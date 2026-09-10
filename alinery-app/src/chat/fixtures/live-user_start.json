@@ -1,0 +1,13 @@
+{
+  "type": "message_start",
+  "message": {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "Think step by step, then reply with ONLY the integer result of 17*19."
+      }
+    ],
+    "attribution": "user"
+  }
+}

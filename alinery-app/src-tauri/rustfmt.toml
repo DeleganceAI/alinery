@@ -1,0 +1,2 @@
+# Matches the frontend's Biome lineWidth so both languages wrap at the same place.
+max_width = 180

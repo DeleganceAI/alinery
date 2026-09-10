@@ -1,0 +1,749 @@
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { ComponentProps } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_APPEARANCE } from "../appearance";
+import { mockIpc } from "../test/mockIpc";
+import type { AgentState, ArtifactListItem, ArtifactTreeNode, SessionObservation, Task } from "../types";
+import { SessionView } from "./SessionView";
+
+const scenario = vi.hoisted(() => ({
+  itemCalls: 0,
+  treeCalls: 0,
+  taskCalls: 0,
+  tasks: [] as Task[],
+  tasksPromise: null as Promise<Task[]> | null,
+  tasksError: null as Error | null,
+  items: null as ArtifactListItem[] | null,
+}));
+
+const sessionStatus = vi.hoisted(() => vi.fn(async (): Promise<SessionObservation> => ({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} })));
+const spawnSessionDetached = vi.hoisted(() => vi.fn(async () => undefined));
+const restateSession = vi.hoisted(() => vi.fn(async () => undefined));
+const rpcAttachSession = vi.hoisted(() => vi.fn(async (_args: unknown) => undefined));
+const rpcWriteSession = vi.hoisted(() => vi.fn(async (_id: string, _payload: unknown) => undefined));
+const detachSession = vi.hoisted(() => vi.fn(async () => undefined));
+const readOmpModelRoles = vi.hoisted(() => vi.fn(async () => ({}) as Record<string, string>));
+const writeOmpModelRoles = vi.hoisted(() => vi.fn(async (roles: Record<string, string>) => roles));
+const openUrl = vi.hoisted(() => vi.fn(async (_url: string | URL, _openWith?: string): Promise<void> => undefined));
+const confirmDanger = vi.hoisted(() => vi.fn(async () => true));
+
+const task: Task = {
+  name: "Task",
+  slug: "task",
+  requested_slug: "",
+  parent_task: "",
+  active_subtask: "",
+  subtask_outcome: "",
+  branch: "task",
+  worktree: "/worktrees/task",
+  has_worktree: true,
+  created: 1,
+  archived: false,
+  pr_url: "",
+  linear_id: "",
+  github_issue: "",
+  playbook: "review",
+  auto_advance: [],
+  draft: false,
+};
+
+const initialItems: ArtifactListItem[] = [
+  { name: "01-review-context.md", modified_at_ms: 2, playbook_step: "review-context", session_id: "", handoffs: [] },
+  { name: "00-ticket.md", modified_at_ms: 1, playbook_step: "", session_id: "", handoffs: [] },
+];
+const updatedItems: ArtifactListItem[] = [{ name: "02-review-checks.md", modified_at_ms: 3, playbook_step: "review-checks", session_id: "", handoffs: [] }, ...initialItems];
+const initialTree: ArtifactTreeNode[] = [
+  ...initialItems.map((item) => ({
+    id: `owned-${item.name}`,
+    kind: "owned" as const,
+    label: item.name,
+    owner_task_slug: "task",
+    source: "owned" as const,
+    children: [],
+  })),
+  {
+    id: "parent-context",
+    kind: "subtask_folder",
+    label: "Parent context",
+    owner_task_slug: "parent",
+    source: "parent_context",
+    children: [{ id: "parent-ticket", kind: "referenced", label: "00-parent-ticket.md", owner_task_slug: "parent", source: "parent_context", children: [] }],
+  },
+];
+
+vi.mock("../SessionTerminal", () => ({ SessionTerminal: () => <div data-testid="terminal" /> }));
+vi.mock("../confirm", () => ({ confirmDanger }));
+vi.mock("../ipc", () =>
+  mockIpc({
+    listTasks: () => {
+      scenario.taskCalls += 1;
+      if (scenario.tasksError) return Promise.reject(scenario.tasksError);
+      return scenario.tasksPromise ?? Promise.resolve(scenario.tasks);
+    },
+    listArtifactsWithMetadata: async () => scenario.items ?? (scenario.itemCalls++ === 0 ? initialItems : updatedItems),
+    listTaskArtifactTree: () => {
+      scenario.treeCalls += 1;
+      return scenario.treeCalls === 1 ? Promise.resolve(initialTree) : new Promise<ArtifactTreeNode[]>(() => {});
+    },
+    listArtifactCommentDrafts: async () => [],
+    listArtifactCommentDraftsForRepo: async () => [],
+    listArtifactComments: async () => [],
+    sessionStatus,
+    spawnSessionDetached,
+    restateSession,
+    rpcAttachSession,
+    rpcWriteSession,
+    detachSession,
+    readOmpModelRoles,
+    writeOmpModelRoles,
+    openUrl,
+    prepareReviewApprovalPrompt: async () => ({
+      text: "Please approve the review.",
+      provenance: { type: "review_approval" as const, review_artifact: "03-review-findings.md" },
+    }),
+  }),
+);
+
+async function flushPromises() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+describe("SessionView artifact pane", () => {
+  beforeEach(() => {
+    scenario.itemCalls = 0;
+    scenario.treeCalls = 0;
+    vi.useFakeTimers();
+    scenario.tasks = [{ ...task }];
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("keeps category tabs and flat artifact polling live when the context tree stalls", async () => {
+    render(
+      <SessionView
+        id="session"
+        cwd="/worktrees/task"
+        taskSlug="task"
+        repoPath="/repo"
+        phase="review-checks"
+        harness="omp"
+        playbook="review"
+        model=""
+        intent="spawn"
+        appearance={DEFAULT_APPEARANCE}
+        messageDraft={{ body: "", pendingActions: [] }}
+        onMessageDraftChange={vi.fn()}
+        onAppearanceChange={vi.fn()}
+        onBack={vi.fn()}
+        onStartFresh={vi.fn()}
+        onStartReviewHandoff={vi.fn()}
+        onOpenRelatedTask={vi.fn()}
+      />,
+    );
+    await flushPromises();
+
+    expect(screen.getByRole("button", { name: "Playbook" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByRole("button", { name: "Wiki" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Attachments" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByText("2/2")).toBeDefined();
+    expect(screen.getByText("Parent context")).toBeDefined();
+    expect(screen.queryByText("02-review-checks.md")).toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(3000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("02-review-checks.md")).toBeDefined();
+    expect(screen.getByText("3/3")).toBeDefined();
+  });
+
+  it.each(["merged", "finished", "killed"] as const)("warns that a live %s child session may be stale", async (outcome) => {
+    scenario.tasks = [
+      { ...task, name: "Parent", slug: "parent", requested_slug: "parent", playbook: "superdevelop" },
+      { ...task, archived: true, parent_task: "parent", subtask_outcome: outcome },
+    ];
+    render(
+      <SessionView
+        id="session"
+        cwd="/worktrees/task"
+        taskSlug="task"
+        repoPath="/repo"
+        phase="review-checks"
+        harness="omp"
+        playbook="review"
+        model=""
+        intent="spawn"
+        appearance={DEFAULT_APPEARANCE}
+        messageDraft={{ body: "", pendingActions: [] }}
+        onMessageDraftChange={vi.fn()}
+        onAppearanceChange={vi.fn()}
+        onBack={vi.fn()}
+        onStartFresh={vi.fn()}
+        onStartReviewHandoff={vi.fn()}
+        onOpenRelatedTask={vi.fn()}
+      />,
+    );
+    await flushPromises();
+
+    expect(screen.getByTestId("chat-pane")).toBeDefined();
+    expect(
+      screen.getByText(
+        `Finalized into Parent as ${outcome.toUpperCase()}. Any open session may be stale. Changes after finalization are not included in the parent snapshot or integrated result.`,
+      ),
+    ).toBeDefined();
+  });
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function sessionView(overrides: Partial<ComponentProps<typeof SessionView>> = {}) {
+  return (
+    <SessionView
+      id="session"
+      cwd="/worktrees/task"
+      taskSlug="task"
+      repoPath="/repo"
+      phase="design"
+      harness="omp"
+      playbook="superdevelop"
+      model=""
+      intent="spawn"
+      appearance={DEFAULT_APPEARANCE}
+      messageDraft={{ body: "", pendingActions: [] }}
+      onMessageDraftChange={vi.fn()}
+      onAppearanceChange={vi.fn()}
+      onBack={vi.fn()}
+      onStartFresh={vi.fn()}
+      onStartReviewHandoff={vi.fn()}
+      onOpenRelatedTask={vi.fn()}
+      {...overrides}
+    />
+  );
+}
+
+function renderSession(overrides: Partial<ComponentProps<typeof SessionView>> = {}) {
+  return render(sessionView(overrides));
+}
+
+describe("the session toolbar names the parent task", () => {
+  beforeEach(() => {
+    scenario.taskCalls = 0;
+    scenario.tasks = [];
+    scenario.tasksPromise = null;
+    scenario.tasksError = null;
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("falls back to the task slug before listTasks resolves", () => {
+    scenario.tasksPromise = deferred<Task[]>().promise;
+    renderSession();
+    const title = screen.getByTitle("task");
+    expect(title.textContent).toBe("task");
+    expect(title.className).toContain("session-task");
+  });
+
+  it("replaces the slug with the task name once listTasks resolves", async () => {
+    scenario.tasks = [{ ...task, name: "Human Readable Task" }];
+    renderSession();
+    await waitFor(() => {
+      expect(screen.getByTitle("task").textContent).toBe("Human Readable Task");
+    });
+  });
+
+  it("keeps the slug when the task cannot be loaded", async () => {
+    scenario.tasksError = new Error("no tasks");
+    renderSession();
+    await waitFor(() => {
+      expect(scenario.taskCalls).toBeGreaterThan(0);
+    });
+    expect(screen.getByTitle("task").textContent).toBe("task");
+  });
+});
+
+function liveObservation(transport: "rpc" | "pty", agent: AgentState = { state: "idle" }): SessionObservation {
+  return {
+    lifecycle: { state: "live" },
+    transport,
+    state: {
+      process: { state: "alive" },
+      agent,
+      playbook: { state: "in_progress" },
+      adapter: "omp",
+      message_adapter: "omp_bracketed_paste",
+    },
+    checkpoint: {},
+  };
+}
+
+function captureRpcOnLine(slot: { current?: (line: string) => void }) {
+  rpcAttachSession.mockImplementation(async (args: unknown) => {
+    slot.current = (args as { onLine?: (line: string) => void }).onLine;
+  });
+}
+
+describe("session message composer feature gate", () => {
+  beforeEach(() => {
+    scenario.taskCalls = 0;
+    scenario.tasks = [{ ...task }];
+    scenario.tasksPromise = null;
+    scenario.tasksError = null;
+    scenario.items = null;
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} });
+  });
+
+  afterEach(cleanup);
+
+  it("shows Chat and the Chat composer for OMP", () => {
+    renderSession();
+
+    expect(screen.getByTestId("chat-pane")).toBeDefined();
+    expect(screen.getByLabelText("Message or /command")).toBeDefined();
+  });
+
+  it("offers the review draft actions to Chat with no experimental flag", async () => {
+    scenario.items = [{ name: "03-review-findings.md", modified_at_ms: 3, playbook_step: "review-findings", session_id: "", handoffs: [] }];
+    const onDraftChange = vi.fn();
+    renderSession({ appearance: DEFAULT_APPEARANCE, playbook: "review", onMessageDraftChange: onDraftChange });
+
+    expect(await screen.findByText("Send findings to task")).toBeDefined();
+    fireEvent.click((await screen.findByText("Add approval prompt")).closest("button") as HTMLButtonElement);
+    await waitFor(() => expect(onDraftChange).toHaveBeenCalledWith(expect.objectContaining({ body: "Please approve the review." })));
+  });
+});
+
+describe("session chat hatch", () => {
+  afterEach(() => {
+    cleanup();
+    sessionStatus.mockReset();
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "exited" as const, code: 0 }, state: null, checkpoint: {} });
+    restateSession.mockClear();
+    confirmDanger.mockReset();
+    confirmDanger.mockResolvedValue(true);
+    rpcWriteSession.mockClear();
+    rpcAttachSession.mockReset();
+    rpcAttachSession.mockImplementation(async () => undefined);
+  });
+
+  it("lists Chat before Terminal in the hatch", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    renderSession();
+    await flushPromises();
+    const hatch = screen.getByRole("group", { name: "Session view" });
+    const buttons = within(hatch).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual(["Chat", "Terminal"]);
+  });
+
+  it("restates live RPC to PTY from the Terminal hatch, not shutdown", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    renderSession();
+    await flushPromises();
+    expect(screen.getByTestId("chat-pane")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    await waitFor(() => expect(restateSession).toHaveBeenCalledWith("session", "pty"));
+    expect(confirmDanger).not.toHaveBeenCalled();
+  });
+
+  it("restates live PTY to RPC from the Chat hatch", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("pty"));
+    renderSession();
+    await flushPromises();
+    expect(screen.getByTestId("terminal")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    await waitFor(() => expect(restateSession).toHaveBeenCalledWith("session", "rpc"));
+  });
+
+  it("confirms before restating when a send is pending and the poll still reads idle", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    confirmDanger.mockResolvedValue(false);
+    renderSession({ messageDraft: { body: "first", pendingActions: [] } });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(rpcWriteSession.mock.calls.some(([, payload]) => (payload as { type?: string } | null)?.type === "prompt")).toBe(true));
+
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    await waitFor(() => expect(confirmDanger).toHaveBeenCalled());
+    expect(restateSession).not.toHaveBeenCalled();
+  });
+
+  it("confirms before restating when turn_start leads the idle observation poll", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    confirmDanger.mockResolvedValue(false);
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    renderSession();
+    await flushPromises();
+    await waitFor(() => expect(onLine.current).toBeDefined());
+    act(() => {
+      onLine.current?.(JSON.stringify({ type: "turn_start" }));
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    await waitFor(() => expect(confirmDanger).toHaveBeenCalled());
+    expect(restateSession).not.toHaveBeenCalled();
+  });
+
+  it("hides the hatch on leftover harnesses", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    renderSession({ harness: "claude", model: "sonnet" });
+    await flushPromises();
+    expect(screen.queryByRole("button", { name: "Terminal" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Chat" })).toBeNull();
+  });
+});
+
+describe("session chat slash dispatch", () => {
+  afterEach(() => {
+    cleanup();
+    sessionStatus.mockReset();
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "exited" as const, code: 0 }, state: null, checkpoint: {} });
+    rpcWriteSession.mockClear();
+  });
+
+  it("opens the model dialog on /model and never prompts that name", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    renderSession({ messageDraft: { body: "/model", pendingActions: [] } });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByRole("dialog", { name: "Models" })).toBeDefined();
+    expect(
+      rpcWriteSession.mock.calls.some(
+        ([, payload]) => payload && typeof payload === "object" && "type" in payload && payload.type === "prompt" && "message" in payload && payload.message === "/model",
+      ),
+    ).toBe(false);
+  });
+
+  it("opens the Accounts tab on /login and never prompts", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    readOmpModelRoles.mockResolvedValue({});
+    renderSession({ messageDraft: { body: "/login", pendingActions: [] } });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByRole("dialog", { name: "Providers" })).toBeDefined();
+    expect(rpcWriteSession.mock.calls.some(([, payload]) => payload && typeof payload === "object" && "message" in payload && payload.message === "/login")).toBe(false);
+  });
+});
+
+describe("leftover harness refuse", () => {
+  afterEach(() => {
+    cleanup();
+    sessionStatus.mockReset();
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "exited" as const, code: 0 }, state: null, checkpoint: {} });
+  });
+
+  it("classifies leftover spawn intent into the unsupported panel instead of spinning", async () => {
+    renderSession({ harness: "claude", model: "sonnet", intent: "spawn" });
+    const panel = (await screen.findByText("This session can't be started or resumed. History and archive remain available.")).closest(".session-action-panel");
+    expect(panel).not.toBeNull();
+    expect(panel?.querySelector(".sap-state")?.textContent).toBe("Unsupported");
+    expect(panel?.textContent).toContain("Unsupported · sonnet");
+    expect(screen.queryByTestId("terminal")).toBeNull();
+    expect(screen.queryByText("Checking session")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start fresh" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Resume/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Set resume token" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Kill" })).toBeNull();
+  });
+
+  it("renders Kill for a live leftover row and not Start fresh", async () => {
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "live" as const }, state: null, checkpoint: {} });
+    renderSession({ harness: "claude", model: "sonnet", intent: "spawn" });
+    const panel = (await screen.findByText("This session can't be started or resumed. History, archive, and Kill remain available.")).closest(".session-action-panel");
+    expect(panel).not.toBeNull();
+    expect(panel?.querySelector(".sap-state")?.textContent).toBe("Unsupported");
+    expect(screen.getByRole("button", { name: "Kill" })).toBeDefined();
+    expect(screen.queryByTestId("terminal")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start fresh" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Resume/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Set resume token" })).toBeNull();
+  });
+});
+
+describe("session chat open_url approval", () => {
+  const REQUEST = "ui-open";
+
+  beforeEach(() => {
+    scenario.tasks = [{ ...task }];
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    // Cleared so `calls.at(-1)` is this render's attach and not one left by an earlier test.
+    rpcAttachSession.mockClear();
+    rpcWriteSession.mockClear();
+    openUrl.mockClear();
+    openUrl.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    cleanup();
+    sessionStatus.mockReset();
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "exited" as const, code: 0 }, state: null, checkpoint: {} });
+  });
+
+  /** Every reply OMP received for the request — the count is the assertion, not just the shape. */
+  function responses() {
+    return rpcWriteSession.mock.calls
+      .map(([, payload]) => payload as { type?: string; id?: string; confirmed?: boolean } | null)
+      .filter((payload) => payload?.type === "extension_ui_response" && payload.id === REQUEST);
+  }
+
+  async function requestOpenUrl(launchUrl: string) {
+    renderSession();
+    await waitFor(() => expect(rpcAttachSession).toHaveBeenCalled());
+    const calls = rpcAttachSession.mock.calls;
+    const attach = calls[calls.length - 1]?.[0] as { onLine: (line: string) => void };
+    await act(async () => {
+      attach.onLine(JSON.stringify({ type: "extension_ui_request", id: REQUEST, method: "open_url", launchUrl }));
+    });
+  }
+
+  it("asks before opening a link instead of launching it, and shows the URL", async () => {
+    await requestOpenUrl("https://example.com/setup");
+
+    expect(openUrl).not.toHaveBeenCalled();
+    expect(responses()).toHaveLength(0);
+    expect(screen.getByText("https://example.com/setup")).toBeDefined();
+    expect(screen.getByTestId("chat-activity").textContent).toContain("Waiting for approval");
+  });
+
+  it("opens the link and confirms once when the user allows it", async () => {
+    await requestOpenUrl("https://example.com/setup");
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+
+    await waitFor(() => expect(responses()).toHaveLength(1));
+    expect(openUrl).toHaveBeenCalledWith("https://example.com/setup");
+    expect(responses()[0]?.confirmed).toBe(true);
+  });
+
+  it("declines once and opens nothing when the user denies", async () => {
+    await requestOpenUrl("https://example.com/setup");
+    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+
+    await waitFor(() => expect(responses()).toHaveLength(1));
+    expect(responses()[0]?.confirmed).toBe(false);
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it.each(["file:///etc/passwd", "javascript:void 0", "not a url"])("declines %s without reaching the opener", async (launchUrl) => {
+    await requestOpenUrl(launchUrl);
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+
+    await waitFor(() => expect(responses()).toHaveLength(1));
+    expect(responses()[0]?.confirmed).toBe(false);
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it("opens the sign-in link without an approval row, because the click was the consent", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    readOmpModelRoles.mockResolvedValue({});
+    renderSession({ messageDraft: { body: "/login", pendingActions: [] } });
+    await flushPromises();
+    const calls = rpcAttachSession.mock.calls;
+    const attach = calls[calls.length - 1]?.[0] as { onLine: (line: string) => void };
+    await act(async () => {
+      attach.onLine(JSON.stringify({ type: "response", command: "get_login_providers", success: true, data: { providers: [{ id: "anthropic", name: "Anthropic" }] } }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Anthropic/ }));
+
+    await act(async () => {
+      attach.onLine(JSON.stringify({ type: "extension_ui_request", id: REQUEST, method: "open_url", launchUrl: "https://auth.example/callback" }));
+    });
+
+    await waitFor(() => expect(responses()).toHaveLength(1));
+    expect(openUrl).toHaveBeenCalledWith("https://auth.example/callback");
+    expect(responses()[0]?.confirmed).toBe(true);
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+  });
+
+  it("arms the sign-in bypass for one link only", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    readOmpModelRoles.mockResolvedValue({});
+    renderSession({ messageDraft: { body: "/login", pendingActions: [] } });
+    await flushPromises();
+    const calls = rpcAttachSession.mock.calls;
+    const attach = calls[calls.length - 1]?.[0] as { onLine: (line: string) => void };
+    await act(async () => {
+      attach.onLine(JSON.stringify({ type: "response", command: "get_login_providers", success: true, data: { providers: [{ id: "anthropic", name: "Anthropic" }] } }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Anthropic/ }));
+    await act(async () => {
+      attach.onLine(JSON.stringify({ type: "extension_ui_request", id: REQUEST, method: "open_url", launchUrl: "https://auth.example/callback" }));
+    });
+    await waitFor(() => expect(openUrl).toHaveBeenCalledTimes(1));
+
+    // A second link on the same login is unsolicited: it has to be approved like any other.
+    await act(async () => {
+      attach.onLine(JSON.stringify({ type: "extension_ui_request", id: "ui-second", method: "open_url", launchUrl: "https://evil.example/x" }));
+    });
+    expect(await screen.findByRole("button", { name: "Allow" })).toBeDefined();
+    expect(openUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers once when the approval is double-clicked", async () => {
+    await requestOpenUrl("https://example.com/setup");
+    const allow = screen.getByRole("button", { name: "Allow" });
+    fireEvent.click(allow);
+    fireEvent.click(allow);
+
+    await waitFor(() => expect(responses()).toHaveLength(1));
+    expect(openUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the resolved origin, not the string the extension picked", async () => {
+    await requestOpenUrl("https://accounts.google.com@evil.example/setup?next=x");
+
+    expect(screen.getByText("https://evil.example/setup")).toBeDefined();
+    expect(screen.queryByText(/accounts\.google\.com/)).toBeNull();
+  });
+
+  it("still answers exactly once when the opener fails", async () => {
+    openUrl.mockRejectedValue(new Error("no handler"));
+    await requestOpenUrl("https://example.com/setup");
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+
+    await waitFor(() => expect(responses()).toHaveLength(1));
+    expect(responses()[0]?.confirmed).toBe(false);
+  });
+});
+
+describe("session chat send routing", () => {
+  /** Every composer send OMP received, in order — the attach seeds are neither prompt nor follow_up. */
+  function sends() {
+    return rpcWriteSession.mock.calls
+      .map(([, payload]) => payload as { type?: string; message?: string } | null)
+      .filter((payload) => payload?.type === "prompt" || payload?.type === "follow_up");
+  }
+
+  beforeEach(() => {
+    scenario.tasks = [{ ...task }];
+    rpcWriteSession.mockClear();
+    rpcWriteSession.mockImplementation(async () => undefined);
+    rpcAttachSession.mockReset();
+    rpcAttachSession.mockImplementation(async () => undefined);
+  });
+
+  afterEach(() => {
+    cleanup();
+    sessionStatus.mockReset();
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "exited" as const, code: 0 }, state: null, checkpoint: {} });
+    rpcWriteSession.mockImplementation(async () => undefined);
+  });
+
+  it("steers a turn that is waiting for input instead of prompting it", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "waiting_for_input", correlation_id: "ask-1" }));
+    renderSession({ messageDraft: { body: "use the other file", pendingActions: [] } });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Steer turn" }));
+
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    expect(sends()[0]).toMatchObject({ type: "follow_up", message: "use the other file" });
+  });
+
+  it("steers the second submit even though the status poll still reads idle", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    const view = renderSession({ messageDraft: { body: "first", pendingActions: [] } });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+
+    view.rerender(sessionView({ messageDraft: { body: "second", pendingActions: [] } }));
+    fireEvent.click(screen.getByRole("button", { name: "Steer turn" }));
+
+    await waitFor(() => expect(sends()).toHaveLength(2));
+    expect(sends().map((payload) => [payload?.type, payload?.message])).toEqual([
+      ["prompt", "first"],
+      ["follow_up", "second"],
+    ]);
+  });
+
+  it("keeps the draft and leaves no delivered row when the write is rejected", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    rpcWriteSession.mockImplementation(async (_id: string, payload: unknown) => {
+      if ((payload as { type?: string } | null)?.type === "prompt") throw new Error("stdin closed");
+    });
+    const onDraftChange = vi.fn();
+    renderSession({ messageDraft: { body: "keep me", pendingActions: [] }, onMessageDraftChange: onDraftChange });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Error: stdin closed")).toBeDefined();
+    expect(onDraftChange).not.toHaveBeenCalled();
+    expect(within(screen.getByTestId("chat-pane")).queryByText("keep me")).toBeNull();
+  });
+
+  it("restores the draft when OMP refuses the send after stdin was acked", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    const onDraftChange = vi.fn();
+    renderSession({ messageDraft: { body: "keep me", pendingActions: [] }, onMessageDraftChange: onDraftChange });
+    await flushPromises();
+    await waitFor(() => expect(onLine.current).toBeDefined());
+
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    const commandId = (sends()[0] as { id?: string }).id;
+    expect(commandId).toBeTruthy();
+    expect(onDraftChange).toHaveBeenCalledWith({ body: "", pendingActions: [] });
+
+    await act(async () => {
+      onLine.current?.(
+        JSON.stringify({
+          type: "response",
+          id: commandId,
+          command: "prompt",
+          success: false,
+          error: "Agent is already processing",
+        }),
+      );
+    });
+
+    await waitFor(() => expect(onDraftChange).toHaveBeenCalledWith({ body: "keep me", pendingActions: [] }));
+    expect(screen.getAllByText("Agent is already processing").length).toBeGreaterThan(0);
+    expect(within(screen.getByTestId("chat-pane")).queryByText("keep me")).toBeNull();
+  });
+
+  it("keeps steering after an unrelated RPC failure between write and turn_start", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    const view = renderSession({ messageDraft: { body: "first", pendingActions: [] } });
+    await flushPromises();
+    await waitFor(() => expect(onLine.current).toBeDefined());
+
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "response", id: "state-1", command: "get_state", success: false, error: "temporary" }));
+    });
+
+    view.rerender(sessionView({ messageDraft: { body: "second", pendingActions: [] } }));
+    fireEvent.click(screen.getByRole("button", { name: "Steer turn" }));
+
+    await waitFor(() => expect(sends()).toHaveLength(2));
+    expect(sends().map((payload) => [payload?.type, payload?.message])).toEqual([
+      ["prompt", "first"],
+      ["follow_up", "second"],
+    ]);
+  });
+});

@@ -1,0 +1,52 @@
+{
+  "name": "alinery-app",
+  "private": true,
+  "version": "0.12.2",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run test:omp-extension && tsc && vite build",
+    "preview": "vite preview",
+    "lint": "biome check . --diagnostic-level=error",
+    "lint:all": "biome check . --max-diagnostics=500",
+    "lint:fix": "biome check --write .",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:omp-extension": "node --test src-tauri/runner/assets/omp-extension.test.mjs",
+    "smoke:omp-completion": "cargo build --manifest-path src-tauri/Cargo.toml -p alinery-runner && node src-tauri/runner/tests/manual_completion_smoke.mjs",
+    "omp:fetch": "../scripts/dev-fetch-omp.sh",
+    "omp:check": "../scripts/dev-fetch-omp.sh --check",
+    "tauri": "node scripts/tauri.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/xterm": "^5.5.0",
+    "lucide-react": "^1.31.0",
+    "mermaid": "^11.16.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "thinking-orbs": "^0.3.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.7",
+    "@tauri-apps/cli": "^2",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "jsdom": "^30.0.1",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4",
+    "vitest": "^4.1.10"
+  }
+}

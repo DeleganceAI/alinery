@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src"],
+  // Tests import vitest; the production build is `tsc && vite build` and must not
+  // require a test runner (or its types) to be present. Vitest still typechecks its
+  // own files when `npm test` runs. `src/test/` is test-support code (e.g. mockIpc.ts)
+  // rather than a suite itself, so it needs its own entry — a *.test.ts(x) suffix never
+  // matches it.
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.spec.ts", "src/**/*.spec.tsx", "src/test/**/*"],
+  "references": [{ "path": "./tsconfig.node.json" }]
+}

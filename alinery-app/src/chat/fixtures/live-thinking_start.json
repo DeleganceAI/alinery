@@ -1,0 +1,17 @@
+{
+  "type": "message_update",
+  "assistantMessageEvent": {
+    "type": "thinking_start",
+    "contentIndex": 0
+  },
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "thinking",
+        "thinking": "The user wants me to reply"
+      }
+    ],
+    "stopReason": "stop"
+  }
+}

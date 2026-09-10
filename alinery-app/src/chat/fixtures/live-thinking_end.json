@@ -1,0 +1,22 @@
+{
+  "type": "message_update",
+  "assistantMessageEvent": {
+    "type": "thinking_end",
+    "contentIndex": 0,
+    "content": "The user wants me to reply with ONLY the integer result of 17*19.\n\n\n"
+  },
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "thinking",
+        "thinking": "The user wants me to reply with ONLY the integer result of 17*19.\n\n\n"
+      },
+      {
+        "type": "text",
+        "text": "323"
+      }
+    ],
+    "stopReason": "stop"
+  }
+}

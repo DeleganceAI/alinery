@@ -1,0 +1,28 @@
+{
+  // tsconfig.json deliberately excludes test files so that `tsc && vite build` never needs
+  // a test runner's types present. The side effect was that nothing typechecked the tests
+  // at all — a test could reference a field that no longer exists and still ship green,
+  // because vitest transpiles without checking types.
+  //
+  // This config is that missing half: same compiler settings, but pointed at the files the
+  // production build leaves out. `npm run typecheck` runs both.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // scripts/tauri.test.ts imports the real scripts/tauri.mjs. checkJs stays off — the
+    // point is to resolve the import, not to start typechecking plain JS.
+    "allowJs": true,
+    "checkJs": false,
+    "types": ["node"]
+  },
+  // Reset the base's test-file exclusion; that exclusion is the whole reason this file exists.
+  "exclude": [],
+  "references": [],
+  "include": [
+    "src",
+    "scripts/**/*.ts",
+    // Neither the production build (outside `include: ["src"]`) nor vitest (excluded with
+    // the rest of src-tauri) sees this file, so until now ~490 lines of TypeScript shipped
+    // with no typechecking whatsoever. Its own suite runs under `node --test`.
+    "src-tauri/runner/assets/**/*.ts"
+  ]
+}

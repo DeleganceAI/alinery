@@ -1,0 +1,23 @@
+[package]
+name = "alineryd"
+version = "0.12.2"
+license = "Apache-2.0"
+edition = "2021"
+
+[[bin]]
+name = "alineryd"
+path = "src/main.rs"
+
+[dependencies]
+portable-pty = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+libc = "0.2"
+uuid = { version = "1", features = ["v4"] }
+alinery-core = { path = "../alinery-core" }
+vt100 = "0.16"
+# R3: path hack retired once session_core.rs is fully moved into alinery-core
+
+[lints]
+workspace = true

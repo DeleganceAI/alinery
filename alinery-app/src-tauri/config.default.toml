@@ -1,0 +1,23 @@
+# alinery repository override config. This file lives at <repo>/.alinery/config.toml.
+#
+# Global settings live in the app-level app.toml under [global]. Repository values
+# here are partial overrides only: a missing key inherits the global value, while an
+# explicitly present blank string (for example `model = ""`) is a real override.
+#
+# Notifications are global-only. A legacy [notifications] block in this file is
+# preserved when read/written by old installs, but alinery ignores it for effective
+# settings and notification delivery.
+#
+# Telemetry is global-only. A [telemetry] block in this file is
+# preserved and ignored.
+
+
+[github]
+# token = ""     # legacy compatibility; new connections use browser login
+
+
+[defaults]
+# harness = ""   # optional repository override for new sessions/tasks
+# model = ""     # explicit blank means harness default, not inheritance
+# playbook = "superdevelop"
+# draft_autosave = true

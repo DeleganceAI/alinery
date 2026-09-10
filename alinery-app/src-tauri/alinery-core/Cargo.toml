@@ -1,0 +1,26 @@
+[package]
+name = "alinery-core"
+version = "0.12.2"
+license = "Apache-2.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+dirs = "5"
+# Exclusive flock: the alineryd lane lock and the app's per-repo ownership lock (.alinery-app.lock).
+libc = "0.2"
+parking_lot = "0.12"
+uuid = { version = "1", features = ["v4"] }
+# Blocking HTTP client for OpenObserve ingest. alinery-core only — do not add to
+# alinery-app / alineryd / alinery-mcp. Transport stays behind alinery_core::telemetry.
+ureq = "2"
+# Backup archives (issue #79). Pure-Rust deflate via flate2/miniz_oxide; default features
+# are off so we do not pull aes/bzip2/zstd/lzma or a second `time` version alongside the
+# 0.3.51 pin in Cargo.lock.
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+vt100 = "0.16"
+
+[lints]
+workspace = true

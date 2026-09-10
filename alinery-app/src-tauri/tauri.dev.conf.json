@@ -1,0 +1,18 @@
+{
+  "productName": "Alinery Dev",
+  "identifier": "ai.delegance.alinery.dev",
+  "app": {
+    "windows": [
+      {
+        "title": "Alinery Dev",
+        "width": 1200,
+        "height": 800,
+        "maximized": true,
+        "minWidth": 900,
+        "minHeight": 600,
+        "decorations": false,
+        "resizable": true
+      }
+    ]
+  }
+}

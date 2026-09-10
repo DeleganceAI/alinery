@@ -1,0 +1,64 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.7/schema.json",
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": {
+    "includes": [
+      "src/**/*.ts",
+      "src/**/*.tsx",
+      "scripts/**/*.ts",
+      "scripts/**/*.mjs",
+      "src-tauri/runner/assets/**/*.ts",
+      "src-tauri/runner/assets/**/*.mjs",
+      "src-tauri/runner/tests/**/*.mjs",
+      "vite.config.ts"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 180
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always",
+      "trailingCommas": "all"
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "a11y": {
+        // Keyboard/pointer a11y across an existing ~11k-line UI. Each finding needs a real
+        // interaction-design decision, not a codemod, so they stay at "warn" (visible via
+        // `npm run lint:all`) without blocking the gate. `npm run lint` / release use
+        // --diagnostic-level=error so these do not flood the log. useButtonType is
+        // deliberately NOT demoted: a <button> with no type defaults to submit, which is a
+        // behaviour bug, and the fix is mechanical.
+        "noStaticElementInteractions": "warn",
+        "useKeyWithClickEvents": "warn",
+        "noLabelWithoutControl": "warn",
+        "useAriaPropsSupportedByRole": "warn",
+        "useSemanticElements": "warn",
+        "useFocusableInteractive": "warn",
+        "noAutofocus": "warn"
+      },
+      "correctness": {
+        // Hook dependency arrays: adding a missing dep changes runtime behaviour (extra
+        // effect runs, re-subscribes), so these are reviewed case by case, never in bulk.
+        // Same gate policy as a11y above: warn for lint:all, silent under lint/release.
+        "useExhaustiveDependencies": "warn"
+      },
+      "style": {
+        // Non-null assertions are mechanical and safe to eliminate — keep as error so they
+        // fail `npm run lint` (diagnostic-level=error) rather than rotting as noise.
+        "noNonNullAssertion": "error"
+      }
+    }
+  },
+  "assist": {
+    "actions": { "source": { "organizeImports": "on" } }
+  }
+}

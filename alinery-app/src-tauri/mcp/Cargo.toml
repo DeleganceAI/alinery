@@ -1,0 +1,20 @@
+[package]
+name = "alinery-mcp"
+version = "0.12.2"
+license = "Apache-2.0"
+edition = "2021"
+
+[[bin]]
+name = "alinery-mcp"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+alinery-core = { path = "../alinery-core" }
+
+[lints]
+workspace = true

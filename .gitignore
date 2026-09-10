@@ -1,0 +1,17 @@
+# OMC tooling state (notepad, memory, sessions, logs) — not project source
+.omc/
+.claude/
+.firecrawl/
+
+.DS_Store
+/.alinery/
+.omp/mcp.json
+
+# Local release packaging scratch (scripts/release.sh) — never commit binaries
+/dist/
+
+# Rust build output
+/target/
+
+# Rustfmt backups
+**/*.rs.bk

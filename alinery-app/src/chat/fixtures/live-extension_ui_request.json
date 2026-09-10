@@ -1,0 +1,6 @@
+{
+  "type": "extension_ui_request",
+  "id": "157311f0b17e2ace",
+  "method": "setWidget",
+  "widgetKey": "autoresearch"
+}

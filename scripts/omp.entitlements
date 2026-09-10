@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- OMP is a Bun single-file binary that extracts an ad-hoc-signed native addon
+       (pi_natives.darwin-arm64.node) at runtime. Library validation refuses to map a
+       library whose Team ID differs from the process's, so a Developer ID signature
+       without this key kills OMP at startup with "different Team IDs". -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <!-- Bun JITs. Without this the hardened runtime denies the W^X mapping and OMP dies
+       with "ReferenceError: SharedArrayBuffer is not defined". -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+</dict>
+</plist>

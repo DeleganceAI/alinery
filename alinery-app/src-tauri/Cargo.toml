@@ -1,0 +1,55 @@
+[package]
+name = "alinery-app"
+version = "0.12.2"
+license = "Apache-2.0"
+description = "Local-first desktop app for task-centric AI coding playbooks: kanban boards, git worktrees, and multi-session terminal harnesses."
+authors = ["delegance.ai"]
+edition = "2021"
+default-run = "Alinery"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+name = "Alinery"
+path = "src/main.rs"
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "alinery_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+portable-pty = "0.9"
+alinery-core = { path = "alinery-core" }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+
+[lints]
+workspace = true
+
+[workspace]
+members = ["alineryd", "alinery-core", "mcp", "runner"]
+default-members = ["."]
+
+[workspace.lints.clippy]
+# 14 functions trip this, and every one of them is a wire surface: a #[tauri::command]'s
+# parameters ARE the IPC contract with the frontend, and spawn_session's are the harness
+# launch contract. Bundling them into structs to satisfy an arity count would add a type
+# per command and change the shape of the boundary the whole app is built around, without
+# making anything clearer. Declared here rather than in scripts/check.sh so a plain
+# `cargo clippy` gives the same verdict as the gate does.
+too_many_arguments = "allow"
