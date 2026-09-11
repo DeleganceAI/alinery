@@ -71,6 +71,34 @@ describe("ChatModelDialog", () => {
     expect(html).toContain("Terminal /login");
     expect(html).toContain("ready via env");
   });
+
+  it("shows Connecting… instead of ready-empty copy while the catalogue is connecting", () => {
+    const connecting = { catalogueStatus: "connecting" as const };
+    const models = renderToStaticMarkup(<ChatModelDialog {...base} models={[]} {...connecting} />);
+    expect(models).toContain("Connecting…");
+    expect(models).not.toContain("No models match");
+    const accounts = renderToStaticMarkup(<ChatModelDialog {...base} tab="accounts" models={[]} loginProviders={[]} {...connecting} />);
+    expect(accounts).toContain("Connecting…");
+    expect(accounts).not.toContain("No Chat-capable providers yet.");
+  });
+
+  it("does not list favourites when the catalogue is empty", () => {
+    const html = renderToStaticMarkup(<ChatModelDialog {...base} models={[]} favorites={["xai/grok-4.6"]} onToggleFavorite={vi.fn()} />);
+    expect(html).toContain("No models match");
+    expect(html).not.toContain("chat-model-item");
+  });
+
+  it("does not list a starred model the query does not match", () => {
+    const html = renderToStaticMarkup(<ChatModelDialog {...base} favorites={["xai/grok-4.6"]} onToggleFavorite={vi.fn()} preselect="nope-nope" />);
+    expect(html).toContain("No models match");
+    expect(html).not.toContain(">xai/grok-4.6<");
+  });
+
+  it("still lists a starred model the query matches", () => {
+    const html = renderToStaticMarkup(<ChatModelDialog {...base} favorites={["xai/grok-4.6"]} onToggleFavorite={vi.fn()} preselect="grok" />);
+    expect(html).toContain("xai/grok-4.6");
+    expect(html).not.toContain("No models match");
+  });
 });
 
 describe("ChatToolsDialog", () => {

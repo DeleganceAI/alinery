@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { collectLiveSubagents } from "./chat/subagents";
 import {
   appendHarnessNotice,
   appendOptimisticUser,
@@ -353,13 +354,148 @@ describe("journal pages", () => {
 
   it("matches only the refused prompt/follow_up for the pending command id", () => {
     expect(matchingSendFailure({ type: "response", id: "c1", command: "prompt", success: false, error: "nope" }, "c1")).toBe("nope");
+    expect(matchingSendFailure({ type: "response", id: "c1", command: "abort_and_prompt", success: false, error: "nope" }, "c1")).toBe("nope");
     expect(matchingSendFailure({ type: "response", id: "c1", command: "get_state", success: false, error: "nope" }, "c1")).toBeNull();
     expect(matchingSendFailure({ type: "response", id: "c2", command: "prompt", success: false, error: "nope" }, "c1")).toBeNull();
   });
-
   it("drops the guessed turn when OMP handled the command locally", () => {
     const guessed = { ...emptyTranscript(), pendingTurn: true };
     const handled = applyRpcLine(guessed, { type: "response", success: true, command: "prompt", data: { agentInvoked: false } });
     expect(handled.pendingTurn).toBe(false);
+  });
+});
+
+function liveIds(cards: ReadonlyArray<{ id?: string }>): Array<string | undefined> {
+  return cards.map((card) => card.id);
+}
+
+describe("subagent envelopes", () => {
+  it("maps a lifecycle payload to one live drawer card", () => {
+    const state = applyRpcLine(emptyTranscript(), load("live-subagent_lifecycle.json"));
+    const cards = collectLiveSubagents(state.entries);
+    expect(cards).toHaveLength(1);
+    expect(liveIds(cards)).toEqual(["sa-1"]);
+    expect(cards[0]?.name).toBe("Explore");
+    expect(cards[0]?.preview).toBe("Search the repo");
+    expect(cards[0]?.status).toBe("running");
+  });
+
+  it("updates the same id from nested progress description", () => {
+    const state = applyRpcLines([load("live-subagent_lifecycle.json"), load("live-subagent_progress.json")]);
+    const cards = collectLiveSubagents(state.entries);
+    expect(cards).toHaveLength(1);
+    expect(liveIds(cards)).toEqual(["sa-1"]);
+    expect(cards[0]?.preview).toBe("Still searching");
+  });
+
+  it("keeps two Explores with distinct ids as two cards", () => {
+    const state = applyRpcLines([load("live-subagent_lifecycle.json"), load("live-subagent_lifecycle-b.json")]);
+    const cards = collectLiveSubagents(state.entries);
+    expect(cards).toHaveLength(2);
+    expect(liveIds(cards).sort()).toEqual(["sa-1", "sa-2"]);
+  });
+
+  it("produces no card when the envelope has no OMP id", () => {
+    const state = applyRpcLine(emptyTranscript(), { type: "subagent_lifecycle", payload: { agent: "Explore", status: "started" } });
+    expect(collectLiveSubagents(state.entries)).toEqual([]);
+  });
+
+  it("still maps an event-wrapped payload as a fallback", () => {
+    const state = applyRpcLine(emptyTranscript(), {
+      type: "subagent_lifecycle",
+      event: { id: "sa-3", agent: "Explore", description: "via event", status: "started" },
+    });
+    const cards = collectLiveSubagents(state.entries);
+    expect(cards).toHaveLength(1);
+    expect(liveIds(cards)).toEqual(["sa-3"]);
+    expect(cards[0]?.preview).toBe("via event");
+  });
+
+  it("hydrates the drawer from a get_subagents snapshot", () => {
+    const state = applyRpcLine(emptyTranscript(), load("live-get_subagents.json"));
+    const cards = collectLiveSubagents(state.entries);
+    expect(cards).toHaveLength(1);
+    expect(liveIds(cards)).toEqual(["sa-9"]);
+    expect(cards[0]?.preview).toBe("Hydrated");
+  });
+});
+
+describe("live assistant GC and journal join", () => {
+  it("drops live thinking rows on turn_end, not only the key map", () => {
+    const open = applyRpcLine(emptyTranscript(), load("live-thinking_start.json"));
+    expect(open.entries.filter((entry) => entry.type === "thinking")).toHaveLength(1);
+    const closed = applyRpcLine(open, { type: "turn_end" });
+    expect(closed.entries.filter((entry) => entry.type === "thinking")).toHaveLength(0);
+    const next = applyRpcLine(closed, load("live-thinking_start.json"));
+    expect(next.entries.filter((entry) => entry.type === "thinking")).toHaveLength(1);
+  });
+
+  it("drops live thinking rows when a closed turn opens again", () => {
+    const live = applyRpcLine(emptyTranscript(), load("live-thinking_start.json"));
+    const next = applyRpcLine(live, { type: "turn_start" });
+    expect(next.entries.filter((entry) => entry.type === "thinking")).toHaveLength(0);
+  });
+
+  it("does not allocate a live thinking row the journal already owns", () => {
+    const journal = applyFilePage(
+      emptyTranscript(),
+      {
+        start: 0,
+        messages: [
+          {
+            rowId: "a1",
+            role: "assistant",
+            content: [
+              { type: "thinking", thinking: "The user wants me to reply" },
+              { type: "text", text: "323" },
+            ],
+          },
+        ],
+      },
+      "initial",
+    );
+    expect(journal.entries.filter((entry) => entry.type === "thinking")).toHaveLength(1);
+    expect(journal.entries.filter((entry) => entry.type === "text")).toHaveLength(1);
+    const joined = applyRpcLine(journal, load("live-thinking_start.json"));
+    expect(joined.entries.filter((entry) => entry.type === "thinking")).toHaveLength(1);
+    expect(joined.entries.filter((entry) => entry.type === "text")).toHaveLength(1);
+    expect(joined.entries.some((entry) => entry.type === "thinking" && entry.id.startsWith("e"))).toBe(false);
+    const thinking = joined.entries.find((entry) => entry.type === "thinking");
+    expect(thinking && "streaming" in thinking ? thinking.streaming : undefined).not.toBe(true);
+  });
+
+  it("still allocates a live row when the incoming text differs", () => {
+    const journal = applyFilePage(
+      emptyTranscript(),
+      {
+        start: 0,
+        messages: [
+          {
+            rowId: "a1",
+            role: "assistant",
+            content: [
+              { type: "thinking", thinking: "plan" },
+              { type: "text", text: "yo" },
+            ],
+          },
+        ],
+      },
+      "initial",
+    );
+    const joined = applyRpcLine(journal, load("live-thinking_start.json"));
+    expect(joined.entries.filter((entry) => entry.type === "thinking")).toHaveLength(2);
+  });
+});
+
+describe("queuedMessageCount", () => {
+  it("records get_state queuedMessageCount including 0", () => {
+    const state = applyRpcLine(emptyTranscript(), {
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: { queuedMessageCount: 0 },
+    });
+    expect("queuedMessageCount" in state.sessionMeta).toBe(true);
+    expect("queuedMessageCount" in state.sessionMeta ? state.sessionMeta.queuedMessageCount : undefined).toBe(0);
   });
 });

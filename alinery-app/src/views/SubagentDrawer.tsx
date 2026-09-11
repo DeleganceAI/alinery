@@ -10,7 +10,7 @@ export function SubagentDrawer({ agents }: { agents: LiveSubagent[] }) {
       <p className="chat-sub-label">subagents · {agents.length} running</p>
       <div className="chat-sub-row">
         {agents.map((agent) => (
-          <article key={agent.name} className="chat-sub-card">
+          <article key={agent.id} className="chat-sub-card">
             <header className="chat-sub-head">
               <Bot className="chat-rail-icon" strokeWidth={1.5} aria-hidden />
               <span className="chat-sub-name">{agent.name}</span>

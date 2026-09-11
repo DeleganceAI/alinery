@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  abortAndPromptCommand,
   compactCommand,
   extensionUiConfirm,
   extensionUiValue,
   getAvailableModelsCommand,
   getLoginProvidersCommand,
   getStateCommand,
+  getSubagentsCommand,
   loginCommand,
   negotiateProtocolCommand,
   promptCommand,
@@ -46,5 +48,17 @@ describe("ompRpc", () => {
     expect(negotiateProtocolCommand(2, "p1")).toEqual({ id: "p1", type: "negotiate_protocol", protocolVersion: 2 });
     expect(transportLimitMessage("RPC response exceeded the transport limit")).toBe(TRANSPORT_LIMIT_HINT);
     expect(transportLimitMessage("other")).toBe("other");
+  });
+
+  it("getSubagentsCommand is official { id, type } stdin", () => {
+    expect(getSubagentsCommand("c20")).toEqual({ id: "c20", type: "get_subagents" });
+    expect(JSON.stringify(getSubagentsCommand("c20"))).not.toContain("method");
+    expect(JSON.stringify(getSubagentsCommand("c20"))).not.toContain("params");
+  });
+
+  it("abortAndPromptCommand is official { id, type, message } stdin", () => {
+    expect(abortAndPromptCommand("now", "c21")).toEqual({ id: "c21", type: "abort_and_prompt", message: "now" });
+    expect(JSON.stringify(abortAndPromptCommand("now", "c21"))).not.toContain("method");
+    expect(JSON.stringify(abortAndPromptCommand("now", "c21"))).not.toContain("params");
   });
 });

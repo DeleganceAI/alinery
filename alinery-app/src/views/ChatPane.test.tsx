@@ -59,6 +59,7 @@ describe("ChatPane", () => {
           at,
           actor: subagent("plan"),
           type: "subagent_status",
+          subagentId: "sa-plan",
           agent: "plan",
           role: "architect",
           status: "running",
@@ -67,8 +68,10 @@ describe("ChatPane", () => {
       ],
       { ...DEFAULT_CHAT_VISIBILITY, showThinking: true, showTurnMarkers: true, showSubagentRows: true },
     );
+
     expect(html).toContain("Map ChatPane");
     expect(html).toContain("Continue.");
+    expect(html).toContain("queued · after this turn");
     expect(html).toContain("todo");
     expect(html).toContain("Turn 3 end");
     expect(html).toContain("redacted");
@@ -88,10 +91,12 @@ describe("ChatPane", () => {
         at,
         actor: subagent("plan"),
         type: "subagent_status",
+        subagentId: "sa-plan",
         agent: "plan",
         status: "running",
         summary: "hidden sub",
       },
+
       { id: "x", at, actor: ACTOR.agent, type: "text", text: "kept" },
     ];
     const html = pane(entries, {

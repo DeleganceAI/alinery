@@ -11,6 +11,7 @@ const subRow: ChatEntry = {
   id: "6",
   actor: subagent("plan"),
   type: "subagent_status",
+  subagentId: "sa-plan",
   agent: "plan",
   status: "running",
   summary: "drafting",
@@ -76,6 +77,11 @@ describe("chatVisibilityFromAppearance", () => {
   it("uses the default for unsupported density values", () => {
     expect(chatVisibilityFromAppearance({ chat_rail_density: "compact" }).railDensity).toBe("normal");
   });
+
+  it("keeps showSubagentRows off when the pref is absent", () => {
+    expect(DEFAULT_CHAT_VISIBILITY.showSubagentRows).toBe(false);
+    expect(chatVisibilityFromAppearance({}).showSubagentRows).toBe(false);
+  });
 });
 
 describe("chatActivityLabel", () => {
@@ -85,5 +91,20 @@ describe("chatActivityLabel", () => {
     expect(chatActivityLabel("running", [])).toBe("Working…");
     expect(chatActivityLabel("running", [{ id: "1", actor: ACTOR.agent, type: "thinking", text: "plan", streaming: true }])).toBe("Thinking…");
     expect(chatActivityLabel("running", [{ id: "1", actor: ACTOR.agent, type: "tool_call", tool: "read", status: "running" }])).toBe("Working…");
+  });
+});
+
+describe("lastApprovalNotice", () => {
+  it("returns the last approval action and detail", async () => {
+    // lastApprovalNotice is added in Phase 4; static import would fail this file during TDD red.
+    const vis = await import("./visibility");
+    expect("lastApprovalNotice" in vis).toBe(true);
+    if (!("lastApprovalNotice" in vis) || typeof vis.lastApprovalNotice !== "function") {
+      throw new Error("lastApprovalNotice missing");
+    }
+    const lastApprovalNotice = vis.lastApprovalNotice;
+    const entries: ChatEntry[] = [{ id: "a", actor: ACTOR.alinery, type: "approval", requestId: "r1", action: "Allow git push", detail: "Publishes" }];
+    expect(lastApprovalNotice(entries)).toEqual({ action: "Allow git push", detail: "Publishes" });
+    expect(lastApprovalNotice([])).toBeNull();
   });
 });

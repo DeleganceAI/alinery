@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { ACTOR } from "../chat/types";
+import { ACTOR, TYPE_LABEL } from "../chat/types";
 import { ChatEntryRow } from "./ChatEntryRow";
 
 describe("ChatEntryRow", () => {
@@ -33,5 +33,17 @@ describe("ChatEntryRow", () => {
     const children = Array.from(line?.children ?? []);
     expect(children[0]?.classList.contains("chat-rail-icon")).toBe(true);
     expect(children[1]?.classList.contains("chat-rail-copy")).toBe(true);
+  });
+
+  it("labels a follow_up row as queued without actor labels", () => {
+    expect(TYPE_LABEL.follow_up).toBe("Queued");
+    const html = render(<ChatEntryRow entry={{ id: "f1", at: Date.now(), actor: ACTOR.you, type: "follow_up", text: "Continue." }} showActorLabels={false} />).container.innerHTML;
+    expect(html).toContain("queued · after this turn");
+    expect(html).toContain("Continue.");
+  });
+
+  it("does not put the queued kicker on a prompt", () => {
+    const html = render(<ChatEntryRow entry={{ id: "p1", at: Date.now(), actor: ACTOR.you, type: "prompt", text: "Continue." }} showActorLabels={false} />).container.innerHTML;
+    expect(html).not.toContain("queued · after this turn");
   });
 });

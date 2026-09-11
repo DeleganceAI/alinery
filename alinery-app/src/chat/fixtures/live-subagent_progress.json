@@ -1,0 +1,13 @@
+{
+  "type": "subagent_progress",
+  "payload": {
+    "agent": "Explore",
+    "agentSource": "bundled",
+    "index": 0,
+    "progress": {
+      "id": "sa-1",
+      "status": "running",
+      "description": "Still searching"
+    }
+  }
+}

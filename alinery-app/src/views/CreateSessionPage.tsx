@@ -357,6 +357,7 @@ export function CreateSessionPage({
                 <ProviderSetupDialog
                   mode="manual"
                   initialTab="models"
+                  unsignedOpensAccounts
                   onPick={(next) => {
                     if (next !== model) void requestContextChange(() => setModel(next));
                   }}

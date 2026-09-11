@@ -118,3 +118,11 @@ export function chatActivityLabel(status: SessionChatStatus, entries: ChatEntry[
   }
   return "Working…";
 }
+
+export function lastApprovalNotice(entries: ChatEntry[]): { action: string; detail: string } | null {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type === "approval") return { action: entry.action, detail: entry.detail };
+  }
+  return null;
+}

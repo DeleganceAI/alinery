@@ -647,6 +647,7 @@ export function CreateTaskPage({
             <ProviderSetupDialog
               mode="manual"
               initialTab="models"
+              unsignedOpensAccounts
               onPick={(next) => {
                 dirtyRef.current = true;
                 setModel(next);

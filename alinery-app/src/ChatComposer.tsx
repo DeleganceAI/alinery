@@ -20,6 +20,11 @@ export type ChatComposerProps = {
   onCompositionChange?: (composing: boolean) => void;
   onSend: (text: string) => void;
   onAbort: () => void;
+  onSendNow?: () => void;
+  sendNowEnabled?: boolean;
+  canAbort?: boolean;
+  approvalNotice?: { action: string; detail: string } | null;
+  queuedCount?: number;
 };
 
 export function ChatComposer({
@@ -33,12 +38,19 @@ export function ChatComposer({
   onCompositionChange,
   onSend,
   onAbort,
+  onSendNow,
+  sendNowEnabled = false,
+  canAbort,
+  approvalNotice,
+  queuedCount,
 }: ChatComposerProps) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const ta = useRef<HTMLTextAreaElement>(null);
   const running = status === "running";
   const waiting = status === "waiting_approval";
+  const abortEnabled = canAbort ?? running;
+
   const metrics = sessionMessageMetrics(body);
 
   const slash = body.startsWith("/");
@@ -119,7 +131,7 @@ export function ChatComposer({
       }
     }
     if (e.key === "Escape") {
-      if (running) {
+      if (abortEnabled && running && !readOnly) {
         e.preventDefault();
         onAbort();
       } else if (body) {
@@ -133,13 +145,21 @@ export function ChatComposer({
     }
   }
 
-  const mode = readOnly ? "readonly" : waiting ? "wait" : running ? "steer" : "prompt";
-  const placeholder = readOnly ? "This session has ended — history only" : waiting ? "Waiting on approval…" : running ? "Steer this turn…" : "Message or /command";
+  const mode = readOnly ? "readonly" : waiting ? "wait" : running ? "queue" : "prompt";
+  const placeholder = readOnly ? "This session has ended — history only" : waiting ? "Waiting on approval…" : running ? "Send after this turn…" : "Message or /command";
   const sendDisabled = readOnly || waiting || sending || metrics.overLimit || body.trim().length === 0;
+  const sendNowDisabled = !sendNowEnabled || sending || readOnly;
+  const sendLabel = running ? "Queue" : "Send";
 
   return (
     <div className="chat-composer">
       {palette ? <CommandList matches={matches} active={active} onPick={fill} onHover={setActive} /> : null}
+      {approvalNotice ? (
+        <p className="dim chat-msg-muted">
+          {approvalNotice.action}
+          {approvalNotice.detail ? ` — ${approvalNotice.detail}` : ""}
+        </p>
+      ) : null}
 
       {metrics.large ? (
         <div className="session-message-large" role="status">
@@ -154,8 +174,13 @@ export function ChatComposer({
             <button type="button" className="btn session-message-clear" onClick={() => onBodyChange("")}>
               Clear large draft
             </button>
-            <button type="button" className="btn primary small" onClick={submit} disabled={sendDisabled} aria-label={running ? "Steer turn" : "Send"}>
-              {running ? "Steer" : "Send"}
+            {onSendNow ? (
+              <button type="button" className="btn small" onClick={onSendNow} disabled={sendNowDisabled} aria-label="Send now">
+                Send now
+              </button>
+            ) : null}
+            <button type="button" className="btn primary small" onClick={submit} disabled={sendDisabled} aria-label={sendLabel}>
+              {sendLabel}
             </button>
           </div>
         </div>
@@ -186,19 +211,17 @@ export function ChatComposer({
                 if (slash) setOpen(true);
               }}
             />
-            {running && !readOnly ? (
+            {abortEnabled && running && !readOnly ? (
               <button type="button" className="btn ghost small chat-composer-abort" onClick={onAbort} aria-label="Abort turn" title="Esc abort">
                 <Square className="chat-composer-icon" fill="currentColor" />
               </button>
             ) : null}
-            <button
-              type="button"
-              className="btn primary small chat-composer-send"
-              onClick={submit}
-              disabled={sendDisabled}
-              aria-label={running ? "Steer turn" : "Send"}
-              title="Enter send"
-            >
+            {onSendNow ? (
+              <button type="button" className="btn ghost small" onClick={onSendNow} disabled={sendNowDisabled} aria-label="Send now">
+                Send now
+              </button>
+            ) : null}
+            <button type="button" className="btn primary small chat-composer-send" onClick={submit} disabled={sendDisabled} aria-label={sendLabel} title="Enter send">
               <ArrowUp className="chat-composer-icon" strokeWidth={2.2} />
             </button>
           </div>
@@ -246,6 +269,7 @@ export function ChatComposer({
             </>
           )
         ) : null}
+        {queuedCount != null && queuedCount > 0 ? <span className="dim">{queuedCount} queued</span> : null}
         <span className={`chat-composer-context${metrics.overLimit ? " over" : ""}`}>{formatComposerStats(metrics.codePoints)}</span>
       </div>
     </div>

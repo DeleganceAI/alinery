@@ -57,6 +57,8 @@ export type ChatEntry =
   | (Base & { type: "tool_result"; tool: string; text: string; status: ToolStatus })
   | (Base & {
       type: "subagent_status";
+      /** OMP identity. Distinct from Base.id (transcript row / React key). */
+      subagentId: string;
       agent: string;
       role?: string;
       status: SubagentStatus;
@@ -110,7 +112,8 @@ export function whoLabel(actor: Actor): string {
 
 export const TYPE_LABEL: Record<ChatEntryType, string> = {
   prompt: "Prompt",
-  follow_up: "Steer",
+  follow_up: "Queued",
+
   slash: "Command",
   thinking: "Thinking",
   redacted_thinking: "Thinking",

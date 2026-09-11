@@ -1,0 +1,17 @@
+{
+  "type": "response",
+  "command": "get_subagents",
+  "success": true,
+  "data": {
+    "subagents": [
+      {
+        "id": "sa-9",
+        "agent": "Explore",
+        "agentSource": "bundled",
+        "description": "Hydrated",
+        "status": "running",
+        "index": 0
+      }
+    ]
+  }
+}

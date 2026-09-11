@@ -131,6 +131,8 @@ export default function App() {
   const [diagramZoomOpen, setDiagramZoomOpen] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [sessionMessageDrafts, setSessionMessageDrafts] = useState<Map<string, SessionMessageDraft>>(() => new Map());
+  const [sessionQueuedFollowUps, setSessionQueuedFollowUps] = useState<Map<string, string[]>>(() => new Map());
+
   const [productName, setProductName] = useState("");
   const [appVersion, setAppVersion] = useState("");
   const duplicatingRef = useRef(false);
@@ -1290,6 +1292,16 @@ export default function App() {
                     setSessionMessageDrafts((current) => {
                       const next = new Map(current);
                       next.set(key, draft);
+                      return next;
+                    });
+                  }}
+                  queuedFollowUps={sessionQueuedFollowUps.get(sessionMessageDraftKey(appConfig.active_repo, view.taskSlug, view.id)) ?? []}
+                  onQueuedFollowUpsChange={(texts) => {
+                    const key = sessionMessageDraftKey(appConfig.active_repo, view.taskSlug, view.id);
+                    setSessionQueuedFollowUps((current) => {
+                      const next = new Map(current);
+                      if (texts.length === 0) next.delete(key);
+                      else next.set(key, texts);
                       return next;
                     });
                   }}

@@ -21,6 +21,8 @@ export type ChatProvidersDialogProps = {
   defaultAdvancedOpen?: boolean;
   /** Starred models, newest store wins. Empty when the host has not loaded them yet. */
   favorites?: string[];
+  /** Default ready so in-session ChatModelDialog is unchanged. */
+  catalogueStatus?: "connecting" | "ready" | "failed";
   /** Omitted by hosts that do not persist favourites; the star is then not rendered at all. */
   onToggleFavorite?: (model: string, favorite: boolean) => void;
   onTabChange: (tab: ProvidersDialogTab) => void;
@@ -51,6 +53,7 @@ export function ChatModelDialog({
   children,
   defaultAdvancedOpen = false,
   favorites,
+  catalogueStatus = "ready",
   onToggleFavorite,
   onTabChange,
   onApplyModel,
@@ -105,7 +108,8 @@ export function ChatModelDialog({
             {error ? <p className="chat-face-danger">{error}</p> : null}
             {children}
             <ul className="chat-model-list">
-              {chatLogin.length === 0 ? <li className="dim">No Chat-capable providers yet.</li> : null}
+              {catalogueStatus === "connecting" ? <li className="dim">Connecting…</li> : null}
+              {catalogueStatus === "ready" && chatLogin.length === 0 ? <li className="dim">No Chat-capable providers yet.</li> : null}
               {chatLogin.map((p) => {
                 const busy = loginBusy === p.id;
                 return (
@@ -157,7 +161,9 @@ export function ChatModelDialog({
             />
             {error ? <p className="chat-face-danger">{error}</p> : null}
             <ul className="chat-model-list">
-              {filtered.length === 0 ? <li className="dim">No models match.</li> : null}
+              {catalogueStatus === "connecting" ? <li className="dim">Connecting…</li> : null}
+              {catalogueStatus === "ready" && filtered.length === 0 ? <li className="dim">No models match.</li> : null}
+
               {filtered.map((m) => {
                 const label = `${m.provider}/${m.id}`;
                 const active = selected ? `${selected.provider}/${selected.id}` === label : false;

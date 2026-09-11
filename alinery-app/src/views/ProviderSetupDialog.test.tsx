@@ -31,8 +31,10 @@ function mountWith(lines: string[], mode: "auto" | "manual" = "auto") {
   mocks.detachSession.mockResolvedValue(undefined);
   mocks.openUrl.mockResolvedValue(undefined);
   mocks.rpcAttachSession.mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
+    await Promise.resolve();
     for (const line of lines) onLine(line);
   });
+
   render(<ProviderSetupDialog mode={mode} onClose={onClose} />);
   return onClose;
 }
@@ -57,6 +59,7 @@ async function startLogin() {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.clearAllMocks();
 });
 
@@ -154,5 +157,93 @@ describe("ProviderSetupDialog", () => {
     // client, so skipping it would strand the session instead of releasing it.
     await waitFor(() => expect(mocks.detachSession).toHaveBeenCalledWith("__omp-setup__", expect.any(Number)));
     expect(mocks.rpcAttachSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows Connecting… in manual mode before providers arrive", async () => {
+    mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
+    mocks.readOmpModelRoles.mockResolvedValue({});
+    mocks.rpcWriteSession.mockResolvedValue(undefined);
+    mocks.detachSession.mockResolvedValue(undefined);
+    mocks.rpcAttachSession.mockImplementation(async () => undefined);
+    render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
+    expect(screen.getByText("Connecting…")).toBeTruthy();
+    expect(screen.queryByText("No models match.")).toBeNull();
+    expect(screen.queryByText("No Chat-capable providers yet.")).toBeNull();
+  });
+
+  it("retries ompSetupSession when the daemon is not connected then shows providers", async () => {
+    vi.useFakeTimers();
+    mocks.ompSetupSession.mockRejectedValueOnce(new Error("daemon not connected")).mockResolvedValue("__omp-setup__");
+    mocks.readOmpModelRoles.mockResolvedValue({});
+    mocks.rpcWriteSession.mockResolvedValue(undefined);
+    mocks.detachSession.mockResolvedValue(undefined);
+    mocks.rpcAttachSession.mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
+      await Promise.resolve();
+      onLine(providersLine([{ id: "anthropic", authenticated: false }]));
+    });
+    render(<ProviderSetupDialog mode="manual" onClose={vi.fn()} />);
+    expect(mocks.ompSetupSession).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+    expect(mocks.ompSetupSession.mock.calls.length).toBeGreaterThan(1);
+    vi.useRealTimers();
+    await waitFor(() => expect(screen.getByText(/anthropic/i)).toBeTruthy());
+  });
+
+  it("surfaces a failed catalogue after persistent daemon not connected, without ready-empty copy", async () => {
+    vi.useFakeTimers();
+    mocks.ompSetupSession.mockRejectedValue(new Error("daemon not connected"));
+    mocks.readOmpModelRoles.mockResolvedValue({});
+    render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4000);
+    });
+    vi.useRealTimers();
+    expect(screen.getByText(/daemon not connected/i)).toBeTruthy();
+    expect(screen.queryByText("No models match.")).toBeNull();
+    expect(screen.queryByText("No Chat-capable providers yet.")).toBeNull();
+  });
+
+  it("retries daemon not connected in auto mode without closing or painting empty lists", async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    mocks.ompSetupSession.mockRejectedValue(new Error("daemon not connected"));
+    mocks.readOmpModelRoles.mockResolvedValue({});
+    render(<ProviderSetupDialog mode="auto" onClose={onClose} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+    expect(mocks.ompSetupSession.mock.calls.length).toBeGreaterThan(1);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.queryByText("No Chat-capable providers yet.")).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("opens Accounts when unsignedOpensAccounts and providers need setup", async () => {
+    const extras = { unsignedOpensAccounts: true };
+    mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
+    mocks.readOmpModelRoles.mockResolvedValue({});
+    mocks.rpcWriteSession.mockResolvedValue(undefined);
+    mocks.detachSession.mockResolvedValue(undefined);
+    mocks.rpcAttachSession.mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
+      await Promise.resolve();
+      onLine(providersLine([{ id: "anthropic", authenticated: false }]));
+    });
+    render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} {...extras} />);
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Accounts" }).getAttribute("aria-selected")).toBe("true"));
+  });
+
+  it("stays on Models without unsignedOpensAccounts", async () => {
+    mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
+    mocks.readOmpModelRoles.mockResolvedValue({});
+    mocks.rpcWriteSession.mockResolvedValue(undefined);
+    mocks.detachSession.mockResolvedValue(undefined);
+    mocks.rpcAttachSession.mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
+      await Promise.resolve();
+      onLine(providersLine([{ id: "anthropic", authenticated: false }]));
+    });
+    render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true"));
   });
 });
