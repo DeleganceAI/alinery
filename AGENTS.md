@@ -2,7 +2,7 @@
 
 Playbook IDE: a local macOS (and Linux) Tauri v2 + React/TS desktop app for task-centric agent work. Playbooks are reusable graphs; each task keeps sessions, decisions, and artifacts together. Filesystem is the database. Local-first. Optional anonymized product-usage telemetry (asked on first launch, off until answered; Settings → Telemetry). A detached per-repo daemon (`alineryd`) owns the PTYs so sessions survive app quit.
 
-This repository is the **public product source**. Release signing, CDN publish, Linux builder droplets, and `scripts/install.sh` live in the private `alinery-deploy` repo. Do not assume those scripts exist here.
+This repository is the **public product source**. Release signing, CDN publish, Linux builder droplets, and `scripts/install.sh` live elsewhere. Do not assume those scripts exist here.
 
 ## Do not launch the app
 
