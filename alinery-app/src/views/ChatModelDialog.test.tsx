@@ -99,6 +99,56 @@ describe("ChatModelDialog", () => {
     expect(html).toContain("xai/grok-4.6");
     expect(html).not.toContain("No models match");
   });
+
+  it("pins Alinery at the top of Accounts and lists hosted models with a cost band", () => {
+    const hosted = {
+      provider: "alinery",
+      defaultModel: "alinery/Qwen3.6-35B-A3B",
+      baseUrl: "https://inference.alinery.ai/v1",
+      plansUrl: "https://accounts.alinery.ai/plans",
+      models: [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 2 }],
+      ready: true,
+      upsell: null,
+      source: "live",
+    };
+    const accounts = renderToStaticMarkup(
+      <ChatModelDialog
+        {...base}
+        tab="accounts"
+        hosted={hosted}
+        models={[{ provider: "anthropic", id: "claude" }]}
+        loginProviders={[{ id: "anthropic", name: "Anthropic", available: true, authenticated: false }]}
+      />,
+    );
+    expect(accounts.indexOf("Alinery")).toBeGreaterThan(-1);
+    expect(accounts.indexOf("Alinery")).toBeLessThan(accounts.indexOf("Anthropic"));
+    expect(accounts).toContain("ready");
+    expect(accounts).not.toContain("Advanced");
+
+    const models = renderToStaticMarkup(<ChatModelDialog {...base} hosted={hosted} />);
+    expect(models).toContain("alinery/Qwen3.6-35B-A3B");
+    expect(models).toContain("cost 2 of 5");
+    expect(models).toContain("xai/grok-4.6");
+  });
+
+  it("upsells unsigned hosted models instead of applying them", () => {
+    const hosted = {
+      provider: "alinery",
+      defaultModel: "alinery/Qwen3.6-35B-A3B",
+      baseUrl: "https://inference.alinery.ai/v1",
+      plansUrl: "https://accounts.alinery.ai/plans",
+      models: [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 1 }],
+      ready: false,
+      upsell: "sign-in" as const,
+      source: "fixture",
+    };
+    const accounts = renderToStaticMarkup(<ChatModelDialog {...base} tab="accounts" hosted={hosted} />);
+    expect(accounts).toContain("Sign in");
+    const unpaid = renderToStaticMarkup(<ChatModelDialog {...base} tab="accounts" hosted={{ ...hosted, upsell: "get-credits" }} />);
+    expect(unpaid).toContain("Get credits");
+    const models = renderToStaticMarkup(<ChatModelDialog {...base} hosted={hosted} />);
+    expect(models).toContain("alinery/Qwen3.6-35B-A3B");
+  });
 });
 
 describe("ChatToolsDialog", () => {

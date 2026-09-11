@@ -1,10 +1,12 @@
 import { Star, X } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { costBand } from "../chat/costBand";
 import { BUILTIN_MODEL_ROLES, type ModelRolesMap } from "../chat/modelRoles";
-import { type AdvancedProviderRow, type LoginProvider, partitionProviders } from "../chat/providers";
+import { type AdvancedProviderRow, HOSTED_PROVIDER, hostedPrice, type LoginProvider, mergeHostedModels, partitionProviders } from "../chat/providers";
 import type { ProvidersDialogTab } from "../chat/slash";
 import type { ChatModelOption } from "../chatTranscript";
 import { Dialog } from "../shared";
+import type { HostedCatalogView } from "../types";
 
 export type ChatProvidersDialogProps = {
   tab: ProvidersDialogTab;
@@ -15,6 +17,7 @@ export type ChatProvidersDialogProps = {
   loginProviders: LoginProvider[];
   livePromotedIds?: string[];
   modelRoles: ModelRolesMap;
+  hosted?: HostedCatalogView | null;
   error?: string | null;
   loginBusy?: string | null;
   children?: ReactNode;
@@ -30,6 +33,8 @@ export type ChatProvidersDialogProps = {
   onLogin: (providerId: string) => void;
   onHatchTerminalLogin: (providerId?: string) => void;
   onAssignRole: (role: string, model: string | null) => void;
+  onSignIn?: () => void;
+  onGetCredits?: () => void;
   onClose: () => void;
 };
 
@@ -37,6 +42,49 @@ function advancedHint(row: AdvancedProviderRow): string {
   if (row.reason === "env") return row.readyViaEnv ? "ready via env" : "set env or Terminal";
   if (row.reason === "live-promote") return "needs Terminal";
   return "Terminal /login";
+}
+
+function CostBand({ price }: { price: number }) {
+  return (
+    <span className="chat-work-meta chat-cost-band" aria-label={`cost ${price} of 5`}>
+      <span className={price > 0 ? "on" : undefined} aria-hidden="true" />
+      <span className={price > 1 ? "on" : undefined} aria-hidden="true" />
+      <span className={price > 2 ? "on" : undefined} aria-hidden="true" />
+      <span className={price > 3 ? "on" : undefined} aria-hidden="true" />
+      <span className={price > 4 ? "on" : undefined} aria-hidden="true" />
+    </span>
+  );
+}
+
+function AlineryAccountRow({ hosted, onSignIn, onGetCredits }: { hosted: HostedCatalogView; onSignIn?: () => void; onGetCredits?: () => void }) {
+  if (hosted.ready) {
+    return (
+      <li>
+        <button type="button" className="chat-model-item" disabled>
+          <span>Alinery</span>
+          <span className="chat-work-meta">ready</span>
+        </button>
+      </li>
+    );
+  }
+  if (hosted.upsell === "get-credits") {
+    return (
+      <li>
+        <button type="button" className="chat-model-item" onClick={onGetCredits}>
+          <span>Alinery</span>
+          <span className="chat-work-meta">Get credits</span>
+        </button>
+      </li>
+    );
+  }
+  return (
+    <li>
+      <button type="button" className="chat-model-item" onClick={onSignIn}>
+        <span>Alinery</span>
+        <span className="chat-work-meta">Sign in</span>
+      </button>
+    </li>
+  );
 }
 
 export function ChatModelDialog({
@@ -48,6 +96,7 @@ export function ChatModelDialog({
   loginProviders,
   livePromotedIds = [],
   modelRoles,
+  hosted,
   error,
   loginBusy,
   children,
@@ -60,6 +109,8 @@ export function ChatModelDialog({
   onLogin,
   onHatchTerminalLogin,
   onAssignRole,
+  onSignIn,
+  onGetCredits,
   onClose,
 }: ChatProvidersDialogProps) {
   const [query, setQuery] = useState(preselect ?? "");
@@ -70,19 +121,29 @@ export function ChatModelDialog({
     setQuery(preselect ?? "");
   }, [preselect]);
 
-  const { chatLogin, advanced } = useMemo(() => partitionProviders({ loginProviders, models, livePromotedIds }), [loginProviders, models, livePromotedIds]);
+  const listed = useMemo(() => mergeHostedModels(models, hosted), [models, hosted]);
+  const { chatLogin, advanced } = useMemo(() => partitionProviders({ loginProviders, models: listed, livePromotedIds }), [loginProviders, listed, livePromotedIds]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const matched = q ? models.filter((m) => `${m.provider}/${m.id}`.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)) : models;
+    const matched = q ? listed.filter((m) => `${m.provider}/${m.id}`.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)) : listed;
     // Starred first, order otherwise preserved -- same contract as `deriveModelRows`, which this
     // list replaces for every model-picking surface.
     const starred = new Set(favorites ?? []);
     if (starred.size === 0) return matched;
     return [...matched.filter((m) => starred.has(`${m.provider}/${m.id}`)), ...matched.filter((m) => !starred.has(`${m.provider}/${m.id}`))];
-  }, [models, query, favorites]);
+  }, [listed, query, favorites]);
   const selected = filtered.find((m) => `${m.provider}/${m.id}` === query.trim()) ?? filtered[0];
   const title = setup ? "Set up your providers" : tab === "accounts" ? "Providers" : "Models";
+
+  const applyOrUpsell = (provider: string, modelId: string) => {
+    if (provider === HOSTED_PROVIDER && !hosted?.ready) {
+      if (hosted?.upsell === "get-credits") onGetCredits?.();
+      else if (hosted?.upsell === "sign-in") onSignIn?.();
+      return;
+    }
+    onApplyModel(provider, modelId);
+  };
 
   return (
     <Dialog onClose={onClose} ariaLabel={title} className="chat-model-dialog">
@@ -108,8 +169,9 @@ export function ChatModelDialog({
             {error ? <p className="chat-face-danger">{error}</p> : null}
             {children}
             <ul className="chat-model-list">
+              {hosted ? <AlineryAccountRow hosted={hosted} onSignIn={onSignIn} onGetCredits={onGetCredits} /> : null}
               {catalogueStatus === "connecting" ? <li className="dim">Connecting…</li> : null}
-              {catalogueStatus === "ready" && chatLogin.length === 0 ? <li className="dim">No Chat-capable providers yet.</li> : null}
+              {catalogueStatus === "ready" && chatLogin.length === 0 && !hosted ? <li className="dim">No Chat-capable providers yet.</li> : null}
               {chatLogin.map((p) => {
                 const busy = loginBusy === p.id;
                 return (
@@ -156,7 +218,7 @@ export function ChatModelDialog({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && selected) onApplyModel(selected.provider, selected.id);
+                if (e.key === "Enter" && selected) applyOrUpsell(selected.provider, selected.id);
               }}
             />
             {error ? <p className="chat-face-danger">{error}</p> : null}
@@ -169,11 +231,15 @@ export function ChatModelDialog({
                 const active = selected ? `${selected.provider}/${selected.id}` === label : false;
                 const isCurrent = current === label;
                 const starred = (favorites ?? []).includes(label);
+                const band = costBand(hostedPrice(hosted, m.provider, m.id));
                 return (
                   <li key={label} className="chat-model-row">
-                    <button type="button" className={`chat-model-item${active ? " active" : ""}`} onClick={() => onApplyModel(m.provider, m.id)}>
+                    <button type="button" className={`chat-model-item${active ? " active" : ""}`} onClick={() => applyOrUpsell(m.provider, m.id)}>
                       <span>{label}</span>
-                      {isCurrent ? <span className="chat-work-meta">current</span> : null}
+                      <span className="chat-model-item-side">
+                        {band !== null ? <CostBand price={band} /> : null}
+                        {isCurrent ? <span className="chat-work-meta">current</span> : null}
+                      </span>
                     </button>
                     {onToggleFavorite ? (
                       <button
@@ -226,7 +292,7 @@ export function ChatModelDialog({
                               }}
                             >
                               <option value="">Clear</option>
-                              {models.map((m) => {
+                              {listed.map((m) => {
                                 const label = `${m.provider}/${m.id}`;
                                 return (
                                   <option key={label} value={label}>
@@ -252,7 +318,7 @@ export function ChatModelDialog({
       </div>
       <div className="mfoot">
         {tab === "models" ? (
-          <button type="button" className="btn small" disabled={!selected} onClick={() => selected && onApplyModel(selected.provider, selected.id)}>
+          <button type="button" className="btn small" disabled={!selected} onClick={() => selected && applyOrUpsell(selected.provider, selected.id)}>
             Apply
           </button>
         ) : (

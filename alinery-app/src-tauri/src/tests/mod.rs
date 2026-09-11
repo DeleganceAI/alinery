@@ -13,15 +13,16 @@ pub(crate) use super::{
     clear_curated_alinery_data, clear_linear_account_in, commit_worktree_in, compare_url, configure_detached_process, copy_task_attachments, create_session_in, create_task_in,
     create_task_in_with_draft_slug, curl_http, curl_request, curl_request_with_timeouts, current_alineryd_socket_path, default_playbook_key, delete_artifact_comment_draft_for,
     delete_draft_in, discard_subtask_with, display_label, end_sign_in_attempt, ensure_drawer_terminal_in, entitlement_url, file_content_id, finalize_session_message_actions_for,
-    finish_sign_in, frame_session_channel_bytes, git_cmd, git_top_level, github_repo_from_remote, gui_lock_held_elsewhere, hold_lock_after_compare_then_clear,
-    linear_account_path_in, list_artifact_comment_drafts_for, list_artifacts_for, list_artifacts_with_metadata, list_playbooks_in, list_tasks_for_repo,
-    load_artifact_comment_drafts_for, load_artifact_comments_for, loopback_html, next_artifact_review_markdown_path, parse_desktop_login_callback, parse_entitlement_plan,
-    parse_github_ref, parse_linear_oauth_tokens, parse_linear_ref, parse_oauth_callback, percent_encode, pkce_challenge, plan_label, prepare_artifact_comments_prompt_for,
-    prepare_review_approval_prompt_for, production_livemode, pump_session_stream, read_model_favorites_in, read_task, read_task_opt, recover_subtask_manager_in,
-    refresh_account_at, register_runtime_plugins, remove_mcp_lane_runtime_files, remove_repo_from_config, require_repo_owned, restore_backup_into, root_sessions_dir,
+    finish_sign_in, frame_session_channel_bytes, git_cmd, git_top_level, github_repo_from_remote, gui_lock_held_elsewhere, hold_lock_after_compare_then_clear, hosted_fixture,
+    inference_path, is_paid_plan, linear_account_path_in, list_artifact_comment_drafts_for, list_artifacts_for, list_artifacts_with_metadata, list_playbooks_in, list_tasks_for_repo,
+    load_artifact_comment_drafts_for, load_artifact_comments_for, loopback_html, models_yml_path, next_artifact_review_markdown_path, paid_from_stored_plan,
+    parse_desktop_login_callback, parse_entitlement_plan, parse_github_ref, parse_hosted_catalog_body, parse_hosted_error, parse_inference_session_body, parse_linear_oauth_tokens,
+    parse_linear_ref, parse_oauth_callback, percent_encode, pkce_challenge, plan_label, prepare_artifact_comments_prompt_for, prepare_review_approval_prompt_for,
+    production_livemode, pump_session_stream, read_model_favorites_in, read_task, read_task_opt, recover_subtask_manager_in, refresh_account_at, register_runtime_plugins,
+    remove_mcp_lane_runtime_files, remove_repo_from_config, render_models_yml, require_repo_owned, resolve_hosted_catalog, restore_backup_into, root_sessions_dir,
     route_socket_path, sanitize_app_config, sanitize_appearance, save_artifact_comment_draft_for, session_list_items_for_repo, session_meta_path, sessions_dir,
     set_active_repo_global, set_model_favorite_in, sign_out_at, start_subtask_manager_in, subtask_state_in, task_dir, unique_attachment_name, validate_known_target_repo,
-    wait_for_daemon_gone, wait_for_desktop_login_callback, wait_for_desktop_login_callback_until, wait_for_linear_callback, worktree_exists, worktrees_dir, write_draft_in,
+    wait_for_daemon_gone, wait_for_desktop_login_callback, wait_for_desktop_login_callback_until, wait_for_linear_callback, wipe_hosted_files, worktree_exists, worktrees_dir, write_draft_in,
     write_draft_in_with_slug, write_global_settings_in, write_task, AccountAuthError, AccountUser, AppConfig, AppState, AppearancePrefs, ArtifactCommentDraftsFile,
     ArtifactCommentsFile, BackupSlot, Command, EnsureDaemonError, LinearTokenError, OAuthCallback, SessionMessageActionProvenance, SessionMeta, SignInAttempt, SignInGuard, Task,
     DEFAULT_CONFIG_TOML, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_SET_BYTES, PROTOCOL_VERSION, SESSION_CHANNEL_BATCH_BYTES, TAURI_RAW_FETCH_MIN_BYTES,
@@ -38,6 +39,7 @@ mod backup;
 mod connections;
 mod daemon;
 mod git_ops;
+mod hosted;
 mod imports;
 mod notify;
 mod omp_update;

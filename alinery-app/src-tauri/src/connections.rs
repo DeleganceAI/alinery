@@ -643,10 +643,20 @@ pub(crate) fn curl_request(url: &str, headers: &[String], body: Option<&str>) ->
 }
 
 pub(crate) fn curl_http(url: &str, headers: &[String], body: Option<&str>) -> Result<CurlResponse, String> {
-    curl_request_with_timeouts(url, headers, body, CURL_CONNECT_TIMEOUT, CURL_TOTAL_TIMEOUT)
+    let method = if body.is_some() { "POST" } else { "GET" };
+    curl_http_method(url, method, headers, body)
+}
+
+pub(crate) fn curl_http_method(url: &str, method: &str, headers: &[String], body: Option<&str>) -> Result<CurlResponse, String> {
+    curl_request_with_method(url, method, headers, body, CURL_CONNECT_TIMEOUT, CURL_TOTAL_TIMEOUT)
 }
 
 pub(crate) fn curl_request_with_timeouts(url: &str, headers: &[String], body: Option<&str>, connect_timeout: Duration, total_timeout: Duration) -> Result<CurlResponse, String> {
+    let method = if body.is_some() { "POST" } else { "GET" };
+    curl_request_with_method(url, method, headers, body, connect_timeout, total_timeout)
+}
+
+fn curl_request_with_method(url: &str, method: &str, headers: &[String], body: Option<&str>, connect_timeout: Duration, total_timeout: Duration) -> Result<CurlResponse, String> {
     let mut config = format!(
         "url = \"{}\"\nsilent\nshow-error\nlocation\nconnect-timeout = {:.3}\nmax-time = {:.3}\nwrite-out = \"\\n__ALINERY_HTTP_STATUS__:%{{http_code}}\"\n",
         curl_config_quote(url),
@@ -656,8 +666,10 @@ pub(crate) fn curl_request_with_timeouts(url: &str, headers: &[String], body: Op
     for header in headers {
         config.push_str(&format!("header = \"{}\"\n", curl_config_quote(header)));
     }
+    if method != "GET" {
+        config.push_str(&format!("request = \"{}\"\n", curl_config_quote(method)));
+    }
     if let Some(body) = body {
-        config.push_str("request = \"POST\"\n");
         config.push_str(&format!("data-binary = \"{}\"\n", curl_config_quote(body)));
     }
     let mut child = Command::new("curl")

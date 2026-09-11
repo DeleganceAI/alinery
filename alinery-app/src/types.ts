@@ -228,9 +228,30 @@ export type AccountStatus = {
   signedIn: boolean;
   email: string | null;
   plan: string | null;
+  /** Entitlement id `founders` | `teams` (legacy plan labels still count). */
+  paid: boolean;
   unavailable: boolean;
 };
 export type AccountSignOutResult = AccountStatus & { remoteRevoked: boolean };
+/** hosted.rs — catalog for Providers/Models. Never includes `inf_…`. */
+export type HostedModel = {
+  id: string;
+  name: string;
+  contextWindow: number;
+  maxTokens: number;
+  /** UI cost band 0–5. Absent or out of range → hide the band, still list the model. */
+  price?: number | null;
+};
+export type HostedCatalogView = {
+  provider: string;
+  defaultModel: string;
+  baseUrl: string;
+  plansUrl: string;
+  models: HostedModel[];
+  ready: boolean;
+  upsell: "sign-in" | "get-credits" | string | null;
+  source: string;
+};
 export type SettingSource = "global" | "repository";
 export type ChoiceProvenance = {
   harness: SettingSource;

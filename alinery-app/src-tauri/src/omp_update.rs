@@ -396,6 +396,15 @@ fn write_model_roles_to_agent_dir(agent_dir: &Path, roles: &HashMap<String, Stri
     Ok(())
 }
 
+pub(crate) fn ensure_default_model_role(agent_dir: &Path, selector: &str) -> Result<(), String> {
+    let mut roles = read_model_roles_from_agent_dir(agent_dir);
+    if roles.contains_key("default") {
+        return Ok(());
+    }
+    roles.insert("default".into(), selector.to_string());
+    write_model_roles_to_agent_dir(agent_dir, &roles)
+}
+
 #[tauri::command]
 pub(crate) fn read_omp_model_roles(app: AppHandle) -> Result<HashMap<String, String>, String> {
     let (agent_dir, _) = alinery_core::omp_home_dirs(&app_config_path(&app)?);

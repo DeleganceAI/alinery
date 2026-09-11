@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { isInteractivePromptLoginError, type LoginProvider, needsProviderSetup, partitionProviders, shouldOfferProviderSetup } from "./providers";
+import {
+  HOSTED_PROVIDER,
+  isInteractivePromptLoginError,
+  type LoginProvider,
+  mergeHostedModels,
+  needsProviderSetup,
+  partitionProviders,
+  shouldOfferProviderSetup,
+} from "./providers";
 
 const providers = (rows: Partial<LoginProvider>[]): LoginProvider[] =>
   rows.map((r, i) => ({
@@ -47,6 +55,10 @@ describe("needsProviderSetup", () => {
     // on a provider that *does* have a login row prove nothing.
     expect(needsProviderSetup(providers([{ id: "anthropic", authenticated: false }]), undefined, models("anthropic"))).toBe(true);
   });
+
+  it("is false when hosted models are ready", () => {
+    expect(needsProviderSetup(providers([{ id: "anthropic", authenticated: false }]), "anthropic/claude", [], true)).toBe(false);
+  });
 });
 
 describe("shouldOfferProviderSetup", () => {
@@ -71,6 +83,10 @@ describe("shouldOfferProviderSetup", () => {
     expect(shouldOfferProviderSetup({ ...base, connected: false })).toBe(false);
     expect(shouldOfferProviderSetup({ ...base, suppressed: true })).toBe(false);
     expect(shouldOfferProviderSetup({ ...base, providers: [] })).toBe(false);
+  });
+
+  it("does not auto-offer when hosted models are ready", () => {
+    expect(shouldOfferProviderSetup({ ...base, hostedReady: true })).toBe(false);
   });
 });
 
@@ -106,6 +122,45 @@ describe("partitionProviders", () => {
       livePromotedIds: ["weird"],
     });
     expect(advanced).toEqual([expect.objectContaining({ id: "weird", reason: "live-promote" })]);
+  });
+
+  it("keeps alinery out of Advanced and Chat login", () => {
+    const { chatLogin, advanced } = partitionProviders({
+      loginProviders: providers([{ id: "anthropic", authenticated: false }]),
+      models: [
+        { provider: HOSTED_PROVIDER, id: "Qwen3.6-35B-A3B" },
+        { provider: "openrouter", id: "auto" },
+      ],
+    });
+    expect(chatLogin.map((p) => p.id)).toEqual(["anthropic"]);
+    expect(advanced.map((p) => p.id)).toEqual(["openrouter"]);
+  });
+});
+
+describe("mergeHostedModels", () => {
+  it("pins catalog rows first and drops OMP duplicates", () => {
+    const hosted = {
+      provider: HOSTED_PROVIDER,
+      defaultModel: "alinery/Qwen3.6-35B-A3B",
+      baseUrl: "https://inference.alinery.ai/v1",
+      plansUrl: "https://accounts.alinery.ai/plans",
+      models: [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 1 }],
+      ready: true,
+      upsell: null,
+      source: "live",
+    };
+    expect(
+      mergeHostedModels(
+        [
+          { provider: "xai", id: "grok" },
+          { provider: HOSTED_PROVIDER, id: "Qwen3.6-35B-A3B" },
+        ],
+        hosted,
+      ),
+    ).toEqual([
+      { provider: HOSTED_PROVIDER, id: "Qwen3.6-35B-A3B" },
+      { provider: "xai", id: "grok" },
+    ]);
   });
 });
 

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   rpcAttachSession: vi.fn(),
   rpcWriteSession: vi.fn(),
   readOmpModelRoles: vi.fn(),
+  hostedCatalog: vi.fn(),
   detachSession: vi.fn(),
   openUrl: vi.fn(),
 }));
@@ -23,10 +24,20 @@ const providersLine = (rows: { id: string; authenticated: boolean }[]) =>
     data: { providers: rows.map((row) => ({ id: row.id, name: row.id, available: true, authenticated: row.authenticated })) },
   });
 
-function mountWith(lines: string[], mode: "auto" | "manual" = "auto") {
+function mountWith(lines: string[], mode: "auto" | "manual" = "auto", hostedReady = false) {
   const onClose = vi.fn();
   mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
   mocks.readOmpModelRoles.mockResolvedValue({});
+  mocks.hostedCatalog.mockResolvedValue({
+    provider: "alinery",
+    defaultModel: "alinery/Qwen3.6-35B-A3B",
+    baseUrl: "https://inference.alinery.ai/v1",
+    plansUrl: "https://accounts.alinery.ai/plans",
+    models: hostedReady ? [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 1 }] : [],
+    ready: hostedReady,
+    upsell: hostedReady ? null : "sign-in",
+    source: hostedReady ? "live" : "fixture",
+  });
   mocks.rpcWriteSession.mockResolvedValue(undefined);
   mocks.detachSession.mockResolvedValue(undefined);
   mocks.openUrl.mockResolvedValue(undefined);
@@ -128,6 +139,12 @@ describe("ProviderSetupDialog", () => {
     // "not-needed" is what keeps a self-close from being remembered as a dismissal, so an install
     // that later loses its credentials is offered setup again.
     expect(screen.queryByText(/Advanced/)).toBeNull();
+  });
+
+  it("stays invisible when hosted models are already ready", async () => {
+    const onClose = mountWith([providersLine([{ id: "anthropic", authenticated: false }])], "auto", true);
+    await waitFor(() => expect(onClose).toHaveBeenCalledWith("not-needed"));
+    expect(screen.queryByText(/anthropic/i)).toBeNull();
   });
 
   it("opens regardless of provider state when the user asked for it", async () => {

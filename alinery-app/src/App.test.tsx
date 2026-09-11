@@ -151,8 +151,8 @@ const { ipcMocks, ipcModule } = vi.hoisted(() => {
     setDockBadgeCount: vi.fn(),
     readAppConfig: vi.fn(),
     setActiveRepo: vi.fn(),
-    accountStatus: vi.fn(async () => ({ signedIn: false, email: null, plan: null, unavailable: false })),
-    accountRefresh: vi.fn(async () => ({ signedIn: false, email: null, plan: null, unavailable: false })),
+    accountStatus: vi.fn(async () => ({ signedIn: false, email: null, plan: null, paid: false, unavailable: false })),
+    accountRefresh: vi.fn(async () => ({ signedIn: false, email: null, plan: null, paid: false, unavailable: false })),
   };
   const cache: Record<string, unknown> = {};
   const ipcModule = new Proxy(ipcMocks, {
