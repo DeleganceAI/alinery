@@ -640,17 +640,11 @@ impl Default for UpdatePrefs {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct ExperimentalFeatures {
     /// Opt-in classic Kanban tab (⌘3). Default off — Grid (Kanban+) is the primary board.
     #[serde(default)]
     pub show_original_kanban: bool,
-}
-
-impl Default for ExperimentalFeatures {
-    fn default() -> Self {
-        Self { show_original_kanban: false }
-    }
 }
 
 pub const MAX_GRID_VIEWS: usize = 3;

@@ -2,7 +2,7 @@ import { type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPoint
 import { archiveBoardTask } from "../archiveTask";
 import * as ipc from "../ipc";
 import { ArchiveTaskModal, Checkbox, EMPTY_TASK_ACTIVITY, repoName, sameBoardTasks, sameKanbanColumns, TaskActivityIndicators, taskKey, useBoardTaskActivity } from "../shared";
-import type { BoardNav, BoardTask, KanbanColumn, TaskActivityStatus, PlaybookStepSummary } from "../types";
+import type { BoardNav, BoardTask, KanbanColumn, PlaybookStepSummary, TaskActivityStatus } from "../types";
 import { usePointerDrag } from "../usePointerDrag";
 
 type PresetKey = "kanban" | "steps" | "quadrants" | "atlas" | "age" | "progress";

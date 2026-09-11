@@ -6,14 +6,14 @@ import { navReady, requireNav } from "../test/nav";
 import type {
   BoardNav,
   BoardTask,
+  PlaybookStepSummary,
+  PlaybookSummary,
   SessionMeta,
   SessionObservation,
   SubtaskManagerState,
   Task,
   TaskActivityRef,
   TaskActivitySummary,
-  PlaybookStepSummary,
-  PlaybookSummary,
 } from "../types";
 import { TaskDetail } from "./TaskDetail";
 
@@ -969,7 +969,10 @@ describe("load() wave + dependent tail", () => {
     const fixture = task({ playbook: "superdevelop" });
     mocks.getTask.mockResolvedValue(fixture);
     mocks.listPlaybooks.mockResolvedValue([playbookSummary({ key: "superdevelop", title: "SuperDevelop" })]);
-    mocks.listSessions.mockResolvedValue([session({ id: "s1", playbook: "superdevelop", phase: "research" }), session({ id: "s2", playbook: "custom-flow", phase: "custom-step" })]);
+    mocks.listSessions.mockResolvedValue([
+      session({ id: "s1", playbook: "superdevelop", phase: "research" }),
+      session({ id: "s2", playbook: "custom-flow", phase: "custom-step" }),
+    ]);
     mocks.listPlaybookSteps.mockImplementation(async (key: string) => {
       if (key === "custom-flow") return [step({ key: "custom-step", title: "Custom Step" })];
       return [step({ key: "research", title: "Research" })];

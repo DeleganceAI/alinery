@@ -1337,7 +1337,6 @@ export default function App() {
               onDuplicate={(task) => duplicateTask({ repoPath: task.repo_path, sourceSlug: task.slug })}
               registerNav={registerNav}
               storageKey={`${gridStorageScopeKey}:view:${gridView.id}`}
-
               initialPreset={gridView.id === DEFAULT_GRID_VIEW_ID ? "kanban" : "steps"}
             />
           </div>

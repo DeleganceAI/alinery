@@ -98,13 +98,13 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 }
 
 pub(crate) fn label_for(file_name: &str) -> &'static str {
-    if file_name == "alineryd" || file_name.starts_with("alineryd-") || file_name == "alineryd" || file_name.starts_with("alineryd-") {
+    if file_name == "alineryd" || file_name.starts_with("alineryd-") {
         "alineryd"
-    } else if file_name == "alinery-mcp" || file_name.starts_with("alinery-mcp-") || file_name == "alinery-mcp" || file_name.starts_with("alinery-mcp-") {
+    } else if file_name == "alinery-mcp" || file_name.starts_with("alinery-mcp-") {
         "alinery-mcp"
-    } else if file_name == "alinery-runner" || file_name.starts_with("alinery-runner-") || file_name == "alinery-runner" || file_name.starts_with("alinery-runner-") {
+    } else if file_name == "alinery-runner" || file_name.starts_with("alinery-runner-") {
         "alinery-runner"
-    } else if matches!(file_name, "alinery" | "alinery Dev" | "alinery" | "Alinery" | "Alinery Dev" | "alinery") {
+    } else if matches!(file_name, "alinery" | "alinery Dev" | "Alinery" | "Alinery Dev") {
         "alinery-app"
     } else {
         "other"

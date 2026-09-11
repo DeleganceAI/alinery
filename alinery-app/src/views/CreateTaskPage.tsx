@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import * as ipc from "../ipc";
-import { Checkbox, InlineStatus, ModelInput, ompDefaultModel } from "../shared";
-import type { BoardTask, DraftOrigin, TargetedCreateResult, PlaybookStepSummary, PlaybookSummary } from "../types";
 import { PlaybookGraph } from "../PlaybookGraph";
+import { Checkbox, InlineStatus, ModelInput, ompDefaultModel } from "../shared";
+import type { BoardTask, DraftOrigin, PlaybookStepSummary, PlaybookSummary, TargetedCreateResult } from "../types";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 type ErrState = { msg: string; detail: string } | null;

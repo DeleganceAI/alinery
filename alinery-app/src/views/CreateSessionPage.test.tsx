@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockIpc } from "../test/mockIpc";
-import type { BoardTask, Config, SessionListItem, PlaybookStepSummary, PlaybookSummary } from "../types";
+import type { BoardTask, Config, PlaybookStepSummary, PlaybookSummary, SessionListItem } from "../types";
 
 const PREVIEW = "Resolved launch prompt for the task.";
 const RESEARCH_PREVIEW = "Resolved research launch prompt.";
@@ -249,7 +249,9 @@ describe("launch context changes", () => {
     expect(previewSessionPrompt.mock.calls.some(([request]) => request.taskSlug === "b-task")).toBe(false);
 
     await act(async () => playbooks.resolve([playbook]));
-    await waitFor(() => expect(previewSessionPrompt).toHaveBeenCalledWith(expect.objectContaining({ taskSlug: "b-task", playbook: "superdevelop", phase: "design", harness: "omp" })));
+    await waitFor(() =>
+      expect(previewSessionPrompt).toHaveBeenCalledWith(expect.objectContaining({ taskSlug: "b-task", playbook: "superdevelop", phase: "design", harness: "omp" })),
+    );
     await waitFor(() => expect(box.disabled).toBe(false));
   });
 
@@ -271,7 +273,9 @@ describe("launch context changes", () => {
     await waitFor(() => expect(box.value).toBe(EDITED_PROMPT));
     expect(previewSessionPrompt).not.toHaveBeenCalled();
     launch();
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(expect.anything(), { kind: "playbook-step", playbook: "superdevelop", phase: "research" }, "omp", "sonnet", EDITED_PROMPT));
+    await waitFor(() =>
+      expect(onCreated).toHaveBeenCalledWith(expect.anything(), { kind: "playbook-step", playbook: "superdevelop", phase: "research" }, "omp", "sonnet", EDITED_PROMPT),
+    );
   });
 
   it("prefers the task's recent omp model over the global default", async () => {
@@ -321,7 +325,9 @@ describe("launch context changes", () => {
 
     await waitFor(() => expect(box.value).toBe(RESEARCH_PREVIEW));
     launch();
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(expect.anything(), { kind: "playbook-step", playbook: "superdevelop", phase: "research" }, "omp", "sonnet", undefined));
+    await waitFor(() =>
+      expect(onCreated).toHaveBeenCalledWith(expect.anything(), { kind: "playbook-step", playbook: "superdevelop", phase: "research" }, "omp", "sonnet", undefined),
+    );
   });
 
   it("cancels a context change without losing the prior edit or selection", async () => {

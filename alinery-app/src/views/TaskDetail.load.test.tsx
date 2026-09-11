@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
-import type { ArtifactListItem, SessionMeta, Task, PlaybookStepSummary, PlaybookSummary } from "../types";
+import type { ArtifactListItem, PlaybookStepSummary, PlaybookSummary, SessionMeta, Task } from "../types";
 import { TaskDetail } from "./TaskDetail";
 
 // Coverage for PR #169 review item 2 (BLOCKING): a failing secondary read in load() or

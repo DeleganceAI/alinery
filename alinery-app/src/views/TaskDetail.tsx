@@ -10,6 +10,7 @@ import type { ArtifactPaneTab } from "../artifactClassification";
 import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassification";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
+import { PlaybookGraph } from "../PlaybookGraph";
 import {
   classifySessionNotice,
   hasAcknowledgedExit,
@@ -51,6 +52,7 @@ import type {
   AutoAdvanceSummary,
   BoardNav,
   BoardTask,
+  PlaybookStepSummary,
   RelatedTaskRef,
   SessionMeta,
   SessionObservation,
@@ -58,12 +60,10 @@ import type {
   Task,
   TaskActivitySummary,
   TaskPanelRow,
-  PlaybookStepSummary,
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
 import { useSessionSort } from "../useSessionSort";
-import { PlaybookGraph } from "../PlaybookGraph";
 
 function taskActivityLabel(activity: TaskActivitySummary): string {
   switch (activity.status) {

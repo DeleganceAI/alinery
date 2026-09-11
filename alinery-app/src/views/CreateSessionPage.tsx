@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { askConfirm } from "../confirm";
 import * as ipc from "../ipc";
 import { InlineStatus, ModelInput, ompDefaultModel, repoName, taskKey } from "../shared";
-import type { BoardTask, SessionListItem, SessionTypeChoice, PlaybookStepSummary, PlaybookSummary } from "../types";
+import type { BoardTask, PlaybookStepSummary, PlaybookSummary, SessionListItem, SessionTypeChoice } from "../types";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 type PlaybookGroup = { playbook: PlaybookSummary; steps: PlaybookStepSummary[] };

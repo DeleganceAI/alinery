@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockIpc } from "../test/mockIpc";
-import type { Config, Task, PlaybookStepSummary, PlaybookSummary } from "../types";
+import type { Config, PlaybookStepSummary, PlaybookSummary, Task } from "../types";
 import { CreateTaskPage } from "./CreateTaskPage";
 
 const playbooks = [
@@ -29,7 +29,6 @@ const readConfigForRepo = vi.hoisted(() =>
   vi.fn(
     async () =>
       ({
-
         defaults: { harness: "claude", model: "", playbook: "superdevelop", draft_autosave: true },
       }) as Config,
   ),
@@ -58,7 +57,6 @@ import * as ipc from "../ipc";
 beforeEach(() => {
   vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => {} });
   readConfigForRepo.mockResolvedValue({
-
     defaults: { harness: "claude", model: "", playbook: "superdevelop", draft_autosave: true },
   } as Config);
 });
@@ -195,7 +193,6 @@ describe("playbook selection", () => {
 describe("OMP model default", () => {
   it("does not prefill a leftover claude-owned model", async () => {
     readConfigForRepo.mockResolvedValue({
-
       defaults: { harness: "claude", model: "sonnet", playbook: "superdevelop", draft_autosave: true },
     } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);

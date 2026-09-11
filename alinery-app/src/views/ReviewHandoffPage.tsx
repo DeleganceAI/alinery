@@ -2,7 +2,7 @@ import type { KeyboardEvent } from "react";
 import { useEffect, useState } from "react";
 import * as ipc from "../ipc";
 import { InlineStatus, ModelInput, ompDefaultModel, repoName, taskKey } from "../shared";
-import type { BoardTask, ReviewHandoffResult, ReviewHandoffSource, PlaybookStepSummary } from "../types";
+import type { BoardTask, PlaybookStepSummary, ReviewHandoffResult, ReviewHandoffSource } from "../types";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 export function ReviewHandoffPage({

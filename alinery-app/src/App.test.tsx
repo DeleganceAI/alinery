@@ -384,7 +384,10 @@ vi.mock("./views/TaskDetail", () => ({
 vi.mock("./views/CreateSessionPage", () => ({
   CreateSessionPage: ({ onCreated }: { onCreated: (task: BoardTask, choice: SessionTypeChoice, harness: string, model: string, prompt?: string) => Promise<void> }) => (
     <div>
-      <button type="button" onClick={() => void onCreated(task, { kind: "playbook-step", playbook: "superdevelop", phase: "implementation" }, "omp", "", "  edited\nlaunch prompt ✓  ")}>
+      <button
+        type="button"
+        onClick={() => void onCreated(task, { kind: "playbook-step", playbook: "superdevelop", phase: "implementation" }, "omp", "", "  edited\nlaunch prompt ✓  ")}
+      >
         finish create session
       </button>
       <button type="button" onClick={() => void onCreated(task, { kind: "generic" }, "omp", "", "")}>

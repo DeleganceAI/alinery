@@ -290,7 +290,7 @@ fn real_mcp_create_start_disconnect_observe_history_and_exit() {
     wait_until(Duration::from_secs(5), || fixture.prompt_file(&playbook.session_id).exists());
     let seed: Value = serde_json::from_str(&fs::read_to_string(fixture.prompt_file(&playbook.session_id)).unwrap()).unwrap();
     let playbook_prompt = seed["message"].as_str().unwrap();
-    assert!(playbook_prompt.contains("# Implementation"));
+    assert!(playbook_prompt.contains("# Build"));
     assert!(playbook_prompt.starts_with(&expected_playbook_prompt));
     assert_eq!(marker_count(playbook_prompt, playbook_extra), 1);
 

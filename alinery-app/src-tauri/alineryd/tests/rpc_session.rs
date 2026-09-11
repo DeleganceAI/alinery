@@ -534,7 +534,7 @@ fn restate_without_jsonl_passes_session_dir_only() {
 }
 
 // The tail of the OMP seed, so its presence in argv also proves the whole prompt was written.
-const SEED_CONTRACT: &str = "Alinery completion contract";
+const SEED_CONTRACT: &str = "Alinery completion contract: after the requested artifact";
 
 // A restate kills the current child, and the Settings "prefer Terminal" restate fires as soon as
 // the session goes live — possibly before the RPC child ever reached `ready` and got its seed.
@@ -638,7 +638,10 @@ fn omp_setup_session_is_attachable_but_never_a_listed_session() {
     // No `--session-dir`, so nothing on disk claims this was a session.
     let argv = fixture.argv(&id);
     assert!(argv.contains("--mode"), "{argv}");
-    assert!(argv.lines().any(|arg| arg == "--model=openai-codex/gpt-5.5"), "setup must start without saved credentials: {argv}");
+    assert!(
+        argv.lines().any(|arg| arg == "--model=openai-codex/gpt-5.5"),
+        "setup must start without saved credentials: {argv}"
+    );
     assert!(!argv.contains("--session-dir"), "setup session must not be given a journal: {argv}");
     assert!(!fixture.root.join(format!(".alinery/sessions/{id}.omp")).exists());
 

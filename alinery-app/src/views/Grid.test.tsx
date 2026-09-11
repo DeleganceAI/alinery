@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { navReady, requireNav } from "../test/nav";
-import type { BoardNav, BoardTask, KanbanColumn, TaskActivityMap, TaskActivityRef, PlaybookStepSummary } from "../types";
+import type { BoardNav, BoardTask, KanbanColumn, PlaybookStepSummary, TaskActivityMap, TaskActivityRef } from "../types";
 import { Grid } from "./Grid";
 
 const now = Math.floor(Date.now() / 1000);
@@ -606,7 +606,6 @@ describe("configurable task grid", () => {
     expect((screen.getByLabelText("session activity") as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole("button", { name: "Close grid settings" })).toBeDefined();
   });
-
 
   it("keeps stable view IDs isolated and gives additional views a useful neutral preset", async () => {
     const first = render(<Grid allRepos={false} onOpen={() => {}} registerNav={() => {}} storageKey="repo-a:view:first" initialPreset="kanban" />);
