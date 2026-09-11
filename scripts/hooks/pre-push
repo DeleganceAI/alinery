@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Runs scripts/check.sh --quick before every push.
+#
+# Activate once per clone:
+#
+#   git config core.hooksPath scripts/hooks
+#
+# Bypass for a work-in-progress push:
+#
+#   ALINERY_SKIP_CHECK=1 git push
+set -euo pipefail
+
+if [ "${ALINERY_SKIP_CHECK:-0}" = "1" ]; then
+  echo "pre-push: skipped (ALINERY_SKIP_CHECK=1)" >&2
+  exit 0
+fi
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
+
+if ! "$ROOT/scripts/check.sh" --quick; then
+  cat >&2 <<'EOF'
+
+pre-push: checks failed, push aborted.
+
+  ./scripts/check.sh --quick        re-run
+  (cd alinery-app && npm run lint:fix) fix formatting and the autofixable lints
+  ALINERY_SKIP_CHECK=1 git push        push anyway
+EOF
+  exit 1
+fi

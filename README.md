@@ -62,6 +62,15 @@ npm install
 npm run tauri dev
 ```
 
+The one command for “is this change good?”:
+
+```bash
+./scripts/check.sh --quick    # lint, typecheck, tests, source gates
+./scripts/check.sh            # plus slow behavioural suites
+```
+
+Enable the pre-push hook once per clone: `git config core.hooksPath scripts/hooks`. Bypass with `ALINERY_SKIP_CHECK=1 git push`.
+
 `npm run tauri dev` automatically launches **Alinery Dev**. The launcher reserves port
 `1420` when available and otherwise selects the next free local port, keeping Vite and
 Tauri on the same URL. Set `ALINERY_DEV_PORT` to an available port when a test needs a
@@ -76,7 +85,7 @@ Builds and installs remain **Alinery** and keep the production
 continues to live under each target repository's `.alinery/`, so use disposable repositories
 for live development writes.
 
-First launch compiles Rust (~a minute). Native notification banners only appear from a real `.app` bundle — use `./scripts/install-local.sh` for that.
+First launch compiles Rust (~a minute). Native notification banners only appear from a real `.app` bundle, not `tauri dev`.
 
 > **Don't run `cargo update`.** `time` is pinned to `0.3.51` in `Cargo.lock` (Tauri v2 build break otherwise).
 
