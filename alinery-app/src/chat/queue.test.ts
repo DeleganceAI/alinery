@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dropConsumedFollowUp, latestQueuedFollowUp, queuedTextsNotInEntries, reconcileQueuedFollowUps } from "./queue";
+import { latestQueuedFollowUp, queuedCountFromGetState, queuedTextsNotInEntries, reconcileQueuedFollowUps } from "./queue";
 import type { ChatEntry } from "./types";
 import { ACTOR } from "./types";
 
@@ -25,21 +25,30 @@ describe("reconcileQueuedFollowUps", () => {
   });
 });
 
-describe("queued follow-up helpers", () => {
-  it("drops the first matching consumed text", () => {
-    expect(dropConsumedFollowUp(["a", "b", "a"], "a")).toEqual(["b", "a"]);
+describe("queuedCountFromGetState", () => {
+  it("reads the count only from a successful get_state", () => {
+    expect(queuedCountFromGetState({ type: "response", command: "get_state", success: true, data: { queuedMessageCount: 2 } })).toBe(2);
+    expect(queuedCountFromGetState({ type: "response", command: "get_state", success: true, data: { queuedMessageCount: 0 } })).toBe(0);
   });
 
+  it("ignores sticky-looking lines that are not a successful get_state", () => {
+    expect(queuedCountFromGetState({ type: "thinking_delta" })).toBeUndefined();
+    expect(queuedCountFromGetState({ type: "response", command: "get_state", success: false, data: { queuedMessageCount: 1 } })).toBeUndefined();
+    expect(queuedCountFromGetState({ type: "response", command: "follow_up", success: true, data: { queuedMessageCount: 1 } })).toBeUndefined();
+  });
+});
+
+describe("queued follow-up helpers", () => {
   it("returns the latest queued text", () => {
     expect(latestQueuedFollowUp(["a", "b"])).toBe("b");
     expect(latestQueuedFollowUp([])).toBeUndefined();
   });
 
-  it("skips stored texts already present as prompt or follow_up entries", () => {
+  it("skips stored texts already present as follow_up entries, not historical prompts", () => {
     const entries: ChatEntry[] = [
-      { id: "p", actor: ACTOR.you, type: "prompt", text: "done" },
+      { id: "p", actor: ACTOR.you, type: "prompt", text: "ok" },
       { id: "f", actor: ACTOR.you, type: "follow_up", text: "queued" },
     ];
-    expect(queuedTextsNotInEntries(["done", "queued", "missing"], entries)).toEqual(["missing"]);
+    expect(queuedTextsNotInEntries(["ok", "queued", "missing"], entries)).toEqual(["ok", "missing"]);
   });
 });

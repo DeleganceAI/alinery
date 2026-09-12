@@ -220,6 +220,31 @@ describe("ProviderSetupDialog", () => {
     vi.useRealTimers();
   });
 
+  it("detaches a setup session when attach fails with daemon not connected, then retries", async () => {
+    vi.useFakeTimers();
+    mocks.ompSetupSession.mockResolvedValueOnce("__omp-setup-1__").mockResolvedValueOnce("__omp-setup-2__");
+    mocks.readOmpModelRoles.mockResolvedValue({});
+    mocks.rpcWriteSession.mockResolvedValue(undefined);
+    mocks.detachSession.mockResolvedValue(undefined);
+    mocks.rpcAttachSession.mockRejectedValueOnce(new Error("daemon not connected")).mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
+      await Promise.resolve();
+      onLine(providersLine([{ id: "anthropic", authenticated: false }]));
+    });
+    render(<ProviderSetupDialog mode="auto" onClose={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mocks.detachSession).toHaveBeenCalledWith("__omp-setup-1__", expect.any(Number));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+    expect(mocks.ompSetupSession.mock.calls.length).toBeGreaterThan(1);
+    vi.useRealTimers();
+    await waitFor(() => expect(screen.getByText(/anthropic/i)).toBeTruthy());
+    expect(mocks.rpcAttachSession).toHaveBeenCalledWith(expect.objectContaining({ id: "__omp-setup-2__" }));
+  });
+
   it("opens Accounts when unsignedOpensAccounts and providers need setup", async () => {
     const extras = { unsignedOpensAccounts: true };
     mocks.ompSetupSession.mockResolvedValue("__omp-setup__");

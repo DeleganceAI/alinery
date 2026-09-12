@@ -132,7 +132,6 @@ export default function App() {
   const [reloadNonce, setReloadNonce] = useState(0);
   const [sessionMessageDrafts, setSessionMessageDrafts] = useState<Map<string, SessionMessageDraft>>(() => new Map());
   const [sessionQueuedFollowUps, setSessionQueuedFollowUps] = useState<Map<string, string[]>>(() => new Map());
-
   const [productName, setProductName] = useState("");
   const [appVersion, setAppVersion] = useState("");
   const duplicatingRef = useRef(false);

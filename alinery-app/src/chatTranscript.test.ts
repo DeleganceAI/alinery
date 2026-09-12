@@ -418,6 +418,24 @@ describe("subagent envelopes", () => {
     expect(liveIds(cards)).toEqual(["sa-9"]);
     expect(cards[0]?.preview).toBe("Hydrated");
   });
+
+  it("does not duplicate get_subagents rows already present for the same id", () => {
+    const first = applyRpcLine(emptyTranscript(), load("live-get_subagents.json"));
+    const second = applyRpcLine(first, load("live-get_subagents.json"));
+    expect(second.entries.filter((entry) => entry.type === "subagent_status")).toHaveLength(1);
+  });
+
+  it("skips a get_subagents item that already has a live status row", () => {
+    const live = applyRpcLine(emptyTranscript(), load("live-subagent_lifecycle.json"));
+    expect(live.entries.filter((entry) => entry.type === "subagent_status")).toHaveLength(1);
+    const next = applyRpcLine(live, {
+      type: "response",
+      command: "get_subagents",
+      success: true,
+      data: { subagents: [{ id: "sa-1", agent: "Explore", description: "Search the repo", status: "running" }] },
+    });
+    expect(next.entries.filter((entry) => entry.type === "subagent_status")).toHaveLength(1);
+  });
 });
 
 describe("live assistant GC and journal join", () => {

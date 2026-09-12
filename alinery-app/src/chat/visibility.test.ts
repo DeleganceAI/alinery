@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ACTOR, type ChatEntry, subagent } from "./types";
-import { chatActivityLabel, chatVisibilityFromAppearance, DEFAULT_CHAT_VISIBILITY, visibleChatEntries, workRailDefaultExpanded } from "./visibility";
+import { chatActivityLabel, chatVisibilityFromAppearance, DEFAULT_CHAT_VISIBILITY, lastApprovalNotice, visibleChatEntries, workRailDefaultExpanded } from "./visibility";
 
 const thinking: ChatEntry = { id: "1", actor: ACTOR.agent, type: "thinking", text: "plan" };
 const tool: ChatEntry = { id: "2", actor: ACTOR.agent, type: "tool_call", tool: "read", status: "ok" };
@@ -95,14 +95,7 @@ describe("chatActivityLabel", () => {
 });
 
 describe("lastApprovalNotice", () => {
-  it("returns the last approval action and detail", async () => {
-    // lastApprovalNotice is added in Phase 4; static import would fail this file during TDD red.
-    const vis = await import("./visibility");
-    expect("lastApprovalNotice" in vis).toBe(true);
-    if (!("lastApprovalNotice" in vis) || typeof vis.lastApprovalNotice !== "function") {
-      throw new Error("lastApprovalNotice missing");
-    }
-    const lastApprovalNotice = vis.lastApprovalNotice;
+  it("returns the last approval action and detail", () => {
     const entries: ChatEntry[] = [{ id: "a", actor: ACTOR.alinery, type: "approval", requestId: "r1", action: "Allow git push", detail: "Publishes" }];
     expect(lastApprovalNotice(entries)).toEqual({ action: "Allow git push", detail: "Publishes" });
     expect(lastApprovalNotice([])).toBeNull();

@@ -590,9 +590,14 @@ function closeTurn(state: ChatTranscriptState, stopReason?: string): ChatTranscr
 
 const SUBAGENT_STATUS: SubagentStatus[] = ["spawned", "running", "waiting", "completed", "failed", "aborted"];
 
+function subagentEnvelopeId(event: Record<string, unknown>): string | undefined {
+  const progress = asRecord(event.progress);
+  return asString((progress?.id ?? event.id) as unknown);
+}
+
 function applySubagent(state: ChatTranscriptState, event: Record<string, unknown>): ChatTranscriptState {
   const progress = asRecord(event.progress);
-  const subagentId = asString((progress?.id ?? event.id) as unknown);
+  const subagentId = subagentEnvelopeId(event);
   if (!subagentId) return state;
   const label = asString(event.agent) ?? asString(event.name) ?? subagentId;
   const role = asString(event.agentSource) ?? asString(event.role);
@@ -773,7 +778,12 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
       if (!Array.isArray(subagents)) return state;
       return subagents.reduce<ChatTranscriptState>((next, item) => {
         const rec = asRecord(item);
-        return rec ? applySubagent(next, rec) : next;
+        if (!rec) return next;
+        const subagentId = subagentEnvelopeId(rec);
+        if (subagentId && next.entries.some((entry) => entry.type === "subagent_status" && entry.subagentId === subagentId)) {
+          return next;
+        }
+        return applySubagent(next, rec);
       }, state);
     }
 

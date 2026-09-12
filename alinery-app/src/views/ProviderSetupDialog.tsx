@@ -124,16 +124,28 @@ export function ProviderSetupDialog({
 
     const attachId = Math.floor(Math.random() * 2 ** 31);
     let attached: string | null = null;
+    let backoffTimer: number | undefined;
+
+    const reap = (id: string) => {
+      void ipc.detachSession(id, attachId);
+      if (sessionIdRef.current === id) sessionIdRef.current = "";
+      if (attached === id) attached = null;
+    };
 
     const attachAndQuery = async (id: string) => {
       sessionIdRef.current = id;
       // Attach even when the effect is already torn down. The daemon's setup-session reaper only
       // arms once it has seen a client, so a session nobody ever attached to is never reaped --
       // attaching and immediately detaching below is what lets it go.
-      await ipc.rpcAttachSession({ id, attachId, streamToken: attachId, onLine: apply });
+      try {
+        await ipc.rpcAttachSession({ id, attachId, streamToken: attachId, onLine: apply });
+      } catch (error) {
+        reap(id);
+        throw error;
+      }
       attached = id;
       if (cancelled) {
-        void ipc.detachSession(id, attachId);
+        reap(id);
         return;
       }
       // The daemon negotiates protocol v2 for this session on `ready`, so go straight to
@@ -154,6 +166,8 @@ export function ProviderSetupDialog({
           return;
         } catch (error) {
           if (cancelled) return;
+          const leaked = attached || sessionIdRef.current;
+          if (leaked) reap(leaked);
           const message = String(error);
           if (!message.includes("daemon not connected")) {
             setCatalogueStatus("failed");
@@ -168,7 +182,7 @@ export function ProviderSetupDialog({
           const delay = DAEMON_BACKOFF_MS[Math.min(attempt, DAEMON_BACKOFF_MS.length - 1)] ?? 2000;
           attempt += 1;
           await new Promise<void>((resolve) => {
-            window.setTimeout(resolve, delay);
+            backoffTimer = window.setTimeout(resolve, delay);
           });
         }
       }
@@ -189,7 +203,9 @@ export function ProviderSetupDialog({
 
     return () => {
       cancelled = true;
-      if (attached) void ipc.detachSession(attached, attachId);
+      if (backoffTimer != null) window.clearTimeout(backoffTimer);
+      const id = attached || sessionIdRef.current;
+      if (id) reap(id);
     };
   }, [mode]);
 

@@ -8,10 +8,15 @@ export function reconcileQueuedFollowUps(local: string[], count: number | undefi
   return { texts: local, unmatchedCount: 0 };
 }
 
-export function dropConsumedFollowUp(local: string[], text: string): string[] {
-  const index = local.indexOf(text);
-  if (index < 0) return local;
-  return [...local.slice(0, index), ...local.slice(index + 1)];
+/** `queuedMessageCount` from this line only — sticky sessionMeta must not trim the local queue. */
+export function queuedCountFromGetState(value: unknown): number | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  if (!("type" in value) || !("success" in value) || !("command" in value) || !("data" in value)) return undefined;
+  if (value.type !== "response" || value.success !== true || value.command !== "get_state") return undefined;
+  const data = value.data;
+  if (typeof data !== "object" || data === null || !("queuedMessageCount" in data)) return undefined;
+  const count = data.queuedMessageCount;
+  return typeof count === "number" ? count : undefined;
 }
 
 export function latestQueuedFollowUp(local: string[]): string | undefined {
@@ -19,6 +24,6 @@ export function latestQueuedFollowUp(local: string[]): string | undefined {
 }
 
 export function queuedTextsNotInEntries(texts: string[], entries: ChatEntry[]): string[] {
-  const present = new Set(entries.flatMap((entry) => (entry.type === "prompt" || entry.type === "follow_up" ? [entry.text] : [])));
+  const present = new Set(entries.flatMap((entry) => (entry.type === "follow_up" ? [entry.text] : [])));
   return texts.filter((text) => !present.has(text));
 }

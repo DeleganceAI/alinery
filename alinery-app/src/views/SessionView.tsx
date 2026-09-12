@@ -13,10 +13,10 @@ import type { ModelRolesMap } from "../chat/modelRoles";
 import { decodeOmpPage } from "../chat/ompFile";
 import { settleOpenUrl as settleBrowserUrl } from "../chat/openUrl";
 import { isInteractivePromptLoginError, shouldOfferProviderSetup } from "../chat/providers";
-import { latestQueuedFollowUp, queuedTextsNotInEntries, reconcileQueuedFollowUps } from "../chat/queue";
+import { latestQueuedFollowUp, queuedCountFromGetState, queuedTextsNotInEntries, reconcileQueuedFollowUps } from "../chat/queue";
 import { applySendPlan, commandOutputText, loginReply, planChatSend, setModelReply } from "../chat/send";
 import { type McpServerRow, type ProvidersDialogTab, parseMcpListOutput } from "../chat/slash";
-import { ACTOR, type SessionChatStatus } from "../chat/types";
+import type { SessionChatStatus } from "../chat/types";
 import { chatVisibilityFromAppearance, lastApprovalNotice } from "../chat/visibility";
 import {
   appendOptimisticAbort,
@@ -193,6 +193,7 @@ export function SessionView({
   const [toolsOpen, setToolsOpen] = useState(false);
   const [mcpDialog, setMcpDialog] = useState<{ rows: McpServerRow[]; empty: boolean } | null>(null);
   const chatAttachIdRef = useRef(0);
+  const [chatAttachEpoch, setChatAttachEpoch] = useState(0);
   const ompStartRef = useRef<string | null>(null);
   const ompSeedRef = useRef<{ id: string; done: Promise<unknown> } | null>(null);
   const preferredViewAppliedRef = useRef<string | null>(null);
@@ -300,14 +301,22 @@ export function SessionView({
     setViewBusy(false);
     if (intent === "history") return;
     let alive = true;
+    let pollFailures = 0;
     const observe = () => {
       ipc
         .sessionStatus(id, taskSlug || null)
         .then((next) => {
-          if (alive) setObservation(next);
+          if (!alive) return;
+          const recovering = pollFailures > 0;
+          pollFailures = 0;
+          setObservation(next);
+          if (recovering) setChatAttachEpoch((epoch) => epoch + 1);
         })
         .catch(() => {
-          // Keep the last observation so a transient poll error cannot flip liveRpc and re-attach.
+          // Keep the last observation so a transient poll error cannot flip liveRpc
+          // and wipe the transcript. Count the miss so a later success can re-attach
+          // without clearing entries (dead socket / daemon restart).
+          if (alive) pollFailures += 1;
         });
     };
     observe();
@@ -738,7 +747,9 @@ export function SessionView({
           pendingSendRef.current = { commandId: sent.commandId, draft: body, actions, entryId: applied.entryId };
         }
         if (busy && plan.optimisticKind === "follow_up") {
-          onQueuedFollowUpsChange?.([...queuedFollowUpsRef.current, body]);
+          const nextQueue = [...queuedFollowUpsRef.current, body];
+          queuedFollowUpsRef.current = nextQueue;
+          onQueuedFollowUpsChange?.(nextQueue);
         }
         updateMessageDraft({ body: "", pendingActions: [] });
       }
@@ -1009,7 +1020,8 @@ export function SessionView({
     const attachId = chatAttachIdRef.current;
     // The session-id effect already clears the transcript on a real session change. Do not
     // emptyTranscript() here: a liveRpc flap would wipe visible history. The poll catch above
-    // keeps the last observation so this effect should not re-enter on a transient error.
+    // keeps the last observation so a transient error does not re-enter; a later successful
+    // poll after a failure bumps chatAttachEpoch to re-attach without clearing entries.
 
     setTerminalConnection("opening");
     const apply = (line: string) => {
@@ -1033,19 +1045,14 @@ export function SessionView({
           }
           setChat((current) => {
             let next = applyRpcLine(current, value);
-            const count = next.sessionMeta.queuedMessageCount;
+            const count = queuedCountFromGetState(value);
             if (typeof count === "number") {
               const reconciled = reconcileQueuedFollowUps(queuedFollowUpsRef.current, count);
               queuedFollowUpsRef.current = reconciled.texts;
               onQueuedFollowUpsChange?.(reconciled.texts);
               next = {
                 ...next,
-                entries: next.entries.filter((entry) => entry.type !== "follow_up" || reconciled.texts.includes(entry.text) || entry.id === "queued-unmatched"),
-              };
-              const withoutPlaceholder = next.entries.filter((entry) => entry.id !== "queued-unmatched");
-              next = {
-                ...next,
-                entries: reconciled.unmatchedCount > 0 ? [...withoutPlaceholder, { id: "queued-unmatched", actor: ACTOR.you, type: "follow_up", text: "" }] : withoutPlaceholder,
+                entries: next.entries.filter((entry) => entry.type !== "follow_up" || reconciled.texts.includes(entry.text)),
               };
             }
             chatRef.current = next;
@@ -1155,7 +1162,7 @@ export function SessionView({
       cancelled = true;
       void ipc.detachSession(id, attachId);
     };
-  }, [liveRpc, id, seedOmpJournal]);
+  }, [liveRpc, id, seedOmpJournal, chatAttachEpoch]);
   useEffect(() => {
     if (!liveRpc) return;
     void ipc.rpcWriteSession(id, setAutoCompactionCommand(chatAutoCompaction)).catch(() => undefined);

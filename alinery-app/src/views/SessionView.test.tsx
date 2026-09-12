@@ -1,7 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ComponentProps } from "react";
+import { type ComponentProps, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
+import type { SessionMessageDraft } from "../sessionMessage";
 import { mockIpc } from "../test/mockIpc";
 import type { AgentState, ArtifactListItem, ArtifactTreeNode, SessionObservation, Task } from "../types";
 import { SessionView } from "./SessionView";
@@ -787,6 +788,43 @@ describe("session chat send routing", () => {
     await waitFor(() => expect(within(screen.getByTestId("chat-pane")).queryByText("keep me")).toBeNull());
   });
 
+  it("does not trim in-flight follow-ups on a non-get_state line", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    function QueueHarness() {
+      const [queued, setQueued] = useState(["first"]);
+      const [draft, setDraft] = useState<SessionMessageDraft>({ body: "second", pendingActions: [] });
+      return sessionView({
+        queuedFollowUps: queued,
+        onQueuedFollowUpsChange: setQueued,
+        messageDraft: draft,
+        onMessageDraftChange: setDraft,
+      });
+    }
+    render(<QueueHarness />);
+    await flushPromises();
+    await waitFor(() => expect(onLine.current).toBeDefined());
+    expect(await screen.findByText("first")).toBeTruthy();
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "response", command: "get_state", success: true, data: { queuedMessageCount: 1 } }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    expect(await screen.findByText("second")).toBeTruthy();
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "thinking_delta" }));
+    });
+    const pane = screen.getByTestId("chat-pane");
+    expect(within(pane).getByText("first")).toBeTruthy();
+    expect(within(pane).getByText("second")).toBeTruthy();
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "response", command: "get_state", success: true, data: { queuedMessageCount: 2 } }));
+    });
+    expect(within(pane).getByText("first")).toBeTruthy();
+    expect(within(pane).getByText("second")).toBeTruthy();
+  });
+
   it("Send now with empty draft aborts and prompts the latest queued text", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
     renderSession({ queuedFollowUps: ["later"], messageDraft: { body: "", pendingActions: [] } });
@@ -877,11 +915,28 @@ describe("session chat attach handshake", () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
     await flushPromises();
+    expect(rpcAttachSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-attaches after a poll failure once sessionStatus succeeds again", async () => {
+    vi.useFakeTimers();
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    renderSession();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await flushPromises();
+    expect(rpcAttachSession).toHaveBeenCalledTimes(1);
+    sessionStatus.mockRejectedValueOnce(new Error("poll failed"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    await flushPromises();
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
     await flushPromises();
-    expect(rpcAttachSession).toHaveBeenCalledTimes(1);
+    expect(rpcAttachSession).toHaveBeenCalledTimes(2);
   });
 });
