@@ -51,6 +51,8 @@ pub(crate) struct HostedCatalogView {
     pub ready: bool,
     pub upsell: Option<String>,
     pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub balance_cents: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +69,148 @@ pub(crate) struct HostedApiError {
     pub status: u16,
     pub error: String,
     pub code: Option<String>,
+}
+
+/// Track B desktop credits snapshot. Display only — never price tokens from `balance_cents`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct DesktopCredits {
+    pub ok: bool,
+    pub plan: String,
+    pub included_cents: i64,
+    pub purchased_cents: i64,
+    pub balance_cents: i64,
+    pub used_this_period_cents: i64,
+    #[serde(default)]
+    pub cutoff: bool,
+    #[serde(default)]
+    pub auto_reload: bool,
+    #[serde(default)]
+    pub last_reload_error: Option<String>,
+    pub account_url: String,
+    pub plans_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DesktopCreditsView {
+    pub visible: bool,
+    pub signed_out: bool,
+    pub plan: Option<String>,
+    pub paid: bool,
+    pub balance_cents: Option<i64>,
+    pub cutoff: bool,
+    pub upsell: Option<String>,
+    pub account_url: Option<String>,
+    pub plans_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum CreditsFetchError {
+    Status(u16),
+    Parse(String),
+    Transport(String),
+}
+
+static CREDITS_SNAPSHOT: std::sync::Mutex<Option<DesktopCredits>> = std::sync::Mutex::new(None);
+
+#[cfg(test)]
+pub(crate) static CREDITS_SNAPSHOT_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub(crate) fn store_credits_snapshot(credits: Option<DesktopCredits>) {
+    if let Ok(mut guard) = CREDITS_SNAPSHOT.lock() {
+        *guard = credits;
+    }
+}
+
+pub(crate) fn last_credits_snapshot() -> Option<DesktopCredits> {
+    CREDITS_SNAPSHOT.lock().ok().and_then(|guard| guard.clone())
+}
+
+pub(crate) fn credits_hidden() -> DesktopCreditsView {
+    DesktopCreditsView {
+        visible: false,
+        signed_out: false,
+        plan: None,
+        paid: false,
+        balance_cents: None,
+        cutoff: false,
+        upsell: None,
+        account_url: None,
+        plans_url: None,
+    }
+}
+
+pub(crate) fn credits_signed_out() -> DesktopCreditsView {
+    DesktopCreditsView {
+        visible: false,
+        signed_out: true,
+        plan: None,
+        paid: false,
+        balance_cents: None,
+        cutoff: false,
+        upsell: None,
+        account_url: None,
+        plans_url: None,
+    }
+}
+
+pub(crate) fn credits_view_from(credits: &DesktopCredits) -> DesktopCreditsView {
+    let paid = is_paid_plan(&credits.plan);
+    let upsell = if !paid {
+        Some("subscribe")
+    } else if credits.balance_cents <= 0 || credits.cutoff {
+        Some("buy-credits")
+    } else {
+        None
+    };
+    DesktopCreditsView {
+        visible: true,
+        signed_out: false,
+        plan: Some(credits.plan.clone()),
+        paid,
+        balance_cents: Some(credits.balance_cents),
+        cutoff: credits.cutoff,
+        upsell: upsell.map(str::to_string),
+        account_url: Some(credits.account_url.clone()),
+        plans_url: Some(credits.plans_url.clone()),
+    }
+}
+
+pub(crate) fn parse_desktop_credits_body(body: &[u8]) -> Result<DesktopCredits, String> {
+    let value: Value = serde_json::from_slice(body).map_err(|e| format!("bad desktop credits: {e}"))?;
+    if value.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Err(parse_hosted_error(200, body).error);
+    }
+    serde_json::from_value(value).map_err(|e| format!("bad desktop credits: {e}"))
+}
+
+pub(crate) fn fetch_desktop_credits(accounts_url: &str, access_token: &str) -> Result<DesktopCredits, CreditsFetchError> {
+    let url = format!("{}/api/desktop/credits", accounts_url.trim_end_matches('/'));
+    let http = curl_http(&url, &hosted_headers(Some(access_token)), None).map_err(CreditsFetchError::Transport)?;
+    if http.status == 200 {
+        return parse_desktop_credits_body(&http.body).map_err(CreditsFetchError::Parse);
+    }
+    Err(CreditsFetchError::Status(http.status))
+}
+
+pub(crate) fn apply_credits_to_hosted_view(mut view: HostedCatalogView, credits: &DesktopCreditsView) -> HostedCatalogView {
+    if credits.signed_out {
+        view.ready = false;
+        view.upsell = Some("sign-in".into());
+        view.balance_cents = None;
+        return view;
+    }
+    if !credits.visible {
+        return view;
+    }
+    view.balance_cents = credits.balance_cents;
+    if let Some(upsell) = credits.upsell.as_deref() {
+        view.upsell = Some(upsell.to_string());
+        if upsell == "subscribe" || upsell == "buy-credits" {
+            view.ready = false;
+        }
+    }
+    view
 }
 
 pub(crate) fn is_paid_plan(id: &str) -> bool {
@@ -280,6 +424,7 @@ fn view_from(catalog: HostedCatalog, ready: bool, upsell: Option<&str>, source: 
         ready,
         upsell: upsell.map(str::to_string),
         source: source.into(),
+        balance_cents: None,
     }
 }
 
@@ -287,7 +432,7 @@ fn upsell_for(signed_in: bool, paid: bool) -> Option<&'static str> {
     if !signed_in {
         Some("sign-in")
     } else if !paid {
-        Some("get-credits")
+        Some("subscribe")
     } else {
         None
     }

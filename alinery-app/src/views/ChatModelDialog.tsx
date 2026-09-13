@@ -34,7 +34,8 @@ export type ChatProvidersDialogProps = {
   onHatchTerminalLogin: (providerId?: string) => void;
   onAssignRole: (role: string, model: string | null) => void;
   onSignIn?: () => void;
-  onGetCredits?: () => void;
+  onSubscribe?: () => void;
+  onBuyCredits?: () => void;
   onClose: () => void;
 };
 
@@ -56,23 +57,48 @@ function CostBand({ price }: { price: number }) {
   );
 }
 
-function AlineryAccountRow({ hosted, onSignIn, onGetCredits }: { hosted: HostedCatalogView; onSignIn?: () => void; onGetCredits?: () => void }) {
+function formatCreditUsd(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+function AlineryAccountRow({
+  hosted,
+  onSignIn,
+  onSubscribe,
+  onBuyCredits,
+}: {
+  hosted: HostedCatalogView;
+  onSignIn?: () => void;
+  onSubscribe?: () => void;
+  onBuyCredits?: () => void;
+}) {
   if (hosted.ready) {
+    const meta = hosted.balanceCents != null ? formatCreditUsd(hosted.balanceCents) : "ready";
     return (
       <li>
         <button type="button" className="chat-model-item" disabled>
           <span>Alinery</span>
-          <span className="chat-work-meta">ready</span>
+          <span className="chat-work-meta">{meta}</span>
         </button>
       </li>
     );
   }
-  if (hosted.upsell === "get-credits") {
+  if (hosted.upsell === "subscribe") {
     return (
       <li>
-        <button type="button" className="chat-model-item" onClick={onGetCredits}>
+        <button type="button" className="chat-model-item" onClick={onSubscribe}>
           <span>Alinery</span>
-          <span className="chat-work-meta">Get credits</span>
+          <span className="chat-work-meta">Subscribe</span>
+        </button>
+      </li>
+    );
+  }
+  if (hosted.upsell === "buy-credits") {
+    return (
+      <li>
+        <button type="button" className="chat-model-item" onClick={onBuyCredits}>
+          <span>Alinery</span>
+          <span className="chat-work-meta">Buy credits</span>
         </button>
       </li>
     );
@@ -110,7 +136,8 @@ export function ChatModelDialog({
   onHatchTerminalLogin,
   onAssignRole,
   onSignIn,
-  onGetCredits,
+  onSubscribe,
+  onBuyCredits,
   onClose,
 }: ChatProvidersDialogProps) {
   const [query, setQuery] = useState(preselect ?? "");
@@ -138,8 +165,8 @@ export function ChatModelDialog({
 
   const applyOrUpsell = (provider: string, modelId: string) => {
     if (provider === HOSTED_PROVIDER && !hosted?.ready) {
-      if (hosted?.upsell === "get-credits") onGetCredits?.();
-      else if (hosted?.upsell === "sign-in") onSignIn?.();
+      if (hosted?.upsell === "sign-in") onSignIn?.();
+      else onTabChange("accounts");
       return;
     }
     onApplyModel(provider, modelId);
@@ -169,7 +196,7 @@ export function ChatModelDialog({
             {error ? <p className="chat-face-danger">{error}</p> : null}
             {children}
             <ul className="chat-model-list">
-              {hosted ? <AlineryAccountRow hosted={hosted} onSignIn={onSignIn} onGetCredits={onGetCredits} /> : null}
+              {hosted ? <AlineryAccountRow hosted={hosted} onSignIn={onSignIn} onSubscribe={onSubscribe} onBuyCredits={onBuyCredits} /> : null}
               {catalogueStatus === "connecting" ? <li className="dim">Connecting…</li> : null}
               {catalogueStatus === "ready" && chatLogin.length === 0 && !hosted ? <li className="dim">No Chat-capable providers yet.</li> : null}
               {chatLogin.map((p) => {

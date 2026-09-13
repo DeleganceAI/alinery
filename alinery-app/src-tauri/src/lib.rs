@@ -279,6 +279,7 @@ pub fn run() {
             account_sign_out,
             account_open,
             hosted_catalog,
+            account_credits,
             account_open_plans,
             import_linear,
             import_linear_for_repo,

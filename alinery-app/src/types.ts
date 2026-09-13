@@ -233,6 +233,18 @@ export type AccountStatus = {
   unavailable: boolean;
 };
 export type AccountSignOutResult = AccountStatus & { remoteRevoked: boolean };
+/** account.rs / hosted.rs — GET /api/desktop/credits. Display only. */
+export type DesktopCreditsView = {
+  visible: boolean;
+  signedOut: boolean;
+  plan: string | null;
+  paid: boolean;
+  balanceCents: number | null;
+  cutoff: boolean;
+  upsell: "subscribe" | "buy-credits" | string | null;
+  accountUrl: string | null;
+  plansUrl: string | null;
+};
 /** hosted.rs — catalog for Providers/Models. Never includes `inf_…`. */
 export type HostedModel = {
   id: string;
@@ -249,8 +261,10 @@ export type HostedCatalogView = {
   plansUrl: string;
   models: HostedModel[];
   ready: boolean;
-  upsell: "sign-in" | "get-credits" | string | null;
+  upsell: "sign-in" | "subscribe" | "buy-credits" | string | null;
   source: string;
+  /** Spendable USD cents when credits are visible. Absent when CREDITS_ENABLED is off. */
+  balanceCents?: number | null;
 };
 export type SettingSource = "global" | "repository";
 export type ChoiceProvenance = {

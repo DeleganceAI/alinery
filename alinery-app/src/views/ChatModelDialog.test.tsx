@@ -147,10 +147,35 @@ describe("ChatModelDialog", () => {
     };
     const accounts = renderToStaticMarkup(<ChatModelDialog {...base} tab="accounts" hosted={hosted} />);
     expect(accounts).toContain("Sign in");
-    const unpaid = renderToStaticMarkup(<ChatModelDialog {...base} tab="accounts" hosted={{ ...hosted, upsell: "get-credits" }} />);
-    expect(unpaid).toContain("Get credits");
+    const unpaid = renderToStaticMarkup(<ChatModelDialog {...base} tab="accounts" hosted={{ ...hosted, upsell: "subscribe" }} />);
+    expect(unpaid).toContain("Subscribe");
+    const buy = renderToStaticMarkup(<ChatModelDialog {...base} tab="accounts" hosted={{ ...hosted, upsell: "buy-credits" }} />);
+    expect(buy).toContain("Buy credits");
+    const balanced = renderToStaticMarkup(<ChatModelDialog {...base} tab="accounts" hosted={{ ...hosted, ready: true, upsell: null, balanceCents: 1300 }} />);
+    expect(balanced).toContain("$13.00");
     const models = renderToStaticMarkup(<ChatModelDialog {...base} hosted={hosted} />);
     expect(models).toContain("alinery/Qwen3.6-35B-A3B");
+  });
+
+  it("keeps unpaid hosted model clicks in the dialog instead of opening billing", () => {
+    const hosted = {
+      provider: "alinery",
+      defaultModel: "alinery/Qwen3.6-35B-A3B",
+      baseUrl: "https://inference.alinery.ai/v1",
+      plansUrl: "https://accounts.alinery.ai/plans",
+      models: [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 1 }],
+      ready: false,
+      upsell: "subscribe" as const,
+      source: "fixture",
+    };
+    const onTabChange = vi.fn();
+    const onSubscribe = vi.fn();
+    const onApplyModel = vi.fn();
+    render(<ChatModelDialog {...base} hosted={hosted} onTabChange={onTabChange} onSubscribe={onSubscribe} onApplyModel={onApplyModel} />);
+    fireEvent.click(screen.getByRole("button", { name: /alinery\/Qwen3.6-35B-A3B/i }));
+    expect(onApplyModel).not.toHaveBeenCalled();
+    expect(onSubscribe).not.toHaveBeenCalled();
+    expect(onTabChange).toHaveBeenCalledWith("accounts");
   });
 
   it("omits hosted models from role assignment until ready", () => {

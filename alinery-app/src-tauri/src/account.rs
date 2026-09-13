@@ -677,6 +677,7 @@ fn save_tokens_to_path(path: &Path, tokens: &AccountTokens) -> Result<(), String
 }
 
 fn clear_tokens_at(path: &Path) -> Result<(), String> {
+    store_credits_snapshot(None);
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
@@ -1139,6 +1140,88 @@ pub(crate) async fn account_sign_out(app: AppHandle) -> Result<AccountSignOutRes
     tauri::async_runtime::spawn_blocking(move || sign_out_blocking(&app)).await.map_err(|e| e.to_string())?
 }
 
+/// GET /api/desktop/credits with the pairing JWT. 401 refreshes once; still 401 signs out.
+/// 404 hides the balance (CREDITS_ENABLED off). 503 keeps the last snapshot.
+pub(crate) fn fetch_desktop_credits_at(accounts_url: &str, supabase_base: &str, path: &Path) -> DesktopCreditsView {
+    let tokens = match load_tokens_from_path(path) {
+        Ok(Some(tokens)) => tokens,
+        Ok(None) => {
+            store_credits_snapshot(None);
+            return credits_signed_out();
+        }
+        Err(e) if e.clears_credential() => {
+            let _ = clear_if_still_invalid(path);
+            store_credits_snapshot(None);
+            return credits_signed_out();
+        }
+        Err(e) => {
+            eprintln!("load account credential for credits: {e}");
+            return last_credits_snapshot().as_ref().map(credits_view_from).unwrap_or_else(credits_hidden);
+        }
+    };
+    match fetch_desktop_credits(accounts_url, &tokens.access_token) {
+        Ok(credits) => {
+            store_credits_snapshot(Some(credits.clone()));
+            credits_view_from(&credits)
+        }
+        Err(CreditsFetchError::Status(401)) => fetch_desktop_credits_after_401(accounts_url, supabase_base, path, &tokens),
+        Err(CreditsFetchError::Status(404)) => {
+            store_credits_snapshot(None);
+            credits_hidden()
+        }
+        Err(e) => {
+            match &e {
+                CreditsFetchError::Status(status) => eprintln!("desktop credits HTTP {status}"),
+                CreditsFetchError::Parse(error) | CreditsFetchError::Transport(error) => eprintln!("desktop credits: {error}"),
+            }
+            last_credits_snapshot().as_ref().map(credits_view_from).unwrap_or_else(credits_hidden)
+        }
+    }
+}
+
+fn fetch_desktop_credits_after_401(accounts_url: &str, supabase_base: &str, path: &Path, tokens: &AccountTokens) -> DesktopCreditsView {
+    match refresh_account_tokens_at(supabase_base, tokens) {
+        Ok(refreshed) => {
+            let _ = save_if_current(path, generation_of(tokens), &refreshed);
+            let access = current_if(path, generation_of(&refreshed))
+                .map(|current| current.access_token.clone())
+                .unwrap_or_else(|| refreshed.access_token.clone());
+            match fetch_desktop_credits(accounts_url, &access) {
+                Ok(credits) => {
+                    store_credits_snapshot(Some(credits.clone()));
+                    credits_view_from(&credits)
+                }
+                Err(CreditsFetchError::Status(401)) => {
+                    let _ = clear_if_current(path, generation_of(&refreshed));
+                    store_credits_snapshot(None);
+                    credits_signed_out()
+                }
+                Err(CreditsFetchError::Status(404)) => {
+                    store_credits_snapshot(None);
+                    credits_hidden()
+                }
+                Err(e) => {
+                    match &e {
+                        CreditsFetchError::Status(status) => eprintln!("desktop credits retry HTTP {status}"),
+                        CreditsFetchError::Parse(error) | CreditsFetchError::Transport(error) => eprintln!("desktop credits retry: {error}"),
+                    }
+                    last_credits_snapshot().as_ref().map(credits_view_from).unwrap_or_else(credits_hidden)
+                }
+            }
+        }
+        Err(AccountAuthError::InvalidRefreshToken(e)) => {
+            eprintln!("refresh account session for credits: {e}");
+            let _ = clear_if_current(path, generation_of(tokens));
+            store_credits_snapshot(None);
+            credits_signed_out()
+        }
+        Err(e) => {
+            eprintln!("refresh account session for credits: {e}");
+            last_credits_snapshot().as_ref().map(credits_view_from).unwrap_or_else(credits_hidden)
+        }
+    }
+}
+
 fn hosted_catalog_blocking(app: &AppHandle) -> HostedCatalogView {
     let accounts = accounts_url();
     let Ok(auth_path) = account_auth_path(app) else {
@@ -1152,7 +1235,15 @@ fn hosted_catalog_blocking(app: &AppHandle) -> HostedCatalogView {
         status
     };
     sync_hosted_from_auth(app, &auth_path, &status);
-    hosted_catalog_at(&config_dir, &accounts, status.signed_in, status.paid)
+    let view = hosted_catalog_at(&config_dir, &accounts, status.signed_in, status.paid);
+    if !status.signed_in {
+        return view;
+    }
+    let credits = fetch_desktop_credits_at(&accounts, SUPABASE_URL, &auth_path);
+    if credits.signed_out {
+        return unsigned_hosted_catalog(&accounts);
+    }
+    apply_credits_to_hosted_view(view, &credits)
 }
 
 #[tauri::command]
@@ -1160,6 +1251,18 @@ pub(crate) async fn hosted_catalog(app: AppHandle) -> HostedCatalogView {
     tauri::async_runtime::spawn_blocking(move || hosted_catalog_blocking(&app))
         .await
         .unwrap_or_else(|_| unsigned_hosted_catalog(&accounts_url()))
+}
+
+#[tauri::command]
+pub(crate) async fn account_credits(app: AppHandle) -> DesktopCreditsView {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(auth_path) = account_auth_path(&app) else {
+            return credits_signed_out();
+        };
+        fetch_desktop_credits_at(&accounts_url(), SUPABASE_URL, &auth_path)
+    })
+    .await
+    .unwrap_or_else(|_| credits_hidden())
 }
 
 #[tauri::command]

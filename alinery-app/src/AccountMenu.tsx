@@ -2,7 +2,15 @@ import { UserRound, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import * as ipc from "./ipc";
 import { toast } from "./toast";
-import type { AccountStatus } from "./types";
+import type { AccountStatus, DesktopCreditsView } from "./types";
+
+const CREDITS_POLL_MS = 3 * 60 * 1000;
+
+function formatCreditUsd(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+const SIGNED_OUT: AccountStatus = { signedIn: false, email: null, plan: null, paid: false, unavailable: false };
 
 /** Titlebar account chip. Icon only — email and plan live in the dropdown.
  *  UserRound keeps the same neutral treatment in every resting state, so the slot
@@ -11,6 +19,7 @@ import type { AccountStatus } from "./types";
  *  Settings lives here (not the top-bar tabs); ⌘9 / , still open it via hotkeys. */
 export function AccountMenu({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [status, setStatus] = useState<AccountStatus | null>(null);
+  const [credits, setCredits] = useState<DesktopCreditsView | null>(null);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement | null>(null);
@@ -23,11 +32,25 @@ export function AccountMenu({ onOpenSettings }: { onOpenSettings: () => void }) 
   // entitlement. Shared by mount and post-sign-in: a fresh pairing gets its plan here
   // instead of inside the sign-in promise, which must stay no longer than Cancel sign-in
   // can act on (see account.rs `finish_sign_in`).
+  const pollCredits = (gen: number) => {
+    ipc
+      .accountCredits()
+      .then((next) => {
+        if (gen !== generation.current) return;
+        setCredits(next);
+        if (next.signedOut) setStatus(SIGNED_OUT);
+      })
+      .catch(() => {});
+  };
+
   const hydrate = (gen: number) => {
     ipc
       .accountRefresh()
       .then((updated) => {
-        if (gen === generation.current) setStatus(updated);
+        if (gen !== generation.current) return;
+        setStatus(updated);
+        if (updated.signedIn) pollCredits(gen);
+        else setCredits(null);
       })
       .catch(() => {});
   };
@@ -42,7 +65,7 @@ export function AccountMenu({ onOpenSettings }: { onOpenSettings: () => void }) 
         if (s.signedIn) hydrate(gen);
       })
       .catch(() => {
-        if (gen === generation.current) setStatus({ signedIn: false, email: null, plan: null, paid: false, unavailable: false });
+        if (gen === generation.current) setStatus(SIGNED_OUT);
       });
     // Bumping the generation retires every in-flight reply, unmount included.
     return () => {
@@ -51,7 +74,19 @@ export function AccountMenu({ onOpenSettings }: { onOpenSettings: () => void }) 
   }, []);
 
   useEffect(() => {
+    if (!status?.signedIn) return;
+    const onFocus = () => pollCredits(generation.current);
+    window.addEventListener("focus", onFocus);
+    const id = window.setInterval(() => pollCredits(generation.current), CREDITS_POLL_MS);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.clearInterval(id);
+    };
+  }, [status?.signedIn]);
+
+  useEffect(() => {
     if (!open) return;
+    if (status?.signedIn) pollCredits(generation.current);
     menu.current?.querySelector<HTMLElement>("button")?.focus();
     const onDown = (e: MouseEvent) => {
       if (!box.current?.contains(e.target as Node)) setOpen(false);
@@ -121,6 +156,7 @@ export function AccountMenu({ onOpenSettings }: { onOpenSettings: () => void }) 
       .accountSignOut()
       .then((s) => {
         setStatus(s);
+        if (!s.signedIn) setCredits(null);
         setOpen(false);
         if (s.signedIn) {
           // A newer pairing replaced the session we signed out of. Keep that chip;
@@ -158,6 +194,12 @@ export function AccountMenu({ onOpenSettings }: { onOpenSettings: () => void }) 
   }
 
   const chipLabel = !status.signedIn ? "Account" : status.unavailable ? "Account unavailable" : "Account";
+  const creditsItem =
+    status.signedIn && credits?.visible && status.paid && credits.balanceCents != null ? (
+      <button type="button" role="menuitem" className="account-chip-action" disabled={busy} onClick={run(openAccount)}>
+        {credits.upsell === "buy-credits" || credits.balanceCents <= 0 || credits.cutoff ? "Buy credits" : `Credits ${formatCreditUsd(credits.balanceCents)}`}
+      </button>
+    ) : null;
   const settingsItem = (
     <button type="button" role="menuitem" className="account-chip-action" disabled={busy} onClick={run(onOpenSettings)}>
       Settings
@@ -193,6 +235,7 @@ export function AccountMenu({ onOpenSettings }: { onOpenSettings: () => void }) 
                 <span className="account-chip-email">{status.email ?? "Signed in"}</span>
                 {status.plan ? <span className="account-chip-plan">{status.plan}</span> : null}
               </button>
+              {creditsItem}
               {settingsItem}
               <button type="button" role="menuitem" className="account-chip-action" disabled={busy} onClick={run(signOut)}>
                 Sign out

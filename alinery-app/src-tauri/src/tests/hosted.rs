@@ -118,11 +118,11 @@ fn resolve_prefers_live_then_unexpired_minted_then_fixture() {
     assert!(!unsigned.ready);
 
     let unpaid = resolve_hosted_catalog(None, None, fixture.clone(), true, false);
-    assert_eq!(unpaid.upsell.as_deref(), Some("get-credits"));
+    assert_eq!(unpaid.upsell.as_deref(), Some("subscribe"));
 
     let unpaid_minted = resolve_hosted_catalog(None, Some(minted.clone()), fixture.clone(), true, false);
     assert!(!unpaid_minted.ready);
-    assert_eq!(unpaid_minted.upsell.as_deref(), Some("get-credits"));
+    assert_eq!(unpaid_minted.upsell.as_deref(), Some("subscribe"));
     assert_eq!(unpaid_minted.source, "minted");
 
     let from_minted = resolve_hosted_catalog(None, Some(minted.clone()), fixture.clone(), true, true);
@@ -176,4 +176,68 @@ fn models_yml_is_owner_only() {
     write_hosted_models_yml(&app_config, &catalog, "inf_test_abc").unwrap();
     let mode = fs::metadata(models_yml_path(&app_config)).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
+}
+
+const CREDITS_OK: &str = r#"{
+  "ok": true,
+  "plan": "founders",
+  "included_cents": 300,
+  "purchased_cents": 1000,
+  "balance_cents": 1300,
+  "used_this_period_cents": 0,
+  "cutoff": false,
+  "auto_reload": true,
+  "last_reload_error": null,
+  "account_url": "https://accounts.alinery.ai/account",
+  "plans_url": "https://accounts.alinery.ai/plans"
+}"#;
+
+#[test]
+fn parse_desktop_credits_reads_the_locked_envelope() {
+    let credits = parse_desktop_credits_body(CREDITS_OK.as_bytes()).unwrap();
+    assert_eq!(credits.plan, "founders");
+    assert_eq!(credits.balance_cents, 1300);
+    assert!(!credits.cutoff);
+}
+
+#[test]
+fn credits_view_upsells_free_to_subscribe_and_empty_paid_to_buy() {
+    let paid = parse_desktop_credits_body(CREDITS_OK.as_bytes()).unwrap();
+    let view = credits_view_from(&paid);
+    assert!(view.visible);
+    assert_eq!(view.balance_cents, Some(1300));
+    assert_eq!(view.upsell, None);
+
+    let mut empty = paid.clone();
+    empty.balance_cents = 0;
+    assert_eq!(credits_view_from(&empty).upsell.as_deref(), Some("buy-credits"));
+
+    let mut free = paid.clone();
+    free.plan = "free".into();
+    free.balance_cents = 0;
+    let free_view = credits_view_from(&free);
+    assert!(!free_view.paid);
+    assert_eq!(free_view.upsell.as_deref(), Some("subscribe"));
+}
+
+#[test]
+fn apply_credits_marks_empty_paid_catalog_not_ready() {
+    let fixture = hosted_fixture("https://accounts.alinery.ai");
+    let ready = resolve_hosted_catalog(None, Some(fixture.clone()), fixture.clone(), true, true);
+    assert!(ready.ready);
+    let empty = DesktopCreditsView {
+        visible: true,
+        signed_out: false,
+        plan: Some("founders".into()),
+        paid: true,
+        balance_cents: Some(0),
+        cutoff: false,
+        upsell: Some("buy-credits".into()),
+        account_url: Some("https://accounts.alinery.ai/account".into()),
+        plans_url: Some("https://accounts.alinery.ai/plans".into()),
+    };
+    let view = apply_credits_to_hosted_view(ready, &empty);
+    assert!(!view.ready);
+    assert_eq!(view.upsell.as_deref(), Some("buy-credits"));
+    assert_eq!(view.balance_cents, Some(0));
 }
