@@ -39,8 +39,10 @@ import type {
   ConnectionStatus,
   CreateTaskResult,
   DaemonStatus,
+  DesktopCreditsView,
   GitHubIssue,
   GlobalSettings,
+  HostedCatalogView,
   KanbanColumn,
   LinearTicket,
   McpStatus,
@@ -207,6 +209,9 @@ export const accountSignIn = () => invoke<AccountStatus>("account_sign_in");
 export const accountCancelSignIn = () => invoke<void>("account_cancel_sign_in");
 export const accountSignOut = () => invoke<AccountSignOutResult>("account_sign_out");
 export const accountOpen = () => invoke<void>("account_open");
+export const hostedCatalog = () => invoke<HostedCatalogView>("hosted_catalog");
+export const accountCredits = () => invoke<DesktopCreditsView>("account_credits");
+export const accountOpenPlans = () => invoke<void>("account_open_plans");
 
 // ── imports.rs ────────────────────────────────────────────────────────
 export const importGithubForRepo = (repoPath: string, reference: string) => invoke<GitHubIssue>("import_github_for_repo", { repoPath, reference });

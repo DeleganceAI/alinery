@@ -228,9 +228,44 @@ export type AccountStatus = {
   signedIn: boolean;
   email: string | null;
   plan: string | null;
+  /** Entitlement id `founders` | `teams` (legacy plan labels still count). */
+  paid: boolean;
   unavailable: boolean;
 };
 export type AccountSignOutResult = AccountStatus & { remoteRevoked: boolean };
+/** account.rs / hosted.rs — GET /api/desktop/credits. Display only. */
+export type DesktopCreditsView = {
+  visible: boolean;
+  signedOut: boolean;
+  plan: string | null;
+  paid: boolean;
+  balanceCents: number | null;
+  cutoff: boolean;
+  upsell: "subscribe" | "buy-credits" | string | null;
+  accountUrl: string | null;
+  plansUrl: string | null;
+};
+/** hosted.rs — catalog for Providers/Models. Never includes `inf_…`. */
+export type HostedModel = {
+  id: string;
+  name: string;
+  contextWindow: number;
+  maxTokens: number;
+  /** UI cost band 0–5. Absent or out of range → hide the band, still list the model. */
+  price?: number | null;
+};
+export type HostedCatalogView = {
+  provider: string;
+  defaultModel: string;
+  baseUrl: string;
+  plansUrl: string;
+  models: HostedModel[];
+  ready: boolean;
+  upsell: "sign-in" | "subscribe" | "buy-credits" | string | null;
+  source: string;
+  /** Spendable USD cents when credits are visible. Absent when CREDITS_ENABLED is off. */
+  balanceCents?: number | null;
+};
 export type SettingSource = "global" | "repository";
 export type ChoiceProvenance = {
   harness: SettingSource;

@@ -244,6 +244,69 @@ describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
   });
 });
 
+describe("extension_ui_request confirm", () => {
+  it("maps OMP confirm message onto the approval row and pending instructions", () => {
+    const state = applyRpcLine(emptyTranscript(), load("live-extension_ui_confirm.json"));
+    const approval = state.entries.filter((e) => e.type === "approval");
+    expect(approval).toHaveLength(1);
+    expect(approval[0]).toMatchObject({
+      type: "approval",
+      requestId: "ui-confirm-1",
+      action: "Proceed despite Biome issues?",
+      detail: "4 FIXABLE issues",
+    });
+    expect(state.pendingUi).toEqual([
+      {
+        id: "ui-confirm-1",
+        method: "confirm",
+        title: "Proceed despite Biome issues?",
+        instructions: "4 FIXABLE issues",
+      },
+    ]);
+  });
+
+  it("keeps instructions-only confirm detail for non-OMP producers", () => {
+    const state = applyRpcLine(emptyTranscript(), {
+      type: "extension_ui_request",
+      id: "ui-confirm-instructions",
+      method: "confirm",
+      title: "Allow git push",
+      instructions: "Publishes the branch",
+    });
+    expect(state.pendingUi).toEqual([
+      {
+        id: "ui-confirm-instructions",
+        method: "confirm",
+        title: "Allow git push",
+        instructions: "Publishes the branch",
+      },
+    ]);
+    expect(state.entries.filter((e) => e.type === "approval")).toEqual([
+      expect.objectContaining({
+        requestId: "ui-confirm-instructions",
+        action: "Allow git push",
+        detail: "Publishes the branch",
+      }),
+    ]);
+  });
+
+  it("prefers message over instructions when both exist", () => {
+    const state = applyRpcLine(emptyTranscript(), {
+      type: "extension_ui_request",
+      id: "ui-confirm-both",
+      method: "confirm",
+      title: "Proceed?",
+      message: "4 FIXABLE issues",
+      instructions: "legacy instructions",
+    });
+    expect(state.pendingUi[0]?.instructions).toBe("legacy instructions");
+    expect(state.entries.filter((e) => e.type === "approval")[0]).toMatchObject({
+      requestId: "ui-confirm-both",
+      detail: "4 FIXABLE issues",
+    });
+  });
+});
+
 describe("journal pages", () => {
   const msg = (rowId: string, role: "user" | "assistant" | "toolResult", text: string, extra = {}) => ({
     rowId,

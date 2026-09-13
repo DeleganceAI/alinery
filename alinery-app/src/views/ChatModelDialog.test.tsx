@@ -1,5 +1,6 @@
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockIpc } from "../test/mockIpc";
 import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatModelDialog } from "./ChatModelDialog";
@@ -21,6 +22,8 @@ describe("ChatModelDialog", () => {
     onAssignRole: vi.fn(),
     onClose: vi.fn(),
   };
+
+  afterEach(cleanup);
 
   it("renders models tab with current and role table", () => {
     const empty = renderToStaticMarkup(<ChatModelDialog {...base} models={[]} />);
@@ -98,6 +101,105 @@ describe("ChatModelDialog", () => {
     const html = renderToStaticMarkup(<ChatModelDialog {...base} favorites={["xai/grok-4.6"]} onToggleFavorite={vi.fn()} preselect="grok" />);
     expect(html).toContain("xai/grok-4.6");
     expect(html).not.toContain("No models match");
+  });
+
+  it("pins Alinery at the top of Accounts and lists hosted models with a cost band", () => {
+    const hosted = {
+      provider: "alinery",
+      defaultModel: "alinery/Qwen3.6-35B-A3B",
+      baseUrl: "https://inference.alinery.ai/v1",
+      plansUrl: "https://accounts.alinery.ai/plans",
+      models: [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 2 }],
+      ready: true,
+      upsell: null,
+      source: "live",
+    };
+    const accounts = renderToStaticMarkup(
+      <ChatModelDialog
+        {...base}
+        tab="accounts"
+        hosted={hosted}
+        models={[{ provider: "anthropic", id: "claude" }]}
+        loginProviders={[{ id: "anthropic", name: "Anthropic", available: true, authenticated: false }]}
+      />,
+    );
+    expect(accounts.indexOf("Alinery")).toBeGreaterThan(-1);
+    expect(accounts.indexOf("Alinery")).toBeLessThan(accounts.indexOf("Anthropic"));
+    expect(accounts).toContain("ready");
+    expect(accounts).not.toContain("Advanced");
+
+    const models = renderToStaticMarkup(<ChatModelDialog {...base} hosted={hosted} />);
+    expect(models).toContain("alinery/Qwen3.6-35B-A3B");
+    expect(models).toContain("cost 2 of 5");
+    expect(models).toContain("xai/grok-4.6");
+  });
+
+  it("upsells unsigned hosted models instead of applying them", () => {
+    const hosted = {
+      provider: "alinery",
+      defaultModel: "alinery/Qwen3.6-35B-A3B",
+      baseUrl: "https://inference.alinery.ai/v1",
+      plansUrl: "https://accounts.alinery.ai/plans",
+      models: [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 1 }],
+      ready: false,
+      upsell: "sign-in" as const,
+      source: "fixture",
+    };
+    const accounts = renderToStaticMarkup(<ChatModelDialog {...base} tab="accounts" hosted={hosted} />);
+    expect(accounts).toContain("Sign in");
+    const unpaid = renderToStaticMarkup(<ChatModelDialog {...base} tab="accounts" hosted={{ ...hosted, upsell: "subscribe" }} />);
+    expect(unpaid).toContain("Subscribe");
+    const buy = renderToStaticMarkup(<ChatModelDialog {...base} tab="accounts" hosted={{ ...hosted, upsell: "buy-credits" }} />);
+    expect(buy).toContain("Buy credits");
+    const balanced = renderToStaticMarkup(<ChatModelDialog {...base} tab="accounts" hosted={{ ...hosted, ready: true, upsell: null, balanceCents: 1300 }} />);
+    expect(balanced).toContain("$13.00");
+    const models = renderToStaticMarkup(<ChatModelDialog {...base} hosted={hosted} />);
+    expect(models).toContain("alinery/Qwen3.6-35B-A3B");
+  });
+
+  it("keeps unpaid hosted model clicks in the dialog instead of opening billing", () => {
+    const hosted = {
+      provider: "alinery",
+      defaultModel: "alinery/Qwen3.6-35B-A3B",
+      baseUrl: "https://inference.alinery.ai/v1",
+      plansUrl: "https://accounts.alinery.ai/plans",
+      models: [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 1 }],
+      ready: false,
+      upsell: "subscribe" as const,
+      source: "fixture",
+    };
+    const onTabChange = vi.fn();
+    const onSubscribe = vi.fn();
+    const onApplyModel = vi.fn();
+    render(<ChatModelDialog {...base} hosted={hosted} onTabChange={onTabChange} onSubscribe={onSubscribe} onApplyModel={onApplyModel} />);
+    fireEvent.click(screen.getByRole("button", { name: /alinery\/Qwen3.6-35B-A3B/i }));
+    expect(onApplyModel).not.toHaveBeenCalled();
+    expect(onSubscribe).not.toHaveBeenCalled();
+    expect(onTabChange).toHaveBeenCalledWith("accounts");
+  });
+
+  it("omits hosted models from role assignment until ready", () => {
+    const hosted = {
+      provider: "alinery",
+      defaultModel: "alinery/Qwen3.6-35B-A3B",
+      baseUrl: "https://inference.alinery.ai/v1",
+      plansUrl: "https://accounts.alinery.ai/plans",
+      models: [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 1 }],
+      ready: false,
+      upsell: "sign-in" as const,
+      source: "fixture",
+    };
+    render(<ChatModelDialog {...base} hosted={hosted} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Assign" })[0]);
+    const values = [...screen.getByLabelText(/Assign/).querySelectorAll("option")].map((option) => (option as HTMLOptionElement).value);
+    expect(values).toContain("xai/grok-4.6");
+    expect(values.some((value) => value.startsWith("alinery/"))).toBe(false);
+
+    cleanup();
+    render(<ChatModelDialog {...base} hosted={{ ...hosted, ready: true, upsell: null, source: "live" }} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Assign" })[0]);
+    const readyValues = [...screen.getByLabelText(/Assign/).querySelectorAll("option")].map((option) => (option as HTMLOptionElement).value);
+    expect(readyValues).toContain("alinery/Qwen3.6-35B-A3B");
   });
 });
 

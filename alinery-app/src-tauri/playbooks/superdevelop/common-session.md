@@ -18,6 +18,8 @@ Stay within the selected stage. Prefer existing code, standard tools, and instal
 
 Ask one focused question at a time when a user decision blocks correctness or scope. Reuse decisions already supplied; do not ask for approval again unless the proposal materially changes. Continue independent work that does not depend on the answer. Never invent an approval, source, command result, reviewer, or completed test.
 
+Binary go/no-go decisions — including failed or blocked checks — must be made by calling the `alinery_ask_approval` tool, not by pasting a table or warning and waiting for a typed reply. After Deny, do not proceed with the gated action. Multi-option questions still use the `ask` tool.
+
 Write the deliverable to exactly `{{ARTIFACT_FILE}}`. It may have a Session-specific suffix. Keep working notes separate from established facts. Cite repository evidence with paths and useful line references, and external claims with source URLs. Record the exact prior artifact paths used. Do not overwrite another Session's artifact or include secrets in the output.
 
 Stage readiness is defined below. If blocked, record the blocker and what is needed in the assigned artifact, tell the user, and leave the stage unfinished. A nonempty file alone does not mean the work is ready. Once ready, follow the Alinery completion contract appended to the Session prompt; do not replace it with a printed success message or start the next stage yourself.

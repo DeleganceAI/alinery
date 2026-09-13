@@ -489,6 +489,7 @@ fn refresh_persists_rotated_token_before_entitlement() {
     let on_disk_at_plan = persisted_rx.recv().unwrap();
     assert!(on_disk_at_plan.contains("rotated"), "{on_disk_at_plan}");
     assert_eq!(status.plan.as_deref(), Some("Founders Edition"));
+    assert!(status.paid);
     assert!(fs::read_to_string(&path).unwrap().contains("Founders Edition"));
 }
 
@@ -1028,4 +1029,108 @@ fn a_dropped_guard_does_not_unregister_the_attempt_that_replaced_it() {
     cancel_sign_in_at(&path).expect("cancel must reach the registered attempt");
     assert!(second.is_cancelled(), "Cancel sign-in must still reach the live attempt");
     end_sign_in_attempt();
+}
+
+const CREDITS_OK: &str = r#"{"ok":true,"plan":"founders","included_cents":300,"purchased_cents":1000,"balance_cents":1300,"used_this_period_cents":0,"cutoff":false,"auto_reload":true,"last_reload_error":null,"account_url":"https://accounts.alinery.ai/account","plans_url":"https://accounts.alinery.ai/plans"}"#;
+const CREDITS_FREE: &str = r#"{"ok":true,"plan":"free","included_cents":0,"purchased_cents":0,"balance_cents":0,"used_this_period_cents":0,"cutoff":false,"auto_reload":false,"last_reload_error":null,"account_url":"https://accounts.alinery.ai/account","plans_url":"https://accounts.alinery.ai/plans"}"#;
+
+#[test]
+fn desktop_credits_200_shows_paid_balance() {
+    let _serial = crate::CREDITS_SNAPSHOT_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    store_credits_snapshot(None);
+    let dir = unique_attachment_temp("credits-200");
+    let path = dir.join("auth.json");
+    write_tokens(&path, "access", "refresh-keep", 4_000_000_000);
+    let (base, server) = serve_routes(vec![("/api/desktop/credits".into(), 200, CREDITS_OK)]);
+    let view = fetch_desktop_credits_at(&base, DEAD_ENTITLEMENT, &path);
+    server.join().unwrap();
+    assert!(view.visible);
+    assert!(!view.signed_out);
+    assert_eq!(view.balance_cents, Some(1300));
+    assert_eq!(view.upsell, None);
+}
+
+#[test]
+fn desktop_credits_free_plan_upsells_subscribe() {
+    let _serial = crate::CREDITS_SNAPSHOT_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    store_credits_snapshot(None);
+    let dir = unique_attachment_temp("credits-free");
+    let path = dir.join("auth.json");
+    write_tokens(&path, "access", "refresh-keep", 4_000_000_000);
+    let (base, server) = serve_routes(vec![("/api/desktop/credits".into(), 200, CREDITS_FREE)]);
+    let view = fetch_desktop_credits_at(&base, DEAD_ENTITLEMENT, &path);
+    server.join().unwrap();
+    assert!(view.visible);
+    assert!(!view.paid);
+    assert_eq!(view.upsell.as_deref(), Some("subscribe"));
+}
+
+#[test]
+fn desktop_credits_404_hides_the_balance() {
+    let _serial = crate::CREDITS_SNAPSHOT_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    store_credits_snapshot(None);
+    let dir = unique_attachment_temp("credits-404");
+    let path = dir.join("auth.json");
+    write_tokens(&path, "access", "refresh-keep", 4_000_000_000);
+    let (base, server) = serve_routes(vec![("/api/desktop/credits".into(), 404, "")]);
+    let view = fetch_desktop_credits_at(&base, DEAD_ENTITLEMENT, &path);
+    server.join().unwrap();
+    assert!(!view.visible);
+    assert!(!view.signed_out);
+    assert_eq!(view.balance_cents, None);
+}
+
+#[test]
+fn desktop_credits_503_keeps_the_last_snapshot() {
+    let _serial = crate::CREDITS_SNAPSHOT_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    store_credits_snapshot(None);
+    let dir = unique_attachment_temp("credits-503");
+    let path = dir.join("auth.json");
+    write_tokens(&path, "access", "refresh-keep", 4_000_000_000);
+    let (base, server) = serve_routes(vec![("/api/desktop/credits".into(), 200, CREDITS_OK)]);
+    let first = fetch_desktop_credits_at(&base, DEAD_ENTITLEMENT, &path);
+    server.join().unwrap();
+    assert_eq!(first.balance_cents, Some(1300));
+    let (base, server) = serve_routes(vec![("/api/desktop/credits".into(), 503, "busy")]);
+    let kept = fetch_desktop_credits_at(&base, DEAD_ENTITLEMENT, &path);
+    server.join().unwrap();
+    assert_eq!(kept.balance_cents, Some(1300));
+    assert!(kept.visible);
+}
+
+#[test]
+fn desktop_credits_401_refreshes_jwt_and_retries() {
+    let _serial = crate::CREDITS_SNAPSHOT_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    store_credits_snapshot(None);
+    let dir = unique_attachment_temp("credits-401");
+    let path = dir.join("auth.json");
+    write_tokens(&path, "old-access", "refresh-keep", 4_000_000_000);
+    let (base, server) = serve_routes(vec![
+        ("/api/desktop/credits".into(), 401, ""),
+        ("/auth/v1/token".into(), 200, r#"{"access_token":"new-access","refresh_token":"r2","expires_in":3600}"#),
+        ("/api/desktop/credits".into(), 200, CREDITS_OK),
+    ]);
+    let view = fetch_desktop_credits_at(&base, &base, &path);
+    server.join().unwrap();
+    assert_eq!(view.balance_cents, Some(1300));
+    let on_disk = fs::read_to_string(&path).unwrap();
+    assert!(on_disk.contains("new-access"), "{on_disk}");
+}
+
+#[test]
+fn desktop_credits_401_after_refresh_signs_out() {
+    let _serial = crate::CREDITS_SNAPSHOT_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    store_credits_snapshot(None);
+    let dir = unique_attachment_temp("credits-401-out");
+    let path = dir.join("auth.json");
+    write_tokens(&path, "old-access", "refresh-keep", 4_000_000_000);
+    let (base, server) = serve_routes(vec![
+        ("/api/desktop/credits".into(), 401, ""),
+        ("/auth/v1/token".into(), 200, r#"{"access_token":"new-access","refresh_token":"r2","expires_in":3600}"#),
+        ("/api/desktop/credits".into(), 401, ""),
+    ]);
+    let view = fetch_desktop_credits_at(&base, &base, &path);
+    server.join().unwrap();
+    assert!(view.signed_out);
+    assert!(!path.exists());
 }

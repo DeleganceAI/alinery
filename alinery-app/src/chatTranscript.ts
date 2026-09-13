@@ -682,7 +682,9 @@ function applyPendingUi(state: ChatTranscriptState, event: Record<string, unknow
   const placeholder = asString(event.placeholder);
   if (placeholder) pending.placeholder = placeholder;
   const instructions = asString(event.instructions);
+  const message = asString(event.message);
   if (instructions) pending.instructions = instructions;
+  else if (message) pending.instructions = message;
   const options = event.options;
   if (Array.isArray(options)) pending.options = options.filter((o): o is string => typeof o === "string");
   const details = event.optionDetails;
@@ -699,7 +701,7 @@ function applyPendingUi(state: ChatTranscriptState, event: Record<string, unknow
       type: "approval",
       requestId: id,
       action: title ?? "Approval required",
-      detail: instructions ?? "",
+      detail: message ?? instructions ?? "",
       options: pending.options,
       at: Date.now(),
     });

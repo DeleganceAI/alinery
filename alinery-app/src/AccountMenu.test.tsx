@@ -1,10 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockIpc } from "./test/mockIpc";
-import type { AccountSignOutResult, AccountStatus } from "./types";
+import type { AccountSignOutResult, AccountStatus, DesktopCreditsView } from "./types";
 
-const signedOut: AccountStatus = { signedIn: false, email: null, plan: null, unavailable: false };
-const signedIn: AccountStatus = { signedIn: true, email: "a@example.com", plan: "Founders Edition", unavailable: false };
+const signedOut: AccountStatus = { signedIn: false, email: null, plan: null, paid: false, unavailable: false };
+const signedIn: AccountStatus = { signedIn: true, email: "a@example.com", plan: "Founders Edition", paid: true, unavailable: false };
 const signedOutRemote: AccountSignOutResult = { ...signedOut, remoteRevoked: true };
 const signedOutLocal: AccountSignOutResult = { ...signedOut, remoteRevoked: false };
 
@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   accountCancelSignIn: vi.fn<() => Promise<void>>(),
   accountSignOut: vi.fn<() => Promise<AccountSignOutResult>>(),
   accountOpen: vi.fn<() => Promise<void>>(),
+  accountCredits: vi.fn<() => Promise<DesktopCreditsView>>(),
   toastError: vi.fn(),
   toastInfo: vi.fn(),
   onOpenSettings: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock("./ipc", () =>
     accountCancelSignIn: mocks.accountCancelSignIn,
     accountSignOut: mocks.accountSignOut,
     accountOpen: mocks.accountOpen,
+    accountCredits: mocks.accountCredits,
   }),
 );
 
@@ -44,6 +46,22 @@ import { AccountMenu } from "./AccountMenu";
 function renderMenu() {
   return render(<AccountMenu onOpenSettings={mocks.onOpenSettings} />);
 }
+
+const creditsHidden: DesktopCreditsView = {
+  visible: false,
+  signedOut: false,
+  plan: null,
+  paid: false,
+  balanceCents: null,
+  cutoff: false,
+  upsell: null,
+  accountUrl: null,
+  plansUrl: null,
+};
+
+beforeEach(() => {
+  mocks.accountCredits.mockResolvedValue(creditsHidden);
+});
 
 afterEach(() => {
   cleanup();
@@ -189,6 +207,52 @@ describe("signed in", () => {
 
     fireEvent.click(screen.getByRole("menuitem", { name: /a@example.com/ }));
     await waitFor(() => expect(mocks.accountOpen).toHaveBeenCalledTimes(1));
+  });
+
+  it("surfaces paid credits below the email and above Settings", async () => {
+    mocks.accountStatus.mockResolvedValue(signedIn);
+    mocks.accountRefresh.mockResolvedValue(signedIn);
+    mocks.accountCredits.mockResolvedValue({
+      visible: true,
+      signedOut: false,
+      plan: "founders",
+      paid: true,
+      balanceCents: 1300,
+      cutoff: false,
+      upsell: null,
+      accountUrl: "https://accounts.alinery.ai/account",
+      plansUrl: "https://accounts.alinery.ai/plans",
+    });
+    mocks.accountOpen.mockResolvedValue(undefined);
+    renderMenu();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Account" }));
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Credits $13.00" })).toBeTruthy());
+    const items = screen.getAllByRole("menuitem").map((el) => el.textContent);
+    expect(items.indexOf("Credits $13.00")).toBeGreaterThan(items.findIndex((text) => text?.includes("a@example.com")));
+    expect(items.indexOf("Credits $13.00")).toBeLessThan(items.indexOf("Settings9"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Credits $13.00" }));
+    await waitFor(() => expect(mocks.accountOpen).toHaveBeenCalledTimes(1));
+  });
+
+  it("offers Buy credits in the dropdown when a paid balance is empty", async () => {
+    mocks.accountStatus.mockResolvedValue(signedIn);
+    mocks.accountRefresh.mockResolvedValue(signedIn);
+    mocks.accountCredits.mockResolvedValue({
+      visible: true,
+      signedOut: false,
+      plan: "founders",
+      paid: true,
+      balanceCents: 0,
+      cutoff: false,
+      upsell: "buy-credits",
+      accountUrl: "https://accounts.alinery.ai/account",
+      plansUrl: "https://accounts.alinery.ai/plans",
+    });
+    renderMenu();
+    fireEvent.click(await screen.findByRole("button", { name: "Account" }));
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Buy credits" })).toBeTruthy());
+    expect(screen.queryByRole("menuitem", { name: /Credits/ })).toBeNull();
   });
 
   it("opens Settings from the signed-in menu", async () => {

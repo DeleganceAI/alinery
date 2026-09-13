@@ -73,7 +73,17 @@ import {
   sameArtifactListItems,
 } from "../shared";
 import { toast } from "../toast";
-import type { AppearancePrefs, ArtifactListItem, ArtifactTreeNode, LifecycleState, ReviewHandoffSource, SessionMessageActionProvenance, SessionObservation, Task } from "../types";
+import type {
+  AppearancePrefs,
+  ArtifactListItem,
+  ArtifactTreeNode,
+  HostedCatalogView,
+  LifecycleState,
+  ReviewHandoffSource,
+  SessionMessageActionProvenance,
+  SessionObservation,
+  Task,
+} from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
@@ -255,6 +265,8 @@ export function SessionView({
   const [modelDialog, setModelDialog] = useState<{ tab: ProvidersDialogTab; preselect: string; setup?: boolean } | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
   const [modelRoles, setModelRoles] = useState<ModelRolesMap>({});
+  const [hosted, setHosted] = useState<HostedCatalogView | null>(null);
+  const [hostedLoaded, setHostedLoaded] = useState(false);
   const [loginBusy, setLoginBusy] = useState<string | null>(null);
   const [livePromotedIds, setLivePromotedIds] = useState<string[]>([]);
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -906,6 +918,11 @@ export function SessionView({
           .readOmpModelRoles()
           .then(setModelRoles)
           .catch(() => undefined);
+        void ipc
+          .hostedCatalog()
+          .then(setHosted)
+          .catch(() => setHosted(null))
+          .finally(() => setHostedLoaded(true));
         await ipc.rpcWriteSession(id, getLoginProvidersCommand()).catch(() => undefined);
         await ipc.rpcWriteSession(id, getAvailableModelsCommand()).catch(() => undefined);
         await ipc.rpcWriteSession(id, getStateCommand()).catch(() => undefined);
@@ -1411,9 +1428,27 @@ export function SessionView({
     }
   }, [liveRpc, chat.pendingUi, id]);
   useEffect(() => {
+    let cancelled = false;
+    void ipc
+      .hostedCatalog()
+      .then((view) => {
+        if (!cancelled) setHosted(view);
+      })
+      .catch(() => {
+        if (!cancelled) setHosted(null);
+      })
+      .finally(() => {
+        if (!cancelled) setHostedLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  useEffect(() => {
     // `get_login_providers` goes out on every attach, including a re-attach to a session that is
     // mid-turn, so `busy` is what keeps the dialog off a running agent. It returns without arming
     // the ref, so the effect re-runs when the turn closes and offers setup then.
+    if (!hostedLoaded) return;
     const offer = shouldOfferProviderSetup({
       connected: liveRpc,
       suppressed: setupOpenedRef.current || modelDialog !== null,
@@ -1425,12 +1460,24 @@ export function SessionView({
       providers: chat.sessionMeta.loginProviders ?? [],
       models: chat.sessionMeta.models ?? [],
       currentModel: chat.sessionMeta.model,
+      hostedReady: hosted?.ready === true,
     });
     if (!offer) return;
     setupOpenedRef.current = true;
     setModelError(null);
     setModelDialog({ tab: "accounts", preselect: "", setup: true });
-  }, [liveRpc, chat.sessionMeta.loginProviders, chat.sessionMeta.model, chat.sessionMeta.models, chat.pendingTurn, chat.turnOpen, observation?.state?.agent?.state, modelDialog]);
+  }, [
+    liveRpc,
+    chat.sessionMeta.loginProviders,
+    chat.sessionMeta.model,
+    chat.sessionMeta.models,
+    chat.pendingTurn,
+    chat.turnOpen,
+    observation?.state?.agent?.state,
+    modelDialog,
+    hosted,
+    hostedLoaded,
+  ]);
   const observedState = observation?.state;
   const messageReadiness = {
     connection: terminalConnection,
@@ -1832,6 +1879,7 @@ export function SessionView({
               loginProviders={chat.sessionMeta.loginProviders ?? []}
               livePromotedIds={livePromotedIds}
               modelRoles={modelRoles}
+              hosted={hosted}
               error={modelError}
               loginBusy={loginBusy}
               onTabChange={(tab) => setModelDialog((current) => (current ? { ...current, tab, setup: false } : current))}
@@ -1839,6 +1887,24 @@ export function SessionView({
               onLogin={(providerId) => void startChatLogin(providerId)}
               onHatchTerminalLogin={(providerId) => void hatchTerminalLogin(providerId)}
               onAssignRole={(role, model) => void assignModelRole(role, model)}
+              onSignIn={() => {
+                void ipc
+                  .accountSignIn()
+                  .then(() => ipc.accountRefresh().catch(() => undefined))
+                  .then(() =>
+                    ipc
+                      .hostedCatalog()
+                      .then(setHosted)
+                      .catch(() => setHosted(null)),
+                  )
+                  .catch((error) => setModelError(String(error)));
+              }}
+              onSubscribe={() => {
+                void ipc.accountOpenPlans().catch((error) => setModelError(String(error)));
+              }}
+              onBuyCredits={() => {
+                void ipc.accountOpen().catch((error) => setModelError(String(error)));
+              }}
               onClose={() => {
                 setModelDialog(null);
                 setModelError(null);
