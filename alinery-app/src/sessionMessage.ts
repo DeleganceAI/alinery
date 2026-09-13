@@ -1,3 +1,4 @@
+import type { DraftAttachment } from "./chat/attachments";
 import type { SessionTerminalConnectionState } from "./SessionTerminal";
 import type { AgentState, LifecycleState, MessageAdapter, ProcessState, SessionMessageActionProvenance } from "./types";
 
@@ -9,11 +10,13 @@ export const OMP_INTERRUPT_DATA = "\u001b";
 export type SessionMessageDraft = {
   body: string;
   pendingActions: SessionMessageActionProvenance[];
+  attachments: DraftAttachment[];
 };
 
 export const EMPTY_SESSION_MESSAGE_DRAFT: SessionMessageDraft = {
   body: "",
   pendingActions: [],
+  attachments: [],
 };
 
 export const sessionMessageDraftKey = (repoPath: string, taskSlug: string, sessionId: string): string =>

@@ -1,6 +1,9 @@
+import type { DraftAttachment } from "./attachments";
 import type { ChatEntry } from "./types";
 
-export function reconcileQueuedFollowUps(local: string[], count: number | undefined): { texts: string[]; unmatchedCount: number } {
+export type QueuedFollowUp = { text: string; attachments: DraftAttachment[] };
+
+export function reconcileQueuedFollowUps<T>(local: T[], count: number | undefined): { texts: T[]; unmatchedCount: number } {
   if (count === undefined) return { texts: local, unmatchedCount: 0 };
   if (count === 0) return { texts: [], unmatchedCount: 0 };
   if (count < local.length) return { texts: local.slice(local.length - count), unmatchedCount: 0 };
@@ -19,7 +22,7 @@ export function queuedCountFromGetState(value: unknown): number | undefined {
   return typeof count === "number" ? count : undefined;
 }
 
-export function latestQueuedFollowUp(local: string[]): string | undefined {
+export function latestQueuedFollowUp<T>(local: T[]): T | undefined {
   return local.length === 0 ? undefined : local[local.length - 1];
 }
 

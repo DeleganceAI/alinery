@@ -87,6 +87,7 @@ export function explodeAssistantParts(content: ChatPart[], idFor: (key: string) 
       });
       continue;
     }
+    if (part.type !== "toolResult") continue;
     const key = `result:${resultIndex}`;
     resultIndex += 1;
     rows.push({

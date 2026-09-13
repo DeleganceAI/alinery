@@ -52,3 +52,26 @@ describe("queued follow-up helpers", () => {
     expect(queuedTextsNotInEntries(["ok", "queued", "missing"], entries)).toEqual(["ok", "missing"]);
   });
 });
+
+describe("queued follow-ups as { text, attachments } items", () => {
+  const items = [
+    { text: "old", attachments: [{ id: "a", kind: "file" as const, name: "a.pdf", mimeType: "application/pdf", bytes: 10 }] },
+    { text: "mid", attachments: [] },
+    { text: "new", attachments: [{ id: "b", kind: "image" as const, name: "b.png", mimeType: "image/png", bytes: 4 }] },
+  ];
+
+  it("keeps the same count/slice behavior without dropping attachments", () => {
+    const reconcile = reconcileQueuedFollowUps as unknown as (local: typeof items, count: number | undefined) => { texts: typeof items; unmatchedCount: number };
+    expect(reconcile(items, undefined)).toEqual({ texts: items, unmatchedCount: 0 });
+    expect(reconcile(items, 0)).toEqual({ texts: [], unmatchedCount: 0 });
+    expect(reconcile(items, 1)).toEqual({ texts: [items[2]], unmatchedCount: 0 });
+    expect(reconcile([items[2]], 3)).toEqual({ texts: [items[2]], unmatchedCount: 2 });
+    expect(reconcile(items.slice(1), 2)).toEqual({ texts: items.slice(1), unmatchedCount: 0 });
+  });
+
+  it("returns the latest queued object, not a string", () => {
+    const latest = latestQueuedFollowUp as unknown as (local: typeof items) => (typeof items)[number] | undefined;
+    expect(latest(items)).toEqual(items[2]);
+    expect(latest([])).toBeUndefined();
+  });
+});

@@ -3,6 +3,7 @@ import {
   appendGeneratedText,
   canInterruptSession,
   chatMessageDisabledReason,
+  EMPTY_SESSION_MESSAGE_DRAFT,
   isTurnActive,
   LARGE_MESSAGE_BYTES,
   MAX_SESSION_MESSAGE_BYTES,
@@ -40,6 +41,15 @@ describe("sessionMessageDraftKey", () => {
 
   it("does not collide when identity components contain the separator", () => {
     expect(sessionMessageDraftKey("repo", "task|session", "id")).not.toBe(sessionMessageDraftKey("repo|task", "session", "id"));
+  });
+});
+
+describe("EMPTY_SESSION_MESSAGE_DRAFT", () => {
+  it("starts with no attachments", () => {
+    expect("attachments" in EMPTY_SESSION_MESSAGE_DRAFT).toBe(true);
+    if ("attachments" in EMPTY_SESSION_MESSAGE_DRAFT) {
+      expect(EMPTY_SESSION_MESSAGE_DRAFT.attachments).toEqual([]);
+    }
   });
 });
 

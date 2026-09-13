@@ -353,6 +353,14 @@ export const writeDraftForRepo = (a: {
   worktreeName: string;
   draftSlug: string;
 }) => invoke<Task>("write_draft_for_repo", a);
+export type ChatFileStat = { name: string; bytes: number };
+export type CopyChatAttachmentsResult = { copied: string[]; failures: string[] };
+export type ChatImage = { mime_type: string; data: string };
+export const chatFileStat = (path: string) => invoke<ChatFileStat>("chat_file_stat", { path });
+export const copyChatAttachments = (taskSlug: string, paths: string[]) => invoke<CopyChatAttachmentsResult>("copy_chat_attachments", { taskSlug, paths });
+export const writeChatAttachmentBytes = (taskSlug: string, fileName: string, bytes: number[] | Uint8Array) =>
+  invoke<string>("write_chat_attachment_bytes", { taskSlug, fileName, bytes });
+export const readChatImage = (taskSlug: string, name: string) => invoke<ChatImage>("read_chat_image", { taskSlug, name });
 
 // ── playbook.rs ───────────────────────────────────────────────────────
 export const listKanbanColumns = (allRepos: boolean) => invoke<KanbanColumn[]>("list_kanban_columns", { allRepos });

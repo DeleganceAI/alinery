@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, createEvent, fireEvent, render, screen } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatComposer, chatComposerLineCap } from "./ChatComposer";
@@ -132,5 +132,118 @@ describe("ChatComposer", () => {
     render(<ChatComposer body={"a".repeat(256 * 1024 + 1)} status="running" catalog={[]} onBodyChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} {...extras} />);
     expect(screen.getByRole("button", { name: "Queue" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Send now" })).toBeTruthy();
+  });
+
+  const shot = {
+    id: "a1",
+    kind: "image" as const,
+    name: "shot.png",
+    mimeType: "image/png",
+    bytes: 12,
+    previewUrl: "blob:shot",
+  };
+  const diskPng = {
+    id: "a2",
+    kind: "image" as const,
+    name: "disk.png",
+    mimeType: "image/png",
+    bytes: 12,
+    sourcePath: "/tmp/disk.png",
+  };
+  const notes = {
+    id: "f1",
+    kind: "file" as const,
+    name: "notes.pdf",
+    mimeType: "application/pdf",
+    bytes: 100,
+    sourcePath: "/tmp/notes.pdf",
+  };
+
+  it("enables send with empty text when an image is staged and sends an empty caption", () => {
+    const onSend = vi.fn();
+    const extras = { attachments: [shot] };
+    render(<ChatComposer body="" status="idle" catalog={[]} onBodyChange={vi.fn()} onSend={onSend} onAbort={vi.fn()} {...extras} />);
+    const send = screen.getByRole("button", { name: "Send" }) as HTMLButtonElement;
+    expect(send.disabled).toBe(false);
+    fireEvent.click(send);
+    expect(onSend).toHaveBeenCalledWith("");
+  });
+
+  it("renders an image preview, a path image without img, and a file chip", () => {
+    const extras = { attachments: [shot, diskPng, notes] };
+    const { container } = render(<ChatComposer body="" status="idle" catalog={[]} onBodyChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} {...extras} />);
+    const preview = container.querySelector(`img[src="${shot.previewUrl}"]`);
+    expect(preview).toBeTruthy();
+    expect(screen.getByText("disk.png")).toBeTruthy();
+    expect(container.querySelector(`img[alt="disk.png"]`)).toBeNull();
+    expect(screen.getByText("notes.pdf")).toBeTruthy();
+    expect(container.querySelector(`img[alt="notes.pdf"]`)).toBeNull();
+  });
+
+  it("removes one attachment from a chip", () => {
+    const onRemoveAttachment = vi.fn();
+    const extras = { attachments: [notes], onRemoveAttachment };
+    render(<ChatComposer body="" status="idle" catalog={[]} onBodyChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} {...extras} />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove notes.pdf" }));
+    expect(onRemoveAttachment).toHaveBeenCalledWith("f1");
+  });
+
+  it("forwards a pasted image file and prevents default", () => {
+    const file = new File(["png"], "shot.png", { type: "image/png" });
+    const onPasteFiles = vi.fn();
+    const extras = { onPasteFiles };
+    render(<ChatComposer body="" status="idle" catalog={[]} onBodyChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} {...extras} />);
+    const field = screen.getByLabelText("Message or /command");
+    const event = createEvent.paste(field, {
+      clipboardData: {
+        items: [{ kind: "file", type: "image/png", getAsFile: () => file }],
+        files: [file],
+      },
+    });
+    fireEvent(field, event);
+    expect(onPasteFiles).toHaveBeenCalledWith([file]);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("opens the paperclip picker", () => {
+    const onAttach = vi.fn();
+    const extras = { onAttach };
+    render(<ChatComposer body="" status="idle" catalog={[]} onBodyChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} {...extras} />);
+    fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
+    expect(onAttach).toHaveBeenCalled();
+  });
+
+  it("clears text on Escape without dropping attachments", () => {
+    const onBodyChange = vi.fn();
+    const onClear = vi.fn();
+    const extras = { attachments: [shot], onClear };
+    render(<ChatComposer body="caption" status="idle" catalog={[]} onBodyChange={onBodyChange} onSend={vi.fn()} onAbort={vi.fn()} {...extras} />);
+    fireEvent.keyDown(screen.getByLabelText("Message or /command"), { key: "Escape" });
+    expect(onBodyChange).toHaveBeenCalledWith("");
+    expect(onClear).not.toHaveBeenCalled();
+  });
+
+  it("clears text and attachments from Clear", () => {
+    const onClear = vi.fn();
+    const extras = { attachments: [shot], onClear };
+    render(<ChatComposer body="caption" status="idle" catalog={[]} onBodyChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} {...extras} />);
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(onClear).toHaveBeenCalled();
+  });
+
+  it("hides paperclip and keeps send disabled when readOnly", () => {
+    const extras = { attachments: [shot], readOnly: true };
+    render(<ChatComposer body="" status="idle" catalog={[]} onBodyChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} {...extras} />);
+    expect(screen.queryByRole("button", { name: "Attach files" })).toBeNull();
+    expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("highlights the composer while dropping", () => {
+    const extras = { dropping: true };
+    const html = renderToStaticMarkup(
+      <ChatComposer body="" status="idle" catalog={[]} onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} {...extras} />,
+    );
+    expect(html).toContain("chat-composer-box");
+    expect(html).toContain("drop");
   });
 });

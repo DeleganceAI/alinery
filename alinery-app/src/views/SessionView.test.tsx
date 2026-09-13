@@ -2,8 +2,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { type ComponentProps, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
+import type { QueuedFollowUp } from "../chat/queue";
 import type { SessionMessageDraft } from "../sessionMessage";
 import { mockIpc } from "../test/mockIpc";
+import { toast } from "../toast";
 import type { AgentState, ArtifactListItem, ArtifactTreeNode, SessionObservation, Task } from "../types";
 import { SessionView } from "./SessionView";
 
@@ -27,6 +29,11 @@ const readOmpModelRoles = vi.hoisted(() => vi.fn(async () => ({}) as Record<stri
 const writeOmpModelRoles = vi.hoisted(() => vi.fn(async (roles: Record<string, string>) => roles));
 const openUrl = vi.hoisted(() => vi.fn(async (_url: string | URL, _openWith?: string): Promise<void> => undefined));
 const confirmDanger = vi.hoisted(() => vi.fn(async () => true));
+const pickAttachmentFilesDialog = vi.hoisted(() => vi.fn(async (): Promise<string[]> => []));
+const chatFileStat = vi.hoisted(() => vi.fn(async (path: string) => ({ name: path.split("/").pop() ?? path, bytes: 12 })));
+const copyChatAttachments = vi.hoisted(() => vi.fn(async () => ({ copied: [] as string[], failures: [] as string[] })));
+const writeChatAttachmentBytes = vi.hoisted(() => vi.fn(async (_slug: string, fileName: string) => fileName));
+const readChatImage = vi.hoisted(() => vi.fn(async () => ({ mime_type: "image/png", data: "aa" })));
 
 const task: Task = {
   name: "Task",
@@ -102,7 +109,15 @@ vi.mock("../ipc", () =>
       text: "Please approve the review.",
       provenance: { type: "review_approval" as const, review_artifact: "03-review-findings.md" },
     }),
-  }),
+    pickAttachmentFilesDialog,
+    getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }),
+    ...({
+      chatFileStat,
+      copyChatAttachments,
+      writeChatAttachmentBytes,
+      readChatImage,
+    } as object),
+  } as never),
 );
 
 async function flushPromises() {
@@ -139,7 +154,7 @@ describe("SessionView artifact pane", () => {
         model=""
         intent="spawn"
         appearance={DEFAULT_APPEARANCE}
-        messageDraft={{ body: "", pendingActions: [] }}
+        messageDraft={{ body: "", pendingActions: [], attachments: [] }}
         onMessageDraftChange={vi.fn()}
         onAppearanceChange={vi.fn()}
         onBack={vi.fn()}
@@ -184,7 +199,7 @@ describe("SessionView artifact pane", () => {
         model=""
         intent="spawn"
         appearance={DEFAULT_APPEARANCE}
-        messageDraft={{ body: "", pendingActions: [] }}
+        messageDraft={{ body: "", pendingActions: [], attachments: [] }}
         onMessageDraftChange={vi.fn()}
         onAppearanceChange={vi.fn()}
         onBack={vi.fn()}
@@ -227,7 +242,7 @@ function sessionView(overrides: Partial<ComponentProps<typeof SessionView>> = {}
       model=""
       intent="spawn"
       appearance={DEFAULT_APPEARANCE}
-      messageDraft={{ body: "", pendingActions: [] }}
+      messageDraft={{ body: "", pendingActions: [], attachments: [] }}
       onMessageDraftChange={vi.fn()}
       onAppearanceChange={vi.fn()}
       onBack={vi.fn()}
@@ -376,7 +391,7 @@ describe("session chat hatch", () => {
   it("confirms before restating when a send is pending and the poll still reads idle", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
     confirmDanger.mockResolvedValue(false);
-    renderSession({ messageDraft: { body: "first", pendingActions: [] } });
+    renderSession({ messageDraft: { body: "first", pendingActions: [], attachments: [] } });
     await flushPromises();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(rpcWriteSession.mock.calls.some(([, payload]) => (payload as { type?: string } | null)?.type === "prompt")).toBe(true));
@@ -422,7 +437,7 @@ describe("session chat slash dispatch", () => {
 
   it("opens the model dialog on /model and never prompts that name", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
-    renderSession({ messageDraft: { body: "/model", pendingActions: [] } });
+    renderSession({ messageDraft: { body: "/model", pendingActions: [], attachments: [] } });
     await flushPromises();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(await screen.findByRole("dialog", { name: "Models" })).toBeDefined();
@@ -436,7 +451,7 @@ describe("session chat slash dispatch", () => {
   it("opens the Accounts tab on /login and never prompts", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
     readOmpModelRoles.mockResolvedValue({});
-    renderSession({ messageDraft: { body: "/login", pendingActions: [] } });
+    renderSession({ messageDraft: { body: "/login", pendingActions: [], attachments: [] } });
     await flushPromises();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(await screen.findByRole("dialog", { name: "Providers" })).toBeDefined();
@@ -554,7 +569,7 @@ describe("session chat open_url approval", () => {
   it("opens the sign-in link without an approval row, because the click was the consent", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
     readOmpModelRoles.mockResolvedValue({});
-    renderSession({ messageDraft: { body: "/login", pendingActions: [] } });
+    renderSession({ messageDraft: { body: "/login", pendingActions: [], attachments: [] } });
     await flushPromises();
     const calls = rpcAttachSession.mock.calls;
     const attach = calls[calls.length - 1]?.[0] as { onLine: (line: string) => void };
@@ -577,7 +592,7 @@ describe("session chat open_url approval", () => {
   it("arms the sign-in bypass for one link only", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
     readOmpModelRoles.mockResolvedValue({});
-    renderSession({ messageDraft: { body: "/login", pendingActions: [] } });
+    renderSession({ messageDraft: { body: "/login", pendingActions: [], attachments: [] } });
     await flushPromises();
     const calls = rpcAttachSession.mock.calls;
     const attach = calls[calls.length - 1]?.[0] as { onLine: (line: string) => void };
@@ -630,7 +645,7 @@ describe("session chat send routing", () => {
   /** Every composer send OMP received, in order — the attach seeds are neither prompt nor follow_up. */
   function sends() {
     return rpcWriteSession.mock.calls
-      .map(([, payload]) => payload as { type?: string; message?: string } | null)
+      .map(([, payload]) => payload as { type?: string; message?: string; id?: string } | null)
       .filter((payload) => payload?.type === "prompt" || payload?.type === "follow_up");
   }
 
@@ -640,6 +655,22 @@ describe("session chat send routing", () => {
     rpcWriteSession.mockImplementation(async () => undefined);
     rpcAttachSession.mockReset();
     rpcAttachSession.mockImplementation(async () => undefined);
+    copyChatAttachments.mockReset();
+    copyChatAttachments.mockResolvedValue({ copied: [], failures: [] });
+    writeChatAttachmentBytes.mockReset();
+    writeChatAttachmentBytes.mockImplementation(async (_slug: string, fileName: string) => fileName);
+    readChatImage.mockReset();
+    readChatImage.mockResolvedValue({ mime_type: "image/png", data: "aa" });
+    chatFileStat.mockReset();
+    chatFileStat.mockImplementation(async (path: string) => ({ name: path.split("/").pop() ?? path, bytes: 12 }));
+    pickAttachmentFilesDialog.mockReset();
+    pickAttachmentFilesDialog.mockResolvedValue([]);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).startsWith("blob:")) {
+        return { arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer } as Response;
+      }
+      throw new Error(`unexpected fetch ${String(input)}`);
+    });
   });
 
   afterEach(() => {
@@ -647,11 +678,12 @@ describe("session chat send routing", () => {
     sessionStatus.mockReset();
     sessionStatus.mockResolvedValue({ lifecycle: { state: "exited" as const, code: 0 }, state: null, checkpoint: {} });
     rpcWriteSession.mockImplementation(async () => undefined);
+    vi.mocked(globalThis.fetch).mockRestore?.();
   });
 
   it("queues a turn that is waiting for input instead of prompting it", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "waiting_for_input", correlation_id: "ask-1" }));
-    renderSession({ messageDraft: { body: "use the other file", pendingActions: [] } });
+    renderSession({ messageDraft: { body: "use the other file", pendingActions: [], attachments: [] } });
     await flushPromises();
     fireEvent.click(screen.getByRole("button", { name: "Queue" }));
 
@@ -661,12 +693,12 @@ describe("session chat send routing", () => {
 
   it("queues the second submit even though the status poll still reads idle", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
-    const view = renderSession({ messageDraft: { body: "first", pendingActions: [] } });
+    const view = renderSession({ messageDraft: { body: "first", pendingActions: [], attachments: [] } });
     await flushPromises();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(sends()).toHaveLength(1));
 
-    view.rerender(sessionView({ messageDraft: { body: "second", pendingActions: [] } }));
+    view.rerender(sessionView({ messageDraft: { body: "second", pendingActions: [], attachments: [] } }));
     fireEvent.click(screen.getByRole("button", { name: "Queue" }));
 
     await waitFor(() => expect(sends()).toHaveLength(2));
@@ -682,7 +714,7 @@ describe("session chat send routing", () => {
       if ((payload as { type?: string } | null)?.type === "prompt") throw new Error("stdin closed");
     });
     const onDraftChange = vi.fn();
-    renderSession({ messageDraft: { body: "keep me", pendingActions: [] }, onMessageDraftChange: onDraftChange });
+    renderSession({ messageDraft: { body: "keep me", pendingActions: [], attachments: [] }, onMessageDraftChange: onDraftChange });
     await flushPromises();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
@@ -696,7 +728,7 @@ describe("session chat send routing", () => {
     const onLine = { current: undefined as ((line: string) => void) | undefined };
     captureRpcOnLine(onLine);
     const onDraftChange = vi.fn();
-    renderSession({ messageDraft: { body: "keep me", pendingActions: [] }, onMessageDraftChange: onDraftChange });
+    renderSession({ messageDraft: { body: "keep me", pendingActions: [], attachments: [] }, onMessageDraftChange: onDraftChange });
     await flushPromises();
     await waitFor(() => expect(onLine.current).toBeDefined());
 
@@ -704,7 +736,7 @@ describe("session chat send routing", () => {
     await waitFor(() => expect(sends()).toHaveLength(1));
     const commandId = (sends()[0] as { id?: string }).id;
     expect(commandId).toBeTruthy();
-    expect(onDraftChange).toHaveBeenCalledWith({ body: "", pendingActions: [] });
+    expect(onDraftChange).toHaveBeenCalledWith({ body: "", pendingActions: [], attachments: [] });
 
     await act(async () => {
       onLine.current?.(
@@ -718,7 +750,7 @@ describe("session chat send routing", () => {
       );
     });
 
-    await waitFor(() => expect(onDraftChange).toHaveBeenCalledWith({ body: "keep me", pendingActions: [] }));
+    await waitFor(() => expect(onDraftChange).toHaveBeenCalledWith({ body: "keep me", pendingActions: [], attachments: [] }));
     expect(screen.getAllByText("Agent is already processing").length).toBeGreaterThan(0);
     expect(within(screen.getByTestId("chat-pane")).queryByText("keep me")).toBeNull();
   });
@@ -727,7 +759,7 @@ describe("session chat send routing", () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
     const onLine = { current: undefined as ((line: string) => void) | undefined };
     captureRpcOnLine(onLine);
-    const view = renderSession({ messageDraft: { body: "first", pendingActions: [] } });
+    const view = renderSession({ messageDraft: { body: "first", pendingActions: [], attachments: [] } });
     await flushPromises();
     await waitFor(() => expect(onLine.current).toBeDefined());
 
@@ -738,7 +770,7 @@ describe("session chat send routing", () => {
       onLine.current?.(JSON.stringify({ type: "response", id: "state-1", command: "get_state", success: false, error: "temporary" }));
     });
 
-    view.rerender(sessionView({ messageDraft: { body: "second", pendingActions: [] } }));
+    view.rerender(sessionView({ messageDraft: { body: "second", pendingActions: [], attachments: [] } }));
     fireEvent.click(screen.getByRole("button", { name: "Queue" }));
 
     await waitFor(() => expect(sends()).toHaveLength(2));
@@ -751,7 +783,7 @@ describe("session chat send routing", () => {
   it("keeps send enabled and writes follow_up while waiting for approval", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "waiting_for_approval", correlation_id: "appr-1" }));
 
-    renderSession({ messageDraft: { body: "later", pendingActions: [] } });
+    renderSession({ messageDraft: { body: "later", pendingActions: [], attachments: [] } });
     await flushPromises();
     fireEvent.click(screen.getByRole("button", { name: "Queue" }));
     await waitFor(() => expect(sends()).toHaveLength(1));
@@ -761,7 +793,7 @@ describe("session chat send routing", () => {
 
   it("rehydrates queued follow-ups after journal seed", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
-    renderSession({ queuedFollowUps: ["keep me"] });
+    renderSession({ queuedFollowUps: [{ text: "keep me", attachments: [] }] });
     await flushPromises();
     expect(await screen.findByText("keep me")).toBeTruthy();
     expect(screen.getByText("queued · after this turn")).toBeTruthy();
@@ -771,7 +803,7 @@ describe("session chat send routing", () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
     const onLine = { current: undefined as ((line: string) => void) | undefined };
     captureRpcOnLine(onLine);
-    renderSession({ queuedFollowUps: ["keep me"] });
+    renderSession({ queuedFollowUps: [{ text: "keep me", attachments: [] }] });
     await flushPromises();
     await waitFor(() => expect(onLine.current).toBeDefined());
     expect(await screen.findByText("keep me")).toBeTruthy();
@@ -793,8 +825,8 @@ describe("session chat send routing", () => {
     const onLine = { current: undefined as ((line: string) => void) | undefined };
     captureRpcOnLine(onLine);
     function QueueHarness() {
-      const [queued, setQueued] = useState(["first"]);
-      const [draft, setDraft] = useState<SessionMessageDraft>({ body: "second", pendingActions: [] });
+      const [queued, setQueued] = useState<QueuedFollowUp[]>([{ text: "first", attachments: [] }]);
+      const [draft, setDraft] = useState<SessionMessageDraft>({ body: "second", pendingActions: [], attachments: [] });
       return sessionView({
         queuedFollowUps: queued,
         onQueuedFollowUpsChange: setQueued,
@@ -827,7 +859,7 @@ describe("session chat send routing", () => {
 
   it("Send now with empty draft aborts and prompts the latest queued text", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
-    renderSession({ queuedFollowUps: ["later"], messageDraft: { body: "", pendingActions: [] } });
+    renderSession({ queuedFollowUps: [{ text: "later", attachments: [] }], messageDraft: { body: "", pendingActions: [], attachments: [] } });
     await flushPromises();
     fireEvent.click(screen.getByRole("button", { name: "Send now" }));
     await waitFor(() => expect(rpcWriteSession.mock.calls.some(([, payload]) => (payload as { type?: string } | null)?.type === "abort_and_prompt")).toBe(true));
@@ -837,7 +869,7 @@ describe("session chat send routing", () => {
 
   it("Send now with a draft aborts and prompts that draft", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
-    renderSession({ queuedFollowUps: ["later"], messageDraft: { body: "now", pendingActions: [] } });
+    renderSession({ queuedFollowUps: [{ text: "later", attachments: [] }], messageDraft: { body: "now", pendingActions: [], attachments: [] } });
     await flushPromises();
     fireEvent.click(screen.getByRole("button", { name: "Send now" }));
     await waitFor(() => expect(rpcWriteSession.mock.calls.some(([, payload]) => (payload as { type?: string } | null)?.type === "abort_and_prompt")).toBe(true));
@@ -847,14 +879,14 @@ describe("session chat send routing", () => {
 
   it("does not enable Send now while waiting for input or approval", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "waiting_for_input", correlation_id: "ask-1" }));
-    renderSession({ messageDraft: { body: "later", pendingActions: [] }, queuedFollowUps: ["queued"] });
+    renderSession({ messageDraft: { body: "later", pendingActions: [], attachments: [] }, queuedFollowUps: [{ text: "queued", attachments: [] }] });
     await flushPromises();
     expect(screen.queryByRole("button", { name: "Send now" })).toBeNull();
 
     cleanup();
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "waiting_for_approval", correlation_id: "appr-1" }));
 
-    renderSession({ messageDraft: { body: "later", pendingActions: [] }, queuedFollowUps: ["queued"] });
+    renderSession({ messageDraft: { body: "later", pendingActions: [], attachments: [] }, queuedFollowUps: [{ text: "queued", attachments: [] }] });
     await flushPromises();
     expect(screen.queryByRole("button", { name: "Send now" })).toBeNull();
   });
@@ -863,7 +895,7 @@ describe("session chat send routing", () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "waiting_for_input", correlation_id: "ask-1" }));
     const onLine = { current: undefined as ((line: string) => void) | undefined };
     captureRpcOnLine(onLine);
-    renderSession({ messageDraft: { body: "queue me", pendingActions: [] } });
+    renderSession({ messageDraft: { body: "queue me", pendingActions: [], attachments: [] } });
     await flushPromises();
     await waitFor(() => expect(onLine.current).toBeDefined());
     fireEvent.click(screen.getByRole("button", { name: "Queue" }));
@@ -874,6 +906,221 @@ describe("session chat send routing", () => {
       onLine.current?.(JSON.stringify({ type: "response", id: followUp.id, command: "follow_up", success: true, data: {} }));
     });
     await waitFor(() => expect(rpcWriteSession.mock.calls.filter(([, payload]) => (payload as { type?: string } | null)?.type === "get_state").length).toBeGreaterThan(before));
+  });
+
+  const diskPng = {
+    id: "img-1",
+    kind: "image" as const,
+    name: "shot.png",
+    mimeType: "image/png",
+    bytes: 12,
+    sourcePath: "/tmp/shot.png",
+  };
+  const blobPng = {
+    id: "img-blob",
+    kind: "image" as const,
+    name: "paste.png",
+    mimeType: "image/png",
+    bytes: 12,
+    previewUrl: "blob:http://localhost/paste",
+  };
+  const diskPdf = {
+    id: "file-1",
+    kind: "file" as const,
+    name: "notes.pdf",
+    mimeType: "application/pdf",
+    bytes: 100,
+    sourcePath: "/tmp/notes.pdf",
+  };
+
+  it("copies a disk image then writes prompt images, never the other way around", async () => {
+    const order: string[] = [];
+    copyChatAttachments.mockImplementation(async () => {
+      order.push("copy");
+      return { copied: ["shot.png"], failures: [] };
+    });
+    readChatImage.mockResolvedValue({ mime_type: "image/png", data: "aa" });
+    rpcWriteSession.mockImplementation(async (_id: string, payload: unknown) => {
+      if (payload && typeof payload === "object" && "type" in payload && payload.type === "prompt") order.push("write");
+    });
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    const messageDraft = { body: "see this", pendingActions: [], attachments: [diskPng] } as SessionMessageDraft;
+    renderSession({ messageDraft });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    expect(order.slice(0, 2)).toEqual(["copy", "write"]);
+    expect(readChatImage).toHaveBeenCalled();
+    const payload = sends()[0];
+    expect(payload).toMatchObject({ type: "prompt", message: "see this" });
+    expect(payload && "images" in payload && payload.images).toEqual([{ type: "image", data: "aa", mimeType: "image/png" }]);
+  });
+
+  it("sends a pdf as a path trailer without images or a vision read", async () => {
+    copyChatAttachments.mockResolvedValue({ copied: ["notes.pdf"], failures: [] });
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    const messageDraft = { body: "see file", pendingActions: [], attachments: [diskPdf] } as SessionMessageDraft;
+    renderSession({ messageDraft });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    expect(readChatImage).not.toHaveBeenCalled();
+    const payload = sends()[0];
+    expect(payload && "message" in payload && typeof payload.message === "string" && payload.message.includes("Attached file: ")).toBe(true);
+    expect(payload && "message" in payload && typeof payload.message === "string" && payload.message.includes("notes.pdf")).toBe(true);
+    expect(payload && "images" in payload).toBe(false);
+  });
+
+  it("sends an empty caption with images", async () => {
+    copyChatAttachments.mockResolvedValue({ copied: ["shot.png"], failures: [] });
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    const messageDraft = { body: "", pendingActions: [], attachments: [diskPng] } as SessionMessageDraft;
+    renderSession({ messageDraft });
+    await flushPromises();
+    const send = screen.getByRole("button", { name: "Send" }) as HTMLButtonElement;
+    expect(send.disabled).toBe(false);
+    fireEvent.click(send);
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    const payload = sends()[0];
+    expect(payload).toMatchObject({ type: "prompt", message: "" });
+    expect(payload && "images" in payload && payload.images).toEqual([{ type: "image", data: "aa", mimeType: "image/png" }]);
+  });
+
+  it("toasts an oversize path and does not copy or write", async () => {
+    const error = vi.spyOn(toast, "error").mockImplementation(() => undefined);
+    chatFileStat.mockResolvedValue({ name: "shot.png", bytes: 5 * 1024 * 1024 + 1 });
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    const oversized = { ...diskPng, bytes: 5 * 1024 * 1024 + 1 };
+    const messageDraft = { body: "see this", pendingActions: [], attachments: [oversized] } as SessionMessageDraft;
+    renderSession({ messageDraft });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await flushPromises();
+    expect(error).toHaveBeenCalled();
+    expect(copyChatAttachments).not.toHaveBeenCalled();
+    expect(sends()).toHaveLength(0);
+    error.mockRestore();
+  });
+
+  it("toasts a copy failure, does not write, and keeps the draft attachments", async () => {
+    const error = vi.spyOn(toast, "error").mockImplementation(() => undefined);
+    const onDraftChange = vi.fn();
+    copyChatAttachments.mockResolvedValue({ copied: [], failures: ["shot.png — disk full"] });
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    const messageDraft = { body: "see this", pendingActions: [], attachments: [diskPng] } as SessionMessageDraft;
+    renderSession({ messageDraft, onMessageDraftChange: onDraftChange });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await flushPromises();
+    expect(error).toHaveBeenCalled();
+    expect(sends()).toHaveLength(0);
+    expect(onDraftChange).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it("refuses slash plus attachments without writing", async () => {
+    const error = vi.spyOn(toast, "error").mockImplementation(() => undefined);
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    const messageDraft = { body: "/model", pendingActions: [], attachments: [diskPng] } as SessionMessageDraft;
+    renderSession({ messageDraft });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await flushPromises();
+    expect(error).toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "Models" })).toBeNull();
+    expect(sends()).toHaveLength(0);
+    error.mockRestore();
+  });
+
+  it("queues follow_up images without storing base64 on the queue item", async () => {
+    copyChatAttachments.mockResolvedValue({ copied: ["paste.png"], failures: [] });
+    writeChatAttachmentBytes.mockResolvedValue("paste.png");
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "waiting_for_input", correlation_id: "ask-1" }));
+    const onQueuedFollowUpsChange = vi.fn();
+    const messageDraft = { body: "later", pendingActions: [], attachments: [blobPng] } as SessionMessageDraft;
+    renderSession({ messageDraft, queuedFollowUps: [], onQueuedFollowUpsChange });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    const payload = sends()[0];
+    expect(payload).toMatchObject({ type: "follow_up" });
+    expect(payload && "images" in payload && payload.images).toEqual([{ type: "image", data: "aa", mimeType: "image/png" }]);
+    expect(onQueuedFollowUpsChange).toHaveBeenCalled();
+    const queued = onQueuedFollowUpsChange.mock.calls[0]?.[0];
+    expect(Array.isArray(queued)).toBe(true);
+    const item = Array.isArray(queued) ? queued[0] : undefined;
+    expect(item && typeof item === "object" && item !== null && "text" in item && item.text).toBe("later");
+    expect(item && typeof item === "object" && item !== null && "attachments" in item).toBe(true);
+    const attachments = item && typeof item === "object" && "attachments" in item ? item.attachments : undefined;
+    expect(Array.isArray(attachments) && attachments[0] && typeof attachments[0] === "object" && attachments[0] !== null && "previewUrl" in attachments[0]).toBe(true);
+    expect(Array.isArray(attachments) && attachments[0] && typeof attachments[0] === "object" && attachments[0] !== null && "data" in attachments[0]).toBe(false);
+  });
+
+  it("revokes blob URLs on turn_start ACK and restores them without revoke on refusal", async () => {
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    writeChatAttachmentBytes.mockResolvedValue("paste.png");
+    copyChatAttachments.mockResolvedValue({ copied: ["paste.png"], failures: [] });
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    const onDraftChange = vi.fn();
+    const messageDraft = { body: "see this", pendingActions: [], attachments: [blobPng] } as SessionMessageDraft;
+    renderSession({ messageDraft, onMessageDraftChange: onDraftChange });
+    await flushPromises();
+    await waitFor(() => expect(onLine.current).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "turn_start" }));
+    });
+    expect(revoke).toHaveBeenCalledWith("blob:http://localhost/paste");
+    revoke.mockClear();
+
+    const refusedDraft = { body: "see this", pendingActions: [], attachments: [blobPng] } as SessionMessageDraft;
+    cleanup();
+    captureRpcOnLine(onLine);
+    const restore = vi.fn();
+    renderSession({ messageDraft: refusedDraft, onMessageDraftChange: restore });
+    await flushPromises();
+    await waitFor(() => expect(onLine.current).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    const commandId = sends()[0]?.id;
+    await act(async () => {
+      onLine.current?.(
+        JSON.stringify({
+          type: "response",
+          id: commandId,
+          command: "prompt",
+          success: false,
+          error: "Agent is already processing",
+        }),
+      );
+    });
+    expect(revoke).not.toHaveBeenCalled();
+    await waitFor(() => expect(restore).toHaveBeenCalled());
+    const restored = restore.mock.calls.find((call) => {
+      const draft = call[0];
+      return draft && typeof draft === "object" && "attachments" in draft;
+    })?.[0];
+    expect(restored && typeof restored === "object" && "attachments" in restored).toBe(true);
+    revoke.mockRestore();
+  });
+
+  it("includes images on abort_and_prompt Send now", async () => {
+    copyChatAttachments.mockResolvedValue({ copied: ["shot.png"], failures: [] });
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    const messageDraft = { body: "now", pendingActions: [], attachments: [diskPng] } as SessionMessageDraft;
+    renderSession({ queuedFollowUps: [{ text: "later", attachments: [] }], messageDraft });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    await waitFor(() =>
+      expect(rpcWriteSession.mock.calls.some(([, payload]) => payload && typeof payload === "object" && "type" in payload && payload.type === "abort_and_prompt")).toBe(true),
+    );
+    const sent = rpcWriteSession.mock.calls
+      .map(([, payload]) => payload)
+      .find((payload) => payload && typeof payload === "object" && "type" in payload && payload.type === "abort_and_prompt");
+    expect(sent && typeof sent === "object" && "images" in sent && sent.images).toEqual([{ type: "image", data: "aa", mimeType: "image/png" }]);
   });
 });
 
