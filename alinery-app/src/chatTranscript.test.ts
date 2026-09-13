@@ -11,6 +11,7 @@ import {
   applyRpcLines,
   emptyTranscript,
   flattenWouldFail,
+  mapHydratedMessage,
   matchingSendFailure,
   removeOptimisticSend,
 } from "./chatTranscript";
@@ -578,5 +579,127 @@ describe("queuedMessageCount", () => {
     });
     expect("queuedMessageCount" in state.sessionMeta).toBe(true);
     expect("queuedMessageCount" in state.sessionMeta ? state.sessionMeta.queuedMessageCount : undefined).toBe(0);
+  });
+});
+
+describe("chat attachments", () => {
+  const imagePart = { type: "image", mimeType: "image/png", data: "aa" };
+
+  it("maps image parts instead of dropping them", () => {
+    const mapped = mapHydratedMessage({
+      role: "user",
+      content: [{ type: "text", text: "look" }, imagePart],
+    });
+    expect(mapped?.content).toEqual([
+      { type: "text", text: "look" },
+      { type: "image", mimeType: "image/png", data: "aa" },
+    ]);
+  });
+
+  it("still drops unknown content types", () => {
+    const mapped = mapHydratedMessage({
+      role: "assistant",
+      content: [{ type: "video", mimeType: "video/mp4" }],
+    });
+    expect(mapped?.content).toEqual([]);
+  });
+
+  it("hydrates a user message with text and an image into a prompt with a data URL", () => {
+    const mapped = mapHydratedMessage({
+      role: "user",
+      rowId: "u1",
+      content: [{ type: "text", text: "look" }, imagePart],
+    });
+    expect(mapped).not.toBeNull();
+    const state = applyFilePage(emptyTranscript(), { start: 0, messages: mapped ? [mapped] : [] }, "initial");
+    expect(state.entries).toHaveLength(1);
+    const entry = state.entries[0];
+    expect(entry).toMatchObject({ type: "prompt", text: "look" });
+    expect(entry && "attachments" in entry && entry.attachments).toEqual([{ kind: "image", name: expect.any(String), mimeType: "image/png", src: "data:image/png;base64,aa" }]);
+  });
+
+  it("turns trailer-only user text into file chips and strips trailers from the caption", () => {
+    const state = applyFilePage(
+      emptyTranscript(),
+      {
+        start: 0,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Attached file: /repo/.alinery/tasks/task/artifacts/attachments/notes.pdf",
+              },
+            ],
+          },
+        ],
+      },
+      "initial",
+    );
+    const entry = state.entries[0];
+    expect(entry).toMatchObject({ type: "prompt", text: "" });
+    expect(entry && "attachments" in entry && entry.attachments).toEqual([{ kind: "file", name: "notes.pdf" }]);
+  });
+
+  it("preserves attachments on an optimistic user row", () => {
+    const attachments = [{ kind: "image" as const, name: "shot.png", mimeType: "image/png", src: "blob:1" }];
+    const next = appendOptimisticUser(emptyTranscript(), "hi", "prompt", undefined, attachments);
+    const entry = next.entries[0];
+    expect(entry).toMatchObject({ type: "prompt", text: "hi" });
+    expect(entry && "attachments" in entry && entry.attachments).toEqual(attachments);
+  });
+
+  it("does not add a second user row when message_start is empty text plus images", () => {
+    const attachments = [{ kind: "image" as const, name: "shot.png", mimeType: "image/png", src: "blob:1" }];
+    const optimistic = appendOptimisticUser(emptyTranscript(), "", "prompt", undefined, attachments);
+    const live = applyRpcLine(optimistic, {
+      type: "message_start",
+      message: { role: "user", content: [imagePart] },
+    });
+    expect(live.entries.filter((entry) => entry.type === "prompt")).toHaveLength(1);
+  });
+
+  it("does not add a second user row when message_start includes file trailers", () => {
+    const attachments = [{ kind: "file" as const, name: "notes.pdf" }];
+    const optimistic = appendOptimisticUser(emptyTranscript(), "see file", "prompt", undefined, attachments);
+    const live = applyRpcLine(optimistic, {
+      type: "message_start",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "see file\n\nAttached file: /repo/.alinery/tasks/task/artifacts/attachments/notes.pdf" }],
+      },
+    });
+    expect(live.entries.filter((entry) => entry.type === "prompt")).toHaveLength(1);
+    const entry = live.entries[0];
+    expect(entry).toMatchObject({ type: "prompt", text: "see file" });
+    expect(entry && "attachments" in entry && entry.attachments).toEqual([{ kind: "file", name: "notes.pdf" }]);
+  });
+
+  it("does not add a second user row when message_start is trailer-only files", () => {
+    const attachments = [{ kind: "file" as const, name: "notes.pdf" }];
+    const optimistic = appendOptimisticUser(emptyTranscript(), "", "prompt", undefined, attachments);
+    const live = applyRpcLine(optimistic, {
+      type: "message_start",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "Attached file: /repo/.alinery/tasks/task/artifacts/attachments/notes.pdf" }],
+      },
+    });
+    expect(live.entries.filter((entry) => entry.type === "prompt")).toHaveLength(1);
+    const entry = live.entries[0];
+    expect(entry).toMatchObject({ type: "prompt", text: "" });
+    expect(entry && "attachments" in entry && entry.attachments).toEqual([{ kind: "file", name: "notes.pdf" }]);
+  });
+
+  it("replaces optimistic image blob src with live image data on message_start", () => {
+    const attachments = [{ kind: "image" as const, name: "shot.png", mimeType: "image/png", src: "blob:1" }];
+    const optimistic = appendOptimisticUser(emptyTranscript(), "", "prompt", undefined, attachments);
+    const live = applyRpcLine(optimistic, {
+      type: "message_start",
+      message: { role: "user", content: [imagePart] },
+    });
+    const entry = live.entries[0];
+    expect(entry && "attachments" in entry && entry.attachments).toEqual([{ kind: "image", name: "image", mimeType: "image/png", src: "data:image/png;base64,aa" }]);
   });
 });

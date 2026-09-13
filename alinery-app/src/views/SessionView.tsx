@@ -8,12 +8,13 @@ import { ArtifactTree, isDirectOwnedArtifactNode } from "../ArtifactTree";
 import type { ArtifactPaneTab } from "../artifactClassification";
 import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassification";
 import { ChatComposer } from "../ChatComposer";
+import { buildPromptMessage, canStage, classifyAttachment, type DraftAttachment, draftToRowAttachments, isHttpUrl, revokeDraftPreviewUrls } from "../chat/attachments";
 import { formatContextUsage } from "../chat/format";
 import type { ModelRolesMap } from "../chat/modelRoles";
 import { decodeOmpPage } from "../chat/ompFile";
 import { settleOpenUrl as settleBrowserUrl } from "../chat/openUrl";
 import { isInteractivePromptLoginError, shouldOfferProviderSetup } from "../chat/providers";
-import { latestQueuedFollowUp, queuedCountFromGetState, queuedTextsNotInEntries, reconcileQueuedFollowUps } from "../chat/queue";
+import { latestQueuedFollowUp, type QueuedFollowUp, queuedCountFromGetState, queuedTextsNotInEntries, reconcileQueuedFollowUps } from "../chat/queue";
 import { applySendPlan, commandOutputText, loginReply, planChatSend, setModelReply } from "../chat/send";
 import { type McpServerRow, type ProvidersDialogTab, parseMcpListOutput } from "../chat/slash";
 import type { SessionChatStatus } from "../chat/types";
@@ -28,6 +29,7 @@ import {
   emptyTranscript,
   isPresentationUi,
   matchingSendFailure,
+  matchingSendSuccess,
   needsUiReply,
   removeOptimisticSend,
 } from "../chatTranscript";
@@ -47,6 +49,7 @@ import {
   getLoginProvidersCommand,
   getStateCommand,
   getSubagentsCommand,
+  type ImageContent,
   loginCommand,
   negotiateProtocolCommand,
   promptCommand,
@@ -97,6 +100,70 @@ type ArtifactReviewPendingStatus = {
   review: string;
 };
 
+type PreparedChatSend = {
+  message: string;
+  images: ImageContent[];
+  copied: DraftAttachment[];
+};
+
+async function blobBytes(previewUrl: string): Promise<number[]> {
+  const response = await fetch(previewUrl);
+  return Array.from(new Uint8Array(await response.arrayBuffer()));
+}
+
+async function prepareChatSend(taskSlug: string, repoPath: string, caption: string, attachments: DraftAttachment[]): Promise<PreparedChatSend> {
+  const restated: DraftAttachment[] = [];
+  for (const item of attachments) {
+    if (item.sourcePath) {
+      const stat = await ipc.chatFileStat(item.sourcePath);
+      restated.push({ ...item, name: stat.name, bytes: stat.bytes });
+    } else {
+      restated.push(item);
+    }
+  }
+  const staged = canStage(
+    [],
+    restated.map((item) => ({ name: item.name, mimeType: item.mimeType, bytes: item.bytes })),
+  );
+  const failed = staged.find((item) => item.ok === false);
+  if (failed && failed.ok === false) throw new Error(failed.reason);
+
+  const copiedNames = new Map<string, string>();
+  const pathItems = restated.filter((item) => item.sourcePath && !item.copiedName);
+  const blobItems = restated.filter((item) => !item.sourcePath && item.previewUrl && !item.copiedName);
+  for (const item of restated) {
+    if (item.copiedName) copiedNames.set(item.id, item.copiedName);
+  }
+  if (pathItems.length > 0) {
+    const result = await ipc.copyChatAttachments(
+      taskSlug,
+      pathItems.map((item) => item.sourcePath as string),
+    );
+    if (result.failures.length > 0 || result.copied.length !== pathItems.length) {
+      throw new Error(result.failures[0] ?? "Could not copy attachments");
+    }
+    pathItems.forEach((item, index) => {
+      const name = result.copied[index];
+      if (name) copiedNames.set(item.id, name);
+    });
+  }
+  for (const item of blobItems) {
+    if (!item.previewUrl) continue;
+    copiedNames.set(item.id, await ipc.writeChatAttachmentBytes(taskSlug, item.name, await blobBytes(item.previewUrl)));
+  }
+
+  const copied = restated.map((item) => ({ ...item, copiedName: copiedNames.get(item.id) ?? item.copiedName }));
+  const files = copied.filter((item) => item.kind === "file").map((item) => ({ name: item.copiedName ?? item.name }));
+  const images: ImageContent[] = [];
+  for (const item of copied) {
+    if (item.kind !== "image") continue;
+    const name = item.copiedName ?? item.name;
+    const image = await ipc.readChatImage(taskSlug, name);
+    images.push({ type: "image", data: image.data, mimeType: image.mime_type });
+  }
+  return { message: buildPromptMessage(caption, files, repoPath, taskSlug), images, copied };
+}
+
 export function SessionView({
   id,
   cwd,
@@ -135,8 +202,8 @@ export function SessionView({
   appearance: AppearancePrefs;
   messageDraft: SessionMessageDraft;
   onMessageDraftChange: (draft: SessionMessageDraft) => void;
-  queuedFollowUps?: string[];
-  onQueuedFollowUpsChange?: (texts: string[]) => void;
+  queuedFollowUps?: QueuedFollowUp[];
+  onQueuedFollowUpsChange?: (items: QueuedFollowUp[]) => void;
   onAppearanceChange: (next: AppearancePrefs) => void;
   onBack: () => void;
   onStartFresh: () => void;
@@ -217,9 +284,17 @@ export function SessionView({
   const loginOpenUrlRef = useRef<string | null>(null);
   const setupOpenedRef = useRef(false);
   const [viewBusy, setViewBusy] = useState(false);
+  const [dropping, setDropping] = useState(false);
+  const attachmentSeq = useRef(0);
   // Last model send whose stdin write was acked but whose OMP response has not landed yet.
   // Cleared on matching success/failure or turn_start; used to restore the draft if OMP refuses.
-  const pendingSendRef = useRef<{ commandId: string; draft: string; actions: SessionMessageDraft["pendingActions"]; entryId: string } | null>(null);
+  const pendingSendRef = useRef<{
+    commandId: string;
+    draft: string;
+    actions: SessionMessageDraft["pendingActions"];
+    entryId: string;
+    attachments: DraftAttachment[];
+  } | null>(null);
   const chatRef = useRef(chat);
   chatRef.current = chat;
   const queuedFollowUpsRef = useRef(queuedFollowUps);
@@ -232,6 +307,108 @@ export function SessionView({
     messageDraftRef.current = draft;
     onMessageDraftChange(draft);
   };
+
+  const nextAttachmentId = () => {
+    attachmentSeq.current += 1;
+    return `att-${attachmentSeq.current}`;
+  };
+
+  const refreshAttachmentArtifacts = () => {
+    void ipc
+      .listArtifactsWithMetadata(taskSlug)
+      .then((items) => {
+        setArtifactItems((current) => (sameArtifactListItems(current, items) ? current : items));
+      })
+      .catch(() => undefined);
+    void ipc
+      .listTaskArtifactTree(taskSlug)
+      .then(setArtifactTree)
+      .catch(() => undefined);
+  };
+
+  const stageIncoming = (accepted: DraftAttachment[]) => {
+    if (accepted.length === 0) return;
+    const current = messageDraftRef.current;
+    updateMessageDraft({ ...current, attachments: [...current.attachments, ...accepted] });
+  };
+
+  const stagePaths = async (paths: string[]) => {
+    const incomingPaths = paths.filter((path) => path.length > 0 && !isHttpUrl(path));
+    if (incomingPaths.length === 0) return;
+    const current = messageDraftRef.current.attachments;
+    const accepted: DraftAttachment[] = [];
+    const stagedForCaps = [...current];
+    for (const path of incomingPaths) {
+      try {
+        const stat = await ipc.chatFileStat(path);
+        const kind = classifyAttachment({ name: stat.name });
+        const verdict = canStage(stagedForCaps, [{ name: stat.name, mimeType: kind === "image" ? "image/png" : "application/octet-stream", bytes: stat.bytes }])[0];
+        if (!verdict || verdict.ok === false) {
+          toast.error(verdict && verdict.ok === false ? verdict.reason : `${stat.name} — could not attach`);
+          continue;
+        }
+        const item: DraftAttachment = {
+          id: nextAttachmentId(),
+          kind,
+          name: stat.name,
+          mimeType: kind === "image" ? "image/png" : "application/octet-stream",
+          bytes: stat.bytes,
+          sourcePath: path,
+        };
+        accepted.push(item);
+        stagedForCaps.push(item);
+      } catch (error) {
+        toast.error(String(error));
+      }
+    }
+    stageIncoming(accepted);
+  };
+
+  const stageBlobs = (files: File[]) => {
+    const current = messageDraftRef.current.attachments;
+    const accepted: DraftAttachment[] = [];
+    const stagedForCaps = [...current];
+    for (const file of files) {
+      if (isHttpUrl(file.name)) continue;
+      const kind = classifyAttachment({ mimeType: file.type, name: file.name });
+      const mimeType = file.type || (kind === "image" ? "image/png" : "application/octet-stream");
+      const verdict = canStage(stagedForCaps, [{ name: file.name, mimeType, bytes: file.size }])[0];
+      if (!verdict || verdict.ok === false) {
+        toast.error(verdict && verdict.ok === false ? verdict.reason : `${file.name} — could not attach`);
+        continue;
+      }
+      const item: DraftAttachment = {
+        id: nextAttachmentId(),
+        kind,
+        name: file.name,
+        mimeType,
+        bytes: file.size,
+        previewUrl: URL.createObjectURL(file),
+      };
+      accepted.push(item);
+      stagedForCaps.push(item);
+    }
+    stageIncoming(accepted);
+  };
+
+  useEffect(() => {
+    const un = ipc.getCurrentWebview().onDragDropEvent((event) => {
+      if (event.payload.type === "enter" || event.payload.type === "over") {
+        setDropping(true);
+        return;
+      }
+      if (event.payload.type === "leave") {
+        setDropping(false);
+        return;
+      }
+      const { paths } = event.payload;
+      setDropping(false);
+      void stagePaths(paths);
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, [taskSlug]);
 
   // ---- session durability & resume gate (issue #24) ----
   // An explicit navigation intent (Start fresh -> spawn, Resume -> resume) skips the gate and
@@ -657,6 +834,7 @@ export function SessionView({
   const appendPreparedAction = (text: string, provenance: SessionMessageActionProvenance) => {
     const current = messageDraftRef.current;
     updateMessageDraft({
+      ...current,
       body: appendGeneratedText(current.body, text),
       pendingActions: [...current.pendingActions, provenance],
     });
@@ -726,110 +904,11 @@ export function SessionView({
     }
   };
 
-  const sendCurrentMessage = async (text?: string) => {
-    const body = (text ?? messageDraftRef.current.body).trim();
-    if (messageSending || body.length === 0) return;
-    const transport = observation?.transport;
-    if (transport !== "rpc" && transport !== "pty") {
-      setMessageError("The session is still connecting.");
-      return;
-    }
-    const actions = [...messageDraftRef.current.pendingActions];
-    // Live turn state leads the 1.5s observation poll, and OMP calls a turn that is asking a
-    // question `waiting_for_input`, not `busy`. Anything short of a settled idle session has to
-    // steer: a second `prompt` inside an open turn is refused ("Agent is already processing").
-    const busy = isTurnActive({
-      pendingTurn: chatRef.current.pendingTurn,
-      turnOpen: chatRef.current.turnOpen,
-      agentState: observation?.state?.agent?.state,
-    });
-    setMessageSending(true);
-    setMessageError("");
-    try {
-      if (transport === "rpc") {
-        const plan = planChatSend(body, chatRef.current.commands, busy);
-        const sent = await dispatchChatPlan(plan, busy);
-        // Only once the write landed: a rejected send must leave the draft in the composer and no
-        // user row claiming it was delivered. Apply outside setState so the entry id is available
-        // immediately after the await (React may defer the updater until the next flush).
-        const applied = applySendPlan(chatRef.current, body, plan);
-        chatRef.current = applied.state;
-        setChat(applied.state);
-        if (sent && applied.entryId) {
-          pendingSendRef.current = { commandId: sent.commandId, draft: body, actions, entryId: applied.entryId };
-        }
-        if (busy && plan.optimisticKind === "follow_up") {
-          const nextQueue = [...queuedFollowUpsRef.current, body];
-          queuedFollowUpsRef.current = nextQueue;
-          onQueuedFollowUpsChange?.(nextQueue);
-        }
-        updateMessageDraft({ body: "", pendingActions: [] });
-      }
-      if (actions.length > 0) {
-        try {
-          await ipc.finalizeSessionMessageActions(id, taskSlug, actions);
-          await refreshFinalizedActions(actions);
-        } catch (error) {
-          setMessageError(`Delivered to session, but Alinery could not finalize message metadata: ${String(error)}`);
-        }
-      }
-    } catch (error) {
-      setMessageError(String(error));
-    } finally {
-      setMessageSending(false);
-    }
-  };
-
-  const sendNow = async () => {
-    const draft = messageDraftRef.current.body.trim();
-    const queued = latestQueuedFollowUp(queuedFollowUpsRef.current);
-    const text = draft || queued;
-    if (!text || messageSending) return;
-    const transport = observation?.transport;
-    if (transport !== "rpc") {
-      setMessageError("The session is still connecting.");
-      return;
-    }
-    setMessageSending(true);
-    setMessageError("");
-    try {
-      const command = abortAndPromptCommand(text);
-      await ipc.rpcWriteSession(id, command);
-      if (draft) {
-        updateMessageDraft({ body: "", pendingActions: [] });
-        const next = appendOptimisticUser(chatRef.current, draft, "prompt");
-        chatRef.current = next;
-        setChat(next);
-        const entryId = next.entries[next.entries.length - 1]?.id;
-        if (entryId) pendingSendRef.current = { commandId: command.id, draft, actions: [], entryId };
-      } else {
-        const remaining = queuedFollowUpsRef.current.slice(0, -1);
-        onQueuedFollowUpsChange?.(remaining);
-        setChat((current) => {
-          const entries = [...current.entries];
-          let entryId: string | undefined;
-          for (let i = entries.length - 1; i >= 0; i -= 1) {
-            const entry = entries[i];
-            if (entry?.type === "follow_up" && entry.text === text) {
-              entries[i] = { ...entry, type: "prompt" };
-              entryId = entry.id;
-              break;
-            }
-          }
-          const next = { ...current, entries };
-          chatRef.current = next;
-          if (entryId) pendingSendRef.current = { commandId: command.id, draft: text, actions: [], entryId };
-          return next;
-        });
-      }
-    } catch (error) {
-      setMessageError(String(error));
-    } finally {
-      setMessageSending(false);
-    }
-  };
-
-  const dispatchChatPlan = async (plan: ReturnType<typeof planChatSend>, busy: boolean): Promise<{ commandId: string } | null> => {
+  const dispatchChatPlan = async (
+    plan: ReturnType<typeof planChatSend>,
+    busy: boolean,
+    extras?: { message?: string; images?: ImageContent[] },
+  ): Promise<{ commandId: string } | null> => {
     const dispatch = plan.dispatch;
     switch (dispatch.kind) {
       case "open-providers":
@@ -867,13 +946,142 @@ export function SessionView({
       case "prompt":
       case "unknown-prompt":
       case "plain": {
-        const message = dispatch.message;
-        const command = busy ? followUpCommand(message) : promptCommand(message);
+        const message = extras?.message ?? dispatch.message;
+        const images = extras?.images;
+        const command = busy ? followUpCommand(message, undefined, images) : promptCommand(message, undefined, images);
         await ipc.rpcWriteSession(id, command);
         return plan.invokesModel ? { commandId: command.id } : null;
       }
     }
   };
+
+  const sendCurrentMessage = async (text?: string) => {
+    const caption = (text ?? messageDraftRef.current.body).trim();
+    const attachments = messageDraftRef.current.attachments ?? [];
+    if (messageSending || (caption.length === 0 && attachments.length === 0)) return;
+    if (caption.startsWith("/") && attachments.length > 0) {
+      toast.error("Remove attachments or clear the slash command");
+      return;
+    }
+    const transport = observation?.transport;
+    if (transport !== "rpc" && transport !== "pty") {
+      setMessageError("The session is still connecting.");
+      return;
+    }
+    const actions = [...messageDraftRef.current.pendingActions];
+    const busy = isTurnActive({
+      pendingTurn: chatRef.current.pendingTurn,
+      turnOpen: chatRef.current.turnOpen,
+      agentState: observation?.state?.agent?.state,
+    });
+    setMessageSending(true);
+    setMessageError("");
+    try {
+      if (transport === "rpc") {
+        let extras: { message?: string; images?: ImageContent[] } | undefined;
+        let queuedAttachments = attachments;
+        if (attachments.length > 0) {
+          const prepared = await prepareChatSend(taskSlug, repoPath, caption, attachments);
+          extras = { message: prepared.message, images: prepared.images };
+          queuedAttachments = prepared.copied;
+          refreshAttachmentArtifacts();
+        }
+        const plan = planChatSend(caption, chatRef.current.commands, busy);
+        const sent = await dispatchChatPlan(plan, busy, extras);
+        const rowAttachments = draftToRowAttachments(attachments);
+        const applied = applySendPlan(chatRef.current, caption, plan, rowAttachments.length > 0 ? rowAttachments : undefined);
+        chatRef.current = applied.state;
+        setChat(applied.state);
+        if (sent && applied.entryId) {
+          pendingSendRef.current = { commandId: sent.commandId, draft: caption, actions, entryId: applied.entryId, attachments };
+        }
+        if (busy && plan.optimisticKind === "follow_up") {
+          const nextQueue = [...queuedFollowUpsRef.current, { text: caption, attachments: queuedAttachments }];
+          queuedFollowUpsRef.current = nextQueue;
+          onQueuedFollowUpsChange?.(nextQueue);
+        }
+        updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
+      }
+      if (actions.length > 0) {
+        try {
+          await ipc.finalizeSessionMessageActions(id, taskSlug, actions);
+          await refreshFinalizedActions(actions);
+        } catch (error) {
+          setMessageError(`Delivered to session, but Alinery could not finalize message metadata: ${String(error)}`);
+        }
+      }
+    } catch (error) {
+      toast.error(String(error));
+      setMessageError(String(error));
+    } finally {
+      setMessageSending(false);
+    }
+  };
+
+  const sendNow = async () => {
+    const draftBody = messageDraftRef.current.body.trim();
+    const draftAttachments = messageDraftRef.current.attachments ?? [];
+    const usingDraft = draftBody.length > 0 || draftAttachments.length > 0;
+    const queued = latestQueuedFollowUp(queuedFollowUpsRef.current);
+    const caption = usingDraft ? draftBody : (queued?.text ?? "");
+    const attachments = usingDraft ? draftAttachments : (queued?.attachments ?? []);
+    if (messageSending || (caption.length === 0 && attachments.length === 0)) return;
+    const transport = observation?.transport;
+    if (transport !== "rpc") {
+      setMessageError("The session is still connecting.");
+      return;
+    }
+    setMessageSending(true);
+    setMessageError("");
+    try {
+      let message = caption;
+      let images: ImageContent[] | undefined;
+      let pendingAttachments = attachments;
+      if (attachments.length > 0) {
+        const prepared = await prepareChatSend(taskSlug, repoPath, caption, attachments);
+        message = prepared.message;
+        images = prepared.images;
+        pendingAttachments = prepared.copied;
+        refreshAttachmentArtifacts();
+      }
+      const command = abortAndPromptCommand(message, undefined, images);
+      await ipc.rpcWriteSession(id, command);
+      const rowAttachments = draftToRowAttachments(attachments);
+      if (usingDraft) {
+        updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
+        const next = appendOptimisticUser(chatRef.current, caption, "prompt", undefined, rowAttachments.length > 0 ? rowAttachments : undefined);
+        chatRef.current = next;
+        setChat(next);
+        const entryId = next.entries[next.entries.length - 1]?.id;
+        if (entryId) pendingSendRef.current = { commandId: command.id, draft: caption, actions: [], entryId, attachments: pendingAttachments };
+      } else {
+        const remaining = queuedFollowUpsRef.current.slice(0, -1);
+        onQueuedFollowUpsChange?.(remaining);
+        setChat((current) => {
+          const entries = [...current.entries];
+          let entryId: string | undefined;
+          for (let i = entries.length - 1; i >= 0; i -= 1) {
+            const entry = entries[i];
+            if (entry?.type === "follow_up" && entry.text === caption) {
+              entries[i] = { ...entry, type: "prompt" };
+              entryId = entry.id;
+              break;
+            }
+          }
+          const next = { ...current, entries };
+          chatRef.current = next;
+          if (entryId) pendingSendRef.current = { commandId: command.id, draft: caption, actions: [], entryId, attachments: pendingAttachments };
+          return next;
+        });
+      }
+    } catch (error) {
+      toast.error(String(error));
+      setMessageError(String(error));
+    } finally {
+      setMessageSending(false);
+    }
+  };
+
   const contextActions: ContextAction[] = [
     ...(canSendCommentsToSession
       ? [
@@ -1054,10 +1262,12 @@ export function SessionView({
             chatRef.current = next;
             return next;
           });
-          updateMessageDraft({ body: pending.draft, pendingActions: pending.actions });
+          updateMessageDraft({ body: pending.draft, pendingActions: pending.actions, attachments: pending.attachments });
+          toast.error(refused);
           setMessageError(refused);
         } else {
-          if (pending && typeof value === "object" && value !== null && "type" in value && (value as { type?: string }).type === "turn_start") {
+          if (pending && (matchingSendSuccess(value, pending.commandId) || (typeof value === "object" && value !== null && "type" in value && value.type === "turn_start"))) {
+            revokeDraftPreviewUrls(pending.attachments);
             pendingSendRef.current = null;
           }
           setChat((current) => {
@@ -1067,9 +1277,10 @@ export function SessionView({
               const reconciled = reconcileQueuedFollowUps(queuedFollowUpsRef.current, count);
               queuedFollowUpsRef.current = reconciled.texts;
               onQueuedFollowUpsChange?.(reconciled.texts);
+              const texts = reconciled.texts.map((item) => item.text);
               next = {
                 ...next,
-                entries: next.entries.filter((entry) => entry.type !== "follow_up" || reconciled.texts.includes(entry.text)),
+                entries: next.entries.filter((entry) => entry.type !== "follow_up" || texts.includes(entry.text)),
               };
             }
             chatRef.current = next;
@@ -1131,7 +1342,10 @@ export function SessionView({
 
       .then(() => {
         if (cancelled) return;
-        const missing = queuedTextsNotInEntries(queuedFollowUpsRef.current, chatRef.current.entries);
+        const missing = queuedTextsNotInEntries(
+          queuedFollowUpsRef.current.map((item) => item.text),
+          chatRef.current.entries,
+        );
         if (missing.length > 0) {
           setChat((current) => {
             let next = current;
@@ -1341,7 +1555,7 @@ export function SessionView({
     agentState !== "waiting_for_approval" &&
     !chat.sessionMeta.isCompacting &&
     !pendingUiReply &&
-    (messageDraft.body.trim().length > 0 || latestQueuedFollowUp(queuedFollowUps) !== undefined);
+    (messageDraft.body.trim().length > 0 || (messageDraft.attachments?.length ?? 0) > 0 || latestQueuedFollowUp(queuedFollowUps) !== undefined);
   const uiPrompt = chat.pendingUi.find((request) => request.method === "select" || request.method === "input" || request.method === "editor");
   const queuedMeta = chat.sessionMeta.queuedMessageCount ?? queuedFollowUps.length;
   const chatMeta = [
@@ -1559,6 +1773,25 @@ export function SessionView({
                         catalog={chat.commands}
                         sending={messageSending}
                         showHints={chatVisibility.showComposerHints}
+                        attachments={messageDraft.attachments ?? []}
+                        dropping={dropping}
+                        onAttach={() => {
+                          void ipc
+                            .pickAttachmentFilesDialog()
+                            .then((paths) => void stagePaths(paths))
+                            .catch((error) => toast.error(String(error)));
+                        }}
+                        onRemoveAttachment={(id) => {
+                          const current = messageDraftRef.current;
+                          const removed = current.attachments.find((item) => item.id === id);
+                          if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+                          updateMessageDraft({ ...current, attachments: current.attachments.filter((item) => item.id !== id) });
+                        }}
+                        onClear={() => {
+                          revokeDraftPreviewUrls(messageDraftRef.current.attachments);
+                          updateMessageDraft({ body: "", pendingActions: messageDraftRef.current.pendingActions, attachments: [] });
+                        }}
+                        onPasteFiles={stageBlobs}
                         onBodyChange={(next) => {
                           updateMessageDraft({ ...messageDraftRef.current, body: next });
                           setMessageError("");

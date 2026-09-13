@@ -1,5 +1,6 @@
-import { ArrowUp, CornerDownLeft, Square } from "lucide-react";
-import { type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ArrowUp, CornerDownLeft, Paperclip, Square } from "lucide-react";
+import { type ClipboardEvent, type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { DraftAttachment } from "./chat/attachments";
 import { groupCommands, matchCommands, parseSlash } from "./chat/commands";
 import { formatComposerStats } from "./chat/format";
 import { type ChatCommand, type SessionChatStatus, SOURCE_LABEL } from "./chat/types";
@@ -25,6 +26,12 @@ export type ChatComposerProps = {
   canAbort?: boolean;
   approvalNotice?: { action: string; detail: string } | null;
   queuedCount?: number;
+  attachments?: DraftAttachment[];
+  dropping?: boolean;
+  onAttach?: () => void;
+  onRemoveAttachment?: (id: string) => void;
+  onClear?: () => void;
+  onPasteFiles?: (files: File[]) => void;
 };
 
 export function ChatComposer({
@@ -43,6 +50,12 @@ export function ChatComposer({
   canAbort,
   approvalNotice,
   queuedCount,
+  attachments,
+  dropping = false,
+  onAttach,
+  onRemoveAttachment,
+  onClear,
+  onPasteFiles,
 }: ChatComposerProps) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -74,9 +87,36 @@ export function ChatComposer({
 
   function submit() {
     const raw = body.trim();
-    if (readOnly || !raw || waiting || sending || metrics.overLimit) return;
+    if (readOnly || waiting || sending || metrics.overLimit) return;
+    if (!raw && (attachments?.length ?? 0) === 0) return;
     onSend(raw);
     setOpen(false);
+  }
+
+  function clearDraft() {
+    if (onClear) onClear();
+    else onBodyChange("");
+  }
+
+  function paste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    if (readOnly) return;
+    const data = e.clipboardData;
+    if (!data) return;
+    const taken: File[] = [];
+    const items = data.items;
+    if (items) {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (!item) continue;
+        if (item.kind !== "file" && !item.type.startsWith("image/")) continue;
+        const file = item.getAsFile();
+        if (file) taken.push(file);
+      }
+    }
+    if (taken.length === 0) taken.push(...Array.from(data.files ?? []));
+    if (taken.length === 0) return;
+    e.preventDefault();
+    onPasteFiles?.(taken);
   }
 
   function fill(cmd: ChatCommand) {
@@ -147,9 +187,12 @@ export function ChatComposer({
 
   const mode = readOnly ? "readonly" : waiting ? "wait" : running ? "queue" : "prompt";
   const placeholder = readOnly ? "This session has ended — history only" : waiting ? "Waiting on approval…" : running ? "Send after this turn…" : "Message or /command";
-  const sendDisabled = readOnly || waiting || sending || metrics.overLimit || body.trim().length === 0;
+  const sendDisabled = readOnly || waiting || sending || metrics.overLimit || (body.trim().length === 0 && (attachments?.length ?? 0) === 0);
   const sendNowDisabled = !sendNowEnabled || sending || readOnly;
   const sendLabel = running ? "Queue" : "Send";
+  const staged = attachments ?? [];
+  const images = staged.filter((a) => a.kind === "image");
+  const files = staged.filter((a) => a.kind === "file");
 
   return (
     <div className="chat-composer">
@@ -171,7 +214,7 @@ export function ChatComposer({
           {/* The text area is gone at this size, so Send and Clear are the only way out of a
               pasted-in wall of text. Without them the draft is unsendable and unclearable. */}
           <div className="session-message-large-actions">
-            <button type="button" className="btn session-message-clear" onClick={() => onBodyChange("")}>
+            <button type="button" className="btn session-message-clear" onClick={clearDraft}>
               Clear large draft
             </button>
             {onSendNow ? (
@@ -185,8 +228,37 @@ export function ChatComposer({
           </div>
         </div>
       ) : (
-        <div className={`chat-composer-box${waiting ? " wait" : ""}`} data-mode={mode}>
+        <div className={`chat-composer-box${waiting ? " wait" : ""}${dropping ? " drop" : ""}`} data-mode={mode}>
+          {images.length > 0 ? (
+            <div className="chat-composer-images">
+              {images.map((a) => (
+                <div key={a.id} className="chat-composer-thumb">
+                  {a.previewUrl ? <img src={a.previewUrl} alt="" /> : a.name}
+                  <button type="button" aria-label={`Remove ${a.name}`} onClick={() => onRemoveAttachment?.(a.id)}>
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {files.length > 0 ? (
+            <div className="chat-composer-files">
+              {files.map((a) => (
+                <div key={a.id} className="chat-composer-chip">
+                  {a.name}
+                  <button type="button" aria-label={`Remove ${a.name}`} onClick={() => onRemoveAttachment?.(a.id)}>
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <div className="chat-composer-row">
+            {!readOnly ? (
+              <button type="button" className="btn ghost small" onClick={() => onAttach?.()} aria-label="Attach files">
+                <Paperclip className="chat-composer-icon" />
+              </button>
+            ) : null}
             <span className="chat-composer-prompt" aria-hidden>
               ›
             </span>
@@ -205,12 +277,18 @@ export function ChatComposer({
               disabled={readOnly}
               onChange={(e) => onBodyChange(e.currentTarget.value)}
               onKeyDown={onKeyDown}
+              onPaste={paste}
               onCompositionStart={() => onCompositionChange?.(true)}
               onCompositionEnd={() => onCompositionChange?.(false)}
               onFocus={() => {
                 if (slash) setOpen(true);
               }}
             />
+            {staged.length > 0 && !readOnly ? (
+              <button type="button" className="btn ghost small" onClick={clearDraft}>
+                Clear
+              </button>
+            ) : null}
             {abortEnabled && running && !readOnly ? (
               <button type="button" className="btn ghost small chat-composer-abort" onClick={onAbort} aria-label="Abort turn" title="Esc abort">
                 <Square className="chat-composer-icon" fill="currentColor" />

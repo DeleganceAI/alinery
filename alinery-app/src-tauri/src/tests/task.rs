@@ -2,7 +2,10 @@
 //!
 //! `use super::*` reaches the shared imports and fixtures in tests/mod.rs.
 use super::*;
-use crate::{artifacts_dir, duplicate_fail_key, duplicate_task_in, first_step_for_playbook, list_sessions_for_repo, CreateTaskResult, FAIL_DUPLICATE_AFTER_WORKTREE};
+use crate::{
+    artifacts_dir, chat_file_stat, copy_chat_attachments_in, duplicate_fail_key, duplicate_task_in, first_step_for_playbook, list_sessions_for_repo, read_chat_image_in,
+    write_chat_attachment_bytes_in, CreateTaskResult, FAIL_DUPLICATE_AFTER_WORKTREE, MAX_CHAT_IMAGE_BYTES,
+};
 
 #[test]
 fn board_task_counts_live_sessions_and_current_phase() {
@@ -1087,6 +1090,29 @@ fn attachment_copy_stops_the_batch_at_the_set_cap() {
 }
 
 #[test]
+fn attachment_copy_counts_existing_dir_bytes_toward_the_set_cap() {
+    let repo = unique_attachment_temp("attachment-existing-set");
+    let attach = attachments_of(&repo, "task");
+    fs::create_dir_all(&attach).unwrap();
+    // 90 MB already on the Attachments tab; a further 20 MB copy must not sneak past
+    // a batch_bytes that starts at 0.
+    fs::File::create(attach.join("already.bin"))
+        .unwrap()
+        .set_len(MAX_ATTACHMENT_SET_BYTES - 10 * 1024 * 1024)
+        .unwrap();
+    let extra = repo.join("extra.bin");
+    fs::File::create(&extra).unwrap().set_len(20 * 1024 * 1024).unwrap();
+
+    let (_, copied, failures) = copy_task_attachments(&repo, "task", &[extra.to_string_lossy().to_string()]);
+
+    assert!(copied.is_empty(), "{copied:?}");
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert!(failures[0].ends_with(" — attachment set would exceed 100 MB"), "{failures:?}");
+    assert!(!attach.join("extra.bin").exists());
+    let _ = fs::remove_dir_all(&repo);
+}
+
+#[test]
 fn attachment_copy_suffixes_a_colliding_basename() {
     let repo = unique_attachment_temp("attachment-collide");
     for (sub, body) in [("a", "from a"), ("b", "from b")] {
@@ -1134,6 +1160,87 @@ fn attachment_copy_creates_no_directory_when_there_is_nothing_local() {
     assert!(copied.is_empty(), "{copied:?}");
     assert!(failures.is_empty(), "{failures:?}");
     assert!(!attachments_of(&repo, "task").exists());
+    let _ = fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn write_chat_attachment_bytes_unique_name() {
+    let repo = unique_attachment_temp("chat-write-unique");
+    let first = write_chat_attachment_bytes_in(&repo, "task", "note.png", b"one").unwrap();
+    let second = write_chat_attachment_bytes_in(&repo, "task", "note.png", b"two").unwrap();
+    assert_eq!(first, "note.png");
+    assert_eq!(second, "note-2.png");
+    let attach = attachments_of(&repo, "task");
+    assert_eq!(fs::read(attach.join("note.png")).unwrap(), b"one");
+    assert_eq!(fs::read(attach.join("note-2.png")).unwrap(), b"two");
+    let _ = fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn write_chat_attachment_bytes_rejects_oversize_file() {
+    let repo = unique_attachment_temp("chat-write-oversize");
+    let too_big = vec![0u8; (MAX_ATTACHMENT_BYTES as usize) + 1];
+    assert!(write_chat_attachment_bytes_in(&repo, "task", "huge.bin", &too_big).is_err());
+    assert!(!attachments_of(&repo, "task").join("huge.bin").exists());
+    let _ = fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn write_chat_attachment_bytes_counts_existing_dir_bytes_toward_the_set_cap() {
+    let repo = unique_attachment_temp("chat-write-existing-set");
+    let attach = attachments_of(&repo, "task");
+    fs::create_dir_all(&attach).unwrap();
+    // 100 MB already on disk; a further write must not sneak past a batch_bytes that starts at 0.
+    fs::File::create(attach.join("already.bin")).unwrap().set_len(MAX_ATTACHMENT_SET_BYTES).unwrap();
+    assert!(write_chat_attachment_bytes_in(&repo, "task", "extra.bin", b"hello").is_err());
+    assert!(!attach.join("extra.bin").exists());
+    let _ = fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn read_chat_image_rejects_oversize_png_before_encoding() {
+    let repo = unique_attachment_temp("chat-read-oversize");
+    let attach = attachments_of(&repo, "task");
+    fs::create_dir_all(&attach).unwrap();
+    fs::File::create(attach.join("big.png")).unwrap().set_len(MAX_CHAT_IMAGE_BYTES + 1).unwrap();
+    assert!(read_chat_image_in(&repo, "task", "big.png").is_err());
+    let _ = fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn read_chat_image_rejects_pdf() {
+    let repo = unique_attachment_temp("chat-read-pdf");
+    let attach = attachments_of(&repo, "task");
+    fs::create_dir_all(&attach).unwrap();
+    fs::write(attach.join("notes.pdf"), b"%PDF").unwrap();
+    assert!(read_chat_image_in(&repo, "task", "notes.pdf").is_err());
+    let _ = fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn chat_file_stat_regular_file_and_rejects_directory() {
+    let repo = unique_attachment_temp("chat-file-stat");
+    let file = repo.join("shot.png");
+    fs::write(&file, b"hello").unwrap();
+    let stat = chat_file_stat(file.to_string_lossy().to_string()).unwrap();
+    assert_eq!(stat.name, "shot.png");
+    assert_eq!(stat.bytes, 5);
+    let dir = repo.join("folder");
+    fs::create_dir_all(&dir).unwrap();
+    let err = chat_file_stat(dir.to_string_lossy().to_string()).unwrap_err();
+    assert!(err.ends_with(" — not a regular file"), "{err}");
+    let _ = fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn copy_chat_attachments_copies_files_and_drops_urls() {
+    let repo = unique_attachment_temp("chat-copy-drop-url");
+    let src = repo.join("trace.log");
+    fs::write(&src, "hello").unwrap();
+    let result = copy_chat_attachments_in(&repo, "task", &[src.to_string_lossy().to_string(), "https://x/y".into()]).unwrap();
+    assert_eq!(result.copied, vec!["trace.log".to_string()]);
+    assert!(result.failures.is_empty(), "{:?}", result.failures);
+    assert_eq!(fs::read_to_string(attachments_of(&repo, "task").join("trace.log")).unwrap(), "hello");
     let _ = fs::remove_dir_all(&repo);
 }
 

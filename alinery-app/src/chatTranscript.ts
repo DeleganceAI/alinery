@@ -5,6 +5,7 @@
  * Journal rows live on `entries`; `messages` stays the hydrate/upsert snapshot.
  */
 
+import { parseFileTrailers, type UserRowAttachment } from "./chat/attachments";
 import { parseSlash } from "./chat/commands";
 import { explodeAssistantParts } from "./chat/journal";
 import { ACTOR, type ChatCommand, type ChatEntry, type CommandSource, type SubagentStatus, subagent } from "./chat/types";
@@ -135,6 +136,13 @@ function mapPart(raw: unknown): ChatPart | null {
   if (part.type === "toolResult" || part.type === "tool_result") {
     const body = typeof part.text === "string" ? part.text : typeof part.content === "string" ? part.content : undefined;
     return { type: "toolResult", body };
+  }
+  if (part.type === "image") {
+    return {
+      type: "image",
+      mimeType: typeof part.mimeType === "string" ? part.mimeType : "image/png",
+      ...(typeof part.data === "string" ? { data: part.data } : {}),
+    };
   }
   return null;
 }
@@ -453,12 +461,26 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
   for (const message of messages) {
     const alloc = allocFor(message);
     if (message.role === "user") {
-      const text = message.content.find((p) => p.type === "text");
+      const joined = message.content
+        .filter((part) => part.type === "text")
+        .map((part) => (part.type === "text" ? part.text : ""))
+        .join("");
+      const parsed = parseFileTrailers(joined);
+      const attachments: UserRowAttachment[] = [
+        ...message.content.flatMap((part) => {
+          if (part.type !== "image") return [];
+          const chip: UserRowAttachment = { kind: "image", name: "image", mimeType: part.mimeType };
+          if (part.data) chip.src = `data:${part.mimeType};base64,${part.data}`;
+          return [chip];
+        }),
+        ...parsed.files.map((file) => ({ kind: "file" as const, name: file.name })),
+      ];
       entries.push({
         id: alloc(),
         actor: ACTOR.you,
         type: "prompt",
-        text: text && text.type === "text" ? text.text : "",
+        text: parsed.caption,
+        ...(attachments.length > 0 ? { attachments } : {}),
       });
       continue;
     }
@@ -522,12 +544,27 @@ function lastUserText(state: ChatTranscriptState): string | undefined {
 
 export type OptimisticKind = "prompt" | "follow_up" | "slash";
 
-export function appendOptimisticUser(state: ChatTranscriptState, text: string, kind: OptimisticKind = "prompt", slash?: { name: string; args?: string }): ChatTranscriptState {
+export function appendOptimisticUser(
+  state: ChatTranscriptState,
+  text: string,
+  kind: OptimisticKind = "prompt",
+  slash?: { name: string; args?: string },
+  attachments?: UserRowAttachment[],
+): ChatTranscriptState {
   const messages: ChatMessage[] = [...state.messages, { role: "user", content: [{ type: "text", text }] }];
   if (kind === "slash" && slash) {
     return appendEntry({ ...state, messages }, { actor: ACTOR.you, type: "slash", name: slash.name, args: slash.args, at: Date.now() });
   }
-  return appendEntry({ ...state, messages }, { actor: ACTOR.you, type: kind === "follow_up" ? "follow_up" : "prompt", text, at: Date.now() });
+  return appendEntry(
+    { ...state, messages },
+    {
+      actor: ACTOR.you,
+      type: kind === "follow_up" ? "follow_up" : "prompt",
+      text,
+      at: Date.now(),
+      ...(attachments ? { attachments } : {}),
+    },
+  );
 }
 
 /** Drop a send that OMP refused after the daemon already acked the stdin write. */
@@ -557,6 +594,14 @@ export function matchingSendFailure(value: unknown, commandId: string): string |
   if (event.command !== "prompt" && event.command !== "follow_up" && event.command !== "abort_and_prompt") return null;
 
   return typeof event.error === "string" ? event.error : "Send was refused.";
+}
+
+/** True when this response is the success of the prompt/follow_up we just wrote. */
+export function matchingSendSuccess(value: unknown, commandId: string): boolean {
+  const event = asRecord(value);
+  if (!event || event.type !== "response" || event.success !== true) return false;
+  if (event.id !== commandId) return false;
+  return event.command === "prompt" || event.command === "follow_up" || event.command === "abort_and_prompt";
 }
 
 export function appendOptimisticAbort(state: ChatTranscriptState, text = "Stopped the running turn."): ChatTranscriptState {
@@ -812,18 +857,45 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
       if (event.type === "message_start") {
         const incomingText = content.find((part) => part.type === "text");
         const incoming = incomingText?.type === "text" ? incomingText.text : "";
-        if (incoming) {
-          for (let i = state.entries.length - 1; i >= 0; i -= 1) {
-            const entry = state.entries[i];
-            if (entry?.type === "follow_up" && entry.text === incoming) {
-              const entries = state.entries.slice();
-              entries[i] = { ...entry, type: "prompt" };
-              return { ...state, entries };
-            }
+        let lastUserIndex = -1;
+        for (let i = state.entries.length - 1; i >= 0; i -= 1) {
+          const entry = state.entries[i];
+          if (entry?.type === "prompt" || entry?.type === "follow_up") {
+            lastUserIndex = i;
+            break;
           }
-          const lastUserEntry = [...state.entries].reverse().find((entry) => entry.type === "prompt" || entry.type === "follow_up");
-          if (lastUserText(state) === incoming && lastUserEntry?.type === "prompt") {
-            return state;
+        }
+        const lastUserEntry = lastUserIndex >= 0 ? state.entries[lastUserIndex] : undefined;
+        if (lastUserEntry?.type === "prompt" || lastUserEntry?.type === "follow_up") {
+          const attachments = lastUserEntry.attachments ?? [];
+          const sent = lastUserText(state);
+          const parsedIncoming = parseFileTrailers(incoming);
+          const sameOptimistic =
+            (incoming !== "" && (incoming === lastUserEntry.text || incoming === sent)) ||
+            (attachments.length > 0 &&
+              (incoming === lastUserEntry.text ||
+                incoming === sent ||
+                parsedIncoming.caption === lastUserEntry.text ||
+                (incoming === "" && attachments.some((item) => item.kind === "image"))));
+          if (sameOptimistic) {
+            const imageChips: UserRowAttachment[] = content.flatMap((part) => {
+              if (part.type !== "image") return [];
+              const chip: UserRowAttachment = { kind: "image", name: "image", mimeType: part.mimeType };
+              if (part.data) chip.src = `data:${part.mimeType};base64,${part.data}`;
+              return [chip];
+            });
+            const fileChips: UserRowAttachment[] =
+              parsedIncoming.files.length > 0
+                ? parsedIncoming.files.map((file) => ({ kind: "file" as const, name: file.name }))
+                : attachments.filter((item) => item.kind === "file");
+            const nextAttachments = [...(imageChips.length > 0 ? imageChips : attachments.filter((item) => item.kind === "image")), ...fileChips];
+            const entries = state.entries.slice();
+            entries[lastUserIndex] = {
+              ...lastUserEntry,
+              type: lastUserEntry.type === "follow_up" ? "prompt" : lastUserEntry.type,
+              ...(nextAttachments.length > 0 ? { attachments: nextAttachments } : {}),
+            };
+            return { ...state, entries };
           }
         }
         const parsed = parseSlash(incoming);

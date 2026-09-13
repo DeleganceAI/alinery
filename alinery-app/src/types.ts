@@ -498,7 +498,8 @@ export type ChatPart =
   | { type: "redactedThinking" }
   | { type: "text"; text: string; streaming?: boolean }
   | { type: "toolCall"; id?: string; name?: string; args?: unknown; streaming?: boolean }
-  | { type: "toolResult"; body?: string };
+  | { type: "toolResult"; body?: string }
+  | { type: "image"; mimeType: string; data?: string };
 
 export type ChatMessage = {
   role: "user" | "assistant" | "toolResult";

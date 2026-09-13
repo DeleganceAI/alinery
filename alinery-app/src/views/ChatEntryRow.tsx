@@ -243,6 +243,28 @@ function Msg({
   );
 }
 
+function UserRowBody({ entry }: { entry: Extract<ChatEntry, { type: "prompt" | "follow_up" }> }) {
+  const images = entry.attachments?.filter((item) => item.kind === "image") ?? [];
+  const files = entry.attachments?.filter((item) => item.kind === "file") ?? [];
+  return (
+    <>
+      {entry.text ? <p className="chat-text-body">{entry.text}</p> : null}
+      {images.length > 0 ? (
+        <div className="chat-entry-thumbs">
+          {images.map((item) => (item.src ? <img key={`${item.name}:${item.src}`} alt={item.name} src={item.src} /> : <span key={item.name}>{item.name}</span>))}
+        </div>
+      ) : null}
+      {files.length > 0 ? (
+        <div className="chat-entry-chips">
+          {files.map((item) => (
+            <span key={item.name}>{item.name}</span>
+          ))}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function ChatEntryRowImpl({
   entry,
   onApprove,
@@ -324,13 +346,13 @@ function ChatEntryRowImpl({
     case "prompt":
       return (
         <Msg at={entry.at} actor={entry.actor} type={entry.type} stamp={stamp} showActorLabels={showActorLabels}>
-          <p className="chat-text-body">{entry.text}</p>
+          <UserRowBody entry={entry} />
         </Msg>
       );
     case "follow_up":
       return (
         <Msg at={entry.at} actor={entry.actor} type="follow_up" stamp={stamp} showActorLabels={showActorLabels} kicker={<Status tone="wait">queued · after this turn</Status>}>
-          {entry.text ? <p className="chat-text-body">{entry.text}</p> : null}
+          <UserRowBody entry={entry} />
         </Msg>
       );
 

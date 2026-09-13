@@ -1,3 +1,5 @@
+import type { UserRowAttachment } from "./attachments";
+
 export type ActorKind = "user" | "assistant" | "subagent" | "harness" | "system";
 
 export type Actor = {
@@ -33,7 +35,7 @@ type Base = {
 };
 
 export type ChatEntry =
-  | (Base & { type: "prompt" | "follow_up"; text: string })
+  | (Base & { type: "prompt" | "follow_up"; text: string; attachments?: UserRowAttachment[] })
   | (Base & { type: "slash"; name: string; args?: string; local?: boolean })
   | (Base & {
       type: "thinking";

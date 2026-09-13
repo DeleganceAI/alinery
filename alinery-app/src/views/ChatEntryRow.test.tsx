@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { ACTOR, TYPE_LABEL } from "../chat/types";
+import { ACTOR, type ChatEntry, TYPE_LABEL } from "../chat/types";
 import { ChatEntryRow } from "./ChatEntryRow";
 
 describe("ChatEntryRow", () => {
@@ -45,5 +45,39 @@ describe("ChatEntryRow", () => {
   it("does not put the queued kicker on a prompt", () => {
     const html = render(<ChatEntryRow entry={{ id: "p1", at: Date.now(), actor: ACTOR.you, type: "prompt", text: "Continue." }} showActorLabels={false} />).container.innerHTML;
     expect(html).not.toContain("queued · after this turn");
+  });
+
+  it("renders image thumbnails and file chips on prompt and follow_up, including empty captions", () => {
+    const attachments = [
+      { kind: "image" as const, name: "shot.png", mimeType: "image/png", src: "data:image/png;base64,aa" },
+      { kind: "file" as const, name: "notes.pdf" },
+    ];
+    const prompt = {
+      id: "p1",
+      at: Date.now(),
+      actor: ACTOR.you,
+      type: "prompt" as const,
+      text: "Look",
+      attachments,
+    };
+    const { container: promptNode } = render(<ChatEntryRow entry={prompt as ChatEntry} />);
+    const promptImg = promptNode.querySelector(".chat-entry-thumbs img");
+    expect(promptImg?.getAttribute("alt")).toBe("shot.png");
+    expect(promptImg?.getAttribute("src")).toBe("data:image/png;base64,aa");
+    expect(promptNode.querySelector(".chat-entry-chips")?.textContent).toContain("notes.pdf");
+
+    const followUp = {
+      id: "f1",
+      at: Date.now(),
+      actor: ACTOR.you,
+      type: "follow_up" as const,
+      text: "",
+      attachments,
+    };
+    const { container: followNode } = render(<ChatEntryRow entry={followUp as ChatEntry} showActorLabels={false} />);
+    expect(followNode.querySelector(".chat-text-body")).toBeNull();
+    expect(followNode.querySelector(".chat-entry-thumbs img")?.getAttribute("alt")).toBe("shot.png");
+    expect(followNode.querySelector(".chat-entry-chips")?.textContent).toContain("notes.pdf");
+    expect(followNode.textContent).toContain("queued · after this turn");
   });
 });

@@ -4117,6 +4117,31 @@ dialog.modal::backdrop {
   font-size: var(--chat-font-size, 14px);
   line-height: 1.45;
 }
+
+.chat-entry-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.chat-entry-thumbs img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+}
+.chat-entry-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.chat-entry-chips span {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
 .chat-work-pre {
   margin: 0;
   white-space: pre-wrap;
@@ -4307,6 +4332,32 @@ dialog.modal::backdrop {
 }
 .chat-composer-box.wait {
   border-color: var(--warning);
+}
+
+.chat-composer-box.drop {
+  border-color: var(--accent);
+}
+.chat-composer-images,
+.chat-composer-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.chat-composer-thumb img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+}
+.chat-composer-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
 }
 /* History view: the composer keeps its shape so a finished session still reads as a chat, but
    nothing about it invites typing. */

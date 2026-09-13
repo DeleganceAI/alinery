@@ -4,6 +4,7 @@ import {
   compactCommand,
   extensionUiConfirm,
   extensionUiValue,
+  followUpCommand,
   getAvailableModelsCommand,
   getLoginProvidersCommand,
   getStateCommand,
@@ -60,5 +61,17 @@ describe("ompRpc", () => {
     expect(abortAndPromptCommand("now", "c21")).toEqual({ id: "c21", type: "abort_and_prompt", message: "now" });
     expect(JSON.stringify(abortAndPromptCommand("now", "c21"))).not.toContain("method");
     expect(JSON.stringify(abortAndPromptCommand("now", "c21"))).not.toContain("params");
+  });
+
+  it("puts images on prompt/follow_up/abort_and_prompt and omits an empty list", () => {
+    const images = [{ type: "image" as const, data: "aa", mimeType: "image/png" }];
+
+    expect(promptCommand("hi", "c1")).toEqual({ id: "c1", type: "prompt", message: "hi" });
+    expect(promptCommand("hi", "c1", images)).toEqual({ id: "c1", type: "prompt", message: "hi", images });
+    expect(followUpCommand("hi", "c2", images)).toEqual({ id: "c2", type: "follow_up", message: "hi", images });
+    expect(abortAndPromptCommand("hi", "c3", images)).toEqual({ id: "c3", type: "abort_and_prompt", message: "hi", images });
+    expect(promptCommand("hi", "c1", [])).toEqual({ id: "c1", type: "prompt", message: "hi" });
+    expect(JSON.stringify(promptCommand("hi", "c1", images))).not.toContain("method");
+    expect(JSON.stringify(promptCommand("hi", "c1", images))).not.toContain("params");
   });
 });

@@ -1,13 +1,17 @@
 /** Official OMP RPC stdin commands. Never `{ method, params }`. */
 
+export type ImageContent = { type: "image"; data: string; mimeType: string };
+
 let seq = 0;
 const nextId = (): string => {
   seq += 1;
   return `c${seq}`;
 };
 
-export const promptCommand = (message: string, id = nextId()) => ({ id, type: "prompt" as const, message });
-export const followUpCommand = (message: string, id = nextId()) => ({ id, type: "follow_up" as const, message });
+export const promptCommand = (message: string, id = nextId(), images?: ImageContent[]) =>
+  images && images.length > 0 ? { id, type: "prompt" as const, message, images } : { id, type: "prompt" as const, message };
+export const followUpCommand = (message: string, id = nextId(), images?: ImageContent[]) =>
+  images && images.length > 0 ? { id, type: "follow_up" as const, message, images } : { id, type: "follow_up" as const, message };
 export const abortCommand = (id = nextId()) => ({ id, type: "abort" as const });
 export const negotiateProtocolCommand = (protocolVersion = 2, id = nextId()) => ({
   id,
@@ -37,7 +41,8 @@ export const setSubagentSubscriptionCommand = (level: "progress" | "events" | "o
   level,
 });
 export const getSubagentsCommand = (id = nextId()) => ({ id, type: "get_subagents" as const });
-export const abortAndPromptCommand = (message: string, id = nextId()) => ({ id, type: "abort_and_prompt" as const, message });
+export const abortAndPromptCommand = (message: string, id = nextId(), images?: ImageContent[]) =>
+  images && images.length > 0 ? { id, type: "abort_and_prompt" as const, message, images } : { id, type: "abort_and_prompt" as const, message };
 
 export const getLoginProvidersCommand = (id = nextId()) => ({ id, type: "get_login_providers" as const });
 export const loginCommand = (providerId: string, id = nextId()) => ({ id, type: "login" as const, providerId });

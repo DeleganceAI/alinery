@@ -21,6 +21,7 @@ import { ThinkingOrb } from "thinking-orbs";
 import { applyAppearance, DEFAULT_APPEARANCE } from "./appearance";
 import alineryIcon from "./assets/alinery-icon-white-plain.png";
 import { GlobalSearch, type SearchItem } from "./CommandPalette";
+import type { QueuedFollowUp } from "./chat/queue";
 import { askConfirm, ConfirmHost, confirmDanger } from "./confirm";
 import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner } from "./DaemonConflictBanner";
 import { ACTIVE_GRID_VIEW_STORAGE_KEY, DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute } from "./gridViews";
@@ -131,7 +132,7 @@ export default function App() {
   const [diagramZoomOpen, setDiagramZoomOpen] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [sessionMessageDrafts, setSessionMessageDrafts] = useState<Map<string, SessionMessageDraft>>(() => new Map());
-  const [sessionQueuedFollowUps, setSessionQueuedFollowUps] = useState<Map<string, string[]>>(() => new Map());
+  const [sessionQueuedFollowUps, setSessionQueuedFollowUps] = useState<Map<string, QueuedFollowUp[]>>(() => new Map());
   const [productName, setProductName] = useState("");
   const [appVersion, setAppVersion] = useState("");
   const duplicatingRef = useRef(false);
@@ -1295,12 +1296,12 @@ export default function App() {
                     });
                   }}
                   queuedFollowUps={sessionQueuedFollowUps.get(sessionMessageDraftKey(appConfig.active_repo, view.taskSlug, view.id)) ?? []}
-                  onQueuedFollowUpsChange={(texts) => {
+                  onQueuedFollowUpsChange={(items) => {
                     const key = sessionMessageDraftKey(appConfig.active_repo, view.taskSlug, view.id);
                     setSessionQueuedFollowUps((current) => {
                       const next = new Map(current);
-                      if (texts.length === 0) next.delete(key);
-                      else next.set(key, texts);
+                      if (items.length === 0) next.delete(key);
+                      else next.set(key, items);
                       return next;
                     });
                   }}

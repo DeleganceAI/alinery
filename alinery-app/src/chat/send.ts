@@ -1,4 +1,5 @@
 import { appendHarnessNotice, appendOptimisticUser, type ChatTranscriptState, type OptimisticKind } from "../chatTranscript";
+import type { UserRowAttachment } from "./attachments";
 import { findCommand, parseSlash } from "./commands";
 import { routeSlash, type SlashDispatch } from "./slash";
 import type { ChatCommand } from "./types";
@@ -59,8 +60,8 @@ function invokesAgent(name: string | undefined, catalog: ChatCommand[]): boolean
   return source !== undefined && AGENT_SOURCES.has(source);
 }
 
-export function applySendPlan(state: ChatTranscriptState, text: string, plan: ChatSendPlan): { state: ChatTranscriptState; entryId: string } {
-  let next = appendOptimisticUser(state, text, plan.optimisticKind, plan.slash);
+export function applySendPlan(state: ChatTranscriptState, text: string, plan: ChatSendPlan, attachments?: UserRowAttachment[]): { state: ChatTranscriptState; entryId: string } {
+  let next = appendOptimisticUser(state, text, plan.optimisticKind, plan.slash, attachments);
   const entryId = next.entries[next.entries.length - 1]?.id ?? "";
   if (plan.notice) {
     const event = plan.dispatch.kind === "hatch" ? "hatch" : "notice";
