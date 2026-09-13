@@ -1,4 +1,8 @@
 import type { ChatModelOption } from "../chatTranscript";
+import type { HostedCatalogView } from "../types";
+
+/** Product provider for Alinery-hosted models. Not an OMP login row. */
+export const HOSTED_PROVIDER = "alinery";
 
 /** OMP `get_login_providers` row. */
 export type LoginProvider = {
@@ -36,7 +40,8 @@ export type AdvancedProviderRow = {
  * provider whether or not it holds a credential (`models.db`), so for a provider that does have a
  * login row, models say nothing about auth and only `authenticated` does.
  */
-export function needsProviderSetup(providers: LoginProvider[], currentModel?: string, models: ChatModelOption[] = []): boolean {
+export function needsProviderSetup(providers: LoginProvider[], currentModel?: string, models: ChatModelOption[] = [], hostedReady = false): boolean {
+  if (hostedReady) return false;
   if (providers.length === 0) return false;
   const loginIds = new Set(providers.map((p) => p.id));
   const envReady = models.some((m) => !loginIds.has(m.provider));
@@ -63,6 +68,7 @@ export function partitionProviders(input: { loginProviders: LoginProvider[]; mod
   const advanced = new Map<string, AdvancedProviderRow>();
 
   for (const [id, count] of modelProviders) {
+    if (id === HOSTED_PROVIDER) continue;
     if (loginIds.has(id)) continue;
     advanced.set(id, {
       id,
@@ -91,9 +97,23 @@ export function partitionProviders(input: { loginProviders: LoginProvider[]; mod
     });
   }
 
-  const chatLogin = input.loginProviders.filter((p) => !advanced.has(p.id));
+  const chatLogin = input.loginProviders.filter((p) => p.id !== HOSTED_PROVIDER && !advanced.has(p.id));
   const advancedList = [...advanced.values()].sort((a, b) => a.name.localeCompare(b.name));
   return { chatLogin, advanced: advancedList };
+}
+
+/** Catalog rows first; drop OMP duplicates of the same `alinery/<id>`. */
+export function mergeHostedModels(models: ChatModelOption[], hosted: HostedCatalogView | null | undefined): ChatModelOption[] {
+  if (!hosted) return models;
+  const hostedRows = hosted.models.map((m) => ({ provider: HOSTED_PROVIDER, id: m.id }));
+  const seen = new Set(hostedRows.map((m) => `${m.provider}/${m.id}`));
+  return [...hostedRows, ...models.filter((m) => !seen.has(`${m.provider}/${m.id}`))];
+}
+
+export function hostedPrice(hosted: HostedCatalogView | null | undefined, provider: string, id: string): number | undefined {
+  if (provider !== HOSTED_PROVIDER || !hosted) return undefined;
+  const row = hosted.models.find((m) => m.id === id);
+  return row?.price ?? undefined;
 }
 
 export function isInteractivePromptLoginError(error: string | undefined | null): boolean {
@@ -110,6 +130,8 @@ export type SetupOfferInput = {
   providers: LoginProvider[];
   models: ChatModelOption[];
   currentModel?: string;
+  /** Paid + minted hosted models count as set up. Do not nag Anthropic. */
+  hostedReady?: boolean;
 };
 
 /**
@@ -123,5 +145,5 @@ export type SetupOfferInput = {
 export function shouldOfferProviderSetup(input: SetupOfferInput): boolean {
   if (!input.connected || input.suppressed || input.busy) return false;
   if (input.providers.length === 0) return false;
-  return needsProviderSetup(input.providers, input.currentModel, input.models);
+  return needsProviderSetup(input.providers, input.currentModel, input.models, input.hostedReady === true);
 }

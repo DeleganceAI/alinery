@@ -115,6 +115,8 @@ pub(crate) struct AccountTokens {
     user: AccountUser,
     #[serde(default)]
     plan: Option<String>,
+    #[serde(default)]
+    paid: bool,
     session_id: String,
 }
 
@@ -126,6 +128,7 @@ pub(crate) struct AccountStatus {
     pub(crate) signed_in: bool,
     pub(crate) email: Option<String>,
     pub(crate) plan: Option<String>,
+    pub(crate) paid: bool,
     pub(crate) unavailable: bool,
 }
 
@@ -135,6 +138,7 @@ pub(crate) struct AccountSignOutResult {
     pub(crate) signed_in: bool,
     pub(crate) email: Option<String>,
     pub(crate) plan: Option<String>,
+    pub(crate) paid: bool,
     pub(crate) unavailable: bool,
     pub(crate) remote_revoked: bool,
 }
@@ -143,6 +147,7 @@ const SIGNED_OUT: AccountStatus = AccountStatus {
     signed_in: false,
     email: None,
     plan: None,
+    paid: false,
     unavailable: false,
 };
 
@@ -178,14 +183,19 @@ pub(crate) fn plan_label(plan: &str) -> String {
 
 /// `Ok(None)` is a successful response carrying no entitlement row — the caller must clear a
 /// cached plan. `Err` is a failed or unparseable lookup, where the cached plan is kept.
-pub(crate) fn parse_entitlement_plan(body: &[u8]) -> Result<Option<String>, String> {
+pub(crate) fn parse_entitlement_id(body: &[u8]) -> Result<Option<String>, String> {
     let rows: Vec<serde_json::Value> = serde_json::from_slice(body).map_err(|e| format!("bad entitlement response: {e}"))?;
     let plan = rows
         .first()
         .and_then(|row| row.get("plan"))
         .and_then(|value| value.as_str())
         .filter(|plan| !plan.is_empty());
-    Ok(plan.map(plan_label))
+    Ok(plan.map(str::to_string))
+}
+
+#[cfg(test)]
+pub(crate) fn parse_entitlement_plan(body: &[u8]) -> Result<Option<String>, String> {
+    Ok(parse_entitlement_id(body)?.as_deref().map(plan_label))
 }
 
 /// Test-mode and live-mode entitlements share one table: `SUPABASE_URL` is a constant with no
@@ -202,7 +212,7 @@ pub(crate) fn production_livemode() -> bool {
     accounts_url() == DEFAULT_ACCOUNTS_URL
 }
 
-fn fetch_account_plan_at(base: &str, access_token: &str) -> Result<Option<String>, String> {
+fn fetch_account_plan_at(base: &str, access_token: &str) -> Result<(Option<String>, bool), String> {
     let http = curl_http(
         &entitlement_url(base, production_livemode()),
         &[
@@ -215,7 +225,9 @@ fn fetch_account_plan_at(base: &str, access_token: &str) -> Result<Option<String
     if !(200..300).contains(&http.status) {
         return Err(format!("entitlement HTTP {}", http.status));
     }
-    parse_entitlement_plan(&http.body)
+    let id = parse_entitlement_id(&http.body)?;
+    let paid = id.as_deref().is_some_and(is_paid_plan);
+    Ok((id.as_deref().map(plan_label), paid))
 }
 
 fn status_for(tokens: &AccountTokens) -> AccountStatus {
@@ -223,6 +235,7 @@ fn status_for(tokens: &AccountTokens) -> AccountStatus {
         signed_in: true,
         email: Some(display_label(&tokens.user)),
         plan: tokens.plan.clone(),
+        paid: paid_from_stored_plan(tokens.plan.as_deref(), tokens.paid),
         unavailable: false,
     }
 }
@@ -232,6 +245,7 @@ fn status_unavailable(tokens: &AccountTokens) -> AccountStatus {
         signed_in: true,
         email: Some(display_label(&tokens.user)),
         plan: tokens.plan.clone(),
+        paid: paid_from_stored_plan(tokens.plan.as_deref(), tokens.paid),
         unavailable: true,
     }
 }
@@ -503,6 +517,7 @@ fn exchange_pairing_code_at(base: &str, code: &str, nonce: &str) -> Result<Accou
         expires_at: value.expires_at.ok_or_else(|| "pairing exchange response is missing expires_at".to_string())?,
         user: value.user.ok_or_else(|| "pairing exchange response is missing user".to_string())?,
         plan: None,
+        paid: false,
         // Minted here, then carried through every rotation — see `AccountTokens`.
         session_id: uuid::Uuid::new_v4().simple().to_string(),
     })
@@ -596,6 +611,7 @@ fn tokens_from_refresh(value: GoTrueRefreshResponse, tokens: &AccountTokens) -> 
         expires_at,
         user,
         plan: tokens.plan.clone(),
+        paid: tokens.paid,
         // A rotation is the same session with new tokens; the id must not change or every
         // in-flight compare-and-mutate would stop recognising its own credential.
         session_id: tokens.session_id.clone(),
@@ -806,21 +822,22 @@ fn clear_if_still_invalid(path: &Path) -> Result<bool, String> {
 /// is the only path that ever clears one — while a failed lookup keeps whatever is cached,
 /// so an outage never downgrades the chip.
 fn persist_plan_if_current(path: &Path, tokens: &AccountTokens, entitlement_base: &str) -> AccountStatus {
-    let plan = match fetch_account_plan_at(entitlement_base, &tokens.access_token) {
-        Ok(plan) => plan,
+    let (plan, paid) = match fetch_account_plan_at(entitlement_base, &tokens.access_token) {
+        Ok(value) => value,
         Err(e) => {
             eprintln!("fetch account plan: {e}");
             return status_for(tokens);
         }
     };
-    if tokens.plan == plan {
+    if tokens.plan == plan && tokens.paid == paid {
         return status_for(tokens);
     }
-    // Only `plan` is written, and onto whatever is on disk now: `tokens` is a pre-request clone,
+    // Only `plan`/`paid` are written, and onto whatever is on disk now: `tokens` is a pre-request clone,
     // and another window can have rotated this session while the entitlement request was out.
     // Writing that clone back would restore its superseded refresh token.
     let written = mutate_if_current(path, Expect::Session(&tokens.session_id), |mut current| {
         current.plan = plan;
+        current.paid = paid;
         save_tokens_to_path(path, &current).map(|()| current)
     });
     match written {
@@ -939,6 +956,7 @@ fn signed_out_result(remote_revoked: bool) -> AccountSignOutResult {
         signed_in: false,
         email: None,
         plan: None,
+        paid: false,
         unavailable: false,
         remote_revoked,
     }
@@ -1005,13 +1023,62 @@ fn sign_out_status_for_remaining(path: &Path, remote_revoked: bool) -> AccountSi
         signed_in: status.signed_in,
         email: status.email,
         plan: status.plan,
+        paid: status.paid,
         unavailable: status.unavailable,
         remote_revoked,
     }
 }
 
+fn access_token_for_hosted_revoke(path: &Path, tokens: &AccountTokens) -> Option<String> {
+    if now_secs() < tokens.expires_at {
+        return Some(tokens.access_token.clone());
+    }
+    match refresh_account_tokens_at(SUPABASE_URL, tokens) {
+        Ok(refreshed) => {
+            let _ = save_if_current(path, generation_of(tokens), &refreshed);
+            Some(refreshed.access_token)
+        }
+        Err(AccountAuthError::InvalidRefreshToken(_)) => None,
+        Err(e) => {
+            eprintln!("refresh account session for hosted revoke: {e}");
+            Some(tokens.access_token.clone())
+        }
+    }
+}
+
 fn sign_out_blocking(app: &AppHandle) -> Result<AccountSignOutResult, String> {
-    sign_out_at(&account_auth_path(app)?, SUPABASE_URL)
+    let path = account_auth_path(app)?;
+    if let Ok(Some(tokens)) = load_tokens_from_path(&path) {
+        if let (Some(config_dir), Ok(app_config)) = (path.parent(), app_config_path(app)) {
+            let access = access_token_for_hosted_revoke(&path, &tokens);
+            revoke_hosted_inference(config_dir, &app_config, &accounts_url(), access.as_deref(), Some(&tokens.session_id));
+        }
+    }
+    sign_out_at(&path, SUPABASE_URL)
+}
+
+fn sync_hosted_from_auth(app: &AppHandle, auth_path: &Path, status: &AccountStatus) {
+    let Some(config_dir) = auth_path.parent() else {
+        return;
+    };
+    let Ok(app_config) = app_config_path(app) else {
+        return;
+    };
+    let tokens = load_tokens_from_path(auth_path).ok().flatten();
+    if !(status.signed_in && status.paid) {
+        revoke_hosted_inference(
+            config_dir,
+            &app_config,
+            &accounts_url(),
+            tokens.as_ref().map(|t| t.access_token.as_str()),
+            tokens.as_ref().map(|t| t.session_id.as_str()),
+        );
+        return;
+    }
+    let Some(tokens) = tokens else {
+        return;
+    };
+    sync_hosted_inference(config_dir, &app_config, &accounts_url(), &tokens.access_token, &tokens.session_id, true);
 }
 
 #[tauri::command]
@@ -1025,7 +1092,11 @@ pub(crate) fn account_status(app: AppHandle) -> AccountStatus {
 #[tauri::command]
 pub(crate) async fn account_refresh(app: AppHandle) -> AccountStatus {
     tauri::async_runtime::spawn_blocking(move || match account_auth_path(&app) {
-        Ok(path) => refresh_account_at(&path, SUPABASE_URL, SUPABASE_URL),
+        Ok(path) => {
+            let status = refresh_account_at(&path, SUPABASE_URL, SUPABASE_URL);
+            sync_hosted_from_auth(&app, &path, &status);
+            status
+        }
         Err(_) => SIGNED_OUT,
     })
     .await
@@ -1066,6 +1137,35 @@ fn mark_sign_in_cancelled(attempt: &SignInAttempt) -> Result<(), String> {
 #[tauri::command]
 pub(crate) async fn account_sign_out(app: AppHandle) -> Result<AccountSignOutResult, String> {
     tauri::async_runtime::spawn_blocking(move || sign_out_blocking(&app)).await.map_err(|e| e.to_string())?
+}
+
+fn hosted_catalog_blocking(app: &AppHandle) -> HostedCatalogView {
+    let accounts = accounts_url();
+    let Ok(auth_path) = account_auth_path(app) else {
+        return unsigned_hosted_catalog(&accounts);
+    };
+    let config_dir = auth_path.parent().unwrap_or(auth_path.as_path()).to_path_buf();
+    let status = account_status_from_path(&auth_path);
+    let status = if status.signed_in {
+        refresh_account_at(&auth_path, SUPABASE_URL, SUPABASE_URL)
+    } else {
+        status
+    };
+    sync_hosted_from_auth(app, &auth_path, &status);
+    hosted_catalog_at(&config_dir, &accounts, status.signed_in, status.paid)
+}
+
+#[tauri::command]
+pub(crate) async fn hosted_catalog(app: AppHandle) -> HostedCatalogView {
+    tauri::async_runtime::spawn_blocking(move || hosted_catalog_blocking(&app))
+        .await
+        .unwrap_or_else(|_| unsigned_hosted_catalog(&accounts_url()))
+}
+
+#[tauri::command]
+pub(crate) fn account_open_plans(app: AppHandle) -> Result<(), String> {
+    let url = format!("{}/plans", accounts_url().trim_end_matches('/'));
+    app.opener().open_url(&url, None::<&str>).map_err(|e| format!("open plans page in browser: {e}"))
 }
 
 #[tauri::command]

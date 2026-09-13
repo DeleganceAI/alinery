@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockIpc } from "./test/mockIpc";
 import type { AccountSignOutResult, AccountStatus } from "./types";
 
-const signedOut: AccountStatus = { signedIn: false, email: null, plan: null, unavailable: false };
-const signedIn: AccountStatus = { signedIn: true, email: "a@example.com", plan: "Founders Edition", unavailable: false };
+const signedOut: AccountStatus = { signedIn: false, email: null, plan: null, paid: false, unavailable: false };
+const signedIn: AccountStatus = { signedIn: true, email: "a@example.com", plan: "Founders Edition", paid: true, unavailable: false };
 const signedOutRemote: AccountSignOutResult = { ...signedOut, remoteRevoked: true };
 const signedOutLocal: AccountSignOutResult = { ...signedOut, remoteRevoked: false };
 

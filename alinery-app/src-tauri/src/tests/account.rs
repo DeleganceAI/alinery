@@ -489,6 +489,7 @@ fn refresh_persists_rotated_token_before_entitlement() {
     let on_disk_at_plan = persisted_rx.recv().unwrap();
     assert!(on_disk_at_plan.contains("rotated"), "{on_disk_at_plan}");
     assert_eq!(status.plan.as_deref(), Some("Founders Edition"));
+    assert!(status.paid);
     assert!(fs::read_to_string(&path).unwrap().contains("Founders Edition"));
 }
 

@@ -83,6 +83,7 @@ mod backup;
 mod connections;
 mod daemon;
 mod git_ops;
+mod hosted;
 mod imports;
 mod mcp;
 mod notify;
@@ -104,6 +105,7 @@ use backup::*;
 use connections::*;
 use daemon::*;
 use git_ops::*;
+use hosted::*;
 use imports::*;
 use mcp::*;
 use notify::*;
@@ -276,6 +278,8 @@ pub fn run() {
             account_cancel_sign_in,
             account_sign_out,
             account_open,
+            hosted_catalog,
+            account_open_plans,
             import_linear,
             import_linear_for_repo,
             import_github,

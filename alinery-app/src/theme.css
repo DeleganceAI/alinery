@@ -4571,6 +4571,27 @@ dialog.modal::backdrop {
 .chat-model-item:hover {
   background: var(--surface-subtle);
 }
+.chat-model-item-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.chat-cost-band {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+}
+.chat-cost-band span {
+  width: 4px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--text-muted);
+  opacity: 0.28;
+}
+.chat-cost-band span.on {
+  opacity: 1;
+}
 .chat-mcp-row {
   cursor: default;
 }

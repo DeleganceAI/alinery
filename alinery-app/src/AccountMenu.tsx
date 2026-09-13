@@ -42,7 +42,7 @@ export function AccountMenu({ onOpenSettings }: { onOpenSettings: () => void }) 
         if (s.signedIn) hydrate(gen);
       })
       .catch(() => {
-        if (gen === generation.current) setStatus({ signedIn: false, email: null, plan: null, unavailable: false });
+        if (gen === generation.current) setStatus({ signedIn: false, email: null, plan: null, paid: false, unavailable: false });
       });
     // Bumping the generation retires every in-flight reply, unmount included.
     return () => {

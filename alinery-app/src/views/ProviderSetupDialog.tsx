@@ -16,6 +16,7 @@ import {
   loginCommand,
   setModelCommand,
 } from "../ompRpc";
+import type { HostedCatalogView } from "../types";
 import { ChatEntryRow } from "./ChatEntryRow";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatModelDialog } from "./ChatModelDialog";
@@ -75,6 +76,8 @@ export function ProviderSetupDialog({
   const [catalogueStatus, setCatalogueStatus] = useState<"connecting" | "ready" | "failed">("connecting");
   // Same store the old ModelInput picker used, so stars survive the swap rather than resetting.
   const [favorites, setFavorites] = useState<string[]>([]);
+  const [hosted, setHosted] = useState<HostedCatalogView | null>(null);
+  const [hostedLoaded, setHostedLoaded] = useState(false);
   const sessionIdRef = useRef("");
   const loginApplyRef = useRef<string | null>(null);
   const loginOpenUrlRef = useRef(false);
@@ -200,6 +203,17 @@ export function ProviderSetupDialog({
         if (!cancelled) setModelRoles(roles);
       })
       .catch(() => undefined);
+    void ipc
+      .hostedCatalog()
+      .then((view) => {
+        if (!cancelled) setHosted(view);
+      })
+      .catch(() => {
+        if (!cancelled) setHosted(null);
+      })
+      .finally(() => {
+        if (!cancelled) setHostedLoaded(true);
+      });
 
     return () => {
       cancelled = true;
@@ -303,7 +317,7 @@ export function ProviderSetupDialog({
   const providers = chat.sessionMeta.loginProviders;
   const models = chat.sessionMeta.models ?? [];
   const status = providers !== undefined ? "ready" : catalogueStatus;
-  const decided = mode === "manual" || (providers !== undefined && providers.length > 0);
+  const decided = mode === "manual" || (hostedLoaded && providers !== undefined && providers.length > 0);
   const offer =
     mode === "manual" ||
     shouldOfferProviderSetup({
@@ -313,6 +327,7 @@ export function ProviderSetupDialog({
       providers: providers ?? [],
       models,
       currentModel: chat.sessionMeta.model,
+      hostedReady: hosted?.ready === true,
     });
   useEffect(() => {
     if (mode === "auto" && decided && !offer) onClose("not-needed");
@@ -337,6 +352,7 @@ export function ProviderSetupDialog({
       loginProviders={chat.sessionMeta.loginProviders ?? []}
       livePromotedIds={livePromotedIds}
       modelRoles={modelRoles}
+      hosted={hosted}
       favorites={favorites}
       catalogueStatus={status}
       onToggleFavorite={(model, favorite) => {
@@ -362,6 +378,21 @@ export function ProviderSetupDialog({
       // No pty here to drop into, so say where /login lives rather than silently doing nothing.
       onHatchTerminalLogin={() => setModelError("This provider needs Terminal /login. Open a session and switch it to Terminal.")}
       onAssignRole={(role, model) => void assignRole(role, model)}
+      onSignIn={() => {
+        void ipc
+          .accountSignIn()
+          .then(() => ipc.accountRefresh().catch(() => undefined))
+          .then(() =>
+            ipc
+              .hostedCatalog()
+              .then(setHosted)
+              .catch(() => setHosted(null)),
+          )
+          .catch((error) => setModelError(String(error)));
+      }}
+      onGetCredits={() => {
+        void ipc.accountOpenPlans().catch((error) => setModelError(String(error)));
+      }}
       onClose={() => onClose("dismissed")}
     >
       {chat.entries
