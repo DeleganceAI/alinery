@@ -73,6 +73,9 @@ function makeFakeApi() {
         object(shape) {
           return { shape };
         },
+        string() {
+          return { type: "string" };
+        },
       },
     },
     on(event, handler) {
@@ -351,7 +354,7 @@ describe("2C — OMP extension callback behavior in isolation", () => {
 
     assert.deepEqual(events, ["agent_end", "agent_start", "session_stop", "tool_approval_requested", "tool_approval_resolved", "tool_call", "tool_result"]);
 
-    assert.deepEqual(tools, ["alinery_phase_complete"]);
+    assert.deepEqual(tools, ["alinery_phase_complete", "alinery_ask_approval"]);
   });
 
   test("maps_agent_lifecycle_without_completing_or_exiting", async () => {
@@ -579,5 +582,148 @@ describe("2C — OMP extension callback behavior in isolation", () => {
     const pcs = emit.emitted.filter((e) => e.type === "phase_completed");
     assert.equal(pcs.length, 2);
     assert.deepEqual(pcs[0], pcs[1]);
+  });
+
+  test("ask_approval_schema_has_title_and_message", () => {
+    const api = makeFakeApi();
+    const emit = makeRecordingEmitter();
+    registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
+
+    const schema = api.getToolSchema("alinery_ask_approval");
+    assert.ok(schema, "alinery_ask_approval must be registered");
+    assert.equal(schema.label, "Ask for approval");
+    assert.deepEqual(Object.keys(schema.parameters.shape).sort(), ["message", "title"]);
+  });
+
+  test("ask_approval_confirm_true_emits_wa_then_busy", async () => {
+    const api = makeFakeApi();
+    const emit = makeRecordingEmitter();
+    registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
+
+    const calls = [];
+    const ctx = {
+      ...makeContext("omp-sess-abc"),
+      ui: {
+        confirm: async (title, message) => {
+          calls.push([title, message]);
+          return true;
+        },
+      },
+    };
+    const output = await api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx);
+
+    assert.equal(output.details.approved, true);
+    assert.match(output.content[0].text, /approved/i);
+    assert.deepEqual(calls, [["Go?", "Biome failed"]]);
+    assert.deepEqual(emit.emitted, [
+      { type: "waiting_for_approval", correlation_id: "tool-call-1" },
+      { type: "busy", correlation_id: "tool-call-1" },
+    ]);
+  });
+
+  test("ask_approval_confirm_false_refuses_without_aborting", async () => {
+    const api = makeFakeApi();
+    const emit = makeRecordingEmitter();
+    registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
+
+    const ctx = {
+      ...makeContext("omp-sess-abc"),
+      ui: { confirm: async () => false },
+    };
+    const output = await api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx);
+
+    assert.equal(output.details.approved, false);
+    assert.ok(!("status" in output.details) || output.details.status !== "unavailable");
+    assert.match(output.content[0].text, /denied|do not proceed/i);
+    assert.deepEqual(emit.emitted, [
+      { type: "waiting_for_approval", correlation_id: "tool-call-1" },
+      { type: "busy", correlation_id: "tool-call-1" },
+    ]);
+  });
+
+  test("ask_approval_emits_busy_when_confirm_throws", async () => {
+    const api = makeFakeApi();
+    const emit = makeRecordingEmitter();
+    registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
+
+    const ctx = {
+      ...makeContext("omp-sess-abc"),
+      ui: {
+        confirm: async () => {
+          throw new Error("confirm failed");
+        },
+      },
+    };
+    await assert.rejects(() => api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx));
+    assert.deepEqual(
+      emit.emitted.filter((e) => e.type === "waiting_for_approval" || e.type === "busy"),
+      [
+        { type: "waiting_for_approval", correlation_id: "tool-call-1" },
+        { type: "busy", correlation_id: "tool-call-1" },
+      ],
+    );
+  });
+
+  test("ask_approval_missing_ui_is_unavailable_without_wa", async () => {
+    const api = makeFakeApi();
+    const emit = makeRecordingEmitter();
+    registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
+
+    const output = await api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, makeContext("omp-sess-abc"));
+    assert.equal(output.details.approved, false);
+    assert.equal(output.details.status, "unavailable");
+    assert.match(output.content[0].text, /unavailable/i);
+    assert.equal(
+      emit.emitted.some((e) => e.type === "waiting_for_approval"),
+      false,
+      "missing UI must not emit waiting_for_approval",
+    );
+  });
+
+  test("ask_approval_ui_without_confirm_is_unavailable_without_wa", async () => {
+    const api = makeFakeApi();
+    const emit = makeRecordingEmitter();
+    registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
+
+    const ctx = { ...makeContext("omp-sess-abc"), ui: {} };
+    const output = await api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx);
+    assert.equal(output.details.approved, false);
+    assert.equal(output.details.status, "unavailable");
+    assert.equal(
+      emit.emitted.some((e) => e.type === "waiting_for_approval"),
+      false,
+      "ui without confirm must not emit waiting_for_approval",
+    );
+  });
+
+  test("ask_approval_substitutes_empty_title_and_message", async () => {
+    const api = makeFakeApi();
+    const emit = makeRecordingEmitter();
+    registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
+
+    const calls = [];
+    const ctx = {
+      ...makeContext("omp-sess-abc"),
+      ui: {
+        confirm: async (title, message) => {
+          calls.push([title, message]);
+          return true;
+        },
+      },
+    };
+    await api.callTool("alinery_ask_approval", { title: "", message: 1 }, ctx);
+    assert.deepEqual(calls, [["Approval required", "Approval needed."]]);
+  });
+
+  test("ask_approval_tool_call_does_not_emit_wa", async () => {
+    const api = makeFakeApi();
+    const emit = makeRecordingEmitter();
+    registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
+
+    await api.trigger("tool_call", {
+      toolName: "alinery_ask_approval",
+      toolCallId: "appr-1",
+    });
+    assert.equal(emit.emitted.length, 0, "alinery_ask_approval tool_call must not emit");
   });
 });
