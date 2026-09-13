@@ -59,6 +59,7 @@ describe("collectLiveSubagents", () => {
         id: "1",
         actor: subagent("plan"),
         type: "subagent_status",
+        subagentId: "sa-plan",
         agent: "plan",
         role: "architect",
         status: "running",
@@ -68,10 +69,12 @@ describe("collectLiveSubagents", () => {
         id: "2",
         actor: subagent("explore"),
         type: "subagent_status",
+        subagentId: "sa-explore",
         agent: "explore",
         status: "completed",
         summary: "done",
       },
+
       {
         id: "3",
         actor: ACTOR.agent,

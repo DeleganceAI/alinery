@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ModelRolesMap } from "../chat/modelRoles";
 import { settleOpenUrl } from "../chat/openUrl";
-import { isInteractivePromptLoginError, shouldOfferProviderSetup } from "../chat/providers";
+import { isInteractivePromptLoginError, needsProviderSetup, shouldOfferProviderSetup } from "../chat/providers";
 import { loginReply, setModelReply } from "../chat/send";
 import type { ProvidersDialogTab } from "../chat/slash";
 import { applyRpcLine, type ChatTranscriptState, dismissPendingUi, emptyTranscript, isPresentationUi, type PendingUi } from "../chatTranscript";
@@ -42,14 +42,22 @@ export type ProviderSetupClose =
   /** The dialog was shown and the user closed it. */
   | "dismissed";
 
+const DAEMON_BACKOFF_MS = [250, 500, 1000, 2000] as const;
+
 export function ProviderSetupDialog({
   mode,
   initialTab = "accounts",
+  unsignedOpensAccounts = false,
   onPick,
   onClose,
 }: {
   mode: ProviderSetupMode;
   initialTab?: ProvidersDialogTab;
+  /**
+   * Form pickers (create task/session, review handoff) land on Accounts once the catalogue
+   * is ready and this install still needs setup. Settings model field omits this.
+   */
+  unsignedOpensAccounts?: boolean;
   /**
    * Pick a model instead of applying one. Form surfaces (create task, create session, the default
    * in Settings) want the `provider/model` string for a field, not a `set_model` written into a
@@ -64,12 +72,14 @@ export function ProviderSetupDialog({
   const [loginBusy, setLoginBusy] = useState<string | null>(null);
   const [livePromotedIds, setLivePromotedIds] = useState<string[]>([]);
   const [tab, setTab] = useState<ProvidersDialogTab>(initialTab);
+  const [catalogueStatus, setCatalogueStatus] = useState<"connecting" | "ready" | "failed">("connecting");
   // Same store the old ModelInput picker used, so stars survive the swap rather than resetting.
   const [favorites, setFavorites] = useState<string[]>([]);
   const sessionIdRef = useRef("");
   const loginApplyRef = useRef<string | null>(null);
   const loginOpenUrlRef = useRef(false);
   const handledUiRef = useRef(new Set<string>());
+  const unsignedSwitchedRef = useRef(false);
   const modelApplyRef = useRef(false);
 
   useEffect(() => {
@@ -114,31 +124,70 @@ export function ProviderSetupDialog({
 
     const attachId = Math.floor(Math.random() * 2 ** 31);
     let attached: string | null = null;
-    ipc
-      .ompSetupSession()
-      .then(async (id) => {
-        sessionIdRef.current = id;
-        // Attach even when the effect is already torn down. The daemon's setup-session reaper only
-        // arms once it has seen a client, so a session nobody ever attached to is never reaped --
-        // attaching and immediately detaching below is what lets it go.
+    let backoffTimer: number | undefined;
+
+    const reap = (id: string) => {
+      void ipc.detachSession(id, attachId);
+      if (sessionIdRef.current === id) sessionIdRef.current = "";
+      if (attached === id) attached = null;
+    };
+
+    const attachAndQuery = async (id: string) => {
+      sessionIdRef.current = id;
+      // Attach even when the effect is already torn down. The daemon's setup-session reaper only
+      // arms once it has seen a client, so a session nobody ever attached to is never reaped --
+      // attaching and immediately detaching below is what lets it go.
+      try {
         await ipc.rpcAttachSession({ id, attachId, streamToken: attachId, onLine: apply });
-        attached = id;
-        // The cleanup ran while the attach was still in flight, so it had no id to release.
-        if (cancelled) {
-          void ipc.detachSession(id, attachId);
+      } catch (error) {
+        reap(id);
+        throw error;
+      }
+      attached = id;
+      if (cancelled) {
+        reap(id);
+        return;
+      }
+      // The daemon negotiates protocol v2 for this session on `ready`, so go straight to
+      // asking what it can see.
+      await ipc.rpcWriteSession(id, getStateCommand());
+      if (cancelled) return;
+      await ipc.rpcWriteSession(id, getLoginProvidersCommand());
+      if (cancelled) return;
+      await ipc.rpcWriteSession(id, getAvailableModelsCommand());
+    };
+
+    const run = async () => {
+      let attempt = 0;
+      while (!cancelled) {
+        try {
+          const id = await ipc.ompSetupSession();
+          await attachAndQuery(id);
           return;
+        } catch (error) {
+          if (cancelled) return;
+          const leaked = attached || sessionIdRef.current;
+          if (leaked) reap(leaked);
+          const message = String(error);
+          if (!message.includes("daemon not connected")) {
+            setCatalogueStatus("failed");
+            setModelError(message);
+            return;
+          }
+          if (mode === "manual" && attempt >= DAEMON_BACKOFF_MS.length) {
+            setCatalogueStatus("failed");
+            setModelError(message);
+            return;
+          }
+          const delay = DAEMON_BACKOFF_MS[Math.min(attempt, DAEMON_BACKOFF_MS.length - 1)] ?? 2000;
+          attempt += 1;
+          await new Promise<void>((resolve) => {
+            backoffTimer = window.setTimeout(resolve, delay);
+          });
         }
-        // The daemon negotiates protocol v2 for this session on `ready`, so go straight to
-        // asking what it can see.
-        await ipc.rpcWriteSession(id, getStateCommand());
-        if (cancelled) return;
-        await ipc.rpcWriteSession(id, getLoginProvidersCommand());
-        if (cancelled) return;
-        await ipc.rpcWriteSession(id, getAvailableModelsCommand());
-      })
-      .catch((error) => {
-        if (!cancelled) setModelError(String(error));
-      });
+      }
+    };
+    void run();
     void ipc
       .readModelFavorites("omp")
       .then((rows) => {
@@ -154,9 +203,11 @@ export function ProviderSetupDialog({
 
     return () => {
       cancelled = true;
-      if (attached) void ipc.detachSession(attached, attachId);
+      if (backoffTimer != null) window.clearTimeout(backoffTimer);
+      const id = attached || sessionIdRef.current;
+      if (id) reap(id);
     };
-  }, []);
+  }, [mode]);
 
   const openBrowser = useCallback(async (request: PendingUi) => {
     try {
@@ -250,6 +301,8 @@ export function ProviderSetupDialog({
   // keeps one attach and one predicate behind both entry points, so the repo-open offer and the
   // in-session offer cannot disagree about what "set up" means.
   const providers = chat.sessionMeta.loginProviders;
+  const models = chat.sessionMeta.models ?? [];
+  const status = providers !== undefined ? "ready" : catalogueStatus;
   const decided = mode === "manual" || (providers !== undefined && providers.length > 0);
   const offer =
     mode === "manual" ||
@@ -258,25 +311,34 @@ export function ProviderSetupDialog({
       suppressed: false,
       busy: false,
       providers: providers ?? [],
-      models: chat.sessionMeta.models ?? [],
+      models,
       currentModel: chat.sessionMeta.model,
     });
   useEffect(() => {
     if (mode === "auto" && decided && !offer) onClose("not-needed");
   }, [mode, decided, offer, onClose]);
-  if (!decided || !offer) return null;
+  useEffect(() => {
+    if (!unsignedOpensAccounts || unsignedSwitchedRef.current || status !== "ready") return;
+    if (needsProviderSetup(providers ?? [], chat.sessionMeta.model, models)) {
+      unsignedSwitchedRef.current = true;
+      setTab("accounts");
+    }
+  }, [unsignedOpensAccounts, status, providers, chat.sessionMeta.model, models]);
+  if (mode === "auto" && (!decided || !offer)) return null;
+  if (mode === "manual" && !offer) return null;
 
   return (
     <ChatModelDialog
       tab={tab}
       setup={mode === "auto"}
-      models={chat.sessionMeta.models ?? []}
+      models={models}
       current={chat.sessionMeta.model}
       preselect=""
       loginProviders={chat.sessionMeta.loginProviders ?? []}
       livePromotedIds={livePromotedIds}
       modelRoles={modelRoles}
       favorites={favorites}
+      catalogueStatus={status}
       onToggleFavorite={(model, favorite) => {
         // Optimistic: the store is the authority, but a star that lags a click reads as broken.
         setFavorites((prev) => (favorite ? [...prev, model] : prev.filter((row) => row !== model)));

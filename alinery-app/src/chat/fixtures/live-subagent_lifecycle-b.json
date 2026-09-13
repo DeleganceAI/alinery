@@ -1,0 +1,11 @@
+{
+  "type": "subagent_lifecycle",
+  "payload": {
+    "id": "sa-2",
+    "agent": "Explore",
+    "agentSource": "bundled",
+    "description": "Search elsewhere",
+    "status": "started",
+    "index": 1
+  }
+}

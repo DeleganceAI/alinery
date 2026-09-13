@@ -13,12 +13,14 @@ import type { ModelRolesMap } from "../chat/modelRoles";
 import { decodeOmpPage } from "../chat/ompFile";
 import { settleOpenUrl as settleBrowserUrl } from "../chat/openUrl";
 import { isInteractivePromptLoginError, shouldOfferProviderSetup } from "../chat/providers";
+import { latestQueuedFollowUp, queuedCountFromGetState, queuedTextsNotInEntries, reconcileQueuedFollowUps } from "../chat/queue";
 import { applySendPlan, commandOutputText, loginReply, planChatSend, setModelReply } from "../chat/send";
 import { type McpServerRow, type ProvidersDialogTab, parseMcpListOutput } from "../chat/slash";
 import type { SessionChatStatus } from "../chat/types";
-import { chatVisibilityFromAppearance } from "../chat/visibility";
+import { chatVisibilityFromAppearance, lastApprovalNotice } from "../chat/visibility";
 import {
   appendOptimisticAbort,
+  appendOptimisticUser,
   applyFilePage,
   applyRpcLine,
   type ChatTranscriptState,
@@ -31,7 +33,9 @@ import {
 } from "../chatTranscript";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
+
 import {
+  abortAndPromptCommand,
   abortCommand,
   cancelExtensionUi,
   compactCommand,
@@ -42,6 +46,7 @@ import {
   getAvailableModelsCommand,
   getLoginProvidersCommand,
   getStateCommand,
+  getSubagentsCommand,
   loginCommand,
   negotiateProtocolCommand,
   promptCommand,
@@ -49,6 +54,7 @@ import {
   setModelCommand,
   setSubagentSubscriptionCommand,
 } from "../ompRpc";
+
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
 import { appendGeneratedText, canAbortChatSession, isTurnActive, OMP_INTERRUPT_DATA, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
 import type { ContextAction } from "../shared";
@@ -95,6 +101,8 @@ export function SessionView({
   appearance,
   messageDraft,
   onMessageDraftChange,
+  queuedFollowUps = [],
+  onQueuedFollowUpsChange,
   onAppearanceChange,
   onBack,
   onStartFresh,
@@ -117,6 +125,8 @@ export function SessionView({
   appearance: AppearancePrefs;
   messageDraft: SessionMessageDraft;
   onMessageDraftChange: (draft: SessionMessageDraft) => void;
+  queuedFollowUps?: string[];
+  onQueuedFollowUpsChange?: (texts: string[]) => void;
   onAppearanceChange: (next: AppearancePrefs) => void;
   onBack: () => void;
   onStartFresh: () => void;
@@ -183,6 +193,7 @@ export function SessionView({
   const [toolsOpen, setToolsOpen] = useState(false);
   const [mcpDialog, setMcpDialog] = useState<{ rows: McpServerRow[]; empty: boolean } | null>(null);
   const chatAttachIdRef = useRef(0);
+  const [chatAttachEpoch, setChatAttachEpoch] = useState(0);
   const ompStartRef = useRef<string | null>(null);
   const ompSeedRef = useRef<{ id: string; done: Promise<unknown> } | null>(null);
   const preferredViewAppliedRef = useRef<string | null>(null);
@@ -199,6 +210,9 @@ export function SessionView({
   const pendingSendRef = useRef<{ commandId: string; draft: string; actions: SessionMessageDraft["pendingActions"]; entryId: string } | null>(null);
   const chatRef = useRef(chat);
   chatRef.current = chat;
+  const queuedFollowUpsRef = useRef(queuedFollowUps);
+  queuedFollowUpsRef.current = queuedFollowUps;
+
   const handleTerminalConnectionState = useCallback((state: SessionTerminalConnectionState) => setTerminalConnection(state), []);
   const messageDraftRef = useRef(messageDraft);
   messageDraftRef.current = messageDraft;
@@ -287,14 +301,22 @@ export function SessionView({
     setViewBusy(false);
     if (intent === "history") return;
     let alive = true;
+    let pollFailures = 0;
     const observe = () => {
       ipc
         .sessionStatus(id, taskSlug || null)
         .then((next) => {
-          if (alive) setObservation(next);
+          if (!alive) return;
+          const recovering = pollFailures > 0;
+          pollFailures = 0;
+          setObservation(next);
+          if (recovering) setChatAttachEpoch((epoch) => epoch + 1);
         })
         .catch(() => {
-          if (alive) setObservation(null);
+          // Keep the last observation so a transient poll error cannot flip liveRpc
+          // and wipe the transcript. Count the miss so a later success can re-attach
+          // without clearing entries (dead socket / daemon restart).
+          if (alive) pollFailures += 1;
         });
     };
     observe();
@@ -724,6 +746,11 @@ export function SessionView({
         if (sent && applied.entryId) {
           pendingSendRef.current = { commandId: sent.commandId, draft: body, actions, entryId: applied.entryId };
         }
+        if (busy && plan.optimisticKind === "follow_up") {
+          const nextQueue = [...queuedFollowUpsRef.current, body];
+          queuedFollowUpsRef.current = nextQueue;
+          onQueuedFollowUpsChange?.(nextQueue);
+        }
         updateMessageDraft({ body: "", pendingActions: [] });
       }
       if (actions.length > 0) {
@@ -733,6 +760,55 @@ export function SessionView({
         } catch (error) {
           setMessageError(`Delivered to session, but Alinery could not finalize message metadata: ${String(error)}`);
         }
+      }
+    } catch (error) {
+      setMessageError(String(error));
+    } finally {
+      setMessageSending(false);
+    }
+  };
+
+  const sendNow = async () => {
+    const draft = messageDraftRef.current.body.trim();
+    const queued = latestQueuedFollowUp(queuedFollowUpsRef.current);
+    const text = draft || queued;
+    if (!text || messageSending) return;
+    const transport = observation?.transport;
+    if (transport !== "rpc") {
+      setMessageError("The session is still connecting.");
+      return;
+    }
+    setMessageSending(true);
+    setMessageError("");
+    try {
+      const command = abortAndPromptCommand(text);
+      await ipc.rpcWriteSession(id, command);
+      if (draft) {
+        updateMessageDraft({ body: "", pendingActions: [] });
+        const next = appendOptimisticUser(chatRef.current, draft, "prompt");
+        chatRef.current = next;
+        setChat(next);
+        const entryId = next.entries[next.entries.length - 1]?.id;
+        if (entryId) pendingSendRef.current = { commandId: command.id, draft, actions: [], entryId };
+      } else {
+        const remaining = queuedFollowUpsRef.current.slice(0, -1);
+        onQueuedFollowUpsChange?.(remaining);
+        setChat((current) => {
+          const entries = [...current.entries];
+          let entryId: string | undefined;
+          for (let i = entries.length - 1; i >= 0; i -= 1) {
+            const entry = entries[i];
+            if (entry?.type === "follow_up" && entry.text === text) {
+              entries[i] = { ...entry, type: "prompt" };
+              entryId = entry.id;
+              break;
+            }
+          }
+          const next = { ...current, entries };
+          chatRef.current = next;
+          if (entryId) pendingSendRef.current = { commandId: command.id, draft: text, actions: [], entryId };
+          return next;
+        });
       }
     } catch (error) {
       setMessageError(String(error));
@@ -942,11 +1018,11 @@ export function SessionView({
     let cancelled = false;
     chatAttachIdRef.current += 1;
     const attachId = chatAttachIdRef.current;
-    // The session-id effect already clears the transcript on a real session change. Clearing here too
-    // meant a transient `liveRpc` flip — the 1.5s sessionStatus poll nulls `observation` on ANY error —
-    // wiped visible history and forced a full re-hydrate. The first page of the new walk replaces
-    // `messages` anyway (messagePageCursor is null after a completed walk), so nothing duplicates; and
-    // if the re-attach's walk fails, the user keeps the history they could already see.
+    // The session-id effect already clears the transcript on a real session change. Do not
+    // emptyTranscript() here: a liveRpc flap would wipe visible history. The poll catch above
+    // keeps the last observation so a transient error does not re-enter; a later successful
+    // poll after a failure bumps chatAttachEpoch to re-attach without clearing entries.
+
     setTerminalConnection("opening");
     const apply = (line: string) => {
       if (cancelled) return;
@@ -968,10 +1044,28 @@ export function SessionView({
             pendingSendRef.current = null;
           }
           setChat((current) => {
-            const next = applyRpcLine(current, value);
+            let next = applyRpcLine(current, value);
+            const count = queuedCountFromGetState(value);
+            if (typeof count === "number") {
+              const reconciled = reconcileQueuedFollowUps(queuedFollowUpsRef.current, count);
+              queuedFollowUpsRef.current = reconciled.texts;
+              onQueuedFollowUpsChange?.(reconciled.texts);
+              next = {
+                ...next,
+                entries: next.entries.filter((entry) => entry.type !== "follow_up" || reconciled.texts.includes(entry.text)),
+              };
+            }
             chatRef.current = next;
             return next;
           });
+          const rec = value as { type?: string; success?: boolean; command?: string };
+          if (
+            (rec.type === "response" && rec.success === true && (rec.command === "follow_up" || rec.command === "abort_and_prompt")) ||
+            rec.type === "turn_end" ||
+            rec.type === "agent_end"
+          ) {
+            void ipc.rpcWriteSession(id, getStateCommand()).catch(() => undefined);
+          }
         }
         if (mcpListWaitRef.current) {
           const listed = commandOutputText(value);
@@ -1017,7 +1111,21 @@ export function SessionView({
       }
     };
     void seedOmpJournal()
-      .then(() => (cancelled ? undefined : ipc.rpcAttachSession({ id, attachId, streamToken: attachId, onLine: apply })))
+
+      .then(() => {
+        if (cancelled) return;
+        const missing = queuedTextsNotInEntries(queuedFollowUpsRef.current, chatRef.current.entries);
+        if (missing.length > 0) {
+          setChat((current) => {
+            let next = current;
+            for (const text of missing) next = appendOptimisticUser(next, text, "follow_up");
+            chatRef.current = next;
+            return next;
+          });
+        }
+        return ipc.rpcAttachSession({ id, attachId, streamToken: attachId, onLine: apply });
+      })
+
       .then(async () => {
         if (cancelled) return;
         setTerminalConnection("open");
@@ -1034,7 +1142,10 @@ export function SessionView({
         if (cancelled) return;
         await ipc.rpcWriteSession(id, setSubagentSubscriptionCommand("events"));
         if (cancelled) return;
+        await ipc.rpcWriteSession(id, getSubagentsCommand());
+        if (cancelled) return;
         await ipc.rpcWriteSession(id, getLoginProvidersCommand());
+
         if (cancelled) return;
         await ipc.rpcWriteSession(id, getAvailableModelsCommand());
         void ipc.readOmpModelRoles().then((roles) => {
@@ -1051,7 +1162,7 @@ export function SessionView({
       cancelled = true;
       void ipc.detachSession(id, attachId);
     };
-  }, [liveRpc, id, seedOmpJournal]);
+  }, [liveRpc, id, seedOmpJournal, chatAttachEpoch]);
   useEffect(() => {
     if (!liveRpc) return;
     void ipc.rpcWriteSession(id, setAutoCompactionCommand(chatAutoCompaction)).catch(() => undefined);
@@ -1156,8 +1267,7 @@ export function SessionView({
     setViewBusy(true);
     try {
       await ipc.restateSession(id, target);
-      setObservation(await ipc.sessionStatus(id, taskSlug || null));
-      preferredViewAppliedRef.current = id;
+      await ipc.sessionStatus(id, taskSlug || null).then((next) => setObservation(next));
       return true;
     } catch (error) {
       toast(String(error), "error");
@@ -1174,14 +1284,25 @@ export function SessionView({
     turnOpen: chat.turnOpen,
     agentState: observedState?.agent?.state,
   });
-  const chatStatus: SessionChatStatus =
-    chat.sessionMeta.isCompacting || observedState?.agent?.state === "waiting_for_approval" || pendingUiReply ? "waiting_approval" : turnActive ? "running" : "idle";
+  const chatStatus: SessionChatStatus = chat.sessionMeta.isCompacting || pendingUiReply ? "waiting_approval" : turnActive ? "running" : "idle";
+  const agentState = observedState?.agent?.state;
+  const approvalNotice = agentState === "waiting_for_approval" ? lastApprovalNotice(chat.entries) : null;
+  const composerCanAbort = canAbortChatSession(messageReadiness) && agentState !== "waiting_for_approval";
+  const sendNowEnabled =
+    turnActive &&
+    agentState !== "waiting_for_input" &&
+    agentState !== "waiting_for_approval" &&
+    !chat.sessionMeta.isCompacting &&
+    !pendingUiReply &&
+    (messageDraft.body.trim().length > 0 || latestQueuedFollowUp(queuedFollowUps) !== undefined);
   const uiPrompt = chat.pendingUi.find((request) => request.method === "select" || request.method === "input" || request.method === "editor");
+  const queuedMeta = chat.sessionMeta.queuedMessageCount ?? queuedFollowUps.length;
   const chatMeta = [
     chat.sessionMeta.model || model,
     chat.sessionMeta.thinking,
     `${chat.entries.length} event${chat.entries.length === 1 ? "" : "s"}`,
     formatContextUsage(chat.sessionMeta.contextUsage?.tokens, chat.sessionMeta.contextUsage?.contextWindow),
+    queuedMeta > 0 ? `${queuedMeta} queued` : "",
   ]
     .filter((part) => part && part.length > 0)
     .join(" · ");
@@ -1398,6 +1519,11 @@ export function SessionView({
                         onCompositionChange={setMessageComposing}
                         onSend={(text) => void sendCurrentMessage(text)}
                         onAbort={() => void interruptCurrentSession()}
+                        onSendNow={sendNowEnabled ? () => void sendNow() : undefined}
+                        sendNowEnabled={sendNowEnabled}
+                        canAbort={composerCanAbort}
+                        approvalNotice={approvalNotice}
+                        queuedCount={queuedMeta}
                       />
                       {messageError ? <InlineStatus tone="error">{messageError}</InlineStatus> : null}
                     </>

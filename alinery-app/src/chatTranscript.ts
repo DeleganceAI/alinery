@@ -46,6 +46,7 @@ export type SessionChatMeta = {
   dumpTools?: DumpTool[];
   models?: ChatModelOption[];
   loginProviders?: ChatLoginProvider[];
+  queuedMessageCount?: number;
 };
 
 export type ChatTranscriptState = {
@@ -232,8 +233,68 @@ function upsertMessages(state: ChatTranscriptState, content: ChatPart[], stopRea
   return messages;
 }
 
+function dropLiveAssistantRows(state: ChatTranscriptState): ChatTranscriptState {
+  const ids = Object.values(state.liveAssistantKeys);
+  if (ids.length === 0) return { ...state, liveAssistantKeys: {} };
+  const drop = new Set(ids);
+  return { ...state, entries: state.entries.filter((entry) => !drop.has(entry.id)), liveAssistantKeys: {} };
+}
+
+const JOURNAL_ASSISTANT_TYPES = new Set(["thinking", "redacted_thinking", "text"]);
+
+function snapshotPartText(part: ChatPart): string | null {
+  if (part.type === "thinking") return part.thinking;
+  if (part.type === "text") return part.text;
+  if (part.type === "redactedThinking") return "";
+  return null;
+}
+
+function journalEntryText(entry: ChatEntry): string | null {
+  if (entry.type === "thinking" || entry.type === "text") return entry.text;
+  if (entry.type === "redacted_thinking") return "";
+  return null;
+}
+
+function journalOwnsAssistantSnapshot(state: ChatTranscriptState, content: ChatPart[]): boolean {
+  const incoming = content
+    .map((part) => {
+      const text = snapshotPartText(part);
+      if (text === null) return null;
+      const type = part.type === "redactedThinking" ? "redacted_thinking" : part.type;
+      return { type, text };
+    })
+    .filter((part): part is { type: string; text: string } => part !== null);
+  if (incoming.length === 0) return false;
+  const committed = state.entries.slice(0, state.liveStart);
+  let end = committed.length;
+  while (end > 0) {
+    const entry = committed[end - 1];
+    if (!entry || entry.actor.kind !== "assistant" || !JOURNAL_ASSISTANT_TYPES.has(entry.type)) {
+      end -= 1;
+      continue;
+    }
+    break;
+  }
+  const cluster: ChatEntry[] = [];
+  for (let i = end - 1; i >= 0; i -= 1) {
+    const entry = committed[i];
+    if (!entry || entry.actor.kind !== "assistant" || !JOURNAL_ASSISTANT_TYPES.has(entry.type)) break;
+    cluster.unshift(entry);
+  }
+  if (incoming.length > cluster.length) return false;
+  for (let i = 0; i < incoming.length; i += 1) {
+    const part = incoming[i];
+    const entry = cluster[i];
+    if (!part || !entry || entry.type !== part.type || journalEntryText(entry) !== part.text) return false;
+  }
+  return true;
+}
+
 function syncLiveAssistant(state: ChatTranscriptState, content: ChatPart[], stopReason: string | undefined, streaming: boolean): ChatTranscriptState {
   const messages = upsertMessages(state, content, stopReason, streaming);
+  if (journalOwnsAssistantSnapshot(state, content)) {
+    return { ...state, messages };
+  }
   const aborted = stopReason === "aborted";
   let entrySeq = state.entrySeq;
   const keys = { ...state.liveAssistantKeys };
@@ -324,6 +385,8 @@ function applySessionMeta(state: ChatTranscriptState, data: Record<string, unkno
   if (usage) sessionMeta.contextUsage = usage;
   if (typeof data.isCompacting === "boolean") sessionMeta.isCompacting = data.isCompacting;
   if (typeof data.autoCompactionEnabled === "boolean") sessionMeta.autoCompactionEnabled = data.autoCompactionEnabled;
+  if (typeof data.queuedMessageCount === "number") sessionMeta.queuedMessageCount = data.queuedMessageCount;
+
   if (Array.isArray(data.dumpTools)) {
     sessionMeta.dumpTools = data.dumpTools.flatMap((item) => {
       const tool = asRecord(item);
@@ -491,7 +554,8 @@ export function matchingSendFailure(value: unknown, commandId: string): string |
   const event = asRecord(value);
   if (!event || event.type !== "response" || event.success !== false) return null;
   if (event.id !== commandId) return null;
-  if (event.command !== "prompt" && event.command !== "follow_up") return null;
+  if (event.command !== "prompt" && event.command !== "follow_up" && event.command !== "abort_and_prompt") return null;
+
   return typeof event.error === "string" ? event.error : "Send was refused.";
 }
 
@@ -505,36 +569,49 @@ export function appendHarnessNotice(state: ChatTranscriptState, event: string, t
 
 function openTurn(state: ChatTranscriptState): ChatTranscriptState {
   if (state.turnOpen) return { ...state, pendingTurn: false };
-  const turn = state.turn + 1;
-  return appendEntry(
-    { ...state, turn, turnOpen: true, pendingTurn: false, liveAssistantKeys: {} },
-    { actor: ACTOR.omp, type: "turn_marker", turn, phase: "start", at: Date.now() },
-  );
+  const cleaned = dropLiveAssistantRows(state);
+  const turn = cleaned.turn + 1;
+  return appendEntry({ ...cleaned, turn, turnOpen: true, pendingTurn: false }, { actor: ACTOR.omp, type: "turn_marker", turn, phase: "start", at: Date.now() });
 }
 
 function closeTurn(state: ChatTranscriptState, stopReason?: string): ChatTranscriptState {
-  if (!state.turnOpen) return { ...state, pendingTurn: false, liveAssistantKeys: {} };
+  if (!state.turnOpen) {
+    return { ...dropLiveAssistantRows(state), pendingTurn: false };
+  }
+  // Keep this turn's live assistant rows as committed history. Deleting them would
+  // wipe the visible reply at turn_end (the grok dump / any live session without a
+  // journal re-seed). Keys are cleared and liveStart advances so the next turn cannot
+  // orphan or rewrite them.
   return appendEntry(
-    { ...state, turnOpen: false, pendingTurn: false, liveAssistantKeys: {} },
+    { ...state, turnOpen: false, pendingTurn: false, liveAssistantKeys: {}, liveStart: state.entries.length },
     { actor: ACTOR.omp, type: "turn_marker", turn: state.turn, phase: "end", stopReason, at: Date.now() },
   );
 }
 
 const SUBAGENT_STATUS: SubagentStatus[] = ["spawned", "running", "waiting", "completed", "failed", "aborted"];
 
+function subagentEnvelopeId(event: Record<string, unknown>): string | undefined {
+  const progress = asRecord(event.progress);
+  return asString((progress?.id ?? event.id) as unknown);
+}
+
 function applySubagent(state: ChatTranscriptState, event: Record<string, unknown>): ChatTranscriptState {
-  const name = asString(event.agent) ?? asString(event.name) ?? asString(event.id);
-  if (!name) return state;
-  const rawStatus = asString(event.status) ?? asString(event.state) ?? "running";
+  const progress = asRecord(event.progress);
+  const subagentId = subagentEnvelopeId(event);
+  if (!subagentId) return state;
+  const label = asString(event.agent) ?? asString(event.name) ?? subagentId;
+  const role = asString(event.agentSource) ?? asString(event.role);
+  const summary = asString((progress?.description ?? event.description ?? event.summary ?? event.text ?? event.message ?? event.preview) as unknown) ?? "";
+  let rawStatus = asString((progress?.status ?? event.status ?? event.state) as unknown) ?? "running";
+  if (rawStatus === "started" || rawStatus === "pending") rawStatus = "running";
   const status = (SUBAGENT_STATUS as string[]).includes(rawStatus) ? (rawStatus as SubagentStatus) : "running";
-  const summary = asString(event.summary) ?? asString(event.text) ?? asString(event.message) ?? asString(event.preview) ?? "";
-  const role = asString(event.role);
   const tools = typeof event.tools === "number" ? event.tools : undefined;
   const durationMs = typeof event.durationMs === "number" ? event.durationMs : typeof event.duration_ms === "number" ? event.duration_ms : undefined;
   return appendEntry(state, {
-    actor: subagent(name),
+    actor: subagent(label),
     type: "subagent_status",
-    agent: name,
+    subagentId,
+    agent: label,
     role,
     status,
     summary,
@@ -696,6 +773,20 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
     if (event.command === "get_login_providers" && data) {
       return applyLoginProviders(state, data);
     }
+    if (event.command === "get_subagents") {
+      const subagents = data?.subagents;
+      if (!Array.isArray(subagents)) return state;
+      return subagents.reduce<ChatTranscriptState>((next, item) => {
+        const rec = asRecord(item);
+        if (!rec) return next;
+        const subagentId = subagentEnvelopeId(rec);
+        if (subagentId && next.entries.some((entry) => entry.type === "subagent_status" && entry.subagentId === subagentId)) {
+          return next;
+        }
+        return applySubagent(next, rec);
+      }, state);
+    }
+
     if (event.command === "set_model" && data) {
       const model = modelLabel(data) ?? modelLabel({ provider: data.provider, id: data.modelId ?? data.id });
       return model ? { ...state, sessionMeta: { ...state.sessionMeta, model } } : state;
@@ -719,8 +810,19 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
       if (event.type === "message_start") {
         const incomingText = content.find((part) => part.type === "text");
         const incoming = incomingText?.type === "text" ? incomingText.text : "";
-        if (lastUserText(state) === incoming && incoming) {
-          return state;
+        if (incoming) {
+          for (let i = state.entries.length - 1; i >= 0; i -= 1) {
+            const entry = state.entries[i];
+            if (entry?.type === "follow_up" && entry.text === incoming) {
+              const entries = state.entries.slice();
+              entries[i] = { ...entry, type: "prompt" };
+              return { ...state, entries };
+            }
+          }
+          const lastUserEntry = [...state.entries].reverse().find((entry) => entry.type === "prompt" || entry.type === "follow_up");
+          if (lastUserText(state) === incoming && lastUserEntry?.type === "prompt") {
+            return state;
+          }
         }
         const parsed = parseSlash(incoming);
         const next = { ...state, messages: [...state.messages, { role: "user" as const, content }] };
@@ -756,7 +858,7 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
   }
 
   if (event.type === "subagent_lifecycle" || event.type === "subagent_progress" || event.type === "subagent_event" || event.type === "subagent_status") {
-    const payload = asRecord(event.event) ?? asRecord(event.data) ?? event;
+    const payload = asRecord(event.payload) ?? asRecord(event.event) ?? asRecord(event.data) ?? event;
     return applySubagent(state, payload);
   }
 

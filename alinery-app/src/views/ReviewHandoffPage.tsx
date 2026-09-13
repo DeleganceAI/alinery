@@ -119,7 +119,7 @@ export function ReviewHandoffPage({
         <label className="create-field">
           <span>Model</span>
           <ModelInput harness="omp" value={model} onChange={setModel} onOpenPicker={() => setPickModel(true)} />
-          {pickModel && <ProviderSetupDialog mode="manual" initialTab="models" onPick={setModel} onClose={() => setPickModel(false)} />}
+          {pickModel && <ProviderSetupDialog mode="manual" initialTab="models" unsignedOpensAccounts onPick={setModel} onClose={() => setPickModel(false)} />}
         </label>
         <label className="create-field">
           <span>Extra instructions</span>

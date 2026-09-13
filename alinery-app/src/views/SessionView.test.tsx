@@ -1,7 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ComponentProps } from "react";
+import { type ComponentProps, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
+import type { SessionMessageDraft } from "../sessionMessage";
 import { mockIpc } from "../test/mockIpc";
 import type { AgentState, ArtifactListItem, ArtifactTreeNode, SessionObservation, Task } from "../types";
 import { SessionView } from "./SessionView";
@@ -648,17 +649,17 @@ describe("session chat send routing", () => {
     rpcWriteSession.mockImplementation(async () => undefined);
   });
 
-  it("steers a turn that is waiting for input instead of prompting it", async () => {
+  it("queues a turn that is waiting for input instead of prompting it", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "waiting_for_input", correlation_id: "ask-1" }));
     renderSession({ messageDraft: { body: "use the other file", pendingActions: [] } });
     await flushPromises();
-    fireEvent.click(screen.getByRole("button", { name: "Steer turn" }));
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
 
     await waitFor(() => expect(sends()).toHaveLength(1));
     expect(sends()[0]).toMatchObject({ type: "follow_up", message: "use the other file" });
   });
 
-  it("steers the second submit even though the status poll still reads idle", async () => {
+  it("queues the second submit even though the status poll still reads idle", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
     const view = renderSession({ messageDraft: { body: "first", pendingActions: [] } });
     await flushPromises();
@@ -666,7 +667,7 @@ describe("session chat send routing", () => {
     await waitFor(() => expect(sends()).toHaveLength(1));
 
     view.rerender(sessionView({ messageDraft: { body: "second", pendingActions: [] } }));
-    fireEvent.click(screen.getByRole("button", { name: "Steer turn" }));
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
 
     await waitFor(() => expect(sends()).toHaveLength(2));
     expect(sends().map((payload) => [payload?.type, payload?.message])).toEqual([
@@ -722,7 +723,7 @@ describe("session chat send routing", () => {
     expect(within(screen.getByTestId("chat-pane")).queryByText("keep me")).toBeNull();
   });
 
-  it("keeps steering after an unrelated RPC failure between write and turn_start", async () => {
+  it("keeps queuing after an unrelated RPC failure between write and turn_start", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
     const onLine = { current: undefined as ((line: string) => void) | undefined };
     captureRpcOnLine(onLine);
@@ -738,12 +739,204 @@ describe("session chat send routing", () => {
     });
 
     view.rerender(sessionView({ messageDraft: { body: "second", pendingActions: [] } }));
-    fireEvent.click(screen.getByRole("button", { name: "Steer turn" }));
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
 
     await waitFor(() => expect(sends()).toHaveLength(2));
     expect(sends().map((payload) => [payload?.type, payload?.message])).toEqual([
       ["prompt", "first"],
       ["follow_up", "second"],
     ]);
+  });
+
+  it("keeps send enabled and writes follow_up while waiting for approval", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "waiting_for_approval", correlation_id: "appr-1" }));
+
+    renderSession({ messageDraft: { body: "later", pendingActions: [] } });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    expect(sends()[0]).toMatchObject({ type: "follow_up", message: "later" });
+    expect(rpcWriteSession.mock.calls.some(([, payload]) => (payload as { type?: string } | null)?.type === "abort_and_prompt")).toBe(false);
+  });
+
+  it("rehydrates queued follow-ups after journal seed", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    renderSession({ queuedFollowUps: ["keep me"] });
+    await flushPromises();
+    expect(await screen.findByText("keep me")).toBeTruthy();
+    expect(screen.getByText("queued · after this turn")).toBeTruthy();
+  });
+
+  it("drops local queued follow_up rows when get_state count is 0", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    renderSession({ queuedFollowUps: ["keep me"] });
+    await flushPromises();
+    await waitFor(() => expect(onLine.current).toBeDefined());
+    expect(await screen.findByText("keep me")).toBeTruthy();
+    await act(async () => {
+      onLine.current?.(
+        JSON.stringify({
+          type: "response",
+          command: "get_state",
+          success: true,
+          data: { queuedMessageCount: 0 },
+        }),
+      );
+    });
+    await waitFor(() => expect(within(screen.getByTestId("chat-pane")).queryByText("keep me")).toBeNull());
+  });
+
+  it("does not trim in-flight follow-ups on a non-get_state line", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    function QueueHarness() {
+      const [queued, setQueued] = useState(["first"]);
+      const [draft, setDraft] = useState<SessionMessageDraft>({ body: "second", pendingActions: [] });
+      return sessionView({
+        queuedFollowUps: queued,
+        onQueuedFollowUpsChange: setQueued,
+        messageDraft: draft,
+        onMessageDraftChange: setDraft,
+      });
+    }
+    render(<QueueHarness />);
+    await flushPromises();
+    await waitFor(() => expect(onLine.current).toBeDefined());
+    expect(await screen.findByText("first")).toBeTruthy();
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "response", command: "get_state", success: true, data: { queuedMessageCount: 1 } }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    expect(await screen.findByText("second")).toBeTruthy();
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "thinking_delta" }));
+    });
+    const pane = screen.getByTestId("chat-pane");
+    expect(within(pane).getByText("first")).toBeTruthy();
+    expect(within(pane).getByText("second")).toBeTruthy();
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "response", command: "get_state", success: true, data: { queuedMessageCount: 2 } }));
+    });
+    expect(within(pane).getByText("first")).toBeTruthy();
+    expect(within(pane).getByText("second")).toBeTruthy();
+  });
+
+  it("Send now with empty draft aborts and prompts the latest queued text", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    renderSession({ queuedFollowUps: ["later"], messageDraft: { body: "", pendingActions: [] } });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    await waitFor(() => expect(rpcWriteSession.mock.calls.some(([, payload]) => (payload as { type?: string } | null)?.type === "abort_and_prompt")).toBe(true));
+    const sent = rpcWriteSession.mock.calls.map(([, payload]) => payload as { type?: string; message?: string }).find((payload) => payload?.type === "abort_and_prompt");
+    expect(sent).toMatchObject({ type: "abort_and_prompt", message: "later" });
+  });
+
+  it("Send now with a draft aborts and prompts that draft", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    renderSession({ queuedFollowUps: ["later"], messageDraft: { body: "now", pendingActions: [] } });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    await waitFor(() => expect(rpcWriteSession.mock.calls.some(([, payload]) => (payload as { type?: string } | null)?.type === "abort_and_prompt")).toBe(true));
+    const sent = rpcWriteSession.mock.calls.map(([, payload]) => payload as { type?: string; message?: string }).find((payload) => payload?.type === "abort_and_prompt");
+    expect(sent).toMatchObject({ type: "abort_and_prompt", message: "now" });
+  });
+
+  it("does not enable Send now while waiting for input or approval", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "waiting_for_input", correlation_id: "ask-1" }));
+    renderSession({ messageDraft: { body: "later", pendingActions: [] }, queuedFollowUps: ["queued"] });
+    await flushPromises();
+    expect(screen.queryByRole("button", { name: "Send now" })).toBeNull();
+
+    cleanup();
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "waiting_for_approval", correlation_id: "appr-1" }));
+
+    renderSession({ messageDraft: { body: "later", pendingActions: [] }, queuedFollowUps: ["queued"] });
+    await flushPromises();
+    expect(screen.queryByRole("button", { name: "Send now" })).toBeNull();
+  });
+
+  it("writes get_state after a successful follow_up", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "waiting_for_input", correlation_id: "ask-1" }));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    renderSession({ messageDraft: { body: "queue me", pendingActions: [] } });
+    await flushPromises();
+    await waitFor(() => expect(onLine.current).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    const followUp = sends()[0] as { id?: string };
+    const before = rpcWriteSession.mock.calls.filter(([, payload]) => (payload as { type?: string } | null)?.type === "get_state").length;
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "response", id: followUp.id, command: "follow_up", success: true, data: {} }));
+    });
+    await waitFor(() => expect(rpcWriteSession.mock.calls.filter(([, payload]) => (payload as { type?: string } | null)?.type === "get_state").length).toBeGreaterThan(before));
+  });
+});
+
+describe("session chat attach handshake", () => {
+  beforeEach(() => {
+    scenario.tasks = [{ ...task }];
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    rpcWriteSession.mockClear();
+    rpcAttachSession.mockReset();
+    rpcAttachSession.mockImplementation(async () => undefined);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    sessionStatus.mockReset();
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "exited" as const, code: 0 }, state: null, checkpoint: {} });
+  });
+
+  it("writes get_subagents after set_subagent_subscription", async () => {
+    renderSession();
+    await waitFor(() => expect(rpcWriteSession.mock.calls.some(([, payload]) => (payload as { type?: string } | null)?.type === "set_subagent_subscription")).toBe(true));
+    const types = rpcWriteSession.mock.calls.map(([, payload]) => (payload as { type?: string } | null)?.type);
+    expect(types).toContain("get_subagents");
+    expect(types.indexOf("get_subagents")).toBeGreaterThan(types.indexOf("set_subagent_subscription"));
+  });
+
+  it("does not re-attach after a transient sessionStatus rejection", async () => {
+    vi.useFakeTimers();
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    renderSession();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await flushPromises();
+    expect(rpcAttachSession).toHaveBeenCalledTimes(1);
+    sessionStatus.mockRejectedValueOnce(new Error("poll failed"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    await flushPromises();
+    expect(rpcAttachSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-attaches after a poll failure once sessionStatus succeeds again", async () => {
+    vi.useFakeTimers();
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    renderSession();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await flushPromises();
+    expect(rpcAttachSession).toHaveBeenCalledTimes(1);
+    sessionStatus.mockRejectedValueOnce(new Error("poll failed"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    await flushPromises();
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    await flushPromises();
+    expect(rpcAttachSession).toHaveBeenCalledTimes(2);
   });
 });

@@ -322,12 +322,18 @@ function ChatEntryRowImpl({
         </Msg>
       );
     case "prompt":
-    case "follow_up":
       return (
         <Msg at={entry.at} actor={entry.actor} type={entry.type} stamp={stamp} showActorLabels={showActorLabels}>
           <p className="chat-text-body">{entry.text}</p>
         </Msg>
       );
+    case "follow_up":
+      return (
+        <Msg at={entry.at} actor={entry.actor} type="follow_up" stamp={stamp} showActorLabels={showActorLabels} kicker={<Status tone="wait">queued · after this turn</Status>}>
+          {entry.text ? <p className="chat-text-body">{entry.text}</p> : null}
+        </Msg>
+      );
+
     case "text":
       return (
         <Msg

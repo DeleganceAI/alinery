@@ -65,9 +65,10 @@ describe("ChatComposer", () => {
   it("aborts on Escape while running", () => {
     const onAbort = vi.fn();
     render(<ChatComposer body="" status="running" catalog={[]} onBodyChange={vi.fn()} onSend={vi.fn()} onAbort={onAbort} />);
-    fireEvent.keyDown(screen.getByLabelText("Steer this turn…"), { key: "Escape" });
+    fireEvent.keyDown(screen.getByLabelText("Send after this turn…"), { key: "Escape" });
     expect(onAbort).toHaveBeenCalled();
   });
+
   it("keeps a large draft sendable and clearable once the text area is hidden", () => {
     const onSend = vi.fn();
     const onBodyChange = vi.fn();
@@ -89,5 +90,47 @@ describe("ChatComposer", () => {
     expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Clear large draft" }));
     expect(onBodyChange).toHaveBeenCalledWith("");
+  });
+
+  it("labels running send as Queue, not Steer", () => {
+    const html = renderToStaticMarkup(
+      <ChatComposer body="later" status="running" catalog={[]} onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} />,
+    );
+    expect(html).toContain('data-mode="queue"');
+    expect(html).toContain("Send after this turn…");
+    expect(html).toContain('aria-label="Queue"');
+    expect(html).not.toContain("Steer");
+  });
+
+  it("keeps send enabled and shows the approval copy while running with a notice", () => {
+    const extras = {
+      approvalNotice: { action: "Allow git push", detail: "Publishes" },
+      canAbort: false,
+      sendNowEnabled: false,
+    };
+    const html = renderToStaticMarkup(
+      <ChatComposer body="ok" status="running" catalog={[]} onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} {...extras} />,
+    );
+    expect(html).toContain("Allow git push");
+    expect(html).toContain("Publishes");
+    expect(html).not.toContain("Waiting on approval");
+    expect(html).not.toContain("Send now");
+  });
+
+  it("fires onSendNow from Send now, not onSend", () => {
+    const onSend = vi.fn();
+    const onSendNow = vi.fn();
+    const extras = { onSendNow, sendNowEnabled: true };
+    render(<ChatComposer body="now" status="running" catalog={[]} onBodyChange={vi.fn()} onSend={onSend} onAbort={vi.fn()} {...extras} />);
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    expect(onSendNow).toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("shows Queue and Send now on a large running draft", () => {
+    const extras = { onSendNow: () => undefined, sendNowEnabled: true };
+    render(<ChatComposer body={"a".repeat(256 * 1024 + 1)} status="running" catalog={[]} onBodyChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} {...extras} />);
+    expect(screen.getByRole("button", { name: "Queue" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Send now" })).toBeTruthy();
   });
 });
