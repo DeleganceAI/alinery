@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   rpcWriteSession: vi.fn(),
   readOmpModelRoles: vi.fn(),
   hostedCatalog: vi.fn(),
+  accountSignIn: vi.fn(),
+  accountRefresh: vi.fn(),
   detachSession: vi.fn(),
   openUrl: vi.fn(),
 }));
@@ -139,6 +141,21 @@ describe("ProviderSetupDialog", () => {
     // "not-needed" is what keeps a self-close from being remembered as a dismissal, so an install
     // that later loses its credentials is offered setup again.
     expect(screen.queryByText(/Advanced/)).toBeNull();
+  });
+
+  it("refreshes entitlement after Alinery sign-in before reloading the catalog", async () => {
+    mocks.accountSignIn.mockResolvedValue({ signedIn: true, email: "a@example.com", plan: null, paid: false, unavailable: false });
+    mocks.accountRefresh.mockResolvedValue({ signedIn: true, email: "a@example.com", plan: "Founders Edition", paid: true, unavailable: false });
+    mountWith([providersLine([{ id: "anthropic", authenticated: false }])], "manual");
+    fireEvent.click(await screen.findByRole("button", { name: /Alinery/ }));
+    await waitFor(() => expect(mocks.accountSignIn).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mocks.accountRefresh).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mocks.hostedCatalog).toHaveBeenCalledTimes(2));
+    const signInOrder = mocks.accountSignIn.mock.invocationCallOrder[0];
+    const refreshOrder = mocks.accountRefresh.mock.invocationCallOrder[0];
+    const catalogOrder = mocks.hostedCatalog.mock.invocationCallOrder[1];
+    expect(signInOrder).toBeLessThan(refreshOrder);
+    expect(refreshOrder).toBeLessThan(catalogOrder);
   });
 
   it("stays invisible when hosted models are already ready", async () => {

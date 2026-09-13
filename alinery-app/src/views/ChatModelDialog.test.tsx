@@ -1,5 +1,6 @@
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockIpc } from "../test/mockIpc";
 import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatModelDialog } from "./ChatModelDialog";
@@ -21,6 +22,8 @@ describe("ChatModelDialog", () => {
     onAssignRole: vi.fn(),
     onClose: vi.fn(),
   };
+
+  afterEach(cleanup);
 
   it("renders models tab with current and role table", () => {
     const empty = renderToStaticMarkup(<ChatModelDialog {...base} models={[]} />);
@@ -148,6 +151,30 @@ describe("ChatModelDialog", () => {
     expect(unpaid).toContain("Get credits");
     const models = renderToStaticMarkup(<ChatModelDialog {...base} hosted={hosted} />);
     expect(models).toContain("alinery/Qwen3.6-35B-A3B");
+  });
+
+  it("omits hosted models from role assignment until ready", () => {
+    const hosted = {
+      provider: "alinery",
+      defaultModel: "alinery/Qwen3.6-35B-A3B",
+      baseUrl: "https://inference.alinery.ai/v1",
+      plansUrl: "https://accounts.alinery.ai/plans",
+      models: [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 1 }],
+      ready: false,
+      upsell: "sign-in" as const,
+      source: "fixture",
+    };
+    render(<ChatModelDialog {...base} hosted={hosted} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Assign" })[0]);
+    const values = [...screen.getByLabelText(/Assign/).querySelectorAll("option")].map((option) => (option as HTMLOptionElement).value);
+    expect(values).toContain("xai/grok-4.6");
+    expect(values.some((value) => value.startsWith("alinery/"))).toBe(false);
+
+    cleanup();
+    render(<ChatModelDialog {...base} hosted={{ ...hosted, ready: true, upsell: null, source: "live" }} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Assign" })[0]);
+    const readyValues = [...screen.getByLabelText(/Assign/).querySelectorAll("option")].map((option) => (option as HTMLOptionElement).value);
+    expect(readyValues).toContain("alinery/Qwen3.6-35B-A3B");
   });
 });
 

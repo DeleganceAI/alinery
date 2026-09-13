@@ -1029,27 +1029,53 @@ fn sign_out_status_for_remaining(path: &Path, remote_revoked: bool) -> AccountSi
     }
 }
 
+fn access_token_for_hosted_revoke(path: &Path, tokens: &AccountTokens) -> Option<String> {
+    if now_secs() < tokens.expires_at {
+        return Some(tokens.access_token.clone());
+    }
+    match refresh_account_tokens_at(SUPABASE_URL, tokens) {
+        Ok(refreshed) => {
+            let _ = save_if_current(path, generation_of(tokens), &refreshed);
+            Some(refreshed.access_token)
+        }
+        Err(AccountAuthError::InvalidRefreshToken(_)) => None,
+        Err(e) => {
+            eprintln!("refresh account session for hosted revoke: {e}");
+            Some(tokens.access_token.clone())
+        }
+    }
+}
+
 fn sign_out_blocking(app: &AppHandle) -> Result<AccountSignOutResult, String> {
     let path = account_auth_path(app)?;
     if let Ok(Some(tokens)) = load_tokens_from_path(&path) {
         if let (Some(config_dir), Ok(app_config)) = (path.parent(), app_config_path(app)) {
-            revoke_hosted_inference(config_dir, &app_config, &accounts_url(), Some(&tokens.access_token), Some(&tokens.session_id));
+            let access = access_token_for_hosted_revoke(&path, &tokens);
+            revoke_hosted_inference(config_dir, &app_config, &accounts_url(), access.as_deref(), Some(&tokens.session_id));
         }
     }
     sign_out_at(&path, SUPABASE_URL)
 }
 
 fn sync_hosted_from_auth(app: &AppHandle, auth_path: &Path, status: &AccountStatus) {
-    if !(status.signed_in && status.paid) {
-        return;
-    }
     let Some(config_dir) = auth_path.parent() else {
         return;
     };
     let Ok(app_config) = app_config_path(app) else {
         return;
     };
-    let Ok(Some(tokens)) = load_tokens_from_path(auth_path) else {
+    let tokens = load_tokens_from_path(auth_path).ok().flatten();
+    if !(status.signed_in && status.paid) {
+        revoke_hosted_inference(
+            config_dir,
+            &app_config,
+            &accounts_url(),
+            tokens.as_ref().map(|t| t.access_token.as_str()),
+            tokens.as_ref().map(|t| t.session_id.as_str()),
+        );
+        return;
+    }
+    let Some(tokens) = tokens else {
         return;
     };
     sync_hosted_inference(config_dir, &app_config, &accounts_url(), &tokens.access_token, &tokens.session_id, true);
@@ -1113,29 +1139,33 @@ pub(crate) async fn account_sign_out(app: AppHandle) -> Result<AccountSignOutRes
     tauri::async_runtime::spawn_blocking(move || sign_out_blocking(&app)).await.map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub(crate) fn hosted_catalog(app: AppHandle) -> HostedCatalogView {
+fn hosted_catalog_blocking(app: &AppHandle) -> HostedCatalogView {
     let accounts = accounts_url();
-    let Ok(auth_path) = account_auth_path(&app) else {
+    let Ok(auth_path) = account_auth_path(app) else {
         return unsigned_hosted_catalog(&accounts);
     };
     let config_dir = auth_path.parent().unwrap_or(auth_path.as_path()).to_path_buf();
     let status = account_status_from_path(&auth_path);
-    sync_hosted_from_auth(&app, &auth_path, &status);
+    let status = if status.signed_in {
+        refresh_account_at(&auth_path, SUPABASE_URL, SUPABASE_URL)
+    } else {
+        status
+    };
+    sync_hosted_from_auth(app, &auth_path, &status);
     hosted_catalog_at(&config_dir, &accounts, status.signed_in, status.paid)
 }
 
 #[tauri::command]
+pub(crate) async fn hosted_catalog(app: AppHandle) -> HostedCatalogView {
+    tauri::async_runtime::spawn_blocking(move || hosted_catalog_blocking(&app))
+        .await
+        .unwrap_or_else(|_| unsigned_hosted_catalog(&accounts_url()))
+}
+
+#[tauri::command]
 pub(crate) fn account_open_plans(app: AppHandle) -> Result<(), String> {
-    let accounts = accounts_url();
-    let auth_path = account_auth_path(&app).ok();
-    let config_dir = auth_path.as_ref().and_then(|path| path.parent()).map(Path::to_path_buf);
-    let status = auth_path.as_ref().map(|path| account_status_from_path(path)).unwrap_or(SIGNED_OUT);
-    let view = match &config_dir {
-        Some(dir) => hosted_catalog_at(dir, &accounts, status.signed_in, status.paid),
-        None => unsigned_hosted_catalog(&accounts),
-    };
-    app.opener().open_url(&view.plans_url, None::<&str>).map_err(|e| format!("open plans page in browser: {e}"))
+    let url = format!("{}/plans", accounts_url().trim_end_matches('/'));
+    app.opener().open_url(&url, None::<&str>).map_err(|e| format!("open plans page in browser: {e}"))
 }
 
 #[tauri::command]

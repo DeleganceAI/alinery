@@ -60,6 +60,18 @@ fn parse_catalog_rejects_a_missing_price() {
 }
 
 #[test]
+fn parse_catalog_rejects_a_missing_default_model() {
+    let body = CATALOG.replace("alinery/Qwen3.6-35B-A3B", "alinery/not-in-list");
+    assert!(parse_hosted_catalog_body(body.as_bytes()).is_err());
+}
+
+#[test]
+fn parse_catalog_rejects_control_characters() {
+    let body = CATALOG.replace("Qwen3.6-35B-A3B", "Qwen\n3.6-35B-A3B");
+    assert!(parse_hosted_catalog_body(body.as_bytes()).is_err());
+}
+
+#[test]
 fn extra_catalog_rows_are_live_data() {
     let mut value: serde_json::Value = serde_json::from_str(CATALOG).unwrap();
     value["models"].as_array_mut().unwrap().push(serde_json::json!({
@@ -108,6 +120,11 @@ fn resolve_prefers_live_then_unexpired_minted_then_fixture() {
     let unpaid = resolve_hosted_catalog(None, None, fixture.clone(), true, false);
     assert_eq!(unpaid.upsell.as_deref(), Some("get-credits"));
 
+    let unpaid_minted = resolve_hosted_catalog(None, Some(minted.clone()), fixture.clone(), true, false);
+    assert!(!unpaid_minted.ready);
+    assert_eq!(unpaid_minted.upsell.as_deref(), Some("get-credits"));
+    assert_eq!(unpaid_minted.source, "minted");
+
     let from_minted = resolve_hosted_catalog(None, Some(minted.clone()), fixture.clone(), true, true);
     assert_eq!(from_minted.source, "minted");
     assert!(from_minted.ready);
@@ -146,4 +163,17 @@ fn wipe_hosted_files_removes_inference_and_models_yml() {
     wipe_hosted_files(&dir, &app_config);
     assert!(!inf.exists());
     assert!(!yml.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn models_yml_is_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = unique_attachment_temp("hosted-yml-mode");
+    let app_config = dir.join("app.toml");
+    fs::write(&app_config, b"").unwrap();
+    let catalog = parse_hosted_catalog_body(CATALOG.as_bytes()).unwrap();
+    write_hosted_models_yml(&app_config, &catalog, "inf_test_abc").unwrap();
+    let mode = fs::metadata(models_yml_path(&app_config)).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
 }

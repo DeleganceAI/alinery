@@ -381,6 +381,7 @@ export function ProviderSetupDialog({
       onSignIn={() => {
         void ipc
           .accountSignIn()
+          .then(() => ipc.accountRefresh().catch(() => undefined))
           .then(() =>
             ipc
               .hostedCatalog()

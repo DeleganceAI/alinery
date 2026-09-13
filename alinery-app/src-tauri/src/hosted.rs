@@ -119,8 +119,8 @@ pub(crate) fn models_yml_path(app_config: &Path) -> PathBuf {
 }
 
 fn require_alinery_id(id: &str) -> Result<(), String> {
-    if id.is_empty() || id.contains('/') {
-        return Err("hosted model id must be non-empty and contain no slash".into());
+    if id.is_empty() || id.contains('/') || id.chars().any(char::is_control) {
+        return Err("hosted model id must be non-empty, contain no slash, and contain no control characters".into());
     }
     Ok(())
 }
@@ -133,11 +133,17 @@ fn validate_catalog(catalog: &HostedCatalog, require_price: bool) -> Result<(), 
         return Err("default_model must be alinery/<id>".into());
     };
     require_alinery_id(id)?;
+    if !catalog.models.iter().any(|model| model.id == id) {
+        return Err(format!("default_model {id} is not in models"));
+    }
     if catalog.base_url.is_empty() || catalog.plans_url.is_empty() {
         return Err("hosted catalog is missing base_url or plans_url".into());
     }
     for model in &catalog.models {
         require_alinery_id(&model.id)?;
+        if model.name.chars().any(char::is_control) {
+            return Err(format!("hosted model {} name must not contain control characters", model.id));
+        }
         if require_price {
             match model.price {
                 Some(p) if p <= 5 => {}
@@ -198,8 +204,8 @@ pub(crate) fn parse_inference_session_body(body: &[u8]) -> Result<(String, u64, 
 }
 
 fn yaml_scalar(value: &str) -> String {
-    if value.is_empty() || value.chars().any(|c| c.is_whitespace() || ":#{}[]&*?|>'!%@`,\"'".contains(c)) {
-        format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    if value.is_empty() || value.chars().any(|c| c.is_control() || c.is_whitespace() || ":#{}[]&*?|>'!%@`,\"'".contains(c)) {
+        format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r"))
     } else {
         value.to_string()
     }
@@ -246,14 +252,7 @@ pub(crate) fn write_inference_file(path: &Path, token: &str, expires_at: u64, se
 }
 
 pub(crate) fn write_hosted_models_yml(app_config: &Path, catalog: &HostedCatalog, token: &str) -> Result<(), String> {
-    let path = models_yml_path(app_config);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
-    }
-    let yaml = render_models_yml(catalog, token);
-    let tmp = path.with_extension("yml.tmp");
-    fs::write(&tmp, yaml.as_bytes()).map_err(|e| format!("write {}: {e}", tmp.display()))?;
-    fs::rename(&tmp, &path).map_err(|e| format!("rename {}: {e}", path.display()))
+    write_owner_only_bytes(&models_yml_path(app_config), render_models_yml(catalog, token).as_bytes())
 }
 
 pub(crate) fn wipe_hosted_files(config_dir: &Path, app_config: &Path) {
@@ -295,13 +294,13 @@ fn upsell_for(signed_in: bool, paid: bool) -> Option<&'static str> {
 }
 
 pub(crate) fn resolve_hosted_catalog(live: Option<HostedCatalog>, minted: Option<HostedCatalog>, fixture: HostedCatalog, signed_in: bool, paid: bool) -> HostedCatalogView {
-    let ready = minted.is_some();
+    let ready = paid && minted.is_some();
     let upsell = upsell_for(signed_in, paid);
     if let Some(catalog) = live {
         return view_from(catalog, ready, upsell, "live");
     }
     if let Some(catalog) = minted {
-        return view_from(catalog, true, upsell, "minted");
+        return view_from(catalog, ready, upsell, "minted");
     }
     view_from(fixture, false, upsell, "fixture")
 }
@@ -344,7 +343,11 @@ fn mint_inference_session(accounts_url: &str, access_token: &str, session_id: &s
 fn delete_inference_session(accounts_url: &str, access_token: &str, session_id: &str) {
     let url = format!("{}/api/desktop/inference-session", accounts_url.trim_end_matches('/'));
     let body = json!({ "session_id": session_id }).to_string();
-    let _ = curl_http_method(&url, "DELETE", &hosted_headers(Some(access_token)), Some(&body));
+    match curl_http_method(&url, "DELETE", &hosted_headers(Some(access_token)), Some(&body)) {
+        Ok(http) if (200..300).contains(&http.status) => {}
+        Ok(http) => eprintln!("delete inference session: HTTP {}", http.status),
+        Err(e) => eprintln!("delete inference session: {e}"),
+    }
 }
 
 fn apply_default_model_role(app_config: &Path, default_model: &str) {
@@ -354,6 +357,7 @@ fn apply_default_model_role(app_config: &Path, default_model: &str) {
 
 pub(crate) fn sync_hosted_inference(config_dir: &Path, app_config: &Path, accounts_url: &str, access_token: &str, session_id: &str, paid: bool) {
     if !paid {
+        revoke_hosted_inference(config_dir, app_config, accounts_url, Some(access_token), Some(session_id));
         return;
     }
     let inf_path = inference_path(config_dir);
@@ -388,9 +392,8 @@ pub(crate) fn revoke_hosted_inference(config_dir: &Path, app_config: &Path, acco
 }
 
 pub(crate) fn hosted_catalog_at(config_dir: &Path, accounts_url: &str, signed_in: bool, paid: bool) -> HostedCatalogView {
-    let live = fetch_live_catalog(accounts_url).ok();
     let minted = load_inference_file(&inference_path(config_dir)).and_then(|file| inference_unexpired(&file, now_secs()).then_some(file.catalog));
-    resolve_hosted_catalog(live, minted, hosted_fixture(accounts_url), signed_in, paid)
+    resolve_hosted_catalog(None, minted, hosted_fixture(accounts_url), signed_in, paid)
 }
 
 pub(crate) fn unsigned_hosted_catalog(accounts_url: &str) -> HostedCatalogView {

@@ -292,14 +292,16 @@ export function ChatModelDialog({
                               }}
                             >
                               <option value="">Clear</option>
-                              {listed.map((m) => {
-                                const label = `${m.provider}/${m.id}`;
-                                return (
-                                  <option key={label} value={label}>
-                                    {label}
-                                  </option>
-                                );
-                              })}
+                              {listed
+                                .filter((m) => m.provider !== HOSTED_PROVIDER || hosted?.ready)
+                                .map((m) => {
+                                  const label = `${m.provider}/${m.id}`;
+                                  return (
+                                    <option key={label} value={label}>
+                                      {label}
+                                    </option>
+                                  );
+                                })}
                             </select>
                           ) : (
                             <button type="button" className="btn ghost small" onClick={() => setRolePick(role)}>
