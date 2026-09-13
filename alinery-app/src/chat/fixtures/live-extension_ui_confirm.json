@@ -1,0 +1,7 @@
+{
+  "type": "extension_ui_request",
+  "id": "ui-confirm-1",
+  "method": "confirm",
+  "title": "Proceed despite Biome issues?",
+  "message": "4 FIXABLE issues"
+}

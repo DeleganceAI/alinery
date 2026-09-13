@@ -1,7 +1,7 @@
 // OMP run-local extension for Alinery.
 //
 // Injected at session startup via --extension <path>. Registers OMP lifecycle
-// callbacks and the alinery_phase_complete tool. Passive callbacks emit one
+// callbacks and the alinery_phase_complete and alinery_ask_approval tools. Passive callbacks emit one
 // normalized RunnerEvent with bounded, terminal-silent, fail-open delivery.
 // Phase completion preserves the daemon acknowledgement and reports accepted,
 // rejected, or delivery-failed status to the OMP model.
@@ -38,6 +38,9 @@ export interface OmpExtensionContext {
   readonly cwd: string;
   readonly sessionManager: {
     getSessionId(): string;
+  };
+  readonly ui?: {
+    confirm(title: string, message: string): Promise<boolean>;
   };
 }
 
@@ -82,7 +85,7 @@ export interface OmpToolDefinition {
   readonly parameters: unknown;
   execute(
     toolCallId: string,
-    input: Record<string, never>,
+    input: Record<string, unknown>,
     signal: AbortSignal | undefined,
     onUpdate: unknown,
     context: OmpExtensionContext,
@@ -106,6 +109,7 @@ export interface OmpExtensionAPI {
   readonly zod: {
     readonly z: {
       object(shape: OmpToolParameters): unknown;
+      string(): unknown;
     };
   };
   on(event: "agent_start", handler: (payload: OmpAgentStartPayload) => void | Promise<void>): void;
@@ -406,7 +410,7 @@ export function makeProductionCompletionEmitter(config: RunnerConfig | undefined
 // ---------- callback registration ----------
 
 /**
- * Register all Alinery OMP callbacks and the alinery_phase_complete tool against api.
+ * Register all Alinery OMP callbacks and the alinery_phase_complete and alinery_ask_approval tools against api.
  * Exported for testability: tests supply a fake api and emitter.
  */
 export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompletion: CompletionEmitter, protectedHost: string | undefined): void {
@@ -476,7 +480,7 @@ export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompl
       "Call this exactly once after the required artifact has been written. " +
       "Do not call this to end a turn — only when the phase deliverable is finished.",
     parameters: api.zod.z.object({}),
-    async execute(_toolCallId: string, _input: Record<string, never>, _signal: AbortSignal | undefined, _onUpdate: unknown, context: OmpExtensionContext) {
+    async execute(_toolCallId: string, _input: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, context: OmpExtensionContext) {
       const sessionId = context.sessionManager.getSessionId();
       if (!sessionId) {
         return completionToolResult(
@@ -505,6 +509,44 @@ export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompl
           "delivery_failed",
           "Alinery could not confirm phase completion because delivery failed. Retry alinery_phase_complete after the Alinery daemon is available.",
         );
+      }
+    },
+  });
+
+  api.registerTool({
+    name: "alinery_ask_approval",
+    label: "Ask for approval",
+    description:
+      "Request an explicit Allow/Deny for a binary go/no-go, especially when checks failed or something is blocked. " +
+      "Do not use this instead of fixing issues the agent can fix itself. Do not dump a table as the question. " +
+      "After Deny, do not proceed with the gated action. For multi-option questions use ask.",
+    parameters: api.zod.z.object({ title: api.zod.z.string(), message: api.zod.z.string() }),
+    async execute(toolCallId: string, input: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, context: OmpExtensionContext) {
+      const title = typeof input.title === "string" && input.title !== "" ? input.title : "Approval required";
+      const message = typeof input.message === "string" && input.message !== "" ? input.message : "Approval needed.";
+      const confirm = context.ui?.confirm;
+      if (typeof confirm !== "function") {
+        return {
+          content: [{ type: "text" as const, text: "Approval UI is unavailable. Do not proceed with the gated action." }],
+          details: { approved: false, status: "unavailable" },
+        };
+      }
+
+      await safeEmit(emit, { type: "waiting_for_approval", correlation_id: toolCallId });
+      try {
+        const ok = await confirm(title, message);
+        if (ok) {
+          return {
+            content: [{ type: "text" as const, text: "User approved. You may proceed with the gated action." }],
+            details: { approved: true },
+          };
+        }
+        return {
+          content: [{ type: "text" as const, text: "User denied. Do not proceed with the gated action." }],
+          details: { approved: false },
+        };
+      } finally {
+        await safeEmit(emit, { type: "busy", correlation_id: toolCallId });
       }
     },
   });

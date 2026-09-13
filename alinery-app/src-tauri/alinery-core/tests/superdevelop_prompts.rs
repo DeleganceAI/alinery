@@ -27,6 +27,8 @@ fn superdevelop_seeds_seven_complete_prompts_and_notices_and_preserves_custom_fi
         let seeded = fs::read_to_string(&path).unwrap();
         assert_eq!(seeded.matches("## Common session instructions").count(), 1);
         assert!(seeded.contains(&format!("# {title}")));
+        assert!(seeded.contains("Ask one focused question"), "common-session must keep the focused-question rule");
+        assert!(seeded.contains("alinery_ask_approval"), "common-session must name alinery_ask_approval for binary go/no-go");
         let vars = PromptVars {
             artifacts_dir: &artifacts,
             artifact_file: &assigned,
