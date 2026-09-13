@@ -1666,8 +1666,11 @@ export function SessionView({
                   )
                   .catch((error) => setModelError(String(error)));
               }}
-              onGetCredits={() => {
+              onSubscribe={() => {
                 void ipc.accountOpenPlans().catch((error) => setModelError(String(error)));
+              }}
+              onBuyCredits={() => {
+                void ipc.accountOpen().catch((error) => setModelError(String(error)));
               }}
               onClose={() => {
                 setModelDialog(null);
