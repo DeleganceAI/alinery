@@ -4117,6 +4117,23 @@ dialog.modal::backdrop {
   font-size: var(--chat-font-size, 14px);
   line-height: 1.45;
 }
+/* Rendered markdown in chat bubbles — tighter rhythm than artifact prose. */
+.chat-md {
+  font-size: var(--chat-font-size, 14px);
+  line-height: 1.45;
+}
+.chat-md > :first-child {
+  margin-top: 0;
+}
+.chat-md > :last-child {
+  margin-bottom: 0;
+}
+.chat-md pre {
+  overflow-x: auto;
+}
+.chat-md code {
+  word-break: break-word;
+}
 
 .chat-entry-thumbs {
   display: flex;

@@ -1,7 +1,6 @@
 import { AlertCircle, ArrowDown, ArrowUp, Check, ChevronRight, Circle, Copy, EllipsisVertical, ExternalLink, Minus, Monitor, Moon, Plus, Sun, Trash2 } from "lucide-react";
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
-import { copyTextToClipboard } from "../ArtifactMarkdown";
 import {
   ARTIFACT_FONT_MAX,
   ARTIFACT_FONT_MIN,
@@ -23,6 +22,7 @@ import {
   TERMINAL_FONT_MIN,
   UI_SCALE_STEPS,
 } from "../appearance";
+import { copyTextToClipboard } from "../chat/CopyMessage";
 import { confirmDanger } from "../confirm";
 import { createGridViewId, gridViewShortcut, MAX_GRID_VIEWS, nextGridViewName, normalizeGridViews, withGridViewSlots } from "../gridViews";
 import { ORB_STATE } from "../Indicators";
