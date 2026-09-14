@@ -38,7 +38,7 @@ function mountWith(lines: string[], mode: "auto" | "manual" = "auto", hostedRead
     models: hostedReady ? [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 1 }] : [],
     ready: hostedReady,
     upsell: hostedReady ? null : "sign-in",
-    source: hostedReady ? "live" : "fixture",
+    source: hostedReady ? "live" : "empty",
   });
   mocks.rpcWriteSession.mockResolvedValue(undefined);
   mocks.detachSession.mockResolvedValue(undefined);
