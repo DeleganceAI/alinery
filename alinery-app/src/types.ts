@@ -27,7 +27,7 @@ export type AppearancePrefs = {
   chat_show_harness?: boolean;
   /** Chat journal: turn markers. Absent → false. */
   chat_show_turn_markers?: boolean;
-  /** Chat journal: subagent_status / subagent-actor rows. Absent → false. */
+  /** Chat journal: subagent_status / subagent-actor rows. Absent → true. */
   chat_show_subagent_rows?: boolean;
   /** Chat: live subagent drawer above the journal. Absent → true. */
   chat_show_subagent_drawer?: boolean;
@@ -49,13 +49,13 @@ export type AppearancePrefs = {
   chat_show_composer_hints?: boolean;
   /** Centered Chat column max width. Absent → "900". */
   chat_max_width?: ChatMaxWidth;
-  /** Journal stamps: calendar date (e.g. Sep 5). Absent → false. */
+  /** Journal stamps: calendar date (e.g. Sep 5). Absent → true. */
   chat_show_date?: boolean;
-  /** Journal stamps: clock time (e.g. 12:11). Absent → false. */
+  /** Journal stamps: clock time (e.g. 12:11). Absent → true. */
   chat_show_time?: boolean;
-  /** You / Agent name + kind icon above message bubbles. Absent → false. */
+  /** You / Agent name + kind icon above message bubbles. Absent → true. */
   chat_show_actor_labels?: boolean;
-  /** Filled bubble around agent text replies only. Absent → false. */
+  /** Filled bubble around agent text replies only. Absent → true. */
   chat_show_agent_bubbles?: boolean;
   /** Preferred OMP session hatch (Chat vs Terminal) for new starts. Absent → "chat". */
   session_default_view?: SessionDefaultView;

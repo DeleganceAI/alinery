@@ -127,7 +127,7 @@ describe("ChatPane", () => {
     expect(html).toContain('data-agent-bubbles="on"');
   });
 
-  it("defaults agent replies to unbubbled text and keeps user prompts bubbled", () => {
+  it("defaults agent replies to labelled bubbles and keeps user prompts bubbled", () => {
     const html = pane(
       [
         { id: "1", at, actor: ACTOR.you, type: "prompt", text: "Hello" },
@@ -136,13 +136,13 @@ describe("ChatPane", () => {
       ],
       { ...DEFAULT_CHAT_VISIBILITY, showThinking: true, showDate: true, showTime: true },
     );
-    expect(html).toContain('data-agent-bubbles="off"');
-    expect(html).toContain('data-actor-labels="off"');
+    expect(html).toContain('data-agent-bubbles="on"');
+    expect(html).toContain('data-actor-labels="on"');
     expect(html).toContain('data-density="normal"');
     expect(html).toContain("chat-msg-mine");
     expect(html).toContain("chat-msg-reply");
     expect(html).toContain("chat-rail");
-    expect(html).not.toContain("chat-msg-who");
+    expect(html).toContain("chat-msg-who");
   });
 
   it("shows a sticky activity strip while running", () => {
@@ -152,13 +152,13 @@ describe("ChatPane", () => {
   });
 
   it("hides journal stamps when date and time prefs are off", () => {
-    const withStamp = pane([{ id: "1", at, actor: ACTOR.you, type: "prompt", text: "Hello" }], {
-      ...DEFAULT_CHAT_VISIBILITY,
-      showDate: true,
-      showTime: true,
-    });
+    const withStamp = pane([{ id: "1", at, actor: ACTOR.you, type: "prompt", text: "Hello" }]);
     expect(withStamp).toContain("chat-msg-time");
-    const hidden = pane([{ id: "1", at, actor: ACTOR.you, type: "prompt", text: "Hello" }]);
+    const hidden = pane([{ id: "1", at, actor: ACTOR.you, type: "prompt", text: "Hello" }], {
+      ...DEFAULT_CHAT_VISIBILITY,
+      showDate: false,
+      showTime: false,
+    });
     expect(hidden).not.toContain("chat-msg-time");
   });
 

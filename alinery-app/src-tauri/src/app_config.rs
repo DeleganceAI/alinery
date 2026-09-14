@@ -63,7 +63,7 @@ pub(crate) struct AppearancePrefs {
     pub(crate) chat_show_harness: bool,
     #[serde(default)]
     pub(crate) chat_show_turn_markers: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub(crate) chat_show_subagent_rows: bool,
     #[serde(default = "default_true")]
     pub(crate) chat_show_subagent_drawer: bool,
@@ -85,13 +85,13 @@ pub(crate) struct AppearancePrefs {
     pub(crate) chat_show_composer_hints: bool,
     #[serde(default = "default_chat_max_width")]
     pub(crate) chat_max_width: String,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub(crate) chat_show_date: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub(crate) chat_show_time: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub(crate) chat_show_actor_labels: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub(crate) chat_show_agent_bubbles: bool,
     #[serde(default = "default_session_default_view")]
     pub(crate) session_default_view: String,
@@ -114,7 +114,7 @@ impl Default for AppearancePrefs {
             chat_expand_tools: false,
             chat_show_harness: true,
             chat_show_turn_markers: false,
-            chat_show_subagent_rows: false,
+            chat_show_subagent_rows: true,
             chat_show_subagent_drawer: true,
             chat_auto_collapse_thinking: true,
             chat_auto_compaction: true,
@@ -125,10 +125,10 @@ impl Default for AppearancePrefs {
             chat_show_meta: true,
             chat_show_composer_hints: true,
             chat_max_width: default_chat_max_width(),
-            chat_show_date: false,
-            chat_show_time: false,
-            chat_show_actor_labels: false,
-            chat_show_agent_bubbles: false,
+            chat_show_date: true,
+            chat_show_time: true,
+            chat_show_actor_labels: true,
+            chat_show_agent_bubbles: true,
             session_default_view: default_session_default_view(),
             mode: default_appearance_mode(),
         }
