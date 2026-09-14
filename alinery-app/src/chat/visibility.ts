@@ -37,7 +37,7 @@ export const DEFAULT_CHAT_VISIBILITY: ChatPrefs = {
   expandTools: false,
   showHarness: true,
   showTurnMarkers: false,
-  showSubagentRows: false,
+  showSubagentRows: true,
   showSubagentDrawer: true,
   autoCollapseThinking: true,
   autoCompaction: true,
@@ -48,10 +48,10 @@ export const DEFAULT_CHAT_VISIBILITY: ChatPrefs = {
   showMeta: true,
   showComposerHints: true,
   maxWidth: "900",
-  showDate: false,
-  showTime: false,
-  showActorLabels: false,
-  showAgentBubbles: false,
+  showDate: true,
+  showTime: true,
+  showActorLabels: true,
+  showAgentBubbles: true,
 };
 
 function normalizeMaxWidth(value: unknown): ChatMaxWidth {
@@ -70,7 +70,7 @@ export function chatVisibilityFromAppearance(input: AppearancePrefs | Record<str
     expandTools: input.chat_expand_tools === true,
     showHarness: input.chat_show_harness !== false,
     showTurnMarkers: input.chat_show_turn_markers === true,
-    showSubagentRows: input.chat_show_subagent_rows === true,
+    showSubagentRows: input.chat_show_subagent_rows !== false,
     showSubagentDrawer: input.chat_show_subagent_drawer !== false,
     autoCollapseThinking: input.chat_auto_collapse_thinking !== false,
     autoCompaction: input.chat_auto_compaction !== false,
@@ -81,10 +81,10 @@ export function chatVisibilityFromAppearance(input: AppearancePrefs | Record<str
     showMeta: input.chat_show_meta !== false,
     showComposerHints: input.chat_show_composer_hints !== false,
     maxWidth: normalizeMaxWidth(input.chat_max_width),
-    showDate: input.chat_show_date === true,
-    showTime: input.chat_show_time === true,
-    showActorLabels: input.chat_show_actor_labels === true,
-    showAgentBubbles: input.chat_show_agent_bubbles === true,
+    showDate: input.chat_show_date !== false,
+    showTime: input.chat_show_time !== false,
+    showActorLabels: input.chat_show_actor_labels !== false,
+    showAgentBubbles: input.chat_show_agent_bubbles !== false,
   };
 }
 

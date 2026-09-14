@@ -17,23 +17,21 @@ const subRow: ChatEntry = {
   summary: "drafting",
 };
 
-const showAll = { ...DEFAULT_CHAT_VISIBILITY, showThinking: true, showTools: true, showTurnMarkers: true, showSubagentRows: true };
-
 describe("visibleChatEntries", () => {
   it("keeps replies and filters thinking/tools by prefs", () => {
     const all = [thinking, tool, text];
     expect(visibleChatEntries(all, DEFAULT_CHAT_VISIBILITY).map((e) => e.type)).toEqual(["text"]);
-    expect(visibleChatEntries(all, showAll).map((e) => e.type)).toEqual(["thinking", "tool_call", "text"]);
-    expect(visibleChatEntries(all, { ...showAll, showThinking: false }).map((e) => e.type)).toEqual(["tool_call", "text"]);
-    expect(visibleChatEntries(all, { ...showAll, showTools: false }).map((e) => e.type)).toEqual(["thinking", "text"]);
+    expect(visibleChatEntries(all, { ...DEFAULT_CHAT_VISIBILITY, showThinking: true }).map((e) => e.type)).toEqual(["thinking", "text"]);
+    expect(visibleChatEntries(all, { ...DEFAULT_CHAT_VISIBILITY, showTools: true }).map((e) => e.type)).toEqual(["tool_call", "text"]);
+    expect(visibleChatEntries(all, { ...DEFAULT_CHAT_VISIBILITY, showThinking: true, showTools: true }).map((e) => e.type)).toEqual(["thinking", "tool_call", "text"]);
   });
 
   it("filters harness, turn markers, and subagent journal rows", () => {
     const all = [harness, turn, subRow, text];
-    expect(visibleChatEntries(all, DEFAULT_CHAT_VISIBILITY).map((e) => e.type)).toEqual(["harness", "text"]);
-    expect(visibleChatEntries(all, { ...showAll, showHarness: false }).map((e) => e.type)).toEqual(["turn_marker", "subagent_status", "text"]);
-    expect(visibleChatEntries(all, { ...DEFAULT_CHAT_VISIBILITY, showTurnMarkers: true }).map((e) => e.type)).toEqual(["harness", "turn_marker", "text"]);
-    expect(visibleChatEntries(all, { ...DEFAULT_CHAT_VISIBILITY, showSubagentRows: true }).map((e) => e.type)).toEqual(["harness", "subagent_status", "text"]);
+    expect(visibleChatEntries(all, DEFAULT_CHAT_VISIBILITY).map((e) => e.type)).toEqual(["harness", "subagent_status", "text"]);
+    expect(visibleChatEntries(all, { ...DEFAULT_CHAT_VISIBILITY, showHarness: false }).map((e) => e.type)).toEqual(["subagent_status", "text"]);
+    expect(visibleChatEntries(all, { ...DEFAULT_CHAT_VISIBILITY, showTurnMarkers: true }).map((e) => e.type)).toEqual(["harness", "turn_marker", "subagent_status", "text"]);
+    expect(visibleChatEntries(all, { ...DEFAULT_CHAT_VISIBILITY, showSubagentRows: false }).map((e) => e.type)).toEqual(["harness", "text"]);
   });
 });
 
@@ -46,7 +44,7 @@ describe("workRailDefaultExpanded", () => {
 });
 
 describe("chatVisibilityFromAppearance", () => {
-  it("defaults journal chrome off and density normal when absent", () => {
+  it("defaults requested journal chrome on and density normal when absent", () => {
     expect(chatVisibilityFromAppearance({})).toEqual(DEFAULT_CHAT_VISIBILITY);
     expect(
       chatVisibilityFromAppearance({
@@ -68,9 +66,6 @@ describe("chatVisibilityFromAppearance", () => {
       fontSize: 18,
       railFontSize: 14,
       maxWidth: "600",
-      showDate: true,
-      showActorLabels: true,
-      showAgentBubbles: true,
     });
   });
 
@@ -78,9 +73,9 @@ describe("chatVisibilityFromAppearance", () => {
     expect(chatVisibilityFromAppearance({ chat_rail_density: "compact" }).railDensity).toBe("normal");
   });
 
-  it("keeps showSubagentRows off when the pref is absent", () => {
-    expect(DEFAULT_CHAT_VISIBILITY.showSubagentRows).toBe(false);
-    expect(chatVisibilityFromAppearance({}).showSubagentRows).toBe(false);
+  it("keeps showSubagentRows on when the pref is absent", () => {
+    expect(DEFAULT_CHAT_VISIBILITY.showSubagentRows).toBe(true);
+    expect(chatVisibilityFromAppearance({}).showSubagentRows).toBe(true);
   });
 });
 

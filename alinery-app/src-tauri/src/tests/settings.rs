@@ -154,7 +154,7 @@ fn appearance_defaults_sanitize_and_round_trip() {
     assert!(!empty.appearance.chat_expand_tools);
     assert!(empty.appearance.chat_show_harness);
     assert!(!empty.appearance.chat_show_turn_markers);
-    assert!(!empty.appearance.chat_show_subagent_rows);
+    assert!(empty.appearance.chat_show_subagent_rows);
     assert!(empty.appearance.chat_show_subagent_drawer);
     assert!(empty.appearance.chat_auto_collapse_thinking);
     assert!(empty.appearance.chat_auto_compaction);
@@ -165,10 +165,10 @@ fn appearance_defaults_sanitize_and_round_trip() {
     assert!(empty.appearance.chat_show_meta);
     assert!(empty.appearance.chat_show_composer_hints);
     assert_eq!(empty.appearance.chat_max_width, "900");
-    assert!(!empty.appearance.chat_show_date);
-    assert!(!empty.appearance.chat_show_time);
-    assert!(!empty.appearance.chat_show_actor_labels);
-    assert!(!empty.appearance.chat_show_agent_bubbles);
+    assert!(empty.appearance.chat_show_date);
+    assert!(empty.appearance.chat_show_time);
+    assert!(empty.appearance.chat_show_actor_labels);
+    assert!(empty.appearance.chat_show_agent_bubbles);
     assert_eq!(empty.appearance.session_default_view, "chat");
 
     let old_default = AppearancePrefs {

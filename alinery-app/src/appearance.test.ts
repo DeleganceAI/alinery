@@ -160,12 +160,12 @@ describe("applyAppearance", () => {
       chat_show_agent_bubbles: true,
     });
     expect(normalizeAppearance({ ...prefs(), chat_show_actor_labels: undefined, chat_show_agent_bubbles: undefined })).toMatchObject({
-      chat_show_actor_labels: false,
-      chat_show_agent_bubbles: false,
+      chat_show_actor_labels: true,
+      chat_show_agent_bubbles: true,
     });
   });
 
-  it("defaults journal chrome off when keys are absent", () => {
+  it("defaults requested journal chrome on when keys are absent", () => {
     expect(
       normalizeAppearance({
         ...prefs(),
@@ -180,9 +180,9 @@ describe("applyAppearance", () => {
       chat_show_thinking: false,
       chat_show_tools: false,
       chat_show_turn_markers: false,
-      chat_show_subagent_rows: false,
-      chat_show_date: false,
-      chat_show_time: false,
+      chat_show_subagent_rows: true,
+      chat_show_date: true,
+      chat_show_time: true,
       chat_show_harness: true,
       chat_show_subagent_drawer: true,
       chat_rail_density: "normal",
@@ -194,7 +194,7 @@ describe("applyAppearance", () => {
     expect(normalizeAppearance(prefs({ chat_max_width: "none" })).chat_max_width).toBe("none");
     expect(normalizeAppearance({ ...prefs(), chat_max_width: "loud" as AppearancePrefs["chat_max_width"] }).chat_max_width).toBe("900");
     expect(normalizeAppearance(prefs({ chat_show_date: false, chat_show_time: false }))).toMatchObject({ chat_show_date: false, chat_show_time: false });
-    expect(normalizeAppearance({ ...prefs(), chat_show_date: undefined, chat_show_time: undefined })).toMatchObject({ chat_show_date: false, chat_show_time: false });
+    expect(normalizeAppearance({ ...prefs(), chat_show_date: undefined, chat_show_time: undefined })).toMatchObject({ chat_show_date: true, chat_show_time: true });
     expect(normalizeAppearance(prefs({ chat_show_date: true, chat_show_time: true }))).toMatchObject({ chat_show_date: true, chat_show_time: true });
   });
 
