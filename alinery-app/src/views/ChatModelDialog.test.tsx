@@ -143,7 +143,7 @@ describe("ChatModelDialog", () => {
       models: [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 1 }],
       ready: false,
       upsell: "sign-in" as const,
-      source: "fixture",
+      source: "live",
     };
     const accounts = renderToStaticMarkup(<ChatModelDialog {...base} tab="accounts" hosted={hosted} />);
     expect(accounts).toContain("Sign in");
@@ -166,7 +166,7 @@ describe("ChatModelDialog", () => {
       models: [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 1 }],
       ready: false,
       upsell: "subscribe" as const,
-      source: "fixture",
+      source: "live",
     };
     const onTabChange = vi.fn();
     const onSubscribe = vi.fn();
@@ -187,7 +187,7 @@ describe("ChatModelDialog", () => {
       models: [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 1 }],
       ready: false,
       upsell: "sign-in" as const,
-      source: "fixture",
+      source: "live",
     };
     render(<ChatModelDialog {...base} hosted={hosted} />);
     fireEvent.click(screen.getAllByRole("button", { name: "Assign" })[0]);

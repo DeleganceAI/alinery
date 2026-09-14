@@ -91,7 +91,7 @@ fn mint_body_keeps_the_token_off_the_catalog_view() {
     let (token, expires, catalog) = parse_inference_session_body(MINT.as_bytes()).unwrap();
     assert_eq!(token, "inf_test_abc");
     assert_eq!(expires, 1773000000);
-    let view = resolve_hosted_catalog(Some(catalog), None, hosted_fixture("https://accounts.alinery.ai"), true, true);
+    let view = resolve_hosted_catalog(Some(catalog), None, "https://accounts.alinery.ai", true, true);
     let json = serde_json::to_string(&view).unwrap();
     assert!(!json.contains("inf_"));
     assert!(!json.contains("token"));
@@ -105,32 +105,41 @@ fn parse_hosted_error_reads_code() {
 }
 
 #[test]
-fn resolve_prefers_live_then_unexpired_minted_then_fixture() {
-    let fixture = hosted_fixture("https://accounts.alinery.ai");
-    let mut live = fixture.clone();
+fn resolve_prefers_live_then_unexpired_minted_then_empty() {
+    let sample = parse_hosted_catalog_body(CATALOG.as_bytes()).unwrap();
+    let mut live = sample.clone();
     live.models.truncate(1);
-    let mut minted = fixture.clone();
+    let mut minted = sample;
     minted.default_model = "alinery/DeepSeek-V4-Pro-0813".into();
+    let accounts = "https://accounts.alinery.ai";
 
-    let unsigned = resolve_hosted_catalog(None, None, fixture.clone(), false, false);
-    assert_eq!(unsigned.source, "fixture");
+    let unsigned = resolve_hosted_catalog(None, None, accounts, false, false);
+    assert_eq!(unsigned.source, "empty");
+    assert!(unsigned.models.is_empty());
     assert_eq!(unsigned.upsell.as_deref(), Some("sign-in"));
     assert!(!unsigned.ready);
 
-    let unpaid = resolve_hosted_catalog(None, None, fixture.clone(), true, false);
+    let unpaid = resolve_hosted_catalog(None, None, accounts, true, false);
     assert_eq!(unpaid.upsell.as_deref(), Some("subscribe"));
+    assert!(unpaid.models.is_empty());
 
-    let unpaid_minted = resolve_hosted_catalog(None, Some(minted.clone()), fixture.clone(), true, false);
+    let unsigned_live = resolve_hosted_catalog(Some(live.clone()), None, accounts, false, false);
+    assert_eq!(unsigned_live.source, "live");
+    assert!(!unsigned_live.ready);
+    assert_eq!(unsigned_live.upsell.as_deref(), Some("sign-in"));
+    assert_eq!(unsigned_live.models.len(), 1);
+
+    let unpaid_minted = resolve_hosted_catalog(None, Some(minted.clone()), accounts, true, false);
     assert!(!unpaid_minted.ready);
     assert_eq!(unpaid_minted.upsell.as_deref(), Some("subscribe"));
     assert_eq!(unpaid_minted.source, "minted");
 
-    let from_minted = resolve_hosted_catalog(None, Some(minted.clone()), fixture.clone(), true, true);
+    let from_minted = resolve_hosted_catalog(None, Some(minted.clone()), accounts, true, true);
     assert_eq!(from_minted.source, "minted");
     assert!(from_minted.ready);
     assert_eq!(from_minted.default_model, "alinery/DeepSeek-V4-Pro-0813");
 
-    let from_live = resolve_hosted_catalog(Some(live.clone()), Some(minted), fixture, true, true);
+    let from_live = resolve_hosted_catalog(Some(live.clone()), Some(minted), accounts, true, true);
     assert_eq!(from_live.source, "live");
     assert_eq!(from_live.models.len(), 1);
     assert!(from_live.ready);
@@ -222,8 +231,8 @@ fn credits_view_upsells_free_to_subscribe_and_empty_paid_to_buy() {
 
 #[test]
 fn apply_credits_marks_empty_paid_catalog_not_ready() {
-    let fixture = hosted_fixture("https://accounts.alinery.ai");
-    let ready = resolve_hosted_catalog(None, Some(fixture.clone()), fixture.clone(), true, true);
+    let catalog = parse_hosted_catalog_body(CATALOG.as_bytes()).unwrap();
+    let ready = resolve_hosted_catalog(None, Some(catalog), "https://accounts.alinery.ai", true, true);
     assert!(ready.ready);
     let empty = DesktopCreditsView {
         visible: true,

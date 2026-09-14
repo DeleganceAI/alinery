@@ -2,6 +2,8 @@
 //! isolated OMP `models.yml`; never puts `inf_…` on IPC or in the OMP child env.
 //!
 //! Contract: envelope fields are frozen; `models[]` membership and `price` values are live.
+//! `GET /api/desktop/hosted-models` is unauthenticated — unsigned browse uses that, not a
+//! compiled-in list. Mint/credits still need a paid session.
 
 use crate::*;
 use serde::{Deserialize, Serialize};
@@ -221,36 +223,14 @@ pub(crate) fn paid_from_stored_plan(plan: Option<&str>, paid: bool) -> bool {
     paid || matches!(plan, Some("Founders Edition" | "Teams"))
 }
 
-pub(crate) fn hosted_fixture(accounts_url: &str) -> HostedCatalog {
+fn empty_hosted_catalog(accounts_url: &str) -> HostedCatalog {
     let origin = accounts_url.trim_end_matches('/');
     HostedCatalog {
         provider: HOSTED_PROVIDER.into(),
-        default_model: "alinery/Qwen3.6-35B-A3B".into(),
+        default_model: String::new(),
         base_url: "https://inference.alinery.ai/v1".into(),
         plans_url: format!("{origin}/plans"),
-        models: vec![
-            HostedModel {
-                id: "Qwen3.6-35B-A3B".into(),
-                name: "Qwen3.6-35B-A3B".into(),
-                context_window: 262144,
-                max_tokens: 32768,
-                price: Some(1),
-            },
-            HostedModel {
-                id: "DeepSeek-V4-Pro-0813".into(),
-                name: "DeepSeek-V4-Pro-0813".into(),
-                context_window: 1048576,
-                max_tokens: 32768,
-                price: Some(2),
-            },
-            HostedModel {
-                id: "GLM-5.3-Flash".into(),
-                name: "GLM-5.3-Flash".into(),
-                context_window: 1048576,
-                max_tokens: 32768,
-                price: Some(1),
-            },
-        ],
+        models: Vec::new(),
     }
 }
 
@@ -438,7 +418,7 @@ fn upsell_for(signed_in: bool, paid: bool) -> Option<&'static str> {
     }
 }
 
-pub(crate) fn resolve_hosted_catalog(live: Option<HostedCatalog>, minted: Option<HostedCatalog>, fixture: HostedCatalog, signed_in: bool, paid: bool) -> HostedCatalogView {
+pub(crate) fn resolve_hosted_catalog(live: Option<HostedCatalog>, minted: Option<HostedCatalog>, accounts_url: &str, signed_in: bool, paid: bool) -> HostedCatalogView {
     let ready = paid && minted.is_some();
     let upsell = upsell_for(signed_in, paid);
     if let Some(catalog) = live {
@@ -447,7 +427,7 @@ pub(crate) fn resolve_hosted_catalog(live: Option<HostedCatalog>, minted: Option
     if let Some(catalog) = minted {
         return view_from(catalog, ready, upsell, "minted");
     }
-    view_from(fixture, false, upsell, "fixture")
+    view_from(empty_hosted_catalog(accounts_url), false, upsell, "empty")
 }
 
 fn hosted_headers(access_token: Option<&str>) -> Vec<String> {
@@ -537,10 +517,11 @@ pub(crate) fn revoke_hosted_inference(config_dir: &Path, app_config: &Path, acco
 }
 
 pub(crate) fn hosted_catalog_at(config_dir: &Path, accounts_url: &str, signed_in: bool, paid: bool) -> HostedCatalogView {
+    let live = fetch_live_catalog(accounts_url).ok();
     let minted = load_inference_file(&inference_path(config_dir)).and_then(|file| inference_unexpired(&file, now_secs()).then_some(file.catalog));
-    resolve_hosted_catalog(None, minted, hosted_fixture(accounts_url), signed_in, paid)
+    resolve_hosted_catalog(live, minted, accounts_url, signed_in, paid)
 }
 
 pub(crate) fn unsigned_hosted_catalog(accounts_url: &str) -> HostedCatalogView {
-    view_from(hosted_fixture(accounts_url), false, Some("sign-in"), "fixture")
+    resolve_hosted_catalog(fetch_live_catalog(accounts_url).ok(), None, accounts_url, false, false)
 }
