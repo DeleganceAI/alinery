@@ -1,7 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ACTOR, type ChatEntry, TYPE_LABEL } from "../chat/types";
 import { ChatEntryRow } from "./ChatEntryRow";
+
+vi.mock("../WindowChrome", () => ({ WindowControls: () => null }));
 
 describe("ChatEntryRow", () => {
   it("approves with the extension request id, not the journal row id", () => {
@@ -79,5 +81,30 @@ describe("ChatEntryRow", () => {
     expect(followNode.querySelector(".chat-entry-thumbs img")?.getAttribute("alt")).toBe("shot.png");
     expect(followNode.querySelector(".chat-entry-chips")?.textContent).toContain("notes.pdf");
     expect(followNode.textContent).toContain("queued · after this turn");
+  });
+});
+
+describe("ChatEntryRow markdown + copy", () => {
+  it("renders finished agent text as markdown", () => {
+    const html = render(<ChatEntryRow entry={{ id: "t1", at: Date.now(), actor: ACTOR.agent, type: "text", text: "## Heading\n\n- item **bold**" }} />).container.innerHTML;
+    expect(html).toContain("<h2>Heading</h2>");
+    expect(html).toContain("<li>");
+    expect(html).toContain("<strong>bold</strong>");
+  });
+
+  it("streaming agent text stays plain and has no copy button", () => {
+    const { container } = render(<ChatEntryRow entry={{ id: "t2", at: Date.now(), actor: ACTOR.agent, type: "text", text: "partial **chunk", streaming: true }} />);
+    expect(container.querySelector(".chat-text-body")).toBeTruthy();
+    expect(container.querySelector("button[title='Copy message']")).toBeNull();
+  });
+
+  it("copies the raw message text from the copy button", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    const { container } = render(<ChatEntryRow entry={{ id: "t3", at: Date.now(), actor: ACTOR.agent, type: "text", text: "## Heading" }} />);
+    const copyButton = container.querySelector("button[title='Copy message']");
+    expect(copyButton).toBeTruthy();
+    fireEvent.click(copyButton as HTMLButtonElement);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("## Heading"));
   });
 });

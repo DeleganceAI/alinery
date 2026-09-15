@@ -1,4 +1,4 @@
-import { Check, Copy, Maximize2, TriangleAlert } from "lucide-react";
+import { Maximize2 } from "lucide-react";
 import type { Mermaid } from "mermaid";
 import type { ComponentProps, MouseEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { createElement, isValidElement, memo, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -808,80 +808,3 @@ export const ArtifactMarkdown = memo(function ArtifactMarkdown({ text, comments 
     </>
   );
 }, sameArtifactMarkdownProps);
-
-export async function copyTextToClipboard(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-
-  const area = document.createElement("textarea");
-  area.value = text;
-  area.setAttribute("readonly", "");
-  area.style.position = "fixed";
-  area.style.left = "-9999px";
-  area.style.top = "0";
-  document.body.appendChild(area);
-  area.select();
-  try {
-    if (!document.execCommand("copy")) throw new Error("copy command rejected");
-  } finally {
-    document.body.removeChild(area);
-  }
-}
-
-export function CopyTextButton({ text, label }: { text: string; label: string }) {
-  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
-  const statusLabel = state === "copied" ? `Copied ${label}` : state === "failed" ? `Failed to copy ${label}` : `Copy ${label}`;
-
-  return (
-    <button
-      className="btn ghost small copy-value-button"
-      type="button"
-      disabled={!text}
-      title={statusLabel}
-      aria-label={statusLabel}
-      onClick={async () => {
-        try {
-          await copyTextToClipboard(text);
-          setState("copied");
-        } catch {
-          setState("failed");
-        }
-        window.setTimeout(() => setState("idle"), 1200);
-      }}
-    >
-      {state === "copied" ? (
-        <Check size={14} strokeWidth={2} aria-hidden="true" />
-      ) : state === "failed" ? (
-        <TriangleAlert size={14} strokeWidth={2} aria-hidden="true" />
-      ) : (
-        <Copy size={14} strokeWidth={1.5} aria-hidden="true" />
-      )}
-    </button>
-  );
-}
-
-export function CopyArtifactButton({ text }: { text: string }) {
-  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
-
-  return (
-    <button
-      type="button"
-      className="btn ghost small"
-      disabled={!text}
-      title={state === "failed" ? "Copy failed" : "Copy artifact markdown"}
-      onClick={async () => {
-        try {
-          await copyTextToClipboard(text);
-          setState("copied");
-        } catch {
-          setState("failed");
-        }
-        window.setTimeout(() => setState("idle"), 1200);
-      }}
-    >
-      {state === "copied" ? "Copied" : state === "failed" ? "Failed" : "Copy"}
-    </button>
-  );
-}

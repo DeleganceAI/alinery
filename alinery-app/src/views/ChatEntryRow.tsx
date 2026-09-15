@@ -1,5 +1,6 @@
 import { Bot, Brain, Cable, CircleAlert, CircleStop, FileOutput, type LucideIcon, MessageSquare, Navigation, Reply, ShieldAlert, Terminal, Wrench } from "lucide-react";
 import { memo, type ReactNode, useEffect, useState } from "react";
+import { ChatMarkdown, CopyChatMessageButton } from "../chat/CopyMessage";
 import { type ChatStampParts, formatChatStamp, formatDuration, formatIso } from "../chat/format";
 import { type Actor, type ChatEntry, type ChatEntryType, TYPE_LABEL, whoLabel, whoLane } from "../chat/types";
 
@@ -200,6 +201,7 @@ function Msg({
   stamp,
   showActorLabels = false,
   reply = false,
+  copyText,
   children,
 }: {
   at?: number;
@@ -210,6 +212,8 @@ function Msg({
   showActorLabels?: boolean;
   /** Marks agent text replies so bubble CSS can target them without touching other Msg skins. */
   reply?: boolean;
+  /** Raw message text; when set, a copy button is shown in the row meta. */
+  copyText?: string;
   children?: ReactNode;
 }) {
   const lane = whoLane(actor);
@@ -217,7 +221,7 @@ function Msg({
   const Icon = KIND_ICON[type];
   const who = whoLabel(actor);
   const when = stampFor(at, stamp);
-  const showMeta = Boolean(when) || showActorLabels;
+  const showMeta = Boolean(when) || showActorLabels || Boolean(copyText);
   return (
     <article className={`chat-msg chat-msg-${lane}${mine ? " chat-msg-mine" : ""}${reply ? " chat-msg-reply" : ""}`} aria-label={`${when} ${who} ${TYPE_LABEL[type]}`.trim()}>
       {showMeta ? (
@@ -233,6 +237,7 @@ function Msg({
               <span className="chat-msg-who">{who}</span>
             </>
           ) : null}
+          {copyText ? <CopyChatMessageButton text={copyText} /> : null}
         </div>
       ) : null}
       <div className={`chat-msg-body ${kindFace(type)}`.trim()}>
@@ -355,7 +360,6 @@ function ChatEntryRowImpl({
           <UserRowBody entry={entry} />
         </Msg>
       );
-
     case "text":
       return (
         <Msg
@@ -365,12 +369,17 @@ function ChatEntryRowImpl({
           stamp={stamp}
           showActorLabels={showActorLabels}
           reply
+          copyText={entry.streaming ? undefined : entry.text}
           kicker={entry.streaming ? <Status tone="wait">live</Status> : undefined}
         >
-          <p className="chat-text-body">
-            {entry.text}
-            {entry.streaming ? <span className="chat-caret" aria-hidden /> : null}
-          </p>
+          {entry.streaming ? (
+            <p className="chat-text-body">
+              {entry.text}
+              <span className="chat-caret" aria-hidden />
+            </p>
+          ) : (
+            <ChatMarkdown text={entry.text} />
+          )}
         </Msg>
       );
     case "harness":
