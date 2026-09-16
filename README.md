@@ -4,7 +4,7 @@
 
 <h1 align="center">Alinery</h1>
 
-<p align="center"><strong>A Playbook IDE for complex work.</strong></p>
+<p align="center"><strong>A Playbook IDE for high-stakes work.</strong></p>
 
 <p align="center">
   <a href="https://alinery.ai"><img src="https://img.shields.io/badge/Website-alinery.ai-111827?style=flat-square" alt="Website: alinery.ai"></a>
@@ -20,7 +20,7 @@
   <a href="#mcp-server">MCP</a>
 </p>
 
-Playbooks define how agents work together through reusable graphs you can inspect and steer. Each task keeps its sessions, decisions, and artifacts together, so you can review results, explore sub-tasks, and iterate.
+Playbooks define how agents work together through reusable graphs you can inspect and steer. Each task keeps its sessions, decisions, and artifacts together, so you can go down rabbit holes without losing track of the main task or the progress you've made.
 
 ## A different way to work
 
@@ -42,7 +42,7 @@ For **macOS on Apple Silicon** and **Linux on x86_64**:
 curl -fsSL https://cdn.alinery.ai/install.sh | bash
 ```
 
-Alinery includes OMP for agent sessions and a Terminal option for shell work.
+Alinery includes [OMP](https://github.com/can1357/oh-my-pi) for agent sessions and a Terminal option for shell work.
 
 ## What it does
 
@@ -69,7 +69,11 @@ Task records, sessions, and artifacts live under your repository's `.alinery/` d
 
 ### Sub-tasks
 
-A sub-task lets you explore a separate piece of work while keeping its relationship to the parent visible. Each task can have one active direct child, with its own worktree, sessions, and artifacts.
+Sub-tasks give rabbit holes a place of their own, so you can investigate a side question and return to the main task knowing exactly where you left off.
+
+Use different agent Playbooks for different parts of a task: investigate a question, build a change, or review the result. Run sub-tasks in sequence, carry useful work forward, and discard approaches that don't hold up. For high-stakes work, you can run successive agent review Playbooks until you're satisfied with the result.
+
+Each task can have one active direct child, with its own worktree, sessions, and artifacts.
 
 <details>
 <summary><strong>Sub-task creation, review, and history</strong></summary>

@@ -1,6 +1,6 @@
 # Vision
 
-Alinery is a Playbook IDE for complex work. We want developers to direct substantial work with AI while retaining a clear understanding of the problem, the process, and the result.
+Alinery is a Playbook IDE for high-stakes work. We want developers to direct substantial work with AI while retaining a clear understanding of the problem, the process, and the result.
 
 This document describes the direction of the project.
 
@@ -56,6 +56,8 @@ A substantial engineering task spans questions, investigation, decisions, implem
 
 The task is Alinery's organizing unit. Sessions, artifacts, decisions, and related sub-tasks belong to that work. When someone returns to it, they should be able to see what was attempted, what was learned, which decisions still matter, and what needs attention next. Exploring a side question should preserve its connection to the reason it was asked.
 
+Sub-tasks should make it natural to use different Playbooks for different parts of a task and go down rabbit holes without losing track of the main work. Developers should be able to build on useful results, discard an approach, or run another agent review Playbook until they are satisfied with the result. The amount of investigation and review should reflect the stakes of the work.
+
 This is also how context should improve over time. A useful investigation or a carefully reviewed decision should remain available to the next Step, without requiring a person to reconstruct it from a long conversation.
 
 ## Make the process visible through Playbooks
@@ -90,7 +92,7 @@ Control also means predictable boundaries. Leaving the interface should not sile
 
 ## What success looks like
 
-We want a developer to be able to take on a complex task, choose and adapt a Playbook, let agents make progress, and return to a coherent set of results worth reviewing. They should spend more of their attention understanding the problem and shaping the solution, with fewer interruptions to coordinate the mechanics.
+We want a developer to be able to take on a high-stakes task, choose and adapt a Playbook, let agents make progress, and return to a coherent set of results worth reviewing. They should spend more of their attention understanding the problem and shaping the solution, with fewer interruptions to coordinate the mechanics.
 
 We should assess progress through real use, including whether people can explain the decisions behind the code, catch mistakes at useful checkpoints, and resume work without reconstructing the whole task.
 
