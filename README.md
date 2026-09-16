@@ -22,18 +22,6 @@
 
 Playbooks define how agents work together through reusable graphs you can inspect and steer. Each task keeps its sessions, decisions, and artifacts together, so you can go down rabbit holes without losing track of the main task or the progress you've made.
 
-## A different way to work
-
-Alinery encourages slower, deeper work with AI. Human review belongs in the Playbook from the beginning, with intentional pauses to align on the problem, approach, and tradeoffs before agents begin substantial work. The aim is **better outcomes and deeper flow states**.
-
-Work in the wrong direction still takes time to review, and a large amount of generated code can create pressure to salvage an approach that should be reconsidered. Getting aligned early helps prevent that wasted effort.
-
-- **Organize by task.** Keep the investigation, decisions, implementation, and review together as the work moves through different sessions.
-- **Review artifacts and code.** Direct agent chat is a low-level tool for debugging and intervention. Most of your attention should go to the work being produced and the decisions it requires.
-- **Make the process your own.** Customize Playbooks for your work so you can understand, inspect, and steer the process the agents follow.
-
-[Read the project vision →](VISION.md)
-
 ## Install
 
 For **macOS on Apple Silicon** and **Linux on x86_64**:
@@ -43,6 +31,20 @@ curl -fsSL https://cdn.alinery.ai/install.sh | bash
 ```
 
 Alinery includes [OMP](https://github.com/can1357/oh-my-pi) for agent sessions and a Terminal option for shell work.
+
+## A different way to work
+
+Alinery encourages slower, deeper work with AI. Human review belongs in the Playbook from the beginning, with intentional pauses to align on the problem, approach, and tradeoffs before agents begin substantial work. The aim is **better outcomes and deeper flow states**.
+
+Work in the wrong direction still takes time to review, and a large amount of generated code can create pressure to salvage an approach that should be reconsidered. Getting aligned early helps prevent that wasted effort.
+
+- **Organize by task.** Keep the investigation, decisions, implementation, and review together as the work moves through different sessions.
+- **Review artifacts and code.** Direct agent chat is a low-level tool for debugging and intervention. Most of your attention should go to the work being produced and the decisions it requires.
+- **Make the process your own.** Customize Playbooks for your work so you can understand, inspect, and steer the process the agents follow.
+- **Build resonant software.** We aim to make Alinery a piece of resonant software, guided by the [Resonant Computing Manifesto](https://resonantcomputing.org/).
+- **Build confidence through process.** Much of knowledge work, including software design decisions, has outcomes you cannot fully know in advance. For high-stakes, complex tasks, Playbooks give agents a deliberate process of investigation, decisions, and review, providing a stronger basis for trusting the quality of the result.
+
+[Read the project vision →](VISION.md)
 
 ## What it does
 
