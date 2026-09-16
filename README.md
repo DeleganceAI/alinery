@@ -1,31 +1,78 @@
-# Alinery
+<p align="center">
+  <a href="https://alinery.ai"><img src="alinery-app/public/brand/alinery-app-icon.png" alt="Alinery" width="96" height="96" style="display: block; margin: 0 auto;"></a>
+</p>
 
-Alinery is a Playbook IDE for complex work. Playbooks define how agents work together through reusable graphs you can inspect and steer. Each task keeps its sessions, decisions, and artifacts together, so you can review results, explore sub-tasks, and iterate.
+<h1 align="center">Alinery</h1>
 
-Using Alinery requires a mindset shift from other AI coding approaches. It encourages slower, deeper use by intentional friction in playbooks where human review is designed in from the beginning. We find these features help humans maintain deeper flow states for longer:
-- Organize agent sessions by task, instead of constantly switching between tens or hundreds of chats in a sidebar.
-- Chatting directly with an agent is a low-level, almost debugging like behavior that is discouraged as much as possible; spend more time reviewing artifacts and code and less time reading long chat messages from agents or watching them while they work.
-- Customize your playbooks so they are better adapted to your specific work and maintain accurate mental models of the process that the AI is following.
+<p align="center"><strong>A Playbook IDE for complex work.</strong></p>
+
+<p align="center">
+  <a href="https://alinery.ai"><img src="https://img.shields.io/badge/Website-alinery.ai-111827?style=flat-square" alt="Website: alinery.ai"></a>
+  <a href="https://discord.gg/tgAUKEv5U"><img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord: join the community"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-2563eb?style=flat-square" alt="License: Apache 2.0"></a>
+  <a href="#install"><img src="https://img.shields.io/badge/Platforms-macOS%20%7C%20Linux-475569?style=flat-square" alt="Platforms: macOS and Linux"></a>
+</p>
+
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="VISION.md">Vision</a> ·
+  <a href="#develop">Develop</a> ·
+  <a href="#mcp-server">MCP</a>
+</p>
+
+Playbooks define how agents work together through reusable graphs you can inspect and steer. Each task keeps its sessions, decisions, and artifacts together, so you can review results, explore sub-tasks, and iterate.
+
+## A different way to work
+
+Alinery encourages slower, deeper work with AI. Human review belongs in the Playbook from the beginning, with intentional pauses to align on the problem, approach, and tradeoffs before agents begin substantial work. The aim is **better outcomes and deeper flow states**.
+
+Work in the wrong direction still takes time to review, and a large amount of generated code can create pressure to salvage an approach that should be reconsidered. Getting aligned early helps prevent that wasted effort.
+
+- **Organize by task.** Keep the investigation, decisions, implementation, and review together as the work moves through different sessions.
+- **Review artifacts and code.** Direct agent chat is a low-level tool for debugging and intervention. Most of your attention should go to the work being produced and the decisions it requires.
+- **Make the process your own.** Customize Playbooks for your work so you can understand, inspect, and steer the process the agents follow.
+
+[Read the project vision →](VISION.md)
 
 ## Install
+
+For **macOS on Apple Silicon** and **Linux on x86_64**:
 
 ```bash
 curl -fsSL https://cdn.alinery.ai/install.sh | bash
 ```
 
+Alinery includes OMP for agent sessions and a Terminal option for shell work.
+
 ## What it does
 
-| Concept | What it is |
-|---------|------------|
-| **Task** | Durable container under `<repo>/.alinery/tasks/<slug>/` |
-| **Session** | One PTY running a harness (default OMP). Cheap; many per task |
-| **Artifact** | Numbered markdown checkpoint written between playbook phases |
-| **Worktree** | One git worktree per task on branch `<slug>` |
-| **Grid/Kanban** | Read-only view grouping tasks by derived playbook Step |
+| Concept | What it gives you |
+| --- | --- |
+| **Task** | One place for the work, its sessions, decisions, and artifacts |
+| **Playbook** | A reusable process with defined Steps and review points |
+| **Session** | An agent or terminal session; a task can have many |
+| **Artifact** | A numbered Markdown output to inspect, comment on, and use in later Steps |
+| **Worktree** | An optional isolated Git checkout and branch for a task |
+| **Grid / Kanban** | Views of tasks grouped by their current Playbook Step |
 
-**Sessions survive app quit.** A per-repo daemon (`alineryd`) owns the PTYs. Quit the UI and agents keep running; relaunch reattaches and replays the reconstructed screen. History is also written to an on-disk `.scrollback` sidecar so it can survive daemon restarts. Explicit teardown only: **Quit & stop all sessions** / `stop_daemon`.
+The default **SuperDevelop** Playbook takes a change through:
+
+```text
+Clarify → Investigate → Decide → Plan → Define Tests → Build → Prepare Review
+```
+
+Review the decision before starting Plan. Other bundled Playbooks cover one-shot implementation, code review, bug hunting, and free-form sessions. Customize them through your repository's `.alinery/playbooks.toml`.
+
+**Sessions survive app quit.** A per-repository daemon (`alineryd`) owns the agent and terminal processes. Leave sessions running when you close the app, then reconnect when you return. Stopping sessions is an explicit action; the quit dialog also offers **Quit & close all repos**.
+
+Task records, sessions, and artifacts live under your repository's `.alinery/` directory. The app runs locally, and product-usage telemetry is opt-in.
 
 ### Sub-tasks
+
+A sub-task lets you explore a separate piece of work while keeping its relationship to the parent visible. Each task can have one active direct child, with its own worktree, sessions, and artifacts.
+
+<details>
+<summary><strong>Sub-task creation, review, and history</strong></summary>
 
 A task can own one active direct child. Click **Start sub-task** on the parent to open one
 parent-owned manager session. The manager asks before it calls `alinery_create_subtask`; Alinery
@@ -35,8 +82,7 @@ step-specific harness still takes precedence. The child is a complete task, can 
 and receives the immediate parent's ticket and artifact paths in every generated session prompt.
 The parent shows the active child as its manager row; the child links back through its header
 instead of projecting the parent manager as one of its sessions. Parent sessions remain available
-while the
-child blocks the parent's sub-task slot.
+while the child blocks the parent's sub-task slot.
 
 While the child is active, the parent's artifact tree shows a live logical `subtasks/<child>/`
 folder. `alinery_finalize_subtask` replaces that view with an immutable snapshot, archives the child,
@@ -52,17 +98,22 @@ active child lineage, archives those child tasks as **KILLED**, and clears the p
 pointer. It preserves the task records, sessions, artifacts, worktrees, branches, and manager
 transcript as navigable history until normal archived-storage cleanup.
 
+</details>
+
 ## Develop
 
-**Prerequisites:** macOS (Apple Silicon), Xcode CLT, Rust stable, Node 18+, and at least one agent CLI on `PATH`. OMP is the only harness with semantic status and phase completion in this version; other configured harnesses remain fully usable as terminals.
+For development on macOS, install Xcode Command Line Tools, Rust stable, and Node.js 24.15+ on the Node 24 line. Start from the repository root:
 
 ```bash
-cd /path/to/repo/alinery-app
+cd alinery-app
 npm install
+npm run omp:fetch
 npm run tauri dev
 ```
 
-The one command for “is this change good?”:
+`omp:fetch` installs the pinned OMP binary used by development sessions. Run `npm run omp:check` to inspect its location and version. Alinery uses its packaged OMP rather than an agent CLI from `PATH`.
+
+Run checks from the **repository root**:
 
 ```bash
 ./scripts/check.sh --quick    # lint, typecheck, tests, source gates
@@ -70,6 +121,9 @@ The one command for “is this change good?”:
 ```
 
 Enable the pre-push hook once per clone: `git config core.hooksPath scripts/hooks`. Bypass with `ALINERY_SKIP_CHECK=1 git push`.
+
+<details>
+<summary><strong>Development instances and build notes</strong></summary>
 
 `npm run tauri dev` automatically launches **Alinery Dev**. The launcher reserves port
 `1420` when available and otherwise selects the next free local port, keeping Vite and
@@ -85,9 +139,11 @@ Builds and installs remain **Alinery** and keep the production
 continues to live under each target repository's `.alinery/`, so use disposable repositories
 for live development writes.
 
-First launch compiles Rust (~a minute). Native notification banners only appear from a real `.app` bundle, not `tauri dev`.
+First launch compiles Rust. Native notification banners only appear from a real `.app` bundle, not `tauri dev`.
 
 > **Don't run `cargo update`.** `time` is pinned to `0.3.51` in `Cargo.lock` (Tauri v2 build break otherwise).
+
+</details>
 
 ## MCP Server
 
@@ -102,6 +158,12 @@ Point any MCP host that runs **command + args** at the `alinery-mcp` binary. Std
   }
 }
 ```
+
+## Get involved
+
+Join the [Discord community](https://discord.gg/tgAUKEv5U) to discuss Playbooks and share how you use Alinery. Visit [alinery.ai](https://alinery.ai) for the project website, report bugs in [GitHub issues](https://github.com/DeleganceAI/alinery/issues), and read [VISION.md](VISION.md) for the direction behind the project.
+
+For code contributions, read [AGENTS.md](AGENTS.md) for the repository's engineering conventions and run `./scripts/check.sh` before submitting a change.
 
 ## License
 
