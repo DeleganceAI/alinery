@@ -5,6 +5,7 @@ import { createElement, isValidElement, memo, useEffect, useId, useMemo, useRef,
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { APPEARANCE_EVENT } from "./appearance";
+import { copyTextToClipboard } from "./clipboard";
 import { DiagramZoomOverlay } from "./DiagramZoomOverlay";
 import { buildRenderedDiff, diffStatusForNode, hashText, isDiffCodeBlock, type MarkdownPositionNode, type RenderedDiff, type RenderedDiffStatus, takeChars } from "./diff";
 import { LoadingState } from "./shared";
@@ -808,27 +809,6 @@ export const ArtifactMarkdown = memo(function ArtifactMarkdown({ text, comments 
     </>
   );
 }, sameArtifactMarkdownProps);
-
-export async function copyTextToClipboard(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-
-  const area = document.createElement("textarea");
-  area.value = text;
-  area.setAttribute("readonly", "");
-  area.style.position = "fixed";
-  area.style.left = "-9999px";
-  area.style.top = "0";
-  document.body.appendChild(area);
-  area.select();
-  try {
-    if (!document.execCommand("copy")) throw new Error("copy command rejected");
-  } finally {
-    document.body.removeChild(area);
-  }
-}
 
 export function CopyTextButton({ text, label }: { text: string; label: string }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");

@@ -4044,10 +4044,13 @@ dialog.modal::backdrop {
   --who-fill: var(--who-alinery);
 }
 .chat-msg-body {
+  position: relative;
   background: var(--who-fill);
   padding: var(--chat-bubble-pad, 8px 12px);
+  padding-inline-end: max(36px, 12px);
   width: 100%;
   border-radius: var(--radius-sm);
+  user-select: text;
 }
 /* Agent text replies only — thinking/tools stay on WorkRail chrome. */
 .chat-pane[data-agent-bubbles="off"] .chat-msg-agent.chat-msg-reply {
@@ -4085,6 +4088,42 @@ dialog.modal::backdrop {
   display: flex;
   gap: 8px;
   margin-top: 8px;
+}
+.chat-msg-copy-row {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  display: flex;
+  user-select: none;
+}
+.chat-msg-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+.chat-msg-copy:hover {
+  color: var(--text-strong);
+  background: var(--surface-subtle);
+  border-color: var(--border);
+}
+.chat-msg-copy:active {
+  background: color-mix(in srgb, var(--surface-subtle) 80%, var(--text-strong));
+}
+.chat-msg-copy:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.chat-work-pre,
+.chat-rail-panel {
+  user-select: text;
 }
 .chat-face-strong {
   color: var(--text-strong);
