@@ -54,7 +54,7 @@ Work in the wrong direction still takes time to review, and a large amount of ge
 
 | Concept | What it gives you |
 | --- | --- |
-| **Task** | One place for the work, its sessions, decisions, and artifacts |
+| **Task** | One place for the work, its agent sessions, decisions, and artifacts |
 | **Playbook** | A reusable process with defined Steps and review points |
 | **Session** | An agent or terminal session; a task can have many |
 | **Artifact** | A numbered Markdown output to inspect, comment on, and use in later Steps |
