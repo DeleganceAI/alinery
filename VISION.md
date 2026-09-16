@@ -1,6 +1,6 @@
 # Vision
 
-Alinery is a Playbook IDE for high-stakes work. We want developers to direct substantial work with AI while retaining a clear understanding of the problem, the process, and the result.
+Alinery is a Playbook IDE for consequential work. We want developers to direct substantial work with AI while retaining a clear understanding of the problem, the process, and the result.
 
 This document describes the direction of the project.
 
@@ -92,7 +92,7 @@ Control also means predictable boundaries. Leaving the interface should not sile
 
 ## What success looks like
 
-We want a developer to be able to take on a high-stakes task, choose and adapt a Playbook, let agents make progress, and return to a coherent set of results worth reviewing. They should spend more of their attention understanding the problem and shaping the solution, with fewer interruptions to coordinate the mechanics.
+We want a developer to be able to take on a consequential task, choose and adapt a Playbook, let agents make progress, and return to a coherent set of results worth reviewing. They should spend more of their attention understanding the problem and shaping the solution, with fewer interruptions to coordinate the mechanics.
 
 We should assess progress through real use, including whether people can explain the decisions behind the code, catch mistakes at useful checkpoints, and resume work without reconstructing the whole task.
 

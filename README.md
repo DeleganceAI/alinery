@@ -4,7 +4,7 @@
 
 <h1 align="center">Alinery</h1>
 
-<p align="center"><strong>A Playbook IDE for high-stakes work.</strong></p>
+<p align="center"><strong>A Playbook IDE for consequential work.</strong></p>
 
 <p align="center">
   <a href="https://alinery.ai"><img src="https://img.shields.io/badge/Website-alinery.ai-111827?style=flat-square" alt="Website: alinery.ai"></a>
@@ -20,7 +20,11 @@
   <a href="#mcp-server">MCP</a>
 </p>
 
-Playbooks define how agents work together through reusable graphs you can inspect and steer. Each task keeps its sessions, decisions, and artifacts together, so you can go down rabbit holes without losing track of the main task or the progress you've made.
+**Put a team of agents to work on your next task.** Give them a process, steer the important decisions, and build on the results.
+
+Playbooks define a ready-to-execute team of agents: who does what, how their work fits together, and where you step in to review or decide. Choose a Playbook for your task and adapt it to the way you want to work.
+
+Each task keeps its sessions, decisions, and artifacts together, so you can go down rabbit holes without losing track of the main task or the progress you’ve made.
 
 ## Install
 
@@ -42,7 +46,7 @@ Work in the wrong direction still takes time to review, and a large amount of ge
 - **Review artifacts and code.** Direct agent chat is a low-level tool for debugging and intervention. Most of your attention should go to the work being produced and the decisions it requires.
 - **Make the process your own.** Customize Playbooks for your work so you can understand, inspect, and steer the process the agents follow.
 - **Build resonant software.** We aim to make Alinery a piece of resonant software, guided by the [Resonant Computing Manifesto](https://resonantcomputing.org/).
-- **Build confidence through process.** Much of knowledge work, including software design decisions, has outcomes you cannot fully know in advance. For high-stakes, complex tasks, Playbooks give agents a deliberate process of investigation, decisions, and review, providing a stronger basis for trusting the quality of the result.
+- **Build confidence through process.** Much of knowledge work, including software design decisions, has outcomes you cannot fully know in advance. For consequential, complex tasks, Playbooks give agents a deliberate process of investigation, decisions, and review, providing a stronger basis for trusting the quality of the result.
 
 [Read the project vision →](VISION.md)
 
@@ -73,7 +77,7 @@ Task records, sessions, and artifacts live under your repository's `.alinery/` d
 
 Sub-tasks give rabbit holes a place of their own, so you can investigate a side question and return to the main task knowing exactly where you left off.
 
-Use different agent Playbooks for different parts of a task: investigate a question, build a change, or review the result. Run sub-tasks in sequence, carry useful work forward, and discard approaches that don't hold up. For high-stakes work, you can run successive agent review Playbooks until you're satisfied with the result.
+Use different agent Playbooks for different parts of a task: investigate a question, build a change, or review the result. Run sub-tasks in sequence, carry useful work forward, and discard approaches that don't hold up. For consequential work, you can run successive agent review Playbooks until you're satisfied with the result.
 
 Each task can have one active direct child, with its own worktree, sessions, and artifacts.
 
