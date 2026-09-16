@@ -20,11 +20,7 @@
   <a href="#mcp-server">MCP</a>
 </p>
 
-**Put a team of agents to work on your next task.** Give them a process, steer the important decisions, and build on the results.
-
-Playbooks define a ready-to-execute team of agents: who does what, how their work fits together, and where you step in to review or decide. Choose a Playbook for your task and adapt it to the way you want to work.
-
-Each task keeps its sessions, decisions, and artifacts together, so you can go down rabbit holes without losing track of the main task or the progress you’ve made.
+**Put a team of agents to work on your next task.** Give them a process, steer the important decisions, and build on the results. Playbooks define a ready-to-execute team of agents: who does what, how their work fits together, and where you step in to review or decide. Choose a Playbook for your task and adapt it to the way you want to work. Each task keeps its sessions, decisions, and artifacts together, so you can go down rabbit holes without losing track of the main task or the progress you’ve made.
 
 ## Install
 
