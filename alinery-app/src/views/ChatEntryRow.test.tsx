@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACTOR, type ChatEntry, TYPE_LABEL } from "../chat/types";
 import { ChatEntryRow } from "./ChatEntryRow";
 
+vi.mock("../WindowChrome", () => ({ WindowControls: () => null }));
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -111,5 +113,30 @@ describe("ChatEntryRow", () => {
     expect(body).toBeTruthy();
     expect(copyButton.closest(".chat-msg-copy-row")).toBeTruthy();
     expect(body?.textContent).toBe("Done.");
+  });
+});
+
+describe("ChatEntryRow markdown + copy", () => {
+  it("renders finished agent text as markdown", () => {
+    const html = render(<ChatEntryRow entry={{ id: "t1", at: Date.now(), actor: ACTOR.agent, type: "text", text: "## Heading\n\n- item **bold**" }} />).container.innerHTML;
+    expect(html).toContain("<h2>Heading</h2>");
+    expect(html).toContain("<li>");
+    expect(html).toContain("<strong>bold</strong>");
+  });
+
+  it("streaming agent text stays plain and has no copy button", () => {
+    const { container } = render(<ChatEntryRow entry={{ id: "t2", at: Date.now(), actor: ACTOR.agent, type: "text", text: "partial **chunk", streaming: true }} />);
+    expect(container.querySelector(".chat-text-body")).toBeTruthy();
+    expect(container.querySelector("button[title='Copy message']")).toBeNull();
+  });
+
+  it("copies the raw message text from the copy button", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const { container } = render(<ChatEntryRow entry={{ id: "t3", at: Date.now(), actor: ACTOR.agent, type: "text", text: "## Heading" }} />);
+    const copyButton = container.querySelector("button[title='Copy message']");
+    expect(copyButton).toBeTruthy();
+    fireEvent.click(copyButton as HTMLButtonElement);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("## Heading"));
   });
 });

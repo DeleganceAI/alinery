@@ -113,19 +113,32 @@ pub(crate) enum CreditsFetchError {
     Transport(String),
 }
 
+#[cfg(not(test))]
 static CREDITS_SNAPSHOT: std::sync::Mutex<Option<DesktopCredits>> = std::sync::Mutex::new(None);
 
+// Tests share the process and run in parallel; sign-out clears this snapshot. A thread-local
+// copy keeps the 503 keep-last path from racing another test's clear.
 #[cfg(test)]
-pub(crate) static CREDITS_SNAPSHOT_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
+thread_local! {
+    static CREDITS_SNAPSHOT: std::cell::RefCell<Option<DesktopCredits>> = const { std::cell::RefCell::new(None) };
+}
 
 pub(crate) fn store_credits_snapshot(credits: Option<DesktopCredits>) {
+    #[cfg(not(test))]
     if let Ok(mut guard) = CREDITS_SNAPSHOT.lock() {
         *guard = credits;
     }
+    #[cfg(test)]
+    CREDITS_SNAPSHOT.with(|slot| *slot.borrow_mut() = credits);
 }
 
 pub(crate) fn last_credits_snapshot() -> Option<DesktopCredits> {
-    CREDITS_SNAPSHOT.lock().ok().and_then(|guard| guard.clone())
+    #[cfg(not(test))]
+    {
+        CREDITS_SNAPSHOT.lock().ok().and_then(|guard| guard.clone())
+    }
+    #[cfg(test)]
+    CREDITS_SNAPSHOT.with(|slot| slot.borrow().clone())
 }
 
 pub(crate) fn credits_hidden() -> DesktopCreditsView {

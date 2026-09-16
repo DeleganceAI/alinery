@@ -1036,7 +1036,6 @@ const CREDITS_FREE: &str = r#"{"ok":true,"plan":"free","included_cents":0,"purch
 
 #[test]
 fn desktop_credits_200_shows_paid_balance() {
-    let _serial = crate::CREDITS_SNAPSHOT_TEST.lock().unwrap_or_else(|e| e.into_inner());
     store_credits_snapshot(None);
     let dir = unique_attachment_temp("credits-200");
     let path = dir.join("auth.json");
@@ -1052,7 +1051,6 @@ fn desktop_credits_200_shows_paid_balance() {
 
 #[test]
 fn desktop_credits_free_plan_upsells_subscribe() {
-    let _serial = crate::CREDITS_SNAPSHOT_TEST.lock().unwrap_or_else(|e| e.into_inner());
     store_credits_snapshot(None);
     let dir = unique_attachment_temp("credits-free");
     let path = dir.join("auth.json");
@@ -1067,7 +1065,6 @@ fn desktop_credits_free_plan_upsells_subscribe() {
 
 #[test]
 fn desktop_credits_404_hides_the_balance() {
-    let _serial = crate::CREDITS_SNAPSHOT_TEST.lock().unwrap_or_else(|e| e.into_inner());
     store_credits_snapshot(None);
     let dir = unique_attachment_temp("credits-404");
     let path = dir.join("auth.json");
@@ -1082,7 +1079,6 @@ fn desktop_credits_404_hides_the_balance() {
 
 #[test]
 fn desktop_credits_503_keeps_the_last_snapshot() {
-    let _serial = crate::CREDITS_SNAPSHOT_TEST.lock().unwrap_or_else(|e| e.into_inner());
     store_credits_snapshot(None);
     let dir = unique_attachment_temp("credits-503");
     let path = dir.join("auth.json");
@@ -1100,7 +1096,6 @@ fn desktop_credits_503_keeps_the_last_snapshot() {
 
 #[test]
 fn desktop_credits_401_refreshes_jwt_and_retries() {
-    let _serial = crate::CREDITS_SNAPSHOT_TEST.lock().unwrap_or_else(|e| e.into_inner());
     store_credits_snapshot(None);
     let dir = unique_attachment_temp("credits-401");
     let path = dir.join("auth.json");
@@ -1119,7 +1114,6 @@ fn desktop_credits_401_refreshes_jwt_and_retries() {
 
 #[test]
 fn desktop_credits_401_after_refresh_signs_out() {
-    let _serial = crate::CREDITS_SNAPSHOT_TEST.lock().unwrap_or_else(|e| e.into_inner());
     store_credits_snapshot(None);
     let dir = unique_attachment_temp("credits-401-out");
     let path = dir.join("auth.json");

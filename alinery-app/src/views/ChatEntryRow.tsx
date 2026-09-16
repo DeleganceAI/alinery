@@ -1,25 +1,8 @@
-import {
-  Bot,
-  Brain,
-  Cable,
-  Check,
-  CircleAlert,
-  CircleStop,
-  Copy,
-  FileOutput,
-  type LucideIcon,
-  MessageSquare,
-  Navigation,
-  Reply,
-  ShieldAlert,
-  Terminal,
-  TriangleAlert,
-  Wrench,
-} from "lucide-react";
-import { type MouseEvent, memo, type ReactNode, useEffect, useState } from "react";
+import { Bot, Brain, Cable, CircleAlert, CircleStop, FileOutput, type LucideIcon, MessageSquare, Navigation, Reply, ShieldAlert, Terminal, Wrench } from "lucide-react";
+import { memo, type ReactNode, useEffect, useState } from "react";
+import { ChatMarkdown, CopyChatMessageButton } from "../chat/CopyMessage";
 import { type ChatStampParts, formatChatStamp, formatDuration, formatIso } from "../chat/format";
 import { type Actor, type ChatEntry, type ChatEntryType, TYPE_LABEL, whoLabel, whoLane } from "../chat/types";
-import { copyTextToClipboard } from "../clipboard";
 
 const KIND_ICON: Record<ChatEntryType, LucideIcon> = {
   prompt: MessageSquare,
@@ -182,41 +165,6 @@ function copyTextForEntry(entry: ChatEntry): string {
   }
 }
 
-function MessageCopyButton({ text }: { text: string }) {
-  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
-  if (!text) return null;
-
-  const label = state === "copied" ? "Copied message" : state === "failed" ? "Failed to copy message" : "Copy message";
-  const stop = (event: MouseEvent<HTMLButtonElement>) => event.stopPropagation();
-  return (
-    <button
-      type="button"
-      className="chat-msg-copy"
-      title={label}
-      aria-label={label}
-      onMouseDown={stop}
-      onClick={async (event) => {
-        event.stopPropagation();
-        try {
-          await copyTextToClipboard(text);
-          setState("copied");
-        } catch {
-          setState("failed");
-        }
-        window.setTimeout(() => setState("idle"), 1200);
-      }}
-    >
-      {state === "copied" ? (
-        <Check size={13} strokeWidth={2} aria-hidden="true" />
-      ) : state === "failed" ? (
-        <TriangleAlert size={13} strokeWidth={2} aria-hidden="true" />
-      ) : (
-        <Copy size={13} strokeWidth={1.5} aria-hidden="true" />
-      )}
-    </button>
-  );
-}
-
 function WorkRail({
   entry,
   defaultExpanded = false,
@@ -294,6 +242,7 @@ function Msg({
   showActorLabels?: boolean;
   /** Marks agent text replies so bubble CSS can target them without touching other Msg skins. */
   reply?: boolean;
+  /** Raw message text; when set, a copy button is shown inside the bubble. */
   copyText?: string;
   children?: ReactNode;
 }) {
@@ -323,9 +272,11 @@ function Msg({
       <div className={`chat-msg-body ${kindFace(type)}`.trim()}>
         {kicker ? <div className="chat-msg-kicker">{kicker}</div> : null}
         {children}
-        <div className="chat-msg-copy-row">
-          <MessageCopyButton text={copyText ?? ""} />
-        </div>
+        {copyText ? (
+          <div className="chat-msg-copy-row">
+            <CopyChatMessageButton text={copyText} />
+          </div>
+        ) : null}
       </div>
     </article>
   );
@@ -452,7 +403,6 @@ function ChatEntryRowImpl({
           <UserRowBody entry={entry} />
         </Msg>
       );
-
     case "text":
       return (
         <Msg
@@ -461,14 +411,17 @@ function ChatEntryRowImpl({
           type="text"
           stamp={stamp}
           showActorLabels={showActorLabels}
-          copyText={copyText}
-          reply
+          copyText={entry.streaming ? undefined : entry.text}
           kicker={entry.streaming ? <Status tone="wait">live</Status> : undefined}
         >
-          <p className="chat-text-body">
-            {entry.text}
-            {entry.streaming ? <span className="chat-caret" aria-hidden /> : null}
-          </p>
+          {entry.streaming ? (
+            <p className="chat-text-body">
+              {entry.text}
+              <span className="chat-caret" aria-hidden />
+            </p>
+          ) : (
+            <ChatMarkdown text={entry.text} />
+          )}
         </Msg>
       );
     case "harness":

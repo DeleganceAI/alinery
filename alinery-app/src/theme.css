@@ -4096,30 +4096,19 @@ dialog.modal::backdrop {
   display: flex;
   user-select: none;
 }
-.chat-msg-copy {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.chat-msg-copy-row .copy-value-button {
   width: 22px;
+  min-width: 0;
   height: 22px;
   padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-color: transparent;
   color: var(--text-muted);
   background: transparent;
-  cursor: pointer;
 }
-.chat-msg-copy:hover {
+.chat-msg-copy-row .copy-value-button:hover {
   color: var(--text-strong);
   background: var(--surface-subtle);
   border-color: var(--border);
-}
-.chat-msg-copy:active {
-  background: color-mix(in srgb, var(--surface-subtle) 80%, var(--text-strong));
-}
-.chat-msg-copy:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 .chat-work-pre,
 .chat-rail-panel {
@@ -4155,6 +4144,23 @@ dialog.modal::backdrop {
   white-space: pre-wrap;
   font-size: var(--chat-font-size, 14px);
   line-height: 1.45;
+}
+/* Rendered markdown in chat bubbles — tighter rhythm than artifact prose. */
+.chat-md {
+  font-size: var(--chat-font-size, 14px);
+  line-height: 1.45;
+}
+.chat-md > :first-child {
+  margin-top: 0;
+}
+.chat-md > :last-child {
+  margin-bottom: 0;
+}
+.chat-md pre {
+  overflow-x: auto;
+}
+.chat-md code {
+  word-break: break-word;
 }
 
 .chat-entry-thumbs {

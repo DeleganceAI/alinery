@@ -22,7 +22,7 @@ import {
   TERMINAL_FONT_MIN,
   UI_SCALE_STEPS,
 } from "../appearance";
-import { copyTextToClipboard } from "../clipboard";
+import { copyTextToClipboard } from "../chat/CopyMessage";
 import { confirmDanger } from "../confirm";
 import { createGridViewId, gridViewShortcut, MAX_GRID_VIEWS, nextGridViewName, normalizeGridViews, withGridViewSlots } from "../gridViews";
 import { ORB_STATE } from "../Indicators";
