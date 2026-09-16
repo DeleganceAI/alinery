@@ -139,4 +139,10 @@ describe("ChatEntryRow markdown + copy", () => {
     fireEvent.click(copyButton as HTMLButtonElement);
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("## Heading"));
   });
+
+  it("hides copy buttons when disabled", () => {
+    const { container } = render(<ChatEntryRow entry={{ id: "t4", at: Date.now(), actor: ACTOR.agent, type: "text", text: "Copy me" }} showCopyButton={false} />);
+    expect(container.querySelector("button[title='Copy message']")).toBeNull();
+    expect(container.querySelector(".chat-msg-body")?.textContent).toBe("Copy me");
+  });
 });

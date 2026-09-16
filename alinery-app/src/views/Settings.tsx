@@ -1860,6 +1860,18 @@ export function Settings({
                   </>
                 }
               />
+              <Checkbox
+                checked={appearance.chat_show_copy_buttons !== false}
+                disabled={!isGlobal}
+                onChange={(enabled) => {
+                  if (isGlobal) saveAppearance({ ...appearance, chat_show_copy_buttons: enabled });
+                }}
+                label={
+                  <>
+                    Show copy buttons <span className="dsc">— per-message copy icon inside chat bubbles</span>
+                  </>
+                }
+              />
             </div>
             <div className="settings-subsection">
               <h2>Density</h2>

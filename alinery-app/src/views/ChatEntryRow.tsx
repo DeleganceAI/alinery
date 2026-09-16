@@ -312,6 +312,7 @@ function ChatEntryRowImpl({
   showDate = true,
   showTime = true,
   showActorLabels = false,
+  showCopyButton = true,
 }: {
   entry: ChatEntry;
   onApprove?: (id: string, allow: boolean) => void;
@@ -320,9 +321,10 @@ function ChatEntryRowImpl({
   showDate?: boolean;
   showTime?: boolean;
   showActorLabels?: boolean;
+  showCopyButton?: boolean;
 }) {
   const stamp: ChatStampParts = { date: showDate, time: showTime };
-  const copyText = copyTextForEntry(entry);
+  const copyText = showCopyButton ? copyTextForEntry(entry) : "";
   if (isWork(entry)) return <WorkRail entry={entry} defaultExpanded={defaultExpanded} autoCollapseThinking={autoCollapseThinking} stamp={stamp} />;
 
   switch (entry.type) {
@@ -411,7 +413,8 @@ function ChatEntryRowImpl({
           type="text"
           stamp={stamp}
           showActorLabels={showActorLabels}
-          copyText={entry.streaming ? undefined : entry.text}
+          copyText={showCopyButton && !entry.streaming ? entry.text : undefined}
+          reply
           kicker={entry.streaming ? <Status tone="wait">live</Status> : undefined}
         >
           {entry.streaming ? (
