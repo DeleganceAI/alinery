@@ -125,6 +125,8 @@ describe("ChatPane", () => {
     expect(html).toContain('data-density="comfortable"');
     expect(html).toContain('data-actor-labels="on"');
     expect(html).toContain('data-agent-bubbles="on"');
+    expect(html).toContain("Copy message");
+    expect(pane([{ id: "1", at, actor: ACTOR.agent, type: "text", text: "hi" }], { ...DEFAULT_CHAT_VISIBILITY, showCopyButtons: false })).not.toContain("Copy message");
   });
 
   it("defaults agent replies to labelled bubbles and keeps user prompts bubbled", () => {

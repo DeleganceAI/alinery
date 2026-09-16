@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   writeGlobalSettings: vi.fn(),
   readGlobalSettings: vi.fn(),
   checkOmpUpdate: vi.fn(),
+  writeAppearance: vi.fn(),
   updateOmp: vi.fn(),
   confirmDanger: vi.fn(),
 }));
@@ -53,6 +54,7 @@ vi.mock("../ipc", () =>
     listHarnessModels: async () => [],
     listHarnessModelsForRepo: async () => [],
     getVersion: async () => "0.0.0",
+    writeAppearance: mocks.writeAppearance,
   }),
 );
 
@@ -82,12 +84,24 @@ function renderHarnessSection() {
 beforeEach(() => {
   mocks.writeGlobalSettings.mockReset().mockImplementation(async (next: GlobalSettings) => next);
   mocks.readGlobalSettings.mockReset().mockResolvedValue(baseGlobal);
+  vi.stubGlobal("localStorage", {
+    getItem: vi.fn(() => null),
+    setItem: vi.fn(),
+    removeItem: vi.fn(),
+    clear: vi.fn(),
+  });
   mocks.checkOmpUpdate.mockReset().mockResolvedValue({ installed: "", available: null, checked_at: 0 });
   mocks.updateOmp.mockReset().mockResolvedValue("omp/18.2.0");
+  mocks.writeAppearance
+    .mockReset()
+    .mockImplementation(async (appearance: typeof DEFAULT_APPEARANCE) => ({ active_repo: "/r", known_repos: ["/r"], mcp_enabled: true, appearance }));
   mocks.confirmDanger.mockReset().mockResolvedValue(true);
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe("Harness settings model default", () => {
   it("does not offer a leftover claude model as the OMP default", async () => {
@@ -108,6 +122,15 @@ describe("Harness settings model default", () => {
     const saved = mocks.writeGlobalSettings.mock.calls[mocks.writeGlobalSettings.mock.calls.length - 1][0] as GlobalSettings;
     expect(saved.defaults.harness).toBe("omp");
     expect(saved.defaults.model).toBe("gpt-5");
+  });
+
+  it("persists the chat copy button toggle", async () => {
+    renderHarnessSection();
+    const toggle = await screen.findByLabelText(/Show copy buttons/);
+    expect((toggle as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(toggle);
+    await waitFor(() => expect(mocks.writeAppearance).toHaveBeenCalled());
+    expect(mocks.writeAppearance.mock.calls[mocks.writeAppearance.mock.calls.length - 1]?.[0]).toMatchObject({ chat_show_copy_buttons: false });
   });
 });
 
