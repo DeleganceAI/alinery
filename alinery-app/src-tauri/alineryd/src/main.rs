@@ -21,12 +21,14 @@ use alinery_core::{
     SessionState, SessionTransport, Task, DAEMON_CONTROL_TIMEOUT, DEFAULT_PLAYBOOK_KEY, NO_HARNESS_KEY, PROTOCOL_VERSION, RUNNER_EVENT_PROTOCOL_VERSION,
 };
 
+use alinery_core::daemon_client::{control_request_size_error, MAX_CONTROL_REQUEST_BYTES};
 use alinery_core::lockfile::{try_lock_exclusive, LockFile};
 
 use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::CommandExt;
@@ -41,7 +43,6 @@ use std::time::{Duration, Instant};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde_json::{json, Value};
 
-const MAX_CONTROL_REQUEST_BYTES: usize = 1024 * 1024;
 const MAX_EVENT_REQUEST_BYTES: usize = 128 * 1024;
 const MAX_MESSAGE_BODY_BYTES: usize = 4 * 1024 * 1024;
 const MAX_IN_FLIGHT_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
@@ -664,28 +665,49 @@ fn boot_sweep(repo: &Path, daemon_namespace: &str) -> usize {
     swept
 }
 
-// Read exactly one bounded \n-terminated request line without over-reading into
-// the byte stream that follows (BufReader would greedily buffer past the newline).
-fn read_line(stream: &mut UnixStream, max_bytes: usize) -> Option<String> {
-    let mut line = Vec::with_capacity(1024);
-    let mut b = [0u8; 1];
+#[derive(Debug, PartialEq, Eq)]
+enum RequestLineError {
+    Closed,
+    TooLarge,
+}
+
+// Peek in chunks, then consume only through the newline: send_message's body
+// must stay on the socket. Reading byte-by-byte makes accepted image sets slow.
+fn read_line(stream: &mut UnixStream, max_bytes: usize) -> Result<String, RequestLineError> {
+    let mut line = Vec::with_capacity(1024.min(max_bytes));
+    let mut chunk = [0u8; 16 * 1024];
+    let mut too_large = false;
     loop {
-        match stream.read(&mut b) {
-            Ok(0) => return None,
-            Ok(_) => {
-                if b[0] == b'\n' {
-                    break;
-                }
-                if line.len() == max_bytes {
-                    return None;
-                }
-                line.push(b[0]);
+        // SAFETY: the fd is live and chunk is writable for exactly chunk.len() bytes.
+        let peeked = unsafe { libc::recv(stream.as_raw_fd(), chunk.as_mut_ptr().cast(), chunk.len(), libc::MSG_PEEK) };
+        if peeked < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+            continue;
+        }
+        if peeked <= 0 {
+            return Err(if too_large { RequestLineError::TooLarge } else { RequestLineError::Closed });
+        }
+        let newline = chunk[..peeked as usize].iter().position(|byte| *byte == b'\n');
+        let count = newline.map_or(peeked as usize, |index| index + 1);
+        stream.read_exact(&mut chunk[..count]).map_err(|_| RequestLineError::Closed)?;
+        let content_len = newline.unwrap_or(count);
+        if !too_large {
+            if content_len > max_bytes - line.len() {
+                too_large = true;
+                line.clear();
+            } else {
+                line.extend_from_slice(&chunk[..content_len]);
             }
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => return None,
+        }
+        // Drain an oversized line without retaining it so write-then-read clients
+        // can finish writing and receive the rejection instead of a broken pipe.
+        if newline.is_some() {
+            return if too_large {
+                Err(RequestLineError::TooLarge)
+            } else {
+                String::from_utf8(line).map_err(|_| RequestLineError::Closed)
+            };
         }
     }
-    String::from_utf8(line).ok()
 }
 
 fn read_message_body(stream: &mut UnixStream, request: &Value, budget: &MessageBudget) -> Result<MessageBody, String> {
@@ -912,19 +934,23 @@ fn handle_conn(
     protected_host: &ProtectedHost,
 ) {
     // The listener is non-blocking so the accept loop can poll the signal pipe.
-    // On macOS, accept() inherits O_NONBLOCK. read_line then treats a drained
-    // socket buffer as EOF (WouldBlock → None), so a request larger than the
-    // ~8 KiB unix-socket buffer (the oversized-event case) flakes with EPIPE.
+    // On macOS accept() inherits O_NONBLOCK; a temporary gap must not be EOF.
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(DAEMON_CONTROL_TIMEOUT));
-    let Some(line) = read_line(&mut stream, MAX_CONTROL_REQUEST_BYTES) else {
-        return;
+    let line = match read_line(&mut stream, MAX_CONTROL_REQUEST_BYTES) {
+        Ok(line) => line,
+        Err(RequestLineError::TooLarge) => {
+            reply(&mut stream, json!({"error": control_request_size_error()}));
+            return;
+        }
+        Err(RequestLineError::Closed) => return,
     };
     let line_len = line.len();
     let Ok(req) = serde_json::from_str::<Value>(&line) else {
         reply(&mut stream, json!({"error": "bad json"}));
         return;
     };
+    drop(line);
     let op = req.get("op").and_then(|v| v.as_str()).unwrap_or("");
     if op == "event" && line_len > MAX_EVENT_REQUEST_BYTES {
         reply(&mut stream, json!({"error": "request-too-large"}));
@@ -1237,7 +1263,7 @@ fn handle_conn(
             }
         }
         "rpc_write" => {
-            let Some(payload) = req.get("payload").cloned().filter(|value| value.is_object()) else {
+            let Some(payload) = req.get("payload").filter(|value| value.is_object()) else {
                 reply(&mut stream, json!({"error": "missing payload"}));
                 return;
             };
@@ -3167,7 +3193,7 @@ mod request_limits {
     use std::os::unix::net::UnixStream;
     use std::thread;
 
-    fn socket_line(bytes: Vec<u8>, max_bytes: usize) -> Option<String> {
+    fn socket_line(bytes: Vec<u8>, max_bytes: usize) -> Result<String, RequestLineError> {
         let (mut server, mut client) = UnixStream::pair().unwrap();
         let writer = thread::spawn(move || {
             client.write_all(&bytes).unwrap();
@@ -3179,9 +3205,19 @@ mod request_limits {
 
     #[test]
     fn request_line_reader_accepts_the_limit_and_rejects_before_overallocation() {
-        assert_eq!(socket_line(b"1234\n".to_vec(), 4).as_deref(), Some("1234"));
-        assert_eq!(socket_line(b"12345\n".to_vec(), 4), None);
-        assert_eq!(socket_line(b"1234".to_vec(), 4), None);
+        assert_eq!(socket_line(b"1234\n".to_vec(), 4).as_deref(), Ok("1234"));
+        assert_eq!(socket_line(b"12345\n".to_vec(), 4), Err(RequestLineError::TooLarge));
+        assert_eq!(socket_line(b"1234".to_vec(), 4), Err(RequestLineError::Closed));
+    }
+
+    #[test]
+    fn request_line_reader_leaves_coalesced_message_body_on_socket() {
+        let (mut server, mut client) = UnixStream::pair().unwrap();
+        client.write_all(b"header\nbody\n").unwrap();
+        assert_eq!(read_line(&mut server, 6).unwrap(), "header");
+        let mut body = [0u8; 5];
+        server.read_exact(&mut body).unwrap();
+        assert_eq!(&body, b"body\n");
     }
 
     #[test]
@@ -3309,7 +3345,7 @@ mod request_limits {
             thread::sleep(std::time::Duration::from_millis(30));
             client.write_all(b" world\n").unwrap();
         });
-        assert_eq!(read_line(&mut server, 64).as_deref(), Some("hello world"));
+        assert_eq!(read_line(&mut server, 64).as_deref(), Ok("hello world"));
         writer.join().unwrap();
     }
 

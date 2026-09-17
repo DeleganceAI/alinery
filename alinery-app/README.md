@@ -11,6 +11,16 @@ Desktop UI for the Alinery task-centric AI coding playbook (kanban, persistent P
 5. **Artifacts** are written after each phase. Use the artifact list or MCP tools to read them.
 6. **Settings** (gear) manages browser-based GitHub/Linear connections plus repository config, harnesses, and notifications.
 
+### Chat attachments
+
+Chat supports up to four images of 5 MiB each (eight attachments total). The daemon
+allows 64 MiB of encoded JSON per request, excluding the framing newline, so base64
+expansion and message escaping fit within the transport limit. Oversized requests
+return a specific size error; failed sends retain the draft and attachments for retry.
+
+This requires daemon protocol 10. An older running daemon is not automatically stopped:
+use the app's explicit takeover flow when ready to stop its sessions and switch versions.
+
 ### Blocking sub-tasks
 
 Each task can own one active direct child. **Start sub-task** creates or opens a parent-owned

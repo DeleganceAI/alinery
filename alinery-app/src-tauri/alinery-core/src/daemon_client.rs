@@ -20,6 +20,14 @@ pub const DAEMON_OBSERVATION_TIMEOUT: Duration = Duration::from_millis(250);
 //         budget: a healthy ack is milliseconds.
 pub const DAEMON_CONTROL_TIMEOUT: Duration = Duration::from_secs(100);
 
+/// Serialized JSON bytes, excluding the trailing newline. Four 5 MiB images need
+/// ~27 MiB of base64; even a 4 MiB caption escaped at 6x fits with JSON overhead.
+pub const MAX_CONTROL_REQUEST_BYTES: usize = 64 * 1024 * 1024;
+
+pub fn control_request_size_error() -> String {
+    format!("request-too-large: encoded daemon request exceeds {MAX_CONTROL_REQUEST_BYTES} bytes (64 MiB); reduce the message or attachments")
+}
+
 // Formats a timeout for the "daemon not responding after ..." message: subsecond
 // durations as milliseconds (`250ms`), everything else as whole seconds (`100s`, truncating
 // any fractional remainder — the two constants above are the only values this ever sees).
@@ -299,10 +307,18 @@ impl DaemonClient {
 
     // Timeouts are set before write_all so a wedged daemon can't hang the write side either.
     pub fn send(&self, request: &Value) -> Result<UnixStream, String> {
+        self.send_with_timeout(request, DAEMON_CONTROL_TIMEOUT)
+    }
+
+    fn send_with_timeout(&self, request: &Value, timeout: Duration) -> Result<UnixStream, String> {
+        let encoded = request.to_string();
+        if encoded.len() > MAX_CONTROL_REQUEST_BYTES {
+            return Err(control_request_size_error());
+        }
         let mut stream = UnixStream::connect(&self.socket_path).map_err(|error| error.to_string())?;
-        stream.set_read_timeout(Some(DAEMON_CONTROL_TIMEOUT)).map_err(|error| error.to_string())?;
-        stream.set_write_timeout(Some(DAEMON_CONTROL_TIMEOUT)).map_err(|error| error.to_string())?;
-        stream.write_all(request.to_string().as_bytes()).map_err(format_socket_write_error)?;
+        stream.set_read_timeout(Some(timeout)).map_err(|error| error.to_string())?;
+        stream.set_write_timeout(Some(timeout)).map_err(|error| error.to_string())?;
+        stream.write_all(encoded.as_bytes()).map_err(format_socket_write_error)?;
         stream.write_all(b"\n").map_err(format_socket_write_error)?;
         stream.flush().map_err(format_socket_write_error)?;
         Ok(stream)
@@ -315,12 +331,7 @@ impl DaemonClient {
     }
 
     pub fn call_with_timeout(&self, request: &Value, timeout: Duration) -> Result<Value, String> {
-        let mut stream = UnixStream::connect(&self.socket_path).map_err(|error| error.to_string())?;
-        stream.set_read_timeout(Some(timeout)).map_err(|error| error.to_string())?;
-        stream.set_write_timeout(Some(timeout)).map_err(|error| error.to_string())?;
-        stream.write_all(request.to_string().as_bytes()).map_err(format_socket_write_error)?;
-        stream.write_all(b"\n").map_err(format_socket_write_error)?;
-        stream.flush().map_err(format_socket_write_error)?;
+        let mut stream = self.send_with_timeout(request, timeout)?;
         let line = read_reply_line(&mut stream, timeout)?;
         serde_json::from_str(&line).map_err(|error| error.to_string())
     }
@@ -695,6 +706,20 @@ mod tests {
         assert!(!is_known_open_intent("rpc_attach"));
         assert!(!is_known_open_intent("restate"));
         assert!(!is_known_open_intent("rpc_write"));
+    }
+
+    #[test]
+    fn oversized_encoded_requests_are_rejected_before_connecting() {
+        let client = DaemonClient::connect_path(socket_path("oversized")).unwrap();
+        // Raw text fits, but JSON escaping plus envelope bytes exceeds the wire cap.
+        let request = rpc_write_request("session", &json!({"type": "prompt", "message": "\0".repeat(MAX_CONTROL_REQUEST_BYTES / 6)}));
+        for error in [
+            client.send(&request).unwrap_err(),
+            client.call_with_timeout(&request, DAEMON_OBSERVATION_TIMEOUT).unwrap_err(),
+        ] {
+            assert!(error.starts_with("request-too-large:"), "{error}");
+            assert!(error.contains(&MAX_CONTROL_REQUEST_BYTES.to_string()), "{error}");
+        }
     }
 
     #[test]
