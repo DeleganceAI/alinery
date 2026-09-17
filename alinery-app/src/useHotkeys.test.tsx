@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, createEvent, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type Handlers, useHotkeys } from "./useHotkeys";
 
@@ -74,15 +74,44 @@ describe("useHotkeys", () => {
     expect(active.moveRow).not.toHaveBeenCalled();
   });
 
-  it("routes both Meta+D and Control+D only to duplicateSelected", () => {
+  it("routes Meta+D but leaves Control+D to the focused surface", () => {
     const active = handlers();
     render(<Probe handlers={active} />);
 
     fireEvent.keyDown(document.body, { key: "d", code: "KeyD", metaKey: true });
-    fireEvent.keyDown(document.body, { key: "D", code: "KeyD", ctrlKey: true });
+    const event = createEvent.keyDown(document.body, { key: "D", code: "KeyD", ctrlKey: true, cancelable: true });
+    fireEvent(document.body, event);
 
-    expect(active.duplicateSelected).toHaveBeenCalledTimes(2);
+    expect(active.duplicateSelected).toHaveBeenCalledOnce();
+    expect(event.defaultPrevented).toBe(false);
     for (const callback of commandCallbacks(active)) expect(callback).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a", "KeyA"],
+    ["e", "KeyE"],
+    ["k", "KeyK"],
+  ] as const)("leaves Control-%s unhandled by global hotkeys", (key, code) => {
+    const active = handlers();
+    render(<Probe handlers={active} />);
+
+    const event = createEvent.keyDown(document.body, { key, code, ctrlKey: true, cancelable: true });
+    fireEvent(document.body, event);
+
+    expect(event.defaultPrevented).toBe(false);
+    for (const callback of [...commandCallbacks(active), active.duplicateSelected]) expect(callback).not.toHaveBeenCalled();
+  });
+
+  it.each(["input", "textarea", "editable"])("leaves Control-K from %s controls to native editing", (label) => {
+    const active = handlers();
+    render(<Probe handlers={active} controls />);
+    const target = screen.getByLabelText(label);
+
+    const event = createEvent.keyDown(target, { key: "k", code: "KeyK", ctrlKey: true, cancelable: true });
+    fireEvent(target, event);
+
+    expect(event.defaultPrevented).toBe(false);
+    for (const callback of [...commandCallbacks(active), active.duplicateSelected]) expect(callback).not.toHaveBeenCalled();
   });
 
   it("does not duplicate while an overlay is open", () => {
