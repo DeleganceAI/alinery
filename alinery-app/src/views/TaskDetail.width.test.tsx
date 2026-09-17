@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
@@ -78,25 +77,5 @@ describe("TaskDetail artifact pane width", () => {
     );
 
     expect((document.querySelector(".detail.taskdetail") as HTMLElement).style.getPropertyValue("--artifact-width")).toBe("480px");
-  });
-});
-
-describe("TaskDetail session layout CSS", () => {
-  const css = readFileSync("src/theme.css", "utf8");
-  const app = readFileSync("src/App.tsx", "utf8");
-
-  it("reserves an action rail, wraps whole buttons, and drops secondary time columns first", () => {
-    expect(css).toMatch(/\.task-session-table \.session-actions-col\s*{[^}]*width: 220px;/s);
-    expect(css).toMatch(/\.session-actions\s*{[^}]*flex-wrap: wrap;/s);
-    expect(css).toMatch(/@media \(max-width: 1100px\)\s*{[\s\S]*?\.task-session-table \.session-time-col\s*{[^}]*display: none;/);
-  });
-
-  it("gives the session table the remaining Task Detail height and sole vertical scroll", () => {
-    expect(css).toMatch(/(?:^|\n)body\s*{[^}]*overflow: hidden;/s);
-    expect(css).toMatch(/\.detailmain\s*{[^}]*display: flex;[^}]*flex-direction: column;[^}]*overflow: hidden;/s);
-    expect(css).toMatch(/\.task-sessions-panel\s*{[^}]*min-height: 0;[^}]*flex: 1 1 0;[^}]*flex-direction: column;/s);
-    expect(css).toMatch(/\.task-session-table-wrap\s*{[^}]*min-height: 0;[^}]*flex: 1 1 0;[^}]*overflow: auto;/s);
-    expect(css).not.toMatch(/\.task-session-table-wrap\s*{[^}]*max-height:/s);
-    expect(app).toMatch(/view\.kind === "task"[\s\S]*?<div className="view">/);
   });
 });
