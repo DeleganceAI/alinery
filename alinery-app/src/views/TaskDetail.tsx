@@ -1045,7 +1045,6 @@ export function TaskDetail({
               <thead>
                 <tr>
                   <th className="status-col">Status</th>
-                  <th>Session</th>
                   <th>Step</th>
                   <th>Harness</th>
                   <th className="session-time-col" aria-sort={sessionSort.field === "started" ? (sessionSort.direction === "desc" ? "descending" : "ascending") : undefined}>
@@ -1082,7 +1081,7 @@ export function TaskDetail({
               <tbody>
                 {sessionsLoaded && taskPanelRows.length === 0 && !subtaskState?.can_recover && (
                   <tr className="empty-row">
-                    <td colSpan={7}>
+                    <td colSpan={6}>
                       <EmptyState title="No sessions yet." hint="Start a session to run a harness in this task's worktree." />
                     </td>
                   </tr>
@@ -1103,8 +1102,6 @@ export function TaskDetail({
                             </span>
                             {outcome && <span className={`pill ${subtaskOutcomeClass(row.child)}`}>{outcome}</span>}
                           </button>
-                        </td>
-                        <td>
                           <span className="badge todo" title="Sub-task history">
                             Sub-task history
                           </span>
@@ -1173,8 +1170,6 @@ export function TaskDetail({
                               </span>
                             )}
                           </button>
-                        </td>
-                        <td>
                           <span className="badge todo" title={canReplaceThisManager ? "Manager unavailable" : "Sub-task manager"}>
                             {canReplaceThisManager ? "Manager unavailable" : "Sub-task manager"}
                           </span>
@@ -1240,7 +1235,7 @@ export function TaskDetail({
                       key={s.id}
                       className={s.archived ? "row-archived" : openable ? "session-row-openable" : undefined}
                       tabIndex={openable ? 0 : undefined}
-                      aria-label={openable ? `Open session ${s.id}` : undefined}
+                      aria-label={openable ? `Open session ${sessionType}` : undefined}
                       onClick={(event) => {
                         if (!openable || (event.target as HTMLElement).closest("button")) return;
                         onOpenSession(slug, s.id, s.worktree, s.phase, s.harness, s.model, s.playbook, s.generic);
@@ -1265,22 +1260,13 @@ export function TaskDetail({
                         />
                       </td>
                       <td>
-                        <div className="session-id-cell">
-                          <span className="mono" title={s.id}>
-                            {s.id}
+                        <div className="session-step-cell">
+                          <span className="pill" title={sessionType}>
+                            {sessionType}
                           </span>
                           {s.archived && <span className="pill session-archived">Archived</span>}
-                          {resumedBy && (
-                            <span className="pill dim" title={`Resumed by ${resumedBy.id}`}>
-                              Resumed by {resumedBy.id}
-                            </span>
-                          )}
+                          {resumedBy && <span className="pill dim">Resumed</span>}
                         </div>
-                      </td>
-                      <td>
-                        <span className="pill" title={sessionType}>
-                          {sessionType}
-                        </span>
                       </td>
                       <td>
                         <span className="pill" title={harnessLabel}>
@@ -1324,8 +1310,6 @@ export function TaskDetail({
                           {subtaskState.active_subtask.slug}
                         </span>
                       </button>
-                    </td>
-                    <td>
                       <span className="badge todo" title="Manager unavailable">
                         Manager unavailable
                       </span>

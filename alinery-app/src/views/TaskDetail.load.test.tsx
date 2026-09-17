@@ -161,7 +161,7 @@ describe("an unknown task playbook", () => {
     expect(screen.getByText(fixture.branch)).toBeDefined();
 
     // Sessions still render even though the task's own playbook is unknown.
-    await waitFor(() => expect(screen.getByText("s1")).toBeDefined());
+    await waitFor(() => expect(screen.getByRole("row", { name: "Open session superdevelop · research" })).toBeDefined());
 
     // Artifacts still render — switch to the Artifacts tab to observe them.
     fireEvent.click(screen.getByRole("button", { name: "Artifacts", pressed: false }));
@@ -192,8 +192,6 @@ describe("an unknown historical-session playbook", () => {
     await waitFor(() => expect(screen.getByText("SuperDevelop \u00b7 Research")).toBeDefined());
     // The historical session with the unknown playbook still renders — degraded label
     // (falls back to the raw key and phase) rather than a blank/crashed row.
-    expect(screen.getByText("current")).toBeDefined();
-    expect(screen.getByText("historical")).toBeDefined();
     expect(screen.getByText("removed-playbook \u00b7 old-phase")).toBeDefined();
   });
 });
@@ -214,7 +212,7 @@ describe("a failing artifact scan on an unseeded related-task route", () => {
     await waitFor(() => expect(screen.getByText("Related Task")).toBeDefined());
     expect(screen.getByText("related-branch")).toBeDefined();
     expect(screen.getByText("/w/related-task")).toBeDefined();
-    expect(screen.getByText("s1")).toBeDefined();
+    expect(screen.getByRole("row", { name: "Open session SuperDevelop · Research" })).toBeDefined();
 
     // The failure is surfaced, not swallowed and not blanking.
     await waitFor(() => expect(screen.getByText("Couldn't load artifacts.")).toBeDefined());
