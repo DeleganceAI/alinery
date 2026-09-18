@@ -12,7 +12,6 @@ fn unique_temp(name: &str) -> std::path::PathBuf {
     dir
 }
 
-
 fn write_app_toml_with_telemetry(dir: &Path, enabled: bool, prompted: bool, endpoint: &str) -> std::path::PathBuf {
     let app_config = dir.join("app.toml");
     let mut global = alinery_core::default_global_settings();
@@ -97,7 +96,6 @@ fn capture_events(dir: &Path, expected: usize, emit: impl Fn(&Path)) -> Vec<serd
     panic!("capture_events: expected {expected} events, got {}: {last:?}", last.len());
 }
 
-
 #[test]
 fn write_draft_in_emits_task_draft_create_only_on_first_write() {
     let repo = init_git_test_repo("telemetry-draft");
@@ -113,7 +111,10 @@ fn write_draft_in_emits_task_draft_create_only_on_first_write() {
             "".into(),
             "".into(),
             "".into(),
-            alinery_core::playbook::PlaybookRef { scope: alinery_core::playbook::PlaybookScope::Bundled, key: "one-shot".into() },
+            alinery_core::playbook::PlaybookRef {
+                scope: alinery_core::playbook::PlaybookScope::Bundled,
+                key: "one-shot".into(),
+            },
             "claude".into(),
             String::new(),
             None,
@@ -135,7 +136,10 @@ fn write_draft_in_emits_task_draft_create_only_on_first_write() {
             "".into(),
             "".into(),
             "".into(),
-            alinery_core::playbook::PlaybookRef { scope: alinery_core::playbook::PlaybookScope::Bundled, key: "one-shot".into() },
+            alinery_core::playbook::PlaybookRef {
+                scope: alinery_core::playbook::PlaybookScope::Bundled,
+                key: "one-shot".into(),
+            },
             "claude".into(),
             String::new(),
             None,

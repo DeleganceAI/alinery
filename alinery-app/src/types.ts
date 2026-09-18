@@ -538,12 +538,27 @@ export type Phase = { key: string; title: string };
 export type PlaybookRef = { scope: "bundled" | "global" | "repo"; key: string };
 export type InputSelector = { path: string; mode: "single" | "each" | "complete" };
 export type NormalizedStep = {
-  key: string; title: string; short: string; is_coding_step: boolean; auto_advance_default: boolean;
-  inputs: InputSelector[]; outputs: { path: string }[]; model: string; harness: string; prompt: string;
+  key: string;
+  title: string;
+  short: string;
+  is_coding_step: boolean;
+  auto_advance_default: boolean;
+  inputs: InputSelector[];
+  outputs: { path: string }[];
+  model: string;
+  harness: string;
+  prompt: string;
 };
 export type NormalizedPlaybook = {
-  version: number; key: string; title: string; description: string; default_model: string; default_harness: string;
-  step: NormalizedStep[]; preamble: string; section_order: string[];
+  version: number;
+  key: string;
+  title: string;
+  description: string;
+  default_model: string;
+  default_harness: string;
+  step: NormalizedStep[];
+  preamble: string;
+  section_order: string[];
 };
 export type PlaybookValidationError = { code: string; message: string; line: number | null; field: string | null; severity: string };
 export type PlaybookSource = { reference: PlaybookRef; path: string | null };
@@ -553,48 +568,116 @@ export type PickerPreference = { reference: PlaybookRef; hidden: boolean; collap
 export type PickerPreferences = { order: PlaybookRef[]; entries: PickerPreference[] };
 export type PlaybookCatalog = { candidates: PlaybookCandidate[]; picker_preferences: PickerPreferences; diagnostics: PlaybookValidationError[] };
 export type PlaybookValidation = { definition: NormalizedPlaybook | null; diagnostics: PlaybookValidationError[] };
-export type SessionTypeChoice = { kind: "primary"; step_key: string; execution_id?: string; input_occurrence_ids?: string[] } | { kind: "auxiliary" } | { kind: "existing"; session_id: string };
+export type SessionTypeChoice =
+  | { kind: "primary"; step_key: string; execution_id?: string; input_occurrence_ids?: string[] }
+  | { kind: "auxiliary" }
+  | { kind: "existing"; session_id: string };
 export type SavePlaybookRequest = { target: PlaybookRef; source: string; overwrite: boolean };
 export type LaunchChoices = { harness: string; model: string };
 export type ExecutionLifecycle = "queued" | "starting" | "running" | "finishing" | "completed" | "launch_failed" | "failed" | "interrupted";
 export type CompletionPermission = { kind: "automatic" | "locked" | "consumed" } | { kind: "human_granted"; execution_id: string; session_id: string };
 export type OutputAssignment = { selector: string; relative_path: string; discriminator: number };
 export type ExecutionCandidate = {
-  step_key: string; context_id: string; inputs: Record<string, string[]>; complete_collection_id: string | null;
-  each_collection_id: string | null; each_member_id: string | null; manual: boolean;
+  step_key: string;
+  context_id: string;
+  inputs: Record<string, string[]>;
+  complete_collection_id: string | null;
+  each_collection_id: string | null;
+  each_member_id: string | null;
+  manual: boolean;
 };
 export type ExecutionRecord = {
-  id: string; binding_key: string; candidate: ExecutionCandidate; outputs: OutputAssignment[]; parent_execution_ids: string[];
-  depth: number; owner_session_id: string; previous_session_ids: string[]; launch: LaunchChoices; is_coding_step: boolean;
-  start_requested: boolean; lifecycle: ExecutionLifecycle; permission: CompletionPermission; receipt_id: string | null;
-  exit_code: number | null; shutdown_confirmed: boolean; error: string | null;
+  id: string;
+  binding_key: string;
+  candidate: ExecutionCandidate;
+  outputs: OutputAssignment[];
+  parent_execution_ids: string[];
+  depth: number;
+  owner_session_id: string;
+  previous_session_ids: string[];
+  launch: LaunchChoices;
+  is_coding_step: boolean;
+  start_requested: boolean;
+  lifecycle: ExecutionLifecycle;
+  permission: CompletionPermission;
+  receipt_id: string | null;
+  exit_code: number | null;
+  shutdown_confirmed: boolean;
+  error: string | null;
 };
 export type ArtifactOccurrence = {
-  id: string; producer_execution_id: string | null; selector: string; logical_path: string; relative_path: string;
-  depth: number; discriminator: number; context_id: string; collection_ids: string[];
+  id: string;
+  producer_execution_id: string | null;
+  selector: string;
+  logical_path: string;
+  relative_path: string;
+  depth: number;
+  discriminator: number;
+  context_id: string;
+  collection_ids: string[];
 };
 export type TaskExecutionState = {
-  version: number; revision: number; creation: string; creation_error: string | null; owning_lane: string;
-  definition_identity: string; reference: PlaybookRef; max_live_sessions: number; enabled_steps: string[]; launch_defaults: LaunchChoices;
-  executions: Record<string, ExecutionRecord>; occurrences: Record<string, ArtifactOccurrence>;
+  version: number;
+  revision: number;
+  creation: string;
+  creation_error: string | null;
+  owning_lane: string;
+  definition_identity: string;
+  reference: PlaybookRef;
+  max_live_sessions: number;
+  enabled_steps: string[];
+  launch_defaults: LaunchChoices;
+  executions: Record<string, ExecutionRecord>;
+  occurrences: Record<string, ArtifactOccurrence>;
   contexts: Record<string, { id: string; parent_id: string | null; cause: { kind: string }; bindings: Record<string, string[]> }>;
-  collections: Record<string, { id: string; context_id: string; selector: string; producer_step: string; source_collection_id: string | null; expected_execution_ids: string[]; member_occurrence_ids: string[]; membership_closed: boolean }>;
+  collections: Record<
+    string,
+    {
+      id: string;
+      context_id: string;
+      selector: string;
+      producer_step: string;
+      source_collection_id: string | null;
+      expected_execution_ids: string[];
+      member_occurrence_ids: string[];
+      membership_closed: boolean;
+    }
+  >;
 };
 export type TaskExecutionReply = { state: TaskExecutionState; definition: NormalizedPlaybook };
 export type TaskAttachment = { name: string; bytes: string };
 export type PreparedTaskAttachments = { attachments: TaskAttachment[]; attachment_urls: string[]; attachment_errors: string[] };
 export type CreateTaskRequest = {
-  name: string; draft_slug?: string | null; requested_slug?: string | null; description?: string; evidence?: string;
-  attachments?: TaskAttachment[]; attachment_urls?: string[]; attachment_errors?: string[]; linear_id?: string; github_issue?: string;
-  related_tasks?: RelatedTaskRef[]; parent_task?: string; playbook: { reference: PlaybookRef; source: string };
-  branch_name?: string | null; worktree_name?: string | null; base_ref?: string | null; launch_defaults?: LaunchChoices;
-  auto_advance_steps?: string[] | null; max_live_sessions?: number | null; start: boolean;
+  name: string;
+  draft_slug?: string | null;
+  requested_slug?: string | null;
+  description?: string;
+  evidence?: string;
+  attachments?: TaskAttachment[];
+  attachment_urls?: string[];
+  attachment_errors?: string[];
+  linear_id?: string;
+  github_issue?: string;
+  related_tasks?: RelatedTaskRef[];
+  parent_task?: string;
+  playbook: { reference: PlaybookRef; source: string };
+  branch_name?: string | null;
+  worktree_name?: string | null;
+  base_ref?: string | null;
+  launch_defaults?: LaunchChoices;
+  auto_advance_steps?: string[] | null;
+  max_live_sessions?: number | null;
+  start: boolean;
 };
 export type CreateExecutionSessionRequest = {
   task_slug: string;
-  target: { kind: "primary"; step_key: string; execution_id?: string | null; input_occurrence_ids?: string[] | null } |
-    { kind: "auxiliary"; harness: string; model?: string | null; prompt?: string | null };
-  launch_override?: LaunchChoices | null; prompt_extra?: string | null; start: boolean;
+  target:
+    | { kind: "primary"; step_key: string; execution_id?: string | null; input_occurrence_ids?: string[] | null }
+    | { kind: "auxiliary"; harness: string; model?: string | null; prompt?: string | null };
+  launch_override?: LaunchChoices | null;
+  prompt_extra?: string | null;
+  handoff_artifact?: string | null;
+  start: boolean;
 };
 export type CreateExecutionSessionReply = { session: SessionMeta; execution: ExecutionRecord | null; start: string };
 export type KanbanColumn = { key: string; title: string };
@@ -680,7 +763,19 @@ export type ReviewHandoffDraft = ReviewHandoffSource & {
   prompt_extra: string;
 };
 
-export type SettingsSectionKey = "playbooks" | "connections" | "notifications" | "telemetry" | "updates" | "storage" | "appearance" | "chat" | "gridViews" | "experimental" | "mcp" | "backup";
+export type SettingsSectionKey =
+  | "playbooks"
+  | "connections"
+  | "notifications"
+  | "telemetry"
+  | "updates"
+  | "storage"
+  | "appearance"
+  | "chat"
+  | "gridViews"
+  | "experimental"
+  | "mcp"
+  | "backup";
 
 export type View =
   | { kind: "list" }

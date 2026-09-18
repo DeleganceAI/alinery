@@ -15,16 +15,15 @@
 // Use alinery-core for all pure FS/path/harness/phase/status logic (pty bits stay local to alineryd).
 mod execution;
 mod ui_control;
-use alinery_core::{
-    alinery_dir, alineryd_lock_path, alineryd_reconciler_lock_path, alineryd_socket_path, all_session_meta_paths,
-    login_shell_path, normalized_session_status, process_exited, process_started, read_meta_launch_fields, read_session_meta_full, read_task,
-    reduce_runner_event, resolve_launch_prompt, safe_component, session_meta_path, session_omp_dir, session_scrollback_path, sessions_dir,
-    stamp_meta, strip_terminal_queries, subst, sweep_ends_session, validate_message_body, write_message, write_meta_atomic,
-    Harness, HarnessAdapter, LaunchFields, MessageAdapter, PlaybookState, ProcessState, RpcChunkAssembler, RunnerEvent, RunnerEventEnvelope, SessionMeta,
-    SessionState, SessionTransport, DAEMON_CONTROL_TIMEOUT, NO_HARNESS_KEY, PROTOCOL_VERSION, RUNNER_EVENT_PROTOCOL_VERSION,
-};
-use alinery_core::execution::{CompletionOutcome, ExecutionLifecycle};
 use alinery_core::daemon_client::{MAX_CONTROL_BODY_BYTES, MAX_CONTROL_HEADER_BYTES};
+use alinery_core::execution::{CompletionOutcome, ExecutionLifecycle};
+use alinery_core::{
+    alinery_dir, alineryd_lock_path, alineryd_reconciler_lock_path, alineryd_socket_path, all_session_meta_paths, login_shell_path, normalized_session_status, process_exited,
+    process_started, read_meta_launch_fields, read_session_meta_full, read_task, reduce_runner_event, resolve_launch_prompt, safe_component, session_meta_path, session_omp_dir,
+    session_scrollback_path, sessions_dir, stamp_meta, strip_terminal_queries, subst, sweep_ends_session, validate_message_body, write_message, write_meta_atomic, Harness,
+    HarnessAdapter, LaunchFields, MessageAdapter, PlaybookState, ProcessState, RpcChunkAssembler, RunnerEvent, RunnerEventEnvelope, SessionMeta, SessionState, SessionTransport,
+    DAEMON_CONTROL_TIMEOUT, NO_HARNESS_KEY, PROTOCOL_VERSION, RUNNER_EVENT_PROTOCOL_VERSION,
+};
 
 use alinery_core::lockfile::{try_lock_exclusive, LockFile};
 
@@ -54,7 +53,9 @@ const OMP_HOST_PROTECTION_ERROR: &str = "OMP host protection is unavailable; res
 const SPAWN_ROLLBACK_REAP_TIMEOUT: Duration = Duration::from_secs(2);
 const RPC_PENDING_MAX_BYTES: usize = 1024 * 1024;
 static EXECUTION_CONFIG_IDENTITY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-fn execution_config_identity() -> &'static str { EXECUTION_CONFIG_IDENTITY.get().map(String::as_str).unwrap_or("") }
+fn execution_config_identity() -> &'static str {
+    EXECUTION_CONFIG_IDENTITY.get().map(String::as_str).unwrap_or("")
+}
 const WRONG_TRANSPORT: &str = "wrong-transport";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -696,10 +697,14 @@ fn read_request_header(stream: &mut UnixStream, max_bytes: usize) -> Result<Stri
         // Peek only to find the delimiter; consume exactly this frame so attach and
         // length-delimited bodies retain every byte after the newline.
         let count = unsafe { libc::recv(stream.as_raw_fd(), chunk.as_mut_ptr().cast(), chunk.len(), libc::MSG_PEEK) };
-        if count == 0 { return Err("incomplete-request-header".to_string()); }
+        if count == 0 {
+            return Err("incomplete-request-header".to_string());
+        }
         if count < 0 {
             let error = std::io::Error::last_os_error();
-            if error.kind() == std::io::ErrorKind::Interrupted { continue; }
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
             return Err(format!("read-request-header: {error}"));
         }
         let bytes = &chunk[..count as usize];
@@ -711,7 +716,9 @@ fn read_request_header(stream: &mut UnixStream, max_bytes: usize) -> Result<Stri
         let consume = payload + usize::from(newline.is_some());
         stream.read_exact(&mut chunk[..consume]).map_err(|error| format!("read-request-header: {error}"))?;
         line.extend_from_slice(&chunk[..payload]);
-        if newline.is_some() { return String::from_utf8(line).map_err(|_| "request-header-invalid-utf8".to_string()); }
+        if newline.is_some() {
+            return String::from_utf8(line).map_err(|_| "request-header-invalid-utf8".to_string());
+        }
     }
 }
 
@@ -727,19 +734,23 @@ fn read_create_task_body(
     if header.get("op").and_then(Value::as_str) != Some("create_task") {
         return Err("invalid-control-body-operation".to_string());
     }
-    let body_bytes = header.get("body_bytes")
+    let body_bytes = header
+        .get("body_bytes")
         .and_then(Value::as_u64)
         .and_then(|bytes| usize::try_from(bytes).ok())
         .ok_or_else(|| "invalid-control-body-length".to_string())?;
-    if body_bytes == 0 { return Err("control-body-empty".to_string()); }
-    if body_bytes > MAX_CONTROL_BODY_BYTES { return Err("control-body-too-large".to_string()); }
+    if body_bytes == 0 {
+        return Err("control-body-empty".to_string());
+    }
+    if body_bytes > MAX_CONTROL_BODY_BYTES {
+        return Err("control-body-too-large".to_string());
+    }
     let reservation = reserve_control_body_bytes(budget, body_bytes)?;
     let mut body = Vec::new();
     body.try_reserve_exact(body_bytes).map_err(|_| "control-body-allocation-failed".to_string())?;
     body.resize(body_bytes, 0);
     stream.read_exact(&mut body).map_err(|error| format!("read-control-body: {error}"))?;
-    let request = serde_json::from_slice::<alinery_core::task_creation::CreateTaskRequest>(&body)
-        .map_err(|error| format!("invalid-create-task-body: {error}"))?;
+    let request = serde_json::from_slice::<alinery_core::task_creation::CreateTaskRequest>(&body).map_err(|error| format!("invalid-create-task-body: {error}"))?;
     Ok((request, reservation))
 }
 
@@ -812,18 +823,40 @@ fn start_auto_advance_once(repo: PathBuf, reg: Registry, daemon_namespace: Strin
 }
 
 fn accept_phase_completion(
-    reg: &Registry, repo: &Path, session_id: &str, task_slug: &str,
-    omp_session_id: &str, omp_turn_id: Option<u64>, meta_path: &Path, _app_config: &Path,
+    reg: &Registry,
+    repo: &Path,
+    session_id: &str,
+    task_slug: &str,
+    omp_session_id: &str,
+    omp_turn_id: Option<u64>,
+    meta_path: &Path,
+    _app_config: &Path,
 ) -> Result<CompletionOutcome, String> {
     let source = read_session_meta_full(meta_path).ok_or("missing-session-meta")?;
-    if source.execution_id.is_empty() { return Err("session has no v2 execution".into()); }
-    let outcome = alinery_core::execution::mutate_execution_state(repo, task_slug, &source.daemon_namespace, execution_config_identity(), "accept execution completion", |_, state| {
-        alinery_core::execution::accept_execution_completion(repo, task_slug, state, &source.execution_id, session_id)
-    })?;
+    if source.execution_id.is_empty() {
+        return Err("session has no v2 execution".into());
+    }
+    let outcome = alinery_core::execution::mutate_execution_state(
+        repo,
+        task_slug,
+        &source.daemon_namespace,
+        execution_config_identity(),
+        "accept execution completion",
+        |_, state| alinery_core::execution::accept_execution_completion(repo, task_slug, state, &source.execution_id, session_id),
+    )?;
     if matches!(outcome, CompletionOutcome::Accepted { .. }) {
         // Projection failures cannot revoke a receipt already durably committed.
-        if let Err(error) = stamp_meta(meta_path, |value| { value["semantic"] = json!({"phase_completed_at":now_secs(),"omp_session_id":omp_session_id,"omp_turn_id":omp_turn_id}); }) { eprintln!("completion projection: {error}"); }
-        let completed = alinery_core::execution::read_execution_state(repo, task_slug).is_ok_and(|state| state.executions.get(&source.execution_id).is_some_and(|record| record.lifecycle == ExecutionLifecycle::Completed));
+        if let Err(error) = stamp_meta(meta_path, |value| {
+            value["semantic"] = json!({"phase_completed_at":now_secs(),"omp_session_id":omp_session_id,"omp_turn_id":omp_turn_id});
+        }) {
+            eprintln!("completion projection: {error}");
+        }
+        let completed = alinery_core::execution::read_execution_state(repo, task_slug).is_ok_and(|state| {
+            state
+                .executions
+                .get(&source.execution_id)
+                .is_some_and(|record| record.lifecycle == ExecutionLifecycle::Completed)
+        });
         let _ = set_live_playbook(reg, session_id, if completed { PlaybookState::Completed } else { PlaybookState::ReadyToAdvance });
     } else {
         let agent = match &outcome {
@@ -914,24 +947,41 @@ fn dispatch_pty_seed(pending: PendingPtySeed, reg: Registry, repo: PathBuf, lane
     std::thread::spawn(move || {
         let result = {
             let mut writer = pending.writer.lock().unwrap_or_else(|error| error.into_inner());
-            writer.write_all(alinery_core::MESSAGE_SUBMIT).and_then(|()| writer.flush()).map_err(|error| error.to_string())
+            writer
+                .write_all(alinery_core::MESSAGE_SUBMIT)
+                .and_then(|()| writer.flush())
+                .map_err(|error| error.to_string())
         };
         if let Err(error) = result {
-            let current = reg.lock().unwrap_or_else(|e| e.into_inner()).get(&pending.session_id)
+            let current = reg
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&pending.session_id)
                 .is_some_and(|session| Arc::ptr_eq(&session.inner, &pending.inner));
-            if !current || pending.replacing.load(Ordering::SeqCst) { return; }
+            if !current || pending.replacing.load(Ordering::SeqCst) {
+                return;
+            }
             let reason = format!("initial prompt delivery failed: {error}");
             let _ = set_live_playbook(&reg, &pending.session_id, PlaybookState::Failed { reason: reason.clone() });
             if let Some(meta) = read_session_meta_full(&session_meta_path(&repo, &pending.task_slug, &pending.session_id)) {
                 if !meta.execution_id.is_empty() {
-                    let _ = alinery_core::mutate_execution_state(&repo, &pending.task_slug, &lane, execution_config_identity(), "record initial prompt failure", |_, state| {
-                        if pending.replacing.load(Ordering::SeqCst) { return Ok(()); }
-                        let record = state.executions.get_mut(&meta.execution_id).ok_or("missing execution")?;
-                        if record.owner_session_id == pending.session_id && record.receipt_id.is_none() && !record.shutdown_confirmed {
-                            record.error = Some(reason.clone());
-                        }
-                        Ok(())
-                    });
+                    let _ = alinery_core::mutate_execution_state(
+                        &repo,
+                        &pending.task_slug,
+                        &lane,
+                        execution_config_identity(),
+                        "record initial prompt failure",
+                        |_, state| {
+                            if pending.replacing.load(Ordering::SeqCst) {
+                                return Ok(());
+                            }
+                            let record = state.executions.get_mut(&meta.execution_id).ok_or("missing execution")?;
+                            if record.owner_session_id == pending.session_id && record.receipt_id.is_none() && !record.shutdown_confirmed {
+                                record.error = Some(reason.clone());
+                            }
+                            Ok(())
+                        },
+                    );
                 }
             }
             eprintln!("{reason}");
@@ -950,7 +1000,9 @@ fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Pa
         if session.event_token != envelope.token {
             return Err("invalid-event-token".into());
         }
-        if session.replacing.load(Ordering::SeqCst) { return Err("session transport replacement in progress".into()); }
+        if session.replacing.load(Ordering::SeqCst) {
+            return Err("session transport replacement in progress".into());
+        }
         (session.inner.clone(), session.meta_path.clone(), session.task_slug.clone())
     };
 
@@ -983,15 +1035,26 @@ fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Pa
     let pending_seed = if matches!(envelope.event, RunnerEvent::Idle { .. }) {
         let mut map = reg.lock().unwrap_or_else(|e| e.into_inner());
         map.get_mut(&envelope.session_id).and_then(|session| {
-            if session.event_token != envelope.token || session.replacing.load(Ordering::SeqCst) || !Arc::ptr_eq(&session.inner, &inner) { return None; }
-            let SessionIo::Pty { writer, .. } = &session.io else { return None; };
-            if !std::mem::take(&mut session.pending_pty_seed) { return None; }
+            if session.event_token != envelope.token || session.replacing.load(Ordering::SeqCst) || !Arc::ptr_eq(&session.inner, &inner) {
+                return None;
+            }
+            let SessionIo::Pty { writer, .. } = &session.io else {
+                return None;
+            };
+            if !std::mem::take(&mut session.pending_pty_seed) {
+                return None;
+            }
             Some(PendingPtySeed {
-                writer: writer.clone(), inner: session.inner.clone(), replacing: session.replacing.clone(),
-                session_id: envelope.session_id.clone(), task_slug: session.task_slug.clone(),
+                writer: writer.clone(),
+                inner: session.inner.clone(),
+                replacing: session.replacing.clone(),
+                session_id: envelope.session_id.clone(),
+                task_slug: session.task_slug.clone(),
             })
         })
-    } else { None };
+    } else {
+        None
+    };
     Ok((completion, pending_seed))
 }
 
@@ -1036,17 +1099,38 @@ fn handle_conn(
             let result: Result<Value, String> = (|| {
                 // Keep the reservation through typed decoding and provisioning, including errors.
                 let (input, _reservation) = read_create_task_body(&mut stream, &req, control_body_budget)?;
-                if !input.parent_task.is_empty() { return Err("child creation requires an authorized subtask manager".into()); }
+                if !input.parent_task.is_empty() {
+                    return Err("child creation requires an authorized subtask manager".into());
+                }
                 serde_json::to_value(execution::create_task(repo, reg, daemon_namespace, app_config, protected_host, input)?).map_err(|e| e.to_string())
             })();
-            match result { Ok(value) => reply(&mut stream, value), Err(error) => reply(&mut stream, json!({"error": error})) }
+            match result {
+                Ok(value) => reply(&mut stream, value),
+                Err(error) => reply(&mut stream, json!({"error": error})),
+            }
         }
         "create_execution_session" | "start_session" | "get_task_execution" | "create_subtask" => {
             let result: Result<Value, String> = (|| {
                 let input = req.get("request").cloned().ok_or("missing request")?;
                 match op {
-                    "create_execution_session" => serde_json::to_value(execution::create_session(repo, reg, daemon_namespace, app_config, protected_host, serde_json::from_value(input).map_err(|e| e.to_string())?)?).map_err(|e| e.to_string()),
-                    "start_session" => serde_json::to_value(execution::start(repo, reg, daemon_namespace, app_config, protected_host, serde_json::from_value(input).map_err(|e| e.to_string())?)?).map_err(|e| e.to_string()),
+                    "create_execution_session" => serde_json::to_value(execution::create_session(
+                        repo,
+                        reg,
+                        daemon_namespace,
+                        app_config,
+                        protected_host,
+                        serde_json::from_value(input).map_err(|e| e.to_string())?,
+                    )?)
+                    .map_err(|e| e.to_string()),
+                    "start_session" => serde_json::to_value(execution::start(
+                        repo,
+                        reg,
+                        daemon_namespace,
+                        app_config,
+                        protected_host,
+                        serde_json::from_value(input).map_err(|e| e.to_string())?,
+                    )?)
+                    .map_err(|e| e.to_string()),
                     "get_task_execution" => {
                         let input: alinery_core::task_creation::GetTaskExecutionRequest = serde_json::from_value(input).map_err(|e| e.to_string())?;
                         serde_json::to_value(execution::query(repo, &input.task_slug, daemon_namespace)?).map_err(|e| e.to_string())
@@ -1062,7 +1146,10 @@ fn handle_conn(
                     _ => unreachable!(),
                 }
             })();
-            match result { Ok(value) => reply(&mut stream, value), Err(error) => reply(&mut stream,json!({"error":error})) }
+            match result {
+                Ok(value) => reply(&mut stream, value),
+                Err(error) => reply(&mut stream, json!({"error":error})),
+            }
         }
         // attach NEVER spawns: reconnect to a daemon-owned pty, or fail. This is the #24
         // guarantee — opening an orphaned (not-owned) session can't silently re-run it.
@@ -1101,7 +1188,7 @@ fn handle_conn(
                 if let Some(pending) = pending_seed {
                     dispatch_pty_seed(pending, reg.clone(), repo.to_path_buf(), daemon_namespace.into());
                 }
-            },
+            }
             Err(error) => reply(&mut stream, json!({"error":error})),
         },
         "write" => {
@@ -1487,12 +1574,26 @@ fn spawn_or_attach(
     if safe_component(&id).is_none() || (!task_slug.is_empty() && safe_component(&task_slug).is_none()) {
         return Err("invalid task or session id".into());
     }
-    let outcome = execution::start(repo, reg, daemon_namespace, app_config, protected_host,
-        alinery_core::task_creation::StartSessionRequest { task_slug, session_id: id.clone() })?;
-    if outcome.start == "failed" { return Err(outcome.errors.first().map(|e| e.message.clone()).unwrap_or_else(|| "launch failed".into())); }
-    if outcome.start == "queued" { return Err("session is queued behind execution capacity or coding ownership".into()); }
-    if attach_id == 0 { ack_detached_open(stream, attach_id); }
-    else {
+    let outcome = execution::start(
+        repo,
+        reg,
+        daemon_namespace,
+        app_config,
+        protected_host,
+        alinery_core::task_creation::StartSessionRequest {
+            task_slug,
+            session_id: id.clone(),
+        },
+    )?;
+    if outcome.start == "failed" {
+        return Err(outcome.errors.first().map(|e| e.message.clone()).unwrap_or_else(|| "launch failed".into()));
+    }
+    if outcome.start == "queued" {
+        return Err("session is queued behind execution capacity or coding ownership".into());
+    }
+    if attach_id == 0 {
+        ack_detached_open(stream, attach_id);
+    } else {
         let mut map = reg.lock().unwrap_or_else(|e| e.into_inner());
         let sess = map.get_mut(&id).ok_or("session exited before attachment")?;
         match sess.transport() {
@@ -1502,7 +1603,6 @@ fn spawn_or_attach(
     }
     Ok(())
 }
-
 
 // Resume: reconnect a resume-capable harness to its prior conversation via resume_args, on a
 // NEW session id (the app mints the row carrying the old token). Idempotent attach if already
@@ -1539,7 +1639,9 @@ fn resume_or_attach(
         if !meta.execution_id.is_empty() || (!meta.generic && meta.harness != NO_HARNESS_KEY) {
             return Err("graph owners cannot be resumed; recover proven-stopped unfinished execution explicitly".into());
         }
-        if meta.daemon_namespace != daemon_namespace { return Err("session belongs to another daemon lane".into()); }
+        if meta.daemon_namespace != daemon_namespace {
+            return Err("session belongs to another daemon lane".into());
+        }
         if meta.started_at.is_some() {
             return Err("already-started; use resume or start-fresh".into());
         }
@@ -1596,7 +1698,6 @@ fn build_seeded_prompt(repo: &Path, launch: &LaunchFields) -> Result<Option<Stri
     resolve_launch_prompt(repo, launch)
 }
 
-
 fn resolve_runner_path() -> Result<PathBuf, String> {
     let path = match env::var_os("ALINERY_RUNNER_PATH").filter(|value| !value.is_empty()) {
         Some(path) => PathBuf::from(path),
@@ -1647,7 +1748,9 @@ fn executable_path(binary: &str, cwd: &str) -> Result<PathBuf, String> {
     } else {
         env::split_paths(&login_shell_path()).map(|directory| directory.join(path)).find(|path| executable(path))
     };
-    candidate.filter(|path| executable(path)).ok_or_else(|| format!("harness executable is missing or not executable: {binary}"))
+    candidate
+        .filter(|path| executable(path))
+        .ok_or_else(|| format!("harness executable is missing or not executable: {binary}"))
 }
 
 fn spawn_session(
@@ -1812,7 +1915,10 @@ fn spawn_session(
         cmd.env("PI_CODING_AGENT_DIR", &agent_dir);
         cmd.env("PI_CONFIG_DIR", &config_root);
         cmd.env("OMP_SKIP_SETUP", "1");
-        cmd.env("ALINERY_PTY_INITIAL_PROMPT", if deferred_pty_seed { seeded.take().unwrap_or_default() } else { String::new() });
+        cmd.env(
+            "ALINERY_PTY_INITIAL_PROMPT",
+            if deferred_pty_seed { seeded.take().unwrap_or_default() } else { String::new() },
+        );
     }
     cmd.cwd(&cwd);
     cmd.env("TERM", "xterm-256color");
@@ -1854,7 +1960,14 @@ fn spawn_session(
     let writer = Arc::new(Mutex::new(pair.master.take_writer().map_err(|e| e.to_string())?));
     let meta_path = session_meta_path(repo, &launch.task_slug, &launch.id);
     let meta_path_reader = meta_path.clone();
-    let execution_reader = (repo.to_path_buf(), launch.task_slug.clone(), launch.id.clone(), daemon_namespace.to_string(), reg.clone(), protected_host.clone());
+    let execution_reader = (
+        repo.to_path_buf(),
+        launch.task_slug.clone(),
+        launch.id.clone(),
+        daemon_namespace.to_string(),
+        reg.clone(),
+        protected_host.clone(),
+    );
     let app_config_reader = app_config.to_path_buf();
     let harness_reader = launch.harness.clone();
     // Eager, unlike the other id lookups: the reader thread still needs these at exit time,
@@ -1981,7 +2094,13 @@ fn spawn_session(
                     drop(inner);
                     if committed && reaped && drained && !replacing_reader.load(Ordering::SeqCst) {
                         execution::exited(&execution_reader.0, &execution_reader.1, &execution_reader.2, &execution_reader.3, code);
-                        start_auto_advance_once(execution_reader.0.clone(), execution_reader.4.clone(), execution_reader.3.clone(), app_config_reader.clone(), execution_reader.5.clone());
+                        start_auto_advance_once(
+                            execution_reader.0.clone(),
+                            execution_reader.4.clone(),
+                            execution_reader.3.clone(),
+                            app_config_reader.clone(),
+                            execution_reader.5.clone(),
+                        );
                     }
                     let _ = reaped_sender.send(());
                     break;
@@ -2621,7 +2740,14 @@ fn spawn_rpc_session(
     cmd.stderr(Stdio::from(stderr));
     let meta_path = session_meta_path(repo, &launch.task_slug, &launch.id);
     let meta_path_reader = meta_path.clone();
-    let execution_reader = (repo.to_path_buf(), launch.task_slug.clone(), launch.id.clone(), daemon_namespace.to_string(), reg.clone(), protected_host.clone());
+    let execution_reader = (
+        repo.to_path_buf(),
+        launch.task_slug.clone(),
+        launch.id.clone(),
+        daemon_namespace.to_string(),
+        reg.clone(),
+        protected_host.clone(),
+    );
     let app_config_reader = app_config.to_path_buf();
     let harness_reader = launch.harness.clone();
     let ids = alinery_core::telemetry_ids_for_session(repo, &launch.task_slug, &launch.id);
@@ -2751,7 +2877,13 @@ fn spawn_rpc_session(
                     drop(inner);
                     if committed && reaped && drained && !replacing_reader.load(Ordering::SeqCst) {
                         execution::exited(&execution_reader.0, &execution_reader.1, &execution_reader.2, &execution_reader.3, code);
-                        start_auto_advance_once(execution_reader.0.clone(), execution_reader.4.clone(), execution_reader.3.clone(), app_config_reader.clone(), execution_reader.5.clone());
+                        start_auto_advance_once(
+                            execution_reader.0.clone(),
+                            execution_reader.4.clone(),
+                            execution_reader.3.clone(),
+                            app_config_reader.clone(),
+                            execution_reader.5.clone(),
+                        );
                     }
                     let _ = reaped_sender.send(());
                     break;
@@ -2767,7 +2899,14 @@ fn spawn_rpc_session(
                                     let mut inner = inner_t.lock().unwrap_or_else(|error| error.into_inner());
                                     push_rpc_line(&mut inner, complete, kind);
                                 }
-                                if kind == RpcLineKind::TurnEnd && alinery_core::execution::read_execution_state(&execution_reader.0, &execution_reader.1).is_ok_and(|state| state.executions.values().any(|r| r.owner_session_id == execution_reader.2 && r.receipt_id.is_some() && !r.shutdown_confirmed)) {
+                                if kind == RpcLineKind::TurnEnd
+                                    && alinery_core::execution::read_execution_state(&execution_reader.0, &execution_reader.1).is_ok_and(|state| {
+                                        state
+                                            .executions
+                                            .values()
+                                            .any(|r| r.owner_session_id == execution_reader.2 && r.receipt_id.is_some() && !r.shutdown_confirmed)
+                                    })
+                                {
                                     // OMP RPC shutdown is observed while processing the next command.
                                     // A harmless get_state wakes that loop after the accepted turn settles.
                                     let mut writer = stdin_reader.lock().unwrap_or_else(|e| e.into_inner());
@@ -2899,32 +3038,70 @@ fn restate_session(
         (sess.pid, sess.inner.clone(), sess.meta_path.clone(), sess.task_slug.clone(), sess.replacing.clone())
     };
     execution::task_for_owner(repo, &task_slug, daemon_namespace)?;
-    if replacing.swap(true, Ordering::SeqCst) { return Err("session replacement already in progress".into()); }
-    let meta = read_session_meta_full(&meta_path).ok_or("missing session")?;
-    if !meta.execution_id.is_empty() {
-        let result = alinery_core::execution::mutate_execution_state(repo, &task_slug, daemon_namespace, execution_config_identity(), "reserve execution restate", |_, state| {
-            let record = state.executions.get_mut(&meta.execution_id).ok_or("missing execution")?;
-            if record.owner_session_id != id || record.receipt_id.is_some() || record.lifecycle != ExecutionLifecycle::Running { return Err("only the current unaccepted running execution can change transport".into()); }
-            // Retain live/coding ownership; block acceptance while replacing the process.
-            record.lifecycle = ExecutionLifecycle::Interrupted;
-            if !matches!(record.permission, alinery_core::execution::CompletionPermission::Automatic) { record.permission = alinery_core::execution::CompletionPermission::Locked; }
-            Ok(())
-        });
-        if let Err(error) = result { replacing.store(false, Ordering::SeqCst); return Err(error); }
+    if replacing.swap(true, Ordering::SeqCst) {
+        return Err("session replacement already in progress".into());
     }
-    wait_session_reaped(&inner, pid);
-    if !inner.lock().unwrap_or_else(|e| e.into_inner()).reaped_and_drained {
-        return Err("previous process exit and output drain are not proven; ownership retained".into());
-    }
-    if !meta.execution_id.is_empty() {
-        alinery_core::execution::mutate_execution_state(repo, &task_slug, daemon_namespace, execution_config_identity(), "replace stopped execution process", |_, state| {
-            let record = state.executions.get_mut(&meta.execution_id).ok_or("missing execution")?;
-            if record.receipt_id.is_some() || record.owner_session_id != id { return Err("execution owner changed".into()); }
-            record.lifecycle = ExecutionLifecycle::Starting;
-            Ok(())
-        })?;
-    }
-    let launch = read_meta_launch_fields(repo, &task_slug, id).ok_or_else(|| format!("missing session meta for {id}"))?;
+    let prepared = (|| {
+        let meta = read_session_meta_full(&meta_path).ok_or("missing session")?;
+        if !meta.execution_id.is_empty() {
+            let result =
+                alinery_core::execution::mutate_execution_state(repo, &task_slug, daemon_namespace, execution_config_identity(), "reserve execution restate", |_, state| {
+                    let record = state.executions.get_mut(&meta.execution_id).ok_or("missing execution")?;
+                    if record.owner_session_id != id || record.receipt_id.is_some() || record.lifecycle != ExecutionLifecycle::Running {
+                        return Err("only the current unaccepted running execution can change transport".into());
+                    }
+                    // Retain live/coding ownership; block acceptance while replacing the process.
+                    record.lifecycle = ExecutionLifecycle::Interrupted;
+                    if !matches!(record.permission, alinery_core::execution::CompletionPermission::Automatic) {
+                        record.permission = alinery_core::execution::CompletionPermission::Locked;
+                    }
+                    Ok(())
+                });
+            result?;
+        }
+        wait_session_reaped(&inner, pid);
+        if !inner.lock().unwrap_or_else(|e| e.into_inner()).reaped_and_drained {
+            return Err("previous process exit and output drain are not proven; ownership retained".into());
+        }
+        if !meta.execution_id.is_empty() {
+            alinery_core::execution::mutate_execution_state(
+                repo,
+                &task_slug,
+                daemon_namespace,
+                execution_config_identity(),
+                "replace stopped execution process",
+                |_, state| {
+                    let record = state.executions.get_mut(&meta.execution_id).ok_or("missing execution")?;
+                    if record.receipt_id.is_some() || record.owner_session_id != id {
+                        return Err("execution owner changed".into());
+                    }
+                    record.lifecycle = ExecutionLifecycle::Starting;
+                    Ok(())
+                },
+            )?;
+        }
+        read_meta_launch_fields(repo, &task_slug, id).ok_or_else(|| format!("missing session meta for {id}"))
+    })();
+    let launch = match prepared {
+        Ok(launch) => launch,
+        Err(error) => {
+            // Re-enable the reader before observing its proof, so an exit that
+            // arrives after this failed replacement still releases ownership.
+            replacing.store(false, Ordering::SeqCst);
+            let inner = inner.lock().unwrap_or_else(|e| e.into_inner());
+            if inner.reaped_and_drained {
+                if let ProcessState::Exited { code } = inner.state.process {
+                    let _ = stamp_meta(&meta_path, |value| {
+                        value["ended_at"] = json!(now_secs());
+                        value["exit_code"] = json!(code);
+                    });
+                    drop(inner);
+                    execution::exited(repo, &task_slug, id, daemon_namespace, code);
+                }
+            }
+            return Err(error);
+        }
+    };
     let omp_dir = session_omp_dir(repo, &task_slug, id);
     let jsonl = newest_jsonl_in(&omp_dir);
     reg.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
@@ -2993,7 +3170,6 @@ fn start_auto_advance_reconciler(repo: PathBuf, reg: Registry, daemon_namespace:
     });
 }
 
-
 fn reconcile_auto_advance_repo(repo: &Path, reg: &Registry, daemon_namespace: &str, app_config: &Path, protected_host: &ProtectedHost) {
     execution::reconcile_repo(repo, reg, daemon_namespace, app_config, protected_host);
 }
@@ -3011,8 +3187,6 @@ fn set_live_playbook(reg: &Registry, id: &str, playbook: PlaybookState) -> Resul
     }
     Ok(())
 }
-
-
 
 #[cfg(test)]
 mod completion_gate {
@@ -3097,8 +3271,14 @@ mod request_limits {
                 &Arc::new(Mutex::new(HashMap::new())),
                 &Arc::new(AtomicUsize::new(0)),
                 &Arc::new(AtomicUsize::new(0)),
-                Path::new(""), Path::new(""), Path::new(""),
-                "", "", "", Path::new(""), &Arc::new(None),
+                Path::new(""),
+                Path::new(""),
+                Path::new(""),
+                "",
+                "",
+                "",
+                Path::new(""),
+                &Arc::new(None),
             );
         });
         // No newline or EOF: the header cap, not JSON parsing or the 100s timeout,
@@ -3120,7 +3300,8 @@ mod request_limits {
             "playbook": {"reference": {"scope": "repo", "key": "fixture"}, "source": ""},
             "attachments": [{"name": "fixture.bin", "bytes": "YWJj".repeat(50_000)}],
             "start": false
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(body.len() > MAX_CONTROL_HEADER_BYTES);
         let body_bytes = body.len();
         let (mut server, mut client) = UnixStream::pair().unwrap();
@@ -3175,13 +3356,15 @@ mod request_limits {
         client.write_all(b"{").unwrap();
         drop(client);
         assert!(read_create_task_body(&mut server, &json!({"op":"create_task", "body_bytes":2}), &budget)
-            .unwrap_err().starts_with("read-control-body:"));
+            .unwrap_err()
+            .starts_with("read-control-body:"));
         assert_eq!(budget.load(Ordering::Acquire), 0);
 
         let (mut server, mut client) = UnixStream::pair().unwrap();
         client.write_all(b"{}").unwrap();
         assert!(read_create_task_body(&mut server, &json!({"op":"create_task", "body_bytes":2}), &budget)
-            .unwrap_err().starts_with("invalid-create-task-body:"));
+            .unwrap_err()
+            .starts_with("invalid-create-task-body:"));
         assert_eq!(budget.load(Ordering::Acquire), 0);
     }
 
@@ -3465,8 +3648,6 @@ mod client_sink {
         panic!("fan-out try_enqueue blocked — the pty reader would hang the harness");
     }
 }
-
-
 
 // The bytes that make a freshly-attached xterm show this session's CURRENT SCREEN.
 //

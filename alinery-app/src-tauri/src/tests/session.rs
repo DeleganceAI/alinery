@@ -50,46 +50,54 @@ fn session_list_items_skip_archived_and_sort_newest_first() {
 
     write_task(
         &repo,
-        &Task { name: "Alpha".into(),
-        slug: "alpha".into(),
-        requested_slug: String::new(),
-        branch: "alpha".into(),
-        worktree: "/wt-alpha".into(),
-        has_worktree: true,
-        created: 1,
-        archived: false,
-        pr_url: String::new(),
-        linear_id: String::new(),
-        github_issue: String::new(),
-        playbook: default_playbook_key(),
-        auto_advance: vec![],
-        draft: false,
-        telemetry_id: String::new(),
-        parent_task: String::new(),
-        active_subtask: String::new(),
-        subtask_outcome: String::new(), related_tasks: Vec::new(), ..Default::default() },
+        &Task {
+            name: "Alpha".into(),
+            slug: "alpha".into(),
+            requested_slug: String::new(),
+            branch: "alpha".into(),
+            worktree: "/wt-alpha".into(),
+            has_worktree: true,
+            created: 1,
+            archived: false,
+            pr_url: String::new(),
+            linear_id: String::new(),
+            github_issue: String::new(),
+            playbook: default_playbook_key(),
+            auto_advance: vec![],
+            draft: false,
+            telemetry_id: String::new(),
+            parent_task: String::new(),
+            active_subtask: String::new(),
+            subtask_outcome: String::new(),
+            related_tasks: Vec::new(),
+            ..Default::default()
+        },
     )
     .unwrap();
     write_task(
         &repo,
-        &Task { name: "Archived".into(),
-        slug: "archived".into(),
-        requested_slug: String::new(),
-        branch: "archived".into(),
-        worktree: "/wt-archived".into(),
-        has_worktree: true,
-        created: 2,
-        archived: true,
-        pr_url: String::new(),
-        linear_id: String::new(),
-        github_issue: String::new(),
-        playbook: default_playbook_key(),
-        auto_advance: vec![],
-        draft: false,
-        telemetry_id: String::new(),
-        parent_task: String::new(),
-        active_subtask: String::new(),
-        subtask_outcome: String::new(), related_tasks: Vec::new(), ..Default::default() },
+        &Task {
+            name: "Archived".into(),
+            slug: "archived".into(),
+            requested_slug: String::new(),
+            branch: "archived".into(),
+            worktree: "/wt-archived".into(),
+            has_worktree: true,
+            created: 2,
+            archived: true,
+            pr_url: String::new(),
+            linear_id: String::new(),
+            github_issue: String::new(),
+            playbook: default_playbook_key(),
+            auto_advance: vec![],
+            draft: false,
+            telemetry_id: String::new(),
+            parent_task: String::new(),
+            active_subtask: String::new(),
+            subtask_outcome: String::new(),
+            related_tasks: Vec::new(),
+            ..Default::default()
+        },
     )
     .unwrap();
 
@@ -185,8 +193,6 @@ fn session_list_items_skip_archived_and_sort_newest_first() {
     let _ = fs::remove_dir_all(&repo);
 }
 
-
-
 #[test]
 fn missing_task_playbook_is_not_inferred() {
     let old = r#"name = "Old"
@@ -199,12 +205,6 @@ created = 1
     assert!(task.playbook.is_empty());
     assert!(task.auto_advance.is_empty());
 }
-
-
-
-
-
-
 
 #[test]
 fn session_resume_state_leftover_is_not_capable() {
@@ -399,12 +399,6 @@ fn allow_root_session_open_rejects_non_drawer() {
     assert!(!allow_root_session_open(Some("")));
     assert!(!allow_root_session_open(Some("omp")));
 }
-
-
-
-
-
-
 
 #[test]
 fn notification_read_stamps_only_requested_session() {

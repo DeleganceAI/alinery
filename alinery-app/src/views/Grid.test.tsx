@@ -1,38 +1,37 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { navReady, requireNav } from "../test/nav";
-import type { BoardNav, BoardTask, ExecutionLifecycle, ExecutionRecord, KanbanColumn, NormalizedStep, TaskExecutionReply, TaskActivityMap, TaskActivityRef } from "../types";
+import type { BoardNav, BoardTask, ExecutionLifecycle, ExecutionRecord, KanbanColumn, NormalizedStep, TaskActivityMap, TaskActivityRef, TaskExecutionReply } from "../types";
 import { Grid } from "./Grid";
 
 const now = Math.floor(Date.now() / 1000);
-const makeTask = (over: Partial<BoardTask>): BoardTask =>
-  ({
-    name: "A task",
-    slug: "a-task",
-    requested_slug: "a-task",
-    branch: "a-task",
-    worktree: "/worktrees/a-task",
-    has_worktree: true,
-    created: now - 86400,
-    archived: false,
-    pr_url: "",
-    linear_id: "",
-    github_issue: "",
-    playbook: "superdevelop",
-    auto_advance: [],
-    draft: false,
-    repo_path: "/repo-a",
-    session_count: 2,
-    playbook_title: "SuperDevelop",
-    updated: now - 3600,
-    current_phase: "implementation",
-    current_step_title: "Implementation",
-    latest_session_title: "Implementation",
-    latest_session_column_key: "implementation",
-    current_column_key: "implementation",
-    current_column_title: "Implementation",
-    ...over,
-  });
+const makeTask = (over: Partial<BoardTask>): BoardTask => ({
+  name: "A task",
+  slug: "a-task",
+  requested_slug: "a-task",
+  branch: "a-task",
+  worktree: "/worktrees/a-task",
+  has_worktree: true,
+  created: now - 86400,
+  archived: false,
+  pr_url: "",
+  linear_id: "",
+  github_issue: "",
+  playbook: "superdevelop",
+  auto_advance: [],
+  draft: false,
+  repo_path: "/repo-a",
+  session_count: 2,
+  playbook_title: "SuperDevelop",
+  updated: now - 3600,
+  current_phase: "implementation",
+  current_step_title: "Implementation",
+  latest_session_title: "Implementation",
+  latest_session_column_key: "implementation",
+  current_column_key: "implementation",
+  current_column_title: "Implementation",
+  ...over,
+});
 
 const tasks = [
   makeTask({ name: "Build API", slug: "build-api" }),
@@ -67,32 +66,88 @@ const columns: KanbanColumn[] = [
   { key: "review", title: "Review" },
 ];
 const step = (key: string, title: string): NormalizedStep => ({
-  key, title, short: title, is_coding_step: false, auto_advance_default: false,
-  inputs: [], outputs: [], model: "default", harness: "omp", prompt: "",
+  key,
+  title,
+  short: title,
+  is_coding_step: false,
+  auto_advance_default: false,
+  inputs: [],
+  outputs: [],
+  model: "default",
+  harness: "omp",
+  prompt: "",
 });
 function retainedExecution(steps: NormalizedStep[], states: [string, ExecutionLifecycle][] = []): TaskExecutionReply {
-  const executions = Object.fromEntries(states.map(([stepKey, lifecycle], index) => {
-    const id = `execution-${index}`;
-    const record: ExecutionRecord = {
-      id, binding_key: id, candidate: { step_key: stepKey, context_id: "root", inputs: {}, complete_collection_id: null, each_collection_id: null, each_member_id: null, manual: true },
-      outputs: [], parent_execution_ids: [], depth: 0, owner_session_id: `session-${index}`, previous_session_ids: [],
-      launch: { harness: "omp", model: "default" }, is_coding_step: false, start_requested: true, lifecycle,
-      permission: { kind: "automatic" }, receipt_id: null, exit_code: null, shutdown_confirmed: false, error: null,
-    };
-    return [id, record];
-  }));
+  const executions = Object.fromEntries(
+    states.map(([stepKey, lifecycle], index) => {
+      const id = `execution-${index}`;
+      const record: ExecutionRecord = {
+        id,
+        binding_key: id,
+        candidate: { step_key: stepKey, context_id: "root", inputs: {}, complete_collection_id: null, each_collection_id: null, each_member_id: null, manual: true },
+        outputs: [],
+        parent_execution_ids: [],
+        depth: 0,
+        owner_session_id: `session-${index}`,
+        previous_session_ids: [],
+        launch: { harness: "omp", model: "default" },
+        is_coding_step: false,
+        start_requested: true,
+        lifecycle,
+        permission: { kind: "automatic" },
+        receipt_id: null,
+        exit_code: null,
+        shutdown_confirmed: false,
+        error: null,
+      };
+      return [id, record];
+    }),
+  );
   return {
-    definition: { version: 2, key: "superdevelop", title: "Retained workflow", description: "", default_model: "default", default_harness: "omp", step: steps, preamble: "", section_order: [] },
+    definition: {
+      version: 2,
+      key: "superdevelop",
+      title: "Retained workflow",
+      description: "",
+      default_model: "default",
+      default_harness: "omp",
+      step: steps,
+      preamble: "",
+      section_order: [],
+    },
     state: {
-      version: 2, revision: 1, creation: "ready", creation_error: null, owning_lane: "local", definition_identity: "retained",
-      reference: { scope: "repo", key: "superdevelop" }, max_live_sessions: 3, enabled_steps: steps.map(({ key }) => key),
-      launch_defaults: { harness: "omp", model: "default" }, executions, occurrences: {}, contexts: {}, collections: {},
+      version: 2,
+      revision: 1,
+      creation: "ready",
+      creation_error: null,
+      owning_lane: "local",
+      definition_identity: "retained",
+      reference: { scope: "repo", key: "superdevelop" },
+      max_live_sessions: 3,
+      enabled_steps: steps.map(({ key }) => key),
+      launch_defaults: { harness: "omp", model: "default" },
+      executions,
+      occurrences: {},
+      contexts: {},
+      collections: {},
     },
   };
 }
 const taskExecutions: Record<string, TaskExecutionReply> = {
-  "/repo-a:build-api": retainedExecution([step("research", "Research"), step("design", "Design"), step("implementation", "Implementation")], [["research", "completed"], ["implementation", "running"]]),
-  "/repo-b:review-queue": retainedExecution([step("context", "Context"), step("findings", "Findings")], [["context", "completed"], ["findings", "running"]]),
+  "/repo-a:build-api": retainedExecution(
+    [step("research", "Research"), step("design", "Design"), step("implementation", "Implementation")],
+    [
+      ["research", "completed"],
+      ["implementation", "running"],
+    ],
+  ),
+  "/repo-b:review-queue": retainedExecution(
+    [step("context", "Context"), step("findings", "Findings")],
+    [
+      ["context", "completed"],
+      ["findings", "running"],
+    ],
+  ),
   "/repo-a:release-app": retainedExecution([step("queued", "Queued"), step("implementation", "Implementation"), step("pr", "PR")], [["pr", "running"]]),
 };
 
@@ -270,7 +325,9 @@ describe("configurable task grid", () => {
     expect(screen.getByRole("button", { name: /Build API, repo-a/ })).toBeDefined();
     grid.rerender(<Grid active={false} allRepos={false} onOpen={onOpen} registerNav={registerNav} />);
     ipcMock.listBoardTasks.mockResolvedValue([{ ...tasks[0], name: "Updated API" }]);
-    await act(async () => { vi.advanceTimersByTime(9000); });
+    await act(async () => {
+      vi.advanceTimersByTime(9000);
+    });
     expect(screen.queryByRole("button", { name: /Updated API, repo-a/ })).toBeNull();
     expect(registerNav.mock.lastCall?.[0]).toBeNull();
     await act(async () => {
@@ -292,12 +349,16 @@ describe("configurable task grid", () => {
     await act(async () => {});
     expect(within(screen.getByLabelText("Build API retained steps")).getByText(/Research · 1 completed/)).toBeDefined();
     failing = true;
-    await act(async () => { vi.advanceTimersByTime(3000); });
+    await act(async () => {
+      vi.advanceTimersByTime(3000);
+    });
     expect(screen.getByRole("alert").textContent).toContain("retained execution unavailable");
     expect(within(screen.getByLabelText("Build API retained steps")).queryByText(/1 completed/)).toBeNull();
     expect(within(screen.getByLabelText("Review queue retained steps")).getByText(/Context · 1 completed/)).toBeDefined();
     failing = false;
-    await act(async () => { vi.advanceTimersByTime(3000); });
+    await act(async () => {
+      vi.advanceTimersByTime(3000);
+    });
     expect(screen.queryByRole("alert")).toBeNull();
     expect(within(screen.getByLabelText("Build API retained steps")).getByText(/Research · 1 completed/)).toBeDefined();
   });
@@ -310,16 +371,31 @@ describe("configurable task grid", () => {
     ]);
     ipcMock.getTaskExecution.mockImplementation(async (slug, repoPath) => {
       if (repoPath === "/repo-b") return retainedExecution([step("work", "Other work")], [["work", "queued"]]);
-      if (slug === "revised") return retainedExecution([step("work", "Revised work"), step("audit", "New audit")], [["work", "running"], ["audit", "completed"]]);
-      return retainedExecution(
-        [step("untouched", "Untouched"), step("work", "Original work"), step("parallel", "Parallel review")],
-        [["work", "running"], ["work", "completed"], ["parallel", "finishing"]],
+      if (slug === "revised")
+        return retainedExecution(
+          [step("work", "Revised work"), step("audit", "New audit")],
+          [
+            ["work", "running"],
+            ["audit", "completed"],
+          ],
+        );
+      const original = retainedExecution(
+        [step("untouched", "Untouched"), step("gated", "Gated"), step("work", "Original work"), step("parallel", "Parallel review")],
+        [
+          ["work", "running"],
+          ["work", "completed"],
+          ["parallel", "finishing"],
+        ],
       );
+      original.state.enabled_steps = original.state.enabled_steps.filter((key) => key !== "gated");
+      return original;
     });
     render(<Grid allRepos onOpen={() => {}} registerNav={() => {}} initialPreset="progress" />);
     const original = await screen.findByLabelText("Original retained steps");
     await waitFor(() => expect(within(original).getByText("Original work · 1 completed, 1 running")).toBeDefined());
     expect(within(original).getByText("Untouched · Not started")).toBeDefined();
+    expect(within(original).getByText(/Gated · .*human completion/i)).toBeDefined();
+    expect(within(original).queryByText(/Disabled/)).toBeNull();
     expect(within(original).getByText("Parallel review · 1 finishing")).toBeDefined();
     expect(within(original).queryByText(/New audit|Revised work|Auxiliary notes/)).toBeNull();
     expect(within(screen.getByLabelText("Revised retained steps")).getByText("New audit · 1 completed")).toBeDefined();
@@ -551,7 +627,6 @@ describe("configurable task grid", () => {
     expect(laneNames()).toEqual(["Review queue", "Build API", "Release app"]);
     Reflect.deleteProperty(document, "elementFromPoint");
   });
-
 
   it("keeps stable view IDs isolated and gives additional views a useful neutral preset", async () => {
     const first = render(<Grid allRepos={false} onOpen={() => {}} registerNav={() => {}} storageKey="repo-a:view:first" initialPreset="kanban" />);

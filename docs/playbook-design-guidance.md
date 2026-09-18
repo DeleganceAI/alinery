@@ -181,7 +181,7 @@ Many workers with one known output each are different from one producer choosing
 
 Known outputs get exact paths. An unknown-cardinality wildcard set needs a permitted assignment/pattern and output attribution to its execution; completion records the actual members. Do not silently treat every wildcard output as one file, allow repeated instances to collide, or collect unrelated sibling files through a task-wide glob.
 
-The concrete wildcard-instance allocator remains an implementation specification to work out under these rules, not a reason to add a general artifact publication subsystem.
+The execution allocator reserves each exact path or wildcard family in `execution.json` before launch. It checks existing files, pending reservations and required directories; physical case-folded collision checks keep case-distinct logical roles from overwriting one another on case-insensitive filesystems.
 
 ### Completion controls scheduling, not individual writes
 
@@ -248,7 +248,7 @@ Authorized completion request
 
 A successful completion response acknowledges durable acceptance, not that successors are already running. Socket acknowledgement alone does not prove tool-result/history flush. Exercise the runner handshake rather than killing the process immediately after writing a reply.
 
-Do not allow another autonomous work turn after accepted completion. Do not release ownership if shutdown cannot be confirmed. An intentional completion-triggered signal exit is not automatically an execution failure; retain the actual lifecycle information.
+Return the accepted tool result and request OMP's ordinary shutdown. The prompt asks the agent to finish without starting more work; this is not a host-enforced ban on queued turns. Retain coding ownership and live capacity until process exit and output drain are proven, even if shutdown stalls. An intentional completion-triggered signal exit is not automatically an execution failure; retain the actual lifecycle information.
 
 History, metadata and artifacts remain readable. Completing one session does not archive/delete it, stop unrelated sessions or shut down the daemon.
 
@@ -311,17 +311,21 @@ Keep file-backed persistence and shared core behavior. Do not add a database, co
 
 New daemon wire operations require the existing protocol-version discipline. New frontend commands use the typed IPC boundary. Do not weaken packaged OMP/host guards or stop sessions on app quit, polling, reconnect or protocol mismatch. Completion-triggered stopping is a narrow approved lifecycle change, not a general teardown permission.
 
-Durable record layouts, wildcard-instance allocation, concrete loop/collection binding algorithms, initial seed mapping and the runner finish handshake still need implementation specifications. Empty required collections alert the human; recovery uses existing sessions/MCP. Human-steered loops use new accepted trigger artifacts or a visible pause for direction. Concurrency is a per-task creation-time live-session limit, default 10. Do not add configuration layers, conflicting local conventions or new failure/approval policies.
+Each task stores its retained `playbook.md` and authoritative `execution.json` beside `task.md`. Execution records own concrete bindings, output reservations, permissions, receipts and shutdown proof; session metadata is a repairable projection. Empty required collections alert the human; recovery uses existing sessions/MCP. Human-steered loops use new accepted trigger artifacts or a visible pause for direction. Concurrency is a per-task creation-time live-session limit, default 10. Do not add configuration layers, conflicting local conventions or new failure/approval policies.
 
 ## Implementation entry points and design sources
 
-These are navigation starting points, not a claim that their current code implements all of v2:
+Canonical implementation entry points:
 
 - [Core playbook/session/artifact helpers](../alinery-app/src-tauri/alinery-core/src/shared.rs)
+- [Strict parser and selector grammar](../alinery-app/src-tauri/alinery-core/src/playbook.rs)
+- [Scope-qualified library](../alinery-app/src-tauri/alinery-core/src/playbook_library.rs)
+- [Durable execution and allocation](../alinery-app/src-tauri/alinery-core/src/execution.rs)
+- [Occurrence-based scheduler](../alinery-app/src-tauri/alinery-core/src/playbook_scheduler.rs)
 - [Core types](../alinery-app/src-tauri/alinery-core/src/types.rs)
 - [Shared daemon client](../alinery-app/src-tauri/alinery-core/src/daemon_client.rs)
 - [Protocol compatibility](../alinery-app/src-tauri/alinery-core/src/protocol.rs)
-- [Daemon execution and reconciliation](../alinery-app/src-tauri/alineryd/src/main.rs)
+- [Daemon execution and reconciliation](../alinery-app/src-tauri/alineryd/src/execution.rs)
 - [App task commands](../alinery-app/src-tauri/src/task.rs)
 - [App playbook commands](../alinery-app/src-tauri/src/playbook.rs)
 - [MCP entry points](../alinery-app/src-tauri/mcp/src/main.rs)

@@ -14,21 +14,58 @@ const sources: ScopedPlaybook[] = [
   source_text: `exact ${scope}/${key} source\r\n`,
   modified_at_ms: null,
   definition: {
-    version: 2, key, title, description: `${title} instructions`, default_model: "", default_harness: "omp", preamble: "", section_order: ["build"],
-    step: [{ key: "build", title: "Build", short: "", inputs: [], outputs: [{ path: "result.md" }], model: "", harness: "", is_coding_step: true, auto_advance_default: false, prompt: "Build it." }],
+    version: 2,
+    key,
+    title,
+    description: `${title} instructions`,
+    default_model: "",
+    default_harness: "omp",
+    preamble: "",
+    section_order: ["build"],
+    step: [
+      {
+        key: "build",
+        title: "Build",
+        short: "",
+        inputs: [],
+        outputs: [{ path: "result.md" }],
+        model: "",
+        harness: "",
+        is_coding_step: true,
+        auto_advance_default: false,
+        prompt: "Build it.",
+      },
+    ],
   },
 }));
 const catalog: PlaybookCatalog = {
-  candidates: [...sources.map((source) => ({
-    source: source.source, title: source.definition.title, description: source.definition.description, modified_at_ms: null, diagnostics: [],
-  })), {
-    source: { reference: { scope: "repo", key: "broken" }, path: "/repo/.alinery/playbooks/broken/playbook.md" },
-    title: "Broken", description: "", modified_at_ms: null,
-    diagnostics: [{ code: "invalid", message: "Overlapping output producers", line: 4, field: "outputs", severity: "error" }],
-  }],
-  picker_preferences: { order: [], entries: [] }, diagnostics: [],
+  candidates: [
+    ...sources.map((source) => ({
+      source: source.source,
+      title: source.definition.title,
+      description: source.definition.description,
+      modified_at_ms: null,
+      diagnostics: [],
+    })),
+    {
+      source: { reference: { scope: "repo", key: "broken" }, path: "/repo/.alinery/playbooks/broken/playbook.md" },
+      title: "Broken",
+      description: "",
+      modified_at_ms: null,
+      diagnostics: [{ code: "invalid", message: "Overlapping output producers", line: 4, field: "outputs", severity: "error" }],
+    },
+  ],
+  picker_preferences: { order: [], entries: [] },
+  diagnostics: [],
 };
-const readyReply = { task: { slug: "new-task", name: "New task" } as Task, sessions: [], executions: [], creation: "ready", start: "not_requested", errors: [] } satisfies CreateTaskResult;
+const readyReply = {
+  task: { slug: "new-task", name: "New task" } as Task,
+  sessions: [],
+  executions: [],
+  creation: "ready",
+  start: "not_requested",
+  errors: [],
+} satisfies CreateTaskResult;
 
 const readConfigForRepo = vi.hoisted(() =>
   vi.fn(
@@ -43,11 +80,7 @@ vi.mock("../ipc", () =>
   mockIpc({
     readConfigForRepo,
     listPlaybookCatalog: vi.fn(async () => structuredClone(catalog)),
-    readPlaybook: vi.fn(async (reference) => {
-      const source = sources.find((item) => item.source.reference.scope === reference.scope && item.source.reference.key === reference.key);
-      if (!source) throw new Error(`Unknown test playbook: ${reference.scope}/${reference.key}`);
-      return structuredClone(source);
-    }),
+    readPlaybook: vi.fn(),
     prepareTaskAttachments: vi.fn(async () => ({ attachments: [], attachment_urls: [], attachment_errors: [] })),
     connectionStatuses: vi.fn(async () => []),
     listHarnessModelsForRepo: vi.fn(async () => []),
@@ -62,6 +95,11 @@ beforeEach(() => {
   readConfigForRepo.mockResolvedValue({
     defaults: { harness: "claude", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
   } as Config);
+  vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => {
+    const source = sources.find((item) => item.source.reference.scope === reference.scope && item.source.reference.key === reference.key);
+    if (!source) throw new Error(`Unknown test playbook: ${reference.scope}/${reference.key}`);
+    return structuredClone(source);
+  });
   vi.mocked(ipc.createTaskForRepo).mockResolvedValue(readyReply);
   vi.mocked(ipc.writeDraftForRepo).mockResolvedValue({ slug: "draft-storage" } as Task);
 });
@@ -191,9 +229,45 @@ describe("scoped playbook selection", () => {
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Scoped task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByRole("button", { name: "Open task" });
-    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(expect.objectContaining({
-      request: expect.objectContaining({ playbook: { reference: { scope: "global", key: "superdevelop" }, source: sources[1].source_text } }),
-    }));
+    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({ playbook: { reference: { scope: "global", key: "superdevelop" }, source: sources[1].source_text } }),
+      }),
+    );
+  });
+
+  it("drops removed step keys on same-source refresh without restoring unchecked completion choices", async () => {
+    const original = structuredClone(sources[0]);
+    const build = { ...original.definition.step[0], auto_advance_default: true };
+    original.definition.step = [build, { ...build, key: "removed", title: "Removed" }, { ...build, key: "keep", title: "Keep" }];
+    const revised = structuredClone(original);
+    revised.source_text = "revised bundled/superdevelop source\n";
+    revised.definition.step = [build, { ...build, key: "keep", title: "Keep" }, { ...build, key: "added", title: "Added" }];
+    vi.mocked(ipc.readPlaybook).mockResolvedValue(original);
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+
+    const buildChoice = await screen.findByRole("checkbox", { name: "Build" });
+    expect(buildChoice).toHaveProperty("checked", true);
+    fireEvent.click(buildChoice);
+    expect(screen.getByRole("checkbox", { name: "Removed" })).toHaveProperty("checked", true);
+    vi.mocked(ipc.readPlaybook).mockResolvedValue(revised);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh playbooks" }));
+
+    expect(await screen.findByRole("checkbox", { name: "Added" })).toHaveProperty("checked", false);
+    expect(screen.queryByRole("checkbox", { name: "Removed" })).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "Build" })).toHaveProperty("checked", false);
+    expect(screen.getByRole("checkbox", { name: "Keep" })).toHaveProperty("checked", true);
+    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Refreshed task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await screen.findByRole("button", { name: "Open task" });
+    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({
+          playbook: { reference: original.source.reference, source: revised.source_text },
+          auto_advance_steps: ["keep"],
+        }),
+      }),
+    );
   });
 
   it("does not replace an unavailable configured default with the first catalog item", async () => {
@@ -243,7 +317,9 @@ describe("v2 task creation", () => {
 
   it("keeps partial multi-root results inspectable without repeating creation or spawning", async () => {
     const reply = {
-      ...readyReply, creation: "partial", start: "failed",
+      ...readyReply,
+      creation: "partial",
+      start: "failed",
       sessions: [{ id: "root-a" }, { id: "root-b" }],
       executions: [
         { id: "a", candidate: { step_key: "build" }, lifecycle: "running", error: null },
@@ -272,14 +348,36 @@ describe("v2 task creation", () => {
 
   it("waits for the stable draft identity and stops autosave throughout promotion", async () => {
     let resolveSave!: (task: Task) => void;
-    const saved = new Promise<Task>((resolve) => { resolveSave = resolve; });
+    const saved = new Promise<Task>((resolve) => {
+      resolveSave = resolve;
+    });
     vi.mocked(ipc.writeDraftForRepo).mockReturnValueOnce(saved);
     const initialDraft: BoardTask = {
-      name: "Draft task", slug: "stable-draft", requested_slug: "final-task", repo_path: "/repo",
-      playbook: "", playbook_ref: { scope: "bundled", key: "superdevelop" }, auto_advance: [], draft: true,
-      branch: "", worktree: "", has_worktree: false, created: 1, archived: false, pr_url: "", linear_id: "", github_issue: "",
-      session_count: 0, playbook_title: "SuperDevelop", updated: 1, current_phase: "", current_step_title: "",
-      latest_session_title: "", latest_session_column_key: "", current_column_key: "", current_column_title: "",
+      name: "Draft task",
+      slug: "stable-draft",
+      requested_slug: "final-task",
+      repo_path: "/repo",
+      playbook: "",
+      playbook_ref: { scope: "bundled", key: "superdevelop" },
+      auto_advance: [],
+      draft: true,
+      branch: "",
+      worktree: "",
+      has_worktree: false,
+      created: 1,
+      archived: false,
+      pr_url: "",
+      linear_id: "",
+      github_issue: "",
+      session_count: 0,
+      playbook_title: "SuperDevelop",
+      updated: 1,
+      current_phase: "",
+      current_step_title: "",
+      latest_session_title: "",
+      latest_session_column_key: "",
+      current_column_key: "",
+      current_column_title: "",
     };
     render(<CreateTaskPage initialDraft={initialDraft} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("checkbox", { name: "Build" });
@@ -289,14 +387,23 @@ describe("v2 task creation", () => {
     expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
     await act(async () => resolveSave({ slug: "stable-draft" } as Task));
     await screen.findByRole("button", { name: "Open task" });
-    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 450)); });
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 450));
+    });
     expect(ipc.writeDraftForRepo).toHaveBeenCalledTimes(1);
     expect(ipc.createTaskForRepo).toHaveBeenCalledTimes(1);
-    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ draft_slug: "stable-draft", requested_slug: "final-task", name: "Draft task" }) }));
+    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(
+      expect.objectContaining({ request: expect.objectContaining({ draft_slug: "stable-draft", requested_slug: "final-task", name: "Draft task" }) }),
+    );
   });
 
   it("keeps a partial reply without a task identity visible and blocks repeated creation", async () => {
-    vi.mocked(ipc.createTaskForRepo).mockResolvedValue({ ...readyReply, task: null, creation: "partial", errors: [{ stage: "provisioning", code: "ambiguous", message: "Inspect durable state" }] });
+    vi.mocked(ipc.createTaskForRepo).mockResolvedValue({
+      ...readyReply,
+      task: null,
+      creation: "partial",
+      errors: [{ stage: "provisioning", code: "ambiguous", message: "Inspect durable state" }],
+    });
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("checkbox", { name: "Build" });
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
@@ -316,7 +423,9 @@ describe("v2 task creation", () => {
     await screen.findByText(/Creation outcome is unknown/);
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Another name" } });
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter" });
-    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 450)); });
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 450));
+    });
     expect(ipc.createTaskForRepo).toHaveBeenCalledTimes(1);
     expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
   });

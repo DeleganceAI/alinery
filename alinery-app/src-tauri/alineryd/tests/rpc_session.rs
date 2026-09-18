@@ -132,7 +132,17 @@ impl Fixture {
         fs::create_dir_all(root.join(".alinery")).unwrap();
         for args in [
             vec!["init", "--quiet"],
-            vec!["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "fixture"],
+            vec![
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                "fixture",
+            ],
         ] {
             assert!(alinery_core::git_cmd(&root).args(args).status().unwrap().success());
         }
@@ -198,7 +208,13 @@ resume_args = ["--resume={{resume_token}}"]
         .unwrap();
 
         let (child, socket) = start_daemon(&root, &runner, &capture, Some(&host));
-        let mut fixture = Self { root, socket, child, host, session_id: String::new() };
+        let mut fixture = Self {
+            root,
+            socket,
+            child,
+            host,
+            session_id: String::new(),
+        };
         let created = fixture.rpc(json!({"op": "create_task", "request": {
             "name": "task", "requested_slug": "task",
             "playbook": {"reference": {"scope": "repo", "key": "transport"}, "source": PLAYBOOK},
@@ -352,7 +368,6 @@ fn start_daemon(root: &Path, runner: &Path, capture: &Path, protected_host: Opti
     panic!("alineryd did not become ready");
 }
 
-
 #[test]
 fn spawn_omp_is_rpc_and_restate_pty_keeps_id() {
     let fixture = Fixture::new();
@@ -373,6 +388,51 @@ fn spawn_omp_is_rpc_and_restate_pty_keeps_id() {
     assert_eq!(after["id"], before["id"], "restate must preserve the execution");
     assert_eq!(after["owner_session_id"], id, "restate must preserve the owner");
     assert_eq!(after["lifecycle"], "running", "{after}");
+}
+
+#[test]
+#[ignore = "subprocess fixture for delayed RPC output drain"]
+fn delayed_rpc_output_child() {
+    let root = PathBuf::from(std::env::var("ALINERY_REPO").unwrap());
+    assert_ne!(unsafe { libc::setsid() }, -1);
+    fs::write(root.join("output-holder-ready"), "").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while root.exists() && !root.join("release-output-holder").exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[test]
+fn failed_restate_recovers_after_delayed_output_drain() {
+    let fixture = Fixture::new();
+    let helper = std::env::current_exe().unwrap().display().to_string().replace('\'', "'\\''");
+    fs::write(
+        fixture.root.join("omp-fixture"),
+        FIXTURE_SCRIPT.replacen(
+            "#!/bin/sh\n",
+            &format!("#!/bin/sh\n'{helper}' --ignored --exact delayed_rpc_output_child --nocapture &\n"),
+            1,
+        ),
+    )
+    .unwrap();
+    let id = fixture.spawn_omp();
+    wait_until(Duration::from_secs(5), || fixture.root.join("output-holder-ready").exists());
+    let reply = fixture.restate(id, "pty");
+    assert!(reply["error"].as_str().is_some_and(|error| error.contains("not proven")), "{reply}");
+    let pending = fixture.execution();
+    assert_eq!(pending["lifecycle"], "interrupted");
+    assert_eq!(pending["shutdown_confirmed"], false);
+    fs::write(fixture.root.join("release-output-holder"), "").unwrap();
+    wait_until(Duration::from_secs(5), || fixture.execution()["shutdown_confirmed"] == true);
+    let stopped = fixture.execution();
+    assert_eq!(stopped["lifecycle"], "failed");
+    let recovered = fixture.rpc(json!({"op": "create_execution_session", "request": {
+        "task_slug": "task",
+        "target": {"kind": "primary", "step_key": "run", "execution_id": stopped["id"]},
+        "start": false
+    }}));
+    assert_eq!(recovered["start"], "not_requested", "{recovered}");
+    assert_ne!(recovered["session"]["id"], id);
 }
 
 #[test]
@@ -583,13 +643,24 @@ fn restate_reseeds_assigned_prompt_only_without_jsonl() {
     wait_until(Duration::from_secs(5), || editor.is_file() && fixture.root.join(format!("token.{id}")).is_file());
     let token = fs::read_to_string(fixture.root.join(format!("token.{id}"))).unwrap();
     assert!(!submitted.exists(), "the seed must wait until the editor reports readiness");
-    assert_eq!(fixture.rpc(json!({"op":"event", "version":alinery_core::RUNNER_EVENT_PROTOCOL_VERSION, "session_id":id, "token":token, "event":{"type":"idle"}}))["ok"], true);
-    wait_until(Duration::from_secs(5), || fs::read_to_string(&submitted).is_ok_and(|body| body.contains("TRANSPORT_SEED_SENTINEL")));
+    assert_eq!(
+        fixture.rpc(json!({"op":"event", "version":alinery_core::RUNNER_EVENT_PROTOCOL_VERSION, "session_id":id, "token":token, "event":{"type":"idle"}}))["ok"],
+        true
+    );
+    wait_until(Duration::from_secs(5), || {
+        fs::read_to_string(&submitted).is_ok_and(|body| body.contains("TRANSPORT_SEED_SENTINEL"))
+    });
     let body = fs::read_to_string(&submitted).unwrap();
     assert_eq!(body.matches("TRANSPORT_SEED_SENTINEL").count(), 1);
     let execution = fixture.execution();
-    let assigned_output = fixture.root.join(".alinery/tasks/task/artifacts").join(execution["outputs"][0]["relative_path"].as_str().unwrap());
-    assert!(body.contains(assigned_output.to_str().unwrap()), "the replacement must receive its actual output assignment");
+    let assigned_output = fixture
+        .root
+        .join(".alinery/tasks/task/artifacts")
+        .join(execution["outputs"][0]["relative_path"].as_str().unwrap());
+    assert!(
+        body.contains(assigned_output.to_str().unwrap()),
+        "the replacement must receive its actual output assignment"
+    );
     let argv = fixture.argv(id);
     assert!(!argv.contains("--resume"), "{argv}");
 

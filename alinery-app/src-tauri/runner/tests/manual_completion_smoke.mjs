@@ -46,7 +46,12 @@ const server = createServer((connection) => {
       return;
     }
 
-    if (request.op !== "event" || request.version !== Number(transportEnvironment.ALINERY_EVENT_PROTOCOL_VERSION) || request.session_id !== sessionId || request.token !== eventToken) {
+    if (
+      request.op !== "event" ||
+      request.version !== Number(transportEnvironment.ALINERY_EVENT_PROTOCOL_VERSION) ||
+      request.session_id !== sessionId ||
+      request.token !== eventToken
+    ) {
       connection.end('{"error":"invalid-event-auth"}\n');
       return;
     }

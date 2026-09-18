@@ -430,7 +430,9 @@ fn list_tools() -> Value {
 }
 
 fn optional_argument<T: serde::de::DeserializeOwned>(args: &Value, key: &str) -> Result<Option<T>, String> {
-    args.get(key).map(|value| serde_json::from_value(value.clone()).map_err(|error| format!("invalid {key}: {error}"))).transpose()
+    args.get(key)
+        .map(|value| serde_json::from_value(value.clone()).map_err(|error| format!("invalid {key}: {error}")))
+        .transpose()
 }
 
 fn json_result<T: serde::Serialize>(result: Result<T, String>) -> Value {
@@ -448,9 +450,12 @@ fn library_roots(repo: &Path, app_config: &Path) -> Result<alinery_core::playboo
 }
 
 fn creation_playbook(repo: &Path, app_config: &Path, reference: alinery_core::playbook::PlaybookRef) -> Result<alinery_core::task_creation::TaskPlaybookPackage, String> {
-    let selected = alinery_core::playbook_library::resolve_playbook(&library_roots(repo, app_config)?, &reference)
-        .map_err(|error| format!("playbook resolution failed: {error:?}"))?;
-    Ok(alinery_core::task_creation::TaskPlaybookPackage { reference, source: selected.source_text })
+    let selected =
+        alinery_core::playbook_library::resolve_playbook(&library_roots(repo, app_config)?, &reference).map_err(|error| format!("playbook resolution failed: {error:?}"))?;
+    Ok(alinery_core::task_creation::TaskPlaybookPackage {
+        reference,
+        source: selected.source_text,
+    })
 }
 
 fn task_client(repo: &Path, app_config: Option<&Path>, task_slug: &str, start_daemon: bool) -> Result<alinery_core::DaemonClient, String> {
@@ -466,7 +471,8 @@ fn task_client(repo: &Path, app_config: Option<&Path>, task_slug: &str, start_da
         alinery_core::ensure_compatible_daemon(repo, &app_config, namespace)
     } else {
         alinery_core::connect_compatible_once(alinery_core::alineryd_socket_path(repo, namespace), &app_config)
-    }.map_err(|error| error.to_string())?;
+    }
+    .map_err(|error| error.to_string())?;
     Ok(client)
 }
 
@@ -542,7 +548,8 @@ fn load_owned_session(repo: &Path, task_slug: &str, session_id: &str) -> Result<
 fn start_task_session(repo: &Path, app_config: Option<&Path>, task_slug: &str, session_id: &str) -> Result<alinery_core::task_creation::CreateExecutionSessionReply, String> {
     let client = task_client(repo, app_config, task_slug, true)?;
     client.start_session(&alinery_core::task_creation::StartSessionRequest {
-        task_slug: task_slug.to_string(), session_id: session_id.to_string(),
+        task_slug: task_slug.to_string(),
+        session_id: session_id.to_string(),
     })
 }
 
@@ -664,7 +671,21 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
             text_result(serde_json::to_string(&list).unwrap_or_else(|_| "[]".into()))
         }
         "alinery_create_session" => {
-            if let Err(error) = validate_exact_arguments(&args, &["repo", "task_slug", "generic", "step_key", "execution_id", "input_occurrence_ids", "model", "prompt_extra", "start"], &["repo", "task_slug"]) {
+            if let Err(error) = validate_exact_arguments(
+                &args,
+                &[
+                    "repo",
+                    "task_slug",
+                    "generic",
+                    "step_key",
+                    "execution_id",
+                    "input_occurrence_ids",
+                    "model",
+                    "prompt_extra",
+                    "start",
+                ],
+                &["repo", "task_slug"],
+            ) {
                 return error;
             }
             json_result((|| {
@@ -673,21 +694,33 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
                 let model = optional_argument::<String>(&args, "model")?;
                 let prompt_extra = optional_argument::<String>(&args, "prompt_extra")?;
                 let target = if generic {
-                    if ["step_key", "execution_id", "input_occurrence_ids", "prompt_extra"].iter().any(|key| args.get(*key).is_some()) {
+                    if ["step_key", "execution_id", "input_occurrence_ids", "prompt_extra"]
+                        .iter()
+                        .any(|key| args.get(*key).is_some())
+                    {
                         return Err("auxiliary sessions cannot select primary work or append a graph prompt".into());
                     }
-                    alinery_core::task_creation::ExecutionSessionTarget::Auxiliary { harness: alinery_core::NO_HARNESS_KEY.into(), model: model.clone(), prompt: None }
+                    alinery_core::task_creation::ExecutionSessionTarget::Auxiliary {
+                        harness: alinery_core::NO_HARNESS_KEY.into(),
+                        model: model.clone(),
+                        prompt: None,
+                    }
                 } else {
                     alinery_core::task_creation::ExecutionSessionTarget::Primary {
-                        step_key: optional_argument::<String>(&args, "step_key")?.filter(|key| !key.is_empty()).ok_or("step_key is required for primary work")?,
+                        step_key: optional_argument::<String>(&args, "step_key")?
+                            .filter(|key| !key.is_empty())
+                            .ok_or("step_key is required for primary work")?,
                         execution_id: optional_argument(&args, "execution_id")?,
                         input_occurrence_ids: optional_argument(&args, "input_occurrence_ids")?,
                     }
                 };
                 let request = alinery_core::task_creation::CreateExecutionSessionRequest {
-                    task_slug: task_slug.clone(), target,
+                    task_slug: task_slug.clone(),
+                    target,
                     launch_override: model.map(|model| alinery_core::execution::LaunchChoices { harness: String::new(), model }),
-                    prompt_extra, start: optional_argument::<bool>(&args, "start")?.unwrap_or(false),
+                    prompt_extra,
+                    handoff_artifact: None,
+                    start: optional_argument::<bool>(&args, "start")?.unwrap_or(false),
                 };
                 task_client(repo, app_config, &task_slug, true)?.create_execution_session(&request)
             })())
@@ -707,7 +740,22 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
             }
         }
         "alinery_send_review_handoff" => {
-            if let Err(error) = validate_exact_arguments(&args, &["repo", "source_slug", "source_artifact", "target_repo", "target_slug", "source_session", "target_step_key", "model", "prompt_extra", "start"], &["repo", "source_slug", "source_artifact", "target_repo", "target_slug", "target_step_key"]) {
+            if let Err(error) = validate_exact_arguments(
+                &args,
+                &[
+                    "repo",
+                    "source_slug",
+                    "source_artifact",
+                    "target_repo",
+                    "target_slug",
+                    "source_session",
+                    "target_step_key",
+                    "model",
+                    "prompt_extra",
+                    "start",
+                ],
+                &["repo", "source_slug", "source_artifact", "target_repo", "target_slug", "target_step_key"],
+            ) {
                 return error;
             }
             let mut target_args = args.clone();
@@ -719,17 +767,27 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
             json_result((|| {
                 let source_slug = args["source_slug"].as_str().unwrap().to_string();
                 let target_slug = args["target_slug"].as_str().unwrap().to_string();
-                if repo == target_repo.as_path() && source_slug == target_slug { return Err("review handoff target must be a different task".into()); }
+                if repo == target_repo.as_path() && source_slug == target_slug {
+                    return Err("review handoff target must be a different task".into());
+                }
                 let source_artifact = alinery_core::validate_artifact_filename(args["source_artifact"].as_str().unwrap())?;
                 let client = task_client(&target_repo, app_config, &target_slug, true)?;
-                alinery_core::send_review_handoff_for_repos(&client, repo, &target_repo, alinery_core::ReviewHandoffRequest {
-                    source_slug, target_slug, source_artifact,
-                    source_session: optional_argument(&args, "source_session")?.unwrap_or_default(),
-                    target_phase: args["target_step_key"].as_str().unwrap().to_string(),
-                    harness: String::new(), model: optional_argument(&args, "model")?.unwrap_or_default(),
-                    prompt_extra: optional_argument(&args, "prompt_extra")?.unwrap_or_default(),
-                    start: optional_argument::<bool>(&args, "start")?.unwrap_or(false),
-                })
+                alinery_core::send_review_handoff_for_repos(
+                    &client,
+                    repo,
+                    &target_repo,
+                    alinery_core::ReviewHandoffRequest {
+                        source_slug,
+                        target_slug,
+                        source_artifact,
+                        source_session: optional_argument(&args, "source_session")?.unwrap_or_default(),
+                        target_phase: args["target_step_key"].as_str().unwrap().to_string(),
+                        harness: String::new(),
+                        model: optional_argument(&args, "model")?.unwrap_or_default(),
+                        prompt_extra: optional_argument(&args, "prompt_extra")?.unwrap_or_default(),
+                        start: optional_argument::<bool>(&args, "start")?.unwrap_or(false),
+                    },
+                )
             })())
         }
         "alinery_session_status" => {
@@ -783,7 +841,8 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
             };
             if alinery_core::read_task(repo, &slug).is_some_and(|task| task.engine_version == 2) {
                 json_result((|| {
-                    let execution = task_client(repo, app_config, &slug, false)?.get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug: slug.clone() })?;
+                    let execution =
+                        task_client(repo, app_config, &slug, false)?.get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug: slug.clone() })?;
                     alinery_core::list_artifacts_with_execution_metadata(repo, &slug, &execution.state)
                 })())
             } else {
@@ -831,13 +890,19 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
                 let manager = load_owned_session(repo, &parent_slug, manager_session_id)?;
                 let input = alinery_core::CreateSubtaskInput {
                     manager_session_id: manager_session_id.to_string(),
-                    playbook: optional_argument(&args, "playbook")?.map(|reference| creation_playbook(repo, &config, reference)).transpose()?,
-                    name: args["name"].as_str().unwrap().to_string(), slug: args["slug"].as_str().unwrap().to_string(),
+                    playbook: optional_argument(&args, "playbook")?
+                        .map(|reference| creation_playbook(repo, &config, reference))
+                        .transpose()?,
+                    name: args["name"].as_str().unwrap().to_string(),
+                    slug: args["slug"].as_str().unwrap().to_string(),
                     instructions: optional_argument(&args, "instructions")?.unwrap_or_default(),
-                    start: optional_argument::<bool>(&args, "start")?.unwrap_or(false), max_live_sessions: None,
+                    start: optional_argument::<bool>(&args, "start")?.unwrap_or(false),
+                    max_live_sessions: None,
                 };
                 let state = alinery_core::execution::read_execution_state(repo, &parent_slug)?;
-                if state.owning_lane != manager.daemon_namespace { return Err("manager session does not belong to the task's daemon lane".into()); }
+                if state.owning_lane != manager.daemon_namespace {
+                    return Err("manager session does not belong to the task's daemon lane".into());
+                }
                 task_client(repo, Some(&config), &parent_slug, true)?.create_subtask(&input)
             })())
         }
@@ -998,29 +1063,66 @@ fn write_toml_file(path: std::path::PathBuf, args: &Value, app_config: Option<&P
 }
 
 fn create_task(repo: &Path, app_config: Option<&Path>, daemon_namespace: &str, args: &Value) -> Value {
-    if let Err(error) = validate_exact_arguments(args, &["repo", "name", "description", "evidence", "attachments", "linear_id", "github_issue", "related_tasks", "playbook", "requested_slug", "branch_name", "worktree_name", "base_ref", "model", "max_live_sessions", "start"], &["repo", "name"]) {
+    if let Err(error) = validate_exact_arguments(
+        args,
+        &[
+            "repo",
+            "name",
+            "description",
+            "evidence",
+            "attachments",
+            "linear_id",
+            "github_issue",
+            "related_tasks",
+            "playbook",
+            "requested_slug",
+            "branch_name",
+            "worktree_name",
+            "base_ref",
+            "model",
+            "max_live_sessions",
+            "start",
+        ],
+        &["repo", "name"],
+    ) {
         return error;
     }
     json_result((|| {
         let config = effective_app_config_path(app_config)?;
         let max_live_sessions = optional_argument::<u32>(args, "max_live_sessions")?;
-        if max_live_sessions == Some(0) { return Err("max_live_sessions must be positive".into()); }
+        if max_live_sessions == Some(0) {
+            return Err("max_live_sessions must be positive".into());
+        }
         let name = args["name"].as_str().unwrap().trim().to_string();
-        if name.is_empty() { return Err("empty name".into()); }
+        if name.is_empty() {
+            return Err("empty name".into());
+        }
         let defaults = alinery_core::read_scoped_settings_strict(&config, repo)?.effective.defaults;
         let request = alinery_core::task_creation::CreateTaskRequest {
-            name, draft_slug: None, requested_slug: optional_argument(args, "requested_slug")?,
+            name,
+            draft_slug: None,
+            requested_slug: optional_argument(args, "requested_slug")?,
             description: optional_argument(args, "description")?.unwrap_or_default(),
-            evidence: optional_argument(args, "evidence")?.unwrap_or_default(), attachments: optional_argument(args, "attachments")?.unwrap_or_default(),
-            original_ticket: None, attachment_urls: Vec::new(), attachment_errors: Vec::new(),
-            linear_id: optional_argument(args, "linear_id")?.unwrap_or_default(), github_issue: optional_argument(args, "github_issue")?.unwrap_or_default(),
-            related_tasks: optional_argument(args, "related_tasks")?.unwrap_or_default(), parent_task: String::new(),
+            evidence: optional_argument(args, "evidence")?.unwrap_or_default(),
+            attachments: optional_argument(args, "attachments")?.unwrap_or_default(),
+            original_ticket: None,
+            attachment_urls: Vec::new(),
+            attachment_errors: Vec::new(),
+            linear_id: optional_argument(args, "linear_id")?.unwrap_or_default(),
+            github_issue: optional_argument(args, "github_issue")?.unwrap_or_default(),
+            related_tasks: optional_argument(args, "related_tasks")?.unwrap_or_default(),
+            parent_task: String::new(),
             playbook: creation_playbook(repo, &config, optional_argument(args, "playbook")?.unwrap_or_else(|| defaults.playbook.clone()))?,
-            branch_name: optional_argument(args, "branch_name")?, worktree_name: optional_argument(args, "worktree_name")?, base_ref: optional_argument(args, "base_ref")?,
+            branch_name: optional_argument(args, "branch_name")?,
+            worktree_name: optional_argument(args, "worktree_name")?,
+            base_ref: optional_argument(args, "base_ref")?,
             launch_defaults: alinery_core::execution::LaunchChoices {
-                harness: alinery_core::DEFAULT_HARNESS_KEY.into(), model: optional_argument(args, "model")?.unwrap_or_else(|| alinery_core::omp_default_model(&defaults)),
+                harness: alinery_core::DEFAULT_HARNESS_KEY.into(),
+                model: optional_argument(args, "model")?.unwrap_or_else(|| alinery_core::omp_default_model(&defaults)),
             },
-            auto_advance_steps: None, max_live_sessions, start: optional_argument::<bool>(args, "start")?.unwrap_or(false),
+            auto_advance_steps: None,
+            max_live_sessions,
+            start: optional_argument::<bool>(args, "start")?.unwrap_or(false),
         };
         let (client, _) = alinery_core::ensure_compatible_daemon(repo, &config, (!daemon_namespace.is_empty()).then_some(daemon_namespace)).map_err(|error| error.to_string())?;
         client.create_task(&request)
@@ -1098,7 +1200,6 @@ mod tests {
     fn text_content(v: &Value) -> &str {
         v["content"][0]["text"].as_str().unwrap()
     }
-
 
     #[test]
     fn subtask_tools_reject_unknown_and_invalid_arguments() {
@@ -1229,7 +1330,8 @@ mod tests {
         write_task(&repo, "target", "superdevelop", "/tmp/target");
         let result = handle_tool_call(
             json!({"name":"alinery_send_review_handoff","arguments":{"source_slug":"review","source_artifact":"findings.md","target_slug":"target","target_step_key":"build"}}),
-            repo.to_str().unwrap(), None,
+            repo.to_str().unwrap(),
+            None,
         );
         assert!(text_content(&result).starts_with("error:"));
         assert!(!repo.join(".alinery/tasks/target/artifacts/review-handoff-001.md").exists());
@@ -1255,7 +1357,12 @@ mod tests {
     fn primary_sessions_reject_foreign_definitions_and_permission_overrides() {
         let repo = unique_repo("create-session-authority");
         write_task(&repo, "task", "one-shot", "/tmp/task");
-        for extra in [json!({"playbook":{"scope":"bundled","key":"superdevelop"}}), json!({"auto_advance":true}), json!({"permission":"automatic"}), json!({"prompt":"replace"})] {
+        for extra in [
+            json!({"playbook":{"scope":"bundled","key":"superdevelop"}}),
+            json!({"auto_advance":true}),
+            json!({"permission":"automatic"}),
+            json!({"prompt":"replace"}),
+        ] {
             let mut arguments = json!({"task_slug":"task","step_key":"build"});
             arguments.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
             let result = handle_tool_call(json!({"name":"alinery_create_session","arguments":arguments}), repo.to_str().unwrap(), None);
@@ -1358,11 +1465,18 @@ mod tests {
     fn pre_v2_session_start_rejects_without_launching_daemon() {
         let repo = unique_repo("legacy-start");
         write_task(&repo, "task", "superdevelop", "/tmp/worktree");
-        let meta = alinery_core::SessionMeta { id: "s1".into(), ..Default::default() };
+        let meta = alinery_core::SessionMeta {
+            id: "s1".into(),
+            ..Default::default()
+        };
         let meta_path = alinery_core::session_meta_path(&repo, "task", "s1");
         let original = serde_json::to_vec(&meta).unwrap();
         std::fs::write(&meta_path, &original).unwrap();
-        let result = handle_tool_call(json!({"name":"alinery_start_session","arguments":{"task_slug":"task","session_id":"s1"}}), repo.to_str().unwrap(), None);
+        let result = handle_tool_call(
+            json!({"name":"alinery_start_session","arguments":{"task_slug":"task","session_id":"s1"}}),
+            repo.to_str().unwrap(),
+            None,
+        );
         assert!(text_content(&result).contains("pre-v2"), "{result}");
         assert_eq!(std::fs::read(meta_path).unwrap(), original);
         assert!(!alinery_core::alineryd_socket_path(&repo, None).exists());
@@ -1385,7 +1499,12 @@ mod tests {
         std::fs::write(&legacy, "legacy sentinel").unwrap();
         let result = handle_tool_call(json!({"name":"alinery_list_playbooks","arguments":{}}), repo.to_str().unwrap(), Some(&config));
         let catalog: alinery_core::playbook_library::PlaybookCatalog = serde_json::from_str(text_content(&result)).unwrap();
-        let scopes: std::collections::BTreeSet<_> = catalog.candidates.iter().filter(|entry| entry.source.reference.key == "superdevelop").map(|entry| entry.source.reference.scope).collect();
+        let scopes: std::collections::BTreeSet<_> = catalog
+            .candidates
+            .iter()
+            .filter(|entry| entry.source.reference.key == "superdevelop")
+            .map(|entry| entry.source.reference.scope)
+            .collect();
         assert_eq!(scopes.len(), 3);
         assert_eq!(std::fs::read_to_string(legacy).unwrap(), "legacy sentinel");
         let _ = std::fs::remove_dir_all(repo);
@@ -1395,7 +1514,10 @@ mod tests {
     fn invalid_creation_defaults_and_caps_have_no_provisioning_side_effects() {
         let repo = unique_repo("invalid-create");
         let config = repo.join("app.toml");
-        for configured in ["[global.defaults]\nplaybook = 'superdevelop'\n", "[global.defaults.playbook]\nscope = 'repo'\nkey = 'absent'\n"] {
+        for configured in [
+            "[global.defaults]\nplaybook = 'superdevelop'\n",
+            "[global.defaults.playbook]\nscope = 'repo'\nkey = 'absent'\n",
+        ] {
             std::fs::write(&config, configured).unwrap();
             let result = handle_tool_call(json!({"name":"alinery_create_task","arguments":{"name":"Invalid"}}), repo.to_str().unwrap(), Some(&config));
             assert!(text_content(&result).starts_with("error:"), "{result}");
@@ -1403,7 +1525,11 @@ mod tests {
         }
         std::fs::write(&config, "").unwrap();
         for cap in [json!(0), json!(-1), json!(1.5), json!(4294967296u64)] {
-            let result = handle_tool_call(json!({"name":"alinery_create_task","arguments":{"name":"Invalid","max_live_sessions":cap}}), repo.to_str().unwrap(), Some(&config));
+            let result = handle_tool_call(
+                json!({"name":"alinery_create_task","arguments":{"name":"Invalid","max_live_sessions":cap}}),
+                repo.to_str().unwrap(),
+                Some(&config),
+            );
             assert!(text_content(&result).starts_with("error:"), "{result}");
             assert!(!repo.join(".alinery/tasks").exists());
         }

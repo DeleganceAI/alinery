@@ -35,7 +35,10 @@ pub struct PlaybookRoots {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PlaybookSource { pub reference: PlaybookRef, pub path: Option<PathBuf> }
+pub struct PlaybookSource {
+    pub reference: PlaybookRef,
+    pub path: Option<PathBuf>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScopedPlaybook {
@@ -66,9 +69,17 @@ pub struct PlaybookCatalog {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PlaybookLoadError {
-    Unknown { source: PlaybookSource },
-    Invalid { source: PlaybookSource, diagnostics: Vec<PlaybookValidationError> },
-    Io { source: PlaybookSource, message: String },
+    Unknown {
+        source: PlaybookSource,
+    },
+    Invalid {
+        source: PlaybookSource,
+        diagnostics: Vec<PlaybookValidationError>,
+    },
+    Io {
+        source: PlaybookSource,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,7 +99,9 @@ impl std::fmt::Display for PlaybookLoadError {
             Self::Io { source, message } => write!(formatter, "playbook {:?}/{}: {message}", source.reference.scope, source.reference.key),
             Self::Invalid { source, diagnostics } => {
                 write!(formatter, "invalid playbook {:?}/{}", source.reference.scope, source.reference.key)?;
-                for diagnostic in diagnostics { write!(formatter, "; {}: {}", diagnostic.code, diagnostic.message)?; }
+                for diagnostic in diagnostics {
+                    write!(formatter, "; {}: {}", diagnostic.code, diagnostic.message)?;
+                }
                 Ok(())
             }
         }
@@ -100,12 +113,18 @@ impl std::fmt::Display for PlaybookSaveError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ReadOnly { reference } => write!(formatter, "bundled playbook {} is read-only; save a global or repo copy", reference.key),
-            Self::Conflict { source } => write!(formatter, "playbook {:?}/{} already exists; explicit overwrite is required", source.reference.scope, source.reference.key),
+            Self::Conflict { source } => write!(
+                formatter,
+                "playbook {:?}/{} already exists; explicit overwrite is required",
+                source.reference.scope, source.reference.key
+            ),
             Self::Unknown { source } => write!(formatter, "unknown playbook {:?}/{}", source.reference.scope, source.reference.key),
             Self::Io { message } => formatter.write_str(message),
             Self::Invalid { diagnostics } => {
                 formatter.write_str("invalid playbook")?;
-                for diagnostic in diagnostics { write!(formatter, "; {}: {}", diagnostic.code, diagnostic.message)?; }
+                for diagnostic in diagnostics {
+                    write!(formatter, "; {}: {}", diagnostic.code, diagnostic.message)?;
+                }
                 Ok(())
             }
         }
@@ -115,7 +134,11 @@ impl std::error::Error for PlaybookSaveError {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SavePlaybookRequest { pub target: PlaybookRef, pub source: String, pub overwrite: bool }
+pub struct SavePlaybookRequest {
+    pub target: PlaybookRef,
+    pub source: String,
+    pub overwrite: bool,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -139,7 +162,9 @@ pub struct PickerPreference {
     pub last_imported_at_ms: Option<u64>,
 }
 
-fn io_save(error: impl ToString) -> PlaybookSaveError { PlaybookSaveError::Io { message: error.to_string() } }
+fn io_save(error: impl ToString) -> PlaybookSaveError {
+    PlaybookSaveError::Io { message: error.to_string() }
+}
 
 fn root(roots: &PlaybookRoots, scope: PlaybookScope) -> Option<PathBuf> {
     match scope {
@@ -151,7 +176,10 @@ fn root(roots: &PlaybookRoots, scope: PlaybookScope) -> Option<PathBuf> {
 }
 
 fn source_for(roots: &PlaybookRoots, reference: &PlaybookRef) -> PlaybookSource {
-    PlaybookSource { reference: reference.clone(), path: root(roots, reference.scope).map(|root| root.join(&reference.key).join("playbook.md")) }
+    PlaybookSource {
+        reference: reference.clone(),
+        path: root(roots, reference.scope).map(|root| root.join(&reference.key).join("playbook.md")),
+    }
 }
 
 fn modification_time(path: &Path) -> Option<u64> {
@@ -165,11 +193,19 @@ fn invalid_key(key: &str) -> PlaybookValidationError {
 pub fn validate_playbook_for_storage(path_key: &str, source: &str) -> Result<NormalizedPlaybook, Vec<PlaybookValidationError>> {
     let mut definition = parse_playbook_md(source);
     if !valid_playbook_key(path_key) {
-        match &mut definition { Ok(_) => return Err(vec![invalid_key(path_key)]), Err(errors) => errors.push(invalid_key(path_key)) }
+        match &mut definition {
+            Ok(_) => return Err(vec![invalid_key(path_key)]),
+            Err(errors) => errors.push(invalid_key(path_key)),
+        }
     }
     let definition = definition?;
     if definition.key != path_key {
-        return Err(vec![PlaybookValidationError::new("storage_key_mismatch", format!("directory key {path_key:?} does not match declared key {:?}", definition.key), None, Some("key".into()))]);
+        return Err(vec![PlaybookValidationError::new(
+            "storage_key_mismatch",
+            format!("directory key {path_key:?} does not match declared key {:?}", definition.key),
+            None,
+            Some("key".into()),
+        )]);
     }
     Ok(definition)
 }
@@ -180,23 +216,32 @@ fn checked_directory(path: &Path, create: bool) -> Result<(), String> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => Ok(()),
         Ok(_) => Err(format!("{} is not a regular directory", path.display())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound && create => {
-            match fs::create_dir(path) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => checked_directory(path, false),
-                Err(error) => Err(format!("create {}: {error}", path.display())),
-            }
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && create => match fs::create_dir(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => checked_directory(path, false),
+            Err(error) => Err(format!("create {}: {error}", path.display())),
+        },
         Err(error) => Err(format!("read {}: {error}", path.display())),
     }
 }
 
 fn checked_root(roots: &PlaybookRoots, scope: PlaybookScope, create: bool) -> Result<PathBuf, String> {
-    if scope == PlaybookScope::Repo && roots.repo_dir.as_os_str().is_empty() { return Err("repo-scoped playbooks require an active repository".into()); }
-    let base = match scope { PlaybookScope::Global => &roots.global_config_dir, PlaybookScope::Repo => &roots.repo_dir, PlaybookScope::Bundled => return Err("bundled library is read-only".into()) };
-    if create { fs::create_dir_all(base).map_err(|error| format!("create {}: {error}", base.display()))?; }
+    if scope == PlaybookScope::Repo && roots.repo_dir.as_os_str().is_empty() {
+        return Err("repo-scoped playbooks require an active repository".into());
+    }
+    let base = match scope {
+        PlaybookScope::Global => &roots.global_config_dir,
+        PlaybookScope::Repo => &roots.repo_dir,
+        PlaybookScope::Bundled => return Err("bundled library is read-only".into()),
+    };
+    if create {
+        fs::create_dir_all(base).map_err(|error| format!("create {}: {error}", base.display()))?;
+    }
     let mut path = base.clone();
-    if scope == PlaybookScope::Repo { path.push(".alinery"); checked_directory(&path, create)?; }
+    if scope == PlaybookScope::Repo {
+        path.push(".alinery");
+        checked_directory(&path, create)?;
+    }
     path.push("playbooks");
     checked_directory(&path, create)?;
     Ok(path)
@@ -213,24 +258,40 @@ fn check_leaf(path: &Path) -> Result<bool, String> {
 
 pub fn resolve_playbook(roots: &PlaybookRoots, reference: &PlaybookRef) -> Result<ScopedPlaybook, PlaybookLoadError> {
     let source = source_for(roots, reference);
-    if !valid_playbook_key(&reference.key) { return Err(PlaybookLoadError::Invalid { source, diagnostics: vec![invalid_key(&reference.key)] }); }
+    if !valid_playbook_key(&reference.key) {
+        return Err(PlaybookLoadError::Invalid {
+            source,
+            diagnostics: vec![invalid_key(&reference.key)],
+        });
+    }
     if reference.scope == PlaybookScope::Repo && roots.repo_dir.as_os_str().is_empty() {
-        return Err(PlaybookLoadError::Io { source, message: "repo-scoped playbooks require an active repository".into() });
+        return Err(PlaybookLoadError::Io {
+            source,
+            message: "repo-scoped playbooks require an active repository".into(),
+        });
     }
     let (source_text, modified_at_ms) = if reference.scope == PlaybookScope::Bundled {
-        let Some((_, text)) = BUNDLED_PLAYBOOKS.iter().find(|(key, _)| *key == reference.key) else { return Err(PlaybookLoadError::Unknown { source }); };
+        let Some((_, text)) = BUNDLED_PLAYBOOKS.iter().find(|(key, _)| *key == reference.key) else {
+            return Err(PlaybookLoadError::Unknown { source });
+        };
         ((*text).to_owned(), None)
     } else {
         let path = source.path.as_ref().expect("writable scope has a path");
         let read = || -> Result<Option<String>, String> {
             // Check parents before probing the leaf; never traverse a scope link.
             let expected_root = root(roots, reference.scope).expect("writable root");
-            if fs::symlink_metadata(&expected_root).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) { return Ok(None); }
+            if fs::symlink_metadata(&expected_root).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) {
+                return Ok(None);
+            }
             checked_root(roots, reference.scope, false)?;
             let directory = path.parent().expect("canonical path has parent");
-            if fs::symlink_metadata(directory).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) { return Ok(None); }
+            if fs::symlink_metadata(directory).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) {
+                return Ok(None);
+            }
             checked_directory(directory, false)?;
-            if !check_leaf(path)? { return Ok(None); }
+            if !check_leaf(path)? {
+                return Ok(None);
+            }
             fs::read_to_string(path).map(Some).map_err(|error| format!("read {}: {error}", path.display()))
         };
         match read() {
@@ -239,16 +300,34 @@ pub fn resolve_playbook(roots: &PlaybookRoots, reference: &PlaybookRef) -> Resul
             Err(message) => return Err(PlaybookLoadError::Io { source, message }),
         }
     };
-    let definition = validate_playbook_for_storage(&reference.key, &source_text).map_err(|diagnostics| PlaybookLoadError::Invalid { source: source.clone(), diagnostics })?;
-    Ok(ScopedPlaybook { source, definition, source_text, modified_at_ms })
+    let definition = validate_playbook_for_storage(&reference.key, &source_text).map_err(|diagnostics| PlaybookLoadError::Invalid {
+        source: source.clone(),
+        diagnostics,
+    })?;
+    Ok(ScopedPlaybook {
+        source,
+        definition,
+        source_text,
+        modified_at_ms,
+    })
 }
 
 pub fn load_playbook_catalog(roots: &PlaybookRoots) -> PlaybookCatalog {
-    let mut references: Vec<PlaybookRef> = BUNDLED_PLAYBOOKS.iter().map(|(key, _)| PlaybookRef { scope: PlaybookScope::Bundled, key: (*key).into() }).collect();
+    let mut references: Vec<PlaybookRef> = BUNDLED_PLAYBOOKS
+        .iter()
+        .map(|(key, _)| PlaybookRef {
+            scope: PlaybookScope::Bundled,
+            key: (*key).into(),
+        })
+        .collect();
     let mut diagnostics = Vec::new();
     for scope in [PlaybookScope::Global, PlaybookScope::Repo] {
-        let Some(path) = root(roots, scope) else { continue; };
-        if fs::symlink_metadata(&path).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) { continue; }
+        let Some(path) = root(roots, scope) else {
+            continue;
+        };
+        if fs::symlink_metadata(&path).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) {
+            continue;
+        }
         let mut scan = || -> Result<(), String> {
             checked_root(roots, scope, false)?;
             for entry in fs::read_dir(&path).map_err(|error| format!("read {}: {error}", path.display()))? {
@@ -267,11 +346,18 @@ pub fn load_playbook_catalog(roots: &PlaybookRoots) -> PlaybookCatalog {
                     }
                 };
                 // Legacy flat prompts and picker/lock files are not candidates.
-                if !file_type.is_dir() && !file_type.is_symlink() { continue; }
+                if !file_type.is_dir() && !file_type.is_symlink() {
+                    continue;
+                }
                 let key = match entry.file_name().into_string() {
                     Ok(key) => key,
                     Err(_) => {
-                        diagnostics.push(PlaybookValidationError::new("library_io", format!("non-UTF-8 playbook directory {}", entry.path().display()), None, None));
+                        diagnostics.push(PlaybookValidationError::new(
+                            "library_io",
+                            format!("non-UTF-8 playbook directory {}", entry.path().display()),
+                            None,
+                            None,
+                        ));
                         continue;
                     }
                 };
@@ -281,29 +367,53 @@ pub fn load_playbook_catalog(roots: &PlaybookRoots) -> PlaybookCatalog {
             }
             Ok(())
         };
-        if let Err(message) = scan() { diagnostics.push(PlaybookValidationError::new("library_io", message, None, None)); }
+        if let Err(message) = scan() {
+            diagnostics.push(PlaybookValidationError::new("library_io", message, None, None));
+        }
     }
     references.sort();
-    let candidates = references.into_iter().map(|reference| {
-        let source = source_for(roots, &reference);
-        match resolve_playbook(roots, &reference) {
-            Ok(playbook) => PlaybookCandidate { source, title: Some(playbook.definition.title), description: Some(playbook.definition.description), modified_at_ms: playbook.modified_at_ms, diagnostics: Vec::new() },
-            Err(error) => {
-                let diagnostics = match error {
-                    PlaybookLoadError::Invalid { diagnostics, .. } => diagnostics,
-                    PlaybookLoadError::Io { message, .. } => vec![PlaybookValidationError::new("library_io", message, None, None)],
-                    PlaybookLoadError::Unknown { .. } => vec![PlaybookValidationError::new("unknown_playbook", "playbook disappeared during discovery", None, None)],
-                };
-                let modified_at_ms = source.path.as_deref().and_then(modification_time);
-                PlaybookCandidate { source, title: None, description: None, modified_at_ms, diagnostics }
+    let candidates = references
+        .into_iter()
+        .map(|reference| {
+            let source = source_for(roots, &reference);
+            match resolve_playbook(roots, &reference) {
+                Ok(playbook) => PlaybookCandidate {
+                    source,
+                    title: Some(playbook.definition.title),
+                    description: Some(playbook.definition.description),
+                    modified_at_ms: playbook.modified_at_ms,
+                    diagnostics: Vec::new(),
+                },
+                Err(error) => {
+                    let diagnostics = match error {
+                        PlaybookLoadError::Invalid { diagnostics, .. } => diagnostics,
+                        PlaybookLoadError::Io { message, .. } => vec![PlaybookValidationError::new("library_io", message, None, None)],
+                        PlaybookLoadError::Unknown { .. } => vec![PlaybookValidationError::new("unknown_playbook", "playbook disappeared during discovery", None, None)],
+                    };
+                    let modified_at_ms = source.path.as_deref().and_then(modification_time);
+                    PlaybookCandidate {
+                        source,
+                        title: None,
+                        description: None,
+                        modified_at_ms,
+                        diagnostics,
+                    }
+                }
             }
-        }
-    }).collect();
+        })
+        .collect();
     let picker_preferences = match load_picker_preferences(roots) {
         Ok(preferences) => preferences,
-        Err(message) => { diagnostics.push(PlaybookValidationError::new("picker_preferences", message, None, None)); PickerPreferences::default() }
+        Err(message) => {
+            diagnostics.push(PlaybookValidationError::new("picker_preferences", message, None, None));
+            PickerPreferences::default()
+        }
     };
-    PlaybookCatalog { candidates, picker_preferences, diagnostics }
+    PlaybookCatalog {
+        candidates,
+        picker_preferences,
+        diagnostics,
+    }
 }
 
 // Serialize cooperating threads as well as processes. The filesystem marker is
@@ -319,7 +429,9 @@ fn with_library_lock<T>(roots: &PlaybookRoots, scope: PlaybookScope, mutate: imp
 }
 
 pub fn save_playbook(roots: &PlaybookRoots, request: SavePlaybookRequest) -> Result<ScopedPlaybook, PlaybookSaveError> {
-    if request.target.scope == PlaybookScope::Bundled { return Err(PlaybookSaveError::ReadOnly { reference: request.target }); }
+    if request.target.scope == PlaybookScope::Bundled {
+        return Err(PlaybookSaveError::ReadOnly { reference: request.target });
+    }
     let definition = validate_playbook_for_storage(&request.target.key, &request.source).map_err(|diagnostics| PlaybookSaveError::Invalid { diagnostics })?;
     let canonical = render_playbook_md(&definition);
     let source = source_for(roots, &request.target);
@@ -328,22 +440,39 @@ pub fn save_playbook(roots: &PlaybookRoots, request: SavePlaybookRequest) -> Res
         checked_directory(&directory, true).map_err(io_save)?;
         let path = directory.join("playbook.md");
         let exists = check_leaf(&path).map_err(io_save)?;
-        if exists && !request.overwrite { return Err(PlaybookSaveError::Conflict { source: source.clone() }); }
+        if exists && !request.overwrite {
+            return Err(PlaybookSaveError::Conflict { source: source.clone() });
+        }
         write_bytes_atomic(&path, canonical.as_bytes()).map_err(io_save)?;
-        Ok(ScopedPlaybook { source: source.clone(), definition, source_text: canonical, modified_at_ms: modification_time(&path) })
+        Ok(ScopedPlaybook {
+            source: source.clone(),
+            definition,
+            source_text: canonical,
+            modified_at_ms: modification_time(&path),
+        })
     })
 }
 
 pub fn delete_playbook(roots: &PlaybookRoots, reference: &PlaybookRef) -> Result<(), PlaybookSaveError> {
-    if reference.scope == PlaybookScope::Bundled { return Err(PlaybookSaveError::ReadOnly { reference: reference.clone() }); }
-    if !valid_playbook_key(&reference.key) { return Err(PlaybookSaveError::Invalid { diagnostics: vec![invalid_key(&reference.key)] }); }
+    if reference.scope == PlaybookScope::Bundled {
+        return Err(PlaybookSaveError::ReadOnly { reference: reference.clone() });
+    }
+    if !valid_playbook_key(&reference.key) {
+        return Err(PlaybookSaveError::Invalid {
+            diagnostics: vec![invalid_key(&reference.key)],
+        });
+    }
     let source = source_for(roots, reference);
     with_library_lock(roots, reference.scope, |root| {
         let directory = root.join(&reference.key);
-        if fs::symlink_metadata(&directory).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) { return Err(PlaybookSaveError::Unknown { source: source.clone() }); }
+        if fs::symlink_metadata(&directory).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) {
+            return Err(PlaybookSaveError::Unknown { source: source.clone() });
+        }
         checked_directory(&directory, false).map_err(io_save)?;
         let path = directory.join("playbook.md");
-        if !check_leaf(&path).map_err(io_save)? { return Err(PlaybookSaveError::Unknown { source: source.clone() }); }
+        if !check_leaf(&path).map_err(io_save)? {
+            return Err(PlaybookSaveError::Unknown { source: source.clone() });
+        }
         fs::remove_file(&path).map_err(io_save)?;
         // Only remove an empty directory. Never recursively delete user material.
         match fs::remove_dir(&directory) {
@@ -357,21 +486,31 @@ pub fn delete_playbook(roots: &PlaybookRoots, reference: &PlaybookRef) -> Result
 fn validate_preferences(preferences: &PickerPreferences) -> Result<(), String> {
     let mut order = HashSet::new();
     for reference in &preferences.order {
-        if !valid_playbook_key(&reference.key) || !order.insert(reference) { return Err("picker order contains an invalid or duplicate scoped reference".into()); }
+        if !valid_playbook_key(&reference.key) || !order.insert(reference) {
+            return Err("picker order contains an invalid or duplicate scoped reference".into());
+        }
     }
     let mut entries = HashSet::new();
     for entry in &preferences.entries {
-        if !valid_playbook_key(&entry.reference.key) || !entries.insert(&entry.reference) { return Err("picker metadata contains an invalid or duplicate scoped reference".into()); }
-        if entry.last_imported_at_ms.is_some() && entry.reference.scope != PlaybookScope::Global { return Err("last-imported metadata applies only to global playbooks".into()); }
+        if !valid_playbook_key(&entry.reference.key) || !entries.insert(&entry.reference) {
+            return Err("picker metadata contains an invalid or duplicate scoped reference".into());
+        }
+        if entry.last_imported_at_ms.is_some() && entry.reference.scope != PlaybookScope::Global {
+            return Err("last-imported metadata applies only to global playbooks".into());
+        }
     }
     Ok(())
 }
 
 pub fn load_picker_preferences(roots: &PlaybookRoots) -> Result<PickerPreferences, String> {
     let path = roots.global_config_dir.join("playbooks/picker.toml");
-    if fs::symlink_metadata(path.parent().expect("picker parent")).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) { return Ok(PickerPreferences::default()); }
+    if fs::symlink_metadata(path.parent().expect("picker parent")).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) {
+        return Ok(PickerPreferences::default());
+    }
     checked_root(roots, PlaybookScope::Global, false)?;
-    if !check_leaf(&path)? { return Ok(PickerPreferences::default()); }
+    if !check_leaf(&path)? {
+        return Ok(PickerPreferences::default());
+    }
     let source = fs::read_to_string(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
     let preferences: PickerPreferences = toml::from_str(&source).map_err(|error| format!("parse {}: {error}", path.display()))?;
     validate_preferences(&preferences)?;
@@ -394,26 +533,48 @@ mod tests {
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
 
-    struct Sandbox { path: PathBuf, roots: PlaybookRoots }
+    struct Sandbox {
+        path: PathBuf,
+        roots: PlaybookRoots,
+    }
     impl Sandbox {
         fn new() -> Self {
             let path = std::env::temp_dir().join(format!("alinery-library-{}", uuid::Uuid::new_v4()));
-            let roots = PlaybookRoots { global_config_dir: path.join("config"), repo_dir: path.join("repo") };
+            let roots = PlaybookRoots {
+                global_config_dir: path.join("config"),
+                repo_dir: path.join("repo"),
+            };
             fs::create_dir_all(&roots.repo_dir).unwrap();
             fs::create_dir_all(&roots.global_config_dir).unwrap();
             Self { path, roots }
         }
     }
-    impl Drop for Sandbox { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.path); } }
+    impl Drop for Sandbox {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
 
-    fn reference(scope: PlaybookScope) -> PlaybookRef { PlaybookRef { scope, key: "superdevelop".into() } }
+    fn reference(scope: PlaybookScope) -> PlaybookRef {
+        PlaybookRef {
+            scope,
+            key: "superdevelop".into(),
+        }
+    }
     fn source(title: &str) -> String {
         let mut definition = parse_playbook_md(BUNDLED_PLAYBOOKS.iter().find(|(key, _)| *key == "superdevelop").unwrap().1).unwrap();
         definition.title = title.into();
         render_playbook_md(&definition)
     }
     fn save(roots: &PlaybookRoots, scope: PlaybookScope, title: &str, overwrite: bool) -> Result<ScopedPlaybook, PlaybookSaveError> {
-        save_playbook(roots, SavePlaybookRequest { target: reference(scope), source: source(title), overwrite })
+        save_playbook(
+            roots,
+            SavePlaybookRequest {
+                target: reference(scope),
+                source: source(title),
+                overwrite,
+            },
+        )
     }
 
     #[test]
@@ -446,15 +607,34 @@ mod tests {
         let path = repo.source.path.unwrap();
         fs::write(&path, "not a playbook").unwrap();
         let catalog = load_playbook_catalog(&sandbox.roots);
-        assert!(catalog.candidates.iter().find(|candidate| candidate.source.reference == reference(PlaybookScope::Repo)).unwrap().diagnostics.iter().any(|error| error.code == "missing_frontmatter"));
-        assert!(matches!(resolve_playbook(&sandbox.roots, &reference(PlaybookScope::Repo)), Err(PlaybookLoadError::Invalid { .. })));
+        assert!(catalog
+            .candidates
+            .iter()
+            .find(|candidate| candidate.source.reference == reference(PlaybookScope::Repo))
+            .unwrap()
+            .diagnostics
+            .iter()
+            .any(|error| error.code == "missing_frontmatter"));
+        assert!(matches!(
+            resolve_playbook(&sandbox.roots, &reference(PlaybookScope::Repo)),
+            Err(PlaybookLoadError::Invalid { .. })
+        ));
         assert_eq!(resolve_playbook(&sandbox.roots, &reference(PlaybookScope::Global)).unwrap().definition, global.definition);
         fs::write(&path, [0xff]).unwrap();
-        assert!(matches!(resolve_playbook(&sandbox.roots, &reference(PlaybookScope::Repo)), Err(PlaybookLoadError::Io { .. })));
+        assert!(matches!(
+            resolve_playbook(&sandbox.roots, &reference(PlaybookScope::Repo)),
+            Err(PlaybookLoadError::Io { .. })
+        ));
         fs::remove_file(&path).unwrap();
         fs::create_dir(&path).unwrap();
-        assert!(matches!(resolve_playbook(&sandbox.roots, &reference(PlaybookScope::Repo)), Err(PlaybookLoadError::Io { .. })));
-        let unknown = PlaybookRef { scope: PlaybookScope::Repo, key: "missing".into() };
+        assert!(matches!(
+            resolve_playbook(&sandbox.roots, &reference(PlaybookScope::Repo)),
+            Err(PlaybookLoadError::Io { .. })
+        ));
+        let unknown = PlaybookRef {
+            scope: PlaybookScope::Repo,
+            key: "missing".into(),
+        };
         assert!(matches!(resolve_playbook(&sandbox.roots, &unknown), Err(PlaybookLoadError::Unknown { .. })));
     }
 
@@ -462,15 +642,26 @@ mod tests {
     fn save_validates_before_mutating_and_requires_explicit_overwrite() {
         let sandbox = Sandbox::new();
         let target = reference(PlaybookScope::Repo);
-        let request = SavePlaybookRequest { target: target.clone(), source: "invalid".into(), overwrite: false };
+        let request = SavePlaybookRequest {
+            target: target.clone(),
+            source: "invalid".into(),
+            overwrite: false,
+        };
         assert!(matches!(save_playbook(&sandbox.roots, request), Err(PlaybookSaveError::Invalid { .. })));
         assert!(!sandbox.roots.repo_dir.join(".alinery/playbooks").exists());
         let original = save(&sandbox.roots, PlaybookScope::Repo, "Original", false).unwrap();
         let path = original.source.path.unwrap();
         let before = fs::read(&path).unwrap();
-        assert!(matches!(save(&sandbox.roots, PlaybookScope::Repo, "Unconfirmed", false), Err(PlaybookSaveError::Conflict { .. })));
+        assert!(matches!(
+            save(&sandbox.roots, PlaybookScope::Repo, "Unconfirmed", false),
+            Err(PlaybookSaveError::Conflict { .. })
+        ));
         let wrong_key = source("Wrong key").replacen("key = \"superdevelop\"", "key = \"different\"", 1);
-        let request = SavePlaybookRequest { target, source: wrong_key, overwrite: true };
+        let request = SavePlaybookRequest {
+            target,
+            source: wrong_key,
+            overwrite: true,
+        };
         assert!(matches!(save_playbook(&sandbox.roots, request), Err(PlaybookSaveError::Invalid { .. })));
         assert_eq!(fs::read(&path).unwrap(), before);
         save(&sandbox.roots, PlaybookScope::Repo, "Confirmed", true).unwrap();
@@ -481,15 +672,32 @@ mod tests {
     fn bundled_copy_new_key_and_delete_are_isolated() {
         let sandbox = Sandbox::new();
         assert!(matches!(save(&sandbox.roots, PlaybookScope::Bundled, "No", true), Err(PlaybookSaveError::ReadOnly { .. })));
-        assert!(matches!(delete_playbook(&sandbox.roots, &reference(PlaybookScope::Bundled)), Err(PlaybookSaveError::ReadOnly { .. })));
+        assert!(matches!(
+            delete_playbook(&sandbox.roots, &reference(PlaybookScope::Bundled)),
+            Err(PlaybookSaveError::ReadOnly { .. })
+        ));
         save(&sandbox.roots, PlaybookScope::Global, "Global", false).unwrap();
         let repo = save(&sandbox.roots, PlaybookScope::Repo, "Repo", false).unwrap();
         let mut copy = repo.definition;
         copy.key = "new-key".into();
-        let new_ref = PlaybookRef { scope: PlaybookScope::Repo, key: copy.key.clone() };
-        save_playbook(&sandbox.roots, SavePlaybookRequest { target: new_ref.clone(), source: render_playbook_md(&copy), overwrite: false }).unwrap();
+        let new_ref = PlaybookRef {
+            scope: PlaybookScope::Repo,
+            key: copy.key.clone(),
+        };
+        save_playbook(
+            &sandbox.roots,
+            SavePlaybookRequest {
+                target: new_ref.clone(),
+                source: render_playbook_md(&copy),
+                overwrite: false,
+            },
+        )
+        .unwrap();
         delete_playbook(&sandbox.roots, &reference(PlaybookScope::Repo)).unwrap();
-        assert!(matches!(resolve_playbook(&sandbox.roots, &reference(PlaybookScope::Repo)), Err(PlaybookLoadError::Unknown { .. })));
+        assert!(matches!(
+            resolve_playbook(&sandbox.roots, &reference(PlaybookScope::Repo)),
+            Err(PlaybookLoadError::Unknown { .. })
+        ));
         assert_eq!(resolve_playbook(&sandbox.roots, &reference(PlaybookScope::Global)).unwrap().definition.title, "Global");
         assert_eq!(resolve_playbook(&sandbox.roots, &new_ref).unwrap().definition, copy);
         assert!(resolve_playbook(&sandbox.roots, &reference(PlaybookScope::Bundled)).is_ok());
@@ -503,7 +711,14 @@ mod tests {
         let before = fs::read(&path).unwrap();
         let preferences = PickerPreferences {
             order: vec![reference(PlaybookScope::Global), reference(PlaybookScope::Bundled)],
-            entries: vec![PickerPreference { reference: reference(PlaybookScope::Global), hidden: true, collapsed: false, badge: Some("G".into()), color: Some("#123456".into()), last_imported_at_ms: Some(123) }],
+            entries: vec![PickerPreference {
+                reference: reference(PlaybookScope::Global),
+                hidden: true,
+                collapsed: false,
+                badge: Some("G".into()),
+                color: Some("#123456".into()),
+                last_imported_at_ms: Some(123),
+            }],
         };
         save_picker_preferences(&sandbox.roots, &preferences).unwrap();
         assert_eq!(load_picker_preferences(&sandbox.roots).unwrap(), preferences);
@@ -513,7 +728,10 @@ mod tests {
         let picker = sandbox.roots.global_config_dir.join("playbooks/picker.toml");
         fs::write(picker, "title = \"Not definition storage\"").unwrap();
         assert!(load_picker_preferences(&sandbox.roots).is_err());
-        assert!(load_playbook_catalog(&sandbox.roots).candidates.iter().any(|candidate| candidate.source.reference == reference(PlaybookScope::Global) && candidate.diagnostics.is_empty()));
+        assert!(load_playbook_catalog(&sandbox.roots)
+            .candidates
+            .iter()
+            .any(|candidate| candidate.source.reference == reference(PlaybookScope::Global) && candidate.diagnostics.is_empty()));
     }
 
     #[test]
@@ -540,10 +758,19 @@ mod tests {
         fs::create_dir_all(sandbox.roots.repo_dir.join(".alinery/playbooks")).unwrap();
         symlink(&outside, sandbox.roots.repo_dir.join(".alinery/playbooks/superdevelop")).unwrap();
         assert!(matches!(save(&sandbox.roots, PlaybookScope::Repo, "Escape", true), Err(PlaybookSaveError::Io { .. })));
-        assert!(matches!(resolve_playbook(&sandbox.roots, &reference(PlaybookScope::Repo)), Err(PlaybookLoadError::Io { .. })));
-        assert!(matches!(delete_playbook(&sandbox.roots, &reference(PlaybookScope::Repo)), Err(PlaybookSaveError::Io { .. })));
+        assert!(matches!(
+            resolve_playbook(&sandbox.roots, &reference(PlaybookScope::Repo)),
+            Err(PlaybookLoadError::Io { .. })
+        ));
+        assert!(matches!(
+            delete_playbook(&sandbox.roots, &reference(PlaybookScope::Repo)),
+            Err(PlaybookSaveError::Io { .. })
+        ));
         assert_eq!(parse_playbook_md(&fs::read_to_string(outside.join("playbook.md")).unwrap()).unwrap().title, "Outside");
-        let unsafe_ref = PlaybookRef { scope: PlaybookScope::Repo, key: "../outside".into() };
+        let unsafe_ref = PlaybookRef {
+            scope: PlaybookScope::Repo,
+            key: "../outside".into(),
+        };
         assert!(matches!(resolve_playbook(&sandbox.roots, &unsafe_ref), Err(PlaybookLoadError::Invalid { .. })));
     }
 
@@ -551,10 +778,15 @@ mod tests {
     // thread mutex. Only the explicitly selected child test observes this env.
     #[test]
     fn save_race_child() {
-        let Some(root) = std::env::var_os("ALINERY_LIBRARY_RACE_ROOT") else { return; };
+        let Some(root) = std::env::var_os("ALINERY_LIBRARY_RACE_ROOT") else {
+            return;
+        };
         let path = PathBuf::from(root);
         let name = std::env::var("ALINERY_LIBRARY_RACE_NAME").unwrap();
-        let roots = PlaybookRoots { global_config_dir: path.join("config"), repo_dir: path.join("repo") };
+        let roots = PlaybookRoots {
+            global_config_dir: path.join("config"),
+            repo_dir: path.join("repo"),
+        };
         fs::write(path.join(format!("ready-{name}")), "").unwrap();
         let deadline = Instant::now() + Duration::from_secs(20);
         while !path.join("go").exists() {
@@ -573,23 +805,33 @@ mod tests {
     fn nonoverwrite_saves_have_one_cross_process_winner() {
         let sandbox = Sandbox::new();
         let executable = std::env::current_exe().unwrap();
-        let mut children: Vec<_> = ["left", "right"].into_iter().map(|name| {
-            Command::new(&executable)
-                .args(["--exact", "playbook_library::tests::save_race_child", "--nocapture"])
-                .env("ALINERY_LIBRARY_RACE_ROOT", &sandbox.path)
-                .env("ALINERY_LIBRARY_RACE_NAME", name)
-                .stdout(Stdio::null()).spawn().unwrap()
-        }).collect();
+        let mut children: Vec<_> = ["left", "right"]
+            .into_iter()
+            .map(|name| {
+                Command::new(&executable)
+                    .args(["--exact", "playbook_library::tests::save_race_child", "--nocapture"])
+                    .env("ALINERY_LIBRARY_RACE_ROOT", &sandbox.path)
+                    .env("ALINERY_LIBRARY_RACE_NAME", name)
+                    .stdout(Stdio::null())
+                    .spawn()
+                    .unwrap()
+            })
+            .collect();
         let deadline = Instant::now() + Duration::from_secs(20);
         while !["left", "right"].iter().all(|name| sandbox.path.join(format!("ready-{name}")).exists()) {
             if Instant::now() >= deadline {
-                for child in &mut children { let _ = child.kill(); let _ = child.wait(); }
+                for child in &mut children {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
                 panic!("race children did not reach barrier");
             }
             std::thread::sleep(Duration::from_millis(5));
         }
         fs::write(sandbox.path.join("go"), "").unwrap();
-        for child in &mut children { assert!(child.wait().unwrap().success()); }
+        for child in &mut children {
+            assert!(child.wait().unwrap().success());
+        }
         let left = fs::read_to_string(sandbox.path.join("outcome-left")).unwrap();
         let right = fs::read_to_string(sandbox.path.join("outcome-right")).unwrap();
         assert!(matches!((left.as_str(), right.as_str()), ("won", "conflict") | ("conflict", "won")));
@@ -600,7 +842,10 @@ mod tests {
     #[test]
     fn global_management_without_repo_never_resolves_current_directory() {
         let sandbox = Sandbox::new();
-        let roots = PlaybookRoots { global_config_dir: sandbox.roots.global_config_dir.clone(), repo_dir: PathBuf::new() };
+        let roots = PlaybookRoots {
+            global_config_dir: sandbox.roots.global_config_dir.clone(),
+            repo_dir: PathBuf::new(),
+        };
         save(&roots, PlaybookScope::Global, "Personal", false).unwrap();
         let catalog = load_playbook_catalog(&roots);
         assert!(catalog.candidates.iter().all(|candidate| candidate.source.reference.scope != PlaybookScope::Repo));
@@ -626,7 +871,10 @@ mod tests {
         }
         save(&sandbox.roots, PlaybookScope::Global, "Valid sibling", false).unwrap();
         let catalog = load_playbook_catalog(&sandbox.roots);
-        assert!(catalog.candidates.iter().any(|candidate| candidate.source.reference == reference(PlaybookScope::Global) && candidate.title.as_deref() == Some("Valid sibling")));
+        assert!(catalog
+            .candidates
+            .iter()
+            .any(|candidate| candidate.source.reference == reference(PlaybookScope::Global) && candidate.title.as_deref() == Some("Valid sibling")));
         // Both failures must be visible regardless of directory enumeration
         // order; stopping the scope scan at its first malformed entry loses one.
         assert_eq!(catalog.diagnostics.iter().filter(|diagnostic| diagnostic.code == "library_io").count(), 2);

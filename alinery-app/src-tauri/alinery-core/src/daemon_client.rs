@@ -12,16 +12,23 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-pub use crate::task_creation::{CreateTaskRequest, CreateTaskReply, CreateExecutionSessionRequest, CreateExecutionSessionReply, ExecutionSessionTarget, TaskPlaybookPackage, TaskAttachment, TaskExecutionReply, StartSessionRequest, GetTaskExecutionRequest, AllowExecutionCompletionRequest};
+pub use crate::task_creation::{
+    AllowExecutionCompletionRequest, CreateExecutionSessionReply, CreateExecutionSessionRequest, CreateTaskReply, CreateTaskRequest, ExecutionSessionTarget,
+    GetTaskExecutionRequest, StartSessionRequest, TaskAttachment, TaskExecutionReply, TaskPlaybookPackage,
+};
 
 fn typed_reply<T: serde::de::DeserializeOwned>(response: Value) -> Result<T, String> {
-    if let Some(error) = reply_error(&response) { return Err(error.to_string()); }
+    if let Some(error) = reply_error(&response) {
+        return Err(error.to_string());
+    }
     serde_json::from_value(response).map_err(|e| format!("invalid daemon reply: {e}"))
 }
 
 /// A retained, peer-authenticated UI connection. Its authority is connection-bound:
 /// neither a capability string nor a `caller` field can authorize another socket.
-pub struct UiControlConnection { stream: UnixStream }
+pub struct UiControlConnection {
+    stream: UnixStream,
+}
 impl UiControlConnection {
     pub fn connect(client: &DaemonClient) -> Result<Self, String> {
         let mut stream = client.send(&json!({"op":"ui_control"}))?;
@@ -49,7 +56,10 @@ pub const MAX_CONTROL_HEADER_BYTES: usize = 128 * 1024;
 pub const MAX_CONTROL_BODY_BYTES: usize = 512 * 1024 * 1024;
 
 fn serialize_control_body(request: &CreateTaskRequest, limit: usize) -> Result<Vec<u8>, String> {
-    struct BoundedBody { bytes: Vec<u8>, limit: usize }
+    struct BoundedBody {
+        bytes: Vec<u8>,
+        limit: usize,
+    }
     impl Write for BoundedBody {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             if bytes.len() > self.limit - self.bytes.len() {
@@ -58,12 +68,15 @@ fn serialize_control_body(request: &CreateTaskRequest, limit: usize) -> Result<V
             self.bytes.extend_from_slice(bytes);
             Ok(bytes.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
     // Reject attachment payloads that cannot fit before allocating their encoded strings.
-    let encoded_bytes = request.attachments.iter().try_fold(0usize, |total, attachment| {
-        attachment.bytes.len().div_ceil(3).checked_mul(4)?.checked_add(total)
-    });
+    let encoded_bytes = request
+        .attachments
+        .iter()
+        .try_fold(0usize, |total, attachment| attachment.bytes.len().div_ceil(3).checked_mul(4)?.checked_add(total));
     if encoded_bytes.is_none_or(|length| length > limit) {
         return Err("create-task-body-too-large".into());
     }
@@ -706,9 +719,8 @@ mod tests {
     }
 
     fn binary_create_request() -> CreateTaskRequest {
-        let mut request: CreateTaskRequest = serde_json::from_str(
-            r#"{"name":"Binary é\npackage","playbook":{"reference":{"scope":"repo","key":"binary"},"source":"retained definition"},"start":false}"#
-        ).unwrap();
+        let mut request: CreateTaskRequest =
+            serde_json::from_str(r#"{"name":"Binary é\npackage","playbook":{"reference":{"scope":"repo","key":"binary"},"source":"retained definition"},"start":false}"#).unwrap();
         request.attachments.push(TaskAttachment {
             name: "binary.bin".into(),
             bytes: (0..=255).cycle().take(200 * 1024).collect(),
@@ -753,11 +765,18 @@ mod tests {
         let body = serialize_control_body(&request, MAX_CONTROL_BODY_BYTES).unwrap();
         assert_eq!(serialize_control_body(&request, body.len()).unwrap(), body);
         assert!(serialize_control_body(&request, body.len() - 1).unwrap_err().contains("create-task-body-too-large"));
-        assert!(serialize_control_body(&request, request.attachments[0].bytes.len()).unwrap_err().contains("create-task-body-too-large"));
-        let client = DaemonClient { socket_path: socket_path("absent") };
+        assert!(serialize_control_body(&request, request.attachments[0].bytes.len())
+            .unwrap_err()
+            .contains("create-task-body-too-large"));
+        let client = DaemonClient {
+            socket_path: socket_path("absent"),
+        };
         let oversized_header = json!({"op":"write","data":"x".repeat(MAX_CONTROL_HEADER_BYTES)});
         assert_eq!(client.send(&oversized_header).unwrap_err(), "control-header-too-large");
-        assert_eq!(client.call_with_timeout(&oversized_header, DAEMON_OBSERVATION_TIMEOUT).unwrap_err(), "control-header-too-large");
+        assert_eq!(
+            client.call_with_timeout(&oversized_header, DAEMON_OBSERVATION_TIMEOUT).unwrap_err(),
+            "control-header-too-large"
+        );
     }
 
     fn serve_version(name: &str, reply: Value) -> (PathBuf, thread::JoinHandle<Value>) {

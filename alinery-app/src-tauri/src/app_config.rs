@@ -261,8 +261,12 @@ fn read_existing_app_config(path: &Path) -> Result<Option<AppConfig>, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("read application configuration {}: {error}", path.display())),
     };
-    toml::from_str::<AppConfig>(&source).map(sanitize_app_config).map(Some)
-        .map_err(|error| format!("invalid application configuration {} (playbook defaults require a scope-qualified reference): {error}", path.display()))
+    toml::from_str::<AppConfig>(&source).map(sanitize_app_config).map(Some).map_err(|error| {
+        format!(
+            "invalid application configuration {} (playbook defaults require a scope-qualified reference): {error}",
+            path.display()
+        )
+    })
 }
 
 pub(crate) fn load_app_config(app: &AppHandle) -> AppConfig {

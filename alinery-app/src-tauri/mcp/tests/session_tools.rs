@@ -1,5 +1,5 @@
-use alinery_core::{AgentState, ProcessState, SessionHistoryResult, SessionMeta, SessionStatusResult, Task};
 use alinery_core::task_creation::{CreateExecutionSessionReply, CreateTaskReply, TaskExecutionReply};
+use alinery_core::{AgentState, ProcessState, SessionHistoryResult, SessionMeta, SessionStatusResult, Task};
 use serde_json::{json, Value};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -36,12 +36,18 @@ impl Fixture {
         // fs::canonicalize), and macOS's /tmp -> /private/tmp symlink would otherwise make
         // every path this fixture embeds (prompts, worktree) disagree with dispatch's own.
         let root = fs::canonicalize(&root).unwrap();
-        for args in [vec!["config", "user.email", "test@example.com"], vec!["config", "user.name", "Test"], vec!["commit", "--allow-empty", "-m", "fixture"]] {
+        for args in [
+            vec!["config", "user.email", "test@example.com"],
+            vec!["config", "user.name", "Test"],
+            vec!["commit", "--allow-empty", "-m", "fixture"],
+        ] {
             assert!(alinery_core::git_cmd(&root).args(args).status().unwrap().success());
         }
         let library = root.join(".alinery/playbooks/fixture");
         fs::create_dir_all(&library).unwrap();
-        fs::write(library.join("playbook.md"), r#"+++
+        fs::write(
+            library.join("playbook.md"),
+            r#"+++
 version = 2
 key = "fixture"
 title = "Fixture"
@@ -73,7 +79,9 @@ auto_advance_default = false
 Fixture instructions. Write the assigned result for {{TASK_NAME}}.
 <!-- alinery:step inspect -->
 Inspect and write the assigned report.
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let app_config = root.join(".alinery/app.toml");
         fs::write(&app_config, "[global.defaults.playbook]\nscope = 'repo'\nkey = 'fixture'\n").unwrap();
@@ -151,7 +159,11 @@ env = {{ ALINERY_RUNNER_TOKENS = "{}" }}
         fixture.daemon_child = Some(child);
         let socket = alinery_core::alineryd_socket_path(&fixture.root, None);
         wait_until(Duration::from_secs(5), || UnixStream::connect(&socket).is_ok());
-        let created: CreateTaskReply = serde_json::from_str(&fixture.call("alinery_create_task", json!({"name":"Task","requested_slug":"task","evidence":"Imported evidence","attachments":[{"name":"proof.bin","bytes":"AP8K"}],"github_issue":"42","start":false}))).unwrap();
+        let created: CreateTaskReply = serde_json::from_str(&fixture.call(
+            "alinery_create_task",
+            json!({"name":"Task","requested_slug":"task","evidence":"Imported evidence","attachments":[{"name":"proof.bin","bytes":"AP8K"}],"github_issue":"42","start":false}),
+        ))
+        .unwrap();
         assert_eq!(created.creation, "ready", "{created:?}");
         assert_eq!(created.task.unwrap().slug, "task");
         fixture
@@ -275,16 +287,24 @@ fn real_mcp_create_start_disconnect_observe_history_and_exit() {
     let playbook_extra = "PLAYBOOK-EXTRA-ONCE";
     let retained: TaskExecutionReply = serde_json::from_str(&fixture.call("alinery_get_task_execution", json!({"task_slug":"task"}))).unwrap();
     assert_eq!(retained.state.executions.len(), 2);
-    assert_eq!(fs::read(fixture.root.join(".alinery/tasks/task/playbook.md")).unwrap(), fs::read(fixture.root.join(".alinery/playbooks/fixture/playbook.md")).unwrap());
+    assert_eq!(
+        fs::read(fixture.root.join(".alinery/tasks/task/playbook.md")).unwrap(),
+        fs::read(fixture.root.join(".alinery/playbooks/fixture/playbook.md")).unwrap()
+    );
     assert_eq!(fs::read(fixture.root.join(".alinery/tasks/task/artifacts/attachments/proof.bin")).unwrap(), [0, 255, 10]);
-    assert!(fs::read_to_string(fixture.root.join(".alinery/tasks/task/artifacts/00-ticket.md")).unwrap().contains("Imported evidence"));
+    assert!(fs::read_to_string(fixture.root.join(".alinery/tasks/task/artifacts/00-ticket.md"))
+        .unwrap()
+        .contains("Imported evidence"));
     let task = alinery_core::read_task(&fixture.root, "task").unwrap();
     assert_eq!(task.github_issue, "42");
     assert_ne!(Path::new(&task.worktree), fixture.root.as_path());
     assert!(Path::new(&task.worktree).join(".git").is_file());
     for record in retained.state.executions.values() {
         let session = &record.owner_session_id;
-        assert!(alinery_core::read_session_meta_full(&alinery_core::session_meta_path(&fixture.root, "task", session)).unwrap().started_at.is_none());
+        assert!(alinery_core::read_session_meta_full(&alinery_core::session_meta_path(&fixture.root, "task", session))
+            .unwrap()
+            .started_at
+            .is_none());
     }
     fs::remove_file(fixture.root.join(".alinery/playbooks/fixture/playbook.md")).unwrap();
     let queried: TaskExecutionReply = serde_json::from_str(&fixture.call("alinery_list_playbook_steps", json!({"task_slug":"task"}))).unwrap();
@@ -292,12 +312,11 @@ fn real_mcp_create_start_disconnect_observe_history_and_exit() {
     let playbook: CreateExecutionSessionReply = serde_json::from_str(&fixture.call(
         "alinery_create_session",
         json!({"task_slug":"task","step_key":"build","prompt_extra":playbook_extra,"start":true}),
-    )).unwrap();
+    ))
+    .unwrap();
     assert_eq!(playbook.start, "started", "{playbook:?}");
     let playbook_id = &playbook.session.id;
-    let generic: CreateExecutionSessionReply = serde_json::from_str(&fixture.call(
-        "alinery_create_session", json!({"task_slug":"task","generic":true}),
-    )).unwrap();
+    let generic: CreateExecutionSessionReply = serde_json::from_str(&fixture.call("alinery_create_session", json!({"task_slug":"task","generic":true}))).unwrap();
     let generic_meta = generic.session;
     assert!(generic_meta.generic);
     assert_eq!(generic_meta.phase, "");
@@ -312,7 +331,13 @@ fn real_mcp_create_start_disconnect_observe_history_and_exit() {
     assert_eq!(marker_count(playbook_prompt, playbook_extra), 1);
     for record in retained.state.executions.values() {
         let session = &record.owner_session_id;
-        assert!(alinery_core::read_session_meta_full(&alinery_core::session_meta_path(&fixture.root, "task", session)).unwrap().started_at.is_none(), "starting one execution must not start held siblings");
+        assert!(
+            alinery_core::read_session_meta_full(&alinery_core::session_meta_path(&fixture.root, "task", session))
+                .unwrap()
+                .started_at
+                .is_none(),
+            "starting one execution must not start held siblings"
+        );
     }
 
     let token = fixture.token_for(playbook_id);
@@ -327,15 +352,13 @@ fn real_mcp_create_start_disconnect_observe_history_and_exit() {
         true
     );
 
-    let playbook_status: SessionStatusResult =
-        serde_json::from_str(&fixture.call("alinery_session_status", json!({"task_slug": "task", "session_id": playbook_id}))).unwrap();
+    let playbook_status: SessionStatusResult = serde_json::from_str(&fixture.call("alinery_session_status", json!({"task_slug": "task", "session_id": playbook_id}))).unwrap();
     assert!(matches!(
         playbook_status.state.unwrap().agent,
         AgentState::WaitingForInput { ref correlation_id } if correlation_id == "merge-conflict"
     ));
 
-    let screen: SessionHistoryResult =
-        serde_json::from_str(&fixture.call("alinery_read_session_history", json!({"task_slug": "task", "session_id": playbook_id}))).unwrap();
+    let screen: SessionHistoryResult = serde_json::from_str(&fixture.call("alinery_read_session_history", json!({"task_slug": "task", "session_id": playbook_id}))).unwrap();
     assert!(screen.data.is_empty(), "RPC sessions have no PTY scrollback");
     let raw: SessionHistoryResult = serde_json::from_str(&fixture.call(
         "alinery_read_session_history",
@@ -351,8 +374,7 @@ fn real_mcp_create_start_disconnect_observe_history_and_exit() {
         let playbook_meta = alinery_core::read_session_meta_full(&alinery_core::session_meta_path(&fixture.root, "task", playbook_id));
         playbook_meta.is_some_and(|meta| meta.exit_code == Some(17))
     });
-    let playbook_exited: SessionStatusResult =
-        serde_json::from_str(&fixture.call("alinery_session_status", json!({"task_slug": "task", "session_id": playbook_id}))).unwrap();
+    let playbook_exited: SessionStatusResult = serde_json::from_str(&fixture.call("alinery_session_status", json!({"task_slug": "task", "session_id": playbook_id}))).unwrap();
     assert!(matches!(playbook_exited.state.unwrap().process, ProcessState::Exited { code: Some(17) }));
 }
 
@@ -362,13 +384,15 @@ fn mcp_first_daemon_refuses_omp_without_a_protected_host() {
     let failed: CreateTaskReply = serde_json::from_str(&fixture.call("alinery_create_task", json!({"name":"Task","requested_slug":"task","start":true}))).unwrap();
     assert_eq!(failed.task.as_ref().unwrap().slug, "task");
     assert_eq!(failed.start, "failed");
-    assert!(failed.errors.iter().any(|error| error.stage == "launch" && error.code == "launch_failed"), "{:?}", failed.errors);
+    assert!(
+        failed.errors.iter().any(|error| error.stage == "launch" && error.code == "launch_failed"),
+        "{:?}",
+        failed.errors
+    );
     let failed_meta = alinery_core::read_session_meta_full(&alinery_core::session_meta_path(&fixture.root, "task", &failed.sessions[0].id)).unwrap();
     assert!(failed_meta.started_at.is_none());
     assert_eq!(fixture.daemon_rpc(json!({"op": "version"}))["host_guard_ready"], false);
-    let terminal: CreateExecutionSessionReply = serde_json::from_str(&fixture.call(
-        "alinery_create_session", json!({"task_slug":"task","generic":true,"start":true}),
-    )).unwrap();
+    let terminal: CreateExecutionSessionReply = serde_json::from_str(&fixture.call("alinery_create_session", json!({"task_slug":"task","generic":true,"start":true}))).unwrap();
     assert_eq!(terminal.start, "started", "{terminal:?}");
 }
 
@@ -379,9 +403,7 @@ fn combined_start_failure_retains_owner_and_mismatches_do_not_touch_live_session
     let disabled_runner = fixture.root.join("fake-alinery-runner.disabled");
     fs::rename(&runner, &disabled_runner).unwrap();
 
-    let failure: CreateExecutionSessionReply = serde_json::from_str(&fixture.call(
-        "alinery_create_session", json!({"task_slug":"task","step_key":"build","start":true}),
-    )).unwrap();
+    let failure: CreateExecutionSessionReply = serde_json::from_str(&fixture.call("alinery_create_session", json!({"task_slug":"task","step_key":"build","start":true}))).unwrap();
     assert_eq!(failure.start, "failed");
     assert!(!failure.errors.is_empty());
     let failed_id = failure.session.id;
@@ -390,7 +412,11 @@ fn combined_start_failure_retains_owner_and_mismatches_do_not_touch_live_session
     assert!(failed_meta.started_at.is_none());
 
     fs::rename(&disabled_runner, &runner).unwrap();
-    let retried: CreateExecutionSessionReply = serde_json::from_str(&fixture.call("alinery_create_session", json!({"task_slug":"task","step_key":"build","execution_id":execution_id,"start":true}))).unwrap();
+    let retried: CreateExecutionSessionReply = serde_json::from_str(&fixture.call(
+        "alinery_create_session",
+        json!({"task_slug":"task","step_key":"build","execution_id":execution_id,"start":true}),
+    ))
+    .unwrap();
     assert_ne!(retried.session.id, failed_id);
     assert!(retried.execution.as_ref().unwrap().previous_session_ids.contains(&failed_id));
     assert_eq!(retried.start, "started", "{retried:?}");
@@ -413,10 +439,17 @@ fn combined_start_failure_retains_owner_and_mismatches_do_not_touch_live_session
     ));
 
     let protocol_meta = SessionMeta {
-        id: "protocol-row".into(), generic: true, harness: alinery_core::NO_HARNESS_KEY.into(),
-        daemon_namespace: "foreign".into(), ..Default::default()
+        id: "protocol-row".into(),
+        generic: true,
+        harness: alinery_core::NO_HARNESS_KEY.into(),
+        daemon_namespace: "foreign".into(),
+        ..Default::default()
     };
-    fs::write(alinery_core::session_meta_path(&fixture.root, "task", &protocol_meta.id), serde_json::to_vec(&protocol_meta).unwrap()).unwrap();
+    fs::write(
+        alinery_core::session_meta_path(&fixture.root, "task", &protocol_meta.id),
+        serde_json::to_vec(&protocol_meta).unwrap(),
+    )
+    .unwrap();
     let foreign_socket = alinery_core::alineryd_socket_path(&fixture.root, Some("foreign"));
     let listener = UnixListener::bind(&foreign_socket).unwrap();
     let expected_identity = alinery_core::app_config_identity(&fixture.app_config);
@@ -459,7 +492,15 @@ fn combined_start_failure_retains_owner_and_mismatches_do_not_touch_live_session
 fn mcp_history_reads_migrated_bin_chunks() {
     let fixture = Fixture::new();
     fs::create_dir_all(fixture.root.join(".alinery/tasks/task/sessions")).unwrap();
-    alinery_core::write_task(&fixture.root, &Task { slug: "task".into(), name: "Historical".into(), ..Default::default() }).unwrap();
+    alinery_core::write_task(
+        &fixture.root,
+        &Task {
+            slug: "task".into(),
+            name: "Historical".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let session_id = "migrated-history";
     let sessions = fixture.root.join(".alinery/tasks/task/sessions");
     let meta = SessionMeta {
@@ -497,23 +538,88 @@ fn review_handoff_addresses_same_slug_in_explicit_target_repository() {
     let source = Fixture::with_ready_daemon();
     let mut target = Fixture::new();
     target.app_config = source.app_config.clone();
+    let target_source = target.root.join(".alinery/playbooks/fixture/playbook.md");
+    let definition = fs::read_to_string(&target_source)
+        .unwrap()
+        .replacen("inputs = []", "inputs = [{path = \"ticket.md\", mode = \"single\"}]", 1)
+        .replace("Fixture instructions.", "Fixture instructions. Incoming review: [{{REVIEW_HANDOFF_FILE}}].");
+    fs::write(target_source, definition).unwrap();
     let target = Fixture::start_daemon(target);
-    fs::write(&source.app_config, format!("known_repos = [{}]\n[global.defaults.playbook]\nscope = 'repo'\nkey = 'fixture'\n", serde_json::to_string(&target.root.display().to_string()).unwrap())).unwrap();
+    fs::write(
+        &source.app_config,
+        format!(
+            "known_repos = [{}]\n[global.defaults.playbook]\nscope = 'repo'\nkey = 'fixture'\n",
+            serde_json::to_string(&target.root.display().to_string()).unwrap()
+        ),
+    )
+    .unwrap();
     fs::write(source.root.join(".alinery/tasks/task/artifacts/findings.md"), "Cross-repository finding").unwrap();
     fs::remove_file(target.root.join(".alinery/playbooks/fixture/playbook.md")).unwrap();
-    let result: alinery_core::ReviewHandoffResult = serde_json::from_str(&source.call(
-        "alinery_send_review_handoff", json!({
+    let response = source.call(
+        "alinery_send_review_handoff",
+        json!({
             "source_slug":"task","source_artifact":"findings.md","target_repo":target.root,"target_slug":"task",
             "target_step_key":"build","prompt_extra":"Retain this finding","start":false
         }),
-    )).unwrap();
+    );
+    let result: alinery_core::ReviewHandoffResult = serde_json::from_str(&response).unwrap_or_else(|error| panic!("handoff failed: {response}\n{error}"));
     assert_eq!(Path::new(&result.target_repo_path), target.root.as_path());
     assert_eq!(result.start, "not_requested");
     assert!(result.errors.is_empty());
     let target_artifact = alinery_core::artifact_file_path(&target.root, "task", &result.target_artifact).unwrap();
-    assert!(fs::read_to_string(target_artifact).unwrap().contains("Cross-repository finding"));
+    assert!(fs::read_to_string(&target_artifact).unwrap().contains("Cross-repository finding"));
     assert!(!source.root.join(".alinery/tasks/task/artifacts").join(&result.target_artifact).exists());
     let retained: TaskExecutionReply = serde_json::from_str(&target.call("alinery_get_task_execution", json!({"task_slug":"task"}))).unwrap();
     assert_eq!(retained.definition.key, "fixture");
-    assert!(retained.state.executions.values().any(|execution| execution.owner_session_id == result.target_session.id));
+    let execution = retained
+        .state
+        .executions
+        .values()
+        .find(|execution| execution.owner_session_id == result.target_session.id)
+        .unwrap();
+    let inputs = &execution.candidate.inputs["ticket.md"];
+    assert_eq!(inputs.len(), 1);
+    assert_eq!(retained.state.occurrences[&inputs[0]].relative_path, "00-ticket.md");
+    let ordinary = retained
+        .state
+        .executions
+        .values()
+        .find(|execution| execution.candidate.step_key == "build" && !execution.candidate.manual)
+        .unwrap();
+    let ordinary_launch = alinery_core::read_meta_launch_fields(&target.root, "task", &ordinary.owner_session_id).unwrap();
+    let ordinary_prompt = alinery_core::resolve_launch_prompt(&target.root, &ordinary_launch).unwrap().unwrap();
+    assert!(ordinary_prompt.contains("Incoming review: []."));
+    // Reload the durable projection, rather than resolving from the create reply.
+    let launch = alinery_core::read_meta_launch_fields(&target.root, "task", &result.target_session.id).unwrap();
+    let prompt = alinery_core::resolve_launch_prompt(&target.root, &launch).unwrap().unwrap();
+    let handoff_instruction = format!("Incoming review: [{}].", target_artifact.display());
+    assert!(prompt.contains(&handoff_instruction), "{prompt}");
+    let started_response = target.call("alinery_start_session", json!({"task_slug":"task","session_id":result.target_session.id}));
+    let started: CreateExecutionSessionReply = serde_json::from_str(&started_response).unwrap_or_else(|error| panic!("start failed: {started_response}\n{error}"));
+    assert_eq!(started.start, "started", "{started:?}");
+    wait_until(Duration::from_secs(5), || target.prompt_file(&result.target_session.id).exists());
+    let seed: Value = serde_json::from_str(&fs::read_to_string(target.prompt_file(&result.target_session.id)).unwrap()).unwrap();
+    assert!(seed["message"].as_str().unwrap().contains(&handoff_instruction), "{seed}");
+    fs::write(target.stop_file(&result.target_session.id), "stop").unwrap();
+}
+
+#[test]
+fn review_handoff_metadata_rejects_unsafe_paths_before_reserving_execution() {
+    let fixture = Fixture::with_ready_daemon();
+    let before = fixture.call("alinery_get_task_execution", json!({"task_slug":"task"}));
+    let evidence_link = fixture.root.join(".alinery/tasks/task/artifacts/unsafe.md");
+    std::os::unix::fs::symlink(fixture.root.join(".alinery/app.toml"), &evidence_link).unwrap();
+    for (artifact, expected_error) in [("../task.md", "invalid artifact path"), ("unsafe.md", "symlink rejected")] {
+        let response = fixture.daemon_rpc(json!({
+            "op": "create_execution_session",
+            "request": {
+                "task_slug": "task",
+                "target": {"kind": "primary", "step_key": "build"},
+                "handoff_artifact": artifact,
+                "start": false
+            }
+        }));
+        assert!(response["error"].as_str().unwrap().contains(expected_error), "{response}");
+    }
+    assert_eq!(fixture.call("alinery_get_task_execution", json!({"task_slug":"task"})), before);
 }

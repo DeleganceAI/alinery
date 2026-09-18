@@ -176,19 +176,25 @@ export function CreateTaskPage({
     setSelectedSource(null);
     setSourceError("");
     if (!playbook || catalogLoading || playbookNeedsReselection) return;
-    ipc.readPlaybook(playbook, repoPath)
+    ipc
+      .readPlaybook(playbook, repoPath)
       .then((source) => {
         if (!alive || !samePlaybookRef(source.source.reference, playbook)) return;
         setSelectedSource(source);
         if (resetAutoAdvance.current) {
           setAutoAdvance(source.definition.step.filter((step) => step.auto_advance_default).map((step) => step.key));
           resetAutoAdvance.current = false;
+        } else {
+          const stepKeys = new Set(source.definition.step.map((step) => step.key));
+          setAutoAdvance((current) => current.filter((key) => stepKeys.has(key)));
         }
       })
       .catch((error) => {
         if (alive) setSourceError(String(error));
       });
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [repoPath, playbook, catalogLoading, playbookNeedsReselection, catalogRevision]);
 
   // Debounced draft write — only after user edit and when setting is on.
@@ -200,33 +206,35 @@ export function CreateTaskPage({
     const generation = draftWriteGeneration.current;
     const handle = window.setTimeout(() => {
       if (!dirtyRef.current || creatingRef.current || generation !== draftWriteGeneration.current) return;
-      const save = draftSaveInFlightRef.current.then(async () => {
-        if (creatingRef.current || generation !== draftWriteGeneration.current) return;
-        const t = await ipc.writeDraftForRepo({
-          repoPath: target,
-          draftSlug: draftIdentities.current.get(target) ?? "",
-          name: n,
-          description: desc,
-          evidence,
-          linearId,
-          githubIssue,
-          playbook,
-          harness,
-          model,
-          autoAdvance,
-          maxLiveSessions: cap,
-          branchName: branchName.trim(),
-          worktreeName: worktreeName.trim(),
-          taskSlug,
+      const save = draftSaveInFlightRef.current
+        .then(async () => {
+          if (creatingRef.current || generation !== draftWriteGeneration.current) return;
+          const t = await ipc.writeDraftForRepo({
+            repoPath: target,
+            draftSlug: draftIdentities.current.get(target) ?? "",
+            name: n,
+            description: desc,
+            evidence,
+            linearId,
+            githubIssue,
+            playbook,
+            harness,
+            model,
+            autoAdvance,
+            maxLiveSessions: cap,
+            branchName: branchName.trim(),
+            worktreeName: worktreeName.trim(),
+            taskSlug,
+          });
+          draftIdentities.current.set(target, t.slug);
+          setDraftOrigins((origins) =>
+            origins.some((origin) => origin.repoPath === target && origin.slug === t.slug) ? origins : [...origins, { repoPath: target, slug: t.slug }],
+          );
+          if (repoRef.current === target) setDraftSlug(t.slug);
+        })
+        .catch((e) => {
+          if (repoRef.current === target) setErr({ msg: "Couldn't save the draft.", detail: String(e) });
         });
-        draftIdentities.current.set(target, t.slug);
-        setDraftOrigins((origins) =>
-          origins.some((origin) => origin.repoPath === target && origin.slug === t.slug) ? origins : [...origins, { repoPath: target, slug: t.slug }],
-        );
-        if (repoRef.current === target) setDraftSlug(t.slug);
-      }).catch((e) => {
-        if (repoRef.current === target) setErr({ msg: "Couldn't save the draft.", detail: String(e) });
-      });
       draftSaveInFlightRef.current = save;
     }, 400);
     return () => window.clearTimeout(handle);
@@ -682,15 +690,15 @@ export function CreateTaskPage({
             }}
             placeholder="Branch name (optional — auto if blank or taken)"
           />
-            <input
-              className="field-input worktree-input"
-              value={worktreeName}
-              onChange={(e) => {
-                dirtyRef.current = true;
-                setWorktreeName(e.target.value);
-              }}
-              placeholder="Worktree folder name (optional — auto if blank or taken)"
-            />
+          <input
+            className="field-input worktree-input"
+            value={worktreeName}
+            onChange={(e) => {
+              dirtyRef.current = true;
+              setWorktreeName(e.target.value);
+            }}
+            placeholder="Worktree folder name (optional — auto if blank or taken)"
+          />
         </div>
         <label className="create-field">
           <span>Maximum live sessions</span>
@@ -702,17 +710,26 @@ export function CreateTaskPage({
             <InlineStatus tone={created.creation === "partial" || created.start === "failed" ? "warning" : "info"}>
               Creation: {created.creation}. Start: {created.start}.
             </InlineStatus>
-            {created.errors.map((error, index) => (
-              <InlineStatus key={`${error.stage}:${error.code}:${index}`} tone="error" detail={error.code}>{error.stage}: {error.message}</InlineStatus>
+            {created.errors.map((error) => (
+              <InlineStatus key={`${error.stage}:${error.code}:${error.message}`} tone="error" detail={error.code}>
+                {error.stage}: {error.message}
+              </InlineStatus>
             ))}
-            {created.attachment_errors?.map((error) => <InlineStatus key={error} tone="warning">{error}</InlineStatus>)}
+            {created.attachment_errors?.map((error) => (
+              <InlineStatus key={error} tone="warning">
+                {error}
+              </InlineStatus>
+            ))}
             {created.sessions.map((session) => (
               <button className="btn ghost" type="button" key={session.id} disabled={!created.task} onClick={() => onCreated({ ...created, selectedSessionId: session.id })}>
                 Open session {session.id}
               </button>
             ))}
             {created.executions.map((execution) => (
-              <div key={execution.id}>{execution.candidate.step_key}: {execution.lifecycle}{execution.error ? ` — ${execution.error}` : ""}</div>
+              <div key={execution.id}>
+                {execution.candidate.step_key}: {execution.lifecycle}
+                {execution.error ? ` — ${execution.error}` : ""}
+              </div>
             ))}
             {!created.task && <InlineStatus tone="warning">No task identity was returned. Inspect the repository before trying again.</InlineStatus>}
           </section>
@@ -728,12 +745,7 @@ export function CreateTaskPage({
               Open task
             </button>
           ) : (
-            <button
-              type="button"
-              className="btn"
-              disabled={creating || !!createBlockedReason || !taskSlug}
-              onClick={create}
-            >
+            <button type="button" className="btn" disabled={creating || !!createBlockedReason || !taskSlug} onClick={create}>
               {creating ? "Creating…" : "Create task"}
             </button>
           )}
@@ -757,7 +769,9 @@ export function CreateTaskPage({
         </div>
         <div className="playbook-panel-controls">
           <div className="playbook-panel-label">Choose a playbook</div>
-          <button type="button" className="btn ghost small" disabled={creating} onClick={() => setCatalogRevision((revision) => revision + 1)}>Refresh playbooks</button>
+          <button type="button" className="btn ghost small" disabled={creating} onClick={() => setCatalogRevision((revision) => revision + 1)}>
+            Refresh playbooks
+          </button>
           <div className="playbook-picker" role="radiogroup" aria-label="Choose playbook">
             {playbooks.length > 0 ? (
               playbooks.map((item) => {
@@ -765,30 +779,38 @@ export function CreateTaskPage({
                 if (preference?.hidden && !item.diagnostics.length && !samePlaybookRef(playbook, item.source.reference)) return null;
                 const appearance = playbookPickerAppearance(item.source.reference, preference);
                 return (
-                <label className={`playbook-option${samePlaybookRef(playbook, item.source.reference) ? " selected" : ""}`} key={playbookRefKey(item.source.reference)} style={{ borderColor: appearance.color }}>
-                  <input
-                    checked={samePlaybookRef(playbook, item.source.reference)}
-                    disabled={creating || item.diagnostics.length > 0}
-                    className="playbook-option-input"
-                    name="create-playbook"
-                    onChange={() => selectPlaybook(item.source.reference)}
-                    type="radio"
-                    value={playbookRefKey(item.source.reference)}
-                  />
-                  <span className="playbook-option-content">
-                    <span className="playbook-option-kicker">{playbookRefKey(item.source.reference)}</span>
-                    <span className="playbook-option-topline">
-                      <span className="playbook-option-title">{item.title ?? item.source.reference.key}</span>
-                      <span className="pill" style={{ borderColor: appearance.color }}>{appearance.badge}</span>
-                      <span className="playbook-option-meta">
-                        {item.modified_at_ms == null ? "Modification time unavailable" : new Date(item.modified_at_ms).toLocaleString()}
+                  <label
+                    className={`playbook-option${samePlaybookRef(playbook, item.source.reference) ? " selected" : ""}`}
+                    key={playbookRefKey(item.source.reference)}
+                    style={{ borderColor: appearance.color }}
+                  >
+                    <input
+                      checked={samePlaybookRef(playbook, item.source.reference)}
+                      disabled={creating || item.diagnostics.length > 0}
+                      className="playbook-option-input"
+                      name="create-playbook"
+                      onChange={() => selectPlaybook(item.source.reference)}
+                      type="radio"
+                      value={playbookRefKey(item.source.reference)}
+                    />
+                    <span className="playbook-option-content">
+                      <span className="playbook-option-kicker">{playbookRefKey(item.source.reference)}</span>
+                      <span className="playbook-option-topline">
+                        <span className="playbook-option-title">{item.title ?? item.source.reference.key}</span>
+                        <span className="pill" style={{ borderColor: appearance.color }}>
+                          {appearance.badge}
+                        </span>
+                        <span className="playbook-option-meta">
+                          {item.modified_at_ms == null ? "Modification time unavailable" : new Date(item.modified_at_ms).toLocaleString()}
+                        </span>
                       </span>
+                      <span className="playbook-option-description">{item.description}</span>
+                      {item.diagnostics.map((diagnostic) => (
+                        <span key={`${diagnostic.code}:${diagnostic.field}:${diagnostic.line}:${diagnostic.message}`}>{diagnostic.message}</span>
+                      ))}
                     </span>
-                    <span className="playbook-option-description">{item.description}</span>
-                    {item.diagnostics.map((diagnostic, index) => <span key={`${diagnostic.code}:${index}`}>{diagnostic.message}</span>)}
-                  </span>
-                  <span aria-hidden="true" className="playbook-option-indicator" />
-                </label>
+                    <span aria-hidden="true" className="playbook-option-indicator" />
+                  </label>
                 );
               })
             ) : (
@@ -798,7 +820,9 @@ export function CreateTaskPage({
           {playbookNeedsReselection && <InlineStatus tone="error">The selected or configured playbook is unavailable or invalid. Choose a valid scoped playbook.</InlineStatus>}
           {sourceError && <InlineStatus tone="error">{sourceError}</InlineStatus>}
         </div>
-        {selectedSource && <PlaybookGraph title={selectedPlaybook?.title ?? selectedSource.definition.title} steps={selectedSource.definition.step} selectedAutoAdvance={autoAdvance} />}
+        {selectedSource && (
+          <PlaybookGraph title={selectedPlaybook?.title ?? selectedSource.definition.title} steps={selectedSource.definition.step} selectedAutoAdvance={autoAdvance} />
+        )}
       </aside>
     </div>
   );

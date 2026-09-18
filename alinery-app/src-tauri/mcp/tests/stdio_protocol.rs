@@ -35,33 +35,84 @@ impl Fixture {
         fs::create_dir_all(root.join(".alinery")).unwrap();
         let app_config = root.join(".alinery/app.toml");
         fs::write(&app_config, "").unwrap();
-        let daemon_binary = std::env::current_exe().unwrap().parent().and_then(Path::parent).unwrap().join(format!("alineryd{}", std::env::consts::EXE_SUFFIX));
-        let daemon = Command::new(daemon_binary).arg("--repo").arg(&root).arg("--app-config").arg(&app_config).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+        let daemon_binary = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .and_then(Path::parent)
+            .unwrap()
+            .join(format!("alineryd{}", std::env::consts::EXE_SUFFIX));
+        let daemon = Command::new(daemon_binary)
+            .arg("--repo")
+            .arg(&root)
+            .arg("--app-config")
+            .arg(&app_config)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
         let socket = alinery_core::alineryd_socket_path(&root, None);
         let deadline = Instant::now() + Duration::from_secs(5);
         let client = loop {
-            if let Ok((client, _)) = alinery_core::connect_compatible_once(socket.clone(), &app_config) { break client; }
+            if let Ok((client, _)) = alinery_core::connect_compatible_once(socket.clone(), &app_config) {
+                break client;
+            }
             assert!(Instant::now() < deadline, "daemon did not become ready");
             std::thread::sleep(Duration::from_millis(20));
         };
-        let reference = alinery_core::playbook::PlaybookRef { scope: alinery_core::playbook::PlaybookScope::Bundled, key: "superdevelop".into() };
-        let selected = alinery_core::playbook_library::resolve_playbook(&alinery_core::playbook_library::PlaybookRoots { global_config_dir: root.join(".alinery"), repo_dir: root.clone() }, &reference).unwrap();
+        let reference = alinery_core::playbook::PlaybookRef {
+            scope: alinery_core::playbook::PlaybookScope::Bundled,
+            key: "superdevelop".into(),
+        };
+        let selected = alinery_core::playbook_library::resolve_playbook(
+            &alinery_core::playbook_library::PlaybookRoots {
+                global_config_dir: root.join(".alinery"),
+                repo_dir: root.clone(),
+            },
+            &reference,
+        )
+        .unwrap();
         let request: CreateTaskRequest = serde_json::from_value(json!({
             "name":"Parent A", "requested_slug":"a", "playbook":TaskPlaybookPackage { reference, source: selected.source_text }, "start":false
-        })).unwrap();
+        }))
+        .unwrap();
         let created = client.create_task(&request).unwrap();
         assert_eq!(created.creation, "ready", "{created:?}");
-        let manager = client.create_execution_session(&CreateExecutionSessionRequest {
-            task_slug: "a".into(), target: ExecutionSessionTarget::SubtaskManager { subtask_slug: None, recover: false, harness: "omp".into(), model: None },
-            launch_override: None, prompt_extra: None, start: false,
-        }).unwrap();
+        let manager = client
+            .create_execution_session(&CreateExecutionSessionRequest {
+                task_slug: "a".into(),
+                target: ExecutionSessionTarget::SubtaskManager {
+                    subtask_slug: None,
+                    recover: false,
+                    harness: "omp".into(),
+                    model: None,
+                },
+                launch_override: None,
+                prompt_extra: None,
+                handoff_artifact: None,
+                start: false,
+            })
+            .unwrap();
         assert!(manager.session.subtask_manager);
         let mut child = Command::new(env!("CARGO_BIN_EXE_alinery-mcp"))
-            .arg("--repo").arg(&root).arg("--app-config").arg(app_config)
-            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+            .arg("--repo")
+            .arg(&root)
+            .arg("--app-config")
+            .arg(app_config)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
-        Self { child, daemon, stdin, stdout, root, manager_id: manager.session.id }
+        Self {
+            child,
+            daemon,
+            stdin,
+            stdout,
+            root,
+            manager_id: manager.session.id,
+        }
     }
 
     fn request(&mut self, request: Value) -> Value {
@@ -91,7 +142,9 @@ fn run_git(path: &Path, args: &[&str]) {
 #[test]
 fn create_subtask_keeps_stdout_json_rpc_framed_and_retains_child_definition() {
     let mut fixture = Fixture::start();
-    let initialized = fixture.request(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"stdio-test","version":"1"}}}));
+    let initialized = fixture.request(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"stdio-test","version":"1"}}}),
+    );
     assert_eq!(initialized["id"], 1);
     let created = fixture.request(json!({
         "jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"alinery_create_subtask","arguments":{

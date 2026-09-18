@@ -66,13 +66,29 @@ pub(crate) fn subtask_state_in(repo: &Path, task_slug: &str) -> Result<alinery_c
     })
 }
 
-fn create_manager_in(daemon: &DaemonClient, task_slug: String, recover: bool) -> Result<alinery_core::task_creation::CreateExecutionSessionReply, String> {
-    daemon.create_execution_session(&alinery_core::task_creation::CreateExecutionSessionRequest {
+pub(crate) fn subtask_manager_request_in(repo: &Path, task_slug: String, recover: bool) -> Result<alinery_core::task_creation::CreateExecutionSessionRequest, String> {
+    let subtask_slug = if recover {
+        Some(
+            alinery_core::read_task_relationships(repo, &task_slug)?
+                .active_subtask
+                .ok_or("task has no active sub-task to recover")?
+                .slug,
+        )
+    } else {
+        None
+    };
+    Ok(alinery_core::task_creation::CreateExecutionSessionRequest {
         task_slug,
         target: alinery_core::task_creation::ExecutionSessionTarget::SubtaskManager {
-            subtask_slug: None, recover, harness: "omp".into(), model: None,
+            subtask_slug,
+            recover,
+            harness: "omp".into(),
+            model: None,
         },
-        launch_override: None, prompt_extra: None, start: true,
+        launch_override: None,
+        prompt_extra: None,
+        handoff_artifact: None,
+        start: true,
     })
 }
 
@@ -115,13 +131,15 @@ pub(crate) fn subtask_state(state: State<'_, AppState>, task_slug: String) -> Re
 #[tauri::command]
 pub(crate) fn start_subtask_manager(app: AppHandle, state: State<'_, AppState>, task_slug: String) -> Result<alinery_core::task_creation::CreateExecutionSessionReply, String> {
     let repo = require_owned_active_repo(&state)?;
-    create_manager_in(&task_daemon_for(&repo, &task_slug, &app_config_path(&app)?)?, task_slug, false)
+    let request = subtask_manager_request_in(&repo, task_slug, false)?;
+    task_daemon_for(&repo, &request.task_slug, &app_config_path(&app)?)?.create_execution_session(&request)
 }
 
 #[tauri::command]
 pub(crate) fn recover_subtask_manager(app: AppHandle, state: State<'_, AppState>, task_slug: String) -> Result<alinery_core::task_creation::CreateExecutionSessionReply, String> {
     let repo = require_owned_active_repo(&state)?;
-    create_manager_in(&task_daemon_for(&repo, &task_slug, &app_config_path(&app)?)?, task_slug, true)
+    let request = subtask_manager_request_in(&repo, task_slug, true)?;
+    task_daemon_for(&repo, &request.task_slug, &app_config_path(&app)?)?.create_execution_session(&request)
 }
 
 #[tauri::command]

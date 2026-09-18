@@ -5,7 +5,16 @@ import type { BoardTask, TaskExecutionReply } from "../types";
 import { CreateSessionPage } from "./CreateSessionPage";
 import { executionRecord, executionReply } from "./executionTestFixture";
 
-const task = { name: "A task", slug: "a-task", repo_path: "/r", worktree: "/w/a-task", archived: false, draft: false, playbook: "deleted-from-library", playbook_ref: { scope: "repo", key: "deleted-from-library" } } as BoardTask;
+const task = {
+  name: "A task",
+  slug: "a-task",
+  repo_path: "/r",
+  worktree: "/w/a-task",
+  archived: false,
+  draft: false,
+  playbook: "deleted-from-library",
+  playbook_ref: { scope: "repo", key: "deleted-from-library" },
+} as BoardTask;
 const mocks = vi.hoisted(() => ({ getTaskExecution: vi.fn(), listBoardTasks: vi.fn(), askConfirm: vi.fn() }));
 vi.mock("../confirm", () => ({ askConfirm: mocks.askConfirm }));
 vi.mock("../ipc", () => mockIpc({ getTaskExecution: mocks.getTaskExecution, listBoardTasks: mocks.listBoardTasks, listHarnessModelsForRepo: async () => [] }));
@@ -16,7 +25,10 @@ beforeEach(() => {
   mocks.getTaskExecution.mockReset().mockResolvedValue(executionReply([executionRecord({ lifecycle: "queued" })]));
   mocks.askConfirm.mockReset().mockResolvedValue("cancel");
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 function renderPage(onCreated = vi.fn(async () => {})) {
   render(<CreateSessionPage allRepos={false} activeRepo="/r" onCancel={() => {}} onCreated={onCreated} />);
@@ -39,11 +51,13 @@ describe("retained execution session selection", () => {
   });
 
   it("offers recovery only for an unaccepted execution with proven stopped ownership", async () => {
-    mocks.getTaskExecution.mockResolvedValue(executionReply([
-      executionRecord({ id: "stopped", lifecycle: "failed", shutdown_confirmed: true, error: "Process exited before completing" }),
-      executionRecord({ id: "uncertain", lifecycle: "interrupted" }),
-      executionRecord({ id: "accepted", lifecycle: "finishing", receipt_id: "receipt" }),
-    ]));
+    mocks.getTaskExecution.mockResolvedValue(
+      executionReply([
+        executionRecord({ id: "stopped", lifecycle: "failed", shutdown_confirmed: true, error: "Process exited before completing" }),
+        executionRecord({ id: "uncertain", lifecycle: "interrupted" }),
+        executionRecord({ id: "accepted", lifecycle: "finishing", receipt_id: "receipt" }),
+      ]),
+    );
     const created = renderPage();
     await screen.findByRole("option", { name: /Recover · Retained worker · stopped/ });
     expect(screen.queryByRole("option", { name: /Recover.*uncertain/ })).toBeNull();
@@ -61,7 +75,9 @@ describe("retained execution session selection", () => {
     fireEvent.change(screen.getByLabelText("Additional instructions"), { target: { value: "Also check the boundary." } });
     expect(screen.queryByText("research/2-result-10.md")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
-    await waitFor(() => expect(created).toHaveBeenCalledWith(task, { kind: "primary", step_key: "worker", input_occurrence_ids: ["input-a"] }, "omp", "", "Also check the boundary."));
+    await waitFor(() =>
+      expect(created).toHaveBeenCalledWith(task, { kind: "primary", step_key: "worker", input_occurrence_ids: ["input-a"] }, "omp", "", "Also check the boundary."),
+    );
   });
 
   it("keeps auxiliary Terminal separate when graph state cannot be loaded", async () => {
@@ -75,11 +91,15 @@ describe("retained execution session selection", () => {
 
   it("does not replace another task's binding with a late query response", async () => {
     let resolve!: (value: TaskExecutionReply) => void;
-    const pending = new Promise<TaskExecutionReply>((accept) => { resolve = accept; });
+    const pending = new Promise<TaskExecutionReply>((accept) => {
+      resolve = accept;
+    });
     mocks.listBoardTasks.mockResolvedValue([task, { ...task, name: "B task", slug: "b-task", worktree: "/w/b-task" }]);
-    mocks.getTaskExecution.mockImplementation((slug: string) => slug === "a-task" ? pending : Promise.resolve(executionReply([executionRecord({ id: "b-only", lifecycle: "queued", owner_session_id: "owner-b" })])));
+    mocks.getTaskExecution.mockImplementation((slug: string) =>
+      slug === "a-task" ? pending : Promise.resolve(executionReply([executionRecord({ id: "b-only", lifecycle: "queued", owner_session_id: "owner-b" })])),
+    );
     const created = renderPage();
-    const b = await screen.findByRole("option", { name: "B task" }) as HTMLOptionElement;
+    const b = (await screen.findByRole("option", { name: "B task" })) as HTMLOptionElement;
     fireEvent.change(screen.getByLabelText("Task"), { target: { value: b.value } });
     await screen.findByRole("option", { name: /Start queued.*b-only/ });
     await act(async () => resolve(executionReply()));

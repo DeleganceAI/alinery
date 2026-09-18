@@ -5,7 +5,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { DEFAULT_APPEARANCE } from "./appearance";
 import type { SessionNoticeRow, SessionSort } from "./sessionAttention";
-import type { AppConfig, BoardTask, CreateTaskResult, NotificationPrefs, PlaybookCatalog, ReviewHandoffResult, SessionListItem, SessionMeta, SessionTypeChoice, TaskActivitySession } from "./types";
+import type {
+  AppConfig,
+  BoardTask,
+  CreateTaskResult,
+  NotificationPrefs,
+  PlaybookCatalog,
+  ReviewHandoffResult,
+  SessionListItem,
+  SessionMeta,
+  SessionTypeChoice,
+  TaskActivitySession,
+} from "./types";
 
 const task: BoardTask = {
   name: "Task",
@@ -388,10 +399,7 @@ vi.mock("./views/TaskDetail", () => ({
 vi.mock("./views/CreateSessionPage", () => ({
   CreateSessionPage: ({ onCreated }: { onCreated: (task: BoardTask, choice: SessionTypeChoice, harness: string, model: string, prompt?: string) => Promise<void> }) => (
     <div>
-      <button
-        type="button"
-        onClick={() => void onCreated(task, { kind: "primary", step_key: "implementation" }, "omp", "", "  edited\nlaunch prompt ✓  ")}
-      >
+      <button type="button" onClick={() => void onCreated(task, { kind: "primary", step_key: "implementation" }, "omp", "", "  edited\nlaunch prompt ✓  ")}>
         finish create session
       </button>
       <button type="button" onClick={() => void onCreated(task, { kind: "auxiliary" }, "omp", "", "")}>
@@ -409,15 +417,28 @@ vi.mock("./views/CreateSessionPage", () => ({
 vi.mock("./views/CreateTaskPage", () => ({
   CreateTaskPage: ({ initialDraft, onCreated }: { initialDraft?: BoardTask; onCreated: (result: CreateTaskResult & { repoPath: string; selectedSessionId?: string }) => void }) => {
     const result: CreateTaskResult & { repoPath: string } = {
-      repoPath: task.repo_path, task, sessions: [session("root-a"), session("root-b")], executions: [],
-      creation: "partial", start: "failed", errors: [{ stage: "launch", code: "launch_failed", message: "binary missing" }],
+      repoPath: task.repo_path,
+      task,
+      sessions: [session("root-a"), session("root-b")],
+      executions: [],
+      creation: "partial",
+      start: "failed",
+      errors: [{ stage: "launch", code: "launch_failed", message: "binary missing" }],
     };
-    return <div>
-      <span>create task:{initialDraft?.slug}</span>
-      <button type="button" onClick={() => onCreated(result)}>open created task</button>
-      <button type="button" onClick={() => onCreated({ ...result, selectedSessionId: "root-b" })}>open second created session</button>
-      <button type="button" onClick={() => onCreated({ ...result, task: null, sessions: [] })}>report failed creation</button>
-    </div>;
+    return (
+      <div>
+        <span>create task:{initialDraft?.slug}</span>
+        <button type="button" onClick={() => onCreated(result)}>
+          open created task
+        </button>
+        <button type="button" onClick={() => onCreated({ ...result, selectedSessionId: "root-b" })}>
+          open second created session
+        </button>
+        <button type="button" onClick={() => onCreated({ ...result, task: null, sessions: [] })}>
+          report failed creation
+        </button>
+      </div>
+    );
   },
 }));
 vi.mock("./views/Settings", () => ({
@@ -521,7 +542,13 @@ afterEach(() => {
 });
 
 it("replaces the intro with Playbooks while retaining the global draft on return", async () => {
-  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   const style = document.createElement("style");
   style.textContent = readFileSync("src/theme.css", "utf8");
   document.head.append(style);
@@ -768,7 +795,6 @@ describe("session navigation acknowledgment", () => {
     expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "review-task", "review-target");
   });
 
-
   it("keeps a visited Grid mounted while navigating away and back", async () => {
     await renderApp();
 
@@ -781,7 +807,6 @@ describe("session navigation acknowledgment", () => {
 
     expect(await screen.findByText("Grid layout revision 1")).toBeTruthy();
   });
-
 });
 
 describe("session sort lifetime", () => {

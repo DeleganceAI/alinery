@@ -44,7 +44,6 @@ const session = (over: Partial<SessionMeta> = {}): SessionMeta =>
     ...over,
   }) as SessionMeta;
 
-
 const artifactItem = (over: Partial<ArtifactListItem> = {}): ArtifactListItem =>
   ({
     name: "00-ticket.md",
@@ -55,7 +54,6 @@ const artifactItem = (over: Partial<ArtifactListItem> = {}): ArtifactListItem =>
     attachment: false,
     ...over,
   }) as ArtifactListItem;
-
 
 // `vi.mock` factories are hoisted above imports, so the mocks it references must be created
 // through `vi.hoisted` rather than plain module-scope `const`.
@@ -143,10 +141,7 @@ describe("a removed library definition", () => {
     const fixture = task();
     mocks.getTask.mockResolvedValue(fixture);
     mocks.getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "current" })]));
-    mocks.listSessions.mockResolvedValue([
-      session({ id: "current", phase: "worker" }),
-      session({ id: "historical", phase: "old-phase" }),
-    ]);
+    mocks.listSessions.mockResolvedValue([session({ id: "current", phase: "worker" }), session({ id: "historical", phase: "old-phase" })]);
     renderDetail({ initialTask: fixture });
     expect(await screen.findByText("Retained playbook · Retained worker")).toBeDefined();
     expect(screen.getByText("current")).toBeDefined();
@@ -202,7 +197,6 @@ describe("a successful listSessions returning an empty array", () => {
     await waitFor(() => expect(screen.getByText("No sessions yet.")).toBeDefined());
   });
 });
-
 
 // PR #169 second review, item 2: load()'s failures were latched in one shared warning that
 // only load() could clear, and refreshLiveTaskState() never set sessionsLoaded. A transient

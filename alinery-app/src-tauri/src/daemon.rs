@@ -7,7 +7,9 @@ pub(crate) fn task_daemon_for(repo: &Path, task_slug: &str, app_config: &Path) -
     // Read only the durable owner address; execution/definition queries go through that daemon.
     let execution = alinery_core::execution::read_execution_state(repo, task_slug)?;
     let socket = alinery_core::alineryd_socket_path(repo, (!execution.owning_lane.is_empty()).then_some(execution.owning_lane.as_str()));
-    daemon_client::connect_compatible(socket, app_config).map(|(client, _)| client).map_err(|error| error.to_string())
+    daemon_client::connect_compatible(socket, app_config)
+        .map(|(client, _)| client)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -22,9 +24,7 @@ pub(crate) fn get_task_execution(
         None => require_owned_active_repo(&state)?,
     };
     require_repo_owned(&state, &repo)?;
-    task_daemon_for(&repo, &task_slug, &app_config_path(&app)?)?.get_task_execution(
-        &alinery_core::task_creation::GetTaskExecutionRequest { task_slug },
-    )
+    task_daemon_for(&repo, &task_slug, &app_config_path(&app)?)?.get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug })
 }
 
 #[tauri::command]
@@ -42,9 +42,11 @@ pub(crate) fn allow_execution_completion(
     };
     require_repo_owned(&state, &repo)?;
     let daemon = task_daemon_for(&repo, &task_slug, &app_config_path(&app)?)?;
-    daemon_client::UiControlConnection::connect(&daemon)?.allow_execution_completion(
-        &alinery_core::task_creation::AllowExecutionCompletionRequest { task_slug, execution_id, session_id },
-    )
+    daemon_client::UiControlConnection::connect(&daemon)?.allow_execution_completion(&alinery_core::task_creation::AllowExecutionCompletionRequest {
+        task_slug,
+        execution_id,
+        session_id,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -100,13 +102,21 @@ pub(crate) fn passive_session_statuses(repo: &Path, expected_app_config_identity
 }
 
 fn task_activity_session(repo: &Path, task: &Task, session: &SessionMeta, app_config: Option<&Path>) -> TaskActivitySession {
-    let playbook = task.playbook_ref.as_ref().map(|reference| reference.key.clone()).unwrap_or_else(|| session.playbook.clone());
+    let playbook = task
+        .playbook_ref
+        .as_ref()
+        .map(|reference| reference.key.clone())
+        .unwrap_or_else(|| session.playbook.clone());
     let step_title = if session.generic {
         "Generic".to_string()
     } else {
         match retained_task_definition(repo, task, app_config) {
-            Ok(Some(definition)) => definition.step.iter().find(|step| step.key == session.phase)
-                .map(|step| step.title.clone()).unwrap_or_else(|| session.phase.clone()),
+            Ok(Some(definition)) => definition
+                .step
+                .iter()
+                .find(|step| step.key == session.phase)
+                .map(|step| step.title.clone())
+                .unwrap_or_else(|| session.phase.clone()),
             Ok(None) => session.phase.clone(),
             Err(error) => format!("Execution unavailable: {error}"),
         }

@@ -170,7 +170,15 @@ fn snapshot_folder(viewing_slug: &str, path: &Path, key: &str) -> Result<Resolve
     })
 }
 
-fn owned_nodes(viewing_slug: &str, owner_slug: &str, root: &Path, source: ArtifactTreeSource, referenced: bool, key_prefix: &str, namespace_root: bool) -> Result<Vec<ResolvedNode>, String> {
+fn owned_nodes(
+    viewing_slug: &str,
+    owner_slug: &str,
+    root: &Path,
+    source: ArtifactTreeSource,
+    referenced: bool,
+    key_prefix: &str,
+    namespace_root: bool,
+) -> Result<Vec<ResolvedNode>, String> {
     let mut nodes = Vec::new();
     for path in checked_entries(root)? {
         let label = safe_name(&path)?;
@@ -203,19 +211,22 @@ fn owned_nodes(viewing_slug: &str, owner_slug: &str, root: &Path, source: Artifa
             }
         } else if metadata.is_dir() {
             let children = owned_nodes(viewing_slug, owner_slug, &path, source, referenced, &key, false)?;
-            nodes.push(ResolvedNode {
-                node: ArtifactTreeNode {
-                    id: node_id(viewing_slug, owner_slug, ArtifactTreeNodeKind::SubtaskFolder, source, &key),
-                    kind: ArtifactTreeNodeKind::SubtaskFolder,
-                    label,
-                    owner_task_slug: owner_slug.to_string(),
-                    source,
+            nodes.push(
+                ResolvedNode {
+                    node: ArtifactTreeNode {
+                        id: node_id(viewing_slug, owner_slug, ArtifactTreeNodeKind::SubtaskFolder, source, &key),
+                        kind: ArtifactTreeNodeKind::SubtaskFolder,
+                        label,
+                        owner_task_slug: owner_slug.to_string(),
+                        source,
+                        children: Vec::new(),
+                    },
+                    path: None,
+                    containment_root: None,
                     children: Vec::new(),
-                },
-                path: None,
-                containment_root: None,
-                children: Vec::new(),
-            }.with_children(children));
+                }
+                .with_children(children),
+            );
         } else {
             return Err(artifact_error(format!("not a regular file or directory: {}", path.display())));
         }
@@ -517,11 +528,14 @@ mod tests {
         assert_ne!(first.id, second.id);
         assert_eq!(read_task_artifact_node(&repo, "task", &first.id).unwrap(), "first");
         assert_eq!(read_task_artifact_node(&repo, "task", &second.id).unwrap(), "second");
-        assert_eq!(research.children.iter().map(|node| node.label.as_str()).collect::<Vec<_>>(), [
-            "2-findings.md",
-            "999999999999999999999999999999999999999-findings.md",
-            "1000000000000000000000000000000000000000-findings.md",
-        ]);
+        assert_eq!(
+            research.children.iter().map(|node| node.label.as_str()).collect::<Vec<_>>(),
+            [
+                "2-findings.md",
+                "999999999999999999999999999999999999999-findings.md",
+                "1000000000000000000000000000000000000000-findings.md",
+            ]
+        );
         fs::remove_dir_all(repo).unwrap();
     }
 

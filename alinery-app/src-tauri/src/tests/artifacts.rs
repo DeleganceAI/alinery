@@ -15,7 +15,18 @@ fn artifact_file_path_stays_in_artifacts_dir() {
         repo.join(".alinery/tasks/task/artifacts/nested/x.md")
     );
 
-    for name in ["", ".", "../x.md", "nested/../x.md", "./x.md", "nested//x.md", "/tmp/x.md", "nested\\x.md", "attachments/x.md", "subtasks/child/x.md"] {
+    for name in [
+        "",
+        ".",
+        "../x.md",
+        "nested/../x.md",
+        "./x.md",
+        "nested//x.md",
+        "/tmp/x.md",
+        "nested\\x.md",
+        "attachments/x.md",
+        "subtasks/child/x.md",
+    ] {
         assert!(artifact_file_path(repo, "task", name).is_err(), "{name}");
     }
 }
@@ -404,9 +415,17 @@ struct HandoffDaemonFixture {
 impl HandoffDaemonFixture {
     fn new() -> Self {
         // Match the real-daemon prerequisite used by mcp/tests/stdio_protocol.rs.
-        let binary = std::env::current_exe().unwrap().parent().and_then(Path::parent).unwrap()
+        let binary = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .and_then(Path::parent)
+            .unwrap()
             .join(format!("alineryd{}", std::env::consts::EXE_SUFFIX));
-        assert!(binary.is_file(), "build the sibling alineryd binary before running artifact handoff tests: {}", binary.display());
+        assert!(
+            binary.is_file(),
+            "build the sibling alineryd binary before running artifact handoff tests: {}",
+            binary.display()
+        );
         // Keep Unix socket paths short, including on macOS.
         let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         let repo = std::path::PathBuf::from(format!("/tmp/al-art-{n}"));
@@ -423,8 +442,15 @@ impl HandoffDaemonFixture {
         }
         let app_config = repo.join(".alinery/app.toml");
         fs::write(&app_config, "").unwrap();
-        let child = Command::new(binary).arg("--repo").arg(&repo).arg("--app-config").arg(&app_config)
-            .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::inherit()).spawn().unwrap();
+        let child = Command::new(binary)
+            .arg("--repo")
+            .arg(&repo)
+            .arg("--app-config")
+            .arg(&app_config)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
+            .unwrap();
         let client = alinery_core::daemon_client::DaemonClient::connect_path(alinery_core::alineryd_socket_path(&repo, None)).unwrap();
         let mut fixture = Self { repo, child, client };
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -448,7 +474,8 @@ impl HandoffDaemonFixture {
             "name": "Task", "requested_slug": "task",
             "playbook": {"reference": {"scope": "bundled", "key": "artifact-fixture"}, "source": source},
             "start": false
-        })).unwrap();
+        }))
+        .unwrap();
         let created = self.client.create_task(&request).unwrap();
         assert_eq!(created.creation, "ready", "{created:?}");
         assert!(created.errors.is_empty(), "{created:?}");
@@ -507,9 +534,11 @@ fn send_review_handoff_preserves_nested_artifact_and_scoped_repo_identity() {
     let target_dir = artifacts_dir(&target_fixture.repo, &target.slug);
     assert!(result.target_session.prompt_extra.contains("Use the smallest safe fix."));
     assert!(result.target_session.prompt_extra.contains(&target_dir.join(&result.target_artifact).display().to_string()));
-    let state = target_fixture.client.get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest {
-        task_slug: target.slug.clone(),
-    }).unwrap().state;
+    let state = target_fixture
+        .client
+        .get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug: target.slug.clone() })
+        .unwrap()
+        .state;
     let execution = &state.executions[&result.target_session.execution_id];
     assert_eq!(execution.owner_session_id, result.target_session.id);
     assert_eq!(execution.candidate.step_key, "design");
@@ -517,8 +546,7 @@ fn send_review_handoff_preserves_nested_artifact_and_scoped_repo_identity() {
     let handed_off = fs::read_to_string(target_dir.join("review-handoff-001.md")).unwrap();
     assert!(handed_off.contains("# Findings\n\nFix it."));
     assert!(!handed_off.contains("unrelated same basename"));
-    let inbound: alinery_core::ReviewHandoffRecord =
-        serde_json::from_str(&fs::read_to_string(target_dir.join("review-handoff-001.handoff.json")).unwrap()).unwrap();
+    let inbound: alinery_core::ReviewHandoffRecord = serde_json::from_str(&fs::read_to_string(target_dir.join("review-handoff-001.handoff.json")).unwrap()).unwrap();
     assert_eq!(inbound, result.target_record);
     let outbound: alinery_core::ReviewHandoffRecord =
         serde_json::from_str(&fs::read_to_string(source_artifacts.join("research/03-review-findings.handoff-001.json")).unwrap()).unwrap();
@@ -648,13 +676,18 @@ fn nested_artifact_list_sorts_numerically_and_excludes_reserved_namespaces() {
     for directory in ["research", "attachments", "subtasks/child"] {
         fs::create_dir_all(root.join(directory)).unwrap();
     }
-    for name in ["research/2-result-2.md", "research/2-result-10.md", "research/10-result-1.md", "attachments/input.md", "subtasks/child/result.md"] {
+    for name in [
+        "research/2-result-2.md",
+        "research/2-result-10.md",
+        "research/10-result-1.md",
+        "attachments/input.md",
+        "subtasks/child/result.md",
+    ] {
         fs::write(root.join(name), name).unwrap();
     }
-    assert_eq!(list_artifacts_for(&repo, "task").unwrap(), [
-        "research/10-result-1.md",
-        "research/2-result-10.md",
-        "research/2-result-2.md",
-    ]);
+    assert_eq!(
+        list_artifacts_for(&repo, "task").unwrap(),
+        ["research/10-result-1.md", "research/2-result-10.md", "research/2-result-2.md",]
+    );
     fs::remove_dir_all(repo).unwrap();
 }

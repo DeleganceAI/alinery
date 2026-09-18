@@ -8,8 +8,11 @@ import type { McpStatusHandle } from "../useMcpStatus";
 import { Settings } from "./Settings";
 
 const mocks = vi.hoisted(() => ({
-  readGlobalSettings: vi.fn(), writeGlobalSettings: vi.fn(), listPlaybookCatalog: vi.fn(),
-  readPlaybookPickerPreferences: vi.fn(), savePlaybookPickerPreferences: vi.fn(),
+  readGlobalSettings: vi.fn(),
+  writeGlobalSettings: vi.fn(),
+  listPlaybookCatalog: vi.fn(),
+  readPlaybookPickerPreferences: vi.fn(),
+  savePlaybookPickerPreferences: vi.fn(),
 }));
 vi.mock("../ipc", async () => {
   // This hoisted factory is invoked while the Settings dependency graph is loading.
@@ -18,17 +21,37 @@ vi.mock("../ipc", async () => {
 });
 
 const base: GlobalSettings = {
-  notifications: { enabled: false, sound: false, bounce: false, banner: false, dock_badge: true, dock_badge_input_waits: true, dock_badge_approval_waits: true, dock_badge_failures: true, dock_badge_completions: true },
+  notifications: {
+    enabled: false,
+    sound: false,
+    bounce: false,
+    banner: false,
+    dock_badge: true,
+    dock_badge_input_waits: true,
+    dock_badge_approval_waits: true,
+    dock_badge_failures: true,
+    dock_badge_completions: true,
+  },
   github: { token: "" },
   defaults: { harness: "omp", model: "", playbook: { scope: "bundled", key: "shared" }, draft_autosave: true },
   backup: { destination: "", enabled: false, retention: 5, trigger_pre_archive: false, trigger_post_artifact_change: false, trigger_post_push_commit: false },
   harnesses: { harness: [] },
   telemetry: { enabled: false, prompted: true, install_id: "", endpoint: "" },
-  updates: { check_enabled: false }, model_favorites: {}, experiments: { show_original_kanban: false },
+  updates: { check_enabled: false },
+  model_favorites: {},
+  experiments: { show_original_kanban: false },
 };
 const mcp: McpStatusHandle = {
-  enabled: false, running: false, clients: 0, socket_reachable: false, binary_found: false,
-  binary_path: "", repo: "", socket_path: "", error: "", refresh: () => {},
+  enabled: false,
+  running: false,
+  clients: 0,
+  socket_reachable: false,
+  binary_found: false,
+  binary_path: "",
+  repo: "",
+  socket_path: "",
+  error: "",
+  refresh: () => {},
 };
 let saved: GlobalSettings;
 let preferences: PickerPreferences;
@@ -41,31 +64,51 @@ beforeEach(() => {
   catalog = {
     candidates: (["bundled", "global", "repo"] as PlaybookRef["scope"][]).map((scope) => ({
       source: { reference: { scope, key: "shared" }, path: scope === "bundled" ? null : `/${scope}/shared/playbook.md` },
-      title: "Shared", description: "", modified_at_ms: scope === "bundled" ? null : 1700000000000,
+      title: "Shared",
+      description: "",
+      modified_at_ms: scope === "bundled" ? null : 1700000000000,
       diagnostics: [],
     })),
-    diagnostics: [], picker_preferences: preferences,
+    diagnostics: [],
+    picker_preferences: preferences,
   };
   mocks.readGlobalSettings.mockImplementation(async () => structuredClone(saved));
-  mocks.writeGlobalSettings.mockImplementation(async (next: GlobalSettings) => { saved = structuredClone(next); return saved; });
+  mocks.writeGlobalSettings.mockImplementation(async (next: GlobalSettings) => {
+    saved = structuredClone(next);
+    return saved;
+  });
   mocks.listPlaybookCatalog.mockImplementation(async () => structuredClone(catalog));
   mocks.readPlaybookPickerPreferences.mockImplementation(async () => structuredClone(preferences));
-  mocks.savePlaybookPickerPreferences.mockImplementation(async (next: PickerPreferences) => { preferences = structuredClone(next); });
+  mocks.savePlaybookPickerPreferences.mockImplementation(async (next: PickerPreferences) => {
+    preferences = structuredClone(next);
+  });
 });
 afterEach(cleanup);
 
 function openSettings() {
-  return render(<Settings mcp={mcp} activeRepo="/r" knownRepos={["/r"]} appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} onNotificationsChange={() => {}} initialSection="playbooks" />);
+  return render(
+    <Settings
+      mcp={mcp}
+      activeRepo="/r"
+      knownRepos={["/r"]}
+      appearance={DEFAULT_APPEARANCE}
+      onAppearanceChange={() => {}}
+      onNotificationsChange={() => {}}
+      initialSection="playbooks"
+    />,
+  );
 }
 function pickerOrder() {
-  return within(screen.getByRole("list", { name: "Personal playbook picker" })).getAllByRole("listitem").map((item) => item.getAttribute("aria-label"));
+  return within(screen.getByRole("list", { name: "Personal playbook picker" }))
+    .getAllByRole("listitem")
+    .map((item) => item.getAttribute("aria-label"));
 }
 
 describe("Scoped playbook settings", () => {
   it("keeps three same-key scopes distinct and preserves an unavailable configured default until explicitly replaced", async () => {
     saved.defaults.playbook = { scope: "global", key: "missing" };
     const first = openSettings();
-    const select = await screen.findByLabelText("Default playbook") as HTMLSelectElement;
+    const select = (await screen.findByLabelText("Default playbook")) as HTMLSelectElement;
     await screen.findByRole("option", { name: "Shared — global/shared" });
     expect(select.value).toBe("global/missing");
     expect(screen.getByText(/configured default is unavailable/)).toBeTruthy();
@@ -85,7 +128,7 @@ describe("Scoped playbook settings", () => {
     saved.defaults.playbook = { scope: "repo", key: "shared" };
     catalog.candidates[2].diagnostics = [{ code: "invalid_selector", message: "Output selector overlaps another producer", severity: "error", line: 14, field: "step.outputs" }];
     openSettings();
-    const invalid = await screen.findByRole("option", { name: "Shared — repo/shared — invalid" }) as HTMLOptionElement;
+    const invalid = (await screen.findByRole("option", { name: "Shared — repo/shared — invalid" })) as HTMLOptionElement;
     expect(invalid.disabled).toBe(true);
     expect((screen.getByLabelText("Default playbook") as HTMLSelectElement).value).toBe("repo/shared");
     expect(screen.getByText("Output selector overlaps another producer")).toBeTruthy();

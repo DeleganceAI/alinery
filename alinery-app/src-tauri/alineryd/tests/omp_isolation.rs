@@ -112,9 +112,19 @@ impl Fixture {
         fs::create_dir_all(root.join(".alinery")).unwrap();
         for args in [
             vec!["init", "--quiet"],
-            vec!["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "fixture"],
+            vec![
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                "fixture",
+            ],
         ] {
-            assert!(Command::new("git").args(args).current_dir(&root).status().unwrap().success());
+            assert!(alinery_core::git_cmd(&root).args(args).status().unwrap().success());
         }
         fs::write(root.join("host-executable"), b"host fixture").unwrap();
         let mut host_permissions = fs::metadata(root.join("host-executable")).unwrap().permissions();
@@ -217,7 +227,6 @@ fn overlay_omp(root: &Path, contents: &str) {
     fs::write(root.join(".alinery/harnesses.toml"), contents).unwrap();
 }
 
-
 fn wait_file(path: &Path, timeout: Duration) -> String {
     let started = Instant::now();
     while started.elapsed() < timeout {
@@ -266,7 +275,14 @@ adapter = "omp"
     let id = fixture.create_session("omp");
     let rejected = fixture.spawn_response(&id);
     assert_eq!(rejected["start"], "failed", "{rejected}");
-    assert!(rejected["errors"].as_array().unwrap().iter().any(|error| error["message"].as_str().is_some_and(|message| message.contains("bundled OMP not found"))), "{rejected}");
+    assert!(
+        rejected["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|error| error["message"].as_str().is_some_and(|message| message.contains("bundled OMP not found"))),
+        "{rejected}"
+    );
     assert!(!sentinel.exists(), "PATH decoy named omp must not run");
     let meta: SessionMeta = serde_json::from_slice(&fs::read(fixture.root.join(format!(".alinery/tasks/task/sessions/{id}.meta.json"))).unwrap()).unwrap();
     assert!(meta.started_at.is_none());

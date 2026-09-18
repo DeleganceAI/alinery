@@ -81,7 +81,6 @@ fn protocol_mismatch_takes_precedence_for_diagnostics() {
     assert_eq!(compat(Some(PROTOCOL_VERSION + 1), Some(APP_BUILD), Some("config-bbbb"),), DaemonCompat::ProtocolMismatch);
 }
 
-
 #[test]
 fn poller_spawns_only_when_nothing_answers() {
     assert_eq!(poller_action(None), PollerAction::Spawn);

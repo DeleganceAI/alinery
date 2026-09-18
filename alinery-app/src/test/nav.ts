@@ -19,7 +19,9 @@ import type { BoardNav } from "../types";
  */
 export async function navReady(get: () => BoardNav | null): Promise<BoardNav> {
   // A handle can already exist from the empty first paint; flush pending updates too.
-  await act(async () => { await Promise.resolve(); });
+  await act(async () => {
+    await Promise.resolve();
+  });
   for (let i = 0; i < 50 && !get(); i += 1) {
     await act(async () => {
       await Promise.resolve();

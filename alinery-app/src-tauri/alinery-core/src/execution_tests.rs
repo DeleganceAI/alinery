@@ -1,7 +1,12 @@
 use super::*;
 use crate::playbook::PlaybookScope;
 
-struct Fixture { repo: PathBuf, source: String, definition: NormalizedPlaybook, state: TaskExecutionState }
+struct Fixture {
+    repo: PathBuf,
+    source: String,
+    definition: NormalizedPlaybook,
+    state: TaskExecutionState,
+}
 impl Fixture {
     fn new(outputs: &str, coding: bool, automatic: bool, cap: u32) -> Self {
         let repo = std::env::temp_dir().join(format!("alinery-v2-execution-{}", uuid::Uuid::new_v4()));
@@ -9,15 +14,41 @@ impl Fixture {
         let source = format!("+++\nversion = 2\nkey = \"fixture\"\ntitle = \"Fixture\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"omp\"\n[[step]]\nkey = \"work\"\ntitle = \"Work\"\nshort = \"\"\ninputs = []\noutputs = [{outputs}]\nmodel = \"\"\nharness = \"\"\nis_coding_step = {coding}\nauto_advance_default = {automatic}\n+++\n<!-- alinery:step work -->\nWrite the assigned outputs.\n");
         let definition = parse_playbook_md(&source).unwrap();
         let enabled = if automatic { BTreeSet::from(["work".into()]) } else { BTreeSet::new() };
-        let mut state = new_execution_state(PlaybookRef { scope: PlaybookScope::Repo, key: "fixture".into() }, &source, "lane".into(), cap, enabled, LaunchChoices::default()).unwrap();
+        let mut state = new_execution_state(
+            PlaybookRef {
+                scope: PlaybookScope::Repo,
+                key: "fixture".into(),
+            },
+            &source,
+            "lane".into(),
+            cap,
+            enabled,
+            LaunchChoices::default(),
+        )
+        .unwrap();
         state.creation = "ready".into();
         Self { repo, source, definition, state }
     }
     fn reserve(&mut self, manual: bool) -> String {
-        reserve_execution(&self.repo, "task", &self.definition, &mut self.state, ExecutionCandidate {
-            step_key: "work".into(), context_id: "root".into(), inputs: BTreeMap::new(),
-            complete_collection_id: None, each_collection_id: None, each_member_id: None, manual,
-        }, &LaunchChoices::default(), None, true).unwrap()
+        reserve_execution(
+            &self.repo,
+            "task",
+            &self.definition,
+            &mut self.state,
+            ExecutionCandidate {
+                step_key: "work".into(),
+                context_id: "root".into(),
+                inputs: BTreeMap::new(),
+                complete_collection_id: None,
+                each_collection_id: None,
+                each_member_id: None,
+                manual,
+            },
+            &LaunchChoices::default(),
+            None,
+            true,
+        )
+        .unwrap()
     }
     fn run(&mut self, id: &str) -> String {
         let session = self.state.executions[id].owner_session_id.clone();
@@ -27,13 +58,20 @@ impl Fixture {
     }
     fn write_output(&self, id: &str, index: usize, slot: Option<&str>) {
         let assignment = &self.state.executions[id].outputs[index];
-        let relative = match slot { Some(slot) => assignment.relative_path.replace('*', slot), None => assignment.relative_path.clone() };
+        let relative = match slot {
+            Some(slot) => assignment.relative_path.replace('*', slot),
+            None => assignment.relative_path.clone(),
+        };
         let path = crate::artifacts_dir(&self.repo, "task").join(relative);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, "real output").unwrap();
     }
 }
-impl Drop for Fixture { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.repo); } }
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.repo);
+    }
+}
 
 #[test]
 fn reservations_are_disjoint_before_outputs_and_persist_unchanged() {
@@ -49,9 +87,35 @@ fn reservations_are_disjoint_before_outputs_and_persist_unchanged() {
 }
 
 #[test]
+fn reservations_keep_case_distinct_roles_physically_disjoint() {
+    let mut f = Fixture::new("{path=\"result.md\"}, {path=\"Result.md\"}", false, true, 10);
+    let first = f.reserve(true);
+    let second = f.reserve(true);
+    let paths: BTreeSet<_> = [&first, &second]
+        .into_iter()
+        .flat_map(|id| &f.state.executions[id].outputs)
+        .map(|output| output.relative_path.to_lowercase())
+        .collect();
+    assert_eq!(paths.len(), 4, "case-insensitive filesystems must not alias output reservations");
+    let owner = f.run(&first);
+    f.write_output(&first, 0, None);
+    assert!(matches!(
+        accept_execution_completion(&f.repo, "task", &mut f.state, &first, &owner).unwrap(),
+        CompletionOutcome::InvalidOutputs { .. }
+    ));
+    f.write_output(&first, 1, None);
+    assert!(matches!(
+        accept_execution_completion(&f.repo, "task", &mut f.state, &first, &owner).unwrap(),
+        CompletionOutcome::Accepted { .. }
+    ));
+}
+
+#[test]
 fn allocation_has_no_999_collision_limit() {
     let mut f = Fixture::new("{path=\"result.md\"}", false, true, 10);
-    for i in 1..=1001 { fs::write(crate::artifacts_dir(&f.repo, "task").join(format!("1-result-{i}.md")), "existing").unwrap(); }
+    for i in 1..=1001 {
+        fs::write(crate::artifacts_dir(&f.repo, "task").join(format!("1-result-{i}.md")), "existing").unwrap();
+    }
     let id = f.reserve(false);
     assert_eq!(f.state.executions[&id].outputs[0].relative_path, "1-result-1002.md");
 }
@@ -65,7 +129,10 @@ fn wildcard_acceptance_attributes_all_and_only_reserved_members() {
     f.write_output(&a, 0, Some("a-10"));
     f.write_output(&a, 0, Some("b"));
     f.write_output(&b, 0, Some("c"));
-    assert!(matches!(accept_execution_completion(&f.repo, "task", &mut f.state, &a, &owner).unwrap(), CompletionOutcome::Accepted { .. }));
+    assert!(matches!(
+        accept_execution_completion(&f.repo, "task", &mut f.state, &a, &owner).unwrap(),
+        CompletionOutcome::Accepted { .. }
+    ));
     let logical: BTreeSet<_> = f.state.occurrences.values().map(|o| o.logical_path.as_str()).collect();
     assert_eq!(logical, BTreeSet::from(["request-a-10.md", "request-b.md"]));
     assert!(f.state.occurrences.values().all(|o| !occurrence_deliverable(&f.state, o)));
@@ -78,9 +145,15 @@ fn invalid_output_preserves_human_grant_and_acceptance_replays_receipt() {
     let mut f = Fixture::new("{path=\"result.md\"}", true, false, 2);
     let id = f.reserve(false);
     let owner = f.run(&id);
-    assert_eq!(accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap(), CompletionOutcome::HumanAuthorizationRequired);
+    assert_eq!(
+        accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap(),
+        CompletionOutcome::HumanAuthorizationRequired
+    );
     grant_execution_completion(&mut f.state, &id, &owner).unwrap();
-    assert!(matches!(accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap(), CompletionOutcome::InvalidOutputs { .. }));
+    assert!(matches!(
+        accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap(),
+        CompletionOutcome::InvalidOutputs { .. }
+    ));
     assert!(matches!(f.state.executions[&id].permission, CompletionPermission::HumanGranted { .. }));
     assert!(f.state.occurrences.is_empty());
     f.write_output(&id, 0, None);
@@ -129,7 +202,10 @@ fn stopped_owner_recovery_retires_old_permission_without_retrying() {
     request_execution_start(&mut f.state, &id).unwrap();
     f.run(&id);
     f.write_output(&id, 0, None);
-    assert_eq!(accept_execution_completion(&f.repo, "task", &mut f.state, &id, &replacement).unwrap(), CompletionOutcome::HumanAuthorizationRequired);
+    assert_eq!(
+        accept_execution_completion(&f.repo, "task", &mut f.state, &id, &replacement).unwrap(),
+        CompletionOutcome::HumanAuthorizationRequired
+    );
 }
 
 #[test]
@@ -152,8 +228,13 @@ fn manual_reservation_cannot_smuggle_unrequired_input_bindings() {
     let mut f = Fixture::new("{path=\"result.md\"}", false, true, 1);
     let seed = install_seed(&mut f.state, "ticket.md", "00-ticket.md").unwrap();
     let candidate = ExecutionCandidate {
-        step_key: "work".into(), context_id: "root".into(), inputs: BTreeMap::from([("ticket.md".into(), vec![seed])]),
-        complete_collection_id: None, each_collection_id: None, each_member_id: None, manual: true,
+        step_key: "work".into(),
+        context_id: "root".into(),
+        inputs: BTreeMap::from([("ticket.md".into(), vec![seed])]),
+        complete_collection_id: None,
+        each_collection_id: None,
+        each_member_id: None,
+        manual: true,
     };
     assert!(reserve_execution(&f.repo, "task", &f.definition, &mut f.state, candidate, &LaunchChoices::default(), None, true).is_err());
     assert!(f.state.executions.is_empty());
@@ -168,11 +249,41 @@ fn reservation_and_completion_reject_symlink_output_parent() {
     fs::create_dir_all(&outside).unwrap();
     symlink(&outside, crate::artifacts_dir(&f.repo, "task").join("research")).unwrap();
     let candidate = ExecutionCandidate {
-        step_key: "work".into(), context_id: "root".into(), inputs: BTreeMap::new(), complete_collection_id: None,
-        each_collection_id: None, each_member_id: None, manual: false,
+        step_key: "work".into(),
+        context_id: "root".into(),
+        inputs: BTreeMap::new(),
+        complete_collection_id: None,
+        each_collection_id: None,
+        each_member_id: None,
+        manual: false,
     };
     assert!(reserve_execution(&f.repo, "task", &f.definition, &mut f.state, candidate, &LaunchChoices::default(), None, true).is_err());
     assert!(fs::read_dir(outside).unwrap().next().is_none());
+}
+
+#[test]
+fn completion_rejects_a_replaced_task_directory_without_consuming_permission() {
+    let mut f = Fixture::new("{path=\"result.md\"}", true, false, 1);
+    let id = f.reserve(false);
+    let owner = f.run(&id);
+    grant_execution_completion(&mut f.state, &id, &owner).unwrap();
+    f.write_output(&id, 0, None);
+    let task = crate::artifacts_dir(&f.repo, "task").parent().unwrap().to_path_buf();
+    let moved = f.repo.join("moved-task");
+    fs::rename(&task, &moved).unwrap();
+    std::os::unix::fs::symlink(&moved, &task).unwrap();
+    assert!(matches!(
+        accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap(),
+        CompletionOutcome::InvalidOutputs { .. }
+    ));
+    assert!(f.state.occurrences.is_empty());
+    assert!(matches!(f.state.executions[&id].permission, CompletionPermission::HumanGranted { .. }));
+    fs::remove_file(&task).unwrap();
+    fs::rename(&moved, &task).unwrap();
+    assert!(matches!(
+        accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap(),
+        CompletionOutcome::Accepted { .. }
+    ));
 }
 
 #[test]
@@ -190,7 +301,9 @@ fn backup_restore_retains_fixed_definition_execution_and_repo_library_only() {
     let destination = f.repo.join("backups");
     fs::create_dir_all(&destination).unwrap();
     let settings = crate::BackupDefaults {
-        destination: destination.display().to_string(), enabled: true, ..Default::default()
+        destination: destination.display().to_string(),
+        enabled: true,
+        ..Default::default()
     };
     crate::create_backup(&f.repo, &settings, crate::BackupTrigger::Manual, "test").unwrap();
     let archive = crate::list_backups(&f.repo, &settings).unwrap().remove(0);
@@ -212,7 +325,10 @@ fn artifact_projection_shows_reserved_and_accepted_execution_ownership() {
     let id = f.reserve(false);
     write_execution_state_unlocked(&f.repo, "task", &mut f.state).unwrap();
     let pending = crate::list_artifacts_with_execution_metadata(&f.repo, "task", &f.state).unwrap();
-    let output = pending.iter().find(|item| item.name == "1-result-1.md").expect("reserved output is visible before it is written");
+    let output = pending
+        .iter()
+        .find(|item| item.name == "1-result-1.md")
+        .expect("reserved output is visible before it is written");
     assert_eq!(output.execution_id.as_deref(), Some(id.as_str()));
     assert_eq!(output.logical_path.as_deref(), Some("result.md"));
     assert_eq!(output.accepted, Some(false));
@@ -234,9 +350,17 @@ fn task_rejects_unsupported_graph_harness_before_provisioning() {
     let f = Fixture::new("{path=\"result.md\"}", false, true, 1);
     let source = f.source.replace("default_harness = \"omp\"", "default_harness = \"no-harness\"");
     assert!(new_execution_state(
-        PlaybookRef { scope: PlaybookScope::Repo, key: "fixture".into() },
-        &source, "lane".into(), 1, BTreeSet::new(), LaunchChoices::default(),
-    ).is_err());
+        PlaybookRef {
+            scope: PlaybookScope::Repo,
+            key: "fixture".into()
+        },
+        &source,
+        "lane".into(),
+        1,
+        BTreeSet::new(),
+        LaunchChoices::default(),
+    )
+    .is_err());
 }
 
 #[test]
@@ -276,28 +400,64 @@ fn join_depth_uses_all_actual_parents_independent_of_completion_order() {
             ("long4", vec!["long3.md"], "long4.md"),
             ("long5", vec!["long4.md"], "long5.md"),
             ("join", vec!["short.md", "long5.md"], "joined.md"),
-        ].into_iter().map(|(key, inputs, output)| {
+        ]
+        .into_iter()
+        .map(|(key, inputs, output)| {
             let mut step = template.clone();
             step.key = key.into();
-            step.inputs = inputs.into_iter().map(|path| InputSelector { path: path.into(), mode: InputMode::Single }).collect();
+            step.inputs = inputs
+                .into_iter()
+                .map(|path| InputSelector {
+                    path: path.into(),
+                    mode: InputMode::Single,
+                })
+                .collect();
             step.outputs = vec![OutputSelector { path: output.into() }];
             step
-        }).collect();
+        })
+        .collect();
         f.definition.section_order = f.definition.step.iter().map(|step| step.key.clone()).collect();
         f.source = crate::render_playbook_md(&f.definition);
         f.definition = parse_playbook_md(&f.source).unwrap();
-        f.state = new_execution_state(f.state.reference.clone(), &f.source, "lane".into(), 10, f.definition.step.iter().map(|step| step.key.clone()).collect(), LaunchChoices::default()).unwrap();
+        f.state = new_execution_state(
+            f.state.reference.clone(),
+            &f.source,
+            "lane".into(),
+            10,
+            f.definition.step.iter().map(|step| step.key.clone()).collect(),
+            LaunchChoices::default(),
+        )
+        .unwrap();
         f.state.creation = "ready".into();
         let reserve = |f: &mut Fixture, key: &str| {
             let step = f.definition.step.iter().find(|step| step.key == key).unwrap();
-            let inputs = step.inputs.iter().map(|input| {
-                let occurrence = f.state.occurrences.values().find(|o| o.logical_path == input.path).unwrap();
-                (input.path.clone(), vec![occurrence.id.clone()])
-            }).collect();
-            reserve_execution(&f.repo, "task", &f.definition, &mut f.state, ExecutionCandidate {
-                step_key: key.into(), context_id: "root".into(), inputs, complete_collection_id: None,
-                each_collection_id: None, each_member_id: None, manual: false,
-            }, &LaunchChoices::default(), None, true).unwrap()
+            let inputs = step
+                .inputs
+                .iter()
+                .map(|input| {
+                    let occurrence = f.state.occurrences.values().find(|o| o.logical_path == input.path).unwrap();
+                    (input.path.clone(), vec![occurrence.id.clone()])
+                })
+                .collect();
+            reserve_execution(
+                &f.repo,
+                "task",
+                &f.definition,
+                &mut f.state,
+                ExecutionCandidate {
+                    step_key: key.into(),
+                    context_id: "root".into(),
+                    inputs,
+                    complete_collection_id: None,
+                    each_collection_id: None,
+                    each_member_id: None,
+                    manual: false,
+                },
+                &LaunchChoices::default(),
+                None,
+                true,
+            )
+            .unwrap()
         };
         let finish = |f: &mut Fixture, id: &str| {
             let owner = f.run(id);
@@ -308,12 +468,16 @@ fn join_depth_uses_all_actual_parents_independent_of_completion_order() {
         let root = reserve(&mut f, "root");
         finish(&mut f, &root);
         let short = reserve(&mut f, "short");
-        if short_first { finish(&mut f, &short); }
+        if short_first {
+            finish(&mut f, &short);
+        }
         for key in ["long2", "long3", "long4", "long5"] {
             let id = reserve(&mut f, key);
             finish(&mut f, &id);
         }
-        if !short_first { finish(&mut f, &short); }
+        if !short_first {
+            finish(&mut f, &short);
+        }
         let join = reserve(&mut f, "join");
         assert_eq!(f.state.executions[&join].depth, 6);
         assert_eq!(f.state.executions[&join].outputs[0].relative_path, "6-joined-1.md");

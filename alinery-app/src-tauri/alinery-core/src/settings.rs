@@ -152,7 +152,10 @@ pub fn load_global_settings(app_config: &Path) -> GlobalSettings {
 pub fn load_global_settings_strict(app_config: &Path) -> Result<GlobalSettings, String> {
     match fs::read_to_string(app_config) {
         Ok(text) => parse_global_settings(&text).map(normalize_global_settings).map_err(|error| {
-            format!("invalid global settings {} (playbook defaults require a scope-qualified v2 reference): {error}", app_config.display())
+            format!(
+                "invalid global settings {} (playbook defaults require a scope-qualified v2 reference): {error}",
+                app_config.display()
+            )
         }),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(default_global_settings()),
         Err(error) => Err(format!("read settings {}: {error}", app_config.display())),
@@ -163,7 +166,10 @@ pub fn load_repo_overrides_strict(repo: &Path) -> Result<RepoOverrides, String> 
     let path = config_toml_path(repo);
     match fs::read_to_string(&path) {
         Ok(text) => toml::from_str(&text).map_err(|error| {
-            format!("invalid repository settings {} (playbook defaults require a scope-qualified v2 reference): {error}", path.display())
+            format!(
+                "invalid repository settings {} (playbook defaults require a scope-qualified v2 reference): {error}",
+                path.display()
+            )
         }),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(RepoOverrides::default()),
         Err(error) => Err(format!("read settings {}: {error}", path.display())),

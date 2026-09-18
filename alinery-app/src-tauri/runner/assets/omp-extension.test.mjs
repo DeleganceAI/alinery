@@ -188,7 +188,14 @@ test("PTY startup seeds the editor before readiness and never overwrites a later
   let draft = "";
   const observations = [];
   const emit = async (event) => observations.push({ event, draft });
-  const context = { ...makeContext("pty-owner"), ui: { setEditorText(value) { draft = value; } } };
+  const context = {
+    ...makeContext("pty-owner"),
+    ui: {
+      setEditorText(value) {
+        draft = value;
+      },
+    },
+  };
   registerCallbacks(api, emit, async () => ({ status: "accepted", receipt_id: "unused" }), undefined, "first line\nsecond line");
   await api.trigger("session_start", { type: "session_start" }, context);
   assert.equal(draft, "first line\nsecond line");
@@ -362,7 +369,6 @@ describe("browser application host guard", () => {
 // ---------- tests ----------
 
 describe("2C — OMP extension callback behavior in isolation", () => {
-
   test("maps_agent_lifecycle_without_completing_or_exiting", async () => {
     const api = makeFakeApi();
     const emit = makeRecordingEmitter();
@@ -774,9 +780,13 @@ describe("production completion transport", () => {
       { status: "human_authorization_required" },
       { status: "rejected", reason: "execution owner is stale" },
     ]) {
-      await withRunnerOutput(`${JSON.stringify(outcome)}\n`, async (emitCompletion) => {
-        assert.deepEqual(await emitCompletion(event), outcome);
-      }, 750);
+      await withRunnerOutput(
+        `${JSON.stringify(outcome)}\n`,
+        async (emitCompletion) => {
+          assert.deepEqual(await emitCompletion(event), outcome);
+        },
+        750,
+      );
     }
   });
 

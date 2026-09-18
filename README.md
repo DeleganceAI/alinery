@@ -23,6 +23,16 @@ The sessions toolbar shows **N queued** immediately before **Priority**. It coun
 
 For a human-gated running session, **Allow this session to complete** is visible beside the execution disclosure even when it is collapsed. This grants permission only; the agent still needs to request completion after finishing its assigned outputs.
 
+Each v2 task retains one validated `playbook.md`, one dedicated worktree, and file-backed
+`execution.json` state. The daemon schedules concrete artifact bindings, including fan-out,
+complete-set merges, and fresh-artifact loops. Coding ownership and the task's live-session
+capacity remain held through human review and confirmed process shutdown.
+
+Reusable definitions live in bundled, global, and repository scopes; identical keys do not
+shadow each other. Legacy `playbooks.toml` and split prompt files remain untouched in user
+repositories but are not v2 runtime inputs. Historical pre-v2 tasks remain readable; launching
+them requires explicit recreation rather than automatic migration or a fallback definition.
+
 ## Install
 
 ```bash

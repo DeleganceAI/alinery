@@ -515,9 +515,8 @@ pub(crate) async fn list_artifacts_with_metadata(app: AppHandle, state: State<'_
     let repo = require_owned_active_repo(&state)?;
     let task = read_task(&repo, &task_slug)?;
     if task.engine_version >= 2 {
-        let execution = task_daemon_for(&repo, &task_slug, &app_config_path(&app)?)?.get_task_execution(
-            &alinery_core::task_creation::GetTaskExecutionRequest { task_slug: task_slug.clone() },
-        )?;
+        let execution = task_daemon_for(&repo, &task_slug, &app_config_path(&app)?)?
+            .get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug: task_slug.clone() })?;
         alinery_core::list_artifacts_with_execution_metadata(&repo, &task_slug, &execution.state)
     } else {
         alinery_core::list_artifacts_with_metadata_for(&repo, &task_slug)

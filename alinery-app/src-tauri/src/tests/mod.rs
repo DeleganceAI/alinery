@@ -10,24 +10,22 @@ pub(crate) use super::{
     allow_root_session_open, apply_credits_to_hosted_view, archive_artifact_comments_for, artifact_comment_drafts_path, artifact_comment_json_path, artifact_comment_markdown_path,
     artifact_file_path, artifact_review_pending_path, artifact_review_pending_status_for, artifacts_dir, attach_repo_daemon, attachment_path_in, backup_now_with,
     backup_queue_lock, begin_sign_in_attempt, board_tasks_for_repo, cancel_sign_in_at, classify_refresh_response, classify_version, clear_artifact_review_pending_for,
-    clear_curated_alinery_data, clear_linear_account_in, commit_worktree_in, compare_url, configure_detached_process, copy_task_attachments,
-    credits_view_from, curl_http, curl_request, curl_request_with_timeouts, current_alineryd_socket_path,
-    delete_artifact_comment_draft_for, delete_draft_in, discard_subtask_with, display_label, end_sign_in_attempt, entitlement_url,
-    fetch_desktop_credits_at, file_content_id, finalize_session_message_actions_for, finish_sign_in, frame_session_channel_bytes, git_cmd, git_top_level, github_repo_from_remote,
-    gui_lock_held_elsewhere, hold_lock_after_compare_then_clear, inference_path, is_paid_plan, linear_account_path_in, list_artifact_comment_drafts_for, list_artifacts_for,
-    list_tasks_for_repo, load_artifact_comment_drafts_for, load_artifact_comments_for, loopback_html, models_yml_path,
+    clear_curated_alinery_data, clear_linear_account_in, commit_worktree_in, compare_url, configure_detached_process, copy_task_attachments, credits_view_from, curl_http,
+    curl_request, curl_request_with_timeouts, current_alineryd_socket_path, delete_artifact_comment_draft_for, delete_draft_in, discard_subtask_with, display_label,
+    end_sign_in_attempt, entitlement_url, fetch_desktop_credits_at, file_content_id, finalize_session_message_actions_for, finish_sign_in, frame_session_channel_bytes, git_cmd,
+    git_top_level, github_repo_from_remote, gui_lock_held_elsewhere, hold_lock_after_compare_then_clear, inference_path, is_paid_plan, linear_account_path_in,
+    list_artifact_comment_drafts_for, list_artifacts_for, list_tasks_for_repo, load_artifact_comment_drafts_for, load_artifact_comments_for, loopback_html, models_yml_path,
     next_artifact_review_markdown_path, paid_from_stored_plan, parse_desktop_credits_body, parse_desktop_login_callback, parse_entitlement_plan, parse_github_ref,
     parse_hosted_catalog_body, parse_hosted_error, parse_inference_session_body, parse_linear_oauth_tokens, parse_linear_ref, parse_oauth_callback, percent_encode, pkce_challenge,
     plan_label, prepare_artifact_comments_prompt_for, prepare_review_approval_prompt_for, production_livemode, pump_session_stream, read_model_favorites_in, read_task,
-    read_task_opt, refresh_account_at, register_runtime_plugins, remove_mcp_lane_runtime_files, remove_repo_from_config, render_models_yml,
-    require_repo_owned, resolve_hosted_catalog, restore_backup_into, root_sessions_dir, route_socket_path, sanitize_app_config, sanitize_appearance,
-    save_artifact_comment_draft_for, session_list_items_for_repo, session_meta_path, sessions_dir, set_active_repo_global, set_model_favorite_in, sign_out_at,
-    store_credits_snapshot, subtask_state_in, task_dir, unique_attachment_name, validate_known_target_repo, wait_for_daemon_gone,
-    wait_for_desktop_login_callback, wait_for_desktop_login_callback_until, wait_for_linear_callback, wipe_hosted_files, worktree_exists, worktrees_dir,
-    write_draft_in_with_slug, write_global_settings_in, write_hosted_models_yml, write_task, AccountAuthError, AccountUser, AppConfig, AppState, AppearancePrefs,
-    ArtifactCommentDraftsFile, ArtifactCommentsFile, BackupSlot, Command, DesktopCreditsView, EnsureDaemonError, LinearTokenError, OAuthCallback, SessionMessageActionProvenance,
-    SessionMeta, SignInAttempt, SignInGuard, Task, DEFAULT_CONFIG_TOML, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_SET_BYTES, PROTOCOL_VERSION, SESSION_CHANNEL_BATCH_BYTES,
-    TAURI_RAW_FETCH_MIN_BYTES,
+    read_task_opt, refresh_account_at, register_runtime_plugins, remove_mcp_lane_runtime_files, remove_repo_from_config, render_models_yml, require_repo_owned,
+    resolve_hosted_catalog, restore_backup_into, root_sessions_dir, route_socket_path, sanitize_app_config, sanitize_appearance, save_artifact_comment_draft_for,
+    session_list_items_for_repo, session_meta_path, sessions_dir, set_active_repo_global, set_model_favorite_in, sign_out_at, store_credits_snapshot, subtask_state_in, task_dir,
+    unique_attachment_name, validate_known_target_repo, wait_for_daemon_gone, wait_for_desktop_login_callback, wait_for_desktop_login_callback_until, wait_for_linear_callback,
+    wipe_hosted_files, worktree_exists, worktrees_dir, write_draft_in_with_slug, write_global_settings_in, write_hosted_models_yml, write_task, AccountAuthError, AccountUser,
+    AppConfig, AppState, AppearancePrefs, ArtifactCommentDraftsFile, ArtifactCommentsFile, BackupSlot, Command, DesktopCreditsView, EnsureDaemonError, LinearTokenError,
+    OAuthCallback, SessionMessageActionProvenance, SessionMeta, SignInAttempt, SignInGuard, Task, DEFAULT_CONFIG_TOML, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_SET_BYTES,
+    PROTOCOL_VERSION, SESSION_CHANNEL_BATCH_BYTES, TAURI_RAW_FETCH_MIN_BYTES,
 };
 pub(crate) use alinery_core::{alinery_app_lock_path, strip_terminal_queries, subst, HarnessFile, RepoOverrides, DEFAULT_HARNESSES_TOML};
 pub(crate) use std::sync::Mutex;
@@ -74,7 +72,9 @@ fn init_git_test_repo(name: &str) -> std::path::PathBuf {
     repo
 }
 
-fn default_playbook_key() -> String { "superdevelop".into() }
+fn default_playbook_key() -> String {
+    "superdevelop".into()
+}
 
 fn create_task_for_test(repo: &Path, name: &str, use_worktree: bool, branch_name: &str, worktree_name: &str) -> Task {
     let slug = alinery_core::slugify(name);
@@ -85,10 +85,17 @@ fn create_task_for_test(repo: &Path, name: &str, use_worktree: bool, branch_name
         let out = git_cmd(repo).args(["worktree", "add", "-b", &branch]).arg(&path).output().unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         path
-    } else { repo.to_path_buf() };
+    } else {
+        repo.to_path_buf()
+    };
     let task = Task {
-        name: name.into(), slug, branch, worktree: worktree.to_string_lossy().into_owned(),
-        has_worktree: use_worktree, created: 1, ..Default::default()
+        name: name.into(),
+        slug,
+        branch,
+        worktree: worktree.to_string_lossy().into_owned(),
+        has_worktree: use_worktree,
+        created: 1,
+        ..Default::default()
     };
     fs::create_dir_all(sessions_dir(repo, &task.slug)).unwrap();
     fs::create_dir_all(artifacts_dir(repo, &task.slug)).unwrap();
@@ -114,7 +121,7 @@ fn activity_repo(label: &str) -> std::path::PathBuf {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let repo = std::path::PathBuf::from("/tmp").join(format!("alinery-test-{label}-{nanos}"));
     fs::create_dir_all(&repo).unwrap();
-    
+
     repo
 }
 

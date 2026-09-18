@@ -5,10 +5,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use alinery_core::execution::{
-    accept_execution_completion, claim_execution_launch, confirm_execution_exit,
-    grant_execution_completion, install_seed, new_execution_state, read_execution_state,
-    read_task_playbook, record_execution_spawn, reserve_execution, task_playbook_path,
-    CompletionOutcome, CompletionPermission, ExecutionLifecycle, LaunchChoices, TaskExecutionState,
+    accept_execution_completion, claim_execution_launch, confirm_execution_exit, grant_execution_completion, install_seed, new_execution_state, read_execution_state,
+    read_task_playbook, record_execution_spawn, reserve_execution, task_playbook_path, CompletionOutcome, CompletionPermission, ExecutionLifecycle, LaunchChoices,
+    TaskExecutionState,
 };
 use alinery_core::playbook::{ArtifactSelector, NormalizedPlaybook, PlaybookRef, PlaybookScope};
 use alinery_core::playbook_library::{load_playbook_catalog, resolve_playbook, PlaybookRoots};
@@ -33,14 +32,24 @@ impl Drop for Trace {
 impl Trace {
     fn new(key: &str) -> Self {
         let repo = std::env::temp_dir().join(format!("alinery-bundled-{}", uuid::Uuid::new_v4()));
-        let roots = PlaybookRoots { global_config_dir: repo.join("config"), repo_dir: repo.clone() };
-        let reference = PlaybookRef { scope: PlaybookScope::Bundled, key: key.into() };
+        let roots = PlaybookRoots {
+            global_config_dir: repo.join("config"),
+            repo_dir: repo.clone(),
+        };
+        let reference = PlaybookRef {
+            scope: PlaybookScope::Bundled,
+            key: key.into(),
+        };
         let loaded = resolve_playbook(&roots, &reference).unwrap();
-        let enabled = loaded.definition.step.iter().filter(|s| s.auto_advance_default)
-            .map(|s| s.key.clone()).collect();
-        let state = new_execution_state(reference, &loaded.source_text, "trace-lane".into(), 10,
-            enabled, LaunchChoices::default()).unwrap();
-        let mut trace = Self { repo, roots, definition: loaded.definition, state, seed: String::new() };
+        let enabled = loaded.definition.step.iter().filter(|s| s.auto_advance_default).map(|s| s.key.clone()).collect();
+        let state = new_execution_state(reference, &loaded.source_text, "trace-lane".into(), 10, enabled, LaunchChoices::default()).unwrap();
+        let mut trace = Self {
+            repo,
+            roots,
+            definition: loaded.definition,
+            state,
+            seed: String::new(),
+        };
         fs::create_dir_all(trace.artifacts()).unwrap();
         fs::write(task_playbook_path(&trace.repo, SLUG).unwrap(), &loaded.source_text).unwrap();
         trace.state.creation = "ready".into();
@@ -49,7 +58,9 @@ impl Trace {
         trace
     }
 
-    fn artifacts(&self) -> PathBuf { alinery_core::artifacts_dir(&self.repo, SLUG) }
+    fn artifacts(&self) -> PathBuf {
+        alinery_core::artifacts_dir(&self.repo, SLUG)
+    }
 
     fn put(&self, relative: &str, text: &str) {
         let path = self.artifacts().join(relative);
@@ -63,8 +74,7 @@ impl Trace {
         assert_eq!(definition, self.definition);
         let candidates = reconcile_graph(&definition, &mut self.state).unwrap();
         for candidate in candidates {
-            reserve_execution(&self.repo, SLUG, &definition, &mut self.state, candidate,
-                &LaunchChoices::default(), None, true).unwrap();
+            reserve_execution(&self.repo, SLUG, &definition, &mut self.state, candidate, &LaunchChoices::default(), None, true).unwrap();
         }
         // Record all expectations before any worker starts, including queued workers.
         assert!(reconcile_graph(&definition, &mut self.state).unwrap().is_empty());
@@ -72,8 +82,12 @@ impl Trace {
 
     fn queued(&mut self, step: &str) -> Vec<String> {
         self.tick();
-        self.state.executions.values().filter(|e| e.candidate.step_key == step
-            && e.lifecycle == ExecutionLifecycle::Queued).map(|e| e.id.clone()).collect()
+        self.state
+            .executions
+            .values()
+            .filter(|e| e.candidate.step_key == step && e.lifecycle == ExecutionLifecycle::Queued)
+            .map(|e| e.id.clone())
+            .collect()
     }
 
     fn one(&mut self, step: &str) -> String {
@@ -82,7 +96,9 @@ impl Trace {
         ids[0].clone()
     }
 
-    fn blocked(&mut self, step: &str) { assert!(self.queued(step).is_empty(), "{step} ran early"); }
+    fn blocked(&mut self, step: &str) {
+        assert!(self.queued(step).is_empty(), "{step} ran early");
+    }
 
     fn start(&mut self, id: &str) {
         assert!(claim_execution_launch(&mut self.state, id).unwrap());
@@ -119,27 +135,40 @@ impl Trace {
     }
 
     fn write(&self, id: &str, logical: &str, text: &str) {
-        let assignment = self.state.executions[id].outputs.iter().find(|a|
-            ArtifactSelector::parse(&a.selector).unwrap().matches(logical)).unwrap();
+        let assignment = self.state.executions[id]
+            .outputs
+            .iter()
+            .find(|a| ArtifactSelector::parse(&a.selector).unwrap().matches(logical))
+            .unwrap();
         let physical = if let Some((prefix, suffix)) = assignment.selector.split_once('*') {
             assignment.relative_path.replace('*', &logical[prefix.len()..logical.len() - suffix.len()])
-        } else { assignment.relative_path.clone() };
+        } else {
+            assignment.relative_path.clone()
+        };
         self.put(&physical, text);
     }
 
     fn input_text(&self, id: &str, selector: &str) -> Vec<String> {
-        self.state.executions[id].candidate.inputs[selector].iter().map(|occurrence|
-            fs::read_to_string(self.artifacts().join(&self.state.occurrences[occurrence].relative_path)).unwrap()).collect()
+        self.state.executions[id].candidate.inputs[selector]
+            .iter()
+            .map(|occurrence| fs::read_to_string(self.artifacts().join(&self.state.occurrences[occurrence].relative_path)).unwrap())
+            .collect()
     }
 
     fn numbers(&self, id: &str, selector: &str) -> Vec<i64> {
-        self.input_text(id, selector).iter().flat_map(|s| s.split_whitespace()
-            .map(|n| n.parse::<i64>().unwrap())).collect()
+        self.input_text(id, selector)
+            .iter()
+            .flat_map(|s| s.split_whitespace().map(|n| n.parse::<i64>().unwrap()))
+            .collect()
     }
 
     fn outputs(&self, id: &str) -> BTreeSet<String> {
-        self.state.occurrences.values().filter(|o| o.producer_execution_id.as_deref() == Some(id))
-            .map(|o| o.id.clone()).collect()
+        self.state
+            .occurrences
+            .values()
+            .filter(|o| o.producer_execution_id.as_deref() == Some(id))
+            .map(|o| o.id.clone())
+            .collect()
     }
 
     fn output(&self, id: &str, path: &str) -> String {
@@ -162,7 +191,9 @@ impl Trace {
         let execution = &self.state.executions[id];
         let mut evidence = BTreeSet::new();
         for (selector, ids) in &execution.candidate.inputs {
-            for oid in ids { evidence.insert(format!("input:{oid}")); }
+            for oid in ids {
+                evidence.insert(format!("input:{oid}"));
+            }
             for text in self.input_text(id, selector) {
                 evidence.extend(text.lines().map(str::to_owned));
             }
@@ -181,7 +212,9 @@ impl Trace {
                     let logical = output.selector.replace('*', &format!("member-{n}"));
                     self.write(id, &logical, &format!("{body}\nmember:{n}\n"));
                 }
-            } else { self.write(id, &output.selector, &body); }
+            } else {
+                self.write(id, &output.selector, &body);
+            }
         }
     }
 
@@ -211,10 +244,14 @@ impl Trace {
     fn batch(&mut self, worker: &str, count: usize, join: &str, selector: &str) -> (Vec<String>, String) {
         let workers = self.queued(worker);
         assert_eq!(workers.len(), count, "wrong {worker} fan-out");
-        let member_ids = workers.iter().map(|id| self.state.executions[id].candidate.each_member_id.clone().unwrap())
+        let member_ids = workers
+            .iter()
+            .map(|id| self.state.executions[id].candidate.each_member_id.clone().unwrap())
             .collect::<BTreeSet<_>>();
         assert_eq!(member_ids.len(), count);
-        for id in &workers[..count - 1] { self.finish_handoff(id, 2); }
+        for id in &workers[..count - 1] {
+            self.finish_handoff(id, 2);
+        }
         self.blocked(join);
         let last = &workers[count - 1];
         self.start(last);
@@ -252,18 +289,32 @@ fn linear_trace(key: &str, stages: &[(&str, &[&str], &[&str])], human: &[&str]) 
     let mut occurrences = BTreeMap::from([("ticket.md".to_owned(), trace.seed.clone())]);
     for (index, (step, inputs, outputs)) in stages.iter().enumerate() {
         let id = trace.one(step);
-        assert_eq!(trace.state.executions[&id].candidate.inputs.keys().map(String::as_str).collect::<BTreeSet<_>>(),
-            inputs.iter().copied().collect());
-        for path in *inputs { trace.bound(&id, path, BTreeSet::from([occurrences[*path].clone()])); }
+        assert_eq!(
+            trace.state.executions[&id].candidate.inputs.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+            inputs.iter().copied().collect()
+        );
+        for path in *inputs {
+            trace.bound(&id, path, BTreeSet::from([occurrences[*path].clone()]));
+        }
         assert_eq!(trace.state.executions[&id].permission == CompletionPermission::Locked, human.contains(step));
         trace.start(&id);
         trace.write_handoff(&id, 1);
         trace.accepted(&id);
-        if let Some((next, _, _)) = stages.get(index + 1) { trace.blocked(next); }
+        if let Some((next, _, _)) = stages.get(index + 1) {
+            trace.blocked(next);
+        }
         trace.exit(&id);
-        assert_eq!(trace.outputs(&id).iter().map(|oid| trace.state.occurrences[oid].logical_path.as_str()).collect::<BTreeSet<_>>(),
-            outputs.iter().copied().collect());
-        for path in *outputs { occurrences.insert((*path).into(), trace.output(&id, path)); }
+        assert_eq!(
+            trace
+                .outputs(&id)
+                .iter()
+                .map(|oid| trace.state.occurrences[oid].logical_path.as_str())
+                .collect::<BTreeSet<_>>(),
+            outputs.iter().copied().collect()
+        );
+        for path in *outputs {
+            occurrences.insert((*path).into(), trace.output(&id, path));
+        }
     }
     trace.tick();
     assert!(trace.state.executions.values().all(|e| e.lifecycle == ExecutionLifecycle::Completed));
@@ -272,24 +323,46 @@ fn linear_trace(key: &str, stages: &[(&str, &[&str], &[&str])], human: &[&str]) 
 #[test]
 fn bundled_superdevelop_trace() {
     let defaults = alinery_core::HarnessChoice::default();
-    assert_eq!(defaults.playbook, PlaybookRef { scope: PlaybookScope::Bundled, key: "superdevelop".into() });
-    linear_trace("superdevelop", &[
-        ("research-questions", &["ticket.md"], &["clarify.md"]),
-        ("research", &["ticket.md", "clarify.md"], &["investigate.md"]),
-        ("design", &["ticket.md", "clarify.md", "investigate.md"], &["decide.md"]),
-        ("structure", &["ticket.md", "clarify.md", "investigate.md", "decide.md"], &["plan.md"]),
-        ("tdd", &["ticket.md", "clarify.md", "investigate.md", "decide.md", "plan.md"], &["test-contract.md"]),
-        ("implementation", &["ticket.md", "clarify.md", "investigate.md", "decide.md", "plan.md", "test-contract.md"], &["build-report.md"]),
-        ("pr", &["ticket.md", "clarify.md", "investigate.md", "decide.md", "plan.md", "test-contract.md", "build-report.md"], &["review-package.md"]),
-    ], &["design", "pr"]);
+    assert_eq!(
+        defaults.playbook,
+        PlaybookRef {
+            scope: PlaybookScope::Bundled,
+            key: "superdevelop".into()
+        }
+    );
+    linear_trace(
+        "superdevelop",
+        &[
+            ("research-questions", &["ticket.md"], &["clarify.md"]),
+            ("research", &["ticket.md", "clarify.md"], &["investigate.md"]),
+            ("design", &["ticket.md", "clarify.md", "investigate.md"], &["decide.md"]),
+            ("structure", &["ticket.md", "clarify.md", "investigate.md", "decide.md"], &["plan.md"]),
+            ("tdd", &["ticket.md", "clarify.md", "investigate.md", "decide.md", "plan.md"], &["test-contract.md"]),
+            (
+                "implementation",
+                &["ticket.md", "clarify.md", "investigate.md", "decide.md", "plan.md", "test-contract.md"],
+                &["build-report.md"],
+            ),
+            (
+                "pr",
+                &["ticket.md", "clarify.md", "investigate.md", "decide.md", "plan.md", "test-contract.md", "build-report.md"],
+                &["review-package.md"],
+            ),
+        ],
+        &["design", "pr"],
+    );
 }
 
 #[test]
 fn bundled_one_shot_trace() {
-    linear_trace("one-shot", &[
-        ("implementation", &["ticket.md"], &["implementation-report.md"]),
-        ("pr", &["ticket.md", "implementation-report.md"], &["pr-note.md"]),
-    ], &["implementation", "pr"]);
+    linear_trace(
+        "one-shot",
+        &[
+            ("implementation", &["ticket.md"], &["implementation-report.md"]),
+            ("pr", &["ticket.md", "implementation-report.md"], &["pr-note.md"]),
+        ],
+        &["implementation", "pr"],
+    );
 }
 
 #[test]
@@ -369,27 +442,59 @@ fn single_result_trace(key: &str, step: &str, output: &str) {
 }
 
 #[test]
-fn bundled_free_form_trace() { single_result_trace("free-form", "session", "session-result.md"); }
+fn bundled_free_form_trace() {
+    single_result_trace("free-form", "session", "session-result.md");
+}
 
 #[test]
 fn bundled_generic_session_trace() {
     single_result_trace("generic-session", "complete-the-request", "result.md");
     let generic = Trace::new("generic-session");
-    let free = resolve_playbook(&generic.roots, &PlaybookRef { scope: PlaybookScope::Bundled, key: "free-form".into() }).unwrap();
+    let free = resolve_playbook(
+        &generic.roots,
+        &PlaybookRef {
+            scope: PlaybookScope::Bundled,
+            key: "free-form".into(),
+        },
+    )
+    .unwrap();
     assert_ne!(generic.state.reference, free.source.reference);
     assert_ne!(generic.definition, free.definition);
 }
 
 #[test]
 fn bundled_primed_feature_development_trace() {
-    linear_trace("primed-feature-development", &[
-        ("probe-the-question", &["ticket.md"], &["question-map.md"]),
-        ("research-the-problem", &["ticket.md", "question-map.md"], &["research-findings.md"]),
-        ("identify-the-direction", &["ticket.md", "question-map.md", "research-findings.md"], &["direction.md"]),
-        ("map-the-plan", &["ticket.md", "question-map.md", "research-findings.md", "direction.md"], &["implementation-plan.md"]),
-        ("establish-the-test-contract", &["ticket.md", "question-map.md", "research-findings.md", "direction.md", "implementation-plan.md"], &["test-contract.md"]),
-        ("develop-the-change", &["ticket.md", "question-map.md", "research-findings.md", "direction.md", "implementation-plan.md", "test-contract.md"], &["development-report.md"]),
-    ], &["identify-the-direction", "develop-the-change"]);
+    linear_trace(
+        "primed-feature-development",
+        &[
+            ("probe-the-question", &["ticket.md"], &["question-map.md"]),
+            ("research-the-problem", &["ticket.md", "question-map.md"], &["research-findings.md"]),
+            ("identify-the-direction", &["ticket.md", "question-map.md", "research-findings.md"], &["direction.md"]),
+            (
+                "map-the-plan",
+                &["ticket.md", "question-map.md", "research-findings.md", "direction.md"],
+                &["implementation-plan.md"],
+            ),
+            (
+                "establish-the-test-contract",
+                &["ticket.md", "question-map.md", "research-findings.md", "direction.md", "implementation-plan.md"],
+                &["test-contract.md"],
+            ),
+            (
+                "develop-the-change",
+                &[
+                    "ticket.md",
+                    "question-map.md",
+                    "research-findings.md",
+                    "direction.md",
+                    "implementation-plan.md",
+                    "test-contract.md",
+                ],
+                &["development-report.md"],
+            ),
+        ],
+        &["identify-the-direction", "develop-the-change"],
+    );
 }
 
 #[test]
@@ -447,7 +552,10 @@ fn bundled_parallel_squares_trace() {
         trace.start(id);
         let number = trace.numbers(id, "request-*.md")[0];
         trace.write(id, "result-square.md", &(number * number).to_string());
-        if *id != held { trace.accepted(id); trace.exit(id); }
+        if *id != held {
+            trace.accepted(id);
+            trace.exit(id);
+        }
     }
     trace.put("result-unowned.md", "900");
     trace.blocked("collect");
@@ -507,15 +615,29 @@ fn naming_pass(trace: &mut Trace, frame: &str) -> BTreeSet<String> {
     let generators = trace.queued("generate-name-batch");
     assert_eq!(generators.len(), 4);
     let requests = trace.outputs(&plan);
-    assert_eq!(generators.iter().map(|id| trace.state.executions[id].candidate.each_member_id.clone().unwrap())
-        .collect::<BTreeSet<_>>(), requests);
-    for id in &generators { trace.finish_handoff(id, 1); }
+    assert_eq!(
+        generators
+            .iter()
+            .map(|id| trace.state.executions[id].candidate.each_member_id.clone().unwrap())
+            .collect::<BTreeSet<_>>(),
+        requests
+    );
+    for id in &generators {
+        trace.finish_handoff(id, 1);
+    }
     let analyses = trace.queued("analyze-name-batch");
     assert_eq!(analyses.len(), 4);
     let raw = generators.iter().flat_map(|id| trace.outputs(id)).collect::<BTreeSet<_>>();
-    assert_eq!(analyses.iter().flat_map(|id| trace.state.executions[id].candidate.inputs["raw-name-batch.md"].clone())
-        .collect::<BTreeSet<_>>(), raw);
-    for id in &analyses[..3] { trace.finish_handoff(id, 1); }
+    assert_eq!(
+        analyses
+            .iter()
+            .flat_map(|id| trace.state.executions[id].candidate.inputs["raw-name-batch.md"].clone())
+            .collect::<BTreeSet<_>>(),
+        raw
+    );
+    for id in &analyses[..3] {
+        trace.finish_handoff(id, 1);
+    }
     trace.blocked("assemble-candidate-universe");
     let delayed = &analyses[3];
     trace.start(delayed);
@@ -548,7 +670,13 @@ fn naming_pass(trace: &mut Trace, frame: &str) -> BTreeSet<String> {
     trace.bound(&decision, "approved-shortlist.md", BTreeSet::from([trace.output(&shortlist, "approved-shortlist.md")]));
     assert_eq!(trace.state.executions[&decision].permission, CompletionPermission::Locked);
     trace.finish_handoff(&decision, 1);
-    generators.iter().chain(&analyses).chain(&rankers).chain(&diligence).flat_map(|id| trace.outputs(id)).collect()
+    generators
+        .iter()
+        .chain(&analyses)
+        .chain(&rankers)
+        .chain(&diligence)
+        .flat_map(|id| trace.outputs(id))
+        .collect()
 }
 
 #[test]
@@ -580,8 +708,11 @@ fn independent_lanes(
     let b = trace.queued(workers[1]);
     assert_eq!(a.len(), 2);
     assert_eq!(b.len(), 2);
-    let members = |ids: &[String]| ids.iter().map(|id|
-        trace.state.executions[id].candidate.each_member_id.clone().unwrap()).collect::<BTreeSet<_>>();
+    let members = |ids: &[String]| {
+        ids.iter()
+            .map(|id| trace.state.executions[id].candidate.each_member_id.clone().unwrap())
+            .collect::<BTreeSet<_>>()
+    };
     assert_eq!(members(&a), members(&b));
     let (a, merge_a) = trace.batch(workers[0], 2, aggregates[0], selectors[0]);
     trace.finish_handoff(&merge_a, 1);
@@ -619,19 +750,25 @@ fn evidence_pass(trace: &mut Trace, method: &str) -> BTreeSet<String> {
     let (searches, merge) = trace.batch("run-one-search", 2, "merge-search-wave", "search-results/*.md");
     trace.finish_handoff(&merge, 1);
     let screening = trace.step("prepare-screening-wave", 2);
-    let (title, mut raw) = independent_lanes(trace,
+    let (title, mut raw) = independent_lanes(
+        trace,
         ["screen-title-abstract-a", "screen-title-abstract-b"],
         ["aggregate-title-a", "aggregate-title-b"],
         ["title-screen-a/*.md", "title-screen-b/*.md"],
-        ["title-a-complete.md", "title-b-complete.md"], "resolve-title-abstract-wave");
+        ["title-a-complete.md", "title-b-complete.md"],
+        "resolve-title-abstract-wave",
+    );
     assert_eq!(trace.state.executions[&title].permission, CompletionPermission::Locked);
     trace.finish_handoff(&title, 1);
     trace.step("retrieve-full-text", 2);
-    let (full_text, full_raw) = independent_lanes(trace,
+    let (full_text, full_raw) = independent_lanes(
+        trace,
         ["screen-full-text-a", "screen-full-text-b"],
         ["aggregate-full-text-a", "aggregate-full-text-b"],
         ["full-text-a/*.md", "full-text-b/*.md"],
-        ["full-text-a-complete.md", "full-text-b-complete.md"], "resolve-full-text-wave");
+        ["full-text-a-complete.md", "full-text-b-complete.md"],
+        "resolve-full-text-wave",
+    );
     trace.bound(&full_text, "candidate-ledger.md", BTreeSet::from([trace.output(&screening, "candidate-ledger.md")]));
     trace.finish_handoff(&full_text, 1);
     let audit = trace.one("audit-and-freeze-corpus");
@@ -651,17 +788,24 @@ fn evidence_pass(trace: &mut Trace, method: &str) -> BTreeSet<String> {
     trace.write_handoff(&extraction, 2);
     trace.accepted(&extraction);
     trace.exit(&extraction);
-    let (reconcile, extracted) = independent_lanes(trace,
+    let (reconcile, extracted) = independent_lanes(
+        trace,
         ["extract-and-code-a", "extract-and-code-b"],
         ["aggregate-extraction-a", "aggregate-extraction-b"],
         ["extraction-a/*.md", "extraction-b/*.md"],
-        ["extraction-a-complete.md", "extraction-b-complete.md"], "reconcile-study-evidence");
+        ["extraction-a-complete.md", "extraction-b-complete.md"],
+        "reconcile-study-evidence",
+    );
     trace.bound(&reconcile, "extraction-plan.md", BTreeSet::from([trace.output(&extraction, "extraction-plan.md")]));
     trace.finish_handoff(&reconcile, 2);
     trace.step("plan-synthesis", 2);
     let (synthesis, draft) = trace.batch("synthesize-unit", 2, "draft-review", "synthesis-results/*.md");
     trace.bound(&draft, "audited-corpus-ledger.md", BTreeSet::from([trace.output(&audit, "audited-corpus-ledger.md")]));
-    trace.bound(&draft, "approved-review-protocol.md", BTreeSet::from([trace.output(&validation, "approved-review-protocol.md")]));
+    trace.bound(
+        &draft,
+        "approved-review-protocol.md",
+        BTreeSet::from([trace.output(&validation, "approved-review-protocol.md")]),
+    );
     trace.start(&draft);
     trace.write_handoff(&draft, 1);
     trace.accepted(&draft);
@@ -706,7 +850,14 @@ fn bundled_catalog_ignores_legacy_without_rewriting_bytes() {
     let catalog = load_playbook_catalog(&trace.roots);
     assert_eq!(catalog.candidates.len(), 12);
     assert!(catalog.candidates.iter().all(|candidate| candidate.source.reference.scope == PlaybookScope::Bundled));
-    assert!(resolve_playbook(&trace.roots, &PlaybookRef { scope: PlaybookScope::Repo, key: "custom".into() }).is_err());
+    assert!(resolve_playbook(
+        &trace.roots,
+        &PlaybookRef {
+            scope: PlaybookScope::Repo,
+            key: "custom".into()
+        }
+    )
+    .is_err());
     assert!(read_execution_state(&trace.repo, "pre-v2-task").is_err());
     assert_eq!(fs::read(&registry).unwrap(), registry_bytes);
     assert_eq!(fs::read(&prompt).unwrap(), prompt_bytes);

@@ -47,6 +47,8 @@ use alinery_core::daemon_client;
 use alinery_core::daemon_client::DAEMON_OBSERVATION_TIMEOUT;
 use alinery_core::daemon_client::{format_daemon_timeout, read_socket_line, DaemonClient, DaemonSessionStatus, SocketReadError, DAEMON_CONTROL_TIMEOUT};
 use alinery_core::lockfile::{try_lock_exclusive, LockFile};
+#[cfg(test)]
+pub(crate) use alinery_core::write_task;
 use alinery_core::{alinery_app_lock_path, alinery_dir, ensure_harnesses_toml, login_shell_path, poller_action, DaemonCompat, PollerAction, PROTOCOL_VERSION};
 pub use alinery_core::{
     alineryd_lock_path,
@@ -71,8 +73,6 @@ use alinery_core::{configure_detached_process, file_content_id};
 pub(crate) use alinery_core::{write_bytes_atomic, write_owner_only_bytes};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter, Manager, State, UserAttentionType};
-#[cfg(test)]
-pub(crate) use alinery_core::write_task;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 

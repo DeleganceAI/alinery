@@ -258,7 +258,6 @@ pub fn task_worktree_is_clean(task: &Task) -> Result<bool, String> {
     worktree_clean(Path::new(&task.worktree))
 }
 
-
 fn validate_subtask_creation(repo: &Path, input: &CreateSubtaskInput) -> Result<ManagerContext, String> {
     let manager = resolve_subtask_manager(repo, &input.manager_session_id)?;
     if !manager.meta.subtask_slug.is_empty() {
@@ -303,8 +302,7 @@ pub fn create_subtask(repo: &Path, lane: &str, app_config_identity: &str, input:
     if state.creation != "ready" {
         return Err("sub-task parent provisioning is not ready".into());
     }
-    let source = fs::read_to_string(crate::execution::task_playbook_path(repo, &manager.owner_slug)?)
-        .map_err(|error| format!("read retained parent definition: {error}"))?;
+    let source = fs::read_to_string(crate::execution::task_playbook_path(repo, &manager.owner_slug)?).map_err(|error| format!("read retained parent definition: {error}"))?;
     if crate::execution::definition_identity(source.as_bytes()) != state.definition_identity {
         return Err("retained parent definition integrity mismatch".into());
     }
@@ -324,7 +322,10 @@ pub fn create_subtask(repo: &Path, lane: &str, app_config_identity: &str, input:
         github_issue: String::new(),
         related_tasks: Vec::new(),
         parent_task: manager.owner_slug.clone(),
-        playbook: input.playbook.clone().unwrap_or(TaskPlaybookPackage { reference: state.reference, source }),
+        playbook: input.playbook.clone().unwrap_or(TaskPlaybookPackage {
+            reference: state.reference,
+            source,
+        }),
         branch_name: Some(input.slug.clone()),
         worktree_name: Some(input.slug.clone()),
         base_ref: Some(base_ref.clone()),
@@ -341,10 +342,7 @@ pub fn create_subtask(repo: &Path, lane: &str, app_config_identity: &str, input:
         || {
             let current = validate_subtask_creation(repo, &input)?;
             let current_state = crate::execution::read_execution_state(repo, &current.owner_slug)?;
-            if current_state.owning_lane != lane
-                || current_state.owning_app_config_identity != app_config_identity
-                || current_state.creation != "ready"
-            {
+            if current_state.owning_lane != lane || current_state.owning_app_config_identity != app_config_identity || current_state.creation != "ready" {
                 return Err("sub-task parent ownership or provisioning changed during creation".into());
             }
             if current.owner_slug != manager.owner_slug || task_head(repo, &current.parent, true, "parent")? != base_ref {
@@ -878,7 +876,10 @@ mod tests {
             has_worktree: true,
             created: 1,
             engine_version: 2,
-            playbook_ref: Some(crate::playbook::PlaybookRef { scope: crate::playbook::PlaybookScope::Repo, key: "subtask-test".into() }),
+            playbook_ref: Some(crate::playbook::PlaybookRef {
+                scope: crate::playbook::PlaybookScope::Repo,
+                key: "subtask-test".into(),
+            }),
             ..Default::default()
         }
     }
@@ -913,9 +914,7 @@ mod tests {
         write_task_unlocked(&repo, &parent).unwrap();
         let source = retained_source();
         fs::write(crate::execution::task_playbook_path(&repo, "a").unwrap(), source).unwrap();
-        let mut state = crate::execution::new_execution_state(
-            parent.playbook_ref.clone().unwrap(), source, "lane".into(), 10, BTreeSet::new(), Default::default(),
-        ).unwrap();
+        let mut state = crate::execution::new_execution_state(parent.playbook_ref.clone().unwrap(), source, "lane".into(), 10, BTreeSet::new(), Default::default()).unwrap();
         state.creation = "ready".into();
         state.owning_app_config_identity = "config".into();
         crate::execution::write_execution_state_unlocked(&repo, "a", &mut state).unwrap();
@@ -1182,13 +1181,18 @@ mod tests {
             ..Default::default()
         };
         write_meta_atomic(&session_meta_path(&repo, "b", "manager-b"), &serde_json::to_value(&nested_manager).unwrap()).unwrap();
-        create_subtask(&repo, "lane", "config", CreateSubtaskInput {
-            manager_session_id: "manager-b".into(),
-            name: "Grandchild C".into(),
-            slug: "c".into(),
-            instructions: String::new(),
-            ..Default::default()
-        })
+        create_subtask(
+            &repo,
+            "lane",
+            "config",
+            CreateSubtaskInput {
+                manager_session_id: "manager-b".into(),
+                name: "Grandchild C".into(),
+                slug: "c".into(),
+                instructions: String::new(),
+                ..Default::default()
+            },
+        )
         .unwrap();
         let grandchild = read_task(&repo, "c").unwrap();
         let ordinary = SessionMeta {

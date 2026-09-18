@@ -48,25 +48,27 @@ const sourceBoardTask: BoardTask = {
 
 const duplicateResult = (slug = "source-2", harness = "claude"): CreateTaskResult => ({
   task: { ...sourceTask, slug, branch: slug, worktree: `/repo-b/.alinery/worktrees/${slug}` },
-  sessions: [{
-    id: `s-${slug}`,
-    worktree: `/repo-b/.alinery/worktrees/${slug}`,
-    created: 2,
-    archived: false,
-    phase: "implement",
-    harness,
-    model: "model-a",
-    playbook: "superdevelop",
-    generic: false,
-    artifact: "",
-    handoff_artifact: "",
-    prompt_extra: "",
-    prompt: null,
-    started_at: null,
-    ended_at: null,
-    exit_code: null,
-    harness_resume_token: "",
-  }],
+  sessions: [
+    {
+      id: `s-${slug}`,
+      worktree: `/repo-b/.alinery/worktrees/${slug}`,
+      created: 2,
+      archived: false,
+      phase: "implement",
+      harness,
+      model: "model-a",
+      playbook: "superdevelop",
+      generic: false,
+      artifact: "",
+      handoff_artifact: "",
+      prompt_extra: "",
+      prompt: null,
+      started_at: null,
+      ended_at: null,
+      exit_code: null,
+      harness_resume_token: "",
+    },
+  ],
   executions: [],
   creation: "ready",
   start: "started",
@@ -212,7 +214,11 @@ describe("App duplicate coordinator", () => {
 
   it("keeps the source available when the backend returns no task", async () => {
     mocks.duplicateTaskForRepo.mockResolvedValue({
-      task: null, sessions: [], executions: [], creation: "partial", start: "not_requested",
+      task: null,
+      sessions: [],
+      executions: [],
+      creation: "partial",
+      start: "not_requested",
       errors: [{ stage: "copy", code: "copy_failed", message: "source unavailable" }],
     } satisfies CreateTaskResult);
     const { default: App } = await import("./App");

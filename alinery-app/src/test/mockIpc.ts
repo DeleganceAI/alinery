@@ -22,21 +22,50 @@ const NOT_COMMANDS = new Set(["then", "catch", "finally", "__esModule"]);
 
 export function mockIpc(overrides: Partial<typeof Ipc> = {}): typeof Ipc {
   const cache = new Map<string, unknown>([
-    ["listPlaybookCatalog", vi.fn(async (): Promise<PlaybookCatalog> => ({
-      candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [],
-    }))],
-    ["getTaskExecution", vi.fn(async (): Promise<TaskExecutionReply> => ({
-      state: {
-        version: 2, revision: 0, creation: "ready", creation_error: null, owning_lane: "test",
-        definition_identity: "test-snapshot", reference: { scope: "bundled", key: "superdevelop" },
-        max_live_sessions: 1, enabled_steps: [], launch_defaults: { harness: "omp", model: "" },
-        executions: {}, occurrences: {}, contexts: {}, collections: {},
-      },
-      definition: {
-        version: 2, key: "superdevelop", title: "SuperDevelop", description: "", default_model: "",
-        default_harness: "omp", step: [], preamble: "", section_order: [],
-      },
-    }))],
+    [
+      "listPlaybookCatalog",
+      vi.fn(
+        async (): Promise<PlaybookCatalog> => ({
+          candidates: [],
+          picker_preferences: { order: [], entries: [] },
+          diagnostics: [],
+        }),
+      ),
+    ],
+    [
+      "getTaskExecution",
+      vi.fn(
+        async (): Promise<TaskExecutionReply> => ({
+          state: {
+            version: 2,
+            revision: 0,
+            creation: "ready",
+            creation_error: null,
+            owning_lane: "test",
+            definition_identity: "test-snapshot",
+            reference: { scope: "bundled", key: "superdevelop" },
+            max_live_sessions: 1,
+            enabled_steps: [],
+            launch_defaults: { harness: "omp", model: "" },
+            executions: {},
+            occurrences: {},
+            contexts: {},
+            collections: {},
+          },
+          definition: {
+            version: 2,
+            key: "superdevelop",
+            title: "SuperDevelop",
+            description: "",
+            default_model: "",
+            default_harness: "omp",
+            step: [],
+            preamble: "",
+            section_order: [],
+          },
+        }),
+      ),
+    ],
   ]);
   return new Proxy({} as typeof Ipc, {
     get(_target, prop: string | symbol) {

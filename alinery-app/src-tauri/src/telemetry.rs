@@ -17,4 +17,3 @@ pub(crate) fn emit_with(app: &AppHandle, build: impl FnOnce() -> alinery_core::T
     let Ok(path) = app_config_path(app) else { return };
     alinery_core::record_event_with(&path, build);
 }
-

@@ -6,31 +6,96 @@ import type { BoardTask, NormalizedPlaybook, ReviewHandoffResult, ScopedSettings
 import { ReviewHandoffPage } from "./ReviewHandoffPage";
 
 const sourceTask = {
-  name: "Source", slug: "shared", requested_slug: "shared", parent_task: "", active_subtask: "",
-  branch: "source", worktree: "/w/source", has_worktree: true, created: 1, archived: false,
-  pr_url: "", linear_id: "", github_issue: "", playbook: "superdevelop", draft: false,
-  auto_advance: [], repo_path: "/a", session_count: 0, playbook_title: "SuperDevelop",
-  updated: 1, current_phase: "research", current_step_title: "Research", current_column_key: "research-design",
-  current_column_title: "Research & Design", latest_session_title: "", latest_session_column_key: "",
+  name: "Source",
+  slug: "shared",
+  requested_slug: "shared",
+  parent_task: "",
+  active_subtask: "",
+  branch: "source",
+  worktree: "/w/source",
+  has_worktree: true,
+  created: 1,
+  archived: false,
+  pr_url: "",
+  linear_id: "",
+  github_issue: "",
+  playbook: "superdevelop",
+  draft: false,
+  auto_advance: [],
+  repo_path: "/a",
+  session_count: 0,
+  playbook_title: "SuperDevelop",
+  updated: 1,
+  current_phase: "research",
+  current_step_title: "Research",
+  current_column_key: "research-design",
+  current_column_title: "Research & Design",
+  latest_session_title: "",
+  latest_session_column_key: "",
 } as BoardTask;
 const foreignTask: BoardTask = { ...sourceTask, name: "Foreign shared", repo_path: "/b", worktree: "/w/foreign" };
 const otherTask: BoardTask = { ...foreignTask, name: "Other", slug: "other", worktree: "/w/other" };
 const definition: NormalizedPlaybook = {
-  version: 2, key: "retained", title: "Retained", description: "", default_model: "", default_harness: "omp", preamble: "", section_order: ["repair"],
-  step: [{ key: "repair", title: "Retained repair", short: "", inputs: [], outputs: [{ path: "repair.md" }], model: "", harness: "", is_coding_step: true, auto_advance_default: false, prompt: "Repair the findings." }],
+  version: 2,
+  key: "retained",
+  title: "Retained",
+  description: "",
+  default_model: "",
+  default_harness: "omp",
+  preamble: "",
+  section_order: ["repair"],
+  step: [
+    {
+      key: "repair",
+      title: "Retained repair",
+      short: "",
+      inputs: [],
+      outputs: [{ path: "repair.md" }],
+      model: "",
+      harness: "",
+      is_coding_step: true,
+      auto_advance_default: false,
+      prompt: "Repair the findings.",
+    },
+  ],
 };
 const handoffRecord = {
-  version: 1, direction: "outbound", source_task: "shared", source_session: "s1", source_artifact: "review/3-findings-1.md",
-  target_task: "shared", target_artifact: "review-handoff-001.md", target_session: "target-session", target_phase: "repair", created_at_ms: 1,
+  version: 1,
+  direction: "outbound",
+  source_task: "shared",
+  source_session: "s1",
+  source_artifact: "review/3-findings-1.md",
+  target_task: "shared",
+  target_artifact: "review-handoff-001.md",
+  target_session: "target-session",
+  target_phase: "repair",
+  created_at_ms: 1,
 };
 const handoffResult: ReviewHandoffResult = {
-  target_repo_path: "/b", target_artifact: "review-handoff-001.md", start: "not_requested", errors: [],
-  target_session: { id: "target-session", worktree: "/w/foreign", created: 1, archived: false, phase: "repair",
-    harness: "omp", model: "", playbook: "", generic: false, harness_resume_token: "" },
-  source_record: handoffRecord, target_record: { ...handoffRecord, direction: "inbound" },
+  target_repo_path: "/b",
+  target_artifact: "review-handoff-001.md",
+  start: "not_requested",
+  errors: [],
+  target_session: {
+    id: "target-session",
+    worktree: "/w/foreign",
+    created: 1,
+    archived: false,
+    phase: "repair",
+    harness: "omp",
+    model: "",
+    playbook: "",
+    generic: false,
+    harness_resume_token: "",
+  },
+  source_record: handoffRecord,
+  target_record: { ...handoffRecord, direction: "inbound" },
 };
 const mocks = vi.hoisted(() => ({
-  listBoardTasks: vi.fn(), readScopedSettingsForRepo: vi.fn(), getTaskExecution: vi.fn(), sendReviewHandoff: vi.fn(),
+  listBoardTasks: vi.fn(),
+  readScopedSettingsForRepo: vi.fn(),
+  getTaskExecution: vi.fn(),
+  sendReviewHandoff: vi.fn(),
 }));
 vi.mock("../ipc", async () => {
   // The hoisted IPC factory runs before shared.tsx finishes importing its dependencies.
@@ -47,7 +112,15 @@ beforeEach(() => {
 afterEach(cleanup);
 
 function renderPage(onConfirmed = vi.fn()) {
-  return render(<ReviewHandoffPage source={{ source_repo_path: "/a", source_slug: "shared", source_session: "s1", source_artifact: "review/3-findings-1.md" }} allRepos activeRepo="/a" onCancel={() => {}} onConfirmed={onConfirmed} />);
+  return render(
+    <ReviewHandoffPage
+      source={{ source_repo_path: "/a", source_slug: "shared", source_session: "s1", source_artifact: "review/3-findings-1.md" }}
+      allRepos
+      activeRepo="/a"
+      onCancel={() => {}}
+      onConfirmed={onConfirmed}
+    />,
+  );
 }
 async function selectTarget(task: BoardTask = foreignTask) {
   await screen.findByRole("option", { name: new RegExp(task.name) });
@@ -77,7 +150,9 @@ describe("ReviewHandoffPage", () => {
 
   it("keeps a created session inspectable when the handoff reports a partial failure", async () => {
     const result: ReviewHandoffResult = {
-      ...handoffResult, start: "failed", errors: [{ stage: "launch", code: "launch_failed", message: "Runner unavailable" }],
+      ...handoffResult,
+      start: "failed",
+      errors: [{ stage: "launch", code: "launch_failed", message: "Runner unavailable" }],
     };
     mocks.sendReviewHandoff.mockResolvedValue(result);
     const onConfirmed = vi.fn();

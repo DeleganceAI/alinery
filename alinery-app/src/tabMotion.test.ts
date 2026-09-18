@@ -37,9 +37,7 @@ describe("applyTabPill", () => {
   });
 });
 
-
 describe("primaryTabOf", () => {
-
   it("resolves a drill-down view to the tab it was opened from", () => {
     const task: View = { kind: "task", slug: "s", from: { kind: "list" } };
     expect(primaryTabOf(task)).toBe("list");

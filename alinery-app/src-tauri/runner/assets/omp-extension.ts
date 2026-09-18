@@ -539,11 +539,7 @@ export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompl
         });
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
-        return completionToolResult(
-          "delivery_failed",
-          `Alinery could not confirm phase completion: ${reason}. Retry after the Alinery daemon is available.`,
-          { reason },
-        );
+        return completionToolResult("delivery_failed", `Alinery could not confirm phase completion: ${reason}. Retry after the Alinery daemon is available.`, { reason });
       }
       if (outcome.status === "accepted") {
         if (shutdownSessionId !== sessionId) {
@@ -556,11 +552,17 @@ export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompl
         return completionToolResult(outcome.status, "Human authorization is required. Ask the user to allow this session to complete in Alinery; keep this session open.");
       }
       if (outcome.status === "invalid_outputs") {
-        return completionToolResult(outcome.status, `Required outputs need correction:\n${outcome.diagnostics.join("\n")}\nCorrect them before calling alinery_phase_complete again.`, {
-          diagnostics: outcome.diagnostics,
-        });
+        return completionToolResult(
+          outcome.status,
+          `Required outputs need correction:\n${outcome.diagnostics.join("\n")}\nCorrect them before calling alinery_phase_complete again.`,
+          {
+            diagnostics: outcome.diagnostics,
+          },
+        );
       }
-      return completionToolResult("rejected", `Alinery rejected phase completion: ${outcome.reason}. Keep this session open and resolve the ownership or protocol error.`, { reason: outcome.reason });
+      return completionToolResult("rejected", `Alinery rejected phase completion: ${outcome.reason}. Keep this session open and resolve the ownership or protocol error.`, {
+        reason: outcome.reason,
+      });
     },
   });
 

@@ -182,7 +182,10 @@ pub fn encode_base64(bytes: &[u8]) -> String {
 
 /// Attachment JSON uses only a canonical base64 string, never a byte array.
 pub mod base64_bytes {
-    use serde::{de::{Error, Visitor}, Deserializer, Serializer};
+    use serde::{
+        de::{Error, Visitor},
+        Deserializer, Serializer,
+    };
 
     pub fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&super::encode_base64(bytes))
@@ -224,8 +227,11 @@ mod tests {
     #[test]
     fn base64_standard_vectors_and_arbitrary_bytes_roundtrip() {
         for (bytes, encoded) in [
-            (&b""[..], ""), (&b"f"[..], "Zg=="), (&b"fo"[..], "Zm8="),
-            (&b"foo"[..], "Zm9v"), (&[0, 255, 128, 10][..], "AP+ACg=="),
+            (&b""[..], ""),
+            (&b"f"[..], "Zg=="),
+            (&b"fo"[..], "Zm8="),
+            (&b"foo"[..], "Zm9v"),
+            (&[0, 255, 128, 10][..], "AP+ACg=="),
         ] {
             assert_eq!(encode_base64(bytes), encoded);
             assert_eq!(decode_base64(encoded).unwrap(), bytes);
@@ -244,12 +250,9 @@ mod tests {
             assert!(decode_base64(encoded).is_err(), "{encoded:?}");
         }
         for bytes in [serde_json::json!([0, 255]), serde_json::json!(" Zg=="), serde_json::json!("Zh==")] {
-            assert!(serde_json::from_value::<crate::task_creation::TaskAttachment>(
-                serde_json::json!({"name":"bad.bin","bytes":bytes})
-            ).is_err());
+            assert!(serde_json::from_value::<crate::task_creation::TaskAttachment>(serde_json::json!({"name":"bad.bin","bytes":bytes})).is_err());
         }
-        let attachment: crate::task_creation::TaskAttachment =
-            serde_json::from_str(r#"{"name":"empty.bin","bytes":""}"#).unwrap();
+        let attachment: crate::task_creation::TaskAttachment = serde_json::from_str(r#"{"name":"empty.bin","bytes":""}"#).unwrap();
         assert!(attachment.bytes.is_empty());
     }
 

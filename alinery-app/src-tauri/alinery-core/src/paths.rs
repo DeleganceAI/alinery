@@ -126,7 +126,6 @@ pub fn harnesses_toml_path(repo: &Path) -> PathBuf {
     alinery_dir(repo).join("harnesses.toml")
 }
 
-
 pub fn playbooks_dir(repo: &Path) -> PathBuf {
     alinery_dir(repo).join("playbooks")
 }

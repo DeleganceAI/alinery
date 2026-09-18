@@ -445,7 +445,6 @@ function randomGridConfig(random: RandomSource): GridConfig {
   };
 }
 
-
 function ageIn(epochSeconds: number, unitSeconds: number) {
   if (!epochSeconds) return 0;
   return Math.max(0, Math.floor((Date.now() / 1000 - epochSeconds) / unitSeconds));
@@ -523,8 +522,13 @@ function stagePath(fact: TaskFacts, executions: Record<string, TaskExecutionRepl
       label: step.short || step.title || step.key,
       active: Boolean(counts?.has("starting") || counts?.has("running") || counts?.has("finishing")),
       summary: counts
-        ? [...counts].sort(([left], [right]) => left.localeCompare(right)).map(([state, count]) => `${count} ${state.replace(/_/g, " ")}`).join(", ")
-        : execution?.state.enabled_steps.includes(step.key) ? "Not started" : "Disabled",
+        ? [...counts]
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([state, count]) => `${count} ${state.replace(/_/g, " ")}`)
+            .join(", ")
+        : execution?.state.enabled_steps.includes(step.key)
+          ? "Not started"
+          : "Not started · Human completion required",
     };
   });
   const current = fact.task.current_phase || "";
@@ -803,11 +807,9 @@ export function Grid({
       );
       loading = false;
       if (!alive) return;
-      setExecutions(Object.fromEntries(entries.flatMap(({ ref, execution }) => execution ? [[ref.key, execution]] : [])));
+      setExecutions(Object.fromEntries(entries.flatMap(({ ref, execution }) => (execution ? [[ref.key, execution]] : []))));
       const failures = entries.filter((entry) => entry.execution === null);
-      setExecutionErr(
-        failures.length ? `Couldn't load task executions. ${failures.map(({ ref, error }) => `${ref.repoPath}:${ref.slug}: ${error}`).join("; ")}` : "",
-      );
+      setExecutionErr(failures.length ? `Couldn't load task executions. ${failures.map(({ ref, error }) => `${ref.repoPath}:${ref.slug}: ${error}`).join("; ")}` : "");
     };
     void loadExecutions();
     const timer = window.setInterval(loadExecutions, 3000);
@@ -1175,13 +1177,19 @@ export function Grid({
             <>
               {visualCells.map((cell, visualIndex) => {
                 const semanticIndex = semanticCells.findIndex((candidate) => candidate.key === cell.key);
-                const showLabel = config.progress === "stage"
-                  ? config.path === "all" || (config.path === "next" && cell.active)
-                  : semanticIndex !== currentSemanticIndex && (config.path === "all" || (config.path === "next" && semanticIndex === currentSemanticIndex + 1));
+                const showLabel =
+                  config.progress === "stage"
+                    ? config.path === "all" || (config.path === "next" && cell.active)
+                    : semanticIndex !== currentSemanticIndex && (config.path === "all" || (config.path === "next" && semanticIndex === currentSemanticIndex + 1));
                 if (!showLabel) return null;
                 return (
-                  <span key={cell.key} className="task-grid-lane-step" style={{ gridColumn: visualIndex + 1, gridRow: config.progress === "stage" ? "1" : undefined, opacity: config.progress === "stage" ? 1 : undefined }}>
-                    {cell.label}{cell.summary ? ` · ${cell.summary}` : ""}
+                  <span
+                    key={cell.key}
+                    className="task-grid-lane-step"
+                    style={{ gridColumn: visualIndex + 1, gridRow: config.progress === "stage" ? "1" : undefined, opacity: config.progress === "stage" ? 1 : undefined }}
+                  >
+                    {cell.label}
+                    {cell.summary ? ` · ${cell.summary}` : ""}
                   </span>
                 );
               })}
@@ -1285,9 +1293,29 @@ export function Grid({
             {config.position === "lanes" && (
               <>
                 <SelectField label="Progress by" value={config.progress} options={PROGRESS_OPTIONS} onChange={(value) => setField("progress", value as ProgressField)} />
-                <SelectField label={config.progress === "stage" ? "Display direction" : "Forward direction"} value={config.direction} options={DIRECTION_OPTIONS} onChange={(value) => setField("direction", value as Direction)} />
-                {config.progress !== "stage" && <SelectField label="Movement memory" value={config.memory} options={MEMORY_OPTIONS} onChange={(value) => setField("memory", value as MovementMemory)} />}
-                <SelectField label="Path labels" value={config.path} options={config.progress === "stage" ? [{ value: "all", label: "All steps" }, { value: "next", label: "Active steps" }, { value: "none", label: "None" }] : PATH_OPTIONS} onChange={(value) => setField("path", value as PathLabels)} />
+                <SelectField
+                  label={config.progress === "stage" ? "Display direction" : "Forward direction"}
+                  value={config.direction}
+                  options={DIRECTION_OPTIONS}
+                  onChange={(value) => setField("direction", value as Direction)}
+                />
+                {config.progress !== "stage" && (
+                  <SelectField label="Movement memory" value={config.memory} options={MEMORY_OPTIONS} onChange={(value) => setField("memory", value as MovementMemory)} />
+                )}
+                <SelectField
+                  label="Path labels"
+                  value={config.path}
+                  options={
+                    config.progress === "stage"
+                      ? [
+                          { value: "all", label: "All steps" },
+                          { value: "next", label: "Active steps" },
+                          { value: "none", label: "None" },
+                        ]
+                      : PATH_OPTIONS
+                  }
+                  onChange={(value) => setField("path", value as PathLabels)}
+                />
               </>
             )}
             <SelectField label="Group by" value={config.group} options={GROUP_OPTIONS} onChange={(value) => setField("group", value as GroupField)} />
@@ -1502,7 +1530,13 @@ export function Grid({
             </span>
           </div>
           <div className="task-grid-legend-note">
-            <span>{config.position === "lanes" ? config.progress === "stage" ? "counts = recorded execution states, not step order" : `movement = ${optionLabel(MEMORY_OPTIONS, config.memory)}` : `brightness = ${optionLabel(BRIGHTNESS_OPTIONS, config.fade)}`}</span>
+            <span>
+              {config.position === "lanes"
+                ? config.progress === "stage"
+                  ? "counts = recorded execution states, not step order"
+                  : `movement = ${optionLabel(MEMORY_OPTIONS, config.memory)}`
+                : `brightness = ${optionLabel(BRIGHTNESS_OPTIONS, config.fade)}`}
+            </span>
             <span>click any task to open</span>
           </div>
         </section>

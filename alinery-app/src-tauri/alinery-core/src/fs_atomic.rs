@@ -33,7 +33,10 @@ pub fn write_bytes_durable(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::create_dir_all(parent).map_err(|e| format!("create durable parent: {e}"))?;
     let tmp = atomic_tmp_path(path);
     let before_rename = (|| {
-        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&tmp)
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
             .map_err(|e| format!("create durable temporary file: {e}"))?;
         file.write_all(bytes).map_err(|e| format!("write durable temporary file: {e}"))?;
         file.sync_all().map_err(|e| format!("sync durable temporary file: {e}"))?;
@@ -44,7 +47,8 @@ pub fn write_bytes_durable(path: &Path, bytes: &[u8]) -> Result<(), String> {
         let _ = fs::remove_file(&tmp);
         return Err(error);
     }
-    fs::File::open(parent).and_then(|dir| dir.sync_all())
+    fs::File::open(parent)
+        .and_then(|dir| dir.sync_all())
         .map_err(|e| format!("ambiguous persistence after rename of {} (parent sync failed): {e}", path.display()))
 }
 

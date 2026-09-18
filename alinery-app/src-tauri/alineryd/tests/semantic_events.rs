@@ -10,10 +10,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use alinery_core::{SessionMeta, RUNNER_EVENT_PROTOCOL_VERSION};
 use alinery_core::daemon_client::DaemonClient;
-use alinery_core::task_creation::{CreateTaskRequest, CreateExecutionSessionRequest, ExecutionSessionTarget, StartSessionRequest, GetTaskExecutionRequest};
 use alinery_core::execution::{CompletionOutcome, ExecutionLifecycle, ExecutionRecord};
+use alinery_core::task_creation::{CreateExecutionSessionRequest, CreateTaskRequest, ExecutionSessionTarget, GetTaskExecutionRequest, StartSessionRequest};
+use alinery_core::{SessionMeta, RUNNER_EVENT_PROTOCOL_VERSION};
 use serde_json::{json, Value};
 static ROOT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -85,8 +85,20 @@ impl Fixture {
     fn new() -> Self {
         let root = unique_root();
         fs::create_dir_all(root.join(".alinery")).unwrap();
-        for args in [vec!["init", "-q"], vec!["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "fixture"]] {
-            assert!(Command::new("git").args(args).current_dir(&root).status().unwrap().success());
+        for args in [
+            vec!["init", "-q"],
+            vec![
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "fixture",
+            ],
+        ] {
+            assert!(alinery_core::git_cmd(&root).args(args).status().unwrap().success());
         }
         fs::write(root.join("host-executable"), b"host fixture").unwrap();
         let mut host_permissions = fs::metadata(root.join("host-executable")).unwrap().permissions();
@@ -234,7 +246,8 @@ Read the assigned input and write the assigned target output.
             "playbook": {"reference": {"scope": "repo", "key": "semantic"}, "source": source},
             "auto_advance_steps": if automatic { vec!["source", "target"] } else { vec!["target"] },
             "start": false
-        })).unwrap();
+        }))
+        .unwrap();
         let reply = self.client().create_task(&request).unwrap();
         assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
         assert!(reply.errors.is_empty(), "{:?}", reply.errors);
@@ -246,15 +259,30 @@ Read the assigned input and write the assigned target output.
     }
 
     fn auxiliary(&self, task_slug: &str, harness: &str, prompt: Option<&str>) -> SessionMeta {
-        self.client().create_execution_session(&CreateExecutionSessionRequest {
-            task_slug: task_slug.into(),
-            target: ExecutionSessionTarget::Auxiliary { harness: harness.into(), model: None, prompt: prompt.map(str::to_owned) },
-            launch_override: None, prompt_extra: None, start: false,
-        }).unwrap().session
+        self.client()
+            .create_execution_session(&CreateExecutionSessionRequest {
+                task_slug: task_slug.into(),
+                target: ExecutionSessionTarget::Auxiliary {
+                    harness: harness.into(),
+                    model: None,
+                    prompt: prompt.map(str::to_owned),
+                },
+                launch_override: None,
+                prompt_extra: None,
+                handoff_artifact: None,
+                start: false,
+            })
+            .unwrap()
+            .session
     }
 
     fn start_response(&self, task_slug: &str, session: &SessionMeta) -> alinery_core::task_creation::CreateExecutionSessionReply {
-        self.client().start_session(&StartSessionRequest { task_slug: task_slug.into(), session_id: session.id.clone() }).unwrap()
+        self.client()
+            .start_session(&StartSessionRequest {
+                task_slug: task_slug.into(),
+                session_id: session.id.clone(),
+            })
+            .unwrap()
     }
 
     fn start(&self, task_slug: &str, session: &SessionMeta) {
@@ -264,8 +292,11 @@ Read the assigned input and write the assigned target output.
     }
 
     fn meta_path(&self, task_slug: &str, session: &SessionMeta) -> PathBuf {
-        if task_slug.is_empty() { self.root.join(format!(".alinery/sessions/{}.meta.json", session.id)) }
-        else { self.root.join(format!(".alinery/tasks/{task_slug}/sessions/{}.meta.json", session.id)) }
+        if task_slug.is_empty() {
+            self.root.join(format!(".alinery/sessions/{}.meta.json", session.id))
+        } else {
+            self.root.join(format!(".alinery/tasks/{task_slug}/sessions/{}.meta.json", session.id))
+        }
     }
 
     fn state(&self) -> alinery_core::task_creation::TaskExecutionReply {
@@ -295,7 +326,13 @@ Read the assigned input and write the assigned target output.
     }
 
     fn target(&self) -> ExecutionRecord {
-        wait_until(Duration::from_secs(8), || self.state().state.executions.values().any(|e| e.candidate.step_key == "target" && e.lifecycle == ExecutionLifecycle::Running));
+        wait_until(Duration::from_secs(8), || {
+            self.state()
+                .state
+                .executions
+                .values()
+                .any(|e| e.candidate.step_key == "target" && e.lifecycle == ExecutionLifecycle::Running)
+        });
         self.state().state.executions.into_values().find(|e| e.candidate.step_key == "target").unwrap()
     }
 
@@ -406,7 +443,10 @@ fn overlay_omp(root: &Path, contents: &str) {
 fn accepted_receipt(response: &Value) -> String {
     assert_eq!(response["ok"], true, "{response}");
     match serde_json::from_value::<CompletionOutcome>(response["completion"].clone()).unwrap() {
-        CompletionOutcome::Accepted { receipt_id } => { assert!(!receipt_id.is_empty()); receipt_id },
+        CompletionOutcome::Accepted { receipt_id } => {
+            assert!(!receipt_id.is_empty());
+            receipt_id
+        }
         other => panic!("expected accepted completion: {other:?}"),
     }
 }
@@ -435,7 +475,10 @@ fn protected_host_reaches_only_omp_runner_launches() {
     let source = fixture.create_task(true);
     fixture.start("task", &source);
     assert_eq!(fixture.host_for(&source.id), fixture.host.to_string_lossy());
-    assert!(!fixture.rpc(json!({"op":"status", "id":source.id})).to_string().contains(fixture.host.to_string_lossy().as_ref()));
+    assert!(!fixture
+        .rpc(json!({"op":"status", "id":source.id}))
+        .to_string()
+        .contains(fixture.host.to_string_lossy().as_ref()));
 
     // Resume launch of a newly created auxiliary owner retains the protected boundary.
     let auxiliary = fixture.auxiliary("task", "omp", None);
@@ -443,7 +486,9 @@ fn protected_host_reaches_only_omp_runner_launches() {
     assert_eq!(resumed["ok"], true, "{resumed}");
     assert!(!resumed.to_string().contains(fixture.host.to_string_lossy().as_ref()));
     assert_eq!(fixture.host_for(&auxiliary.id), fixture.host.to_string_lossy());
-    overlay_omp(&fixture.root, r#"
+    overlay_omp(
+        &fixture.root,
+        r#"
 [[harness]]
 key = "omp"
 name = "Unsupported fixture"
@@ -452,13 +497,17 @@ args = ["-c", "printf '%s' \"$ALINERY_HOST_EXECUTABLE\" > \"{worktree}/unsupport
 model_arg = []
 prompt_injection = "arg"
 adapter = "unsupported"
-"#);
+"#,
+    );
     let unsupported = fixture.auxiliary("task", "omp", None);
     fixture.start("task", &unsupported);
     let capture = Path::new(&unsupported.worktree).join("unsupported-host");
     wait_until(Duration::from_secs(5), || capture.exists());
     assert_eq!(fs::read_to_string(capture).unwrap(), "");
-    assert!(!fs::read_to_string(&fixture.capture).unwrap().lines().any(|line| line.starts_with(&format!("{}\t", unsupported.id))));
+    assert!(!fs::read_to_string(&fixture.capture)
+        .unwrap()
+        .lines()
+        .any(|line| line.starts_with(&format!("{}\t", unsupported.id))));
 
     fixture.shell = Some(fixture.root.join("no-harness-shell"));
     fixture.restart();
@@ -483,7 +532,9 @@ fn missing_protected_host_rejects_only_omp_launches() {
     let resumed = fixture.rpc(json!({"op":"resume", "id":auxiliary.id, "task_slug":"task", "resume_token":"resume-token"}));
     assert!(resumed["error"].is_string());
     assert_eq!(fixture.rpc(json!({"op":"status", "id":auxiliary.id}))["error"], "unknown-session");
-    overlay_omp(&fixture.root, r#"
+    overlay_omp(
+        &fixture.root,
+        r#"
 [[harness]]
 key = "omp"
 name = "Unsupported fixture"
@@ -492,7 +543,8 @@ args = ["-c", "sleep 30"]
 model_arg = []
 prompt_injection = "arg"
 adapter = "unsupported"
-"#);
+"#,
+    );
     let direct = fixture.auxiliary("task", "omp", None);
     fixture.start("task", &direct);
     assert_eq!(fixture.rpc(json!({"op":"status", "id":direct.id}))["adapter"], "unsupported");
@@ -507,16 +559,38 @@ fn phase_less_generic_omp_spawn_keeps_seed_without_completion_contract() {
     let fixture = Fixture::new();
     fixture.create_task(true);
     let session = fixture.auxiliary("task", "omp", Some("Keep this auxiliary seed."));
+    overlay_omp(
+        &fixture.root,
+        r#"[[harness]]
+key = "omp"
+name = "OMP seed fixture"
+binary = "sh"
+args = ["-c", '''printf '%s\n' '{"type":"ready"}'; while IFS= read -r line; do printf '%s\n' "$line" >> "$ALINERY_REPO/seed.$ALINERY_SESSION_ID"; done''']
+model_arg = []
+prompt_injection = "arg"
+adapter = "omp"
+"#,
+    );
     fixture.start("task", &session);
-    let args_path = fixture.root.join(format!("runner-events.tsv.{}.args", session.id));
-    wait_until(Duration::from_secs(5), || fs::read_to_string(&args_path).is_ok_and(|text| text.contains("Keep this auxiliary seed.")));
+    let args_path = fixture.root.join(format!("seed.{}", session.id));
+    wait_until(Duration::from_secs(5), || {
+        fs::read_to_string(&args_path).is_ok_and(|text| text.contains("Keep this auxiliary seed."))
+    });
     let args = fs::read_to_string(args_path).unwrap();
     assert!(!args.contains("alinery_phase_complete"), "auxiliary sessions cannot complete an execution: {args}");
     let status = fixture.rpc(json!({"op":"status", "id":session.id}));
     assert_eq!(status["process"]["state"], "alive");
     assert_eq!(status["adapter"], "omp");
-    assert_eq!(fs::read_to_string(fixture.root.join(format!("runner-events.tsv.{}.repo", session.id))).unwrap().trim(), fixture.root.to_string_lossy());
-    assert_eq!(fs::read_to_string(fixture.root.join(format!("runner-events.tsv.{}.app-config", session.id))).unwrap().trim(), fixture.root.join(".alinery/unused-app-config.toml").to_string_lossy());
+    assert_eq!(
+        fs::read_to_string(fixture.root.join(format!("runner-events.tsv.{}.repo", session.id))).unwrap().trim(),
+        fixture.root.to_string_lossy()
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root.join(format!("runner-events.tsv.{}.app-config", session.id)))
+            .unwrap()
+            .trim(),
+        fixture.root.join(".alinery/unused-app-config.toml").to_string_lossy()
+    );
     let token = fixture.token_for(&session.id);
     assert!(fixture.complete(&session, &token)["error"].is_string());
     assert_eq!(fixture.state().state.executions.len(), 1);
@@ -636,16 +710,24 @@ fn reversible_transition_is_not_published_when_stamp_fails() {
     assert!(fixture.execution(&source).receipt_id.is_none());
 }
 
-struct PermissionGuard { path: PathBuf, mode: u32 }
+struct PermissionGuard {
+    path: PathBuf,
+    mode: u32,
+}
 impl PermissionGuard {
     fn readonly(path: &Path) -> Self {
-        let guard = Self { path: path.into(), mode: fs::metadata(path).unwrap().permissions().mode() };
+        let guard = Self {
+            path: path.into(),
+            mode: fs::metadata(path).unwrap().permissions().mode(),
+        };
         fs::set_permissions(path, fs::Permissions::from_mode(0o555)).unwrap();
         guard
     }
 }
 impl Drop for PermissionGuard {
-    fn drop(&mut self) { fs::set_permissions(&self.path, fs::Permissions::from_mode(self.mode)).unwrap(); }
+    fn drop(&mut self) {
+        fs::set_permissions(&self.path, fs::Permissions::from_mode(self.mode)).unwrap();
+    }
 }
 
 #[test]
@@ -690,8 +772,14 @@ fn structured_events_require_the_live_token_and_advance_exactly_once() {
     assert_eq!(fixture.event(&auxiliary, &token, json!({"type":"busy"}))["error"], "invalid-event-token");
     assert_eq!(fixture.event(&source, &other_token, json!({"type":"busy"}))["error"], "invalid-event-token");
     assert_eq!(fixture.event(&source, "wrong", json!({"type":"busy"}))["error"], "invalid-event-token");
-    assert_eq!(fixture.rpc(json!({"op":"event", "version":RUNNER_EVENT_PROTOCOL_VERSION + 1, "session_id":source.id, "token":token, "event":{"type":"busy"}}))["error"], "unsupported-event-version");
-    assert_eq!(fixture.rpc(json!({"op":"event", "version":RUNNER_EVENT_PROTOCOL_VERSION, "session_id":"unknown", "token":token, "event":{"type":"busy"}}))["error"], "unknown-session");
+    assert_eq!(
+        fixture.rpc(json!({"op":"event", "version":RUNNER_EVENT_PROTOCOL_VERSION + 1, "session_id":source.id, "token":token, "event":{"type":"busy"}}))["error"],
+        "unsupported-event-version"
+    );
+    assert_eq!(
+        fixture.rpc(json!({"op":"event", "version":RUNNER_EVENT_PROTOCOL_VERSION, "session_id":"unknown", "token":token, "event":{"type":"busy"}}))["error"],
+        "unknown-session"
+    );
     assert!(fixture.complete(&auxiliary, &other_token)["error"].is_string());
     let status = fixture.rpc(json!({"op":"status", "id":source.id}));
     assert_eq!(status["process"]["state"], "alive");
@@ -722,7 +810,9 @@ fn structured_events_require_the_live_token_and_advance_exactly_once() {
     let checkpoint: Value = serde_json::from_slice(&fs::read(fixture.meta_path("task", &source)).unwrap()).unwrap();
     assert_eq!(checkpoint["semantic"]["omp_session_id"], "omp-session");
     assert_eq!(checkpoint["semantic"]["omp_turn_id"], 7);
-    for transient in ["event_token", "process_state", "agent_state", "playbook_state"] { assert!(checkpoint.get(transient).is_none()); }
+    for transient in ["event_token", "process_state", "agent_state", "playbook_state"] {
+        assert!(checkpoint.get(transient).is_none());
+    }
     fixture.release(&source);
     let target = fixture.target();
     assert_eq!(fixture.host_for(&target.owner_session_id), fixture.host.to_string_lossy());
@@ -766,7 +856,6 @@ fn accepted_live_owner_is_not_handed_off_after_restart_without_exit_proof() {
     // Shutdown may prove the reap; otherwise restart must retain uncertain ownership.
     if execution.shutdown_confirmed {
         assert_eq!(execution.lifecycle, ExecutionLifecycle::Completed);
-        fixture.target();
     } else {
         assert_eq!(execution.lifecycle, ExecutionLifecycle::Interrupted);
         assert_eq!(fixture.state().state.executions.len(), 1);
@@ -784,22 +873,46 @@ fn failed_successor_launch_requires_explicit_recovery_without_duplicate_executio
     let hidden_runner = fixture.root.join("saved-runner");
     fs::rename(&fixture.runner, &hidden_runner).unwrap();
     fixture.release(&source);
-    wait_until(Duration::from_secs(5), || fixture.state().state.executions.values().any(|e| e.candidate.step_key == "target" && e.lifecycle == ExecutionLifecycle::LaunchFailed));
+    wait_until(Duration::from_secs(5), || {
+        fixture
+            .state()
+            .state
+            .executions
+            .values()
+            .any(|e| e.candidate.step_key == "target" && e.lifecycle == ExecutionLifecycle::LaunchFailed)
+    });
     let failed = fixture.state().state.executions.into_values().find(|e| e.candidate.step_key == "target").unwrap();
     fs::rename(hidden_runner, &fixture.runner).unwrap();
     fixture.restart();
     assert_eq!(fixture.state().state.executions[&failed.id].lifecycle, ExecutionLifecycle::LaunchFailed);
-    let recovered = fixture.client().create_execution_session(&CreateExecutionSessionRequest {
-        task_slug: "task".into(), target: ExecutionSessionTarget::Primary { step_key: "target".into(), execution_id: Some(failed.id.clone()), input_occurrence_ids: None },
-        launch_override: None, prompt_extra: None, start: false,
-    }).unwrap();
+    let recovered = fixture
+        .client()
+        .create_execution_session(&CreateExecutionSessionRequest {
+            task_slug: "task".into(),
+            target: ExecutionSessionTarget::Primary {
+                step_key: "target".into(),
+                execution_id: Some(failed.id.clone()),
+                input_occurrence_ids: None,
+            },
+            launch_override: None,
+            prompt_extra: None,
+            handoff_artifact: None,
+            start: false,
+        })
+        .unwrap();
     assert_ne!(recovered.session.id, failed.owner_session_id);
     fixture.start("task", &recovered.session);
     let target = fixture.target();
     assert_eq!(target.id, failed.id);
     assert_eq!(fixture.state().state.executions.len(), 2);
     assert!(!fixture.token_for(&recovered.session.id).is_empty());
-    assert!(fixture.client().start_session(&StartSessionRequest { task_slug: "task".into(), session_id: failed.owner_session_id }).is_err());
+    assert!(fixture
+        .client()
+        .start_session(&StartSessionRequest {
+            task_slug: "task".into(),
+            session_id: failed.owner_session_id
+        })
+        .is_err());
 }
 
 #[test]
@@ -812,7 +925,9 @@ fn missing_runner_blocks_only_omp_adapted_spawn() {
     assert!(!rejected.errors.is_empty());
     let meta: SessionMeta = serde_json::from_slice(&fs::read(fixture.meta_path("task", &source)).unwrap()).unwrap();
     assert!(meta.started_at.is_none());
-    overlay_omp(&fixture.root, r#"
+    overlay_omp(
+        &fixture.root,
+        r#"
 [[harness]]
 key = "omp"
 name = "Broken fixture"
@@ -821,13 +936,16 @@ args = []
 model_arg = []
 prompt_injection = "arg"
 adapter = "unsupported"
-"#);
+"#,
+    );
     let broken = fixture.auxiliary("task", "omp", None);
     assert_eq!(fixture.start_response("task", &broken).start, "failed");
     assert_eq!(fixture.rpc(json!({"op":"status", "id":broken.id}))["error"], "unknown-session");
     let rolled_back: SessionMeta = serde_json::from_slice(&fs::read(fixture.meta_path("task", &broken)).unwrap()).unwrap();
     assert!(rolled_back.started_at.is_none());
-    overlay_omp(&fixture.root, r#"
+    overlay_omp(
+        &fixture.root,
+        r#"
 [[harness]]
 key = "omp"
 name = "Unsupported fixture"
@@ -836,7 +954,8 @@ args = ["-c", "sleep 30"]
 model_arg = []
 prompt_injection = "arg"
 adapter = "unsupported"
-"#);
+"#,
+    );
     let direct = fixture.auxiliary("task", "omp", None);
     fixture.start("task", &direct);
     let status = fixture.rpc(json!({"op":"status", "id":direct.id}));
@@ -851,7 +970,17 @@ fn oversized_runner_event_is_rejected_before_state_mutation() {
     let source = fixture.create_task(true);
     fixture.start("task", &source);
     let token = fixture.token_for(&source.id);
-    let response = fixture.event(&source, &token, json!({"type":"adapter_error", "detail":"x".repeat(130 * 1024)}));
+    let request = json!({"op": "event", "version": RUNNER_EVENT_PROTOCOL_VERSION,
+        "session_id": source.id, "token": token, "event": {"type":"adapter_error", "detail":"x".repeat(130 * 1024)}});
+    let mut stream = UnixStream::connect(&fixture.socket).unwrap();
+    stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    // Rejection can close the socket before an oversized frame finishes writing.
+    if let Err(error) = writeln!(stream, "{request}") {
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+    }
+    let mut response = String::new();
+    BufReader::new(stream).read_line(&mut response).unwrap();
+    let response: Value = serde_json::from_str(&response).unwrap();
     assert_eq!(response["error"], "request-too-large");
     let status = fixture.rpc(json!({"op":"status", "id":source.id}));
     assert_eq!(status["agent"]["state"], "unknown");
@@ -865,10 +994,14 @@ fn invalid_artifact_is_nonfatal_and_can_be_fixed_before_completion() {
     fixture.start("task", &source);
     let token = fixture.token_for(&source.id);
     for content in [None, Some("")] {
-        if let Some(content) = content { fs::write(fixture.output_path(&source), content).unwrap(); }
+        if let Some(content) = content {
+            fs::write(fixture.output_path(&source), content).unwrap();
+        }
         let response = fixture.complete(&source, &token);
         assert_eq!(response["ok"], true, "{response}");
-        assert!(matches!(serde_json::from_value::<CompletionOutcome>(response["completion"].clone()).unwrap(), CompletionOutcome::InvalidOutputs { diagnostics } if !diagnostics.is_empty()));
+        assert!(
+            matches!(serde_json::from_value::<CompletionOutcome>(response["completion"].clone()).unwrap(), CompletionOutcome::InvalidOutputs { diagnostics } if !diagnostics.is_empty())
+        );
         assert!(fixture.execution(&source).receipt_id.is_none());
         assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Running);
         assert_eq!(fixture.rpc(json!({"op":"status", "id":source.id}))["playbook"]["state"], "in_progress");
@@ -890,8 +1023,12 @@ fn human_locked_completion_is_nonfatal_and_cannot_be_granted_by_runner_socket() 
     fs::write(fixture.output_path(&source), "complete").unwrap();
     let response = fixture.complete(&source, &token);
     assert_eq!(response["ok"], true, "{response}");
-    assert!(matches!(serde_json::from_value::<CompletionOutcome>(response["completion"].clone()).unwrap(), CompletionOutcome::HumanAuthorizationRequired));
-    let denied = fixture.rpc(json!({"op":"allow_execution_completion", "request":{"task_slug":"task", "execution_id":source.execution_id, "session_id":source.id}, "token":token, "caller":"ui"}));
+    assert!(matches!(
+        serde_json::from_value::<CompletionOutcome>(response["completion"].clone()).unwrap(),
+        CompletionOutcome::HumanAuthorizationRequired
+    ));
+    let denied = fixture
+        .rpc(json!({"op":"allow_execution_completion", "request":{"task_slug":"task", "execution_id":source.execution_id, "session_id":source.id}, "token":token, "caller":"ui"}));
     assert!(denied["error"].is_string());
     assert!(fixture.execution(&source).receipt_id.is_none());
     assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Running);
@@ -907,7 +1044,10 @@ fn mismatched_session_lane_cannot_start_an_execution() {
     let mut projection: Value = serde_json::from_slice(&original).unwrap();
     projection["daemon_namespace"] = json!("another-lane");
     fs::write(&path, serde_json::to_vec(&projection).unwrap()).unwrap();
-    let denied = fixture.client().start_session(&StartSessionRequest { task_slug:"task".into(), session_id: source.id.clone() });
+    let denied = fixture.client().start_session(&StartSessionRequest {
+        task_slug: "task".into(),
+        session_id: source.id.clone(),
+    });
     fs::write(path, original).unwrap();
     assert!(denied.is_err());
     assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Queued);
@@ -925,12 +1065,29 @@ fn missing_protected_host_requires_explicit_recovery_after_ready_restart() {
     fixture.restart();
     assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::LaunchFailed);
     assert!(!fixture.capture.exists(), "failed work must not silently acquire a new owner");
-    let recovered = fixture.client().create_execution_session(&CreateExecutionSessionRequest {
-        task_slug:"task".into(), target:ExecutionSessionTarget::Primary { step_key:"source".into(), execution_id:Some(source.execution_id.clone()), input_occurrence_ids:None },
-        launch_override:None, prompt_extra:None, start:false,
-    }).unwrap();
+    let recovered = fixture
+        .client()
+        .create_execution_session(&CreateExecutionSessionRequest {
+            task_slug: "task".into(),
+            target: ExecutionSessionTarget::Primary {
+                step_key: "source".into(),
+                execution_id: Some(source.execution_id.clone()),
+                input_occurrence_ids: None,
+            },
+            launch_override: None,
+            prompt_extra: None,
+            handoff_artifact: None,
+            start: false,
+        })
+        .unwrap();
     assert_ne!(recovered.session.id, source.id);
-    assert!(fixture.client().start_session(&StartSessionRequest { task_slug:"task".into(), session_id:source.id.clone() }).is_err());
+    assert!(fixture
+        .client()
+        .start_session(&StartSessionRequest {
+            task_slug: "task".into(),
+            session_id: source.id.clone()
+        })
+        .is_err());
     fixture.start("task", &recovered.session);
     assert_eq!(fixture.host_for(&recovered.session.id), fixture.host.to_string_lossy());
     assert_eq!(fixture.state().state.executions.len(), 1);

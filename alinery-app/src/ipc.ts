@@ -37,6 +37,9 @@ import type {
   BoardTask,
   Config,
   ConnectionStatus,
+  CreateExecutionSessionReply,
+  CreateExecutionSessionRequest,
+  CreateTaskRequest,
   CreateTaskResult,
   DaemonStatus,
   DesktopCreditsView,
@@ -46,24 +49,20 @@ import type {
   KanbanColumn,
   LinearTicket,
   McpStatus,
-  OmpUpdateStatus,
   NormalizedPlaybook,
+  OmpUpdateStatus,
+  PickerPreferences,
   PlaybookCatalog,
   PlaybookRef,
   PlaybookValidation,
-  ScopedPlaybook,
-  SavePlaybookRequest,
-  PickerPreferences,
-  CreateTaskRequest,
-  PreparedTaskAttachments,
-  CreateExecutionSessionRequest,
-  CreateExecutionSessionReply,
-  TaskExecutionReply,
   PreparedSessionMessageAction,
+  PreparedTaskAttachments,
   PurgeArchivedResult,
   RelatedTaskRef,
   RepoOverrides,
   ReviewHandoffResult,
+  SavePlaybookRequest,
+  ScopedPlaybook,
   ScopedSettings,
   SessionListItem,
   SessionMessageActionProvenance,
@@ -77,6 +76,7 @@ import type {
   Task,
   TaskActivityRef,
   TaskActivitySummary,
+  TaskExecutionReply,
   UpdateStatus,
 } from "./types";
 
@@ -254,8 +254,7 @@ export const createSessionForRepo = (a: { repoPath: string; request: CreateExecu
 export const getTaskExecution = (taskSlug: string, repoPath?: string) => invoke<TaskExecutionReply>("get_task_execution", { taskSlug, repoPath });
 export const allowExecutionCompletion = (taskSlug: string, executionId: string, sessionId: string, repoPath?: string) =>
   invoke<void>("allow_execution_completion", { taskSlug, executionId, sessionId, repoPath });
-export const startSession = (taskSlug: string, sessionId: string, repoPath?: string) =>
-  invoke<CreateExecutionSessionReply>("start_session", { taskSlug, sessionId, repoPath });
+export const startSession = (taskSlug: string, sessionId: string, repoPath?: string) => invoke<CreateExecutionSessionReply>("start_session", { taskSlug, sessionId, repoPath });
 export const detachSession = (id: string, attachId: number) => invoke<void>("detach_session", { id, attachId });
 export const ensureDrawerTerminal = () => invoke<SessionMeta>("ensure_drawer_terminal");
 export const killSession = (id: string, taskSlug: string) => invoke<void>("kill_session", { id, taskSlug });

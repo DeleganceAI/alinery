@@ -66,12 +66,12 @@ import { CreateTaskPage } from "./views/CreateTaskPage";
 import { Grid } from "./views/Grid";
 import { Kanban } from "./views/Kanban";
 import { NotificationsList } from "./views/NotificationsList";
+import { Playbooks } from "./views/Playbooks";
 import { ProviderSetupDialog } from "./views/ProviderSetupDialog";
 import { SessionsList } from "./views/SessionsList";
 import { SECTIONS as SETTINGS_SECTIONS, Settings } from "./views/Settings";
 import { TaskList } from "./views/TaskList";
 import { ResizeHandles, useWindowFullscreen, WindowControls } from "./WindowChrome";
-import { Playbooks } from "./views/Playbooks";
 
 /** Per-install: asked once, then the Settings button is the way back. */
 const OMP_SETUP_DISMISSED_KEY = "alinery.ompSetupDismissed";
@@ -505,17 +505,18 @@ export default function App() {
     if (task.repo_path !== appConfig.active_repo) {
       setAppConfig(await switchActiveRepo(task.repo_path));
     }
-    const reply = choice.kind === "existing"
-      ? await ipc.startSession(task.slug, choice.session_id, task.repo_path)
-      : await ipc.createSessionForRepo({
-          repoPath: task.repo_path,
-          request: {
-            task_slug: task.slug,
-            target: choice.kind === "primary" ? choice : { kind: "auxiliary", harness, model, prompt },
-            ...(choice.kind === "primary" ? { launch_override: { harness, model }, prompt_extra: prompt } : {}),
-            start: true,
-          },
-        });
+    const reply =
+      choice.kind === "existing"
+        ? await ipc.startSession(task.slug, choice.session_id, task.repo_path)
+        : await ipc.createSessionForRepo({
+            repoPath: task.repo_path,
+            request: {
+              task_slug: task.slug,
+              target: choice.kind === "primary" ? choice : { kind: "auxiliary", harness, model, prompt },
+              ...(choice.kind === "primary" ? { launch_override: { harness, model }, prompt_extra: prompt } : {}),
+              start: true,
+            },
+          });
     if (reply.start !== "started") toast(`Session ${reply.start}`);
     const targetTaskView: View = view.kind === "createSession" ? { kind: "task", slug: task.slug, repoPath: task.repo_path, from: view.from } : view;
     if (reply.start !== "started") {
@@ -1064,7 +1065,9 @@ export default function App() {
           Increase your <span>token:attention</span> ratio.
         </p>
         <RepoPicker appConfig={appConfig} error={repoErr} onSelect={setRepo} onRemove={removeRepo} onAdd={addRepo} />
-        <button className="btn ghost" type="button" onClick={() => switchTop("playbooks")}>Playbooks</button>
+        <button className="btn ghost" type="button" onClick={() => switchTop("playbooks")}>
+          Playbooks
+        </button>
       </div>,
       minimalHeader,
     );

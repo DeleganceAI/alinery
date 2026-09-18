@@ -40,7 +40,6 @@ it("resolves nested owned artifact paths without confusing same-name references 
   expect(findOwnedArtifactNode(nodes, "research/10-findings-2.md")).toBeUndefined();
 });
 
-
 describe("repoName", () => {
   it("takes the last path segment", () => {
     expect(repoName("/Users/x/Repositories/alinery")).toBe("alinery");
@@ -173,7 +172,6 @@ describe("session timestamps", () => {
   const NOW = 1_700_000_120;
   afterEach(() => vi.useRealTimers());
 
-
   it("updates every supplied row from one minute clock and cleans it up", () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW * 1000);
@@ -224,36 +222,35 @@ describe("re-render comparators", () => {
       exit_notification_read_at: null,
       ...over,
     }) as SessionMeta;
-  const task = (over: Partial<BoardTask> = {}): BoardTask =>
-    ({
-      name: "n",
-      slug: "s",
-      requested_slug: "s",
-      branch: "s",
-      worktree: "/w",
-      has_worktree: true,
-      created: 1,
-      archived: false,
-      pr_url: "",
-      linear_id: "",
-      github_issue: "",
-      playbook: "superdevelop",
-      engine_version: 2,
-      playbook_ref: { scope: "bundled", key: "superdevelop" },
-      draft: false,
-      auto_advance: [],
-      repo_path: "/r",
-      session_count: 0,
-      playbook_title: "SuperDevelop",
-      updated: 1,
-      current_phase: "design",
-      current_step_title: "Design",
-      latest_session_title: "Design",
-      latest_session_column_key: "research-design",
-      current_column_key: "research-design",
-      current_column_title: "Research & Design",
-      ...over,
-    });
+  const task = (over: Partial<BoardTask> = {}): BoardTask => ({
+    name: "n",
+    slug: "s",
+    requested_slug: "s",
+    branch: "s",
+    worktree: "/w",
+    has_worktree: true,
+    created: 1,
+    archived: false,
+    pr_url: "",
+    linear_id: "",
+    github_issue: "",
+    playbook: "superdevelop",
+    engine_version: 2,
+    playbook_ref: { scope: "bundled", key: "superdevelop" },
+    draft: false,
+    auto_advance: [],
+    repo_path: "/r",
+    session_count: 0,
+    playbook_title: "SuperDevelop",
+    updated: 1,
+    current_phase: "design",
+    current_step_title: "Design",
+    latest_session_title: "Design",
+    latest_session_column_key: "research-design",
+    current_column_key: "research-design",
+    current_column_title: "Research & Design",
+    ...over,
+  });
 
   it("sameSessionMetas is false when any tracked field moves", () => {
     expect(sameSessionMetas([meta()], [meta()])).toBe(true);
@@ -348,4 +345,3 @@ describe("re-render comparators", () => {
     expect(sameTaskActivityMaps(map(summary()), {})).toBe(false);
   });
 });
-

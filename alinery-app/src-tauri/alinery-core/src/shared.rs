@@ -13,10 +13,9 @@ use crate::prompts::{SUBTASK_MANAGER_PROMPT, SUBTASK_MANAGER_RECOVERY_PROMPT};
 use crate::settings::{bundled_harness_file, default_global_settings, load_global_settings, load_repo_overrides};
 use crate::task::{append_related_tasks_prompt, read_task};
 use crate::types::{
-    AgentState, ArtifactListItem, BackupDefaults, ChoiceProvenance, ConfigProvenance, EffectiveConfig, GitHubPrefs,
-    GlobalSettings, Harness, HarnessAdapter, HarnessChoice, HarnessFile, MessageAdapter, NormalizedSessionStatus, PlaybookState, ProcessState, PromptVars,
-    RepoBackupOverrides, RepoOverrides, ReviewHandoffRecord, ReviewHandoffRequest, ReviewHandoffResult, RunnerEvent, SessionMeta, SessionState, SettingSource, Task, TaskSummary,
-    MAX_BACKUP_RETENTION, MIN_BACKUP_RETENTION,
+    AgentState, ArtifactListItem, BackupDefaults, ChoiceProvenance, ConfigProvenance, EffectiveConfig, GitHubPrefs, GlobalSettings, Harness, HarnessAdapter, HarnessChoice,
+    HarnessFile, MessageAdapter, NormalizedSessionStatus, PlaybookState, ProcessState, PromptVars, RepoBackupOverrides, RepoOverrides, ReviewHandoffRecord, ReviewHandoffRequest,
+    ReviewHandoffResult, RunnerEvent, SessionMeta, SessionState, SettingSource, Task, TaskSummary, MAX_BACKUP_RETENTION, MIN_BACKUP_RETENTION,
 };
 use crate::write_bytes_atomic;
 use serde::{Deserialize, Serialize};
@@ -39,7 +38,6 @@ pub fn omp_default_model(defaults: &HarnessChoice) -> String {
         String::new()
     }
 }
-
 
 // Scan only authored text: escaped candidates and inserted values are literal.
 fn expand_prompt_tokens(raw: &str, prompt_extra: &str, mut expand: impl FnMut(&str, &mut String) -> bool) -> String {
@@ -216,7 +214,6 @@ fn split_artifact_filename(name: &str) -> Result<(String, String), String> {
     }
 }
 
-
 pub fn next_review_handoff_artifact_name(repo: &Path, target_slug: &str) -> Result<String, String> {
     for idx in 1..=999 {
         let candidate = format!("review-handoff-{idx:03}.md");
@@ -247,12 +244,9 @@ fn next_outbound_handoff_sidecar_name(repo: &Path, source_slug: &str, source_art
     Err(format!("too many outbound handoff records for {source_artifact}"))
 }
 
-
 fn now_millis() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
-
-
 
 fn append_parent_context(repo: &Path, task: &Task, mut prompt: String) -> Result<String, String> {
     if task.parent_task.is_empty() {
@@ -393,11 +387,23 @@ Prior playbook artifacts are ordinary files in the task artifacts directory. Rea
     }
     let state = crate::execution::read_execution_state(repo, &task.slug)?;
     let definition = crate::execution::read_task_playbook(repo, &task.slug, &state)?;
-    let execution = state.executions.values().find(|execution| execution.owner_session_id == launch.id)
+    let execution = state
+        .executions
+        .values()
+        .find(|execution| execution.owner_session_id == launch.id)
         .ok_or("session is not the current owner of a retained execution")?;
-    let step = definition.step.iter().find(|step| step.key == execution.candidate.step_key).ok_or("retained execution step is missing")?;
-    let artifact_file = execution.outputs.iter().find(|output| !output.selector.contains('*'))
-        .map(|output| artifact_file_path(repo, &task.slug, &output.relative_path)).transpose()?.unwrap_or_default();
+    let step = definition
+        .step
+        .iter()
+        .find(|step| step.key == execution.candidate.step_key)
+        .ok_or("retained execution step is missing")?;
+    let artifact_file = execution
+        .outputs
+        .iter()
+        .find(|output| !output.selector.contains('*'))
+        .map(|output| artifact_file_path(repo, &task.slug, &output.relative_path))
+        .transpose()?
+        .unwrap_or_default();
     let review_handoff_file = if launch.handoff_artifact.is_empty() {
         None
     } else {
@@ -425,7 +431,6 @@ Prior playbook artifacts are ordinary files in the task artifacts directory. Rea
     prompt.push_str(&crate::execution::execution_assignment_prompt(repo, &task.slug, &state, &execution.id)?);
     Ok(Some(prompt))
 }
-
 
 pub fn send_review_handoff_for_repos(
     client: &crate::daemon_client::DaemonClient,
@@ -457,19 +462,41 @@ pub fn send_review_handoff_for_repos(
     let target_artifact = crate::with_task_mutation_lock(target_repo, "install review evidence", || {
         let artifact = next_review_handoff_artifact_name(target_repo, target_slug)?;
         let target_path = artifact_file_path(target_repo, target_slug, &artifact)?;
-        let markdown = format!("# Review handoff\n\nSource repository: {}\nSource task: {source_slug}\nSource artifact: {source_artifact}\n\n{source_text}", source_repo.display());
+        let markdown = format!(
+            "# Review handoff\n\nSource repository: {}\nSource task: {source_slug}\nSource artifact: {source_artifact}\n\n{source_text}",
+            source_repo.display()
+        );
         write_bytes_atomic(&target_path, markdown.as_bytes())?;
         Ok(artifact)
     })?;
     let target_path = artifact_file_path(target_repo, target_slug, &target_artifact)?;
-    let prompt_extra = format!("{}\n\nRead the review handoff evidence at {}. It is context, not an engine input occurrence; preserve the assigned execution paths and completion policy.", request.prompt_extra, target_path.display());
-    let mut created = client.create_execution_session(&crate::task_creation::CreateExecutionSessionRequest {
-        task_slug: target_slug.into(),
-        target: crate::task_creation::ExecutionSessionTarget::Primary { step_key: target_phase.into(), execution_id: None, input_occurrence_ids: None },
-        launch_override: Some(crate::execution::LaunchChoices { harness: request.harness, model: request.model }),
-        prompt_extra: Some(prompt_extra),
-        start: request.start,
-    }).map_err(|error| format!("review handoff evidence retained at {} for target {target_slug}; session creation outcome must be inspected before retrying: {error}", target_path.display()))?;
+    let prompt_extra = format!(
+        "{}\n\nRead the review handoff evidence at {}. It is context, not an engine input occurrence; preserve the assigned execution paths and completion policy.",
+        request.prompt_extra,
+        target_path.display()
+    );
+    let mut created = client
+        .create_execution_session(&crate::task_creation::CreateExecutionSessionRequest {
+            task_slug: target_slug.into(),
+            target: crate::task_creation::ExecutionSessionTarget::Primary {
+                step_key: target_phase.into(),
+                execution_id: None,
+                input_occurrence_ids: None,
+            },
+            launch_override: Some(crate::execution::LaunchChoices {
+                harness: request.harness,
+                model: request.model,
+            }),
+            prompt_extra: Some(prompt_extra),
+            handoff_artifact: Some(target_artifact.clone()),
+            start: request.start,
+        })
+        .map_err(|error| {
+            format!(
+                "review handoff evidence retained at {} for target {target_slug}; session creation outcome must be inspected before retrying: {error}",
+                target_path.display()
+            )
+        })?;
     let source_record = ReviewHandoffRecord {
         version: 2,
         direction: "outbound".into(),
@@ -484,18 +511,31 @@ pub fn send_review_handoff_for_repos(
         target_phase: created.session.phase.clone(),
         created_at_ms: now_millis(),
     };
-    let target_record = ReviewHandoffRecord { direction: "inbound".into(), ..source_record.clone() };
+    let target_record = ReviewHandoffRecord {
+        direction: "inbound".into(),
+        ..source_record.clone()
+    };
     let inbound = (|| {
         let inbound_name = artifact_record_sidecar_name(&target_artifact, "inbound", 0)?;
-        write_bytes_atomic(&artifact_file_path(target_repo, target_slug, &inbound_name)?, &serde_json::to_vec_pretty(&target_record).map_err(|error| error.to_string())?)
+        write_bytes_atomic(
+            &artifact_file_path(target_repo, target_slug, &inbound_name)?,
+            &serde_json::to_vec_pretty(&target_record).map_err(|error| error.to_string())?,
+        )
     })();
     let outbound = crate::with_task_mutation_lock(source_repo, "record outbound review handoff", || {
         let outbound_name = next_outbound_handoff_sidecar_name(source_repo, source_slug, &source_artifact)?;
-        write_bytes_atomic(&artifact_file_path(source_repo, source_slug, &outbound_name)?, &serde_json::to_vec_pretty(&source_record).map_err(|error| error.to_string())?)
+        write_bytes_atomic(
+            &artifact_file_path(source_repo, source_slug, &outbound_name)?,
+            &serde_json::to_vec_pretty(&source_record).map_err(|error| error.to_string())?,
+        )
     });
     for (stage, outcome) in [("inbound_handoff_record", inbound), ("outbound_handoff_record", outbound)] {
         if let Err(message) = outcome {
-            created.errors.push(crate::task_creation::CreationError { stage: stage.into(), code: "handoff_record_failed".into(), message });
+            created.errors.push(crate::task_creation::CreationError {
+                stage: stage.into(),
+                code: "handoff_record_failed".into(),
+                message,
+            });
         }
     }
     Ok(ReviewHandoffResult {
@@ -644,22 +684,24 @@ pub fn list_artifacts_with_metadata_for(repo: &Path, task_slug: &str) -> Result<
 
 /// Execution ownership comes from the caller's authoritative daemon snapshot,
 /// not from a potentially stale session-metadata projection.
-pub fn list_artifacts_with_execution_metadata(
-    repo: &Path,
-    task_slug: &str,
-    state: &crate::execution::TaskExecutionState,
-) -> Result<Vec<ArtifactListItem>, String> {
+pub fn list_artifacts_with_execution_metadata(repo: &Path, task_slug: &str, state: &crate::execution::TaskExecutionState) -> Result<Vec<ArtifactListItem>, String> {
     let (mut items, attachments): (Vec<_>, Vec<_>) = list_artifacts_with_metadata_for(repo, task_slug)?.into_iter().partition(|item| !item.attachment);
     let occurrences: BTreeMap<_, _> = state.occurrences.values().map(|occurrence| (occurrence.relative_path.as_str(), occurrence)).collect();
     for occurrence in state.occurrences.values().filter(|occurrence| occurrence.producer_execution_id.is_some()) {
         if !items.iter().any(|item| item.name == occurrence.relative_path) {
-            items.push(ArtifactListItem { name: occurrence.relative_path.clone(), ..Default::default() });
+            items.push(ArtifactListItem {
+                name: occurrence.relative_path.clone(),
+                ..Default::default()
+            });
         }
     }
     for record in state.executions.values() {
         for assignment in &record.outputs {
             if record.receipt_id.is_none() && !items.iter().any(|item| item.name == assignment.relative_path) {
-                items.push(ArtifactListItem { name: assignment.relative_path.clone(), ..Default::default() });
+                items.push(ArtifactListItem {
+                    name: assignment.relative_path.clone(),
+                    ..Default::default()
+                });
             }
             let selector = crate::playbook::ArtifactSelector::parse(&assignment.relative_path)?;
             for item in items.iter_mut().filter(|item| !item.attachment && selector.matches(&item.name)) {
@@ -669,24 +711,23 @@ pub fn list_artifacts_with_execution_metadata(
                 item.session_id = record.owner_session_id.clone();
                 item.depth = Some(record.depth);
                 item.discriminator = Some(assignment.discriminator);
-                let occurrence = occurrences.get(item.name.as_str()).filter(|occurrence| occurrence.producer_execution_id.as_deref() == Some(record.id.as_str()));
+                let occurrence = occurrences
+                    .get(item.name.as_str())
+                    .filter(|occurrence| occurrence.producer_execution_id.as_deref() == Some(record.id.as_str()));
                 item.accepted = Some(occurrence.is_some());
                 item.logical_path = Some(occurrence.map_or(assignment.selector.as_str(), |occurrence| occurrence.logical_path.as_str()).to_string());
             }
         }
     }
-    items.sort_by(|left, right| {
-        match (left.depth.zip(left.discriminator), right.depth.zip(right.discriminator)) {
-            (Some(left_depth), Some(right_depth)) => right_depth.cmp(&left_depth).then_with(|| compare_artifact_paths(&right.name, &left.name)),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => compare_artifact_paths(&right.name, &left.name),
-        }
+    items.sort_by(|left, right| match (left.depth.zip(left.discriminator), right.depth.zip(right.discriminator)) {
+        (Some(left_depth), Some(right_depth)) => right_depth.cmp(&left_depth).then_with(|| compare_artifact_paths(&right.name, &left.name)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => compare_artifact_paths(&right.name, &left.name),
     });
     items.extend(attachments);
     Ok(items)
 }
-
 
 // ---- settings and harness overlay (pure) ------------------------------------
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1329,7 +1370,6 @@ pub fn sweep_ends_session(started_at: Option<u64>, ended_at: Option<u64>) -> boo
     started_at.is_some() && ended_at.is_none()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1344,7 +1384,6 @@ mod tests {
         let seq = TEST_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!("{name}_{}_{}_{}", std::process::id(), nanos, seq))
     }
-
 
     #[test]
     fn read_meta_harness_model_missing_file_returns_none() {
@@ -1419,7 +1458,6 @@ mod tests {
         assert_eq!(overrides.defaults.model, None);
         assert_eq!(overrides.defaults.harness, None);
     }
-
 
     #[test]
     fn missing_session_meta_harness_is_not_inferred() {
@@ -1522,7 +1560,6 @@ adapter = "unsupported"
         assert_eq!(explicit_json["generic"], serde_json::json!(true));
     }
 
-
     #[test]
     fn playbook_prompt_substitution_replaces_all_tokens() {
         let artifacts = PathBuf::from("/tmp/artifacts");
@@ -1583,7 +1620,6 @@ adapter = "unsupported"
         assert_eq!(compose_prompt_extra(r"\{{PROMPT_EXTRA}} / {{PROMPT_EXTRA}}", ""), "{{PROMPT_EXTRA}} / ");
     }
 
-
     #[test]
     fn artifact_filename_rejects_traversal() {
         for bad in ["", ".", "..", "../x.md", "nested/../x.md", "/tmp/x.md", "nested\\x.md"] {
@@ -1592,7 +1628,6 @@ adapter = "unsupported"
         assert_eq!(validate_artifact_filename("03-design.md").unwrap(), "03-design.md");
         assert_eq!(validate_artifact_filename("review-handoff-001.md").unwrap(), "review-handoff-001.md");
     }
-
 
     #[test]
     fn list_artifacts_with_metadata_flags_attachments() {
@@ -1696,7 +1731,6 @@ adapter = "unsupported"
         let back: ReviewHandoffRecord = serde_json::from_str(&raw).unwrap();
         assert_eq!(back, record);
     }
-
 
     #[test]
     fn prompt_extra_composer_repairs_placeholder_counts_without_reprocessing_extra() {
@@ -2127,7 +2161,6 @@ prompt_injection = "arg"
         }
     }
 
-
     mod semantic_control_plane {
         use super::*;
         use crate::types::{HarnessAdapter, NormalizedSessionStatus, RunnerEventEnvelope, RUNNER_EVENT_PROTOCOL_VERSION};
@@ -2303,9 +2336,7 @@ prompt_injection = "arg"
             assert_eq!(exited.process, ProcessState::Exited { code: Some(23) });
             assert_eq!(exited.agent, AgentState::Busy);
         }
-
     }
-
 
     // ---- Session durability & resume (issue #24) — Phase 1 pure logic ----
     mod durability {
@@ -2673,5 +2704,4 @@ binary = "custom"
             assert_eq!(op.resume_args, vec!["--resume={resume_token}"]);
         }
     }
-
 }

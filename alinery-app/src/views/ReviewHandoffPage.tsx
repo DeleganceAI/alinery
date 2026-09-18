@@ -33,16 +33,22 @@ export function ReviewHandoffPage({
 
   useEffect(() => {
     let alive = true;
-    ipc.listBoardTasks(allRepos)
+    ipc
+      .listBoardTasks(allRepos)
       .then((loaded) => {
         if (!alive) return;
-        const candidates = loaded.filter((task) => !task.archived && !task.draft && Boolean(task.worktree)
-          && !(task.slug === source.source_slug && task.repo_path === source.source_repo_path));
+        const candidates = loaded.filter(
+          (task) => !task.archived && !task.draft && Boolean(task.worktree) && !(task.slug === source.source_slug && task.repo_path === source.source_repo_path),
+        );
         setTasks(candidates);
-        setTaskId((current) => candidates.some((task) => taskKey(task) === current) ? current : "");
+        setTaskId((current) => (candidates.some((task) => taskKey(task) === current) ? current : ""));
       })
-      .catch((error) => { if (alive) setErr(String(error)); });
-    return () => { alive = false; };
+      .catch((error) => {
+        if (alive) setErr(String(error));
+      });
+    return () => {
+      alive = false;
+    };
   }, [allRepos, activeRepo, source.source_slug, source.source_repo_path]);
 
   const selectedTask = taskId ? tasks.find((task) => taskKey(task) === taskId) : null;
@@ -54,17 +60,18 @@ export function ReviewHandoffPage({
     setModel("");
     setErr("");
     if (!selectedTask) return;
-    Promise.all([
-      ipc.getTaskExecution(selectedTask.slug, selectedTask.repo_path),
-      ipc.readScopedSettingsForRepo(selectedTask.repo_path),
-    ])
+    Promise.all([ipc.getTaskExecution(selectedTask.slug, selectedTask.repo_path), ipc.readScopedSettingsForRepo(selectedTask.repo_path)])
       .then(([execution, settings]) => {
         if (!alive) return;
         setSteps(execution.definition.step);
         setModel(ompDefaultModel(settings.effective.defaults));
       })
-      .catch((error) => { if (alive) setErr(String(error)); });
-    return () => { alive = false; };
+      .catch((error) => {
+        if (alive) setErr(String(error));
+      });
+    return () => {
+      alive = false;
+    };
   }, [selectedTask?.repo_path, selectedTask?.slug]);
 
   const confirmDisabled = busy || attempted || !selectedTask || !selectedTask.worktree || !harness || !steps.some((step) => step.key === phase);
@@ -188,7 +195,11 @@ export function ReviewHandoffPage({
           >
             {busy ? "Sending…" : "Confirm handoff"}
           </button>
-          {created && <button type="button" className="btn" onClick={() => onConfirmed(created)}>Open created session</button>}
+          {created && (
+            <button type="button" className="btn" onClick={() => onConfirmed(created)}>
+              Open created session
+            </button>
+          )}
           <button type="button" className="btn ghost" onClick={onCancel}>
             Cancel
           </button>

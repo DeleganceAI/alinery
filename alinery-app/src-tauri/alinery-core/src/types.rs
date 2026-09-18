@@ -168,7 +168,10 @@ pub enum NormalizedSessionStatus {
 }
 
 pub fn default_playbook_ref() -> crate::playbook::PlaybookRef {
-    crate::playbook::PlaybookRef { scope: crate::playbook::PlaybookScope::Bundled, key: "superdevelop".to_string() }
+    crate::playbook::PlaybookRef {
+        scope: crate::playbook::PlaybookScope::Bundled,
+        key: "superdevelop".to_string(),
+    }
 }
 
 pub fn default_max_live_sessions() -> u32 {
@@ -333,8 +336,6 @@ pub struct SessionMeta {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub telemetry_id: String,
 }
-
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionStatusResult {
@@ -902,8 +903,6 @@ pub struct HarnessFile {
     #[serde(default)]
     pub harness: Vec<Harness>,
 }
-
-
 
 pub struct PromptVars<'a> {
     pub artifacts_dir: &'a Path,

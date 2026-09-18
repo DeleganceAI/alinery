@@ -2,10 +2,7 @@
 //! batch and reconciles again in the same transaction before launching any owner.
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::execution::{
-    occurrence_deliverable, ArtifactCollection, ContextCause, ExecutionCandidate,
-    ExecutionContext, ExecutionLifecycle, TaskExecutionState,
-};
+use crate::execution::{occurrence_deliverable, ArtifactCollection, ContextCause, ExecutionCandidate, ExecutionContext, ExecutionLifecycle, TaskExecutionState};
 use crate::playbook::{ArtifactSelector, InputMode, NormalizedPlaybook, NormalizedStep};
 
 struct Graph {
@@ -37,18 +34,26 @@ impl Graph {
             }
         }
         fn visit(node: usize, edges: &[Vec<usize>], seen: &mut [bool], order: &mut Vec<usize>) {
-            if seen[node] { return; }
+            if seen[node] {
+                return;
+            }
             seen[node] = true;
-            for &next in &edges[node] { visit(next, edges, seen, order); }
+            for &next in &edges[node] {
+                visit(next, edges, seen, order);
+            }
             order.push(node);
         }
         let mut order = Vec::new();
         let mut seen = vec![false; n];
-        for node in 0..n { visit(node, &edges, &mut seen, &mut order); }
+        for node in 0..n {
+            visit(node, &edges, &mut seen, &mut order);
+        }
         seen.fill(false);
         let mut components = Vec::new();
         for node in order.into_iter().rev() {
-            if seen[node] { continue; }
+            if seen[node] {
+                continue;
+            }
             let mut members = Vec::new();
             visit(node, &reverse, &mut seen, &mut members);
             if members.len() > 1 || edges[node].contains(&node) {
@@ -92,7 +97,9 @@ fn resolve_single(state: &TaskExecutionState, graph: &Graph, context: &str, path
             return if delivered.next().is_none() { Some(first.clone()) } else { None };
         }
         if let ContextCause::Loop { component_steps, .. } = &current.cause {
-            if graph.producer(path).is_some_and(|p| component_steps.contains(p)) { return None; }
+            if graph.producer(path).is_some_and(|p| component_steps.contains(p)) {
+                return None;
+            }
         }
         current = state.contexts.get(current.parent_id.as_deref()?)?;
     }
@@ -102,11 +109,17 @@ fn entry_roles(state: &TaskExecutionState, graph: &Graph, component: &BTreeSet<S
     let mut roles = BTreeSet::new();
     for execution in state.executions.values().filter(|e| !e.candidate.manual && component.contains(&e.candidate.step_key)) {
         for (path, ids) in &execution.candidate.inputs {
-            if !graph.producer(path).is_some_and(|p| component.contains(p)) { continue; }
-            if ids.iter().any(|id| state.occurrences.get(id).is_some_and(|o| {
-                o.producer_execution_id.as_ref().and_then(|id| state.executions.get(id))
-                    .is_none_or(|producer| !component.contains(&producer.candidate.step_key))
-            })) {
+            if !graph.producer(path).is_some_and(|p| component.contains(p)) {
+                continue;
+            }
+            if ids.iter().any(|id| {
+                state.occurrences.get(id).is_some_and(|o| {
+                    o.producer_execution_id
+                        .as_ref()
+                        .and_then(|id| state.executions.get(id))
+                        .is_none_or(|producer| !component.contains(&producer.candidate.step_key))
+                })
+            }) {
                 roles.insert(path.clone());
             }
         }
@@ -120,32 +133,54 @@ fn route_occurrences(state: &mut TaskExecutionState, graph: &Graph) -> Result<()
     let delivered: Vec<_> = state.occurrences.values().filter(|o| occurrence_deliverable(state, o)).cloned().collect();
     for occurrence in delivered {
         let producer = occurrence.producer_execution_id.as_ref().and_then(|id| state.executions.get(id));
-        if producer.is_some_and(|e| e.candidate.manual) { continue; }
-        let reentry = producer.and_then(|e| graph.components.iter().enumerate().find(|(index, component)| {
-            component.contains(&e.candidate.step_key) && entries[*index].contains(&occurrence.logical_path)
-        }).map(|(index, _)| index));
+        if producer.is_some_and(|e| e.candidate.manual) {
+            continue;
+        }
+        let reentry = producer.and_then(|e| {
+            graph
+                .components
+                .iter()
+                .enumerate()
+                .find(|(index, component)| component.contains(&e.candidate.step_key) && entries[*index].contains(&occurrence.logical_path))
+                .map(|(index, _)| index)
+        });
         if let Some(index) = reentry {
-            triggers.entry((index, occurrence.context_id.clone())).or_default()
-                .entry(occurrence.logical_path.clone()).or_default().push(occurrence.id.clone());
+            triggers
+                .entry((index, occurrence.context_id.clone()))
+                .or_default()
+                .entry(occurrence.logical_path.clone())
+                .or_default()
+                .push(occurrence.id.clone());
         } else {
             let context = state.contexts.get_mut(&occurrence.context_id).ok_or("occurrence has unknown context")?;
             let ids = context.bindings.entry(occurrence.logical_path).or_default();
-            if !ids.contains(&occurrence.id) { ids.push(occurrence.id); ids.sort(); }
+            if !ids.contains(&occurrence.id) {
+                ids.push(occurrence.id);
+                ids.sort();
+            }
         }
     }
     for ((index, parent), mut bindings) in triggers {
         // One AND entry is one activation. Never make a partial activation, or
         // choose a latest occurrence when the causal context is ambiguous.
-        if entries[index].iter().any(|role| bindings.get(role).is_none_or(|ids| ids.len() != 1)) { continue; }
-        for ids in bindings.values_mut() { ids.sort(); }
+        if entries[index].iter().any(|role| bindings.get(role).is_none_or(|ids| ids.len() != 1)) {
+            continue;
+        }
+        for ids in bindings.values_mut() {
+            ids.sort();
+        }
         let trigger_occurrences = bindings.values().flatten().cloned().collect::<BTreeSet<_>>();
         // Trigger occurrence IDs are globally unique; embedding the parent ID
         // would recursively expand every previous pass into this identifier.
         let id = identity("loop", &(&graph.components[index], &trigger_occurrences))?;
         state.contexts.entry(id.clone()).or_insert(ExecutionContext {
-            id, parent_id: Some(parent), cause: ContextCause::Loop {
-                component_steps: graph.components[index].clone(), trigger_occurrences,
-            }, bindings,
+            id,
+            parent_id: Some(parent),
+            cause: ContextCause::Loop {
+                component_steps: graph.components[index].clone(),
+                trigger_occurrences,
+            },
+            bindings,
         });
     }
     Ok(())
@@ -164,12 +199,20 @@ fn initiating_each_selectors(
     let mut visited = BTreeSet::new();
     let mut paths = BTreeSet::new();
     while let Some(id) = pending.pop() {
-        if !visited.insert(id) { continue; }
+        if !visited.insert(id) {
+            continue;
+        }
         let execution = state.executions.get(id).ok_or("unknown collection ancestor")?;
         if execution.candidate.each_collection_id.as_deref() == Some(source_id) {
-            let step = definition.step.iter().find(|step| step.key == execution.candidate.step_key)
+            let step = definition
+                .step
+                .iter()
+                .find(|step| step.key == execution.candidate.step_key)
                 .ok_or("unknown collection ancestor step")?;
-            let input = step.inputs.iter().find(|input| input.mode == InputMode::Each)
+            let input = step
+                .inputs
+                .iter()
+                .find(|input| input.mode == InputMode::Each)
                 .ok_or("collection ancestor lacks its each selector")?;
             paths.insert(&input.path);
         }
@@ -186,39 +229,64 @@ fn configure_collections(definition: &NormalizedPlaybook, state: &mut TaskExecut
         let step = definition.step.iter().find(|s| s.key == execution.candidate.step_key).ok_or("unknown execution step")?;
         for output in &step.outputs {
             let selector = ArtifactSelector::parse(&output.path)?;
-            let consumed_as_collection = definition.step.iter().flat_map(|step| &step.inputs).any(|input| {
-                input.mode != InputMode::Single && ArtifactSelector::parse(&input.path).is_ok_and(|input| input.overlaps(&selector))
-            });
-            if !selector.wildcard && !consumed_as_collection { continue; }
+            let consumed_as_collection = definition
+                .step
+                .iter()
+                .flat_map(|step| &step.inputs)
+                .any(|input| input.mode != InputMode::Single && ArtifactSelector::parse(&input.path).is_ok_and(|input| input.overlaps(&selector)));
+            if !selector.wildcard && !consumed_as_collection {
+                continue;
+            }
             let id = identity("output", &(&execution.id, &output.path))?;
             additions.push(ArtifactCollection {
-                id, context_id: execution.candidate.context_id.clone(), selector: output.path.clone(),
-                producer_step: step.key.clone(), source_collection_id: None,
+                id,
+                context_id: execution.candidate.context_id.clone(),
+                selector: output.path.clone(),
+                producer_step: step.key.clone(),
+                source_collection_id: None,
                 expected_execution_ids: BTreeSet::from([execution.id.clone()]),
-                member_occurrence_ids: BTreeSet::new(), membership_closed: false,
+                member_occurrence_ids: BTreeSet::new(),
+                membership_closed: false,
             });
             if let Some((parent, source, _)) = nearest_member(state, &execution.candidate.context_id) {
                 let id = identity("family", &(parent, source, &step.key, &output.path))?;
                 additions.push(ArtifactCollection {
-                    id, context_id: parent.into(), selector: output.path.clone(), producer_step: step.key.clone(),
-                    source_collection_id: Some(source.into()), expected_execution_ids: BTreeSet::from([execution.id.clone()]),
-                    member_occurrence_ids: BTreeSet::new(), membership_closed: false,
+                    id,
+                    context_id: parent.into(),
+                    selector: output.path.clone(),
+                    producer_step: step.key.clone(),
+                    source_collection_id: Some(source.into()),
+                    expected_execution_ids: BTreeSet::from([execution.id.clone()]),
+                    member_occurrence_ids: BTreeSet::new(),
+                    membership_closed: false,
                 });
             }
         }
     }
     for addition in additions {
-        state.collections.entry(addition.id.clone()).and_modify(|collection| {
-            collection.expected_execution_ids.extend(addition.expected_execution_ids.clone());
-        }).or_insert(addition);
+        state
+            .collections
+            .entry(addition.id.clone())
+            .and_modify(|collection| {
+                collection.expected_execution_ids.extend(addition.expected_execution_ids.clone());
+            })
+            .or_insert(addition);
     }
-    let memberships: Vec<_> = state.collections.values().map(|collection| {
-        let members = state.occurrences.values().filter(|occurrence| {
-            occurrence.selector == collection.selector && occurrence.producer_execution_id.as_ref()
-                .is_some_and(|id| collection.expected_execution_ids.contains(id))
-        }).map(|o| o.id.clone()).collect::<BTreeSet<_>>();
-        (collection.id.clone(), members)
-    }).collect();
+    let memberships: Vec<_> = state
+        .collections
+        .values()
+        .map(|collection| {
+            let members = state
+                .occurrences
+                .values()
+                .filter(|occurrence| {
+                    occurrence.selector == collection.selector && occurrence.producer_execution_id.as_ref().is_some_and(|id| collection.expected_execution_ids.contains(id))
+                })
+                .map(|o| o.id.clone())
+                .collect::<BTreeSet<_>>();
+            (collection.id.clone(), members)
+        })
+        .collect();
     for (id, members) in memberships {
         for member in &members {
             state.occurrences.get_mut(member).ok_or("missing collection occurrence")?.collection_ids.insert(id.clone());
@@ -230,41 +298,61 @@ fn configure_collections(definition: &NormalizedPlaybook, state: &mut TaskExecut
     loop {
         let mut closable = Vec::new();
         for collection in state.collections.values() {
-            if collection.membership_closed || collection.member_occurrence_ids.is_empty() { continue; }
-            if !collection.expected_execution_ids.iter().all(|id| state.executions.get(id).is_some_and(|e| {
-                e.lifecycle == ExecutionLifecycle::Completed && e.shutdown_confirmed && e.receipt_id.is_some()
-            })) { continue; }
+            if collection.membership_closed || collection.member_occurrence_ids.is_empty() {
+                continue;
+            }
+            if !collection.expected_execution_ids.iter().all(|id| {
+                state
+                    .executions
+                    .get(id)
+                    .is_some_and(|e| e.lifecycle == ExecutionLifecycle::Completed && e.shutdown_confirmed && e.receipt_id.is_some())
+            }) {
+                continue;
+            }
             if let Some(source_id) = &collection.source_collection_id {
                 let source = state.collections.get(source_id).ok_or("unknown source collection")?;
-                if !source.membership_closed { continue; }
+                if !source.membership_closed {
+                    continue;
+                }
                 let selectors = initiating_each_selectors(definition, state, collection, source_id)?;
-                let represented: BTreeSet<_> = collection.expected_execution_ids.iter().filter_map(|id| {
-                    let execution = state.executions.get(id)?;
-                    let (_, source, member) = nearest_member(state, &execution.candidate.context_id)?;
-                    (source == source_id).then_some(member)
-                }).collect();
+                let represented: BTreeSet<_> = collection
+                    .expected_execution_ids
+                    .iter()
+                    .filter_map(|id| {
+                        let execution = state.executions.get(id)?;
+                        let (_, source, member) = nearest_member(state, &execution.candidate.context_id)?;
+                        (source == source_id).then_some(member)
+                    })
+                    .collect();
                 let mut missing = false;
                 for id in &source.member_occurrence_ids {
                     let occurrence = state.occurrences.get(id).ok_or("unknown source collection member")?;
-                    if selectors.iter().all(|selector| selector.matches(&occurrence.logical_path))
-                        && !represented.contains(id.as_str()) {
+                    if selectors.iter().all(|selector| selector.matches(&occurrence.logical_path)) && !represented.contains(id.as_str()) {
                         missing = true;
                         break;
                     }
                 }
-                if missing { continue; }
+                if missing {
+                    continue;
+                }
             }
             closable.push(collection.id.clone());
         }
-        if closable.is_empty() { break; }
-        for id in closable { state.collections.get_mut(&id).ok_or("missing closing collection")?.membership_closed = true; }
+        if closable.is_empty() {
+            break;
+        }
+        for id in closable {
+            state.collections.get_mut(&id).ok_or("missing closing collection")?.membership_closed = true;
+        }
     }
     Ok(())
 }
 
 fn bind_singles(step: &NormalizedStep, state: &TaskExecutionState, graph: &Graph, candidate: &mut ExecutionCandidate) -> bool {
     for input in step.inputs.iter().filter(|i| i.mode == InputMode::Single) {
-        let Some(id) = resolve_single(state, graph, &candidate.context_id, &input.path) else { return false; };
+        let Some(id) = resolve_single(state, graph, &candidate.context_id, &input.path) else {
+            return false;
+        };
         candidate.inputs.insert(input.path.clone(), vec![id]);
     }
     true
@@ -272,8 +360,13 @@ fn bind_singles(step: &NormalizedStep, state: &TaskExecutionState, graph: &Graph
 
 fn candidate(step: &NormalizedStep, context: &str) -> ExecutionCandidate {
     ExecutionCandidate {
-        step_key: step.key.clone(), context_id: context.into(), inputs: BTreeMap::new(),
-        complete_collection_id: None, each_collection_id: None, each_member_id: None, manual: false,
+        step_key: step.key.clone(),
+        context_id: context.into(),
+        inputs: BTreeMap::new(),
+        complete_collection_id: None,
+        each_collection_id: None,
+        each_member_id: None,
+        manual: false,
     }
 }
 
@@ -282,7 +375,9 @@ fn candidate(step: &NormalizedStep, context: &str) -> ExecutionCandidate {
 /// Reserve every candidate, then call again before committing or launching: this
 /// records the entire expected worker set even when capacity allows only one owner.
 pub fn reconcile_graph(definition: &NormalizedPlaybook, state: &mut TaskExecutionState) -> Result<Vec<ExecutionCandidate>, String> {
-    if state.creation != "ready" { return Ok(Vec::new()); }
+    if state.creation != "ready" {
+        return Ok(Vec::new());
+    }
     let graph = Graph::new(definition)?;
     route_occurrences(state, &graph)?;
     configure_collections(definition, state)?;
@@ -290,59 +385,94 @@ pub fn reconcile_graph(definition: &NormalizedPlaybook, state: &mut TaskExecutio
     for step in &definition.step {
         if let Some(input) = step.inputs.iter().find(|i| i.mode != InputMode::Single) {
             let selector = ArtifactSelector::parse(&input.path)?;
-            let collections: Vec<_> = state.collections.values().filter(|collection| {
-                collection.membership_closed && ArtifactSelector::parse(&collection.selector).is_ok_and(|s| selector.overlaps(&s))
-            }).cloned().collect();
+            let collections: Vec<_> = state
+                .collections
+                .values()
+                .filter(|collection| collection.membership_closed && ArtifactSelector::parse(&collection.selector).is_ok_and(|s| selector.overlaps(&s)))
+                .cloned()
+                .collect();
             for collection in collections {
                 if input.mode == InputMode::Each {
                     // Local producer batches preserve nested member ancestry.
-                    if collection.source_collection_id.is_some() { continue; }
+                    if collection.source_collection_id.is_some() {
+                        continue;
+                    }
                     for member in &collection.member_occurrence_ids {
                         let occurrence = state.occurrences.get(member).ok_or("unknown collection member")?;
-                        if !selector.matches(&occurrence.logical_path) { continue; }
+                        if !selector.matches(&occurrence.logical_path) {
+                            continue;
+                        }
                         let id = identity("member", &(&collection.id, member))?;
                         state.contexts.entry(id.clone()).or_insert(ExecutionContext {
-                            id: id.clone(), parent_id: Some(collection.context_id.clone()),
-                            cause: ContextCause::Member { collection_id: collection.id.clone(), occurrence_id: member.clone() },
+                            id: id.clone(),
+                            parent_id: Some(collection.context_id.clone()),
+                            cause: ContextCause::Member {
+                                collection_id: collection.id.clone(),
+                                occurrence_id: member.clone(),
+                            },
                             bindings: BTreeMap::from([(occurrence.logical_path.clone(), vec![member.clone()])]),
                         });
                         let mut binding = candidate(step, &id);
                         binding.each_collection_id = Some(collection.id.clone());
                         binding.each_member_id = Some(member.clone());
                         binding.inputs.insert(input.path.clone(), vec![member.clone()]);
-                        if bind_singles(step, state, &graph, &mut binding) { candidates.insert(binding.binding_key()?, binding); }
+                        if bind_singles(step, state, &graph, &mut binding) {
+                            candidates.insert(binding.binding_key()?, binding);
+                        }
                     }
                 } else {
                     // An each worker's local subset is not a complete family.
-                    if collection.source_collection_id.is_none() && collection.expected_execution_ids.iter().any(|id| {
-                        state.executions.get(id).is_some_and(|e| nearest_member(state, &e.candidate.context_id).is_some())
-                    }) { continue; }
-                    let members: Vec<_> = collection.member_occurrence_ids.iter().filter(|id| {
-                        state.occurrences.get(*id).is_some_and(|o| selector.matches(&o.logical_path))
-                    }).cloned().collect();
-                    if members.is_empty() { continue; }
+                    if collection.source_collection_id.is_none()
+                        && collection
+                            .expected_execution_ids
+                            .iter()
+                            .any(|id| state.executions.get(id).is_some_and(|e| nearest_member(state, &e.candidate.context_id).is_some()))
+                    {
+                        continue;
+                    }
+                    let members: Vec<_> = collection
+                        .member_occurrence_ids
+                        .iter()
+                        .filter(|id| state.occurrences.get(*id).is_some_and(|o| selector.matches(&o.logical_path)))
+                        .cloned()
+                        .collect();
+                    if members.is_empty() {
+                        continue;
+                    }
                     let mut binding = candidate(step, &collection.context_id);
                     binding.complete_collection_id = Some(collection.id.clone());
                     binding.inputs.insert(input.path.clone(), members);
-                    if bind_singles(step, state, &graph, &mut binding) { candidates.insert(binding.binding_key()?, binding); }
+                    if bind_singles(step, state, &graph, &mut binding) {
+                        candidates.insert(binding.binding_key()?, binding);
+                    }
                 }
             }
         } else {
             for context in state.contexts.values() {
-                if step.inputs.is_empty() && !matches!(context.cause, ContextCause::Root) { continue; }
+                if step.inputs.is_empty() && !matches!(context.cause, ContextCause::Root) {
+                    continue;
+                }
                 let mut binding = candidate(step, &context.id);
-                if !bind_singles(step, state, &graph, &mut binding) { continue; }
+                if !bind_singles(step, state, &graph, &mut binding) {
+                    continue;
+                }
                 // Inheritance supplies governing context, not a cross-product of
                 // new executions for every descendant with the same old seeds.
-                if !step.inputs.is_empty() && !binding.inputs.values().flatten().any(|id| {
-                    state.occurrences.get(id).is_some_and(|o| o.context_id == context.id)
-                        || matches!(&context.cause, ContextCause::Loop { trigger_occurrences, .. } if trigger_occurrences.contains(id))
-                }) { continue; }
+                if !step.inputs.is_empty()
+                    && !binding.inputs.values().flatten().any(|id| {
+                        state.occurrences.get(id).is_some_and(|o| o.context_id == context.id)
+                            || matches!(&context.cause, ContextCause::Loop { trigger_occurrences, .. } if trigger_occurrences.contains(id))
+                    })
+                {
+                    continue;
+                }
                 candidates.insert(binding.binding_key()?, binding);
             }
         }
     }
-    for execution in state.executions.values().filter(|e| !e.candidate.manual) { candidates.remove(&execution.binding_key); }
+    for execution in state.executions.values().filter(|e| !e.candidate.manual) {
+        candidates.remove(&execution.binding_key);
+    }
     Ok(candidates.into_values().collect())
 }
 
@@ -350,23 +480,30 @@ pub fn reconcile_graph(definition: &NormalizedPlaybook, state: &mut TaskExecutio
 mod tests {
     use super::*;
     use crate::execution::{
-        accept_execution_completion, claim_execution_launch, confirm_execution_exit,
-        grant_execution_completion, install_seed, new_execution_state, record_execution_spawn,
-        recover_execution_owner, request_execution_start, reserve_execution, CompletionOutcome,
-        LaunchChoices,
+        accept_execution_completion, claim_execution_launch, confirm_execution_exit, grant_execution_completion, install_seed, new_execution_state, record_execution_spawn,
+        recover_execution_owner, request_execution_start, reserve_execution, CompletionOutcome, LaunchChoices,
     };
-    use crate::playbook::{
-        parse_playbook_md, render_playbook_md, InputSelector, OutputSelector, PlaybookRef, PlaybookScope,
-    };
+    use crate::playbook::{parse_playbook_md, render_playbook_md, InputSelector, OutputSelector, PlaybookRef, PlaybookScope};
     use std::path::PathBuf;
 
     fn step(key: &str, inputs: &[(&str, InputMode)], outputs: &[&str]) -> NormalizedStep {
         NormalizedStep {
-            key: key.into(), title: key.into(), short: String::new(),
-            is_coding_step: false, auto_advance_default: true,
-            inputs: inputs.iter().map(|(path, mode)| InputSelector { path: (*path).into(), mode: *mode }).collect(),
+            key: key.into(),
+            title: key.into(),
+            short: String::new(),
+            is_coding_step: false,
+            auto_advance_default: true,
+            inputs: inputs
+                .iter()
+                .map(|(path, mode)| InputSelector {
+                    path: (*path).into(),
+                    mode: *mode,
+                })
+                .collect(),
             outputs: outputs.iter().map(|path| OutputSelector { path: (*path).into() }).collect(),
-            model: String::new(), harness: String::new(), prompt: "Write the assigned output.\n".into(),
+            model: String::new(),
+            harness: String::new(),
+            prompt: "Write the assigned output.\n".into(),
         }
     }
 
@@ -377,22 +514,37 @@ mod tests {
     }
 
     impl Drop for Fixture {
-        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.repo); }
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.repo);
+        }
     }
 
     impl Fixture {
         fn new(steps: Vec<NormalizedStep>) -> Self {
             let source = render_playbook_md(&NormalizedPlaybook {
-                version: 2, key: "graph".into(), title: "Graph".into(), description: String::new(),
-                default_model: String::new(), default_harness: "omp".into(),
-                section_order: steps.iter().map(|s| s.key.clone()).collect(), step: steps, preamble: String::new(),
+                version: 2,
+                key: "graph".into(),
+                title: "Graph".into(),
+                description: String::new(),
+                default_model: String::new(),
+                default_harness: "omp".into(),
+                section_order: steps.iter().map(|s| s.key.clone()).collect(),
+                step: steps,
+                preamble: String::new(),
             });
             let definition = parse_playbook_md(&source).unwrap();
             let mut state = new_execution_state(
-                PlaybookRef { scope: PlaybookScope::Repo, key: "graph".into() }, &source,
-                "test-lane".into(), 10, definition.step.iter().map(|s| s.key.clone()).collect(),
+                PlaybookRef {
+                    scope: PlaybookScope::Repo,
+                    key: "graph".into(),
+                },
+                &source,
+                "test-lane".into(),
+                10,
+                definition.step.iter().map(|s| s.key.clone()).collect(),
                 LaunchChoices::default(),
-            ).unwrap();
+            )
+            .unwrap();
             state.creation = "ready".into();
             let repo = std::env::temp_dir().join(format!("alinery-graph-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(crate::artifacts_dir(&repo, "task")).unwrap();
@@ -413,10 +565,7 @@ mod tests {
         }
 
         fn reserve(&mut self, candidate: ExecutionCandidate) -> String {
-            reserve_execution(
-                &self.repo, "task", &self.definition, &mut self.state, candidate,
-                &LaunchChoices::default(), None, true,
-            ).unwrap()
+            reserve_execution(&self.repo, "task", &self.definition, &mut self.state, candidate, &LaunchChoices::default(), None, true).unwrap()
         }
 
         fn tick(&mut self) -> Vec<String> {
@@ -439,13 +588,17 @@ mod tests {
 
         fn write(&self, id: &str, outputs: &[(&str, &str)]) {
             for (logical, contents) in outputs {
-                let assignment = self.state.executions[id].outputs.iter().find(|output| {
-                    ArtifactSelector::parse(&output.selector).unwrap().matches(logical)
-                }).unwrap();
+                let assignment = self.state.executions[id]
+                    .outputs
+                    .iter()
+                    .find(|output| ArtifactSelector::parse(&output.selector).unwrap().matches(logical))
+                    .unwrap();
                 let physical = if let Some((prefix, suffix)) = assignment.selector.split_once('*') {
                     let member = &logical[prefix.len()..logical.len() - suffix.len()];
                     assignment.relative_path.replace('*', member)
-                } else { assignment.relative_path.clone() };
+                } else {
+                    assignment.relative_path.clone()
+                };
                 let path = crate::artifacts_dir(&self.repo, "task").join(physical);
                 std::fs::create_dir_all(path.parent().unwrap()).unwrap();
                 std::fs::write(path, contents).unwrap();
@@ -470,15 +623,25 @@ mod tests {
         }
 
         fn numbers(&self, id: &str, selector: &str) -> Vec<i64> {
-            self.state.executions[id].candidate.inputs[selector].iter().flat_map(|id| {
-                std::fs::read_to_string(crate::artifacts_dir(&self.repo, "task").join(&self.state.occurrences[id].relative_path))
-                    .unwrap().split_whitespace().map(|n| n.parse::<i64>().unwrap()).collect::<Vec<_>>()
-            }).collect()
+            self.state.executions[id].candidate.inputs[selector]
+                .iter()
+                .flat_map(|id| {
+                    std::fs::read_to_string(crate::artifacts_dir(&self.repo, "task").join(&self.state.occurrences[id].relative_path))
+                        .unwrap()
+                        .split_whitespace()
+                        .map(|n| n.parse::<i64>().unwrap())
+                        .collect::<Vec<_>>()
+                })
+                .collect()
         }
 
         fn output_ids(&self, id: &str) -> BTreeSet<String> {
-            self.state.occurrences.values().filter(|o| o.producer_execution_id.as_deref() == Some(id))
-                .map(|o| o.id.clone()).collect()
+            self.state
+                .occurrences
+                .values()
+                .filter(|o| o.producer_execution_id.as_deref() == Some(id))
+                .map(|o| o.id.clone())
+                .collect()
         }
 
         fn restart(&mut self) {
@@ -501,7 +664,10 @@ mod tests {
         let ids = f.tick();
         let sum = f.named(&ids, "sum");
         let product = f.named(&ids, "product");
-        assert_eq!(f.state.executions[&sum].candidate.inputs["numbers.md"].iter().cloned().collect::<BTreeSet<_>>(), f.output_ids(&seed));
+        assert_eq!(
+            f.state.executions[&sum].candidate.inputs["numbers.md"].iter().cloned().collect::<BTreeSet<_>>(),
+            f.output_ids(&seed)
+        );
         let product_value: i64 = f.numbers(&product, "numbers.md").iter().product();
         f.finish(&product, &[("product.md", &product_value.to_string())]);
         assert!(f.ready().is_empty());
@@ -541,7 +707,12 @@ mod tests {
         assert!(f.ready().is_empty());
         f.exit(&seed);
         let workers = f.tick();
-        let family = f.state.collections.values().find(|c| c.selector == "result-*.md" && c.source_collection_id.is_some()).unwrap();
+        let family = f
+            .state
+            .collections
+            .values()
+            .find(|c| c.selector == "result-*.md" && c.source_collection_id.is_some())
+            .unwrap();
         assert_eq!(family.expected_execution_ids, workers.iter().cloned().collect());
         let b = workers.iter().find(|id| f.numbers(id, "request-*.md") == [3]).unwrap().clone();
         for id in workers.iter().filter(|id| **id != b) {
@@ -564,8 +735,10 @@ mod tests {
         f.exit(&b);
         let ids = f.tick();
         let collect = f.named(&ids, "collect");
-        assert_eq!(f.state.executions[&collect].candidate.inputs["result-*.md"].iter().cloned().collect::<BTreeSet<_>>(),
-            workers.iter().flat_map(|id| f.output_ids(id)).collect());
+        assert_eq!(
+            f.state.executions[&collect].candidate.inputs["result-*.md"].iter().cloned().collect::<BTreeSet<_>>(),
+            workers.iter().flat_map(|id| f.output_ids(id)).collect()
+        );
         let answer: i64 = f.numbers(&collect, "result-*.md").iter().sum();
         f.finish(&collect, &[("answer.md", &answer.to_string())]);
         assert_eq!(answer, 38);
@@ -595,7 +768,9 @@ mod tests {
         }
         let workers = f.tick();
         assert_eq!(workers.len(), 5);
-        for id in &workers { assert_eq!(f.state.executions[id].candidate.inputs["policy.md"], [policy.clone()]); }
+        for id in &workers {
+            assert_eq!(f.state.executions[id].candidate.inputs["policy.md"].as_slice(), std::slice::from_ref(&policy));
+        }
         let delayed = workers.iter().find(|id| f.numbers(id, "inner-request-*.md") == [4]).unwrap().clone();
         for number in [5, 2, 3, 1] {
             let id = workers.iter().find(|id| f.numbers(id, "inner-request-*.md") == [number]).unwrap();
@@ -635,8 +810,13 @@ mod tests {
         let ids = f.tick();
         let next_local = f.named(&ids, "local");
         assert_eq!(f.numbers(&next_local, "inner-result-*.md"), [100]);
-        assert_eq!(f.state.executions[&next_local].candidate.inputs["inner-result-*.md"].iter().cloned().collect::<BTreeSet<_>>(),
-            f.output_ids(&next_worker));
+        assert_eq!(
+            f.state.executions[&next_local].candidate.inputs["inner-result-*.md"]
+                .iter()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            f.output_ids(&next_worker)
+        );
     }
 
     #[test]
@@ -665,7 +845,10 @@ mod tests {
         let ids = f.tick();
         let a2 = f.named(&ids, "a");
         assert_eq!(f.state.executions[&a2].depth, 5);
-        assert_eq!(f.state.executions[&a2].candidate.inputs["ticket.md"].iter().cloned().collect::<BTreeSet<_>>(), f.output_ids(&d));
+        assert_eq!(
+            f.state.executions[&a2].candidate.inputs["ticket.md"].iter().cloned().collect::<BTreeSet<_>>(),
+            f.output_ids(&d)
+        );
         f.restart();
         f.write(&d, &[("ticket.md", "rewritten")]);
         std::fs::write(crate::artifacts_dir(&f.repo, "task").join("999-ticket-99.md"), "unaccepted").unwrap();
@@ -714,8 +897,10 @@ mod tests {
         f.finish(&product2, &[("product.md", "12")]);
         let ids = f.tick();
         let join2 = f.named(&ids, "join");
-        assert_eq!(f.state.executions[&join2].candidate.inputs.values().flatten().cloned().collect::<BTreeSet<_>>(),
-            f.output_ids(&sum2).union(&f.output_ids(&product2)).cloned().collect());
+        assert_eq!(
+            f.state.executions[&join2].candidate.inputs.values().flatten().cloned().collect::<BTreeSet<_>>(),
+            f.output_ids(&sum2).union(&f.output_ids(&product2)).cloned().collect()
+        );
     }
 
     #[test]
@@ -742,7 +927,10 @@ mod tests {
         let ids = f.tick();
         assert_eq!(ids.len(), 1);
         let next = f.named(&ids, "entry");
-        assert_eq!(f.state.executions[&next].candidate.inputs.values().flatten().cloned().collect::<BTreeSet<_>>(), f.output_ids(&continuation));
+        assert_eq!(
+            f.state.executions[&next].candidate.inputs.values().flatten().cloned().collect::<BTreeSet<_>>(),
+            f.output_ids(&continuation)
+        );
         assert_eq!(f.state.contexts.values().filter(|c| matches!(c.cause, ContextCause::Loop { .. })).count(), 1);
     }
 
@@ -759,8 +947,10 @@ mod tests {
         std::fs::create_dir_all(&attachments).unwrap();
         std::fs::write(attachments.join("evidence.md"), "not a seed").unwrap();
         let ids = f.tick();
-        assert_eq!(ids.iter().map(|id| f.state.executions[id].candidate.step_key.as_str()).collect::<BTreeSet<_>>(),
-            BTreeSet::from(["first", "root", "second"]));
+        assert_eq!(
+            ids.iter().map(|id| f.state.executions[id].candidate.step_key.as_str()).collect::<BTreeSet<_>>(),
+            BTreeSet::from(["first", "root", "second"])
+        );
         let root = f.named(&ids, "root");
         f.start(&root);
         assert!(matches!(f.accept(&root), CompletionOutcome::InvalidOutputs { .. }));
@@ -793,8 +983,10 @@ mod tests {
         f.finish(&second, &[("result-square.md", "9"), ("result-extra.md", "16")]);
         let ids = f.tick();
         let collect = f.named(&ids, "collect");
-        assert_eq!(f.state.executions[&collect].candidate.inputs["result-*.md"].iter().cloned().collect::<BTreeSet<_>>(),
-            f.output_ids(&first).union(&f.output_ids(&second)).cloned().collect());
+        assert_eq!(
+            f.state.executions[&collect].candidate.inputs["result-*.md"].iter().cloned().collect::<BTreeSet<_>>(),
+            f.output_ids(&first).union(&f.output_ids(&second)).cloned().collect()
+        );
         assert_eq!(f.numbers(&collect, "result-*.md").iter().sum::<i64>(), 29);
         assert!(f.ready().is_empty());
     }
@@ -814,7 +1006,7 @@ mod tests {
         let selected = &candidates[0];
         assert_eq!(selected.step_key, "selected");
         let expected = f.state.occurrences.values().find(|o| o.logical_path == "request-a.md").unwrap();
-        assert_eq!(selected.inputs["request-a.md"], [expected.id.clone()]);
+        assert_eq!(selected.inputs["request-a.md"].as_slice(), std::slice::from_ref(&expected.id));
     }
 
     #[test]
@@ -848,8 +1040,10 @@ mod tests {
         let ready = f.ready();
         assert_eq!(ready.len(), 1, "unmatched source members are not worker obligations");
         assert_eq!(ready[0].step_key, "collect");
-        assert_eq!(ready[0].inputs["result-*.md"].iter().cloned().collect::<BTreeSet<_>>(),
-            f.output_ids(&first).union(&f.output_ids(&second)).cloned().collect());
+        assert_eq!(
+            ready[0].inputs["result-*.md"].iter().cloned().collect::<BTreeSet<_>>(),
+            f.output_ids(&first).union(&f.output_ids(&second)).cloned().collect()
+        );
     }
 
     #[test]

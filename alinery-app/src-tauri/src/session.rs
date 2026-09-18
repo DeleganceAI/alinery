@@ -131,7 +131,6 @@ pub(crate) fn session_list_status_key(repo_path: &str, task_slug: &str, id: &str
     format!("{repo_path}:{task_slug}:{id}")
 }
 
-
 // Only the tests build the meta path now (the daemon resolves its own); keep it as the
 // canonical helper so a test and the daemon can't drift.
 pub(crate) fn session_meta_path(repo: &Path, slug: &str, id: &str) -> PathBuf {
@@ -507,15 +506,21 @@ pub(crate) fn allow_root_session_open(meta_harness: Option<&str>) -> bool {
 #[tauri::command]
 pub(crate) fn ensure_drawer_terminal(state: State<'_, AppState>) -> Result<SessionMeta, String> {
     let repo = require_owned_active_repo(&state)?;
-    let reply = state.daemon_for(&repo).ok_or("daemon not connected")?.create_execution_session(
-        &alinery_core::task_creation::CreateExecutionSessionRequest {
+    let reply = state
+        .daemon_for(&repo)
+        .ok_or("daemon not connected")?
+        .create_execution_session(&alinery_core::task_creation::CreateExecutionSessionRequest {
             task_slug: String::new(),
             target: alinery_core::task_creation::ExecutionSessionTarget::Auxiliary {
-                harness: alinery_core::NO_HARNESS_KEY.into(), model: None, prompt: None,
+                harness: alinery_core::NO_HARNESS_KEY.into(),
+                model: None,
+                prompt: None,
             },
-            launch_override: None, prompt_extra: None, start: false,
-        },
-    )?;
+            launch_override: None,
+            prompt_extra: None,
+            handoff_artifact: None,
+            start: false,
+        })?;
     Ok(reply.session)
 }
 
@@ -565,7 +570,9 @@ pub(crate) fn open_session(
         if task.engine_version < 2 {
             return Err("pre-v2 task data is read-only; create a new v2 task to launch sessions".into());
         }
-        if task.draft || task.archived { return Err("draft or archived tasks cannot launch sessions".into()); }
+        if task.draft || task.archived {
+            return Err("draft or archived tasks cannot launch sessions".into());
+        }
         retained_task_definition(&repo, &task, Some(&app_config_path(&app)?))?;
         if let Some(launch) = alinery_core::read_meta_launch_fields(&repo, slug_trim, &id) {
             if !alinery_core::is_allowed_launch_harness(&launch.harness) {
@@ -958,9 +965,7 @@ pub(crate) fn start_session(
         None => require_owned_active_repo(&state)?,
     };
     require_repo_owned(&state, &repo)?;
-    task_daemon_for(&repo, &task_slug, &app_config_path(&app)?)?.start_session(
-        &alinery_core::task_creation::StartSessionRequest { task_slug, session_id },
-    )
+    task_daemon_for(&repo, &task_slug, &app_config_path(&app)?)?.start_session(&alinery_core::task_creation::StartSessionRequest { task_slug, session_id })
 }
 
 // Terminate a live daemon-owned session's harness process group and reap it (issue #24 P6).
