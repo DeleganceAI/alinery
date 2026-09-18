@@ -69,6 +69,18 @@ Review the decision before starting Plan. Other bundled Playbooks cover one-shot
 
 Task records, sessions, and artifacts live under your repository's `.alinery/` directory. The app runs locally, and product-usage telemetry is opt-in.
 
+**GitHub pull requests.** Kanban cards and task detail show a clickable indicator for the
+task branch's PR: green for open, purple for merged, gray for closed without merging.
+Clicking opens the actual PR in your browser; it does not move or archive the task.
+Discovery uses the existing GitHub CLI connection (`gh`) in the background. Results
+are shared between views and cached for 60 seconds, with refreshes while the relevant
+view is open and visible. Discovered PR links survive branch/worktree removal.
+Lookup failures show an unavailable indicator, or mark the last known status stale.
+Compare links are not treated as existing PRs; automatic discovery is GitHub-only.
+In Grid, enable **pull request** under **Card properties** to show the same icon in
+any card mode. This option is off by default and saved per Grid view. Disabled
+properties and inactive Grid tabs do not request PR refreshes.
+
 ### Sub-tasks
 
 Sub-tasks give rabbit holes a place of their own, so you can investigate a side question and return to the main task knowing exactly where you left off.

@@ -12,6 +12,7 @@ import { CopyArtifactButton, CopyTextButton, copyTextToClipboard } from "../chat
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import { PlaybookGraph } from "../PlaybookGraph";
+import { PullRequestIndicator } from "../PullRequestIndicator";
 import {
   classifySessionNotice,
   hasAcknowledgedExit,
@@ -65,6 +66,7 @@ import type {
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
 import { useSessionSort } from "../useSessionSort";
+import { useTaskPullRequests } from "../useTaskPullRequests";
 
 function taskActivityLabel(activity: TaskActivitySummary): string {
   switch (activity.status) {
@@ -162,6 +164,8 @@ export function TaskDetail({
   onSessionSortChange?: (sort: SessionSort) => void;
 }) {
   const [task, setTask] = useState<Task | null>(initialTask ?? null);
+  const pullRequests = useTaskPullRequests(task && task.slug === slug && !task.draft ? [{ repoPath, taskSlug: slug }] : []);
+  const pullRequest = pullRequests[`${repoPath}:${slug}`];
   const taskMutationEpoch = useRef(0);
   const [repoTasks, setRepoTasks] = useState<Task[]>([]);
   const primaryPlaybook = task?.playbook || "superdevelop";
@@ -868,8 +872,11 @@ export function TaskDetail({
             </div>
             <div className="kv">
               <span className="k">PR URL</span>
-              <span className="v mono">{task?.pr_url ? task.pr_url : <span className="dim">not available</span>}</span>
-              <CopyTextButton text={task?.pr_url ?? ""} label="PR URL" />
+              <span className="v mono">
+                <PullRequestIndicator snapshot={pullRequest} />
+                {!pullRequest?.pr && (task?.pr_url ? task.pr_url : <span className="dim">not available</span>)}
+              </span>
+              <CopyTextButton text={pullRequest?.pr?.url ?? task?.pr_url ?? ""} label="PR URL" />
               <button
                 type="button"
                 className="btn ghost small"

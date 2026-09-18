@@ -178,3 +178,160 @@ fn default_base_branch_reads_origin_head_when_it_is_set() {
 
     assert_eq!(crate::default_base_branch(&repo), "trunk");
 }
+
+fn github_pull_fixture(number: u64, owner: &str, branch: &str, state: &str, merged: bool) -> serde_json::Value {
+    serde_json::json!({
+        "number": number,
+        "html_url": format!("https://github.com/team/project/pull/{number}"),
+        "state": state,
+        "merged_at": if merged { Some("2026-09-17T12:00:00Z") } else { None },
+        "head": {
+            "ref": branch,
+            "user": { "login": owner },
+            "repo": { "full_name": format!("{owner}/project") }
+        }
+    })
+}
+
+#[test]
+fn pull_request_urls_reject_creation_forms_and_foreign_hosts() {
+    let reference = crate::github_pull_request_ref("https://github.com/team/project/pull/42?notification_referrer_id=1#discussion").unwrap();
+    assert_eq!(reference.label(), "team/project#42");
+    for url in [
+        "https://github.com/team/project/compare/main...feature",
+        "https://github.com/team/project/issues/42",
+        "https://github.com.evil.test/team/project/pull/42",
+        "https://github.com@evil.test/team/project/pull/42",
+        "https://github.com/team/project/pull/0",
+        "https://github.com/team/project/pull/42/files",
+        "https://github.com/team/../pull/42",
+        "https://github.com/team%2Fevil/project/pull/42",
+    ] {
+        assert!(crate::github_pull_request_ref(url).is_none(), "{url}");
+    }
+}
+
+#[test]
+fn branch_pull_requests_require_exact_head_and_prefer_open_then_latest() {
+    let pulls = serde_json::json!([
+        github_pull_fixture(40, "fork", "feature/nested", "open", false),
+        github_pull_fixture(39, "team", "feature/nested-more", "open", false),
+        github_pull_fixture(38, "team", "feature/nested", "closed", true),
+        github_pull_fixture(21, "team", "feature/nested", "open", false),
+        github_pull_fixture(22, "team", "feature/nested", "open", false)
+    ]);
+    let selected = crate::select_branch_pull_request(&pulls, "team", "project", "feature/nested").unwrap().unwrap();
+    assert_eq!(selected.number, 22);
+    assert_eq!(selected.state, crate::PullRequestState::Open);
+    let historical = serde_json::json!([
+        github_pull_fixture(37, "team", "feature/nested", "closed", false),
+        github_pull_fixture(38, "team", "feature/nested", "closed", true)
+    ]);
+    let merged = crate::select_branch_pull_request(&historical, "team", "project", "feature/nested").unwrap().unwrap();
+    assert_eq!(merged.number, 38);
+    assert_eq!(merged.state, crate::PullRequestState::Merged);
+    let closed = crate::select_branch_pull_request(
+        &serde_json::json!([github_pull_fixture(39, "team", "feature/nested", "closed", false)]),
+        "team",
+        "project",
+        "feature/nested",
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(closed.state, crate::PullRequestState::Closed);
+}
+
+#[test]
+fn discovery_persists_real_link_and_queries_it_after_branch_removal() {
+    let repo = init_git_test_repo("pr-discovery");
+    let mut task = create_task_for_test(&repo, "PR discovery", false, "", "");
+    task.pr_url = "https://github.com/team/project/compare/main...feature".into();
+    write_task(&repo, &task).unwrap();
+    let discovered = crate::task_pull_request_with(
+        &repo,
+        &task.slug,
+        || Ok(Some(("team".into(), "project".into()))),
+        |_, fields| {
+            if fields.contains(&("state", "open")) {
+                Ok(serde_json::json!([]))
+            } else {
+                Ok(serde_json::json!([github_pull_fixture(42, "team", &task.branch, "closed", true)]))
+            }
+        },
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(discovered.state, crate::PullRequestState::Merged);
+    assert_eq!(read_task(&repo, &task.slug).unwrap().pr_url, discovered.url);
+    crate::record_pushed_url_in(&repo, &task.slug, &task.branch, "https://github.com/team/project/compare/main...feature").unwrap();
+    assert_eq!(read_task(&repo, &task.slug).unwrap().pr_url, discovered.url);
+    alinery_core::mutate_task(&repo, &task.slug, "remove task branch", |task| {
+        task.branch.clear();
+        task.worktree.clear();
+        Ok(())
+    })
+    .unwrap();
+    let retained = crate::task_pull_request_with(
+        &repo,
+        &task.slug,
+        || panic!("stored PR must not depend on origin or branch"),
+        |endpoint, _| {
+            assert_eq!(endpoint, "repos/team/project/pulls/42");
+            Ok(github_pull_fixture(42, "team", "deleted-branch", "closed", true))
+        },
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(retained, discovered);
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn failed_discovery_does_not_look_like_no_pull_request_or_change_the_link() {
+    let repo = init_git_test_repo("pr-lookup-error");
+    let task = create_task_for_test(&repo, "PR lookup error", false, "", "");
+    let error = crate::task_pull_request_with(
+        &repo,
+        &task.slug,
+        || Ok(Some(("team".into(), "project".into()))),
+        |_, _| Err("authentication failed".into()),
+    )
+    .unwrap_err();
+    assert_eq!(error, "authentication failed");
+    assert_eq!(read_task(&repo, &task.slug).unwrap().pr_url, task.pr_url);
+    let no_pr = crate::task_pull_request_with(&repo, &task.slug, || Ok(Some(("team".into(), "project".into()))), |_, _| Ok(serde_json::json!([]))).unwrap();
+    assert_eq!(no_pr, None);
+    assert_eq!(read_task(&repo, &task.slug).unwrap().pr_url, task.pr_url);
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn discovery_does_not_overwrite_concurrent_branch_or_link_edits() {
+    let repo = init_git_test_repo("pr-discovery-race");
+    let task = create_task_for_test(&repo, "PR discovery race", false, "", "");
+    alinery_core::mutate_task(&repo, &task.slug, "replace branch", |task| {
+        task.branch = "replacement".into();
+        Ok(())
+    })
+    .unwrap();
+    assert!(crate::record_discovered_pull_request_in(&repo, &task.slug, &task.branch, &task.pr_url, "https://github.com/team/project/pull/42").is_err());
+    let changed = read_task(&repo, &task.slug).unwrap();
+    assert_eq!(changed.branch, "replacement");
+    assert_eq!(changed.pr_url, task.pr_url);
+    crate::set_pr_url_in(&repo, task.slug.clone(), "https://github.com/team/project/pull/99".into()).unwrap();
+    assert!(crate::record_discovered_pull_request_in(&repo, &task.slug, &changed.branch, &changed.pr_url, "https://github.com/team/project/pull/42").is_err());
+    assert_eq!(read_task(&repo, &task.slug).unwrap().pr_url, "https://github.com/team/project/pull/99");
+    fs::remove_dir_all(task_dir(&repo, &task.slug)).unwrap();
+    assert!(crate::record_discovered_pull_request_in(&repo, &task.slug, &changed.branch, &changed.pr_url, "https://github.com/team/project/pull/42").is_err());
+    assert!(!task_dir(&repo, &task.slug).exists());
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn malformed_pull_request_state_and_url_are_errors_not_missing_prs() {
+    let mut pull = github_pull_fixture(42, "team", "feature", "unknown", false);
+    assert!(crate::select_branch_pull_request(&serde_json::json!([pull.clone()]), "team", "project", "feature").is_err());
+    pull["state"] = serde_json::json!("open");
+    pull["html_url"] = serde_json::json!("https://example.com/team/project/pull/42");
+    assert!(crate::select_branch_pull_request(&serde_json::json!([pull]), "team", "project", "feature").is_err());
+}

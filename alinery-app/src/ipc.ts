@@ -50,6 +50,7 @@ import type {
   PlaybookStepSummary,
   PlaybookSummary,
   PreparedSessionMessageAction,
+  PullRequestSnapshot,
   PurgeArchivedResult,
   RelatedTaskRef,
   RepoOverrides,
@@ -339,6 +340,7 @@ export const deleteDraftForRepo = (repoPath: string, slug: string) => invoke<voi
 export const getTask = (slug: string) => invoke<Task | null>("get_task", { slug });
 export const listBoardTasks = (allRepos: boolean) => invoke<BoardTask[]>("list_board_tasks", { allRepos });
 export const listTaskActivity = (refs: TaskActivityRef[]) => invoke<Record<string, TaskActivitySummary>>("list_task_activity", { refs });
+export const listTaskPullRequests = (tasks: TaskActivityRef[]) => invoke<Record<string, PullRequestSnapshot>>("list_task_pull_requests", { tasks });
 export const listTasks = () => invoke<Task[]>("list_tasks");
 export const setRelatedTasksForRepo = (repoPath: string, slug: string, related: RelatedTaskRef[]) => invoke<Task>("set_related_tasks_for_repo", { repoPath, slug, related });
 export const writeDraftForRepo = (a: {

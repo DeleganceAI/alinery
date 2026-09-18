@@ -23,9 +23,8 @@ pub(crate) struct Task {
     pub(crate) created: u64,
     #[serde(default)]
     pub(crate) archived: bool,
-    // M5: prefilled with the forge compare URL on push, hand-editable to the real PR URL
-    // once created; shown as a clickable/copyable link. #[serde(default)] so pre-M5 task.md
-    // (no pr_url) still parses.
+    // Compare URL until discovery or a user supplies the real PR link. Retained after
+    // worktree removal; defaulted so older task.md files still parse.
     #[serde(default)]
     pub(crate) pr_url: String,
     // M5: the Linear identifier (e.g. "ENG-123") when a task was imported from Linear; ""
