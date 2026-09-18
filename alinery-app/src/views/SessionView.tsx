@@ -284,6 +284,8 @@ export function SessionView({
   const loginOpenUrlRef = useRef<string | null>(null);
   const setupOpenedRef = useRef(false);
   const [viewBusy, setViewBusy] = useState(false);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const archivePending = useRef(false);
   const [dropping, setDropping] = useState(false);
   const attachmentSeq = useRef(0);
   // Last model send whose stdin write was acked but whose OMP response has not landed yet.
@@ -517,25 +519,31 @@ export function SessionView({
   }, [id, taskSlug, repoPath, intent]);
 
   const handleArchive = async () => {
-    // archive_session kills+reaps a live pty before archiving, so a live session
-    // must state that consequence first (DESIGN.md: consequences before confirmation).
-    const live = lifecycle?.state === "live";
-    const label = harnessDisplayName(harness) + (model ? ` · ${model}` : "");
-    const ok = await confirmDanger(
-      "Archive session",
-      live
-        ? `Session ${id} (${label}) still has a running process. Archiving stops that process, then moves the session out of the active list. Scrollback is kept.`
-        : `Session ${id} (${label}) will move out of the active list. Its scrollback and artifacts are kept.`,
-      live ? "Stop and archive" : "Archive session",
-    );
-    if (!ok) return;
-    ipc
-      .archiveSession(taskSlug, id)
-      .then(() => {
-        toast("Session archived", "success");
-        onBack();
-      })
-      .catch((e) => toast(String(e), "error"));
+    if (archivePending.current) return;
+    archivePending.current = true;
+    try {
+      // archive_session kills+reaps a live pty before archiving, so a live session
+      // must state that consequence first (DESIGN.md: consequences before confirmation).
+      const live = lifecycle?.state === "live";
+      const label = harnessDisplayName(harness) + (model ? ` · ${model}` : "");
+      const ok = await confirmDanger(
+        "Archive session",
+        live
+          ? `Session ${id} (${label}) still has a running process. Archiving stops that process, then moves the session out of the active list. Scrollback is kept.`
+          : `Session ${id} (${label}) will move out of the active list. Its scrollback and artifacts are kept.`,
+        live ? "Stop and archive" : "Archive session",
+      );
+      if (!ok) return;
+      setArchiveBusy(true);
+      await ipc.archiveSession(taskSlug, id);
+      toast("Session archived", "success");
+      onBack();
+    } catch (error) {
+      toast(String(error), "error");
+    } finally {
+      archivePending.current = false;
+      setArchiveBusy(false);
+    }
   };
   // Manual resume-token entry. launch harnesses (claude/grok) already carry a minted token, so in
   // practice this modal only surfaces for omp (id_source = "manual"). ponytail: omp auto-resume
@@ -1843,6 +1851,7 @@ export function SessionView({
                 taskSlug={taskSlug}
                 onStartFresh={leftover ? () => undefined : onStartFresh}
                 onArchive={handleArchive}
+                archiveBusy={archiveBusy}
                 onViewHistory={() => setShowHistory(true)}
                 onKilled={() => setReclassifyTick((n) => n + 1)}
               />

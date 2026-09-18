@@ -307,18 +307,25 @@ pub(crate) fn storage_info(app: AppHandle) -> Result<StorageInfo, String> {
 // Irreversible, local-only: drops every archived task dir, every archived session's files, and
 // the worktrees of archived tasks. Live data is never a target (alinery-core owns the walk).
 #[tauri::command]
-pub(crate) fn delete_all_archived_storage(app: AppHandle, state: State<'_, AppState>) -> Result<alinery_core::PurgeArchivedResult, String> {
+pub(crate) async fn delete_all_archived_storage(app: AppHandle, state: State<'_, AppState>) -> Result<alinery_core::PurgeArchivedResult, String> {
     let repo = require_owned_active_repo(&state)?;
-    let kill = |task_slug: &str, id: &str| {
-        let owned = with_session_client(&state, &repo, task_slug, id, |d| d.session_status_observed(id))
-            .map(|s| s.is_some())
-            .unwrap_or(false);
-        if owned {
-            let _ = with_session_client(&state, &repo, task_slug, id, |d| d.kill_session(id));
-            state.clear_session_route(id);
-        }
-    };
-    let result = alinery_core::purge_archived_storage(&repo, &kill)?;
+    // Keep the shared route cache/fallback behavior without borrowing command State in the worker.
+    let worker_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = worker_app.state::<AppState>();
+        let kill = |task_slug: &str, id: &str| {
+            let owned = with_session_client(&state, &repo, task_slug, id, |d| d.session_status_observed(id))
+                .map(|s| s.is_some())
+                .unwrap_or(false);
+            if owned {
+                let _ = with_session_client(&state, &repo, task_slug, id, |d| d.kill_session(id));
+                state.clear_session_route(id);
+            }
+        };
+        alinery_core::purge_archived_storage(&repo, &kill)
+    })
+    .await
+    .map_err(|e| format!("purge archived storage task: {e}"))??;
     emit(
         &app,
         alinery_core::TelemetryEvent::StoragePurge {

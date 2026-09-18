@@ -1,5 +1,5 @@
 import { type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { archiveBoardTask } from "../archiveTask";
+import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import * as ipc from "../ipc";
 import { ArchiveTaskModal, Checkbox, EMPTY_TASK_ACTIVITY, repoName, sameBoardTasks, sameKanbanColumns, TaskActivityIndicators, taskKey, useBoardTaskActivity } from "../shared";
 import type { BoardNav, BoardTask, KanbanColumn, PlaybookStepSummary, TaskActivityStatus } from "../types";
@@ -1215,17 +1215,16 @@ export function Grid({
     );
   };
 
-  const confirmArchive = (removeWorktree: boolean) => {
+  const confirmArchive = async (removeWorktree: boolean, onPhase: (phase: ArchiveTaskPhase) => void) => {
     const task = pendingArchive;
     if (!task) return;
-    void archiveBoardTask(task, removeWorktree).then((failure) => {
-      setPendingArchive(null);
-      if (failure) {
-        setErr(`${failure.msg} ${failure.detail}`);
-        return;
-      }
-      void load();
-    });
+    const failure = await archiveBoardTask(task, removeWorktree, onPhase);
+    setPendingArchive(null);
+    if (failure) {
+      setErr(`${failure.msg} ${failure.detail}`);
+      return;
+    }
+    void load();
   };
 
   return (

@@ -36,6 +36,7 @@ const ipcSpies = vi.hoisted(() => ({
   discardSubtask: vi.fn(),
   createSessionForRepo: vi.fn(),
   restoreTaskForRepo: vi.fn(),
+  archiveSessionForRepo: vi.fn(),
 }));
 
 const mocks = vi.hoisted(() => ({
@@ -84,6 +85,7 @@ vi.mock("../ipc", () =>
     worktreeExists: mocks.worktreeExists,
     createSessionForRepo: ipcSpies.createSessionForRepo,
     restoreTaskForRepo: ipcSpies.restoreTaskForRepo,
+    archiveSessionForRepo: ipcSpies.archiveSessionForRepo,
     markSessionNotificationRead: mocks.markSessionNotificationRead,
     startSubtaskManager: ipcSpies.startSubtaskManager,
     recoverSubtaskManager: ipcSpies.recoverSubtaskManager,
@@ -270,6 +272,7 @@ beforeEach(() => {
   ipcSpies.startSubtaskManager.mockResolvedValue({ ...manager });
   ipcSpies.recoverSubtaskManager.mockResolvedValue({ ...manager, subtask_slug: "child" });
   ipcSpies.restoreTaskForRepo.mockReset().mockResolvedValue(undefined);
+  ipcSpies.archiveSessionForRepo.mockReset();
   ipcSpies.discardSubtask.mockImplementation(async () => {
     const child = scenario.state.active_subtask;
     scenario.task = { ...scenario.task, active_subtask: "" };
@@ -349,6 +352,36 @@ async function renderDetail(slug = "parent") {
   await screen.findByRole("heading", { name: scenario.task.name });
   return { onOpenSession, onOpenRelatedTask, onNewSession };
 }
+
+describe("task session archive pending feedback", () => {
+  it("keeps the session pending until IPC settles and exposes errors before retry", async () => {
+    scenario.sessions = [session({ id: "archive-me" })];
+    const pending = deferred<void>();
+    ipcSpies.archiveSessionForRepo.mockReturnValue(pending.promise);
+    await renderDetail();
+    const button = await screen.findByRole("button", { name: "Archive" });
+    act(() => {
+      fireEvent.click(button);
+      fireEvent.click(button);
+    });
+    expect((screen.getByRole("button", { name: "Archiving session…" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(ipcSpies.archiveSessionForRepo).toHaveBeenCalledTimes(1);
+    expect(ipcSpies.archiveSessionForRepo).toHaveBeenCalledWith("/repo", "parent", "archive-me");
+    await act(async () => pending.reject(new Error("daemon timed out")));
+    expect(screen.getByText("Couldn't archive the session.")).toBeDefined();
+    expect(screen.getByText("Error: daemon timed out")).toBeDefined();
+    expect((screen.getByRole("button", { name: "Archive" }) as HTMLButtonElement).disabled).toBe(false);
+
+    const retry = deferred<void>();
+    ipcSpies.archiveSessionForRepo.mockReturnValue(retry.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+    expect(ipcSpies.archiveSessionForRepo).toHaveBeenCalledTimes(2);
+    scenario.sessions = [session({ id: "archive-me", archived: true })];
+    await act(async () => retry.resolve());
+    expect(screen.queryByText("archive-me")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Archiving session…" })).toBeNull();
+  });
+});
 
 describe("removed distill surfaces", () => {
   it("keeps a historical session visible without offering Distill or a Wiki tab", async () => {
