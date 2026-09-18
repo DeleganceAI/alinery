@@ -398,9 +398,9 @@ fn list_tools() -> Value {
         {"name":"alinery_list_repos","description":"List known repos (local + discovery)","inputSchema":{"type":"object"}},
         {"name":"alinery_list_tasks","description":"List tasks for repo","inputSchema":{"type":"object","properties":{"repo":repo_prop()},"required":["repo"]}},
         {"name":"alinery_get_task","description":"Get task.md content","inputSchema":{"type":"object","properties":{"repo":repo_prop(),"slug":{"type":"string"}},"required":["repo"]}},
-        {"name":"alinery_create_task","description":"Create default SuperDevelop task plus first session (local only)","inputSchema":{"type":"object","properties":{"repo":repo_prop(),"name":{"type":"string"},"description":{"type":"string"}},"required":["repo"]}},
+        {"name":"alinery_create_task","description":"Create a task plus its first session, in the given playbook (default: superdevelop) (local only)","inputSchema":{"type":"object","properties":{"repo":repo_prop(),"name":{"type":"string"},"description":{"type":"string"},"playbook":{"type":"string","description":"Primary playbook for the task's first session. Defaults to 'superdevelop'. Built-in options: superdevelop, one-shot, free-form, review, bug-hunting. Call alinery_list_playbooks for the full set available in this repo (custom playbooks may be configured)."}},"required":["repo"]}},
         {"name":"alinery_list_sessions","description":"List sessions for task","inputSchema":{"type":"object","properties":{"repo":repo_prop(),"slug":{"type":"string"}},"required":["repo"]}},
-        {"name":"alinery_create_session","description":"Create a playbook-step OMP session in the task's primary or selected playbook, or an auxiliary Generic Terminal session (no-harness). prompt_extra appends instructions to a playbook-step prompt exactly once; Generic Terminal rows do not take prompt_extra. Set start=true to start durably through alineryd.","inputSchema":{"type":"object","properties":{"repo":repo_prop(),"slug":{"type":"string"},"task_slug":{"type":"string"},"playbook":{"type":"string"},"generic":{"type":"boolean","default":false},"phase":{"type":"string"},"model":{"type":"string"},"prompt_extra":{"type":"string"},"start":{"type":"boolean","default":false}},"required":["repo"]}},
+        {"name":"alinery_create_session","description":"Create a playbook-step OMP session in the task's primary or selected playbook, or an auxiliary Generic Terminal session (no-harness). prompt_extra appends instructions to a playbook-step prompt exactly once; Generic Terminal rows do not take prompt_extra. Set start=true to start durably through alineryd.","inputSchema":{"type":"object","properties":{"repo":repo_prop(),"slug":{"type":"string"},"task_slug":{"type":"string"},"playbook":{"type":"string","description":"Playbook to select for this session; defaults to the task's primary playbook. Built-in options: superdevelop, one-shot, free-form, review, bug-hunting. Call alinery_list_playbooks for the full set available in this repo (custom playbooks may be configured)."},"generic":{"type":"boolean","default":false},"phase":{"type":"string"},"model":{"type":"string"},"prompt_extra":{"type":"string"},"start":{"type":"boolean","default":false}},"required":["repo"]}},
         {"name":"alinery_start_session","description":"Durably start an eligible never-started task session through its recorded alineryd lane. This does not attach interactive terminal control.","inputSchema":{"type":"object","properties":{"repo":repo_prop(),"task_slug":{"type":"string"},"session_id":{"type":"string"}},"required":["repo","task_slug","session_id"]}},
         {"name":"alinery_send_review_handoff","description":"Copy review findings to another task and create a target session (local only)","inputSchema":{"type":"object","properties":{"repo":repo_prop(),"source_slug":{"type":"string"},"source_artifact":{"type":"string"},"target_slug":{"type":"string"},"source_session":{"type":"string"},"target_phase":{"type":"string"},"model":{"type":"string"},"prompt_extra":{"type":"string"}},"required":["repo","source_slug","source_artifact","target_slug"]}},
         {"name":"alinery_list_playbook_steps","description":"List selectable steps for a playbook","inputSchema":{"type":"object","properties":{"repo":repo_prop(),"playbook":{"type":"string"}},"required":["repo"]}},
@@ -412,7 +412,7 @@ fn list_tools() -> Value {
         {"name":"alinery_write_config","description":"Write .alinery/config.toml (validated as TOML)","inputSchema":{"type":"object","properties":{"repo":repo_prop(),"content":{"type":"string"}},"required":["repo"]}},
         {"name":"alinery_list_phases","description":"Compatibility: list SuperDevelop playbook steps","inputSchema":{"type":"object","properties":{"repo":repo_prop()},"required":["repo"]}},
         {"name":"alinery_list_playbooks","description":"List playbook summaries","inputSchema":{"type":"object","properties":{"repo":repo_prop()},"required":["repo"]}},
-        {"name":"alinery_create_subtask","description":"Create an approved child for an Alinery sub-task manager","inputSchema":{"type":"object","additionalProperties":false,"properties":{"repo":repo_prop(),"manager_session_id":{"type":"string"},"name":{"type":"string"},"slug":{"type":"string"},"playbook":{"type":"string"},"instructions":{"type":"string"}},"required":["repo","manager_session_id","name","slug","playbook"]}},
+        {"name":"alinery_create_subtask","description":"Create an approved child for an Alinery sub-task manager","inputSchema":{"type":"object","additionalProperties":false,"properties":{"repo":repo_prop(),"manager_session_id":{"type":"string"},"name":{"type":"string"},"slug":{"type":"string"},"playbook":{"type":"string","description":"Playbook for the child task. Built-in options: superdevelop, one-shot, free-form, review, bug-hunting. Call alinery_list_playbooks for the full set available in this repo (custom playbooks may be configured)."},"instructions":{"type":"string"}},"required":["repo","manager_session_id","name","slug","playbook"]}},
         {"name":"alinery_inspect_subtask_finish","description":"Inspect durable Git and artifact state before finishing a child","inputSchema":{"type":"object","additionalProperties":false,"properties":{"repo":repo_prop(),"manager_session_id":{"type":"string"}},"required":["repo","manager_session_id"]}},
         {"name":"alinery_finalize_subtask","description":"Finalize an inspected child with an explicit code disposition","inputSchema":{"type":"object","additionalProperties":false,"properties":{"repo":repo_prop(),"manager_session_id":{"type":"string"},"mode":{"type":"string","enum":["artifacts_only","integrated_code","archive_without_code"]}},"required":["repo","manager_session_id","mode"]}},
         {"name":"alinery_archive_task","description":"Archive task","inputSchema":{"type":"object","properties":{"repo":repo_prop(),"slug":{"type":"string"}},"required":["repo"]}},
@@ -1100,6 +1100,16 @@ fn create_task(repo: &Path, app_config: Option<&Path>, args: &Value) -> Value {
         return text_result("error: empty name");
     }
     let desc = args.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let playbook_key = args.get("playbook").and_then(Value::as_str).unwrap_or("").trim();
+    let playbook_key = if playbook_key.is_empty() {
+        alinery_core::DEFAULT_PLAYBOOK_KEY.to_string()
+    } else {
+        playbook_key.to_string()
+    };
+    let playbook = match alinery_core::get_playbook(repo, &playbook_key) {
+        Some(wf) => wf,
+        None => return text_result(format!("error: unknown playbook '{playbook_key}'")),
+    };
     let slug = alinery_core::unique_slug(repo, &alinery_core::slugify(&nm));
     if let Err(e) = alinery_core::prepare_task_dirs_and_ticket(repo, &slug, &nm, &desc) {
         return text_result(format!("prep error: {}", e));
@@ -1126,16 +1136,12 @@ fn create_task(repo: &Path, app_config: Option<&Path>, args: &Value) -> Value {
         pr_url: String::new(),
         linear_id: String::new(),
         github_issue: String::new(),
-        playbook: alinery_core::DEFAULT_PLAYBOOK_KEY.to_string(),
-        auto_advance: alinery_core::get_playbook(repo, alinery_core::DEFAULT_PLAYBOOK_KEY)
-            .map(|wf| {
-                alinery_core::ordered_auto_advance_edges(&wf)
-                    .into_iter()
-                    .filter(|(_, e)| e.default_enabled)
-                    .map(|(k, _)| k.clone())
-                    .collect()
-            })
-            .unwrap_or_default(),
+        playbook: playbook_key.clone(),
+        auto_advance: alinery_core::ordered_auto_advance_edges(&playbook)
+            .into_iter()
+            .filter(|(_, e)| e.default_enabled)
+            .map(|(k, _)| k.clone())
+            .collect(),
         parent_task: String::new(),
         active_subtask: String::new(),
         subtask_outcome: String::new(),
@@ -1163,12 +1169,13 @@ fn create_task(repo: &Path, app_config: Option<&Path>, args: &Value) -> Value {
             },
         );
     }
+    let phase = playbook.steps.first().cloned().unwrap_or_default();
     match create_session_meta_with_app_config(
         app_config,
         repo,
         alinery_core::CreateSessionInput {
             task_slug: slug.clone(),
-            phase: "research-questions".to_string(),
+            phase,
             harness: alinery_core::DEFAULT_HARNESS_KEY.to_string(),
             ..Default::default()
         },
@@ -1833,6 +1840,64 @@ title = "Appended"
         let _ = alinery_core::git_cmd(&repo)
             .args(["worktree", "remove", "--force", repo.join(".alinery/worktrees").join(&slug).to_str().unwrap_or("")])
             .status();
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn alinery_create_task_accepts_playbook_and_uses_its_first_step() {
+        let repo = unique_repo("create-task-playbook");
+        let init = alinery_core::git_cmd(&repo).args(["init"]).output().expect("git init");
+        assert!(init.status.success(), "git init: {:?}", init);
+        let _ = alinery_core::git_cmd(&repo).args(["config", "user.email", "t@t"]).status();
+        let _ = alinery_core::git_cmd(&repo).args(["config", "user.name", "t"]).status();
+        let commit = alinery_core::git_cmd(&repo).args(["commit", "--allow-empty", "-m", "init"]).output().expect("git commit");
+        assert!(commit.status.success(), "git commit failed: {:?}", commit);
+
+        let name = format!("t0-3-playbook-{}", now_nanos());
+        let result = handle_tool_call(
+            json!({
+                "name": "alinery_create_task",
+                "arguments": {"name": name, "playbook": "review"}
+            }),
+            repo.to_str().unwrap(),
+            None,
+        );
+        let text = text_content(&result).to_string();
+        assert!(text.starts_with("created task ") && text.contains(" and session "), "unexpected create_task reply: {text}");
+        let session_id = text.rsplit(" and session ").next().unwrap_or("").trim().to_string();
+        let slug = text.trim_start_matches("created task ").split(" and session ").next().unwrap_or("").to_string();
+
+        let task_md = std::fs::read_to_string(repo.join(".alinery/tasks").join(&slug).join("task.md")).expect("read task.md");
+        assert!(task_md.contains("review"), "task.md should record playbook=review; got {task_md}");
+
+        let meta_path = repo.join(".alinery/tasks").join(&slug).join("sessions").join(format!("{session_id}.meta.json"));
+        let raw = std::fs::read_to_string(&meta_path).expect("read meta");
+        let parsed: alinery_core::SessionMeta = serde_json::from_str(&raw).expect("SessionMeta");
+        assert_eq!(parsed.phase, "review-context", "first session should start on review's first step");
+
+        let _ = alinery_core::git_cmd(&repo)
+            .args(["worktree", "remove", "--force", repo.join(".alinery/worktrees").join(&slug).to_str().unwrap_or("")])
+            .status();
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn alinery_create_task_rejects_unknown_playbook() {
+        let repo = unique_repo("create-task-bad-playbook");
+        let init = alinery_core::git_cmd(&repo).args(["init"]).output().expect("git init");
+        assert!(init.status.success(), "git init: {:?}", init);
+        let result = handle_tool_call(
+            json!({
+                "name": "alinery_create_task",
+                "arguments": {"name": "bogus-playbook-task", "playbook": "not-a-real-playbook"}
+            }),
+            repo.to_str().unwrap(),
+            None,
+        );
+        let text = text_content(&result).to_string();
+        assert!(text.contains("unknown playbook"), "expected unknown playbook error, got: {text}");
+        // No task should have been created (no worktree left behind, no dirs written).
+        assert!(alinery_core::list_tasks_for_repo(&repo).is_empty());
         let _ = std::fs::remove_dir_all(repo);
     }
 
