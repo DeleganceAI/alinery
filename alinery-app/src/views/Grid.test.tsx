@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { navReady, requireNav } from "../test/nav";
-import type { BoardNav, BoardTask, KanbanColumn, PlaybookStepSummary, TaskActivityMap, TaskActivityRef } from "../types";
+import type { BoardNav, BoardTask, KanbanColumn, PlaybookStepSummary, PullRequestSnapshot, TaskActivityMap, TaskActivityRef } from "../types";
 import { Grid } from "./Grid";
 
 const now = Math.floor(Date.now() / 1000);
@@ -78,6 +78,8 @@ const ipcMock = vi.hoisted(() => ({
   listKanbanColumns: vi.fn(async (_allRepos: boolean): Promise<KanbanColumn[]> => []),
   listPlaybookStepsForRepo: vi.fn(async (_repoPath: string, _playbook: string): Promise<PlaybookStepSummary[]> => []),
   listTaskActivity: vi.fn(async (_refs: TaskActivityRef[]): Promise<TaskActivityMap> => ({})),
+  listTaskPullRequests: vi.fn(async (_tasks: TaskActivityRef[]): Promise<Record<string, PullRequestSnapshot>> => ({})),
+  openUrl: vi.fn(async (_url: string): Promise<void> => {}),
   archiveTaskForRepo: vi.fn(async (_repoPath: string, _slug: string): Promise<void> => {}),
   removeWorktreeForRepo: vi.fn(async (_repoPath: string, _slug: string): Promise<void> => {}),
 }));
@@ -102,6 +104,7 @@ beforeEach(() => {
   ipcMock.listBoardTasks.mockResolvedValue(tasks);
   ipcMock.listKanbanColumns.mockResolvedValue(columns);
   ipcMock.listPlaybookStepsForRepo.mockImplementation(async (_repoPath: string, playbook: string) => playbookSteps[playbook] ?? []);
+  ipcMock.listTaskPullRequests.mockImplementation(async (refs) => Object.fromEntries(refs.map((ref) => [`${ref.repoPath}:${ref.taskSlug}`, { pr: null, error: null }])));
   ipcMock.listTaskActivity.mockResolvedValue({
     "/repo-a:build-api": { status: "running", active_session: null },
     "/repo-b:review-queue": { status: "waiting_for_approval", active_session: null },
@@ -217,6 +220,74 @@ describe("configurable task grid", () => {
     expect(container.querySelector('.task-grid-card[data-task-id="/repo-a:build-api"]')).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Close grid settings" }));
     expect(grid.style.getPropertyValue("--task-grid-group-width")).toBe("114px");
+  });
+
+  it("persists the optional PR property and opens its link independently in every card mode", async () => {
+    const task = makeTask({ name: "PR task", slug: "grid-pr", repo_path: "/grid-pr" });
+    const url = "https://github.com/example/project/pull/42";
+    ipcMock.listBoardTasks.mockResolvedValue([task]);
+    ipcMock.listTaskPullRequests.mockResolvedValue({ "/grid-pr:grid-pr": { pr: { number: 42, url, state: "open" }, error: null } });
+    const onOpen = vi.fn();
+    const first = render(<Grid allRepos={false} onOpen={onOpen} registerNav={() => {}} storageKey="pr-property" />);
+    const card = await screen.findByRole("button", { name: /PR task, grid-pr/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    expect(ipcMock.listTaskPullRequests).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByLabelText("pull request"));
+    await screen.findByRole("link", { name: /PR #42.*Open/ });
+    for (const mode of ["detail", "compact", "icon"]) {
+      fireEvent.change(screen.getByLabelText("Card mode"), { target: { value: mode } });
+      const link = within(card).getByRole("link", { name: /PR #42.*Open/ });
+      fireEvent.click(link);
+      fireEvent.keyDown(link, { key: "Enter" });
+    }
+    expect(ipcMock.openUrl).toHaveBeenCalledTimes(6);
+    expect(ipcMock.openUrl).toHaveBeenLastCalledWith(url);
+    expect(onOpen).not.toHaveBeenCalled();
+    fireEvent.keyDown(card, { key: "Enter" });
+    fireEvent.keyDown(card, { key: " " });
+    expect(onOpen.mock.calls).toEqual([[task], [task]]);
+    fireEvent.click(screen.getByRole("button", { name: "Hide Implementation column" }));
+    expect(screen.queryByRole("link", { name: /PR #42/ })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Position model"), { target: { value: "lanes" } });
+    expect(screen.getByRole("link", { name: /PR #42.*Open/ })).toBeDefined();
+    first.unmount();
+
+    render(<Grid allRepos={false} onOpen={onOpen} registerNav={() => {}} storageKey="pr-property" />);
+    expect((screen.getByLabelText("pull request") as HTMLInputElement).checked).toBe(true);
+    await screen.findByRole("link", { name: /PR #42.*Open/ });
+    expect(ipcMock.listTaskPullRequests).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByLabelText("pull request"));
+    expect(screen.queryByRole("link", { name: /PR #42/ })).toBeNull();
+  });
+
+  it("pauses PR refreshes for inactive grids and when the property is disabled", async () => {
+    ipcMock.listBoardTasks.mockResolvedValue([makeTask({ slug: "pr-poll", repo_path: "/grid-pr-poll" })]);
+    const props = { allRepos: false, onOpen: () => {}, registerNav: () => {} };
+    const view = render(<Grid {...props} />);
+    await screen.findByRole("button", { name: /A task, grid-pr-poll/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    view.rerender(<Grid {...props} active={false} />);
+    fireEvent.click(screen.getByLabelText("pull request"));
+    await act(async () => {});
+    expect(ipcMock.listTaskPullRequests).not.toHaveBeenCalled();
+    view.rerender(<Grid {...props} active />);
+    await waitFor(() => expect(ipcMock.listTaskPullRequests).toHaveBeenCalledTimes(1));
+    vi.useFakeTimers();
+    view.rerender(<Grid {...props} active={false} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(61_000);
+    });
+    expect(ipcMock.listTaskPullRequests).toHaveBeenCalledTimes(1);
+    view.rerender(<Grid {...props} active />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(ipcMock.listTaskPullRequests).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByLabelText("pull request"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(61_000);
+    });
+    expect(ipcMock.listTaskPullRequests).toHaveBeenCalledTimes(2);
   });
 
   it("persists exact-width scrolling columns and collapsed group rails", async () => {

@@ -1,9 +1,11 @@
 import { type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { archiveBoardTask } from "../archiveTask";
 import * as ipc from "../ipc";
+import { PullRequestIndicator } from "../PullRequestIndicator";
 import { ArchiveTaskModal, Checkbox, EMPTY_TASK_ACTIVITY, repoName, sameBoardTasks, sameKanbanColumns, TaskActivityIndicators, taskKey, useBoardTaskActivity } from "../shared";
 import type { BoardNav, BoardTask, KanbanColumn, PlaybookStepSummary, TaskActivityStatus } from "../types";
 import { usePointerDrag } from "../usePointerDrag";
+import { useTaskPullRequests } from "../useTaskPullRequests";
 
 type PresetKey = "kanban" | "steps" | "quadrants" | "atlas" | "age" | "progress";
 type PresetSelection = PresetKey | "custom";
@@ -22,7 +24,7 @@ type SortField = "manual" | "updatedHours" | "createdAtAsc" | "createdDays" | "i
 type CardMode = "detail" | "compact" | "icon";
 type TaskFilter = "all" | "active" | "attention";
 type Brightness = "updatedHours" | "none";
-type CardProperty = "activity" | "name" | "repo" | "playbook" | "stage" | "status" | "sessions" | "updatedHours" | "createdDays" | "attention";
+type CardProperty = "activity" | "pullRequest" | "name" | "repo" | "playbook" | "stage" | "status" | "sessions" | "updatedHours" | "createdDays" | "attention";
 
 type GridConfig = {
   position: PositionModel;
@@ -206,6 +208,7 @@ const CARD_PROPERTIES: { value: CardProperty; label: string }[] = [
   { value: "updatedHours", label: "updated" },
   { value: "createdDays", label: "created" },
   { value: "attention", label: "attention" },
+  { value: "pullRequest", label: "pull request" },
 ];
 
 const PRESETS: Record<PresetKey, GridConfig> = {
@@ -599,7 +602,7 @@ export function reorderGridTasks(order: string[], participating: Set<string>, ta
   return next.every((id, index) => id === order[index]) ? order : next;
 }
 
-function propertyValue(fact: TaskFacts, property: Exclude<CardProperty, "activity" | "name">) {
+function propertyValue(fact: TaskFacts, property: Exclude<CardProperty, "activity" | "pullRequest" | "name">) {
   switch (property) {
     case "repo":
       return fact.repo;
@@ -917,9 +920,18 @@ export function Grid({
       ),
     }));
   }, [config.group, config.sort, visibleFacts, columns, playbooks, manualOrder, stageOrder]);
+  const collapsibleGroups = config.position === "packed" && config.placement === "columns";
   const displayFacts = useMemo(
-    () => groups.filter((group) => !hiddenGroupKeys.has(`${config.group}:${group.key}`)).flatMap((group) => group.tasks),
-    [groups, hiddenGroupKeys, config.group],
+    () => groups.filter((group) => !collapsibleGroups || !hiddenGroupKeys.has(`${config.group}:${group.key}`)).flatMap((group) => group.tasks),
+    [groups, hiddenGroupKeys, config.group, collapsibleGroups],
+  );
+  const showPullRequest = config.properties.includes("pullRequest");
+  const pullRequests = useTaskPullRequests(
+    active && showPullRequest
+      ? displayFacts
+          .filter((fact) => !fact.task.draft && (config.position !== "lanes" || !hiddenTaskIds.has(fact.id)))
+          .map((fact) => ({ repoPath: fact.task.repo_path, taskSlug: fact.task.slug }))
+      : [],
   );
 
   useEffect(() => {
@@ -1071,9 +1083,10 @@ export function Grid({
     } as CSSProperties;
     const label = `${fact.name}, ${fact.repo}, ${fact.playbook}, ${fact.stage}, ${fact.status}`;
     return (
-      <button
+      <div
         key={`${fact.id}:${placement?.column ?? "packed"}`}
-        type="button"
+        role="button"
+        tabIndex={0}
         className={`task-grid-card task-grid-card-${config.mode}${selectedTaskKey === fact.id ? " selected" : ""}`}
         style={style}
         aria-label={label}
@@ -1082,10 +1095,17 @@ export function Grid({
         onFocus={() => setSelectedTaskKey(fact.id)}
         onMouseDown={() => setSelectedTaskKey(fact.id)}
         onClick={() => onOpen(fact.task)}
+        onKeyDown={(event) => {
+          if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            if (!event.repeat) onOpen(fact.task);
+          }
+        }}
       >
-        {config.properties.includes("activity") && (
-          <span className="task-grid-card-activity">
-            <TaskActivityIndicators activity={activity[fact.id] ?? EMPTY_TASK_ACTIVITY} />
+        {(config.properties.includes("activity") || showPullRequest) && (
+          <span className="task-grid-card-indicators">
+            {config.properties.includes("activity") && <TaskActivityIndicators activity={activity[fact.id] ?? EMPTY_TASK_ACTIVITY} />}
+            {showPullRequest && <PullRequestIndicator snapshot={pullRequests[fact.id]} compact />}
           </span>
         )}
         <span className="task-grid-icon" aria-hidden="true">
@@ -1094,12 +1114,14 @@ export function Grid({
         {config.properties.includes("name") && <span className="task-grid-card-name">{fact.name}</span>}
         <span className="task-grid-card-meta">
           {config.properties
-            .filter((property): property is Exclude<CardProperty, "activity" | "name"> => property !== "activity" && property !== "name")
+            .filter(
+              (property): property is Exclude<CardProperty, "activity" | "pullRequest" | "name"> => property !== "activity" && property !== "pullRequest" && property !== "name",
+            )
             .map((property) => (
               <span key={property}>{propertyValue(fact, property)}</span>
             ))}
         </span>
-      </button>
+      </div>
     );
   };
 
@@ -1396,9 +1418,8 @@ export function Grid({
         {loaded && !err && visibleFacts.length === 0 && <div className="task-grid-empty">No tasks match this grid configuration.</div>}
         <div className="task-grid-groups" data-position={config.position} data-placement={config.placement} data-column-flow={config.columnFlow} data-card-mode={config.mode}>
           {groups.map((group) => {
-            const collapsible = config.position === "packed" && config.placement === "columns";
             const visibilityKey = `${config.group}:${group.key}`;
-            if (collapsible && hiddenGroupKeys.has(visibilityKey)) {
+            if (collapsibleGroups && hiddenGroupKeys.has(visibilityKey)) {
               return (
                 <button
                   key={group.key}
@@ -1417,7 +1438,7 @@ export function Grid({
                 <div className="task-grid-group-head">
                   <span>{group.label}</span>
                   <span className="task-grid-group-count">{group.tasks.length}</span>
-                  {collapsible && (
+                  {collapsibleGroups && (
                     <button
                       type="button"
                       className="task-grid-hide task-grid-hide-group"

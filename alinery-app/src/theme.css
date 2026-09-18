@@ -23,6 +23,7 @@
   --on-accent: #0a0a0a;
   --success: #55c58a;
   --success-subtle: rgb(85 197 138 / 0.12);
+  --pr-merged: #bc8cff;
   --warning: #ffb347;
   --warning-subtle: rgb(255 179 71 / 0.12);
   --danger: #ff3d1f;
@@ -92,6 +93,7 @@
   --on-accent: #ffffff;
   --success: #147a46;
   --success-subtle: rgb(20 122 70 / 0.1);
+  --pr-merged: #8250df;
   --warning: #8a5a00;
   --warning-subtle: rgb(255 179 71 / 0.16);
   --danger: #a62715;
@@ -1285,6 +1287,47 @@ main {
 .active-session-action:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+
+.pull-request-indicator {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 5px;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.4;
+  text-decoration: none;
+}
+.pull-request-indicator[href] {
+  cursor: pointer;
+}
+.pull-request-indicator[href]:hover {
+  background: var(--surface-subtle);
+}
+.pull-request-indicator:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.pull-request-indicator.open {
+  color: var(--success);
+}
+.pull-request-indicator.merged {
+  color: var(--pr-merged);
+}
+.pull-request-indicator.stale {
+  outline: 1px dashed var(--text-faint);
+}
+.pull-request-indicator.stale:focus-visible {
+  outline: 2px solid var(--accent);
+}
+.pull-request-indicator.compact {
+  padding: 2px;
 }
 
 /* ---- session activity indicator (Thinking Orb) ---- */
@@ -6821,17 +6864,21 @@ dialog.modal::backdrop {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
-.task-grid-card-activity {
+.task-grid-card-indicators {
   position: absolute;
   top: 7px;
   right: 7px;
   z-index: 1;
   display: inline-flex;
   align-items: center;
+  gap: 3px;
   justify-content: center;
 }
-.task-grid-card:has(.task-grid-card-activity) .task-grid-card-name {
+.task-grid-card:has(.task-grid-card-indicators > *) .task-grid-card-name {
   padding-right: 20px;
+}
+.task-grid-card:has(.task-grid-card-indicators > :nth-child(2)) .task-grid-card-name {
+  padding-right: 40px;
 }
 .task-grid-card-name {
   display: -webkit-box;

@@ -25,6 +25,18 @@ curl -fsSL https://cdn.alinery.ai/install.sh | bash
 
 **Sessions survive app quit.** A per-repo daemon (`alineryd`) owns the PTYs. Quit the UI and agents keep running; relaunch reattaches and replays the reconstructed screen. History is also written to an on-disk `.scrollback` sidecar so it can survive daemon restarts. Explicit teardown only: **Quit & stop all sessions** / `stop_daemon`.
 
+**GitHub pull requests.** Kanban cards and task detail show a clickable indicator for the
+task branch's PR: green for open, purple for merged, gray for closed without merging.
+Clicking opens the actual PR in your browser; it does not move or archive the task.
+Discovery uses the existing GitHub CLI connection (`gh`) in the background. Results
+are shared between views and cached for 60 seconds, with refreshes while the relevant
+view is open and visible. Discovered PR links survive branch/worktree removal.
+Lookup failures show an unavailable indicator, or mark the last known status stale.
+Compare links are not treated as existing PRs; automatic discovery is GitHub-only.
+In Grid, enable **pull request** under **Card properties** to show the same icon in
+any card mode. This option is off by default and saved per Grid view. Disabled
+properties and inactive Grid tabs do not request PR refreshes.
+
 ### Sub-tasks
 
 A task can own one active direct child. Click **Start sub-task** on the parent to open one

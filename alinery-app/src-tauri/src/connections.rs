@@ -325,14 +325,29 @@ fn save_linear_oauth_tokens(tokens: &LinearOAuthTokens) -> Result<(), String> {
     Err("Linear connections require macOS Keychain".into())
 }
 
-fn output_with_timeout(mut cmd: Command, timeout: Duration) -> std::io::Result<std::process::Output> {
+pub(crate) fn output_with_timeout(mut cmd: Command, timeout: Duration) -> std::io::Result<std::process::Output> {
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
+    // Drain both pipes while the child runs: API responses can exceed a pipe's capacity.
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let mut stderr = child.stderr.take().expect("piped stderr");
+    let stdout_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).map(|_| bytes)
+    });
     let deadline = Instant::now() + timeout;
     loop {
-        if child.try_wait()?.is_some() {
-            return child.wait_with_output();
+        if let Some(status) = child.try_wait()? {
+            return Ok(std::process::Output {
+                status,
+                stdout: stdout_reader.join().map_err(|_| std::io::Error::other("stdout reader panicked"))??,
+                stderr: stderr_reader.join().map_err(|_| std::io::Error::other("stderr reader panicked"))??,
+            });
         }
         if Instant::now() >= deadline {
             let _ = child.kill();
