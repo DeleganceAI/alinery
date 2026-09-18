@@ -154,7 +154,7 @@ export default function App() {
   const appConfigRef = useRef(appConfig);
   appConfigRef.current = appConfig;
   const gridViews = useMemo(() => normalizeGridViews(appConfig?.global?.grid_views), [appConfig?.global?.grid_views]);
-  const showOriginalKanban = appConfig?.global?.experiments?.show_original_kanban ?? false;
+  const showOriginalKanban = appConfig?.global?.experiments?.show_original_kanban ?? true;
   const repoKey = appConfig?.active_repo ? `${scope}:${appConfig.active_repo}:${appConfig.known_repos.join("|")}:${reloadNonce}` : "";
   const activeGridViewId = view.kind === "grid" && gridViews.some((gridView) => gridView.id === view.gridViewId) ? view.gridViewId : undefined;
   const [mountedGridViews, setMountedGridViews] = useState<{ repoKey: string; ids: string[] }>({ repoKey: "", ids: [] });

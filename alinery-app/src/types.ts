@@ -183,7 +183,7 @@ export type BackupListItem = {
 export type TelemetryPrefs = { enabled: boolean; prompted: boolean; install_id: string; endpoint: string };
 export type UpdatePrefs = { check_enabled: boolean };
 export type ExperimentalFeatures = {
-  /** Opt-in classic Kanban tab (⌘3). Absent/false = Grid-only. */
+  /** Classic Kanban tab (⌘3). Absent = enabled; false hides the tab. */
   show_original_kanban?: boolean;
 };
 export type GridViewDefinition = { id: string; name: string; slot: number };

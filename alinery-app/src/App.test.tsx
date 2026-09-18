@@ -691,20 +691,22 @@ describe("session navigation acknowledgment", () => {
 
     expect((await screen.findByText("Go to Tasks")).closest(".pitem")?.textContent).toContain("⌘1");
     expect(screen.getByText("Go to Kanban+").closest(".pitem")?.textContent).toContain("⌘2");
-    expect(screen.queryByText("Go to Kanban")).toBeNull();
+    expect(screen.getByText("Go to Kanban").closest(".pitem")?.textContent).toContain("⌘3");
     expect(screen.getByText("Go to Sessions").closest(".pitem")?.textContent).toContain("⌘7");
     expect(screen.getByText("Go to Notifications").closest(".pitem")?.textContent).toContain("⌘8");
     expect(screen.queryByText("Go to Wiki")).toBeNull();
     expect(screen.getByText("Open Settings").closest(".pitem")?.textContent).toContain("⌘9");
   });
 
-  it("exposes Grid navigation by default and classic Kanban when opted in", async () => {
+  it("exposes both boards by default and opens classic Kanban", async () => {
     await renderApp();
 
     expect(screen.getByRole("button", { name: /Kanban\+/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Kanban3" }));
+    expect(await screen.findByRole("button", { name: "open active card session" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByText("Go to Kanban+")).toBeTruthy();
-    expect(screen.queryByText("Go to Kanban")).toBeNull();
+    expect(screen.getByText("Go to Kanban")).toBeTruthy();
   });
 
   it("lists classic Kanban at ⌘3 when the experimental tab is enabled", async () => {
