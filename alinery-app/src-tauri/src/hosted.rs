@@ -15,6 +15,10 @@ const INFERENCE_SKEW_SECS: u64 = 120;
 const MINT_DEBOUNCE_SECS: u64 = 300;
 pub(crate) const HOSTED_MODEL_UNAVAILABLE: &str = "the selected model isn't available right now";
 
+pub(crate) fn is_hosted_model(model: &str) -> bool {
+    model.split_once('/').is_some_and(|(provider, id)| provider == HOSTED_PROVIDER && !id.is_empty())
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct HostedModel {
     pub id: String,
@@ -392,17 +396,19 @@ fn mint_debounce_fresh(file: &InferenceFile, now: u64) -> bool {
     now.saturating_sub(file.minted_at) < MINT_DEBOUNCE_SECS
 }
 
-fn persist_minted_inference(inf_path: &Path, app_config: &Path, token: &str, expires_at: u64, session_id: &str, minted_at: u64, catalog: &HostedCatalog) {
-    let _ = write_inference_file(inf_path, token, expires_at, session_id, minted_at, catalog);
-    let _ = write_hosted_models_yml(app_config, catalog, token);
+fn persist_minted_inference(inf_path: &Path, app_config: &Path, token: &str, expires_at: u64, session_id: &str, minted_at: u64, catalog: &HostedCatalog) -> Result<(), String> {
+    // models.yml first: splice fail-closed must not leave a rotated token in inference.json.
+    write_hosted_models_yml(app_config, catalog, token)?;
+    write_inference_file(inf_path, token, expires_at, session_id, minted_at, catalog)?;
     apply_default_model_role(app_config, &catalog.default_model);
+    Ok(())
 }
 
-fn reuse_cached_inference(inf_path: &Path, app_config: &Path, accounts_url: &str, session_id: &str, file: &InferenceFile) {
+fn reuse_cached_inference(inf_path: &Path, app_config: &Path, accounts_url: &str, session_id: &str, file: &InferenceFile) -> Result<(), String> {
     if let Ok(live) = fetch_live_catalog(accounts_url) {
-        persist_minted_inference(inf_path, app_config, &file.token, file.expires_at, session_id, file.minted_at, &live);
+        persist_minted_inference(inf_path, app_config, &file.token, file.expires_at, session_id, file.minted_at, &live)
     } else {
-        let _ = write_hosted_models_yml(app_config, &file.catalog, &file.token);
+        write_hosted_models_yml(app_config, &file.catalog, &file.token)
     }
 }
 
@@ -655,24 +661,19 @@ pub(crate) fn sync_hosted_inference(config_dir: &Path, app_config: &Path, accoun
     let inf_path = inference_path(config_dir);
     let now = now_secs();
     let existing = load_inference_file(&inf_path);
+    let persist = |result: Result<(), String>| result.map_err(|_| HOSTED_MODEL_UNAVAILABLE.to_string());
     if let Some(file) = existing.filter(|file| inference_unexpired(file, now)) {
         if mint_debounce_fresh(&file, now) {
-            reuse_cached_inference(&inf_path, app_config, accounts_url, session_id, &file);
-            return Ok(());
+            // Spawn must not block on HTTP when a usable token is already on disk.
+            return persist(write_hosted_models_yml(app_config, &file.catalog, &file.token));
         }
-        match mint_inference_session(accounts_url, access_token, session_id) {
-            Ok((token, expires_at, catalog)) => {
-                persist_minted_inference(&inf_path, app_config, &token, expires_at, session_id, now, &catalog);
-            }
+        return persist(match mint_inference_session(accounts_url, access_token, session_id) {
+            Ok((token, expires_at, catalog)) => persist_minted_inference(&inf_path, app_config, &token, expires_at, session_id, now, &catalog),
             Err(_) => reuse_cached_inference(&inf_path, app_config, accounts_url, session_id, &file),
-        }
-        return Ok(());
+        });
     }
     match mint_inference_session(accounts_url, access_token, session_id) {
-        Ok((token, expires_at, catalog)) => {
-            persist_minted_inference(&inf_path, app_config, &token, expires_at, session_id, now, &catalog);
-            Ok(())
-        }
+        Ok((token, expires_at, catalog)) => persist(persist_minted_inference(&inf_path, app_config, &token, expires_at, session_id, now, &catalog)),
         Err(_) => Err(HOSTED_MODEL_UNAVAILABLE.into()),
     }
 }

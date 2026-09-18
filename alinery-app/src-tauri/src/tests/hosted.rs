@@ -356,17 +356,28 @@ fn missing_minted_at_defaults_to_zero_and_remints() {
 }
 
 #[test]
-fn reuse_catalog_refresh_preserves_minted_at() {
-    let (dir, app_config) = hosted_sync_dirs("hosted-reuse-minted-at");
-    let now = now_epoch();
-    write_cached_inference(&dir, &app_config, "inf_stale", now + 86_400, Some(now.saturating_sub(10)));
-    let (base, server) = serve_routes(vec![("/api/desktop/hosted-models".into(), 200, CATALOG)]);
+fn mint_success_with_foreign_models_yml_returns_err_and_leaves_files() {
+    let (dir, app_config) = hosted_sync_dirs("hosted-mint-foreign-yml");
+    let yml = models_yml_path(&app_config);
+    fs::create_dir_all(yml.parent().unwrap()).unwrap();
+    let existing = "this is not yaml\n";
+    fs::write(&yml, existing).unwrap();
+    let inf = inference_path(&dir);
+    let (base, server) = serve_routes(vec![("/api/desktop/inference-session".into(), 200, MINT)]);
     let result = sync_hosted_inference(&dir, &app_config, &base, "access", "sess", true);
     server.join().unwrap();
-    assert_eq!(result, Ok(()));
-    let file = inference_value(&dir);
-    assert_eq!(file["token"], "inf_stale");
-    assert_eq!(file["minted_at"], now.saturating_sub(10));
+    assert_eq!(result, Err(HOSTED_MODEL_UNAVAILABLE.to_string()));
+    assert!(!inf.exists());
+    assert_eq!(fs::read_to_string(&yml).unwrap(), existing);
+}
+
+#[test]
+fn is_hosted_model_requires_alinery_provider_and_id() {
+    assert!(is_hosted_model("alinery/Qwen3.6-35B-A3B"));
+    assert!(!is_hosted_model("anthropic/claude"));
+    assert!(!is_hosted_model("alinery"));
+    assert!(!is_hosted_model("alinery/"));
+    assert!(!is_hosted_model(""));
 }
 
 #[cfg(unix)]

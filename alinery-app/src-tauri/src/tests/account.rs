@@ -96,7 +96,7 @@ fn accounts_url_defaults_to_production_and_honors_the_local_override() {
 }
 
 #[test]
-fn unsigned_spawn_refresh_is_err_and_does_not_wipe() {
+fn unsigned_spawn_refresh_is_ok_and_does_not_wipe() {
     let dir = unique_attachment_temp("spawn-refresh-unsigned");
     let app_config = dir.join("app.toml");
     fs::write(&app_config, b"").unwrap();
@@ -107,8 +107,7 @@ fn unsigned_spawn_refresh_is_err_and_does_not_wipe() {
     fs::write(&yml, b"providers:\n").unwrap();
     let before_inf = fs::read(&inf).unwrap();
     let before_yml = fs::read(&yml).unwrap();
-    let err = refresh_hosted_inference_for_spawn_at(&dir.join("auth.json"), &app_config, "http://127.0.0.1:1", "http://127.0.0.1:1", "http://127.0.0.1:1").unwrap_err();
-    assert_eq!(err, HOSTED_MODEL_UNAVAILABLE);
+    refresh_hosted_inference_for_spawn_at(&dir.join("auth.json"), &app_config, "http://127.0.0.1:1", "http://127.0.0.1:1", "http://127.0.0.1:1").unwrap();
     assert_eq!(fs::read(&inf).unwrap(), before_inf);
     assert_eq!(fs::read(&yml).unwrap(), before_yml);
 }

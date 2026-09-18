@@ -1096,7 +1096,7 @@ pub(crate) fn refresh_hosted_inference_for_spawn_at(auth_path: &Path, app_config
         status
     };
     if !(status.signed_in && status.paid) {
-        return Err(HOSTED_MODEL_UNAVAILABLE.into());
+        return Ok(());
     }
     let Some(config_dir) = auth_path.parent() else {
         return Err(HOSTED_MODEL_UNAVAILABLE.into());
