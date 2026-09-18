@@ -3,6 +3,50 @@ use crate::*;
 
 pub(crate) static EFFECTIVE_APP_IDENTIFIER: OnceLock<String> = OnceLock::new();
 
+pub(crate) fn task_daemon_for(repo: &Path, task_slug: &str, app_config: &Path) -> Result<DaemonClient, String> {
+    // Read only the durable owner address; execution/definition queries go through that daemon.
+    let execution = alinery_core::execution::read_execution_state(repo, task_slug)?;
+    let socket = alinery_core::alineryd_socket_path(repo, (!execution.owning_lane.is_empty()).then_some(execution.owning_lane.as_str()));
+    daemon_client::connect_compatible(socket, app_config).map(|(client, _)| client).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn get_task_execution(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_path: Option<String>,
+    task_slug: String,
+) -> Result<alinery_core::task_creation::TaskExecutionReply, String> {
+    let repo = match repo_path {
+        Some(path) => target_repo_for_app(&app, &path)?,
+        None => require_owned_active_repo(&state)?,
+    };
+    require_repo_owned(&state, &repo)?;
+    task_daemon_for(&repo, &task_slug, &app_config_path(&app)?)?.get_task_execution(
+        &alinery_core::task_creation::GetTaskExecutionRequest { task_slug },
+    )
+}
+
+#[tauri::command]
+pub(crate) fn allow_execution_completion(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_path: Option<String>,
+    task_slug: String,
+    execution_id: String,
+    session_id: String,
+) -> Result<(), String> {
+    let repo = match repo_path {
+        Some(path) => target_repo_for_app(&app, &path)?,
+        None => require_owned_active_repo(&state)?,
+    };
+    require_repo_owned(&state, &repo)?;
+    let daemon = task_daemon_for(&repo, &task_slug, &app_config_path(&app)?)?;
+    daemon_client::UiControlConnection::connect(&daemon)?.allow_execution_completion(
+        &alinery_core::task_creation::AllowExecutionCompletionRequest { task_slug, execution_id, session_id },
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn open_daemon_session(
     client: &DaemonClient,
@@ -55,20 +99,17 @@ pub(crate) fn passive_session_statuses(repo: &Path, expected_app_config_identity
     client.session_statuses_observed()
 }
 
-fn task_activity_session(repo: &Path, task: &Task, session: &SessionMeta) -> TaskActivitySession {
-    let playbook = if session.playbook.trim().is_empty() {
-        playbook_key_for_task(task)
-    } else {
-        session.playbook.trim().to_string()
-    };
+fn task_activity_session(repo: &Path, task: &Task, session: &SessionMeta, app_config: Option<&Path>) -> TaskActivitySession {
+    let playbook = task.playbook_ref.as_ref().map(|reference| reference.key.clone()).unwrap_or_else(|| session.playbook.clone());
     let step_title = if session.generic {
         "Generic".to_string()
-    } else if playbook_step_exists(repo, &playbook, &session.phase) {
-        step_title(repo, &playbook, &session.phase)
-    } else if session.phase.trim().is_empty() {
-        "Generic".to_string()
     } else {
-        session.phase.clone()
+        match retained_task_definition(repo, task, app_config) {
+            Ok(Some(definition)) => definition.step.iter().find(|step| step.key == session.phase)
+                .map(|step| step.title.clone()).unwrap_or_else(|| session.phase.clone()),
+            Ok(None) => session.phase.clone(),
+            Err(error) => format!("Execution unavailable: {error}"),
+        }
     };
     TaskActivitySession {
         id: session.id.clone(),
@@ -161,7 +202,7 @@ fn task_has_actionable_session(repo: &Path, task: &Task, sessions: &[SessionMeta
     })
 }
 
-pub(crate) fn resolve_task_activity_for_repo(repo: &Path, slugs: &[String], statuses: &[DaemonSessionStatus]) -> HashMap<String, TaskActivitySummary> {
+pub(crate) fn resolve_task_activity_for_repo(repo: &Path, slugs: &[String], statuses: &[DaemonSessionStatus], app_config: Option<&Path>) -> HashMap<String, TaskActivitySummary> {
     let repo_path = repo.display().to_string();
     let statuses_by_id = statuses.iter().map(|status| (status.id.as_str(), &status.state)).collect::<HashMap<_, _>>();
     let mut activity = slugs
@@ -198,7 +239,7 @@ pub(crate) fn resolve_task_activity_for_repo(repo: &Path, slugs: &[String], stat
         }
         let mut summary = TaskActivitySummary::default();
         let mut status_choice: Option<(u8, u64, String, TaskActivityStatus)> = None;
-        let mut active_choice: Option<(u8, u64, String, TaskActivitySession)> = None;
+        let mut active_choice: Option<(u8, u64, String, &SessionMeta)> = None;
 
         for session in sessions.iter().filter(|session| !session.archived) {
             let projection = project_task_session_activity(repo, &activity_task, session, statuses_by_id.get(session.id.as_str()).copied());
@@ -220,17 +261,17 @@ pub(crate) fn resolve_task_activity_for_repo(repo: &Path, slugs: &[String], stat
                     || (active_tier == *current_tier && (session.created > *current_created || (session.created == *current_created && session.id > *current_id)))
             });
             if replace {
-                active_choice = Some((active_tier, session.created, session.id.clone(), task_activity_session(repo, &activity_task, session)));
+                active_choice = Some((active_tier, session.created, session.id.clone(), session));
             }
         }
         summary.status = status_choice.map(|(_, _, _, status)| status);
-        summary.active_session = active_choice.map(|(_, _, _, session)| session);
+        summary.active_session = active_choice.map(|(_, _, _, session)| task_activity_session(repo, &activity_task, session, app_config));
         activity.insert(key, summary);
     }
     activity
 }
 
-pub(crate) fn list_task_activity_for_refs(refs: &[TaskActivityRef], app_config_identity: Option<&str>) -> HashMap<String, TaskActivitySummary> {
+pub(crate) fn list_task_activity_for_refs(refs: &[TaskActivityRef], app_config_identity: Option<&str>, app_config: Option<&Path>) -> HashMap<String, TaskActivitySummary> {
     let mut activity = HashMap::new();
     let mut grouped = BTreeMap::<String, BTreeSet<String>>::new();
     for reference in refs {
@@ -260,7 +301,7 @@ pub(crate) fn list_task_activity_for_refs(refs: &[TaskActivityRef], app_config_i
                     .ok_or_else(|| "app config identity unavailable".to_string())
                     .and_then(|identity| passive_session_statuses(&repo, identity))
                     .unwrap_or_default();
-                let _ = result_tx.send(resolve_task_activity_for_repo(&repo, &slugs, &statuses));
+                let _ = result_tx.send(resolve_task_activity_for_repo(&repo, &slugs, &statuses, app_config));
             });
         }
         for (repo_path, slugs) in grouped {

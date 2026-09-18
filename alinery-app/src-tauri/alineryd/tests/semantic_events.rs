@@ -10,7 +10,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use alinery_core::{SemanticCheckpoint, SessionMeta, Task};
+use alinery_core::{SessionMeta, RUNNER_EVENT_PROTOCOL_VERSION};
+use alinery_core::daemon_client::DaemonClient;
+use alinery_core::task_creation::{CreateTaskRequest, CreateExecutionSessionRequest, ExecutionSessionTarget, StartSessionRequest, GetTaskExecutionRequest};
+use alinery_core::execution::{CompletionOutcome, ExecutionLifecycle, ExecutionRecord};
 use serde_json::{json, Value};
 static ROOT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -82,6 +85,9 @@ impl Fixture {
     fn new() -> Self {
         let root = unique_root();
         fs::create_dir_all(root.join(".alinery")).unwrap();
+        for args in [vec!["init", "-q"], vec!["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "fixture"]] {
+            assert!(Command::new("git").args(args).current_dir(&root).status().unwrap().success());
+        }
         fs::write(root.join("host-executable"), b"host fixture").unwrap();
         let mut host_permissions = fs::metadata(root.join("host-executable")).unwrap().permissions();
         host_permissions.set_mode(0o755);
@@ -100,13 +106,14 @@ printf '%s\n' "$@" > "{capture}.$ALINERY_SESSION_ID.args"
 printf '%s\n' "$ALINERY_REPO" > "{capture}.$ALINERY_SESSION_ID.repo"
 printf '%s\n' "$ALINERY_APP_CONFIG" > "{capture}.$ALINERY_SESSION_ID.app-config"
 if [ -f "{capture}.early" ]; then
-  printf '{{"op":"event","version":1,"session_id":"%s","token":"%s","event":{{"type":"busy"}}}}\n' "$ALINERY_SESSION_ID" "$ALINERY_EVENT_TOKEN" |
+  printf '{{"op":"event","version":{event_version},"session_id":"%s","token":"%s","event":{{"type":"busy"}}}}\n' "$ALINERY_SESSION_ID" "$ALINERY_EVENT_TOKEN" |
     /usr/bin/nc -U "$ALINERY_DAEMON_SOCKET" >/dev/null 2>&1
 fi
 shift 4
 exec "$@"
 "#,
-                capture = capture.display()
+                capture = capture.display(),
+                event_version = RUNNER_EVENT_PROTOCOL_VERSION
             ),
         )
         .unwrap();
@@ -123,7 +130,7 @@ exec "$@"
 key = "omp"
 name = "OMP fixture"
 binary = "sh"
-args = ["-c", "sleep 30"]
+args = ["-c", "while [ ! -f \"$ALINERY_REPO/release.$ALINERY_SESSION_ID\" ]; do sleep 0.02; done; printf 'producer drained\\n'"]
 model_arg = []
 prompt_injection = "arg"
 adapter = "omp"
@@ -184,39 +191,112 @@ resume_args = ["--resume={resume_token}"]
         serde_json::from_str(line.trim()).unwrap()
     }
 
-    fn open_response(&self, op: &str, id: &str, task_slug: &str, harness: &str, phase: &str, resume_token: Option<&str>) -> String {
-        let mut stream = UnixStream::connect(&self.socket).unwrap();
-        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        writeln!(
-            stream,
-            "{}",
-            json!({
-                "op": op,
-                "id": id,
-                "cwd": self.root,
-                "task_slug": task_slug,
-                "harness": harness,
-                "model": "",
-                "phase": phase,
-                "resume_token": resume_token,
-                "attach_id": 1,
-                "cols": 80,
-                "rows": 24
-            })
-        )
-        .unwrap();
-        let mut line = String::new();
-        BufReader::new(stream).read_line(&mut line).unwrap();
-        line
+    fn client(&self) -> DaemonClient {
+        DaemonClient::connect_path(self.socket.clone()).unwrap()
     }
 
-    fn spawn_response(&self, id: &str, harness: &str, phase: &str) -> String {
-        self.open_response("spawn", id, "task", harness, phase, None)
+    fn create_task(&self, automatic: bool) -> SessionMeta {
+        let source = r#"+++
+version = 2
+key = "semantic"
+title = "Semantic events"
+description = ""
+default_model = ""
+default_harness = "omp"
+[[step]]
+key = "source"
+title = "Source"
+short = ""
+is_coding_step = false
+auto_advance_default = true
+inputs = [{path = "ticket.md", mode = "single"}]
+outputs = [{path = "source.md"}]
+model = ""
+harness = ""
+[[step]]
+key = "target"
+title = "Target"
+short = ""
+is_coding_step = false
+auto_advance_default = true
+inputs = [{path = "source.md", mode = "single"}]
+outputs = [{path = "target.md"}]
+model = ""
+harness = ""
++++
+<!-- alinery:step source -->
+Write the assigned source output.
+<!-- alinery:step target -->
+Read the assigned input and write the assigned target output.
+"#;
+        let request: CreateTaskRequest = serde_json::from_value(json!({
+            "name": "task", "requested_slug": "task",
+            "playbook": {"reference": {"scope": "repo", "key": "semantic"}, "source": source},
+            "auto_advance_steps": if automatic { vec!["source", "target"] } else { vec!["target"] },
+            "start": false
+        })).unwrap();
+        let reply = self.client().create_task(&request).unwrap();
+        assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+        assert!(reply.errors.is_empty(), "{:?}", reply.errors);
+        assert_eq!(reply.sessions.len(), 1);
+        let session = reply.sessions.into_iter().next().unwrap();
+        assert_eq!(self.execution(&session).lifecycle, ExecutionLifecycle::Queued);
+        assert!(!self.execution(&session).start_requested);
+        session
     }
 
-    fn spawn_session(&self, id: &str, harness: &str, phase: &str) {
-        let line = self.spawn_response(id, harness, phase);
-        assert!(line.contains("\"ok\":true"), "spawn response: {line}");
+    fn auxiliary(&self, task_slug: &str, harness: &str, prompt: Option<&str>) -> SessionMeta {
+        self.client().create_execution_session(&CreateExecutionSessionRequest {
+            task_slug: task_slug.into(),
+            target: ExecutionSessionTarget::Auxiliary { harness: harness.into(), model: None, prompt: prompt.map(str::to_owned) },
+            launch_override: None, prompt_extra: None, start: false,
+        }).unwrap().session
+    }
+
+    fn start_response(&self, task_slug: &str, session: &SessionMeta) -> alinery_core::task_creation::CreateExecutionSessionReply {
+        self.client().start_session(&StartSessionRequest { task_slug: task_slug.into(), session_id: session.id.clone() }).unwrap()
+    }
+
+    fn start(&self, task_slug: &str, session: &SessionMeta) {
+        let reply = self.start_response(task_slug, session);
+        assert_eq!(reply.start, "started", "{:?}", reply.errors);
+        assert!(reply.errors.is_empty(), "{:?}", reply.errors);
+    }
+
+    fn meta_path(&self, task_slug: &str, session: &SessionMeta) -> PathBuf {
+        if task_slug.is_empty() { self.root.join(format!(".alinery/sessions/{}.meta.json", session.id)) }
+        else { self.root.join(format!(".alinery/tasks/{task_slug}/sessions/{}.meta.json", session.id)) }
+    }
+
+    fn state(&self) -> alinery_core::task_creation::TaskExecutionReply {
+        self.client().get_task_execution(&GetTaskExecutionRequest { task_slug: "task".into() }).unwrap()
+    }
+
+    fn execution(&self, session: &SessionMeta) -> ExecutionRecord {
+        self.state().state.executions[&session.execution_id].clone()
+    }
+
+    fn output_path(&self, session: &SessionMeta) -> PathBuf {
+        self.root.join(".alinery/tasks/task/artifacts").join(&self.execution(session).outputs[0].relative_path)
+    }
+
+    fn event(&self, session: &SessionMeta, token: &str, event: Value) -> Value {
+        self.rpc(json!({"op": "event", "version": RUNNER_EVENT_PROTOCOL_VERSION,
+            "session_id": session.id, "token": token, "event": event}))
+    }
+
+    fn complete(&self, session: &SessionMeta, token: &str) -> Value {
+        self.event(session, token, json!({"type": "phase_completed", "omp_session_id": "omp-session", "omp_turn_id": 7}))
+    }
+
+    fn release(&self, session: &SessionMeta) {
+        fs::write(self.root.join(format!("release.{}", session.id)), "").unwrap();
+        wait_until(Duration::from_secs(5), || self.rpc(json!({"op":"status", "id":session.id}))["process"]["state"] == "exited");
+    }
+
+    fn target(&self) -> ExecutionRecord {
+        wait_until(Duration::from_secs(8), || self.state().state.executions.values().any(|e| e.candidate.step_key == "target" && e.lifecycle == ExecutionLifecycle::Running));
+        self.state().state.executions.into_values().find(|e| e.candidate.step_key == "target").unwrap()
     }
 
     fn token_for(&self, id: &str) -> String {
@@ -319,92 +399,24 @@ fn wait_until(timeout: Duration, condition: impl Fn() -> bool) {
     panic!("condition did not become true within {timeout:?}");
 }
 
-fn write_task_and_source(root: &Path, id: &str) -> PathBuf {
-    let task_dir = root.join(".alinery/tasks/task");
-    let sessions = task_dir.join("sessions");
-    fs::create_dir_all(task_dir.join("artifacts")).unwrap();
-    fs::create_dir_all(&sessions).unwrap();
-    let task = Task {
-        name: "task".into(),
-        slug: "task".into(),
-        branch: "task".into(),
-        worktree: root.to_string_lossy().into_owned(),
-        has_worktree: true,
-        created: 1,
-        playbook: "superdevelop".into(),
-        auto_advance: vec!["questions_to_research".into()],
-        ..Default::default()
-    };
-    fs::write(task_dir.join("task.md"), toml::to_string(&task).unwrap()).unwrap();
-    let source = SessionMeta {
-        id: id.into(),
-        worktree: root.to_string_lossy().into_owned(),
-        created: 1,
-        phase: "research-questions".into(),
-        harness: "omp".into(),
-        playbook: "superdevelop".into(),
-        artifact: "01-research-questions.md".into(),
-        semantic: SemanticCheckpoint::default(),
-        ..Default::default()
-    };
-    let path = sessions.join(format!("{id}.meta.json"));
-    fs::write(&path, serde_json::to_vec(&source).unwrap()).unwrap();
-    path
-}
-
-fn write_generic_omp_meta(root: &Path, id: &str) -> PathBuf {
-    let path = write_task_and_source(root, id);
-    let mut meta: SessionMeta = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    meta.phase.clear();
-    meta.artifact.clear();
-    meta.generic = true;
-    fs::write(&path, serde_json::to_vec(&meta).unwrap()).unwrap();
-    path
-}
-
-fn write_stale_omp_meta(root: &Path, id: &str) -> PathBuf {
-    let meta = SessionMeta {
-        id: id.into(),
-        worktree: root.to_string_lossy().into_owned(),
-        created: 0,
-        phase: "research-questions".into(),
-        harness: "omp".into(),
-        playbook: "superdevelop".into(),
-        artifact: "01-research-questions.md".into(),
-        ..Default::default()
-    };
-    let path = root.join(".alinery/tasks/task/sessions").join(format!("{id}.meta.json"));
-    fs::write(&path, serde_json::to_vec(&meta).unwrap()).unwrap();
-    path
-}
-
 fn overlay_omp(root: &Path, contents: &str) {
     fs::write(root.join(".alinery/harnesses.toml"), contents).unwrap();
 }
 
-fn write_unsupported_meta(root: &Path, id: &str) {
-    let meta = SessionMeta {
-        id: id.into(),
-        worktree: root.to_string_lossy().into_owned(),
-        created: 3,
-        harness: "omp".into(),
-        playbook: "superdevelop".into(),
-        ..Default::default()
-    };
-    fs::write(
-        root.join(".alinery/tasks/task/sessions").join(format!("{id}.meta.json")),
-        serde_json::to_vec(&meta).unwrap(),
-    )
-    .unwrap();
+fn accepted_receipt(response: &Value) -> String {
+    assert_eq!(response["ok"], true, "{response}");
+    match serde_json::from_value::<CompletionOutcome>(response["completion"].clone()).unwrap() {
+        CompletionOutcome::Accepted { receipt_id } => { assert!(!receipt_id.is_empty()); receipt_id },
+        other => panic!("expected accepted completion: {other:?}"),
+    }
 }
 
 #[test]
 fn omp_spawn_creates_session_omp_dir() {
     let fixture = Fixture::new();
-    write_task_and_source(&fixture.root, "s1");
-    fixture.spawn_session("s1", "omp", "research-questions");
-    let dir = fixture.root.join(".alinery/tasks/task/sessions/s1.omp");
-    assert!(dir.is_dir(), "expected OMP session dir {}", dir.display());
+    let source = fixture.create_task(true);
+    fixture.start("task", &source);
+    assert!(fixture.meta_path("task", &source).with_file_name(format!("{}.omp", source.id)).is_dir());
 }
 
 #[test]
@@ -412,40 +424,26 @@ fn no_harness_spawn_does_not_create_session_omp_dir() {
     let mut fixture = Fixture::new();
     fixture.shell = Some(fixture.root.join("no-harness-shell"));
     fixture.restart();
-    fs::create_dir_all(fixture.root.join(".alinery/sessions")).unwrap();
-    let meta = SessionMeta {
-        id: "root-nh".into(),
-        worktree: fixture.root.to_string_lossy().into_owned(),
-        harness: "no-harness".into(),
-        ..Default::default()
-    };
-    fs::write(fixture.root.join(".alinery/sessions/root-nh.meta.json"), serde_json::to_vec(&meta).unwrap()).unwrap();
-    let spawned = fixture.open_response("spawn", "root-nh", "", "no-harness", "", None);
-    assert!(spawned.contains("\"ok\":true"), "no-harness spawn response: {spawned}");
-    assert!(!fixture.root.join(".alinery/sessions/root-nh.omp").exists());
+    let session = fixture.auxiliary("", "no-harness", None);
+    fixture.start("", &session);
+    assert!(!fixture.root.join(format!(".alinery/sessions/{}.omp", session.id)).exists());
 }
+
 #[test]
 fn protected_host_reaches_only_omp_runner_launches() {
     let mut fixture = Fixture::new();
+    let source = fixture.create_task(true);
+    fixture.start("task", &source);
+    assert_eq!(fixture.host_for(&source.id), fixture.host.to_string_lossy());
+    assert!(!fixture.rpc(json!({"op":"status", "id":source.id})).to_string().contains(fixture.host.to_string_lossy().as_ref()));
 
-    write_task_and_source(&fixture.root, "fresh-host");
-    let fresh = fixture.spawn_response("fresh-host", "omp", "research-questions");
-    assert!(fresh.contains("\"ok\":true"), "fresh spawn response: {fresh}");
-    assert_eq!(fixture.host_for("fresh-host"), fixture.host.to_string_lossy());
-    assert!(!fresh.contains(fixture.host.to_string_lossy().as_ref()));
-
-    let resume_path = write_stale_omp_meta(&fixture.root, "resume-host");
-    let mut resume_meta: SessionMeta = serde_json::from_slice(&fs::read(&resume_path).unwrap()).unwrap();
-    resume_meta.harness_resume_token = "resume-token".into();
-    fs::write(&resume_path, serde_json::to_vec(&resume_meta).unwrap()).unwrap();
-    let resumed = fixture.open_response("resume", "resume-host", "task", "omp", "", Some("resume-token"));
-    assert!(resumed.contains("\"ok\":true"), "resume response: {resumed}");
-    assert_eq!(fixture.host_for("resume-host"), fixture.host.to_string_lossy());
-    assert!(!resumed.contains(fixture.host.to_string_lossy().as_ref()));
-
-    overlay_omp(
-        &fixture.root,
-        r#"
+    // Resume launch of a newly created auxiliary owner retains the protected boundary.
+    let auxiliary = fixture.auxiliary("task", "omp", None);
+    let resumed = fixture.rpc(json!({"op":"resume", "id":auxiliary.id, "task_slug":"task", "resume_token":"resume-token"}));
+    assert_eq!(resumed["ok"], true, "{resumed}");
+    assert!(!resumed.to_string().contains(fixture.host.to_string_lossy().as_ref()));
+    assert_eq!(fixture.host_for(&auxiliary.id), fixture.host.to_string_lossy());
+    overlay_omp(&fixture.root, r#"
 [[harness]]
 key = "omp"
 name = "Unsupported fixture"
@@ -454,58 +452,38 @@ args = ["-c", "printf '%s' \"$ALINERY_HOST_EXECUTABLE\" > \"{worktree}/unsupport
 model_arg = []
 prompt_injection = "arg"
 adapter = "unsupported"
-"#,
-    );
-    write_unsupported_meta(&fixture.root, "unsupported-host");
-    fixture.spawn_session("unsupported-host", "omp", "");
-    wait_until(Duration::from_secs(5), || fixture.root.join("unsupported-host").exists());
-    assert_eq!(fs::read_to_string(fixture.root.join("unsupported-host")).unwrap(), "");
+"#);
+    let unsupported = fixture.auxiliary("task", "omp", None);
+    fixture.start("task", &unsupported);
+    let capture = Path::new(&unsupported.worktree).join("unsupported-host");
+    wait_until(Duration::from_secs(5), || capture.exists());
+    assert_eq!(fs::read_to_string(capture).unwrap(), "");
+    assert!(!fs::read_to_string(&fixture.capture).unwrap().lines().any(|line| line.starts_with(&format!("{}\t", unsupported.id))));
 
     fixture.shell = Some(fixture.root.join("no-harness-shell"));
     fixture.restart();
-
-    fs::create_dir_all(fixture.root.join(".alinery/sessions")).unwrap();
-    let root_meta = SessionMeta {
-        id: "root-host".into(),
-        worktree: fixture.root.to_string_lossy().into_owned(),
-        harness: "no-harness".into(),
-        ..Default::default()
-    };
-    fs::write(fixture.root.join(".alinery/sessions/root-host.meta.json"), serde_json::to_vec(&root_meta).unwrap()).unwrap();
-    let root_spawn = fixture.open_response("spawn", "root-host", "", "no-harness", "", None);
-    assert!(root_spawn.contains("\"ok\":true"), "root spawn response: {root_spawn}");
+    let terminal = fixture.auxiliary("", "no-harness", None);
+    fixture.start("", &terminal);
     wait_until(Duration::from_secs(5), || fixture.root.join("no-harness-host").exists());
     assert_eq!(fs::read_to_string(fixture.root.join("no-harness-host")).unwrap(), "");
-
-    let runner_capture = fs::read_to_string(&fixture.capture).unwrap();
-    assert!(runner_capture
-        .lines()
-        .all(|line| !line.starts_with("unsupported-host\t") && !line.starts_with("root-host\t")));
 }
 
 #[test]
 fn missing_protected_host_rejects_only_omp_launches() {
     let mut fixture = Fixture::without_protected_host();
-    assert_eq!(fixture.rpc(json!({"op": "version"}))["host_guard_ready"], false);
-
-    let fresh_path = write_task_and_source(&fixture.root, "unready-fresh");
-    let fresh = fixture.spawn_response("unready-fresh", "omp", "research-questions");
-    assert!(fresh.contains("OMP host protection is unavailable"), "fresh OMP response: {fresh}");
-    let fresh_meta: SessionMeta = serde_json::from_slice(&fs::read(fresh_path).unwrap()).unwrap();
-    assert!(fresh_meta.started_at.is_none());
-    assert_eq!(fixture.rpc(json!({"op": "status", "id": "unready-fresh"}))["error"], "unknown-session");
-
-    let resume_path = write_stale_omp_meta(&fixture.root, "unready-resume");
-    let mut resume_meta: SessionMeta = serde_json::from_slice(&fs::read(&resume_path).unwrap()).unwrap();
-    resume_meta.harness_resume_token = "resume-token".into();
-    fs::write(&resume_path, serde_json::to_vec(&resume_meta).unwrap()).unwrap();
-    let resumed = fixture.open_response("resume", "unready-resume", "task", "omp", "", Some("resume-token"));
-    assert!(resumed.contains("OMP host protection is unavailable"), "resumed OMP response: {resumed}");
-    assert_eq!(fixture.rpc(json!({"op": "status", "id": "unready-resume"}))["error"], "unknown-session");
-
-    overlay_omp(
-        &fixture.root,
-        r#"
+    assert_eq!(fixture.rpc(json!({"op":"version"}))["host_guard_ready"], false);
+    let source = fixture.create_task(true);
+    let rejected = fixture.start_response("task", &source);
+    assert_eq!(rejected.start, "failed");
+    assert!(!rejected.errors.is_empty());
+    let meta: SessionMeta = serde_json::from_slice(&fs::read(fixture.meta_path("task", &source)).unwrap()).unwrap();
+    assert!(meta.started_at.is_none());
+    assert_eq!(fixture.rpc(json!({"op":"status", "id":source.id}))["error"], "unknown-session");
+    let auxiliary = fixture.auxiliary("task", "omp", None);
+    let resumed = fixture.rpc(json!({"op":"resume", "id":auxiliary.id, "task_slug":"task", "resume_token":"resume-token"}));
+    assert!(resumed["error"].is_string());
+    assert_eq!(fixture.rpc(json!({"op":"status", "id":auxiliary.id}))["error"], "unknown-session");
+    overlay_omp(&fixture.root, r#"
 [[harness]]
 key = "omp"
 name = "Unsupported fixture"
@@ -514,116 +492,47 @@ args = ["-c", "sleep 30"]
 model_arg = []
 prompt_injection = "arg"
 adapter = "unsupported"
-"#,
-    );
-    write_unsupported_meta(&fixture.root, "unready-unsupported");
-    fixture.spawn_session("unready-unsupported", "omp", "");
-    assert_eq!(fixture.rpc(json!({"op": "status", "id": "unready-unsupported"}))["adapter"], "unsupported");
-
+"#);
+    let direct = fixture.auxiliary("task", "omp", None);
+    fixture.start("task", &direct);
+    assert_eq!(fixture.rpc(json!({"op":"status", "id":direct.id}))["adapter"], "unsupported");
     fixture.shell = Some(fixture.root.join("no-harness-shell"));
     fixture.restart();
-    fs::create_dir_all(fixture.root.join(".alinery/sessions")).unwrap();
-    let root_meta = SessionMeta {
-        id: "unready-root".into(),
-        worktree: fixture.root.to_string_lossy().into_owned(),
-        harness: "no-harness".into(),
-        ..Default::default()
-    };
-    fs::write(fixture.root.join(".alinery/sessions/unready-root.meta.json"), serde_json::to_vec(&root_meta).unwrap()).unwrap();
-    let root_spawn = fixture.open_response("spawn", "unready-root", "", "no-harness", "", None);
-    assert!(root_spawn.contains("\"ok\":true"), "unready root response: {root_spawn}");
-}
-
-#[test]
-fn missing_protected_host_defers_auto_advanced_omp_until_ready_restart() {
-    let mut fixture = Fixture::without_protected_host();
-    let source_path = write_task_and_source(&fixture.root, "unready-auto-source");
-    let mut source: SessionMeta = serde_json::from_slice(&fs::read(&source_path).unwrap()).unwrap();
-    source.semantic = SemanticCheckpoint {
-        phase_completed_at: Some(1),
-        omp_session_id: Some("omp-unready".into()),
-        omp_turn_id: Some(1),
-    };
-    fs::write(&source_path, serde_json::to_vec(&source).unwrap()).unwrap();
-    fs::write(fixture.root.join(".alinery/tasks/task/artifacts/01-research-questions.md"), "complete").unwrap();
-
-    fixture.restart();
-    let target_path = fixture.root.join(".alinery/tasks/task/sessions/sadv-task-superdevelop-research.meta.json");
-    thread::sleep(Duration::from_secs(1));
-    assert!(!target_path.exists(), "failed exclusive claim must be released for a protected retry");
-    assert!(!fs::read_to_string(&fixture.capture).is_ok_and(|capture| capture.lines().any(|line| line.starts_with("sadv-task-superdevelop-research\t"))));
-
-    fixture.host_enabled = true;
-    fixture.restart();
-    wait_until(Duration::from_secs(5), || {
-        fs::read(&target_path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<SessionMeta>(&bytes).ok())
-            .is_some_and(|target| target.started_at.is_some())
-    });
-    wait_until(Duration::from_secs(5), || {
-        fs::read_to_string(&fixture.capture).is_ok_and(|capture| capture.lines().any(|line| line.starts_with("sadv-task-superdevelop-research\t")))
-    });
+    let terminal = fixture.auxiliary("", "no-harness", None);
+    fixture.start("", &terminal);
 }
 
 #[test]
 fn phase_less_generic_omp_spawn_keeps_seed_without_completion_contract() {
     let fixture = Fixture::new();
-    overlay_omp(
-        &fixture.root,
-        r#"
-[[harness]]
-key = "omp"
-name = "OMP fixture"
-binary = "sh"
-args = ["-c", "printf '%s\\n' '{\"type\":\"ready\"}'; cat > \"$ALINERY_REPO/stdin.$ALINERY_SESSION_ID\""]
-model_arg = []
-prompt_injection = "arg"
-adapter = "omp"
-env = { ALINERY_HOST_EXECUTABLE = "harness-override" }
-"#,
-    );
-    let id = "generic-omp";
-    let meta_path = write_generic_omp_meta(&fixture.root, id);
-
-    let line = fixture.spawn_response(id, "omp", "");
-    assert!(line.contains("\"ok\":true"), "spawn response: {line}");
-    wait_until(Duration::from_secs(5), || {
-        fs::read_to_string(fixture.root.join(format!("stdin.{id}"))).is_ok_and(|text| text.contains("Generic Alinery session"))
-    });
-
-    let meta: SessionMeta = serde_json::from_slice(&fs::read(meta_path).unwrap()).unwrap();
-    assert!(meta.started_at.is_some());
-    let status = fixture.rpc(json!({"op": "status", "id": id}));
+    fixture.create_task(true);
+    let session = fixture.auxiliary("task", "omp", Some("Keep this auxiliary seed."));
+    fixture.start("task", &session);
+    let args_path = fixture.root.join(format!("runner-events.tsv.{}.args", session.id));
+    wait_until(Duration::from_secs(5), || fs::read_to_string(&args_path).is_ok_and(|text| text.contains("Keep this auxiliary seed.")));
+    let args = fs::read_to_string(args_path).unwrap();
+    assert!(!args.contains("alinery_phase_complete"), "auxiliary sessions cannot complete an execution: {args}");
+    let status = fixture.rpc(json!({"op":"status", "id":session.id}));
     assert_eq!(status["process"]["state"], "alive");
     assert_eq!(status["adapter"], "omp");
-
-    let stdin = fs::read_to_string(fixture.root.join(format!("stdin.{id}"))).unwrap();
-    assert!(stdin.contains("Generic Alinery session"), "{stdin}");
-    assert!(!stdin.contains("Alinery completion contract"), "{stdin}");
-    assert_eq!(
-        fs::read_to_string(fixture.root.join(format!("runner-events.tsv.{id}.repo"))).unwrap().trim(),
-        fixture.root.to_string_lossy()
-    );
-    assert_eq!(
-        fs::read_to_string(fixture.root.join(format!("runner-events.tsv.{id}.app-config"))).unwrap().trim(),
-        fixture.root.join(".alinery/unused-app-config.toml").to_string_lossy()
-    );
+    assert_eq!(fs::read_to_string(fixture.root.join(format!("runner-events.tsv.{}.repo", session.id))).unwrap().trim(), fixture.root.to_string_lossy());
+    assert_eq!(fs::read_to_string(fixture.root.join(format!("runner-events.tsv.{}.app-config", session.id))).unwrap().trim(), fixture.root.join(".alinery/unused-app-config.toml").to_string_lossy());
+    let token = fixture.token_for(&session.id);
+    assert!(fixture.complete(&session, &token)["error"].is_string());
+    assert_eq!(fixture.state().state.executions.len(), 1);
 }
 
 #[test]
 fn callback_emitted_during_child_startup_is_authenticated() {
     let fixture = Fixture::new();
     fs::write(format!("{}.early", fixture.capture.display()), "").unwrap();
-    let meta_path = write_task_and_source(&fixture.root, "early-event");
-
-    fixture.spawn_session("early-event", "omp", "research-questions");
+    let source = fixture.create_task(true);
+    fixture.start("task", &source);
     wait_until(Duration::from_secs(5), || {
-        let status = fixture.rpc(json!({"op": "status", "id": "early-event"}));
+        let status = fixture.rpc(json!({"op":"status", "id":source.id}));
         status["process"]["state"] == "alive" && status["agent"]["state"] == "busy"
     });
-
-    let meta: SessionMeta = serde_json::from_slice(&fs::read(meta_path).unwrap()).unwrap();
+    let meta: SessionMeta = serde_json::from_slice(&fs::read(fixture.meta_path("task", &source)).unwrap()).unwrap();
     assert!(meta.started_at.is_some());
     assert_eq!(meta.status_changed_at, meta.started_at);
 }
@@ -631,14 +540,15 @@ fn callback_emitted_during_child_startup_is_authenticated() {
 #[test]
 fn status_changed_at_runner_transitions_are_normalized() {
     let fixture = Fixture::new();
-    let id = "status-transitions";
-    let meta_path = write_task_and_source(&fixture.root, id);
-    fixture.spawn_session(id, "omp", "research-questions");
+    let source = fixture.create_task(true);
+    let id = source.id.as_str();
+    let meta_path = fixture.meta_path("task", &source);
+    fixture.start("task", &source);
     let token = fixture.token_for(id);
     let send = |event: Value| {
         let response = fixture.rpc(json!({
             "op": "event",
-            "version": 1,
+            "version": RUNNER_EVENT_PROTOCOL_VERSION,
             "session_id": id,
             "token": token,
             "event": event,
@@ -711,436 +621,198 @@ fn status_changed_at_runner_transitions_are_normalized() {
 #[test]
 fn reversible_transition_is_not_published_when_stamp_fails() {
     let fixture = Fixture::new();
-    let id = "failed-status-stamp";
-    let meta_path = write_task_and_source(&fixture.root, id);
-    fixture.spawn_session(id, "omp", "research-questions");
-    let token = fixture.token_for(id);
-    fs::write(fixture.root.join(".alinery/tasks/task/artifacts/01-research-questions.md"), "complete").unwrap();
-
-    let sessions_dir = meta_path.parent().unwrap();
-    let original_mode = fs::metadata(sessions_dir).unwrap().permissions().mode();
-    fs::set_permissions(sessions_dir, fs::Permissions::from_mode(0o555)).unwrap();
-    let waiting = fixture.rpc(json!({
-        "op": "event",
-        "version": 1,
-        "session_id": id,
-        "token": token,
-        "event": {"type": "waiting_for_input", "correlation_id": "ask"},
-    }));
-    assert!(waiting["error"]
-        .as_str()
-        .is_some_and(|error| error.contains("Permission denied") || error.contains("Operation not permitted")));
-    let completion = fixture.rpc(json!({
-        "op": "event",
-        "version": 1,
-        "session_id": id,
-        "token": token,
-        "event": {"type": "phase_completed", "omp_session_id": "omp-session"},
-    }));
-    fs::set_permissions(sessions_dir, fs::Permissions::from_mode(original_mode)).unwrap();
-    assert!(completion["error"]
-        .as_str()
-        .is_some_and(|error| error.contains("Permission denied") || error.contains("Operation not permitted")));
-
-    let status = fixture.rpc(json!({"op": "status", "id": id}));
+    let source = fixture.create_task(true);
+    fixture.start("task", &source);
+    let token = fixture.token_for(&source.id);
+    let meta_path = fixture.meta_path("task", &source);
+    let directory = meta_path.parent().unwrap();
+    let permissions = PermissionGuard::readonly(directory);
+    let waiting = fixture.event(&source, &token, json!({"type":"waiting_for_input", "correlation_id":"ask"}));
+    drop(permissions);
+    assert!(waiting["error"].is_string(), "{waiting}");
+    let status = fixture.rpc(json!({"op":"status", "id":source.id}));
     assert_eq!(status["agent"]["state"], "unknown");
     assert_eq!(status["playbook"]["state"], "in_progress");
-    let meta: SessionMeta = serde_json::from_slice(&fs::read(meta_path).unwrap()).unwrap();
-    assert!(meta.semantic.phase_completed_at.is_none());
+    assert!(fixture.execution(&source).receipt_id.is_none());
+}
+
+struct PermissionGuard { path: PathBuf, mode: u32 }
+impl PermissionGuard {
+    fn readonly(path: &Path) -> Self {
+        let guard = Self { path: path.into(), mode: fs::metadata(path).unwrap().permissions().mode() };
+        fs::set_permissions(path, fs::Permissions::from_mode(0o555)).unwrap();
+        guard
+    }
+}
+impl Drop for PermissionGuard {
+    fn drop(&mut self) { fs::set_permissions(&self.path, fs::Permissions::from_mode(self.mode)).unwrap(); }
+}
+
+#[test]
+fn completion_receipt_requires_authoritative_persistence_not_projection() {
+    let fixture = Fixture::new();
+    let source = fixture.create_task(true);
+    fixture.start("task", &source);
+    let token = fixture.token_for(&source.id);
+    fs::write(fixture.output_path(&source), "complete").unwrap();
+    let state_path = fixture.root.join(".alinery/tasks/task/execution.json");
+    let before = fs::read(&state_path).unwrap();
+    let permissions = PermissionGuard::readonly(state_path.parent().unwrap());
+    let failed = fixture.complete(&source, &token);
+    drop(permissions);
+    assert!(failed["error"].is_string(), "{failed}");
+    assert!(failed.get("completion").is_none(), "{failed}");
+    assert_eq!(fs::read(&state_path).unwrap(), before);
+    assert!(fixture.execution(&source).receipt_id.is_none());
+    assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Running);
+
+    // Session metadata is a repairable projection: its failure cannot revoke an
+    // execution.json receipt that has already committed.
+    let path = fixture.meta_path("task", &source);
+    let permissions = PermissionGuard::readonly(path.parent().unwrap());
+    let accepted = fixture.complete(&source, &token);
+    drop(permissions);
+    let receipt = accepted_receipt(&accepted);
+    assert_eq!(fixture.execution(&source).receipt_id.as_deref(), Some(receipt.as_str()));
+    assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Finishing);
 }
 
 #[test]
 fn structured_events_require_the_live_token_and_advance_exactly_once() {
     let fixture = Fixture::new();
-    let source_id = "source";
-    let source_meta = write_task_and_source(&fixture.root, source_id);
-    fixture.spawn_session(source_id, "omp", "research-questions");
-    let token = fixture.token_for(source_id);
+    let source = fixture.create_task(true);
+    fixture.start("task", &source);
+    let token = fixture.token_for(&source.id);
+    let auxiliary = fixture.auxiliary("task", "omp", None);
+    fixture.start("task", &auxiliary);
+    let other_token = fixture.token_for(&auxiliary.id);
     assert!(!token.is_empty());
-    let stale_id = "stale";
-    let stale_meta = write_stale_omp_meta(&fixture.root, stale_id);
-    fixture.spawn_session(stale_id, "omp", "research-questions");
-    let stale_token = fixture.token_for(stale_id);
-    assert_eq!(
-        fixture.rpc(json!({
-            "op": "event",
-            "version": 1,
-            "session_id": stale_id,
-            "token": token,
-            "event": {"type": "busy"}
-        }))["error"],
-        "invalid-event-token"
-    );
-    assert_eq!(
-        fixture.rpc(json!({
-            "op": "event",
-            "version": 1,
-            "session_id": source_id,
-            "token": stale_token,
-            "event": {"type": "busy"}
-        }))["error"],
-        "invalid-event-token"
-    );
-    let stale_completion = fixture.rpc(json!({
-        "op": "event",
-        "version": 1,
-        "session_id": stale_id,
-        "token": stale_token,
-        "event": {
-            "type": "phase_completed",
-            "omp_session_id": "omp-stale"
-        }
-    }));
-    assert_eq!(stale_completion["error"], "completion-rejected:StaleSource");
-    let stale_on_disk: Value = serde_json::from_slice(&fs::read(&stale_meta).unwrap()).unwrap();
-    assert!(stale_on_disk["semantic"]["phase_completed_at"].is_null());
-    assert!(stale_on_disk["status_changed_at"].as_u64().is_some());
-    assert_eq!(fixture.rpc(json!({"op": "status", "id": stale_id}))["playbook"]["state"], "failed");
-
-    let status = fixture.rpc(json!({"op": "status", "id": source_id}));
+    assert_eq!(fixture.event(&auxiliary, &token, json!({"type":"busy"}))["error"], "invalid-event-token");
+    assert_eq!(fixture.event(&source, &other_token, json!({"type":"busy"}))["error"], "invalid-event-token");
+    assert_eq!(fixture.event(&source, "wrong", json!({"type":"busy"}))["error"], "invalid-event-token");
+    assert_eq!(fixture.rpc(json!({"op":"event", "version":RUNNER_EVENT_PROTOCOL_VERSION + 1, "session_id":source.id, "token":token, "event":{"type":"busy"}}))["error"], "unsupported-event-version");
+    assert_eq!(fixture.rpc(json!({"op":"event", "version":RUNNER_EVENT_PROTOCOL_VERSION, "session_id":"unknown", "token":token, "event":{"type":"busy"}}))["error"], "unknown-session");
+    assert!(fixture.complete(&auxiliary, &other_token)["error"].is_string());
+    let status = fixture.rpc(json!({"op":"status", "id":source.id}));
     assert_eq!(status["process"]["state"], "alive");
     assert_eq!(status["agent"]["state"], "unknown");
     assert_eq!(status["playbook"]["state"], "in_progress");
     assert_eq!(status["adapter"], "omp");
-    assert!(status.get("status").is_none(), "scalar status must be gone");
-
-    let list = fixture.rpc(json!({"op": "list"}));
-    let row = list["sessions"].as_array().unwrap().iter().find(|row| row["id"] == source_id).unwrap();
+    assert!(status.get("status").is_none());
+    let list = fixture.rpc(json!({"op":"list"}));
+    let row = list["sessions"].as_array().unwrap().iter().find(|row| row["id"] == source.id).unwrap();
     assert_eq!(row["process"]["state"], "alive");
     assert_eq!(row["adapter"], "omp");
-
-    assert_eq!(
-        fixture.rpc(json!({
-            "op": "event",
-            "version": 2,
-            "session_id": source_id,
-            "token": token,
-            "event": {"type": "busy"}
-        }))["error"],
-        "unsupported-event-version"
-    );
-    assert_eq!(
-        fixture.rpc(json!({
-            "op": "event",
-            "version": 1,
-            "session_id": "unknown",
-            "token": token,
-            "event": {"type": "busy"}
-        }))["error"],
-        "unknown-session"
-    );
-    let invalid = fixture.rpc(json!({
-        "op": "event",
-        "version": 1,
-        "session_id": source_id,
-        "token": "wrong",
-        "event": {"type": "busy"}
-    }));
-    assert_eq!(invalid["error"], "invalid-event-token");
-
-    let accepted = fixture.rpc(json!({
-        "op": "event",
-        "version": 1,
-        "session_id": source_id,
-        "token": token,
-        "event": {"type": "busy"}
-    }));
-    assert_eq!(accepted["ok"], true);
-    assert_eq!(fixture.rpc(json!({"op": "status", "id": source_id}))["agent"]["state"], "busy");
-
-    fixture.rpc(json!({
-        "op": "event",
-        "version": 1,
-        "session_id": source_id,
-        "token": token,
-        "event": {"type": "waiting_for_input", "correlation_id": "ask-1"}
-    }));
-    fixture.rpc(json!({
-        "op": "event",
-        "version": 1,
-        "session_id": source_id,
-        "token": token,
-        "event": {"type": "busy", "correlation_id": "other"}
-    }));
-    assert_eq!(fixture.rpc(json!({"op": "status", "id": source_id}))["agent"]["state"], "waiting_for_input");
-    fixture.rpc(json!({
-        "op": "event",
-        "version": 1,
-        "session_id": source_id,
-        "token": token,
-        "event": {"type": "busy", "correlation_id": "ask-1"}
-    }));
-
-    // Artifact presence alone must remain inert beyond the old two-observation window.
-    fs::write(fixture.root.join(".alinery/tasks/task/artifacts/01-research-questions.md"), "complete").unwrap();
-    thread::sleep(Duration::from_millis(4_250));
-    let before: Value = serde_json::from_slice(&fs::read(&source_meta).unwrap()).unwrap();
-    assert!(before["semantic"]["phase_completed_at"].is_null());
-    assert_eq!(
-        fs::read_dir(fixture.root.join(".alinery/tasks/task/sessions"))
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(|entry| entry.path().to_string_lossy().ends_with(".meta.json"))
-            .count(),
-        2
-    );
-
-    let completed = fixture.rpc(json!({
-        "op": "event",
-        "version": 1,
-        "session_id": source_id,
-        "token": token,
-        "event": {
-            "type": "phase_completed",
-            "omp_session_id": "omp-session-1",
-            "omp_turn_id": 7
-        }
-    }));
-    assert_eq!(completed["ok"], true, "completion response: {completed}");
-
-    wait_until(Duration::from_secs(5), || {
-        fs::read_dir(fixture.root.join(".alinery/tasks/task/sessions"))
-            .map(|entries| {
-                entries
-                    .filter_map(Result::ok)
-                    .filter(|entry| entry.path().to_string_lossy().ends_with(".meta.json"))
-                    .count()
-                    == 3
-            })
-            .unwrap_or(false)
-    });
-    let checkpointed: Value = serde_json::from_slice(&fs::read(&source_meta).unwrap()).unwrap();
-    assert!(checkpointed["semantic"]["phase_completed_at"].as_u64().is_some());
-    assert_eq!(checkpointed["semantic"]["omp_session_id"], "omp-session-1");
-    assert_eq!(checkpointed["semantic"]["omp_turn_id"], 7);
-    assert!(checkpointed["status_changed_at"].as_u64().is_some());
-    assert!(checkpointed.get("event_token").is_none());
-    assert!(checkpointed.get("process_state").is_none());
-    assert!(checkpointed.get("agent_state").is_none());
-    assert!(checkpointed.get("playbook_state").is_none());
-
-    let sessions = fs::read_dir(fixture.root.join(".alinery/tasks/task/sessions"))
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().to_string_lossy().ends_with(".meta.json"))
-        .map(|entry| serde_json::from_slice::<SessionMeta>(&fs::read(entry.path()).unwrap()).unwrap())
-        .collect::<Vec<_>>();
-    assert_eq!(sessions.iter().filter(|meta| meta.phase == "research").count(), 1);
-    let advanced = sessions.iter().find(|meta| meta.phase == "research").unwrap();
-    assert_eq!(fixture.host_for(&advanced.id), fixture.host.to_string_lossy());
-    wait_until(Duration::from_secs(5), || {
-        fixture.rpc(json!({"op": "status", "id": source_id}))["playbook"]["state"] == "completed"
-    });
-
-    // Duplicate completion cannot stamp or create another target.
-    let duplicate = fixture.rpc(json!({
-        "op": "event",
-        "version": 1,
-        "session_id": source_id,
-        "token": token,
-        "event": {
-            "type": "phase_completed",
-            "omp_session_id": "omp-session-1",
-            "omp_turn_id": 7
-        }
-    }));
-    assert_eq!(duplicate["ok"], true);
-    thread::sleep(Duration::from_millis(150));
-    assert_eq!(
-        fs::read_dir(fixture.root.join(".alinery/tasks/task/sessions"))
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(|entry| entry.path().to_string_lossy().ends_with(".meta.json"))
-            .count(),
-        3
-    );
-
-    // Unsupported adapters launch directly, keep terminal process authority, and never
-    // receive a runner token/capture entry.
-    overlay_omp(
-        &fixture.root,
-        r#"
-[[harness]]
-key = "omp"
-name = "Unsupported fixture"
-binary = "sh"
-args = ["-c", "sleep 30"]
-model_arg = []
-prompt_injection = "arg"
-adapter = "unsupported"
-"#,
-    );
-    let unsupported_id = "unsupported";
-    write_unsupported_meta(&fixture.root, unsupported_id);
-    fixture.spawn_session(unsupported_id, "omp", "");
-    let unsupported = fixture.rpc(json!({"op": "status", "id": unsupported_id}));
-    assert_eq!(unsupported["process"]["state"], "alive");
-    assert_eq!(unsupported["agent"]["state"], "unknown");
-    assert_eq!(unsupported["adapter"], "unsupported");
-    overlay_omp(
-        &fixture.root,
-        r#"
-[[harness]]
-key = "omp"
-name = "Exiting OMP fixture"
-binary = "sh"
-args = ["-c", "sleep 1"]
-model_arg = []
-prompt_injection = "arg"
-adapter = "omp"
-"#,
-    );
-    let exited_id = "exited";
-    let exited_meta = write_stale_omp_meta(&fixture.root, exited_id);
-    fixture.spawn_session(exited_id, "omp", "research-questions");
-    let exited_token = fixture.token_for(exited_id);
-    wait_until(Duration::from_secs(5), || {
-        fixture.rpc(json!({"op": "status", "id": exited_id}))["process"]["state"] == "exited"
-    });
-    let exited_on_disk: Value = serde_json::from_slice(&fs::read(&exited_meta).unwrap()).unwrap();
-    assert!(exited_on_disk["ended_at"].as_u64().is_some());
-    assert!(exited_on_disk["status_changed_at"].as_u64().unwrap() >= exited_on_disk["started_at"].as_u64().unwrap());
-    assert_eq!(
-        fixture.rpc(json!({
-            "op": "event",
-            "version": 1,
-            "session_id": exited_id,
-            "token": exited_token,
-            "event": {"type": "busy"}
-        }))["error"],
-        "session-exited"
-    );
-    let capture = fs::read_to_string(&fixture.capture).unwrap();
-    assert!(!capture.lines().any(|line| line.starts_with("unsupported\t")));
+    assert_eq!(fixture.event(&source, &token, json!({"type":"busy"}))["ok"], true);
+    assert_eq!(fixture.event(&source, &token, json!({"type":"waiting_for_input", "correlation_id":"ask"}))["ok"], true);
+    assert_eq!(fixture.event(&source, &token, json!({"type":"busy", "correlation_id":"other"}))["ok"], true);
+    assert_eq!(fixture.rpc(json!({"op":"status", "id":source.id}))["agent"]["state"], "waiting_for_input");
+    assert_eq!(fixture.event(&source, &token, json!({"type":"busy", "correlation_id":"ask"}))["ok"], true);
+    fs::write(fixture.output_path(&source), "complete").unwrap();
+    assert!(fixture.execution(&source).receipt_id.is_none());
+    assert_eq!(fixture.state().state.executions.len(), 1);
+    let receipt = accepted_receipt(&fixture.complete(&source, &token));
+    let finishing = fixture.execution(&source);
+    assert_eq!(finishing.lifecycle, ExecutionLifecycle::Finishing);
+    assert!(!finishing.shutdown_confirmed);
+    assert_eq!(fixture.rpc(json!({"op":"status", "id":source.id}))["process"]["state"], "alive");
+    assert_eq!(fixture.state().state.executions.len(), 1, "live producer must not release a successor");
+    assert_eq!(accepted_receipt(&fixture.complete(&source, &token)), receipt);
+    assert_eq!(fixture.state().state.executions.len(), 1);
+    let checkpoint: Value = serde_json::from_slice(&fs::read(fixture.meta_path("task", &source)).unwrap()).unwrap();
+    assert_eq!(checkpoint["semantic"]["omp_session_id"], "omp-session");
+    assert_eq!(checkpoint["semantic"]["omp_turn_id"], 7);
+    for transient in ["event_token", "process_state", "agent_state", "playbook_state"] { assert!(checkpoint.get(transient).is_none()); }
+    fixture.release(&source);
+    let target = fixture.target();
+    assert_eq!(fixture.host_for(&target.owner_session_id), fixture.host.to_string_lossy());
+    assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Completed);
+    assert!(fixture.execution(&source).shutdown_confirmed);
+    assert_eq!(fixture.state().state.executions.values().filter(|e| e.candidate.step_key == "target").count(), 1);
+    assert_eq!(fixture.event(&source, &token, json!({"type":"busy"}))["error"], "session-exited");
+    let ended: SessionMeta = serde_json::from_slice(&fs::read(fixture.meta_path("task", &source)).unwrap()).unwrap();
+    assert!(ended.ended_at.is_some());
+    assert!(ended.status_changed_at >= ended.started_at);
 }
 
 #[test]
 fn completion_ack_precedes_slow_auto_advance() {
     let fixture = Fixture::with_slow_login_shell();
-    let source_id = "slow-advance";
-    let source_meta = write_task_and_source(&fixture.root, source_id);
-    fixture.spawn_session(source_id, "omp", "research-questions");
-    let token = fixture.token_for(source_id);
-    fs::write(fixture.root.join(".alinery/tasks/task/artifacts/01-research-questions.md"), "complete").unwrap();
-
+    let source = fixture.create_task(true);
+    fixture.start("task", &source);
+    let token = fixture.token_for(&source.id);
+    fs::write(fixture.output_path(&source), "complete").unwrap();
     let started = Instant::now();
-    let response = fixture.rpc(json!({
-        "op": "event",
-        "version": 1,
-        "session_id": source_id,
-        "token": token,
-        "event": {
-            "type": "phase_completed",
-            "omp_session_id": "omp-slow-advance",
-            "omp_turn_id": 1
-        }
-    }));
+    accepted_receipt(&fixture.complete(&source, &token));
     let elapsed = started.elapsed();
-
-    assert_eq!(response["ok"], true, "completion response: {response}");
-    assert!(elapsed < Duration::from_millis(250), "checkpoint acknowledgement exceeded runner deadline: {elapsed:?}");
-    let checkpointed: SessionMeta = serde_json::from_slice(&fs::read(&source_meta).unwrap()).unwrap();
-    assert!(checkpointed.semantic.phase_completed_at.is_some());
-
-    wait_until(Duration::from_secs(5), || {
-        fs::read_dir(fixture.root.join(".alinery/tasks/task/sessions"))
-            .map(|entries| {
-                entries
-                    .filter_map(Result::ok)
-                    .filter(|entry| entry.path().to_string_lossy().ends_with(".meta.json"))
-                    .count()
-                    == 2
-            })
-            .unwrap_or(false)
-    });
+    assert!(elapsed < Duration::from_millis(250), "receipt acknowledgement exceeded runner deadline: {elapsed:?}");
+    assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Finishing);
+    assert_eq!(fixture.state().state.executions.len(), 1);
+    fixture.release(&source);
+    fixture.target();
 }
 
 #[test]
-fn checkpointed_completion_retries_unstarted_target_after_restart_without_duplicate() {
+fn accepted_live_owner_is_not_handed_off_after_restart_without_exit_proof() {
     let mut fixture = Fixture::new();
-    let source_meta = write_task_and_source(&fixture.root, "checkpointed");
-    let mut source: SessionMeta = serde_json::from_slice(&fs::read(&source_meta).unwrap()).unwrap();
-    source.semantic = SemanticCheckpoint {
-        phase_completed_at: Some(1),
-        omp_session_id: Some("omp-checkpointed".into()),
-        omp_turn_id: Some(9),
-    };
-    fs::write(&source_meta, serde_json::to_vec(&source).unwrap()).unwrap();
-    fs::write(fixture.root.join(".alinery/tasks/task/artifacts/01-research-questions.md"), "complete").unwrap();
-
-    // Simulate the durable point between exclusive target-meta creation and a
-    // failed child spawn. Reconciliation must launch this row, not create another.
-    let target_id = "sadv-task-superdevelop-research";
-    let target_meta = fixture.root.join(format!(".alinery/tasks/task/sessions/{target_id}.meta.json"));
-    let target = SessionMeta {
-        id: target_id.into(),
-        worktree: source.worktree.clone(),
-        created: source.created + 1,
-        phase: "research".into(),
-        harness: "omp".into(),
-        playbook: "superdevelop".into(),
-        ..Default::default()
-    };
-    fs::write(&target_meta, serde_json::to_vec(&target).unwrap()).unwrap();
-
+    let source = fixture.create_task(true);
+    fixture.start("task", &source);
+    let token = fixture.token_for(&source.id);
+    fs::write(fixture.output_path(&source), "complete").unwrap();
+    let receipt = accepted_receipt(&fixture.complete(&source, &token));
     fixture.restart();
-    wait_until(Duration::from_secs(5), || {
-        let started = serde_json::from_slice::<SessionMeta>(&fs::read(&target_meta).unwrap()).unwrap().started_at.is_some();
-        let captured = fs::read_to_string(&fixture.capture).is_ok_and(|text| text.lines().any(|line| line.starts_with(&format!("{target_id}\t"))));
-        started && captured
-    });
+    let execution = fixture.execution(&source);
+    assert_eq!(execution.receipt_id.as_deref(), Some(receipt.as_str()));
+    // Shutdown may prove the reap; otherwise restart must retain uncertain ownership.
+    if execution.shutdown_confirmed {
+        assert_eq!(execution.lifecycle, ExecutionLifecycle::Completed);
+        fixture.target();
+    } else {
+        assert_eq!(execution.lifecycle, ExecutionLifecycle::Interrupted);
+        assert_eq!(fixture.state().state.executions.len(), 1);
+    }
+}
 
-    let sessions_dir = fixture.root.join(".alinery/tasks/task/sessions");
-    let phases = fs::read_dir(&sessions_dir)
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().to_string_lossy().ends_with(".meta.json"))
-        .map(|entry| serde_json::from_slice::<SessionMeta>(&fs::read(entry.path()).unwrap()).unwrap())
-        .collect::<Vec<_>>();
-    assert_eq!(phases.iter().filter(|meta| meta.phase == "research").count(), 1);
-    assert_eq!(
-        fs::read_to_string(&fixture.capture)
-            .unwrap()
-            .lines()
-            .filter(|line| line.starts_with(&format!("{target_id}\t")))
-            .count(),
-        1
-    );
-
+#[test]
+fn failed_successor_launch_requires_explicit_recovery_without_duplicate_execution() {
+    let mut fixture = Fixture::new();
+    let source = fixture.create_task(true);
+    fixture.start("task", &source);
+    let token = fixture.token_for(&source.id);
+    fs::write(fixture.output_path(&source), "complete").unwrap();
+    accepted_receipt(&fixture.complete(&source, &token));
+    let hidden_runner = fixture.root.join("saved-runner");
+    fs::rename(&fixture.runner, &hidden_runner).unwrap();
+    fixture.release(&source);
+    wait_until(Duration::from_secs(5), || fixture.state().state.executions.values().any(|e| e.candidate.step_key == "target" && e.lifecycle == ExecutionLifecycle::LaunchFailed));
+    let failed = fixture.state().state.executions.into_values().find(|e| e.candidate.step_key == "target").unwrap();
+    fs::rename(hidden_runner, &fixture.runner).unwrap();
     fixture.restart();
-    thread::sleep(Duration::from_millis(250));
-    assert_eq!(
-        fs::read_dir(&sessions_dir)
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(|entry| entry.path().to_string_lossy().ends_with(".meta.json"))
-            .count(),
-        2
-    );
-    assert_eq!(
-        fs::read_to_string(&fixture.capture)
-            .unwrap()
-            .lines()
-            .filter(|line| line.starts_with(&format!("{target_id}\t")))
-            .count(),
-        1
-    );
+    assert_eq!(fixture.state().state.executions[&failed.id].lifecycle, ExecutionLifecycle::LaunchFailed);
+    let recovered = fixture.client().create_execution_session(&CreateExecutionSessionRequest {
+        task_slug: "task".into(), target: ExecutionSessionTarget::Primary { step_key: "target".into(), execution_id: Some(failed.id.clone()), input_occurrence_ids: None },
+        launch_override: None, prompt_extra: None, start: false,
+    }).unwrap();
+    assert_ne!(recovered.session.id, failed.owner_session_id);
+    fixture.start("task", &recovered.session);
+    let target = fixture.target();
+    assert_eq!(target.id, failed.id);
+    assert_eq!(fixture.state().state.executions.len(), 2);
+    assert!(!fixture.token_for(&recovered.session.id).is_empty());
+    assert!(fixture.client().start_session(&StartSessionRequest { task_slug: "task".into(), session_id: failed.owner_session_id }).is_err());
 }
 
 #[test]
 fn missing_runner_blocks_only_omp_adapted_spawn() {
     let fixture = Fixture::new();
-    write_task_and_source(&fixture.root, "missing-runner");
+    let source = fixture.create_task(true);
     fs::remove_file(&fixture.runner).unwrap();
-
-    let rejected = fixture.spawn_response("missing-runner", "omp", "research-questions");
-    assert!(rejected.contains("alinery-runner not found"), "OMP spawn response: {rejected}");
-    let source: SessionMeta = serde_json::from_slice(&fs::read(fixture.root.join(".alinery/tasks/task/sessions/missing-runner.meta.json")).unwrap()).unwrap();
-    assert!(source.started_at.is_none());
-
-    overlay_omp(
-        &fixture.root,
-        r#"
+    let rejected = fixture.start_response("task", &source);
+    assert_eq!(rejected.start, "failed");
+    assert!(!rejected.errors.is_empty());
+    let meta: SessionMeta = serde_json::from_slice(&fs::read(fixture.meta_path("task", &source)).unwrap()).unwrap();
+    assert!(meta.started_at.is_none());
+    overlay_omp(&fixture.root, r#"
 [[harness]]
 key = "omp"
 name = "Broken fixture"
@@ -1149,19 +821,13 @@ args = []
 model_arg = []
 prompt_injection = "arg"
 adapter = "unsupported"
-"#,
-    );
-    write_unsupported_meta(&fixture.root, "broken");
-    let broken_meta_path = fixture.root.join(".alinery/tasks/task/sessions/broken.meta.json");
-    let broken = fixture.spawn_response("broken", "omp", "");
-    assert!(broken.contains("No such file"), "broken spawn response: {broken}");
-    assert_eq!(fixture.rpc(json!({"op": "status", "id": "broken"}))["error"], "unknown-session");
-    let rolled_back: SessionMeta = serde_json::from_slice(&fs::read(&broken_meta_path).unwrap()).unwrap();
+"#);
+    let broken = fixture.auxiliary("task", "omp", None);
+    assert_eq!(fixture.start_response("task", &broken).start, "failed");
+    assert_eq!(fixture.rpc(json!({"op":"status", "id":broken.id}))["error"], "unknown-session");
+    let rolled_back: SessionMeta = serde_json::from_slice(&fs::read(fixture.meta_path("task", &broken)).unwrap()).unwrap();
     assert!(rolled_back.started_at.is_none());
-
-    overlay_omp(
-        &fixture.root,
-        r#"
+    overlay_omp(&fixture.root, r#"
 [[harness]]
 key = "omp"
 name = "Unsupported fixture"
@@ -1170,81 +836,102 @@ args = ["-c", "sleep 30"]
 model_arg = []
 prompt_injection = "arg"
 adapter = "unsupported"
-"#,
-    );
-    write_unsupported_meta(&fixture.root, "direct");
-    fixture.spawn_session("direct", "omp", "");
-    let direct = fixture.rpc(json!({"op": "status", "id": "direct"}));
-    assert_eq!(direct["process"]["state"], "alive");
-    assert_eq!(direct["adapter"], "unsupported");
+"#);
+    let direct = fixture.auxiliary("task", "omp", None);
+    fixture.start("task", &direct);
+    let status = fixture.rpc(json!({"op":"status", "id":direct.id}));
+    assert_eq!(status["process"]["state"], "alive");
+    assert_eq!(status["adapter"], "unsupported");
+    assert!(!fixture.capture.exists());
 }
 
 #[test]
 fn oversized_runner_event_is_rejected_before_state_mutation() {
     let fixture = Fixture::new();
-    write_task_and_source(&fixture.root, "oversized-event");
-    fixture.spawn_session("oversized-event", "omp", "research-questions");
-    let token = fixture.token_for("oversized-event");
-
-    let response = fixture.rpc(json!({
-        "op": "event",
-        "version": 1,
-        "session_id": "oversized-event",
-        "token": token,
-        "event": {
-            "type": "adapter_error",
-            "detail": "x".repeat(130 * 1024)
-        }
-    }));
+    let source = fixture.create_task(true);
+    fixture.start("task", &source);
+    let token = fixture.token_for(&source.id);
+    let response = fixture.event(&source, &token, json!({"type":"adapter_error", "detail":"x".repeat(130 * 1024)}));
     assert_eq!(response["error"], "request-too-large");
-
-    let status = fixture.rpc(json!({"op": "status", "id": "oversized-event"}));
+    let status = fixture.rpc(json!({"op":"status", "id":source.id}));
     assert_eq!(status["agent"]["state"], "unknown");
     assert_eq!(status["playbook"]["state"], "in_progress");
 }
 
 #[test]
-fn invalid_artifact_rejects_without_checkpoint_until_fixed() {
+fn invalid_artifact_is_nonfatal_and_can_be_fixed_before_completion() {
     let fixture = Fixture::new();
-    let source_meta = write_task_and_source(&fixture.root, "artifact-check");
-    fixture.spawn_session("artifact-check", "omp", "research-questions");
-    let token = fixture.token_for("artifact-check");
-    let complete = || {
-        fixture.rpc(json!({
-            "op": "event",
-            "version": 1,
-            "session_id": "artifact-check",
-            "token": token,
-            "event": {
-                "type": "phase_completed",
-                "omp_session_id": "omp-artifact-check"
-            }
-        }))
-    };
+    let source = fixture.create_task(true);
+    fixture.start("task", &source);
+    let token = fixture.token_for(&source.id);
+    for content in [None, Some("")] {
+        if let Some(content) = content { fs::write(fixture.output_path(&source), content).unwrap(); }
+        let response = fixture.complete(&source, &token);
+        assert_eq!(response["ok"], true, "{response}");
+        assert!(matches!(serde_json::from_value::<CompletionOutcome>(response["completion"].clone()).unwrap(), CompletionOutcome::InvalidOutputs { diagnostics } if !diagnostics.is_empty()));
+        assert!(fixture.execution(&source).receipt_id.is_none());
+        assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Running);
+        assert_eq!(fixture.rpc(json!({"op":"status", "id":source.id}))["playbook"]["state"], "in_progress");
+        assert_eq!(fixture.state().state.executions.len(), 1);
+    }
+    fs::write(fixture.output_path(&source), "complete").unwrap();
+    accepted_receipt(&fixture.complete(&source, &token));
+    assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Finishing);
+    fixture.release(&source);
+    fixture.target();
+}
 
-    assert_eq!(complete()["error"], "completion-rejected:MissingArtifact");
-    let checkpoint: Value = serde_json::from_slice(&fs::read(&source_meta).unwrap()).unwrap();
-    assert!(checkpoint["semantic"]["phase_completed_at"].is_null());
+#[test]
+fn human_locked_completion_is_nonfatal_and_cannot_be_granted_by_runner_socket() {
+    let fixture = Fixture::new();
+    let source = fixture.create_task(false);
+    fixture.start("task", &source);
+    let token = fixture.token_for(&source.id);
+    fs::write(fixture.output_path(&source), "complete").unwrap();
+    let response = fixture.complete(&source, &token);
+    assert_eq!(response["ok"], true, "{response}");
+    assert!(matches!(serde_json::from_value::<CompletionOutcome>(response["completion"].clone()).unwrap(), CompletionOutcome::HumanAuthorizationRequired));
+    let denied = fixture.rpc(json!({"op":"allow_execution_completion", "request":{"task_slug":"task", "execution_id":source.execution_id, "session_id":source.id}, "token":token, "caller":"ui"}));
+    assert!(denied["error"].is_string());
+    assert!(fixture.execution(&source).receipt_id.is_none());
+    assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Running);
+    assert_eq!(fixture.complete(&source, &token)["completion"]["status"], "human_authorization_required");
+}
 
-    let artifact = fixture.root.join(".alinery/tasks/task/artifacts/01-research-questions.md");
-    fs::write(&artifact, "").unwrap();
-    assert_eq!(complete()["error"], "completion-rejected:EmptyArtifact");
-    let checkpoint: Value = serde_json::from_slice(&fs::read(&source_meta).unwrap()).unwrap();
-    assert!(checkpoint["semantic"]["phase_completed_at"].is_null());
+#[test]
+fn mismatched_session_lane_cannot_start_an_execution() {
+    let fixture = Fixture::new();
+    let source = fixture.create_task(true);
+    let path = fixture.meta_path("task", &source);
+    let original = fs::read(&path).unwrap();
+    let mut projection: Value = serde_json::from_slice(&original).unwrap();
+    projection["daemon_namespace"] = json!("another-lane");
+    fs::write(&path, serde_json::to_vec(&projection).unwrap()).unwrap();
+    let denied = fixture.client().start_session(&StartSessionRequest { task_slug:"task".into(), session_id: source.id.clone() });
+    fs::write(path, original).unwrap();
+    assert!(denied.is_err());
+    assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Queued);
+    assert!(!fixture.capture.exists());
+    fixture.start("task", &source);
+}
 
-    fs::write(&artifact, "complete").unwrap();
-    assert_eq!(complete()["ok"], true);
-    wait_until(Duration::from_secs(5), || {
-        fs::read_dir(fixture.root.join(".alinery/tasks/task/sessions"))
-            .map(|entries| {
-                entries
-                    .filter_map(Result::ok)
-                    .filter(|entry| entry.path().to_string_lossy().ends_with(".meta.json"))
-                    .count()
-                    == 2
-            })
-            .unwrap_or(false)
-    });
-    let checkpoint: Value = serde_json::from_slice(&fs::read(&source_meta).unwrap()).unwrap();
-    assert!(checkpoint["semantic"]["phase_completed_at"].as_u64().is_some());
+#[test]
+fn missing_protected_host_requires_explicit_recovery_after_ready_restart() {
+    let mut fixture = Fixture::without_protected_host();
+    let source = fixture.create_task(true);
+    assert_eq!(fixture.start_response("task", &source).start, "failed");
+    assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::LaunchFailed);
+    fixture.host_enabled = true;
+    fixture.restart();
+    assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::LaunchFailed);
+    assert!(!fixture.capture.exists(), "failed work must not silently acquire a new owner");
+    let recovered = fixture.client().create_execution_session(&CreateExecutionSessionRequest {
+        task_slug:"task".into(), target:ExecutionSessionTarget::Primary { step_key:"source".into(), execution_id:Some(source.execution_id.clone()), input_occurrence_ids:None },
+        launch_override:None, prompt_extra:None, start:false,
+    }).unwrap();
+    assert_ne!(recovered.session.id, source.id);
+    assert!(fixture.client().start_session(&StartSessionRequest { task_slug:"task".into(), session_id:source.id.clone() }).is_err());
+    fixture.start("task", &recovered.session);
+    assert_eq!(fixture.host_for(&recovered.session.id), fixture.host.to_string_lossy());
+    assert_eq!(fixture.state().state.executions.len(), 1);
 }

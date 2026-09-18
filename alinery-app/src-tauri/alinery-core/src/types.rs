@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-pub const RUNNER_EVENT_PROTOCOL_VERSION: u16 = 1;
+pub const RUNNER_EVENT_PROTOCOL_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -167,16 +167,12 @@ pub enum NormalizedSessionStatus {
     Exited,
 }
 
-pub fn default_playbook_key() -> String {
-    "superdevelop".to_string()
+pub fn default_playbook_ref() -> crate::playbook::PlaybookRef {
+    crate::playbook::PlaybookRef { scope: crate::playbook::PlaybookScope::Bundled, key: "superdevelop".to_string() }
 }
 
-pub fn default_playbook_version() -> u32 {
-    1
-}
-
-pub fn default_playbook_kind() -> String {
-    "linear".to_string()
+pub fn default_max_live_sessions() -> u32 {
+    10
 }
 
 fn is_false(value: &bool) -> bool {
@@ -206,7 +202,7 @@ pub struct RelatedTaskRef {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct Task {
     pub name: String,
     pub slug: String,
@@ -227,6 +223,14 @@ pub struct Task {
     pub github_issue: String,
     #[serde(default)]
     pub playbook: String,
+    #[serde(default)]
+    pub engine_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub playbook_ref: Option<crate::playbook::PlaybookRef>,
+    #[serde(default = "default_max_live_sessions")]
+    pub max_live_sessions: u32,
+    #[serde(default)]
+    pub launch_defaults: crate::execution::LaunchChoices,
     #[serde(default)]
     pub auto_advance: Vec<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -274,6 +278,10 @@ pub struct SessionMeta {
     pub model: String,
     #[serde(default)]
     pub playbook: String,
+    #[serde(default)]
+    pub execution_id: String,
+    #[serde(default)]
+    pub execution_revision: u64,
     #[serde(default)]
     pub generic: bool,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -326,38 +334,7 @@ pub struct SessionMeta {
     pub telemetry_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub struct CreateSessionInput {
-    pub task_slug: String,
-    pub playbook: String,
-    pub generic: bool,
-    pub phase: String,
-    pub harness: String,
-    pub model: String,
-    pub artifact: String,
-    pub handoff_artifact: String,
-    pub prompt_extra: String,
-    pub prompt: Option<String>,
-    pub subtask_manager: bool,
-    pub subtask_slug: String,
-    pub daemon_namespace: String,
-    /// Force a specific session id instead of a fresh timestamp. Used by the auto-advance
-    /// reconciler so racing daemons compute the SAME id for one (task, to_phase) edge and the
-    /// exclusive create below lets only one win. `None` = generate `s<nanos>` as usual.
-    pub id_override: Option<String>,
-    /// Write the meta with O_EXCL (`create_new`) so a concurrent reconciler on another daemon
-    /// can't also create it — the loser gets an "already exists" error. Defends the dedup
-    /// against the cross-process TOCTOU that `next_step_session_exists` alone can't close.
-    pub exclusive_create: bool,
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SessionStartResult {
-    pub task_slug: String,
-    pub session_id: String,
-    pub started_at: u64,
-    pub state: SessionState,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionStatusResult {
@@ -391,7 +368,7 @@ impl From<&Task> for TaskSummary {
             branch: task.branch.clone(),
             worktree: task.worktree.clone(),
             has_worktree: task.has_worktree,
-            playbook: task.playbook.clone(),
+            playbook: task.playbook_ref.as_ref().map(|reference| reference.key.clone()).unwrap_or_else(|| task.playbook.clone()),
             archived: task.archived,
             draft: task.draft,
             subtask_outcome: task.subtask_outcome.clone(),
@@ -419,20 +396,27 @@ pub struct SubtaskManagerState {
     pub disabled_reason: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct CreateSubtaskInput {
     pub manager_session_id: String,
     pub name: String,
     pub slug: String,
-    pub playbook: String,
+    #[serde(default)]
+    pub playbook: Option<crate::task_creation::TaskPlaybookPackage>,
     pub instructions: String,
+    #[serde(default)]
+    pub start: bool,
+    #[serde(default)]
+    pub max_live_sessions: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSubtaskResult {
     pub parent_task: TaskSummary,
-    pub child_task: TaskSummary,
+    pub child_task: Option<TaskSummary>,
     pub manager_session: SessionMeta,
+    pub provisioning: crate::task_creation::CreateTaskReply,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -489,6 +473,10 @@ pub struct SnapshotProvenance {
 pub struct ReviewHandoffRecord {
     pub version: u32,
     pub direction: String,
+    #[serde(default)]
+    pub source_repo_path: String,
+    #[serde(default)]
+    pub target_repo_path: String,
     pub source_task: String,
     pub source_session: String,
     pub source_artifact: String,
@@ -509,10 +497,15 @@ pub struct ReviewHandoffRequest {
     pub harness: String,
     pub model: String,
     pub prompt_extra: String,
+    #[serde(default)]
+    pub start: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ReviewHandoffResult {
+    pub target_repo_path: String,
+    pub start: String,
+    pub errors: Vec<crate::task_creation::CreationError>,
     pub target_artifact: String,
     pub target_session: SessionMeta,
     pub source_record: ReviewHandoffRecord,
@@ -529,6 +522,18 @@ pub struct ArtifactListItem {
     pub handoffs: Vec<ReviewHandoffRecord>,
     #[serde(default)]
     pub attachment: bool,
+    #[serde(default)]
+    pub execution_id: Option<String>,
+    #[serde(default)]
+    pub step_key: Option<String>,
+    #[serde(default)]
+    pub logical_path: Option<String>,
+    #[serde(default)]
+    pub depth: Option<u64>,
+    #[serde(default)]
+    pub discriminator: Option<u64>,
+    #[serde(default)]
+    pub accepted: Option<bool>,
 }
 
 fn default_has_worktree() -> bool {
@@ -719,8 +724,8 @@ pub struct HarnessChoice {
     pub harness: String,
     #[serde(default)]
     pub model: String,
-    #[serde(default = "default_playbook_key")]
-    pub playbook: String,
+    #[serde(default = "default_playbook_ref")]
+    pub playbook: crate::playbook::PlaybookRef,
     #[serde(default = "default_enabled")]
     pub draft_autosave: bool,
 }
@@ -730,7 +735,7 @@ impl Default for HarnessChoice {
         Self {
             harness: String::new(),
             model: String::new(),
-            playbook: default_playbook_key(),
+            playbook: default_playbook_ref(),
             draft_autosave: true,
         }
     }
@@ -790,7 +795,7 @@ pub struct RepoHarnessChoiceOverrides {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub playbook: Option<String>,
+    pub playbook: Option<crate::playbook::PlaybookRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draft_autosave: Option<bool>,
 }
@@ -898,82 +903,7 @@ pub struct HarnessFile {
     pub harness: Vec<Harness>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Phase {
-    pub key: String,
-    pub name: String,
-    pub prompt: String,
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct PlaybookFile {
-    #[serde(default = "default_playbook_version")]
-    pub version: u32,
-    #[serde(default = "default_playbook_key")]
-    pub default: String,
-    #[serde(default)]
-    pub playbook_order: Vec<String>,
-    #[serde(default)]
-    pub playbooks: BTreeMap<String, Playbook>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Playbook {
-    #[serde(default)]
-    pub title: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default = "default_playbook_kind")]
-    pub kind: String,
-    #[serde(default)]
-    pub steps: Vec<String>,
-    #[serde(default)]
-    pub default_harness: String,
-    #[serde(default)]
-    pub columns: Vec<String>,
-    #[serde(default)]
-    pub step: BTreeMap<String, PlaybookStep>,
-    #[serde(default)]
-    pub column: BTreeMap<String, PlaybookColumn>,
-    #[serde(default)]
-    pub auto_advance: BTreeMap<String, AutoAdvanceEdge>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct PlaybookStep {
-    #[serde(default)]
-    pub title: String,
-    #[serde(default)]
-    pub short: String,
-    #[serde(default)]
-    pub prompt: String,
-    #[serde(default)]
-    pub prompt_inline: String,
-    #[serde(default)]
-    pub artifact: String,
-    #[serde(default)]
-    pub column: String,
-    #[serde(default)]
-    pub harness: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct PlaybookColumn {
-    #[serde(default)]
-    pub title: String,
-    #[serde(default)]
-    pub steps: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AutoAdvanceEdge {
-    #[serde(default)]
-    pub title: String,
-    pub from: String,
-    pub to: String,
-    #[serde(default)]
-    pub default_enabled: bool,
-}
 
 pub struct PromptVars<'a> {
     pub artifacts_dir: &'a Path,
@@ -992,7 +922,6 @@ pub struct PromptVars<'a> {
 
 pub const DEFAULT_CONFIG_TOML: &str = include_str!("../../config.default.toml");
 pub const DEFAULT_HARNESSES_TOML: &str = include_str!("../../harnesses.default.toml");
-pub const DEFAULT_PLAYBOOKS_TOML: &str = include_str!("../../playbooks.default.toml");
 
 #[cfg(test)]
 mod tests {

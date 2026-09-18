@@ -18,6 +18,8 @@ import type { BoardNav } from "../types";
  * effect queue under both real and fake timers, so this works everywhere and stays deterministic.
  */
 export async function navReady(get: () => BoardNav | null): Promise<BoardNav> {
+  // A handle can already exist from the empty first paint; flush pending updates too.
+  await act(async () => { await Promise.resolve(); });
   for (let i = 0; i < 50 && !get(); i += 1) {
     await act(async () => {
       await Promise.resolve();

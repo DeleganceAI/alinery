@@ -31,6 +31,7 @@ import {
   EMPTY_TASK_ACTIVITY,
   EmptyState,
   finalizedSubtaskNotice,
+  findOwnedArtifactNode,
   harnessDisplayName,
   InlineStatus,
   KillButton,
@@ -49,10 +50,9 @@ import type {
   AppearancePrefs,
   ArtifactListItem,
   ArtifactTreeNode,
-  AutoAdvanceSummary,
+  TaskExecutionReply,
   BoardNav,
   BoardTask,
-  PlaybookStepSummary,
   RelatedTaskRef,
   SessionMeta,
   SessionObservation,
@@ -163,16 +163,19 @@ export function TaskDetail({
   const [task, setTask] = useState<Task | null>(initialTask ?? null);
   const taskMutationEpoch = useRef(0);
   const [repoTasks, setRepoTasks] = useState<Task[]>([]);
-  const primaryPlaybook = task?.playbook || "superdevelop";
+  const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
+  const [executionError, setExecutionError] = useState("");
+  const executionRequest = useRef(0);
+  const steps = executionView?.definition.step ?? [];
+  const executions = Object.values(executionView?.state.executions ?? {});
+  const executionForSession = (session: SessionMeta) => executions.find((execution) => execution.owner_session_id === session.id || execution.previous_session_ids.includes(session.id));
+  const activeExecutions = executions.filter((execution) => ["starting", "running", "finishing", "interrupted"].includes(execution.lifecycle));
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [sessionStatuses, setSessionStatuses] = useState<Record<string, SessionObservation>>({});
   const [subtaskState, setSubtaskState] = useState<SubtaskManagerState | null>(null);
   const [childActivity, setChildActivity] = useState<TaskActivitySummary>(EMPTY_TASK_ACTIVITY);
   const [childPlaybookStep, setChildPlaybookStep] = useState("");
-  const [steps, setSteps] = useState<PlaybookStepSummary[]>([]);
-  const [playbookDetails, setPlaybookDetails] = useState<Record<string, { title: string; steps: PlaybookStepSummary[] }>>({});
-  const [autoAdvanceEdges, setAutoAdvanceEdges] = useState<AutoAdvanceSummary[]>([]);
   const [err, setErr] = useState<ErrState>(null);
   const [sessionsError, setSessionsError] = useState("");
   const [artifactsError, setArtifactsError] = useState("");
@@ -187,25 +190,8 @@ export function TaskDetail({
   const [artifactItems, setArtifactItems] = useState<ArtifactListItem[]>([]);
   const [artifactTree, setArtifactTree] = useState<ArtifactTreeNode[]>([]);
   const artifactNames = artifactItems.map((a) => a.name);
-  // Attachments are excluded so one named e.g. 03-design.md can never tick a phase badge or
-  // flip the session sort. artifactNames stays unfiltered — it backs the shown/total pills.
-  const artifactNameSet = new Set(artifactItems.filter((artifact) => !artifact.attachment).map((artifact) => artifact.name));
-  const isPrimarySession = (session: SessionMeta) => {
-    if (!task || session.generic) return false;
-    const playbook = session.playbook || primaryPlaybook;
-    return playbook === primaryPlaybook && steps.some((step) => step.key === session.phase);
-  };
-  const expectedArtifactForSession = (session: SessionMeta, fallback = "") => {
-    if (session.artifact) return session.artifact;
-    if (fallback) return fallback;
-    const playbook = session.playbook || primaryPlaybook;
-    return playbookDetails[playbook]?.steps.find((step) => step.key === session.phase)?.artifact || "";
-  };
   const filteredSessions = showArchived ? sessions : sessions.filter((session) => !session.archived);
-  const hasExpectedArtifact = (session: SessionMeta) => {
-    const expected = expectedArtifactForSession(session);
-    return !!expected && artifactNameSet.has(expected);
-  };
+  const hasExpectedArtifact = (session: SessionMeta) => Boolean(executionForSession(session)?.receipt_id);
   const unacknowledgedExitedSessions = sessions.filter((session) => !session.archived && hasUnacknowledgedExit(session));
   const prioritySessions = orderTaskPanelRows(
     filteredSessions.map<TaskPanelRow>((session) => ({ kind: "session", session })),
@@ -255,22 +241,6 @@ export function TaskDetail({
   }
   projectedRows.push(...managerlessFinishedRows);
   const taskPanelRows = orderTaskPanelRows(projectedRows, sessionStatuses, hasExpectedArtifact, sessionSort);
-  const latestSessionByPlaybookPhase = sessions
-    .filter((s) => !s.archived && s.phase)
-    .reduce<Record<string, SessionMeta>>((latest, s) => {
-      const scope = `${s.playbook}\u0000${s.phase}`;
-      const current = latest[scope];
-      if (!current || s.created > current.created || (s.created === current.created && s.id > current.id)) {
-        latest[scope] = s;
-      }
-      return latest;
-    }, {});
-  const sessionCountsByPhase = sessions
-    .filter((session) => !session.archived && isPrimarySession(session))
-    .reduce<Record<string, number>>((counts, session) => {
-      counts[session.phase] = (counts[session.phase] ?? 0) + 1;
-      return counts;
-    }, {});
   const [selectedArtifact, setSelectedArtifact] = useState("");
   const [selectedArtifactNode, setSelectedArtifactNode] = useState<ArtifactTreeNode | null>(null);
   const selectedArtifactIsDirect = selectedArtifactNode ? isDirectOwnedArtifactNode(selectedArtifactNode) : false;
@@ -334,17 +304,35 @@ export function TaskDetail({
     await refreshChildActivity(fetched, epoch);
   };
 
-  // Pipeline progress: current = highest primary-playbook phase reached by a live session.
-  const curIdx = sessions
-    .filter((session) => !session.archived && isPrimarySession(session))
-    .reduce((max, session) => {
-      const index = steps.findIndex((step) => step.key === session.phase);
-      return index > max ? index : max;
-    }, -1);
 
   const commitFetchedTask = (fetched: Task | null, epoch: number) => {
     if (epoch !== taskMutationEpoch.current) return;
     setTask((current) => (current && fetched && sameTask(current, fetched) ? current : fetched));
+  };
+
+  const refreshExecution = async () => {
+    const request = ++executionRequest.current;
+    try {
+      const value = await ipc.getTaskExecution(slug, repoPath);
+      if (request !== executionRequest.current) return;
+      setExecutionView(value);
+      setExecutionError("");
+    } catch (error) {
+      if (request !== executionRequest.current) return;
+      setExecutionError(String(error));
+    }
+  };
+
+  const allowCompletion = async (executionId: string, sessionId: string) => {
+    setBusy(`allow:${executionId}`);
+    try {
+      await ipc.allowExecutionCompletion(slug, executionId, sessionId, repoPath);
+      await refreshExecution();
+    } catch (error) {
+      setExecutionError(String(error));
+    } finally {
+      setBusy("");
+    }
   };
 
   const load = async () => {
@@ -352,7 +340,7 @@ export function TaskDetail({
     // Every optional read is pre-wrapped so one rejection can never fail the shared
     // Promise.all — a removed custom playbook or a transient artifact-scan error must not
     // discard whatever else in this wave succeeded.
-    const [taskResult, managerResult, tasksResult, playbooks, primarySteps, sessionsResult, artifactsResult, artifactTreeResult] = await Promise.all([
+    const [taskResult, managerResult, tasksResult, , sessionsResult, artifactsResult, artifactTreeResult] = await Promise.all([
       ipc.getTask(slug).then(
         (value) => ({ ok: true, value }) as const,
         (error) => ({ ok: false, error }) as const,
@@ -365,8 +353,7 @@ export function TaskDetail({
         (value) => ({ ok: true, value }) as const,
         () => ({ ok: false }) as const,
       ),
-      ipc.listPlaybooks().catch(() => []),
-      ipc.listPlaybookSteps(primaryPlaybook).catch(() => [] as PlaybookStepSummary[]),
+      refreshExecution(),
       ipc.listSessions(slug).then(
         (value) => ({ ok: true, value }) as const,
         (error) => ({ ok: false, error }) as const,
@@ -424,49 +411,7 @@ export function TaskDetail({
       setArtifactsError(String(artifactsResult.error));
     }
 
-    // Wave 1's listPlaybookSteps guess is for `primaryPlaybook` (the seed). Trust it only
-    // when the freshly fetched task actually agrees; a stale/absent seed's guess is
-    // discarded rather than mislabeled as the real task's steps.
-    const taskPlaybook = t?.playbook || primaryPlaybook;
-    const details: Record<string, { title: string; steps: PlaybookStepSummary[] }> = {};
-    if (taskPlaybook === primaryPlaybook) {
-      details[primaryPlaybook] = { title: playbooks.find((w) => w.key === primaryPlaybook)?.title || primaryPlaybook, steps: primarySteps };
-    }
-    // Dependent tail: the task's real playbook (if the wave-1 guess missed) plus every
-    // distinct session playbook not already covered, de-duplicated.
-    const tailKeys = new Set<string>();
-    if (!details[taskPlaybook]) tailKeys.add(taskPlaybook);
-    for (const session of ss) {
-      const key = session.playbook || taskPlaybook;
-      if (!details[key]) tailKeys.add(key);
-    }
-    const [statuses, tailEntries] = await Promise.all([
-      ipc
-        .sessionStatuses(
-          ss.map((session) => session.id),
-          slug,
-        )
-        .catch(() => ({}) as Record<string, SessionObservation>),
-      Promise.all(
-        [...tailKeys].map(
-          async (key) =>
-            [
-              key,
-              {
-                // An unregistered playbook (removed custom playbook, historical session)
-                // degrades to a label with no steps instead of rejecting the whole batch.
-                title: playbooks.find((w) => w.key === key)?.title || key,
-                steps: await ipc.listPlaybookSteps(key).catch(() => [] as PlaybookStepSummary[]),
-              },
-            ] as const,
-        ),
-      ),
-    ]);
-    for (const [key, value] of tailEntries) details[key] = value;
-
-    setPlaybookDetails(details);
-    setSteps(details[taskPlaybook]?.steps ?? []);
-    setAutoAdvanceEdges(playbooks.find((playbook) => playbook.key === taskPlaybook)?.auto_advance ?? []);
+    const statuses = await ipc.sessionStatuses(ss.map((session) => session.id), slug).catch(() => ({}) as Record<string, SessionObservation>);
     setSessionStatuses((current) => (sameSessionObservationMaps(current, statuses) ? current : statuses));
   };
 
@@ -495,6 +440,7 @@ export function TaskDetail({
         (value) => ({ ok: true, value }) as const,
         () => ({ ok: false }) as const,
       ),
+      refreshExecution(),
     ]);
     if (tasksResult.ok) {
       const refreshedTask = tasksResult.value.find((candidate) => candidate.slug === slug) ?? null;
@@ -527,6 +473,8 @@ export function TaskDetail({
   useEffect(() => {
     let alive = true;
     let timer = 0;
+    setExecutionView(null);
+    setExecutionError("");
     // Every read inside load() is individually wrapped, so this only fires on an unexpected
     // throw — but without it that throw would be a silent unhandled rejection, which is what
     // the old whole-body try/catch prevented.
@@ -542,6 +490,7 @@ export function TaskDetail({
     timer = window.setTimeout(poll, 3000);
     return () => {
       alive = false;
+      executionRequest.current += 1;
       window.clearTimeout(timer);
     };
   }, [repoPath, slug]);
@@ -719,8 +668,8 @@ export function TaskDetail({
     });
   };
 
-  const openManagerSession = (ownerTaskSlug: string, manager: SessionMeta, intent: "attach" | "spawn" = "attach") => {
-    onOpenSession(ownerTaskSlug, manager.id, manager.worktree, manager.phase, manager.harness, manager.model, manager.playbook, manager.generic, intent);
+  const openManagerSession = (ownerTaskSlug: string, manager: SessionMeta) => {
+    onOpenSession(ownerTaskSlug, manager.id, manager.worktree, manager.phase, manager.harness, manager.model, manager.playbook, manager.generic, "attach");
   };
 
   const startManager = () => {
@@ -728,7 +677,7 @@ export function TaskDetail({
     setErr(null);
     ipc
       .startSubtaskManager(slug)
-      .then((manager) => openManagerSession(slug, manager, "spawn"))
+      .then((reply) => openManagerSession(slug, reply.session))
       .catch((error) => setErr({ msg: "Couldn't start the sub-task manager.", detail: String(error) }))
       .finally(() => setBusy(""));
   };
@@ -738,7 +687,7 @@ export function TaskDetail({
     setErr(null);
     ipc
       .recoverSubtaskManager(slug)
-      .then((manager) => openManagerSession(slug, manager, "spawn"))
+      .then((reply) => openManagerSession(slug, reply.session))
       .catch((error) => setErr({ msg: "Couldn't recover the sub-task manager.", detail: String(error) }))
       .finally(() => setBusy(""));
   };
@@ -821,14 +770,43 @@ export function TaskDetail({
 
           {finalizedNotice && <InlineStatus tone="warning">{finalizedNotice}</InlineStatus>}
 
-          {steps.length > 0 && (
-            <div className="pipe">
-              {steps.map((p, i) => (
-                <div key={p.key} className={`phase${i < curIdx ? " done" : i === curIdx ? " cur" : ""}`} aria-current={i === curIdx ? "step" : undefined}>
-                  {p.title}
-                </div>
+          {executionError && <InlineStatus tone="error" detail={executionError}>Execution state unavailable. Last known state is shown; completion grants are disabled.</InlineStatus>}
+          {executionView && (
+            <section aria-label="Task executions">
+              <h3>{executionView.definition.title}</h3>
+              <p>{activeExecutions.length} active executions / {executionView.state.max_live_sessions} slots · Creation: {executionView.state.creation}</p>
+              {executionView.state.creation_error && <InlineStatus tone="error">{executionView.state.creation_error}</InlineStatus>}
+              {executions.map((execution) => (
+                <article key={execution.id} aria-label={`Execution ${execution.id}`}>
+                  <strong>{steps.find((step) => step.key === execution.candidate.step_key)?.title ?? execution.candidate.step_key}</strong>
+                  <span className="pill">{execution.lifecycle}</span>
+                  <p className="mono">Execution {execution.id} · Owner {execution.owner_session_id}</p>
+                  {execution.lifecycle === "queued" && <p>{execution.start_requested ? "Waiting for capacity or coding ownership" : "Held until explicitly started"}</p>}
+                  {execution.lifecycle === "finishing" && <p>Outputs accepted; waiting for confirmed session shutdown.</p>}
+                  {execution.lifecycle === "interrupted" && <p>Process ownership is uncertain; capacity remains reserved.</p>}
+                  {execution.error && <InlineStatus tone="error">{execution.error}</InlineStatus>}
+                  <details>
+                    <summary>Inputs and outputs</summary>
+                    <ul aria-label="Execution inputs">
+                      {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) => ids.map((occurrenceId) => {
+                        const occurrence = executionView.state.occurrences[occurrenceId];
+                        return <li key={`${selector}:${occurrenceId}`}><code>{selector}</code> ← <code>{occurrence?.relative_path ?? occurrenceId}</code> · occurrence {occurrenceId} · producer {occurrence?.producer_execution_id ?? "seed"}</li>;
+                      }))}
+                    </ul>
+                    <ul aria-label="Execution outputs">
+                      {execution.outputs.map((output) => <li key={output.relative_path}><code>{output.selector}</code> → <code>{output.relative_path}</code> · {execution.receipt_id ? "accepted" : "pending"}</li>)}
+                      {Object.values(executionView.state.occurrences).filter((occurrence) => occurrence.producer_execution_id === execution.id && occurrence.selector.includes("*")).map((occurrence) => <li key={occurrence.id}>Accepted member <code>{occurrence.relative_path}</code> · occurrence {occurrence.id}</li>)}
+                    </ul>
+                  </details>
+                  <p>Completion permission: {execution.permission.kind}{execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}</p>
+                  {execution.permission.kind === "locked" && execution.lifecycle === "running" && (
+                    <button type="button" className="btn small" disabled={!!busy || !!executionError} onClick={() => void allowCompletion(execution.id, execution.owner_session_id)}>
+                      Allow this session to complete · {execution.owner_session_id}
+                    </button>
+                  )}
+                </article>
               ))}
-            </div>
+            </section>
           )}
 
           <div className="task-info-grid">
@@ -1225,12 +1203,10 @@ export function TaskDetail({
                   }
 
                   const resumedBy = sessions.find((other) => other.resume_of === s.id);
-                  const scope = `${s.playbook}\u0000${s.phase}`;
-                  const superseded = !s.archived && !!s.phase && latestSessionByPlaybookPhase[scope]?.id !== s.id;
-                  const playbookKey = s.playbook || primaryPlaybook;
-                  const playbook = playbookDetails[playbookKey];
-                  const stepTitle = playbook?.steps.find((step) => step.key === s.phase)?.title || s.phase;
-                  const sessionType = s.subtask_manager ? "Sub-task manager" : s.generic ? "Generic" : s.phase ? `${playbook?.title || playbookKey} · ${stepTitle}` : "—";
+                  const execution = executionForSession(s);
+                  const superseded = Boolean(execution && execution.owner_session_id !== s.id);
+                  const stepTitle = steps.find((step) => step.key === execution?.candidate.step_key)?.title ?? execution?.candidate.step_key;
+                  const sessionType = s.subtask_manager ? "Sub-task manager" : execution ? `${executionView?.definition.title} · ${stepTitle}` : s.generic ? "Auxiliary" : s.phase || "Historical session";
                   const harnessLabel = `${harnessDisplayName(s.harness)}${s.model ? ` · ${s.model}` : ""}`;
                   const unreadCompletion = classifySessionNotice(s, obs ?? undefined) === "unread_completion";
                   const openable = Boolean(task?.worktree) && !s.archived;
@@ -1280,6 +1256,7 @@ export function TaskDetail({
                         <span className="pill" title={sessionType}>
                           {sessionType}
                         </span>
+                        {execution && <span className="pill">{execution.lifecycle}</span>}
                       </td>
                       <td>
                         <span className="pill" title={harnessLabel}>
@@ -1486,11 +1463,10 @@ export function TaskDetail({
             {sideTab === "playbook" ? (
               <div className="playbook-side-scroll">
                 <PlaybookGraph
-                  title={playbookDetails[primaryPlaybook]?.title || primaryPlaybook}
+                  title={executionView?.definition.title ?? "Retained task playbook"}
                   steps={steps}
-                  countsByStep={sessionCountsByPhase}
-                  autoAdvanceEdges={autoAdvanceEdges}
-                  selectedAutoAdvance={task?.auto_advance}
+                  countsByStep={Object.fromEntries(steps.map((step) => [step.key, activeExecutions.filter((execution) => execution.candidate.step_key === step.key).length]))}
+                  selectedAutoAdvance={executionView?.state.enabled_steps}
                 />
               </div>
             ) : (
@@ -1527,7 +1503,10 @@ export function TaskDetail({
                   {!artifactErr && displayedArtifactItems.length === 0 && contextualArtifactTree.length === 0 && (
                     <div className="dim">{artifactTab === "attachments" ? "No attachments." : "No playbook artifacts yet."}</div>
                   )}
-                  {displayedArtifactItems.map((item) => (
+                  {displayedArtifactItems.map((item) => {
+                    const node = findOwnedArtifactNode(artifactTree, item.name);
+                    const available = Boolean(item.attachment || node);
+                    return (
                     // div, not <button>: the provenance badges inside are buttons themselves,
                     // and button-in-button is invalid HTML (same pattern as SessionView).
                     <div
@@ -1535,7 +1514,8 @@ export function TaskDetail({
                       className={`artifactitem${item.attachment ? " attachment" : ""}`}
                       title={item.name}
                       role="button"
-                      tabIndex={0}
+                      tabIndex={available ? 0 : -1}
+                      aria-disabled={!available}
                       onKeyDown={(e) => {
                         if ((e.key !== "Enter" && e.key !== " ") || e.target !== e.currentTarget) return;
                         e.preventDefault();
@@ -1549,16 +1529,20 @@ export function TaskDetail({
                             .catch((e) => setArtifactErr({ msg: "Couldn't reveal the attachment.", detail: String(e) }));
                           return;
                         }
-                        setSelectedArtifactNode(artifactTree.find((node) => node.source === "owned" && node.kind === "owned" && node.label === item.name) ?? null);
+                        if (!node) return;
+                        setSelectedArtifactNode(node);
                         setSelectedArtifact(item.name);
                         setArtifactMode("preview");
                         setArtifactErr(null);
                       }}
                     >
                       <span className="artifactitem-name">{item.name}</span>
+                      {item.execution_id && <span className="dim">Execution {item.execution_id} · {item.step_key} · {item.accepted ? "accepted" : "pending"}</span>}
+                      {!available && <span className="pill">Not yet readable</span>}
                       <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
                     </div>
-                  ))}
+                    );
+                  })}
                   {contextualArtifactTree.length > 0 && (
                     <ArtifactTree
                       taskSlug={slug}

@@ -18,6 +18,3 @@ pub(crate) fn emit_with(app: &AppHandle, build: impl FnOnce() -> alinery_core::T
     alinery_core::record_event_with(&path, build);
 }
 
-pub(crate) fn emit_at_with(app_config: &Path, build: impl FnOnce() -> alinery_core::TelemetryEvent) {
-    alinery_core::record_event_with(app_config, build);
-}

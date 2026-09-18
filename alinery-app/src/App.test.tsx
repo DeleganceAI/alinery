@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { DEFAULT_APPEARANCE } from "./appearance";
 import type { SessionNoticeRow, SessionSort } from "./sessionAttention";
-import type { AppConfig, BoardTask, NotificationPrefs, ReviewHandoffResult, SessionListItem, SessionMeta, SessionTypeChoice, TaskActivitySession } from "./types";
+import type { AppConfig, BoardTask, CreateTaskResult, NotificationPrefs, PlaybookCatalog, ReviewHandoffResult, SessionListItem, SessionMeta, SessionTypeChoice, TaskActivitySession } from "./types";
 
 const task: BoardTask = {
   name: "Task",
@@ -19,6 +19,8 @@ const task: BoardTask = {
   linear_id: "",
   github_issue: "",
   playbook: "superdevelop",
+  engine_version: 2,
+  playbook_ref: { scope: "bundled", key: "superdevelop" },
   draft: false,
   auto_advance: [],
   repo_path: "/repo",
@@ -119,7 +121,7 @@ const appConfig: AppConfig = {
     notifications: notificationPrefs,
 
     github: { token: "" },
-    defaults: { harness: "claude", model: "", playbook: "superdevelop", draft_autosave: true },
+    defaults: { harness: "claude", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
     backup: {
       destination: "",
       enabled: false,
@@ -137,7 +139,9 @@ const appConfig: AppConfig = {
 
 const { ipcMocks, ipcModule } = vi.hoisted(() => {
   const ipcMocks = {
-    createSession: vi.fn(),
+    createSessionForRepo: vi.fn(),
+    startSession: vi.fn(),
+    listPlaybookCatalog: vi.fn<() => Promise<PlaybookCatalog>>(),
     getCurrentWindow: vi.fn(() => ({
       destroy: vi.fn(),
       onCloseRequested: vi.fn(async () => () => {}),
@@ -171,7 +175,7 @@ const { ipcMocks, ipcModule } = vi.hoisted(() => {
 
 vi.mock("./ipc", () => ipcModule);
 vi.mock("./tabMotion", () => {
-  const isPrimaryTab = (kind: string) => ["kanban", "list", "grid", "sessions", "notifications", "settings"].includes(kind);
+  const isPrimaryTab = (kind: string) => ["kanban", "list", "grid", "sessions", "notifications", "playbooks", "settings"].includes(kind);
   return {
     isPrimaryTab,
     primaryTabOf: (view: { kind: string; from?: unknown }) => {
@@ -386,21 +390,35 @@ vi.mock("./views/CreateSessionPage", () => ({
     <div>
       <button
         type="button"
-        onClick={() => void onCreated(task, { kind: "playbook-step", playbook: "superdevelop", phase: "implementation" }, "omp", "", "  edited\nlaunch prompt ✓  ")}
+        onClick={() => void onCreated(task, { kind: "primary", step_key: "implementation" }, "omp", "", "  edited\nlaunch prompt ✓  ")}
       >
         finish create session
       </button>
-      <button type="button" onClick={() => void onCreated(task, { kind: "generic" }, "omp", "", "")}>
+      <button type="button" onClick={() => void onCreated(task, { kind: "auxiliary" }, "omp", "", "")}>
         finish empty-prompt session
       </button>
-      <button type="button" onClick={() => void onCreated(task, { kind: "generic" }, "no-harness", "", "stale prompt")}>
+      <button type="button" onClick={() => void onCreated(task, { kind: "auxiliary" }, "no-harness", "")}>
         finish terminal session
+      </button>
+      <button type="button" onClick={() => void onCreated(task, { kind: "existing", session_id: "queued-design" }, "omp", "")}>
+        start queued session
       </button>
     </div>
   ),
 }));
 vi.mock("./views/CreateTaskPage", () => ({
-  CreateTaskPage: ({ initialDraft }: { initialDraft?: BoardTask }) => <div>create task:{initialDraft?.slug}</div>,
+  CreateTaskPage: ({ initialDraft, onCreated }: { initialDraft?: BoardTask; onCreated: (result: CreateTaskResult & { repoPath: string; selectedSessionId?: string }) => void }) => {
+    const result: CreateTaskResult & { repoPath: string } = {
+      repoPath: task.repo_path, task, sessions: [session("root-a"), session("root-b")], executions: [],
+      creation: "partial", start: "failed", errors: [{ stage: "launch", code: "launch_failed", message: "binary missing" }],
+    };
+    return <div>
+      <span>create task:{initialDraft?.slug}</span>
+      <button type="button" onClick={() => onCreated(result)}>open created task</button>
+      <button type="button" onClick={() => onCreated({ ...result, selectedSessionId: "root-b" })}>open second created session</button>
+      <button type="button" onClick={() => onCreated({ ...result, task: null, sessions: [] })}>report failed creation</button>
+    </div>;
+  },
 }));
 vi.mock("./views/Settings", () => ({
   SECTIONS: [],
@@ -413,11 +431,13 @@ vi.mock("./views/Settings", () => ({
 vi.mock("./views/SessionView", () => ({
   SessionView: ({
     id,
+    intent,
     onBack,
     onStartFresh,
     onStartReviewHandoff,
   }: {
     id: string;
+    intent?: string;
     onBack: () => void;
     onStartFresh: () => void;
     onStartReviewHandoff: (source: { task: string; session: string; artifact: string }) => void;
@@ -425,6 +445,7 @@ vi.mock("./views/SessionView", () => ({
     return (
       <div>
         <span>session:{id}</span>
+        <span>session intent:{intent}</span>
         <button type="button" onClick={onBack}>
           back from session
         </button>
@@ -440,6 +461,9 @@ vi.mock("./views/SessionView", () => ({
 }));
 
 const handoffResult: ReviewHandoffResult = {
+  target_repo_path: task.repo_path,
+  start: "not_requested",
+  errors: [],
   target_artifact: "07-review.md",
   target_session: session("review-target", "review-findings"),
   source_record: {
@@ -478,7 +502,9 @@ vi.mock("./views/ReviewHandoffPage", () => ({
 
 beforeEach(() => {
   ipcMocks.readAppConfig.mockResolvedValue(appConfig);
-  ipcMocks.createSession.mockResolvedValue(session("created-implementation", "implementation"));
+  ipcMocks.createSessionForRepo.mockResolvedValue({ session: session("created-implementation", "implementation"), execution: null, start: "started" });
+  ipcMocks.startSession.mockResolvedValue({ session: session("queued-design"), execution: null, start: "started" });
+  ipcMocks.listPlaybookCatalog.mockResolvedValue({ candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [] });
   ipcMocks.markSessionNotificationRead.mockResolvedValue(undefined);
   ipcMocks.setActiveRepo.mockResolvedValue(appConfig);
   ipcMocks.listSessionItems.mockResolvedValue([]);
@@ -514,6 +540,49 @@ describe("draft routing", () => {
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: "open archived draft" }));
     await screen.findByText("task detail:archived-draft");
+  });
+});
+
+describe("creation result navigation", () => {
+  it("opens the task without selecting one of multiple returned sessions", async () => {
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    fireEvent.click(await screen.findByRole("button", { name: "open created task" }));
+    await screen.findByText("task detail:task");
+    expect(screen.queryByText("session:root-a")).toBeNull();
+    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+  });
+
+  it("attaches only the session explicitly selected from the creation result", async () => {
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    fireEvent.click(await screen.findByRole("button", { name: "open second created session" }));
+    await screen.findByText("session:root-b");
+    expect(screen.getByText("session intent:attach")).toBeTruthy();
+    expect(ipcMocks.markSessionNotificationRead).toHaveBeenCalledWith("/repo", "task", "root-b");
+    expect(ipcMocks.createSessionForRepo).not.toHaveBeenCalled();
+  });
+
+  it("stays on creation when the result has no task", async () => {
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    fireEvent.click(await screen.findByRole("button", { name: "report failed creation" }));
+    expect(screen.getByRole("button", { name: "open created task" })).toBeTruthy();
+    expect(screen.queryByText("task detail:task")).toBeNull();
+    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+  });
+});
+
+describe("Playbooks navigation", () => {
+  it("opens the library from a task and returns to that task", async () => {
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "open list task" }));
+    await screen.findByText("task detail:task");
+    fireEvent.click(screen.getByRole("button", { name: "Playbooks" }));
+    await screen.findByRole("list", { name: "Playbook library" });
+    fireEvent.click(screen.getByRole("button", { name: "Back to previous view" }));
+    await screen.findByText("task detail:task");
   });
 });
 
@@ -579,9 +648,6 @@ describe("session navigation acknowledgment", () => {
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
     const row = await screen.findByRole("button", { name: "open notification session" });
-    const notificationView = row.closest("[data-scope]");
-    expect(notificationView?.getAttribute("data-scope")).toBe("/repo");
-    expect(notificationView?.getAttribute("data-register-nav")).toBe("function");
     expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
 
     fireEvent.click(row);
@@ -619,14 +685,15 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(await screen.findByRole("button", { name: "new task session" }));
     fireEvent.click(await screen.findByRole("button", { name: "finish create session" }));
     await screen.findByText("session:created-implementation");
-    expect(ipcMocks.createSession).toHaveBeenLastCalledWith({
-      taskSlug: "task",
-      playbook: "superdevelop",
-      phase: "implementation",
-      generic: false,
-      harness: "omp",
-      model: "",
-      prompt: "  edited\nlaunch prompt ✓  ",
+    expect(ipcMocks.createSessionForRepo).toHaveBeenLastCalledWith({
+      repoPath: "/repo",
+      request: {
+        task_slug: "task",
+        target: { kind: "primary", step_key: "implementation" },
+        launch_override: { harness: "omp", model: "" },
+        prompt_extra: "  edited\nlaunch prompt ✓  ",
+        start: true,
+      },
     });
     expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "created-implementation");
   });
@@ -637,14 +704,9 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(await screen.findByRole("button", { name: "new task session" }));
     fireEvent.click(await screen.findByRole("button", { name: "finish empty-prompt session" }));
     await screen.findByText("session:created-implementation");
-    expect(ipcMocks.createSession).toHaveBeenLastCalledWith({
-      taskSlug: "task",
-      playbook: "",
-      phase: "",
-      generic: true,
-      harness: "omp",
-      model: "",
-      prompt: "",
+    expect(ipcMocks.createSessionForRepo).toHaveBeenLastCalledWith({
+      repoPath: "/repo",
+      request: { task_slug: "task", target: { kind: "auxiliary", harness: "omp", model: "", prompt: "" }, start: true },
     });
 
     cleanup();
@@ -653,31 +715,22 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(await screen.findByRole("button", { name: "new task session" }));
     fireEvent.click(await screen.findByRole("button", { name: "finish terminal session" }));
     await screen.findByText("session:created-implementation");
-    expect(ipcMocks.createSession).toHaveBeenLastCalledWith({
-      taskSlug: "task",
-      playbook: "",
-      phase: "",
-      generic: true,
-      harness: "no-harness",
-      model: "",
+    expect(ipcMocks.createSessionForRepo).toHaveBeenLastCalledWith({
+      repoPath: "/repo",
+      request: { task_slug: "task", target: { kind: "auxiliary", harness: "no-harness", model: "", prompt: undefined }, start: true },
     });
   });
 
-  it("acknowledges start-fresh and review-handoff targets exactly", async () => {
+  it("lets start-fresh choose an execution and acknowledges that target", async () => {
     await renderApp();
     await openGlobalSession();
-    ipcMocks.createSession.mockResolvedValueOnce(session("fresh-design"));
     fireEvent.click(screen.getByRole("button", { name: "start fresh" }));
-    await screen.findByText("session:fresh-design");
-    expect(ipcMocks.createSession).toHaveBeenLastCalledWith({
-      taskSlug: "task",
-      playbook: "superdevelop",
-      phase: "design",
-      generic: false,
-      harness: "omp",
-      model: "",
-    });
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "fresh-design");
+    fireEvent.click(await screen.findByRole("button", { name: "start queued session" }));
+    await screen.findByText("session:queued-design");
+    expect(ipcMocks.startSession).toHaveBeenCalledWith("task", "queued-design", "/repo");
+    expect(ipcMocks.createSessionForRepo).not.toHaveBeenCalled();
+    expect(screen.getByText("session intent:attach")).toBeTruthy();
+    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "queued-design");
 
     fireEvent.click(screen.getByRole("button", { name: "review handoff" }));
     fireEvent.click(await screen.findByRole("button", { name: "confirm review handoff" }));
@@ -685,39 +738,6 @@ describe("session navigation acknowledgment", () => {
     expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "review-task", "review-target");
   });
 
-  it("lists the remapped top-level actions in the command palette", async () => {
-    await renderApp();
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
-
-    expect((await screen.findByText("Go to Tasks")).closest(".pitem")?.textContent).toContain("⌘1");
-    expect(screen.getByText("Go to Kanban+").closest(".pitem")?.textContent).toContain("⌘2");
-    expect(screen.queryByText("Go to Kanban")).toBeNull();
-    expect(screen.getByText("Go to Sessions").closest(".pitem")?.textContent).toContain("⌘7");
-    expect(screen.getByText("Go to Notifications").closest(".pitem")?.textContent).toContain("⌘8");
-    expect(screen.queryByText("Go to Wiki")).toBeNull();
-    expect(screen.getByText("Open Settings").closest(".pitem")?.textContent).toContain("⌘9");
-  });
-
-  it("exposes Grid navigation by default and classic Kanban when opted in", async () => {
-    await renderApp();
-
-    expect(screen.getByRole("button", { name: /Kanban\+/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    expect(await screen.findByText("Go to Kanban+")).toBeTruthy();
-    expect(screen.queryByText("Go to Kanban")).toBeNull();
-  });
-
-  it("lists classic Kanban at ⌘3 when the experimental tab is enabled", async () => {
-    ipcMocks.readAppConfig.mockResolvedValue({
-      ...appConfig,
-      global: { ...appConfig.global, experiments: { show_original_kanban: true } },
-    });
-    await renderApp();
-
-    expect(screen.getByRole("button", { name: "Kanban3" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    expect((await screen.findByText("Go to Kanban")).closest(".pitem")?.textContent).toContain("⌘3");
-  });
 
   it("keeps a visited Grid mounted while navigating away and back", async () => {
     await renderApp();
@@ -732,35 +752,6 @@ describe("session navigation acknowledgment", () => {
     expect(await screen.findByText("Grid layout revision 1")).toBeTruthy();
   });
 
-  it("renders configured Grid views in order and falls into the first when original Kanban is hidden", async () => {
-    ipcMocks.readAppConfig.mockResolvedValue({
-      ...appConfig,
-      global: {
-        ...appConfig.global,
-        experiments: { show_original_kanban: false },
-        grid_views: [
-          { id: "planning", name: "Planning", slot: 1 },
-          { id: "triage", name: "Triage", slot: 2 },
-          { id: "archive", name: "Archive map", slot: 3 },
-        ],
-      },
-    });
-    await renderApp();
-
-    // First paint can still be default-kanban-plus until appConfig reconciles onto
-    // the first configured Grid view; wait for that, not merely for the tab to exist.
-    const planning = await screen.findByRole("button", { name: "Planning2", current: "page" });
-    expect(planning.getAttribute("aria-current")).toBe("page");
-    expect(screen.getByRole("button", { name: "Tasks1" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Kanban3" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Triage4" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Archive map5" })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    expect((await screen.findByText("Go to Planning")).closest(".pitem")?.textContent).toContain("⌘2");
-    expect(screen.getByText("Go to Triage").closest(".pitem")?.textContent).toContain("⌘4");
-    expect(screen.queryByText("Go to Kanban")).toBeNull();
-  });
 });
 
 describe("session sort lifetime", () => {

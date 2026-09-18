@@ -2,6 +2,15 @@ use std::path::{Path, PathBuf};
 
 pub const REPO_DATA_DIR: &str = ".alinery";
 
+/// Stable application configuration root, including development instance paths.
+pub fn app_config_dir_of(app_config: &Path) -> Option<&Path> {
+    let dir = app_config.parent()?;
+    match dir.parent() {
+        Some(instances) if instances.file_name() == Some(std::ffi::OsStr::new("instances")) => instances.parent(),
+        _ => Some(dir),
+    }
+}
+
 pub fn alinery_dir(repo: &Path) -> PathBuf {
     repo.join(REPO_DATA_DIR)
 }
@@ -117,9 +126,6 @@ pub fn harnesses_toml_path(repo: &Path) -> PathBuf {
     alinery_dir(repo).join("harnesses.toml")
 }
 
-pub fn playbooks_toml_path(repo: &Path) -> PathBuf {
-    alinery_dir(repo).join("playbooks.toml")
-}
 
 pub fn playbooks_dir(repo: &Path) -> PathBuf {
     alinery_dir(repo).join("playbooks")

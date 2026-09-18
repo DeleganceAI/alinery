@@ -32,7 +32,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, OnceLock, RwLock};
@@ -52,7 +52,6 @@ pub use alinery_core::{
     alineryd_lock_path,
     alineryd_socket_path,
     classify,
-    phase_prompt,
     stamp_meta,
     write_meta_atomic,
     // Structured semantic types (Step 3 cutover).
@@ -66,13 +65,14 @@ pub use alinery_core::{
     RunnerEventEnvelope,
     SemanticCheckpoint,
     SessionState,
-    PHASES,
 };
 #[cfg(test)]
 use alinery_core::{configure_detached_process, file_content_id};
 pub(crate) use alinery_core::{write_bytes_atomic, write_owner_only_bytes};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter, Manager, State, UserAttentionType};
+#[cfg(test)]
+pub(crate) use alinery_core::write_task;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 
@@ -148,6 +148,7 @@ pub fn run() {
             pick_attachment_files_dialog,
             create_task,
             create_task_for_repo,
+            prepare_task_attachments,
             duplicate_task_for_repo,
             get_task,
             write_draft,
@@ -163,10 +164,12 @@ pub fn run() {
             set_related_tasks_for_repo,
             create_session,
             create_session_for_repo,
-            preview_session_prompt,
             ensure_drawer_terminal,
             list_sessions,
             list_session_items,
+            get_task_execution,
+            start_session,
+            allow_execution_completion,
             session_list_statuses,
             archive_session,
             archive_session_for_repo,
@@ -176,12 +179,14 @@ pub fn run() {
             start_subtask_manager,
             recover_subtask_manager,
             discard_subtask,
-            list_phases,
-            list_playbooks,
-            list_playbooks_for_repo,
-            get_playbook,
-            list_playbook_steps,
-            list_playbook_steps_for_repo,
+            list_playbook_catalog,
+            read_playbook,
+            validate_playbook_source,
+            render_playbook_source,
+            save_playbook_source,
+            delete_playbook_source,
+            read_playbook_picker_preferences,
+            save_playbook_picker_preferences,
             list_kanban_columns,
             list_harness_models,
             session_artifact_ready,
@@ -227,8 +232,6 @@ pub fn run() {
             omp_setup_session,
             session_status,
             session_statuses,
-            spawn_session_detached,
-            spawn_session_detached_for_repo,
             kill_session,
             kill_session_for_repo,
             read_session_history,

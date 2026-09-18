@@ -1,28 +1,26 @@
 // Pure (non-pty) logic extracted for sharing with alineryd + mcp + app.
 // This is the common surface that used to live only in session_core.rs (src-tauri/src/).
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::git::git_cmd;
-use crate::paths::{alinery_dir, app_config_toml_path, artifacts_dir, attachments_dir, harnesses_toml_path, playbooks_toml_path, safe_component, session_meta_path, sessions_dir};
-use crate::prompts::{DEFAULT_PLAYBOOK_NOTICES, DEFAULT_PLAYBOOK_PROMPTS, SUBTASK_MANAGER_PROMPT, SUBTASK_MANAGER_RECOVERY_PROMPT};
+use crate::paths::{alinery_dir, app_config_toml_path, artifacts_dir, harnesses_toml_path, safe_component, session_meta_path, sessions_dir};
+use crate::prompts::{SUBTASK_MANAGER_PROMPT, SUBTASK_MANAGER_RECOVERY_PROMPT};
 use crate::settings::{bundled_harness_file, default_global_settings, load_global_settings, load_repo_overrides};
 use crate::task::{append_related_tasks_prompt, read_task};
 use crate::types::{
-    new_telemetry_id, AgentState, ArtifactListItem, AutoAdvanceEdge, BackupDefaults, ChoiceProvenance, ConfigProvenance, CreateSessionInput, EffectiveConfig, GitHubPrefs,
-    GlobalSettings, Harness, HarnessAdapter, HarnessChoice, HarnessFile, MessageAdapter, NormalizedSessionStatus, Playbook, PlaybookFile, PlaybookState, ProcessState, PromptVars,
+    AgentState, ArtifactListItem, BackupDefaults, ChoiceProvenance, ConfigProvenance, EffectiveConfig, GitHubPrefs,
+    GlobalSettings, Harness, HarnessAdapter, HarnessChoice, HarnessFile, MessageAdapter, NormalizedSessionStatus, PlaybookState, ProcessState, PromptVars,
     RepoBackupOverrides, RepoOverrides, ReviewHandoffRecord, ReviewHandoffRequest, ReviewHandoffResult, RunnerEvent, SessionMeta, SessionState, SettingSource, Task, TaskSummary,
-    DEFAULT_PLAYBOOKS_TOML, MAX_BACKUP_RETENTION, MIN_BACKUP_RETENTION,
+    MAX_BACKUP_RETENTION, MIN_BACKUP_RETENTION,
 };
 use crate::write_bytes_atomic;
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
-pub const DEFAULT_PLAYBOOK_KEY: &str = "superdevelop";
 pub const DEFAULT_HARNESS_KEY: &str = "omp";
 pub const NO_HARNESS_KEY: &str = "no-harness";
 
@@ -42,267 +40,187 @@ pub fn omp_default_model(defaults: &HarnessChoice) -> String {
     }
 }
 
-// ---- playbook registry ----
-fn ensure_default_playbook_prompt(repo: &Path, rel: &str, text: &str) -> Result<(), String> {
-    let rel_path = Path::new(rel);
-    if !safe_playbook_prompt_path(rel_path) {
-        return Err(format!("unsafe bundled playbook prompt path {rel}"));
-    }
 
-    let p = alinery_dir(repo).join(rel_path);
-    if let Some(parent) = p.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
-    }
-
-    if !p.exists() {
-        fs::write(&p, text).map_err(|e| format!("write {}: {e}", p.display()))?;
-        return Ok(());
-    }
-
-    Ok(())
-}
-
-pub fn ensure_playbooks(repo: &Path) -> Result<(), String> {
-    fs::create_dir_all(alinery_dir(repo)).map_err(|e| e.to_string())?;
-    let toml_path = playbooks_toml_path(repo);
-    if !toml_path.exists() {
-        write_bytes_atomic(&toml_path, DEFAULT_PLAYBOOKS_TOML.as_bytes()).map_err(|e| format!("write {}: {e}", toml_path.display()))?;
-    }
-    for (rel, text) in DEFAULT_PLAYBOOK_PROMPTS.iter().chain(DEFAULT_PLAYBOOK_NOTICES) {
-        ensure_default_playbook_prompt(repo, rel, text)?;
-    }
-    Ok(())
-}
-
-struct PlaybookCacheEntry {
-    mtime: SystemTime,
-    file: PlaybookFile,
-}
-
-static PLAYBOOK_CACHE: LazyLock<RwLock<HashMap<PathBuf, PlaybookCacheEntry>>> = LazyLock::new(|| RwLock::new(HashMap::new()));
-
-fn parse_playbooks_toml(s: &str) -> PlaybookFile {
-    match toml::from_str::<PlaybookFile>(s) {
-        Ok(f) if !f.playbooks.is_empty() => f,
-        Ok(_) => {
-            eprintln!("playbooks.toml has no [playbooks] entries; using bundled defaults");
-            toml::from_str(DEFAULT_PLAYBOOKS_TOML).unwrap_or_default()
-        }
-        Err(e) => {
-            eprintln!("playbooks.toml parse error ({e}); using bundled defaults");
-            toml::from_str(DEFAULT_PLAYBOOKS_TOML).unwrap_or_default()
-        }
-    }
-}
-
-/// Reads + parses `playbooks.toml`, cached in-process keyed by (repo path, file mtime).
-/// `board_task`/session listing call `get_playbook` per task and per session — without this
-/// cache that re-reads + re-parses the file (plus `ensure_playbooks`'s 13-file existence
-/// scan) on every single call, which is the dominant cost of loading the Kanban board.
-/// Invalidated automatically whenever the file's mtime changes (edits, recreation, etc).
-pub fn load_playbooks(repo: &Path) -> PlaybookFile {
-    let toml_path = playbooks_toml_path(repo);
-    if let Ok(mtime) = fs::metadata(&toml_path).and_then(|m| m.modified()) {
-        if let Some(entry) = PLAYBOOK_CACHE.read().get(&toml_path) {
-            if entry.mtime == mtime {
-                return entry.file.clone();
+// Scan only authored text: escaped candidates and inserted values are literal.
+fn expand_prompt_tokens(raw: &str, prompt_extra: &str, mut expand: impl FnMut(&str, &mut String) -> bool) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut remaining = raw;
+    let mut inserted_extra = false;
+    while let Some(start) = remaining.find("{{") {
+        let Some(close) = remaining[start + 2..].find("}}") else {
+            break;
+        };
+        let end = start + 2 + close + 2;
+        let token = &remaining[start..end];
+        if remaining[..start].ends_with('\\') {
+            out.push_str(&remaining[..start - 1]);
+            out.push_str(token);
+        } else {
+            out.push_str(&remaining[..start]);
+            if token == "{{PROMPT_EXTRA}}" {
+                if !inserted_extra {
+                    out.push_str(prompt_extra);
+                    inserted_extra = true;
+                }
+            } else if !expand(token, &mut out) {
+                out.push_str(token);
             }
         }
+        remaining = &remaining[end..];
     }
-
-    // Cache miss: file is new, changed, or missing — slow path also (re)creates the
-    // file/bundled prompts if they've gone missing.
-    let _ = ensure_playbooks(repo);
-    let s = fs::read_to_string(&toml_path).unwrap_or_default();
-    let file = parse_playbooks_toml(&s);
-
-    if let Ok(mtime) = fs::metadata(&toml_path).and_then(|m| m.modified()) {
-        PLAYBOOK_CACHE.write().insert(toml_path, PlaybookCacheEntry { mtime, file: file.clone() });
+    out.push_str(remaining);
+    if !inserted_extra && !prompt_extra.is_empty() {
+        out.push_str("\n\nAdditional instructions:\n");
+        out.push_str(prompt_extra);
     }
-    file
-}
-
-pub fn get_playbook(repo: &Path, key: &str) -> Option<Playbook> {
-    load_playbooks(repo).playbooks.get(key).cloned()
-}
-
-/// Returns `playbook.auto_advance` edges ordered by the position of each edge's `from` step
-/// (ties broken by `to`'s position) in `playbook.steps`. `Playbook::auto_advance` is a
-/// `BTreeMap` keyed by edge slug, so raw iteration is alphabetical by key and does not track
-/// the actual phase order callers (the UI toggle list) need.
-pub fn ordered_auto_advance_edges(playbook: &Playbook) -> Vec<(&String, &AutoAdvanceEdge)> {
-    let step_index = |step: &str| -> usize { playbook.steps.iter().position(|s| s == step).unwrap_or(usize::MAX) };
-    let mut edges: Vec<(&String, &AutoAdvanceEdge)> = playbook.auto_advance.iter().collect();
-    edges.sort_by_key(|(_, edge)| (step_index(&edge.from), step_index(&edge.to)));
-    edges
-}
-
-pub fn default_playbook(repo: &Path) -> Playbook {
-    let f = load_playbooks(repo);
-    f.playbooks
-        .get(&f.default)
-        .cloned()
-        .or_else(|| f.playbooks.get(DEFAULT_PLAYBOOK_KEY).cloned())
-        .unwrap_or_default()
-}
-
-fn safe_playbook_prompt_path(path: &Path) -> bool {
-    !path.as_os_str().is_empty() && !path.is_absolute() && path.components().all(|c| matches!(c, Component::Normal(_)))
-}
-
-pub fn resolve_playbook_step_prompt(repo: &Path, playbook: &str, step: &str, vars: &PromptVars<'_>) -> Result<Option<String>, String> {
-    if step.is_empty() {
-        return Ok(None);
-    }
-    let wf = get_playbook(repo, playbook).ok_or_else(|| format!("unknown playbook '{playbook}'"))?;
-    if wf.kind == "freeform" {
-        return Ok(None);
-    }
-    let st = wf.step.get(step).ok_or_else(|| format!("unknown playbook step '{step}' for playbook '{playbook}'"))?;
-    let raw = if !st.prompt.is_empty() {
-        let rel = Path::new(&st.prompt);
-        if !safe_playbook_prompt_path(rel) {
-            return Err(format!("unsafe playbook prompt path '{}'", st.prompt));
-        }
-        fs::read_to_string(alinery_dir(repo).join(rel)).map_err(|e| format!("read playbook prompt {}: {e}", st.prompt))?
-    } else {
-        st.prompt_inline.clone()
-    };
-    Ok(Some(substitute_prompt_tokens(&raw, vars)))
-}
-
-pub fn compose_prompt_extra(raw: &str, prompt_extra: &str) -> String {
-    const TOKEN: &str = "{{PROMPT_EXTRA}}";
-    if prompt_extra.is_empty() {
-        return raw.replace(TOKEN, "");
-    }
-    let Some(first) = raw.find(TOKEN) else {
-        return format!("{raw}\n\nAdditional instructions:\n{prompt_extra}");
-    };
-    let mut out = String::with_capacity(raw.len() + prompt_extra.len());
-    out.push_str(&raw[..first]);
-    out.push_str(prompt_extra);
-    out.push_str(&raw[first + TOKEN.len()..].replace(TOKEN, ""));
     out
 }
 
+pub fn compose_prompt_extra(raw: &str, prompt_extra: &str) -> String {
+    expand_prompt_tokens(raw, prompt_extra, |_, _| false)
+}
+
 pub fn substitute_prompt_tokens(raw: &str, vars: &PromptVars<'_>) -> String {
-    let substituted = raw
-        .replace("{{ARTIFACTS_DIR}}", &vars.artifacts_dir.display().to_string())
-        .replace("{{ARTIFACT_FILE}}", &vars.artifact_file.display().to_string())
-        .replace("{{REVIEW_HANDOFF_FILE}}", &vars.review_handoff_file.map(|p| p.display().to_string()).unwrap_or_default())
-        .replace("{{SESSION_HISTORY_DIR}}", &vars.session_history_dir.display().to_string())
-        .replace("{{TASK_NAME}}", vars.task_name)
-        .replace("{{TASK_SLUG}}", vars.task_slug)
-        .replace("{{WORKTREE}}", vars.worktree)
-        .replace("{{PLAYBOOK_KEY}}", vars.playbook_key)
-        .replace("{{PHASE_KEY}}", vars.phase_key)
-        .replace("{{PHASE_TITLE}}", vars.phase_title)
-        .replace("{{TICKET_FILE}}", &vars.ticket_file.display().to_string());
-    compose_prompt_extra(&substituted, vars.prompt_extra)
+    expand_prompt_tokens(raw, vars.prompt_extra, |token, out| {
+        match token {
+            "{{ARTIFACTS_DIR}}" => {
+                let _ = write!(out, "{}", vars.artifacts_dir.display());
+            }
+            "{{ARTIFACT_FILE}}" => {
+                let _ = write!(out, "{}", vars.artifact_file.display());
+            }
+            "{{REVIEW_HANDOFF_FILE}}" => {
+                if let Some(path) = vars.review_handoff_file {
+                    let _ = write!(out, "{}", path.display());
+                }
+            }
+            "{{SESSION_HISTORY_DIR}}" => {
+                let _ = write!(out, "{}", vars.session_history_dir.display());
+            }
+            "{{TASK_NAME}}" => out.push_str(vars.task_name),
+            "{{TASK_SLUG}}" => out.push_str(vars.task_slug),
+            "{{WORKTREE}}" => out.push_str(vars.worktree),
+            "{{PLAYBOOK_KEY}}" => out.push_str(vars.playbook_key),
+            "{{PHASE_KEY}}" => out.push_str(vars.phase_key),
+            "{{PHASE_TITLE}}" => out.push_str(vars.phase_title),
+            "{{TICKET_FILE}}" => {
+                let _ = write!(out, "{}", vars.ticket_file.display());
+            }
+            _ => return false,
+        }
+        true
+    })
+}
+
+fn validate_relative_artifact_path(name: &str) -> Result<(), String> {
+    if name.is_empty()
+        || name.contains(['\\', '\0', ':'])
+        || name.split('/').any(|part| part.is_empty() || part == "." || part == "..")
+        || Path::new(name).components().any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return Err(format!("invalid artifact path: {name}"));
+    }
+    Ok(())
 }
 
 pub fn validate_artifact_filename(name: &str) -> Result<String, String> {
-    let mut parts = Path::new(name).components();
-    match (parts.next(), parts.next()) {
-        (Some(Component::Normal(part)), None) if !name.contains('\\') && part.to_string_lossy() == name => Ok(name.to_string()),
-        _ => Err(format!("invalid artifact filename: {name}")),
+    validate_relative_artifact_path(name)?;
+    if matches!(name.split('/').next(), Some("attachments" | "subtasks")) {
+        return Err(format!("reserved artifact namespace: {name}"));
     }
+    Ok(name.to_string())
+}
+
+fn resolve_artifact_entry(root: &Path, relative: &str, directory: bool) -> Result<PathBuf, String> {
+    if !relative.is_empty() {
+        validate_relative_artifact_path(relative)?;
+    } else if !directory {
+        return Err("empty artifact path".into());
+    }
+    let inspect = |path: &Path, is_directory: bool| -> Result<(), String> {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => Err(format!("symlink rejected: {}", path.display())),
+            Ok(metadata) if if is_directory { metadata.is_dir() } else { metadata.is_file() } => Ok(()),
+            Ok(_) => Err(format!("not a regular {}: {}", if is_directory { "directory" } else { "file" }, path.display())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(format!("inspect {}: {error}", path.display())),
+        }
+    };
+    // The root is the caller's trusted repository boundary; do not canonicalize
+    // descendants before inspection, which would hide symlink components.
+    inspect(root, true)?;
+    let mut path = root.to_path_buf();
+    let mut parts = relative.split('/').filter(|part| !part.is_empty()).peekable();
+    while let Some(part) = parts.next() {
+        path.push(part);
+        inspect(&path, directory || parts.peek().is_some())?;
+    }
+    Ok(path)
+}
+
+/// Resolve an ordinary file below a trusted root without following symlinks.
+/// Missing directories and the final file are allowed for output reservations.
+/// Namespace policy belongs to the caller (attachments use this resolver too).
+pub fn resolve_artifact_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    resolve_artifact_entry(root, relative, false)
+}
+
+pub(crate) fn resolve_artifact_directory(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    resolve_artifact_entry(root, relative, true)
 }
 
 pub fn artifact_file_path(repo: &Path, slug: &str, name: &str) -> Result<PathBuf, String> {
-    Ok(artifacts_dir(repo, slug).join(validate_artifact_filename(name)?))
+    if safe_component(slug) != Some(slug) {
+        return Err(format!("invalid task slug: {slug}"));
+    }
+    validate_artifact_filename(name)?;
+    resolve_artifact_path(repo, &format!(".alinery/tasks/{slug}/artifacts/{name}"))
+}
+
+/// Compare digit runs by magnitude without parsing into bounded integers.
+pub fn compare_artifact_paths(left: &str, right: &str) -> std::cmp::Ordering {
+    let (mut a, mut b) = (left.as_bytes(), right.as_bytes());
+    while !a.is_empty() && !b.is_empty() {
+        if a[0].is_ascii_digit() && b[0].is_ascii_digit() {
+            let an = a.iter().take_while(|byte| byte.is_ascii_digit()).count();
+            let bn = b.iter().take_while(|byte| byte.is_ascii_digit()).count();
+            let av = &a[..an];
+            let bv = &b[..bn];
+            let av = &av[av.iter().take_while(|byte| **byte == b'0').count()..];
+            let bv = &bv[bv.iter().take_while(|byte| **byte == b'0').count()..];
+            let order = av.len().cmp(&bv.len()).then_with(|| av.cmp(bv));
+            if !order.is_eq() {
+                return order;
+            }
+            a = &a[an..];
+            b = &b[bn..];
+        } else {
+            let order = a[0].cmp(&b[0]);
+            if !order.is_eq() {
+                return order;
+            }
+            a = &a[1..];
+            b = &b[1..];
+        }
+    }
+    a.len().cmp(&b.len()).then_with(|| left.cmp(right))
 }
 
 fn split_artifact_filename(name: &str) -> Result<(String, String), String> {
-    let name = validate_artifact_filename(name)?;
-    match name.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() => Ok((stem.to_string(), format!(".{ext}"))),
-        _ => Ok((name, String::new())),
+    validate_artifact_filename(name)?;
+    let path = Path::new(name);
+    let extension = path.extension().and_then(|value| value.to_str()).filter(|value| !value.is_empty());
+    match extension {
+        Some(extension) => Ok((path.with_extension("").to_string_lossy().into_owned(), format!(".{extension}"))),
+        None => Ok((name.to_string(), String::new())),
     }
 }
 
-fn playbook_key_for_task(task: &Task) -> String {
-    task.playbook.clone()
-}
-
-fn playbook_step_exists(playbook: &Playbook, phase: &str) -> bool {
-    playbook.steps.iter().any(|s| s == phase) && playbook.step.contains_key(phase)
-}
-
-fn playbook_artifact_base(repo: &Path, playbook: &str, phase: &str) -> Result<String, String> {
-    let wf = get_playbook(repo, playbook).ok_or_else(|| format!("unknown playbook '{playbook}'"))?;
-    Ok(wf.step.get(phase).map(|s| s.artifact.clone()).unwrap_or_default())
-}
-
-fn session_artifact_name(repo: &Path, meta: &SessionMeta) -> String {
-    if !meta.artifact.is_empty() {
-        return meta.artifact.clone();
-    }
-    if meta.playbook.is_empty() || meta.phase.is_empty() {
-        return String::new();
-    }
-    playbook_artifact_base(repo, &meta.playbook, &meta.phase).unwrap_or_default()
-}
-
-pub fn next_session_artifact_name(repo: &Path, slug: &str, playbook: &str, phase: &str) -> Result<String, String> {
-    ensure_playbooks(repo)?;
-    let base = playbook_artifact_base(repo, playbook, phase)?;
-    if base.is_empty() {
-        return Ok(String::new());
-    }
-    validate_artifact_filename(&base)?;
-    let (stem, ext) = split_artifact_filename(&base)?;
-    let mut reserved = BTreeSet::new();
-    let adir = artifacts_dir(repo, slug);
-    if let Ok(entries) = fs::read_dir(&adir) {
-        for entry in entries.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
-                reserved.insert(name.to_string());
-            }
-        }
-    }
-    let sdir = sessions_dir(repo, slug);
-    if let Ok(entries) = fs::read_dir(&sdir) {
-        for entry in entries.flatten() {
-            if !entry.path().to_string_lossy().ends_with(".meta.json") {
-                continue;
-            }
-            let Ok(raw) = fs::read_to_string(entry.path()) else {
-                continue;
-            };
-            let Ok(meta) = serde_json::from_str::<SessionMeta>(&raw) else {
-                continue;
-            };
-            let name = if meta.artifact.is_empty() {
-                let meta_playbook = meta.playbook.trim();
-                if meta.phase.is_empty() {
-                    String::new()
-                } else {
-                    playbook_artifact_base(repo, meta_playbook, &meta.phase).unwrap_or_default()
-                }
-            } else {
-                meta.artifact
-            };
-            if !name.is_empty() {
-                reserved.insert(name);
-            }
-        }
-    }
-    for idx in 1..=999 {
-        let candidate = if idx == 1 { base.clone() } else { format!("{stem}-{idx:03}{ext}") };
-        if !reserved.contains(&candidate) {
-            return Ok(candidate);
-        }
-    }
-    Err(format!("too many artifacts for {base}"))
-}
 
 pub fn next_review_handoff_artifact_name(repo: &Path, target_slug: &str) -> Result<String, String> {
-    let adir = artifacts_dir(repo, target_slug);
     for idx in 1..=999 {
         let candidate = format!("review-handoff-{idx:03}.md");
-        if !adir.join(&candidate).exists() {
+        if !artifact_file_path(repo, target_slug, &candidate)?.exists() {
             return Ok(candidate);
         }
     }
@@ -320,168 +238,21 @@ pub fn artifact_record_sidecar_name(artifact: &str, direction: &str, index: u16)
 }
 
 fn next_outbound_handoff_sidecar_name(repo: &Path, source_slug: &str, source_artifact: &str) -> Result<String, String> {
-    let adir = artifacts_dir(repo, source_slug);
     for idx in 1..=999 {
         let name = artifact_record_sidecar_name(source_artifact, "outbound", idx)?;
-        if !adir.join(&name).exists() {
+        if !artifact_file_path(repo, source_slug, &name)?.exists() {
             return Ok(name);
         }
     }
     Err(format!("too many outbound handoff records for {source_artifact}"))
 }
 
-fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
-}
 
 fn now_millis() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-fn now_nanos() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
-}
 
-fn prepare_session_meta(app_config: &Path, repo: &Path, input: &CreateSessionInput) -> Result<SessionMeta, String> {
-    ensure_playbooks(repo)?;
-    let task_slug = input.task_slug.trim().to_string();
-    if task_slug.is_empty() {
-        return Err("sessions must be attached to a task".into());
-    }
-    let task = read_task(repo, &task_slug).ok_or_else(|| format!("read task {task_slug}: missing task.md"))?;
-    if task.archived {
-        return Err("this task is archived — no new sessions".into());
-    }
-    if !task.has_worktree || task.worktree.trim().is_empty() {
-        return Err("task has no worktree".into());
-    }
-    if !Path::new(&task.worktree).is_dir() {
-        return Err(format!("task worktree is not an existing directory: {}", task.worktree));
-    }
-    let task_playbook = playbook_key_for_task(&task);
-    let generic = input.generic;
-    if generic && !input.playbook.trim().is_empty() {
-        return Err("generic sessions do not accept a playbook".into());
-    }
-    if generic && !input.phase.trim().is_empty() {
-        return Err("generic sessions do not accept a phase".into());
-    }
-    let playbook = if generic || input.playbook.trim().is_empty() {
-        task_playbook
-    } else {
-        input.playbook.trim().to_string()
-    };
-    let wf = if generic {
-        None
-    } else {
-        Some(get_playbook(repo, &playbook).ok_or_else(|| format!("unknown playbook '{playbook}'"))?)
-    };
-    let mut phase = input.phase.trim().to_string();
-    let mut harness = input.harness.trim().to_string();
-    let mut model = input.model.clone();
-    if generic {
-        phase.clear();
-    } else {
-        let wf = wf.as_ref().expect("non-generic playbook resolved");
-        if phase.is_empty() {
-            if harness != NO_HARNESS_KEY && wf.kind != "freeform" {
-                return Err("blank playbook step requires no-harness or free-form playbook".into());
-            }
-        } else if !playbook_step_exists(wf, &phase) {
-            return Err(format!("unknown step '{phase}' for playbook '{playbook}'"));
-        }
-    }
-    if harness == NO_HARNESS_KEY {
-        phase.clear();
-        model.clear();
-    } else if harness.is_empty() {
-        harness = DEFAULT_HARNESS_KEY.to_string();
-    } else if !is_allowed_launch_harness(&harness) {
-        return Err(format!("unknown harness '{harness}'"));
-    }
-    if harness == NO_HARNESS_KEY && !input.prompt_extra.is_empty() {
-        return Err("no-harness cannot deliver prompt_extra".into());
-    }
-    let resolved_harness = resolve_harness_strict_for(app_config, repo, &harness)?;
-
-    let mut artifact = if generic { String::new() } else { input.artifact.trim().to_string() };
-    if !artifact.is_empty() {
-        artifact = validate_artifact_filename(&artifact)?;
-    } else if !phase.is_empty() && harness != NO_HARNESS_KEY {
-        artifact = next_session_artifact_name(repo, &task_slug, &playbook, &phase)?;
-    }
-    let handoff_artifact = if input.handoff_artifact.trim().is_empty() {
-        String::new()
-    } else {
-        validate_artifact_filename(input.handoff_artifact.trim())?
-    };
-    let harness_resume_token = match resolved_harness.resume {
-        Some(r) if r.enabled && r.id_source == "launch" => uuid::Uuid::new_v4().to_string(),
-        _ => String::new(),
-    };
-    let id = input.id_override.clone().unwrap_or_else(|| format!("s{}", now_nanos()));
-    let meta = SessionMeta {
-        id: id.clone(),
-        worktree: task.worktree.clone(),
-        created: now_secs(),
-        archived: false,
-        phase,
-        harness,
-        model,
-        playbook,
-        generic,
-        subtask_manager: input.subtask_manager,
-        subtask_slug: input.subtask_slug.clone(),
-        artifact,
-        handoff_artifact,
-        prompt_extra: input.prompt_extra.clone(),
-        prompt: input.prompt.clone(),
-        daemon_namespace: input.daemon_namespace.clone(),
-        harness_resume_token,
-        telemetry_id: new_telemetry_id(),
-        ..Default::default()
-    };
-    Ok(meta)
-}
-
-pub fn create_session_meta_for(app_config: &Path, repo: &Path, input: CreateSessionInput) -> Result<SessionMeta, String> {
-    let mut meta = prepare_session_meta(app_config, repo, &input)?;
-    if input.exclusive_create {
-        // Publish the auto-advance claim as already starting. Older reconcilers adopt any
-        // unstarted target meta, so O_EXCL alone leaves a window where two daemon lanes can
-        // spawn the same id. spawn_session refreshes this timestamp after a successful spawn;
-        // its caller removes the claimed meta if spawning fails.
-        meta.started_at = Some(now_secs());
-    }
-    let task_slug = input.task_slug.trim();
-    let id = &meta.id;
-    let dir = sessions_dir(repo, task_slug);
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    fs::create_dir_all(artifacts_dir(repo, task_slug)).map_err(|e| e.to_string())?;
-    let meta_path = dir.join(format!("{id}.meta.json"));
-    let value = serde_json::to_value(&meta).map_err(|e| e.to_string())?;
-    if input.exclusive_create {
-        // Atomic claim: O_EXCL chooses one reconciler, and the pre-set started_at keeps
-        // reconcilers from older daemon lanes from adopting the winner before it spawns.
-        use std::io::Write;
-        let body = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
-        match fs::OpenOptions::new().write(true).create_new(true).open(&meta_path) {
-            Ok(mut f) => f.write_all(body.as_bytes()).map_err(|e| e.to_string())?,
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                return Err("duplicate target session already exists".into());
-            }
-            Err(e) => return Err(e.to_string()),
-        }
-    } else {
-        write_meta_atomic(&meta_path, &value)?;
-    }
-    Ok(meta)
-}
-
-pub fn create_session_meta(repo: &Path, input: CreateSessionInput) -> Result<SessionMeta, String> {
-    let app_config = app_config_toml_path().ok_or_else(|| "app config dir unavailable".to_string())?;
-    create_session_meta_for(&app_config, repo, input)
-}
 
 fn append_parent_context(repo: &Path, task: &Task, mut prompt: String) -> Result<String, String> {
     if task.parent_task.is_empty() {
@@ -555,13 +326,12 @@ pub fn resolve_launch_prompt(repo: &Path, launch: &LaunchFields) -> Result<Optio
     if launch.harness == NO_HARNESS_KEY {
         return Ok(None);
     }
-    // A stored prompt is the exact prompt approved at session creation. It already includes
-    // derived child context, and replaying it must not depend on mutable task files.
-    if let Some(prompt) = &launch.prompt {
-        return Ok((!prompt.is_empty()).then(|| prompt.clone()));
-    }
-    if !launch.subtask_manager && !launch.generic && launch.phase.is_empty() {
-        return Ok(None);
+    // Auxiliary prompts are user instructions; graph prompts always receive a fresh
+    // authoritative assignment block after every editable instruction.
+    if launch.generic || launch.subtask_manager || launch.task_slug.is_empty() {
+        if let Some(prompt) = &launch.prompt {
+            return Ok((!prompt.is_empty()).then(|| compose_prompt_extra(prompt, &launch.prompt_extra)));
+        }
     }
     let task = read_task(repo, &launch.task_slug).ok_or_else(|| format!("read task {}: missing task.md", launch.task_slug))?;
     let playbook = launch.playbook.clone();
@@ -614,15 +384,20 @@ Prior playbook artifacts are ordinary files in the task artifacts directory. Rea
         let prompt = if launch.prompt_extra.is_empty() {
             base
         } else {
-            let template = format!("{base}\n\nAdditional instructions:\n{{{{PROMPT_EXTRA}}}}");
-            compose_prompt_extra(&template, &launch.prompt_extra)
+            format!("{base}\n\nAdditional instructions:\n{}", launch.prompt_extra)
         };
         return append_launch_context(repo, &task, prompt).map(Some);
     }
-    let phase_title = get_playbook(repo, &playbook)
-        .and_then(|wf| wf.step.get(&launch.phase).map(|step| step.title.clone()))
-        .unwrap_or_else(|| launch.phase.clone());
-    let artifact_file = resolved_session_artifact_file(repo, &launch.task_slug, &playbook, &launch.phase, &launch.artifact)?;
+    if task.engine_version != 2 {
+        return Err("pre-v2 task data is read-only; create a new v2 task to launch graph work".into());
+    }
+    let state = crate::execution::read_execution_state(repo, &task.slug)?;
+    let definition = crate::execution::read_task_playbook(repo, &task.slug, &state)?;
+    let execution = state.executions.values().find(|execution| execution.owner_session_id == launch.id)
+        .ok_or("session is not the current owner of a retained execution")?;
+    let step = definition.step.iter().find(|step| step.key == execution.candidate.step_key).ok_or("retained execution step is missing")?;
+    let artifact_file = execution.outputs.iter().find(|output| !output.selector.contains('*'))
+        .map(|output| artifact_file_path(repo, &task.slug, &output.relative_path)).transpose()?.unwrap_or_default();
     let review_handoff_file = if launch.handoff_artifact.is_empty() {
         None
     } else {
@@ -637,199 +412,161 @@ Prior playbook artifacts are ordinary files in the task artifacts directory. Rea
         task_name: &task.name,
         task_slug: &task.slug,
         worktree,
-        playbook_key: &playbook,
-        phase_key: &launch.phase,
-        phase_title: &phase_title,
+        playbook_key: &definition.key,
+        phase_key: &step.key,
+        phase_title: &step.title,
         ticket_file: &ticket,
     };
-    let prompt = resolve_playbook_step_prompt(repo, &playbook, &launch.phase, &vars)?;
-    prompt.map(|prompt| append_launch_context(repo, &task, prompt)).transpose()
+    let prompt = match &launch.prompt {
+        Some(prompt) => compose_prompt_extra(prompt, &launch.prompt_extra),
+        None => substitute_prompt_tokens(&step.prompt, &vars),
+    };
+    let mut prompt = append_launch_context(repo, &task, prompt)?;
+    prompt.push_str(&crate::execution::execution_assignment_prompt(repo, &task.slug, &state, &execution.id)?);
+    Ok(Some(prompt))
 }
 
-pub fn preview_session_prompt_for(app_config: &Path, repo: &Path, input: CreateSessionInput) -> Result<String, String> {
-    let meta = prepare_session_meta(app_config, repo, &input)?;
-    resolve_launch_prompt(
-        repo,
-        &LaunchFields {
-            id: meta.id,
-            task_slug: input.task_slug.trim().to_string(),
-            worktree: meta.worktree,
-            playbook: meta.playbook,
-            generic: meta.generic,
-            subtask_manager: meta.subtask_manager,
-            subtask_slug: meta.subtask_slug,
-            phase: meta.phase,
-            harness: meta.harness,
-            model: meta.model,
-            created: meta.created,
-            artifact: meta.artifact,
-            handoff_artifact: meta.handoff_artifact,
-            prompt_extra: meta.prompt_extra,
-            prompt: None,
-            resume_token: meta.harness_resume_token,
-        },
-    )
-    .map(Option::unwrap_or_default)
-}
 
-pub fn preview_session_prompt(repo: &Path, input: CreateSessionInput) -> Result<String, String> {
-    let app_config = app_config_toml_path().ok_or_else(|| "app config dir unavailable".to_string())?;
-    preview_session_prompt_for(&app_config, repo, input)
-}
-
-pub fn default_handoff_target_phase(repo: &Path, playbook: &str) -> Result<String, String> {
-    let wf = get_playbook(repo, playbook).ok_or_else(|| format!("unknown playbook '{playbook}'"))?;
-    if playbook_step_exists(&wf, "implementation") {
-        return Ok("implementation".into());
+pub fn send_review_handoff_for_repos(
+    client: &crate::daemon_client::DaemonClient,
+    source_repo: &Path,
+    target_repo: &Path,
+    request: ReviewHandoffRequest,
+) -> Result<ReviewHandoffResult, String> {
+    let source_slug = request.source_slug.trim();
+    let target_slug = request.target_slug.trim();
+    if safe_component(source_slug).is_none() || safe_component(target_slug).is_none() {
+        return Err("source and target task identities are required".into());
     }
-    Ok(wf.steps.first().cloned().unwrap_or_default())
-}
-
-pub fn send_review_handoff_for(app_config: &Path, repo: &Path, request: ReviewHandoffRequest) -> Result<ReviewHandoffResult, String> {
-    ensure_playbooks(repo)?;
-    let source_slug = request.source_slug.trim().to_string();
-    let target_slug = request.target_slug.trim().to_string();
-    if source_slug.is_empty() || target_slug.is_empty() {
-        return Err("source and target tasks are required".into());
+    if source_slug == target_slug && fs::canonicalize(source_repo).map_err(|error| error.to_string())? == fs::canonicalize(target_repo).map_err(|error| error.to_string())? {
+        return Err("review handoff source and target must be different tasks".into());
     }
-    let source_task = read_task(repo, &source_slug).ok_or_else(|| format!("read task {source_slug}: missing task.md"))?;
-    let target_task = read_task(repo, &target_slug).ok_or_else(|| format!("read task {target_slug}: missing task.md"))?;
-    if source_task.archived {
-        return Err("source task is archived — no review handoff".into());
+    let source_task = read_task(source_repo, source_slug).ok_or("source task is missing")?;
+    let target_task = read_task(target_repo, target_slug).ok_or("target task is missing")?;
+    if source_task.archived || target_task.archived {
+        return Err("archived tasks cannot participate in review handoff".into());
     }
-    if target_task.archived {
-        return Err("target task is archived — no review handoff".into());
-    }
-    if source_task.worktree.trim().is_empty() {
-        return Err("source task has no worktree".into());
-    }
-    if target_task.worktree.trim().is_empty() {
-        return Err("target task has no worktree".into());
+    let retained = client.get_task_execution(&crate::task_creation::GetTaskExecutionRequest { task_slug: target_slug.into() })?;
+    let target_phase = request.target_phase.trim();
+    if !retained.definition.step.iter().any(|step| step.key == target_phase) {
+        return Err("choose an explicit step from the target task's retained playbook".into());
     }
     let source_artifact = validate_artifact_filename(request.source_artifact.trim())?;
-    let source_path = artifact_file_path(repo, &source_slug, &source_artifact)?;
-    let source_text = fs::read_to_string(&source_path).map_err(|e| format!("read {}: {e}", source_path.display()))?;
-    let target_playbook = playbook_key_for_task(&target_task);
-    let mut target_phase = request.target_phase.trim().to_string();
-    if target_phase.is_empty() {
-        target_phase = default_handoff_target_phase(repo, &target_playbook)?;
-    }
-    let target_wf = get_playbook(repo, &target_playbook).ok_or_else(|| format!("unknown playbook '{target_playbook}'"))?;
-    if !target_phase.is_empty() && !playbook_step_exists(&target_wf, &target_phase) {
-        return Err(format!("unknown step '{target_phase}' for playbook '{target_playbook}'"));
-    }
-    let target_artifact = next_review_handoff_artifact_name(repo, &target_slug)?;
-    let target_session = create_session_meta_for(
-        app_config,
-        repo,
-        CreateSessionInput {
-            task_slug: target_slug.clone(),
-            phase: target_phase.clone(),
-            harness: request.harness,
-            model: request.model,
-            artifact: String::new(),
-            handoff_artifact: target_artifact.clone(),
-            prompt_extra: request.prompt_extra,
-            daemon_namespace: String::new(),
-            ..Default::default()
-        },
-    )?;
-    let created_at_ms = now_millis();
+    let source_path = artifact_file_path(source_repo, source_slug, &source_artifact)?;
+    let source_text = fs::read_to_string(&source_path).map_err(|error| format!("read {}: {error}", source_path.display()))?;
+    let target_artifact = crate::with_task_mutation_lock(target_repo, "install review evidence", || {
+        let artifact = next_review_handoff_artifact_name(target_repo, target_slug)?;
+        let target_path = artifact_file_path(target_repo, target_slug, &artifact)?;
+        let markdown = format!("# Review handoff\n\nSource repository: {}\nSource task: {source_slug}\nSource artifact: {source_artifact}\n\n{source_text}", source_repo.display());
+        write_bytes_atomic(&target_path, markdown.as_bytes())?;
+        Ok(artifact)
+    })?;
+    let target_path = artifact_file_path(target_repo, target_slug, &target_artifact)?;
+    let prompt_extra = format!("{}\n\nRead the review handoff evidence at {}. It is context, not an engine input occurrence; preserve the assigned execution paths and completion policy.", request.prompt_extra, target_path.display());
+    let mut created = client.create_execution_session(&crate::task_creation::CreateExecutionSessionRequest {
+        task_slug: target_slug.into(),
+        target: crate::task_creation::ExecutionSessionTarget::Primary { step_key: target_phase.into(), execution_id: None, input_occurrence_ids: None },
+        launch_override: Some(crate::execution::LaunchChoices { harness: request.harness, model: request.model }),
+        prompt_extra: Some(prompt_extra),
+        start: request.start,
+    }).map_err(|error| format!("review handoff evidence retained at {} for target {target_slug}; session creation outcome must be inspected before retrying: {error}", target_path.display()))?;
     let source_record = ReviewHandoffRecord {
-        version: 1,
+        version: 2,
         direction: "outbound".into(),
-        source_task: source_slug.clone(),
-        source_session: request.source_session.clone(),
+        source_repo_path: source_repo.to_string_lossy().into_owned(),
+        target_repo_path: target_repo.to_string_lossy().into_owned(),
+        source_task: source_slug.into(),
+        source_session: request.source_session,
         source_artifact: source_artifact.clone(),
-        target_task: target_slug.clone(),
+        target_task: target_slug.into(),
         target_artifact: target_artifact.clone(),
-        target_session: target_session.id.clone(),
-        target_phase: target_session.phase.clone(),
-        created_at_ms,
+        target_session: created.session.id.clone(),
+        target_phase: created.session.phase.clone(),
+        created_at_ms: now_millis(),
     };
-    let target_record = ReviewHandoffRecord {
-        direction: "inbound".into(),
-        ..source_record.clone()
-    };
-    let target_path = artifact_file_path(repo, &target_slug, &target_artifact)?;
-    let markdown = format!(
-        "---\nreview_handoff:\n  source_task: {}\n  source_session: {}\n  source_artifact: {}\n  target_task: {}\n  target_phase: {}\n  target_session: {}\n  target_artifact: {}\n  created_at_ms: {}\n---\n\n# Review handoff\n\nCopied from `{}` / `{}`.\n\n{}\n",
-        source_record.source_task,
-        source_record.source_session,
-        source_record.source_artifact,
-        source_record.target_task,
-        source_record.target_phase,
-        source_record.target_session,
-        source_record.target_artifact,
-        created_at_ms,
-        source_record.source_task,
-        source_record.source_artifact,
-        source_text
-    );
-    write_bytes_atomic(&target_path, markdown.as_bytes())?;
-    let inbound_name = artifact_record_sidecar_name(&target_artifact, "inbound", 0)?;
-    let outbound_name = next_outbound_handoff_sidecar_name(repo, &source_slug, &source_artifact)?;
-    write_bytes_atomic(
-        &artifacts_dir(repo, &target_slug).join(inbound_name),
-        serde_json::to_string_pretty(&target_record).map_err(|e| e.to_string())?.as_bytes(),
-    )?;
-    write_bytes_atomic(
-        &artifacts_dir(repo, &source_slug).join(outbound_name),
-        serde_json::to_string_pretty(&source_record).map_err(|e| e.to_string())?.as_bytes(),
-    )?;
+    let target_record = ReviewHandoffRecord { direction: "inbound".into(), ..source_record.clone() };
+    let inbound = (|| {
+        let inbound_name = artifact_record_sidecar_name(&target_artifact, "inbound", 0)?;
+        write_bytes_atomic(&artifact_file_path(target_repo, target_slug, &inbound_name)?, &serde_json::to_vec_pretty(&target_record).map_err(|error| error.to_string())?)
+    })();
+    let outbound = crate::with_task_mutation_lock(source_repo, "record outbound review handoff", || {
+        let outbound_name = next_outbound_handoff_sidecar_name(source_repo, source_slug, &source_artifact)?;
+        write_bytes_atomic(&artifact_file_path(source_repo, source_slug, &outbound_name)?, &serde_json::to_vec_pretty(&source_record).map_err(|error| error.to_string())?)
+    });
+    for (stage, outcome) in [("inbound_handoff_record", inbound), ("outbound_handoff_record", outbound)] {
+        if let Err(message) = outcome {
+            created.errors.push(crate::task_creation::CreationError { stage: stage.into(), code: "handoff_record_failed".into(), message });
+        }
+    }
     Ok(ReviewHandoffResult {
+        target_repo_path: target_repo.to_string_lossy().into_owned(),
+        start: created.start,
+        errors: created.errors,
         target_artifact,
-        target_session,
+        target_session: created.session,
         source_record,
         target_record,
     })
-}
-
-pub fn send_review_handoff(repo: &Path, request: ReviewHandoffRequest) -> Result<ReviewHandoffResult, String> {
-    let app_config = app_config_toml_path().ok_or_else(|| "app config dir unavailable".to_string())?;
-    send_review_handoff_for(&app_config, repo, request)
 }
 
 fn is_handoff_sidecar_name(name: &str) -> bool {
     (name.ends_with(".handoff.json") || (name.contains(".handoff-") && name.ends_with(".json"))) && !name.ends_with(".comments.json")
 }
 
-pub fn visible_artifact_names(repo: &Path, task_slug: &str) -> Result<Vec<String>, String> {
-    let dir = artifacts_dir(repo, task_slug);
-    if !dir.exists() {
-        return Ok(vec![]);
+fn owned_artifact_names(repo: &Path, task_slug: &str) -> Result<Vec<String>, String> {
+    if safe_component(task_slug) != Some(task_slug) {
+        return Err(format!("invalid task slug: {task_slug}"));
     }
-    let mut out = vec![];
-    for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        if !entry.path().is_file() {
-            continue;
+    let dir = resolve_artifact_directory(repo, &format!(".alinery/tasks/{task_slug}/artifacts"))?;
+    fn collect(root: &Path, directory: &Path, out: &mut Vec<String>) -> Result<(), String> {
+        if !directory.exists() {
+            return Ok(());
         }
-        if let Some(name) = entry.file_name().to_str() {
-            if name != crate::task::RELATED_TASKS_MARKDOWN && !name.ends_with(".comments.json") && !is_handoff_sidecar_name(name) {
+        for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let path = entry.path();
+            let relative = path.strip_prefix(root).map_err(|error| error.to_string())?;
+            let name = relative.to_str().ok_or("non-UTF-8 artifact path")?;
+            if matches!(name.split('/').next(), Some("attachments" | "subtasks")) {
+                continue;
+            }
+            let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+            if metadata.is_dir() {
+                let checked = resolve_artifact_directory(root, name)?;
+                collect(root, &checked, out)?;
+            } else {
+                resolve_artifact_path(root, name)?;
                 out.push(name.to_string());
             }
         }
+        Ok(())
     }
-    out.sort_by(|a, b| b.cmp(a));
+    let mut out = Vec::new();
+    collect(&dir, &dir, &mut out)?;
+    out.sort_by(|a, b| compare_artifact_paths(b, a));
     Ok(out)
 }
 
-// Attachments live one level down so visible_artifact_names (and therefore every prompt-facing
-// scan, comment anchor, handoff selector and phase-completion decider) stays blind to them.
-// Only this lister looks, and only as a trailing append.
-fn attachment_items(repo: &Path, task_slug: &str) -> Vec<ArtifactListItem> {
-    let Ok(entries) = fs::read_dir(attachments_dir(repo, task_slug)) else {
-        return vec![];
-    };
+fn is_visible_artifact_name(name: &str) -> bool {
+    name != crate::task::RELATED_TASKS_MARKDOWN && !name.ends_with(".comments.json") && !is_handoff_sidecar_name(name)
+}
+
+pub fn visible_artifact_names(repo: &Path, task_slug: &str) -> Result<Vec<String>, String> {
+    Ok(owned_artifact_names(repo, task_slug)?.into_iter().filter(|name| is_visible_artifact_name(name)).collect())
+}
+
+// Attachments and subtask snapshots remain outside ordinary artifact scans.
+fn attachment_items(repo: &Path, task_slug: &str) -> Result<Vec<ArtifactListItem>, String> {
+    let directory = resolve_artifact_directory(repo, &format!(".alinery/tasks/{task_slug}/artifacts/attachments"))?;
+    if !directory.exists() {
+        return Ok(Vec::new());
+    }
+    let entries = fs::read_dir(&directory).map_err(|error| error.to_string())?;
     let mut out: Vec<ArtifactListItem> = vec![];
-    for entry in entries.flatten() {
-        if !entry.path().is_file() {
-            continue;
-        }
-        let Some(name) = entry.file_name().to_str().map(|s| s.to_string()) else {
-            continue;
-        };
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let name = entry.file_name().into_string().map_err(|_| "non-UTF-8 attachment name")?;
+        resolve_artifact_path(repo, &format!(".alinery/tasks/{task_slug}/artifacts/attachments/{name}"))?;
         let modified_at_ms = entry
             .metadata()
             .and_then(|m| m.modified())
@@ -844,26 +581,36 @@ fn attachment_items(repo: &Path, task_slug: &str) -> Vec<ArtifactListItem> {
         });
     }
     out.sort_by(|a, b| b.modified_at_ms.cmp(&a.modified_at_ms).then_with(|| a.name.cmp(&b.name)));
-    out
+    Ok(out)
 }
 
 pub fn list_artifacts_with_metadata_for(repo: &Path, task_slug: &str) -> Result<Vec<ArtifactListItem>, String> {
-    let names = visible_artifact_names(repo, task_slug)?;
+    let names = owned_artifact_names(repo, task_slug)?;
+    let mut records = Vec::new();
+    for name in names.iter().filter(|name| is_handoff_sidecar_name(name)) {
+        let path = artifact_file_path(repo, task_slug, name)?;
+        let raw = fs::read_to_string(path).map_err(|error| error.to_string())?;
+        if let Ok(record) = serde_json::from_str::<ReviewHandoffRecord>(&raw) {
+            records.push(record);
+        }
+    }
+    records.sort_by_key(|record| record.created_at_ms);
     let mut items: Vec<ArtifactListItem> = names
         .into_iter()
+        .filter(|name| is_visible_artifact_name(name))
         .map(|name| {
-            let modified_at_ms = fs::metadata(artifacts_dir(repo, task_slug).join(&name))
+            let modified_at_ms = fs::metadata(artifact_file_path(repo, task_slug, &name)?)
                 .and_then(|m| m.modified())
                 .ok()
                 .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
                 .map(|d| d.as_millis() as u64);
-            ArtifactListItem {
+            Ok(ArtifactListItem {
                 name,
                 modified_at_ms,
                 ..Default::default()
-            }
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, String>>()?;
     let sessions = fs::read_dir(sessions_dir(repo, task_slug))
         .ok()
         .into_iter()
@@ -872,107 +619,74 @@ pub fn list_artifacts_with_metadata_for(repo: &Path, task_slug: &str) -> Result<
         .filter_map(|entry| fs::read_to_string(entry.path()).ok())
         .filter_map(|raw| serde_json::from_str::<SessionMeta>(&raw).ok());
     for meta in sessions {
-        let artifact = session_artifact_name(repo, &meta);
+        let artifact = &meta.artifact;
         if artifact.is_empty() {
             continue;
         }
-        if let Some(item) = items.iter_mut().find(|item| item.name == artifact) {
+        if let Some(item) = items.iter_mut().find(|item| &item.name == artifact) {
             item.playbook_step = meta.phase.clone();
             item.session_id = meta.id.clone();
         }
     }
-    if let Ok(entries) = fs::read_dir(artifacts_dir(repo, task_slug)) {
-        let mut records = vec![];
-        for entry in entries.flatten() {
-            let Some(name) = entry.file_name().to_str().map(|s| s.to_string()) else {
-                continue;
-            };
-            if !is_handoff_sidecar_name(&name) {
-                continue;
-            }
-            let Ok(raw) = fs::read_to_string(entry.path()) else {
-                continue;
-            };
-            if let Ok(record) = serde_json::from_str::<ReviewHandoffRecord>(&raw) {
-                records.push(record);
-            }
-        }
-        records.sort_by_key(|a| a.created_at_ms);
-        for item in &mut items {
-            item.handoffs = records
-                .iter()
-                .filter(|record| record.source_artifact == item.name || record.target_artifact == item.name)
-                .cloned()
-                .collect();
-        }
+    for item in &mut items {
+        item.handoffs = records
+            .iter()
+            .filter(|record| {
+                (record.direction == "outbound" && record.source_task == task_slug && record.source_artifact == item.name)
+                    || (record.direction == "inbound" && record.target_task == task_slug && record.target_artifact == item.name)
+            })
+            .cloned()
+            .collect();
     }
-    items.extend(attachment_items(repo, task_slug));
+    items.extend(attachment_items(repo, task_slug)?);
     Ok(items)
 }
 
-pub fn resolved_session_artifact_file(repo: &Path, slug: &str, playbook: &str, phase: &str, artifact_override: &str) -> Result<PathBuf, String> {
-    if !artifact_override.trim().is_empty() {
-        return artifact_file_path(repo, slug, artifact_override.trim());
+/// Execution ownership comes from the caller's authoritative daemon snapshot,
+/// not from a potentially stale session-metadata projection.
+pub fn list_artifacts_with_execution_metadata(
+    repo: &Path,
+    task_slug: &str,
+    state: &crate::execution::TaskExecutionState,
+) -> Result<Vec<ArtifactListItem>, String> {
+    let (mut items, attachments): (Vec<_>, Vec<_>) = list_artifacts_with_metadata_for(repo, task_slug)?.into_iter().partition(|item| !item.attachment);
+    let occurrences: BTreeMap<_, _> = state.occurrences.values().map(|occurrence| (occurrence.relative_path.as_str(), occurrence)).collect();
+    for occurrence in state.occurrences.values().filter(|occurrence| occurrence.producer_execution_id.is_some()) {
+        if !items.iter().any(|item| item.name == occurrence.relative_path) {
+            items.push(ArtifactListItem { name: occurrence.relative_path.clone(), ..Default::default() });
+        }
     }
-    let artifact = playbook_artifact_base(repo, playbook, phase)?;
-    if artifact.is_empty() {
-        return Err(format!("playbook '{playbook}' step '{phase}' has no artifact"));
+    for record in state.executions.values() {
+        for assignment in &record.outputs {
+            if record.receipt_id.is_none() && !items.iter().any(|item| item.name == assignment.relative_path) {
+                items.push(ArtifactListItem { name: assignment.relative_path.clone(), ..Default::default() });
+            }
+            let selector = crate::playbook::ArtifactSelector::parse(&assignment.relative_path)?;
+            for item in items.iter_mut().filter(|item| !item.attachment && selector.matches(&item.name)) {
+                item.execution_id = Some(record.id.clone());
+                item.step_key = Some(record.candidate.step_key.clone());
+                item.playbook_step = record.candidate.step_key.clone();
+                item.session_id = record.owner_session_id.clone();
+                item.depth = Some(record.depth);
+                item.discriminator = Some(assignment.discriminator);
+                let occurrence = occurrences.get(item.name.as_str()).filter(|occurrence| occurrence.producer_execution_id.as_deref() == Some(record.id.as_str()));
+                item.accepted = Some(occurrence.is_some());
+                item.logical_path = Some(occurrence.map_or(assignment.selector.as_str(), |occurrence| occurrence.logical_path.as_str()).to_string());
+            }
+        }
     }
-    artifact_file_path(repo, slug, &artifact)
+    items.sort_by(|left, right| {
+        match (left.depth.zip(left.discriminator), right.depth.zip(right.discriminator)) {
+            (Some(left_depth), Some(right_depth)) => right_depth.cmp(&left_depth).then_with(|| compare_artifact_paths(&right.name, &left.name)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => compare_artifact_paths(&right.name, &left.name),
+        }
+    });
+    items.extend(attachments);
+    Ok(items)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CompletionRejectReason {
-    MissingTaskContext,
-    TaskArchived,
-    SourceArchived,
-    Generic,
-    NoHarness,
-    PlaybookMismatch,
-    MissingSourceStep,
-    MissingCheckpoint,
-    StaleSource,
-    MissingTargetStep,
-    MissingPlaybook,
-    MissingPhase,
-    MissingArtifact,
-    EmptyArtifact,
-    UnsafeArtifact,
-    NonRegularArtifact,
-}
-
-pub fn validate_expected_artifact(repo: &Path, task_slug: &str, session: &SessionMeta) -> Result<PathBuf, CompletionRejectReason> {
-    if safe_component(task_slug).is_none() {
-        return Err(CompletionRejectReason::MissingTaskContext);
-    }
-    if session.playbook.trim().is_empty() {
-        return Err(CompletionRejectReason::MissingPlaybook);
-    }
-    if session.phase.trim().is_empty() {
-        return Err(CompletionRejectReason::MissingPhase);
-    }
-
-    let playbook = get_playbook(repo, &session.playbook).ok_or(CompletionRejectReason::MissingPlaybook)?;
-    let step = playbook.step.get(&session.phase).ok_or(CompletionRejectReason::MissingPhase)?;
-    let artifact = if session.artifact.trim().is_empty() {
-        step.artifact.trim()
-    } else {
-        session.artifact.trim()
-    };
-    if artifact.is_empty() {
-        return Err(CompletionRejectReason::MissingArtifact);
-    }
-    let artifact = validate_artifact_filename(artifact).map_err(|_| CompletionRejectReason::UnsafeArtifact)?;
-    let path = artifacts_dir(repo, task_slug).join(artifact);
-    let metadata = fs::symlink_metadata(&path).map_err(|_| CompletionRejectReason::MissingArtifact)?;
-    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
-        return Err(CompletionRejectReason::NonRegularArtifact);
-    }
-    if metadata.len() == 0 {
-        return Err(CompletionRejectReason::EmptyArtifact);
-    }
-    Ok(path)
-}
 
 // ---- settings and harness overlay (pure) ------------------------------------
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1006,7 +720,10 @@ fn bool_value(global: bool, override_value: &Option<bool>) -> (bool, SettingSour
 fn resolve_choice(global: &HarnessChoice, overrides: &crate::types::RepoHarnessChoiceOverrides) -> (HarnessChoice, ChoiceProvenance) {
     let (harness, harness_source) = string_value(&global.harness, &overrides.harness);
     let (model, model_source) = string_value(&global.model, &overrides.model);
-    let (playbook, playbook_source) = string_value(&global.playbook, &overrides.playbook);
+    let (playbook, playbook_source) = match &overrides.playbook {
+        Some(reference) => (reference.clone(), SettingSource::Repository),
+        None => (global.playbook.clone(), SettingSource::Global),
+    };
     let (draft_autosave, draft_autosave_source) = bool_value(global.draft_autosave, &overrides.draft_autosave);
     (
         HarnessChoice {
@@ -1060,6 +777,13 @@ pub fn read_scoped_settings(app_config: &Path, repo: &Path) -> ScopedSettings {
     let overrides = load_repo_overrides(repo);
     let effective = resolve_effective_config(&global, &overrides);
     ScopedSettings { global, overrides, effective }
+}
+
+pub fn read_scoped_settings_strict(app_config: &Path, repo: &Path) -> Result<ScopedSettings, String> {
+    let global = crate::settings::load_global_settings_strict(app_config)?;
+    let overrides = crate::settings::load_repo_overrides_strict(repo)?;
+    let effective = resolve_effective_config(&global, &overrides);
+    Ok(ScopedSettings { global, overrides, effective })
 }
 
 pub fn clear_repo_override(overrides: &mut RepoOverrides, field: &str) -> Result<(), String> {
@@ -1537,6 +1261,16 @@ pub fn validate_task_session_start(app_config: &Path, repo: &Path, task_slug: &s
     if meta.archived {
         return Err("session-archived".into());
     }
+    if !meta.generic && !meta.subtask_manager && meta.harness != NO_HARNESS_KEY {
+        if task.engine_version != 2 || meta.execution_id.is_empty() {
+            return Err("pre-v2 task data is read-only; create a new v2 task to launch graph work".into());
+        }
+        let state = crate::execution::read_execution_state(repo, task_slug)?;
+        let execution = state.executions.get(&meta.execution_id).ok_or("missing-execution")?;
+        if execution.owner_session_id != meta.id {
+            return Err("stale execution session owner".into());
+        }
+    }
     if meta.started_at.is_some() {
         return Err("already-started; use resume or start-fresh".into());
     }
@@ -1595,147 +1329,6 @@ pub fn sweep_ends_session(started_at: Option<u64>, ended_at: Option<u64>) -> boo
     started_at.is_some() && ended_at.is_none()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AutoAdvanceCreate {
-    pub edge_key: String,
-    pub from_phase: String,
-    pub to_phase: String,
-    pub artifact: String,
-    pub harness: String,
-    pub model: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CompletionDecision {
-    Reject(CompletionRejectReason),
-    Complete,
-    CreateNext(AutoAdvanceCreate),
-}
-
-pub fn is_latest_completion_source(source: &SessionMeta, sessions: &[SessionMeta], playbook_key: &str) -> bool {
-    if source.playbook != playbook_key || source.playbook.is_empty() {
-        return false;
-    }
-    let source_playbook = source.playbook.as_str();
-    sessions
-        .iter()
-        .filter(|session| {
-            let playbook = session.playbook.as_str();
-            !session.archived && playbook == source_playbook && session.phase == source.phase
-        })
-        .max_by(|left, right| (left.created, left.id.as_str()).cmp(&(right.created, right.id.as_str())))
-        .is_some_and(|latest| latest.id == source.id)
-}
-pub fn find_enabled_auto_edge(task: &Task, playbook: &Playbook, from_phase: &str) -> Option<(String, AutoAdvanceEdge)> {
-    task.auto_advance.iter().find_map(|key| {
-        let edge = playbook.auto_advance.get(key)?;
-        (edge.from == from_phase).then(|| (key.clone(), edge.clone()))
-    })
-}
-
-pub fn resolve_auto_advance_harness_model(playbook: &Playbook, target_phase: &str, _source_harness: &str, source_model: &str) -> Option<(String, String)> {
-    let _ = playbook.step.get(target_phase)?;
-    Some((DEFAULT_HARNESS_KEY.to_string(), source_model.to_string()))
-}
-
-pub fn completion_decision(
-    repo: &Path,
-    task_slug: &str,
-    task: &Task,
-    playbook_key: &str,
-    playbook: &Playbook,
-    source: &SessionMeta,
-    sessions: &[SessionMeta],
-) -> CompletionDecision {
-    if task.archived {
-        return CompletionDecision::Reject(CompletionRejectReason::TaskArchived);
-    }
-    if source.archived {
-        return CompletionDecision::Reject(CompletionRejectReason::SourceArchived);
-    }
-    if source.generic {
-        return CompletionDecision::Reject(CompletionRejectReason::Generic);
-    }
-    if source.playbook.trim().is_empty() {
-        return CompletionDecision::Reject(CompletionRejectReason::MissingPlaybook);
-    }
-    if source.phase.trim().is_empty() {
-        return CompletionDecision::Reject(CompletionRejectReason::MissingPhase);
-    }
-    if source.harness == NO_HARNESS_KEY {
-        return CompletionDecision::Reject(CompletionRejectReason::NoHarness);
-    }
-    let source_playbook = source.playbook.as_str();
-    if source_playbook != playbook_key {
-        return CompletionDecision::Reject(CompletionRejectReason::PlaybookMismatch);
-    }
-    let Some(source_step) = playbook.step.get(&source.phase) else {
-        return CompletionDecision::Reject(CompletionRejectReason::MissingSourceStep);
-    };
-    if !is_latest_completion_source(source, sessions, playbook_key) {
-        return CompletionDecision::Reject(CompletionRejectReason::StaleSource);
-    }
-    if source.semantic.phase_completed_at.is_none() {
-        return CompletionDecision::Reject(CompletionRejectReason::MissingCheckpoint);
-    }
-    if let Err(reason) = validate_expected_artifact(repo, task_slug, source) {
-        return CompletionDecision::Reject(reason);
-    }
-    if playbook_key != playbook_key_for_task(task) {
-        return CompletionDecision::Complete;
-    }
-
-    let Some((edge_key, edge)) = find_enabled_auto_edge(task, playbook, &source.phase) else {
-        return CompletionDecision::Complete;
-    };
-    if !playbook.step.contains_key(&edge.to) {
-        return CompletionDecision::Reject(CompletionRejectReason::MissingTargetStep);
-    }
-    let target_is_complete = sessions.iter().any(|session| {
-        let playbook = session.playbook.as_str();
-        playbook == playbook_key && session.phase == edge.to && (session.archived || session.started_at.is_some() || session.ended_at.is_some())
-    });
-    if target_is_complete {
-        return CompletionDecision::Complete;
-    }
-    let Some((harness, model)) = resolve_auto_advance_harness_model(playbook, &edge.to, &source.harness, &source.model) else {
-        return CompletionDecision::Reject(CompletionRejectReason::MissingTargetStep);
-    };
-    CompletionDecision::CreateNext(AutoAdvanceCreate {
-        edge_key,
-        from_phase: source.phase.clone(),
-        to_phase: edge.to,
-        artifact: if source.artifact.is_empty() {
-            source_step.artifact.clone()
-        } else {
-            source.artifact.clone()
-        },
-        harness,
-        model,
-    })
-}
-
-pub fn next_step_session_exists(repo: &Path, slug: &str, playbook: &str, to_phase: &str) -> bool {
-    let dir = sessions_dir(repo, slug);
-    let Ok(entries) = fs::read_dir(dir) else {
-        return false;
-    };
-    entries
-        .flatten()
-        // #119 T0-1: only session metas — never open `.scrollback` sidecars (MB-sized) or
-        // atomic-write `.tmp.*` leftovers on the every-2s reconciler path.
-        .filter(|e| e.file_name().to_str().is_some_and(|n| n.ends_with(".meta.json")))
-        .any(|e| {
-            let Ok(s) = fs::read_to_string(e.path()) else {
-                return false;
-            };
-            let Ok(meta) = serde_json::from_str::<SessionMeta>(&s) else {
-                return false;
-            };
-            let meta_playbook = meta.playbook.as_str();
-            meta_playbook == playbook && meta.phase == to_phase
-        })
-}
 
 #[cfg(test)]
 mod tests {
@@ -1752,27 +1345,6 @@ mod tests {
         std::env::temp_dir().join(format!("{name}_{}_{}_{}", std::process::id(), nanos, seq))
     }
 
-    fn write_test_task(repo: &Path, slug: &str, playbook: &str, archived: bool, worktree: &str) {
-        let task = Task {
-            name: slug.to_string(),
-            slug: slug.to_string(),
-            branch: slug.to_string(),
-            worktree: worktree.to_string(),
-            has_worktree: !worktree.is_empty(),
-            created: 1,
-            archived,
-            playbook: playbook.to_string(),
-            auto_advance: vec!["questions_to_research".into(), "research_to_design".into(), "implementation_to_pr".into()],
-            ..Default::default()
-        };
-        if !worktree.is_empty() && !Path::new(worktree).exists() {
-            fs::create_dir_all(worktree).unwrap();
-        }
-        let dir = crate::task::task_dir(repo, slug);
-        fs::create_dir_all(dir.join("artifacts")).unwrap();
-        fs::create_dir_all(dir.join("sessions")).unwrap();
-        fs::write(dir.join("task.md"), toml::to_string(&task).unwrap()).unwrap();
-    }
 
     #[test]
     fn read_meta_harness_model_missing_file_returns_none() {
@@ -1848,10 +1420,6 @@ mod tests {
         assert_eq!(overrides.defaults.harness, None);
     }
 
-    #[test]
-    fn default_harness_key_is_omp_for_new_mints() {
-        assert_eq!(DEFAULT_HARNESS_KEY, "omp");
-    }
 
     #[test]
     fn missing_session_meta_harness_is_not_inferred() {
@@ -1867,7 +1435,7 @@ mod tests {
     #[test]
     fn missing_harness_field_on_disk_is_not_inferred() {
         let repo = unique_temp("alinery_missing_harness_field");
-        write_test_task(&repo, "t", "superdevelop", false, "");
+        fs::create_dir_all(sessions_dir(&repo, "t")).unwrap();
         fs::write(session_meta_path(&repo, "t", "pre-m4"), r#"{"id":"pre-m4","worktree":"/tmp/wt","created":1}"#).unwrap();
         let launch = read_meta_launch_fields(&repo, "t", "pre-m4").expect("meta exists");
         assert_eq!(launch.harness, "");
@@ -1954,302 +1522,6 @@ adapter = "unsupported"
         assert_eq!(explicit_json["generic"], serde_json::json!(true));
     }
 
-    #[test]
-    fn no_harness_entry_is_labeled_terminal() {
-        let terminal = no_harness_entry();
-        assert_eq!(terminal.key, NO_HARNESS_KEY);
-        assert_eq!(terminal.name, "Terminal");
-    }
-
-    #[test]
-    fn task_artifact_reservations_span_playbooks_before_files_exist() {
-        let repo = unique_temp("alinery_cross_playbook_artifact_reservation");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, "/tmp/worktree");
-
-        let mut playbooks: PlaybookFile = toml::from_str(DEFAULT_PLAYBOOKS_TOML).unwrap();
-        playbooks.playbooks.get_mut("one-shot").unwrap().step.get_mut("implementation").unwrap().artifact = "06-build.md".into();
-        fs::write(playbooks_toml_path(&repo), toml::to_string_pretty(&playbooks).unwrap()).unwrap();
-
-        let first = next_session_artifact_name(&repo, "task", "superdevelop", "implementation").unwrap();
-        assert_eq!(first, "06-build.md");
-        let reservation = SessionMeta {
-            id: "reserved-superdevelop".into(),
-            worktree: "/tmp/worktree".into(),
-            created: 1,
-            phase: "implementation".into(),
-            harness: "omp".into(),
-            playbook: "superdevelop".into(),
-            artifact: first,
-            ..Default::default()
-        };
-        fs::write(
-            sessions_dir(&repo, "task").join("reserved-superdevelop.meta.json"),
-            serde_json::to_string(&reservation).unwrap(),
-        )
-        .unwrap();
-
-        let second = next_session_artifact_name(&repo, "task", "one-shot", "implementation").unwrap();
-        assert_eq!(second, "06-build-002.md");
-        assert!(!artifacts_dir(&repo, "task").join("06-build.md").exists());
-
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn playbook_defaults_parse_with_five_builtins() {
-        let f: PlaybookFile = toml::from_str(DEFAULT_PLAYBOOKS_TOML).unwrap();
-        assert_eq!(f.playbook_order, vec!["superdevelop", "one-shot", "free-form", "review", "bug-hunting"]);
-        assert_eq!(
-            f.playbooks.keys().cloned().collect::<Vec<_>>(),
-            vec!["bug-hunting", "free-form", "one-shot", "review", "superdevelop"]
-        );
-        assert_eq!(
-            f.playbooks["superdevelop"].steps,
-            vec!["research-questions", "research", "design", "structure", "tdd", "implementation", "pr"]
-        );
-        assert!(!f.playbooks["superdevelop"].auto_advance.is_empty());
-        assert!(f.playbooks["one-shot"].auto_advance.is_empty());
-        assert!(f.playbooks["free-form"].auto_advance.is_empty());
-        let review_edges = &f.playbooks["review"].auto_advance;
-        assert_eq!(review_edges.keys().cloned().collect::<Vec<_>>(), vec!["checks_to_findings", "context_to_checks"]);
-        assert!(!review_edges.values().any(|edge| edge.from == "review-findings" && edge.to == "review-response"));
-
-        let bug_hunting = &f.playbooks["bug-hunting"];
-        assert_eq!(bug_hunting.steps, vec!["rca", "solutions", "design", "implementation", "pr"]);
-        for (step, prompt) in [
-            ("rca", "playbooks/bug-hunting/01-rca.md"),
-            ("solutions", "playbooks/bug-hunting/02-solutions.md"),
-            ("design", "playbooks/bug-hunting/03-design.md"),
-            ("implementation", "playbooks/bug-hunting/04-implementation.md"),
-            ("pr", "playbooks/bug-hunting/05-pr.md"),
-        ] {
-            let s = &bug_hunting.step[step];
-            assert_eq!(s.prompt, prompt);
-            assert!(
-                DEFAULT_PLAYBOOK_PROMPTS.iter().any(|(rel, _)| *rel == prompt),
-                "{prompt} must be bundled in DEFAULT_PLAYBOOK_PROMPTS"
-            );
-            assert!(bug_hunting.columns.contains(&s.column));
-        }
-        let bh_edges = &bug_hunting.auto_advance;
-        assert_eq!(bh_edges.keys().cloned().collect::<Vec<_>>(), vec!["implementation_to_pr", "rca_to_solutions"]);
-        assert!(bh_edges.values().all(|edge| edge.default_enabled));
-    }
-
-    #[test]
-    fn bundled_playbooks_contain_no_harness_fields() {
-        assert!(!DEFAULT_PLAYBOOKS_TOML.contains("default_harness"), "bundled playbooks must not specify a harness");
-        for line in DEFAULT_PLAYBOOKS_TOML.lines() {
-            let trimmed = line.trim();
-            assert!(!trimmed.starts_with("harness ="), "bundled playbooks must not specify a step harness: {trimmed}");
-        }
-    }
-
-    #[test]
-    fn prepare_session_meta_ignores_leftover_step_harness() {
-        let repo = unique_temp("alinery_prepare_ignore_step");
-        let wt = repo.join("wt");
-        fs::create_dir_all(&wt).unwrap();
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, wt.to_str().unwrap());
-        let mut playbooks = load_playbooks(&repo);
-        playbooks.playbooks.get_mut("superdevelop").unwrap().step.get_mut("research").unwrap().harness = "codex".into();
-        fs::write(playbooks_toml_path(&repo), toml::to_string_pretty(&playbooks).unwrap()).unwrap();
-        let app_config = repo.join("missing-app.toml");
-        let meta = prepare_session_meta(
-            &app_config,
-            &repo,
-            &CreateSessionInput {
-                task_slug: "task".into(),
-                phase: "research".into(),
-                harness: String::new(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(meta.harness, "omp");
-        assert_eq!(resolve_harness_strict_for(&app_config, &repo, &meta.harness).unwrap().key, "omp");
-        let empty = prepare_session_meta(
-            &app_config,
-            &repo,
-            &CreateSessionInput {
-                task_slug: "task".into(),
-                phase: "research".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(empty.harness, "omp");
-        let _ = fs::remove_dir_all(&repo);
-    }
-
-    #[test]
-    fn prepare_session_meta_keeps_explicit_no_harness() {
-        let repo = unique_temp("alinery_prepare_terminal");
-        let wt = repo.join("wt");
-        fs::create_dir_all(&wt).unwrap();
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, wt.to_str().unwrap());
-        let app_config = repo.join("missing-app.toml");
-        let meta = prepare_session_meta(
-            &app_config,
-            &repo,
-            &CreateSessionInput {
-                task_slug: "task".into(),
-                generic: true,
-                harness: NO_HARNESS_KEY.into(),
-                model: "opus".into(),
-                phase: "research".into(),
-                ..Default::default()
-            },
-        )
-        .expect_err("generic rejects phase");
-        assert!(meta.contains("generic sessions do not accept a phase"), "{meta}");
-        let meta = prepare_session_meta(
-            &app_config,
-            &repo,
-            &CreateSessionInput {
-                task_slug: "task".into(),
-                generic: true,
-                harness: NO_HARNESS_KEY.into(),
-                model: "opus".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(meta.harness, NO_HARNESS_KEY);
-        assert!(meta.phase.is_empty());
-        assert!(meta.model.is_empty());
-        let err = prepare_session_meta(
-            &app_config,
-            &repo,
-            &CreateSessionInput {
-                task_slug: "task".into(),
-                generic: true,
-                harness: NO_HARNESS_KEY.into(),
-                prompt_extra: "nope".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap_err();
-        assert!(err.contains("no-harness cannot deliver prompt_extra"), "{err}");
-        let _ = fs::remove_dir_all(&repo);
-    }
-
-    #[test]
-    fn prepare_session_meta_rejects_leftover_caller_key() {
-        let repo = unique_temp("alinery_prepare_leftover_caller");
-        let wt = repo.join("wt");
-        fs::create_dir_all(&wt).unwrap();
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, wt.to_str().unwrap());
-        let err = prepare_session_meta(
-            &repo.join("missing-app.toml"),
-            &repo,
-            &CreateSessionInput {
-                task_slug: "task".into(),
-                phase: "research".into(),
-                harness: "claude".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap_err();
-        assert!(err.contains("unknown harness"), "{err}");
-        let _ = fs::remove_dir_all(&repo);
-    }
-
-    #[test]
-    fn bundled_playbook_defaults_omit_distill_step() {
-        let file: PlaybookFile = toml::from_str(DEFAULT_PLAYBOOKS_TOML).unwrap();
-
-        for playbook_key in ["superdevelop", "one-shot", "review"] {
-            let playbook = &file.playbooks[playbook_key];
-            assert!(!playbook.steps.iter().any(|step| step == "distill-to-wiki"));
-            assert!(!playbook.column["review"].steps.iter().any(|step| step == "distill-to-wiki"));
-            assert!(!playbook.step.contains_key("distill-to-wiki"));
-        }
-    }
-
-    #[test]
-    fn ordered_auto_advance_edges_follows_step_order_not_key_order() {
-        let f: PlaybookFile = toml::from_str(DEFAULT_PLAYBOOKS_TOML).unwrap();
-        let superdevelop = &f.playbooks["superdevelop"];
-        // Raw BTreeMap iteration is alphabetical by key, which does NOT match phase order
-        // (e.g. "implementation_to_pr" < "questions_to_research" alphabetically, even though
-        // implementation comes after research in the actual SuperDevelop flow).
-        let raw_keys: Vec<&str> = superdevelop.auto_advance.keys().map(std::string::String::as_str).collect();
-        assert_ne!(
-            raw_keys,
-            vec![
-                "questions_to_research",
-                "research_to_design",
-                "structure_to_tdd",
-                "tdd_to_implementation",
-                "implementation_to_pr",
-            ]
-        );
-
-        let ordered_keys: Vec<&str> = ordered_auto_advance_edges(superdevelop).into_iter().map(|(k, _)| k.as_str()).collect();
-        assert_eq!(
-            ordered_keys,
-            vec![
-                "questions_to_research",
-                "research_to_design",
-                "structure_to_tdd",
-                "tdd_to_implementation",
-                "implementation_to_pr",
-            ]
-        );
-    }
-
-    #[test]
-    fn ensure_playbooks_preserves_unknown_fields_and_is_idempotent() {
-        let repo = unique_temp("alinery_playbook_unknown_field_preservation");
-        let _ = fs::remove_dir_all(&repo);
-        let alinery = repo.join(".alinery");
-        fs::create_dir_all(&alinery).unwrap();
-        let toml_path = alinery.join("playbooks.toml");
-        fs::write(
-            &toml_path,
-            r#"version = 1
-default = "superdevelop"
-playbook_order = ["superdevelop"]
-unknown_root = "keep"
-
-[playbooks.superdevelop]
-steps = ["implementation", "distill-to-wiki", "pr"]
-unknown_playbook = "keep"
-[playbooks.superdevelop.column.review]
-steps = ["distill-to-wiki", "pr"]
-unknown_column = "keep"
-[playbooks.superdevelop.step.implementation]
-title = "Implementation"
-custom_step = "keep"
-[playbooks.superdevelop.step.distill-to-wiki]
-title = "Distill to Wiki"
-
-[custom_table]
-unknown = "keep"
-"#,
-        )
-        .unwrap();
-
-        ensure_playbooks(&repo).unwrap();
-        let after_first = fs::read_to_string(&toml_path).unwrap();
-        let document: toml::Value = toml::from_str(&after_first).unwrap();
-        assert_eq!(document["unknown_root"].as_str(), Some("keep"));
-        assert_eq!(document["playbooks"]["superdevelop"]["unknown_playbook"].as_str(), Some("keep"));
-        assert_eq!(document["playbooks"]["superdevelop"]["column"]["review"]["unknown_column"].as_str(), Some("keep"));
-        assert_eq!(document["playbooks"]["superdevelop"]["step"]["implementation"]["custom_step"].as_str(), Some("keep"));
-        assert_eq!(document["custom_table"]["unknown"].as_str(), Some("keep"));
-
-        ensure_playbooks(&repo).unwrap();
-        assert_eq!(fs::read_to_string(&toml_path).unwrap(), after_first);
-
-        let _ = fs::remove_dir_all(repo);
-    }
 
     #[test]
     fn playbook_prompt_substitution_replaces_all_tokens() {
@@ -2278,326 +1550,55 @@ unknown = "keep"
     }
 
     #[test]
-    fn playbook_unknown_step_errors_instead_of_unseeded_prompt() {
-        let repo = unique_temp("alinery_playbook_unknown");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        let artifacts = PathBuf::from("/tmp/artifacts");
-        let history = PathBuf::from("/tmp/sessions");
-        let ticket = artifacts.join("00-ticket.md");
-        let artifact = artifacts.join("bogus.md");
+    fn playbook_prompt_substitution_preserves_literal_tokens() {
         let vars = PromptVars {
-            artifacts_dir: &artifacts,
-            artifact_file: &artifact,
+            artifacts_dir: Path::new("/tmp/artifacts"),
+            artifact_file: Path::new("/tmp/artifacts/result.md"),
             review_handoff_file: None,
             prompt_extra: "",
-            session_history_dir: &history,
-            task_name: "T",
-            task_slug: "t",
-            worktree: "/tmp/w",
-            playbook_key: "superdevelop",
-            phase_key: "bogus",
-            phase_title: "Bogus",
-            ticket_file: &ticket,
-        };
-        let err = resolve_playbook_step_prompt(&repo, "superdevelop", "bogus", &vars).unwrap_err();
-        assert!(err.contains("unknown playbook step 'bogus'"));
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn auto_advance_selected_edge_lookup_ignores_default_enabled_runtime() {
-        let mut playbook = Playbook::default();
-        playbook.auto_advance.insert(
-            "selected_false_default".into(),
-            AutoAdvanceEdge {
-                title: "Selected Edge".into(),
-                from: "source".into(),
-                to: "target".into(),
-                default_enabled: false,
-            },
-        );
-        let task = Task {
-            auto_advance: vec!["selected_false_default".into()],
-            ..Default::default()
-        };
-        let (key, edge) = find_enabled_auto_edge(&task, &playbook, "source").unwrap();
-        assert_eq!(key, "selected_false_default");
-        assert_eq!(edge.to, "target");
-    }
-
-    #[test]
-    fn auto_advance_review_edges_are_default_selected() {
-        let wf: PlaybookFile = toml::from_str(DEFAULT_PLAYBOOKS_TOML).unwrap();
-        let review = &wf.playbooks["review"];
-        let context_to_checks = review
-            .auto_advance
-            .get("context_to_checks")
-            .expect("review playbook exposes context_to_checks auto-advance edge");
-        assert_eq!(context_to_checks.from, "review-context");
-        assert_eq!(context_to_checks.to, "review-checks");
-        assert!(context_to_checks.default_enabled);
-
-        let checks_to_findings = review
-            .auto_advance
-            .get("checks_to_findings")
-            .expect("review playbook exposes checks_to_findings auto-advance edge");
-        assert_eq!(checks_to_findings.from, "review-checks");
-        assert_eq!(checks_to_findings.to, "review-findings");
-        assert!(checks_to_findings.default_enabled);
-
-        assert!(!review.auto_advance.values().any(|edge| edge.from == "review-findings" && edge.to == "review-response"));
-
-        let task = Task {
-            auto_advance: vec!["questions_to_research".into()],
-            ..Default::default()
-        };
-        let (key, edge) = find_enabled_auto_edge(&task, &wf.playbooks["superdevelop"], "research-questions").unwrap();
-        assert_eq!(key, "questions_to_research");
-        assert_eq!(edge.to, "research");
-    }
-
-    #[test]
-    fn auto_advance_duplicate_next_session_prevention() {
-        let repo = unique_temp("alinery_next_exists");
-        let slug = "task";
-        let dir = sessions_dir(&repo, slug);
-        fs::create_dir_all(&dir).unwrap();
-        let meta = SessionMeta {
-            id: "s2".into(),
-            created: 20,
-            phase: "research".into(),
-            playbook: "superdevelop".into(),
-            archived: true,
-            ..Default::default()
-        };
-        fs::write(dir.join("s2.meta.json"), serde_json::to_string(&meta).unwrap()).unwrap();
-        assert!(next_step_session_exists(&repo, slug, "superdevelop", "research"));
-        assert!(!next_step_session_exists(&repo, slug, "superdevelop", "design"));
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    /// T0-1: non-meta sidecars must not be opened/parsed. A `.scrollback` (and a
-    /// real-shape atomic tmp leftover) whose *body* is valid SessionMeta JSON for
-    /// the target phase would make the predicate true today — after the
-    /// `ends_with(".meta.json")` filter it must stay false.
-    #[test]
-    fn next_step_session_exists_ignores_scrollback_and_atomic_tmp() {
-        let repo = unique_temp("alinery_next_exists_filter");
-        let slug = "task";
-        let dir = sessions_dir(&repo, slug);
-        fs::create_dir_all(&dir).unwrap();
-
-        let poison = SessionMeta {
-            id: "x".into(),
-            worktree: String::new(),
-            created: 1,
-            phase: "design".into(),
-            playbook: "superdevelop".into(),
-            ..Default::default()
-        };
-        let body = serde_json::to_string(&poison).unwrap();
-
-        // Content would match phase=design if read — must be ignored by name filter.
-        fs::write(dir.join("s9.scrollback"), &body).unwrap();
-        // Real atomic_tmp_path shape: with_extension replaces `.json` → `.meta.tmp.…`
-        fs::write(dir.join("s9.meta.tmp.4242.99.0"), &body).unwrap();
-
-        assert!(
-            !next_step_session_exists(&repo, slug, "superdevelop", "design"),
-            "scrollback/tmp leftovers must not count as a next-step session"
-        );
-
-        // Control: a real meta still counts (including archived — separate test pins that).
-        let real = SessionMeta {
-            id: "s-real".into(),
-            created: 2,
-            phase: "design".into(),
-            playbook: "superdevelop".into(),
-            ..Default::default()
-        };
-        fs::write(dir.join("s-real.meta.json"), serde_json::to_string(&real).unwrap()).unwrap();
-        assert!(next_step_session_exists(&repo, slug, "superdevelop", "design"));
-
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    fn auto_advance_playbook() -> Playbook {
-        let mut playbook = Playbook {
-            default_harness: DEFAULT_HARNESS_KEY.into(),
-            ..Default::default()
-        };
-        playbook.step.insert(
-            "source".into(),
-            crate::types::PlaybookStep {
-                artifact: "01-source.md".into(),
-                ..Default::default()
-            },
-        );
-        playbook.step.insert("target".into(), crate::types::PlaybookStep::default());
-        playbook.auto_advance.insert(
-            "source_to_target".into(),
-            AutoAdvanceEdge {
-                title: "Source → Target".into(),
-                from: "source".into(),
-                to: "target".into(),
-                default_enabled: true,
-            },
-        );
-        playbook
-    }
-
-    #[test]
-    fn auto_advance_resolve_harness_model_fallback_order() {
-        let mut playbook = auto_advance_playbook();
-        playbook.default_harness = "playbook-default".into();
-        playbook.step.get_mut("target").unwrap().harness = "codex".into();
-        assert_eq!(
-            resolve_auto_advance_harness_model(&playbook, "target", "grok", "opus"),
-            Some((DEFAULT_HARNESS_KEY.into(), "opus".into()))
-        );
-
-        playbook.step.get_mut("target").unwrap().harness.clear();
-        assert_eq!(
-            resolve_auto_advance_harness_model(&playbook, "target", "grok", "opus"),
-            Some((DEFAULT_HARNESS_KEY.into(), "opus".into()))
-        );
-        assert_eq!(
-            resolve_auto_advance_harness_model(&playbook, "target", "", "opus"),
-            Some((DEFAULT_HARNESS_KEY.into(), "opus".into()))
-        );
-
-        playbook.default_harness.clear();
-        assert_eq!(
-            resolve_auto_advance_harness_model(&playbook, "target", "", "opus"),
-            Some((DEFAULT_HARNESS_KEY.into(), "opus".into()))
-        );
-        assert_eq!(resolve_auto_advance_harness_model(&playbook, "missing", "grok", "opus"), None);
-
-        playbook.step.get_mut("target").unwrap().harness = NO_HARNESS_KEY.into();
-        assert_eq!(
-            resolve_auto_advance_harness_model(&playbook, "target", "grok", "opus"),
-            Some((DEFAULT_HARNESS_KEY.into(), "opus".into()))
-        );
-    }
-
-    #[test]
-    fn auto_advance_from_leftover_always_mints_omp() {
-        let mut playbook = auto_advance_playbook();
-        playbook.default_harness = "claude".into();
-        playbook.step.get_mut("target").unwrap().harness = "codex".into();
-        assert_eq!(
-            resolve_auto_advance_harness_model(&playbook, "target", "claude", "opus"),
-            Some(("omp".into(), "opus".into()))
-        );
-        playbook.step.get_mut("target").unwrap().harness.clear();
-        assert_eq!(
-            resolve_auto_advance_harness_model(&playbook, "target", "codex", "opus"),
-            Some(("omp".into(), "opus".into()))
-        );
-        assert_eq!(resolve_auto_advance_harness_model(&playbook, "missing", "claude", "opus"), None);
-    }
-
-    #[test]
-    fn ensure_playbooks_preserves_custom_superdevelop_prompts() {
-        let repo = unique_temp("alinery_custom_prompt_preservation");
-        let prompt_dir = repo.join(".alinery/playbooks/superdevelop");
-        let design_prompt = "custom design prompt that must survive byte-for-byte";
-        let structure_prompt = "custom structure prompt that must survive byte-for-byte";
-        let _ = fs::remove_dir_all(&repo);
-        fs::create_dir_all(&prompt_dir).unwrap();
-        fs::write(prompt_dir.join("03-decide.md"), design_prompt).unwrap();
-        fs::write(prompt_dir.join("04-plan.md"), structure_prompt).unwrap();
-
-        ensure_playbooks(&repo).unwrap();
-
-        assert_eq!(fs::read_to_string(prompt_dir.join("03-decide.md")).unwrap(), design_prompt);
-        assert_eq!(fs::read_to_string(prompt_dir.join("04-plan.md")).unwrap(), structure_prompt);
-
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn playbook_structure_prompt_resolves_comment_aware_instructions() {
-        let repo = unique_temp("alinery_structure_prompt_resolution");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-
-        let artifacts = PathBuf::from("/tmp/artifacts");
-        let history = PathBuf::from("/tmp/sessions");
-        let ticket = artifacts.join("00-ticket.md");
-        let artifact = artifacts.join("04-structure.md");
-        let vars = PromptVars {
-            artifacts_dir: &artifacts,
-            artifact_file: &artifact,
-            review_handoff_file: None,
-            prompt_extra: "",
-            session_history_dir: &history,
-            task_name: "Task Name",
-            task_slug: "task-name",
+            session_history_dir: Path::new("/tmp/sessions"),
+            task_name: "{{TASK_SLUG}}",
+            task_slug: "actual-slug",
             worktree: "/tmp/worktree",
-            playbook_key: "superdevelop",
-            phase_key: "structure",
-            phase_title: "Structure",
-            ticket_file: &ticket,
+            playbook_key: "fixture",
+            phase_key: "build",
+            phase_title: "Build",
+            ticket_file: Path::new("/tmp/artifacts/00-ticket.md"),
         };
-
-        let prompt = resolve_playbook_step_prompt(&repo, "superdevelop", "structure", &vars).unwrap().unwrap();
-        assert!(prompt.contains("relevant prior artifacts"));
-        assert!(prompt.contains("Do not assume a filename suffix"));
-        assert!(!prompt.contains("{{ARTIFACTS_DIR}}"));
-
-        let _ = fs::remove_dir_all(repo);
+        let actual = substitute_prompt_tokens(r"\{{TASK_SLUG}} | {{TASK_NAME}} | {{TASK_SLUG}}", &vars);
+        assert_eq!(actual, "{{TASK_SLUG}} | {{TASK_SLUG}} | actual-slug");
     }
+
+    #[test]
+    fn playbook_prompt_extra_is_inserted_once_without_expanding_literals() {
+        let extra = r"Unicode λ and \{{TASK_SLUG}}";
+        assert_eq!(
+            compose_prompt_extra(r"\{{PROMPT_EXTRA}} / {{PROMPT_EXTRA}} / {{PROMPT_EXTRA}}", extra),
+            format!("{{{{PROMPT_EXTRA}}}} / {extra} / ")
+        );
+        assert_eq!(
+            compose_prompt_extra(r"Only \{{PROMPT_EXTRA}} and {{unfinished", extra),
+            format!("Only {{{{PROMPT_EXTRA}}}} and {{{{unfinished\n\nAdditional instructions:\n{extra}")
+        );
+        assert_eq!(compose_prompt_extra(r"\{{PROMPT_EXTRA}} / {{PROMPT_EXTRA}}", ""), "{{PROMPT_EXTRA}} / ");
+    }
+
 
     #[test]
     fn artifact_filename_rejects_traversal() {
-        for bad in ["", ".", "..", "../x.md", "nested/x.md", "/tmp/x.md", "nested\\x.md"] {
+        for bad in ["", ".", "..", "../x.md", "nested/../x.md", "/tmp/x.md", "nested\\x.md"] {
             assert!(validate_artifact_filename(bad).is_err(), "{bad} should reject");
         }
         assert_eq!(validate_artifact_filename("03-design.md").unwrap(), "03-design.md");
         assert_eq!(validate_artifact_filename("review-handoff-001.md").unwrap(), "review-handoff-001.md");
     }
 
-    #[test]
-    fn next_session_artifact_name_uses_base_then_suffixes() {
-        let repo = unique_temp("alinery_artifact_suffix");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, "/tmp/wt");
-        assert_eq!(next_session_artifact_name(&repo, "task", "superdevelop", "design").unwrap(), "03-decide.md");
-        fs::write(artifacts_dir(&repo, "task").join("03-decide.md"), "one").unwrap();
-        assert_eq!(next_session_artifact_name(&repo, "task", "superdevelop", "design").unwrap(), "03-decide-002.md");
-        fs::write(artifacts_dir(&repo, "task").join("03-decide-002.md"), "two").unwrap();
-        assert_eq!(next_session_artifact_name(&repo, "task", "superdevelop", "design").unwrap(), "03-decide-003.md");
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn next_session_artifact_name_counts_unwritten_session_meta() {
-        let repo = unique_temp("alinery_artifact_reserved");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, "/tmp/wt");
-        let meta = SessionMeta {
-            id: "s1".into(),
-            worktree: "/tmp/wt".into(),
-            created: 1,
-            phase: "implementation".into(),
-            playbook: "superdevelop".into(),
-            artifact: "06-build.md".into(),
-            ..Default::default()
-        };
-        fs::write(sessions_dir(&repo, "task").join("s1.meta.json"), serde_json::to_string(&meta).unwrap()).unwrap();
-        assert_eq!(next_session_artifact_name(&repo, "task", "superdevelop", "implementation").unwrap(), "06-build-002.md");
-        let _ = fs::remove_dir_all(repo);
-    }
 
     #[test]
     fn list_artifacts_with_metadata_flags_attachments() {
         let repo = unique_temp("alinery_attachment_flag");
         let _ = fs::remove_dir_all(&repo);
-        write_test_task(&repo, "task", "superdevelop", false, "/tmp/wt");
+        fs::create_dir_all(artifacts_dir(&repo, "task")).unwrap();
         fs::write(artifacts_dir(&repo, "task").join("01-a.md"), "a").unwrap();
         let attach = artifacts_dir(&repo, "task").join("attachments");
         fs::create_dir_all(&attach).unwrap();
@@ -2617,7 +1618,7 @@ unknown = "keep"
     fn visible_artifact_names_ignores_attachment_and_subtask_directories() {
         let repo = unique_temp("alinery_attachment_invisible");
         let _ = fs::remove_dir_all(&repo);
-        write_test_task(&repo, "task", "superdevelop", false, "/tmp/wt");
+        fs::create_dir_all(artifacts_dir(&repo, "task")).unwrap();
         fs::write(artifacts_dir(&repo, "task").join("01-a.md"), "a").unwrap();
         let attach = artifacts_dir(&repo, "task").join("attachments");
         fs::create_dir_all(&attach).unwrap();
@@ -2636,7 +1637,7 @@ unknown = "keep"
     fn attachment_items_are_newest_first() {
         let repo = unique_temp("alinery_attachment_order");
         let _ = fs::remove_dir_all(&repo);
-        write_test_task(&repo, "task", "superdevelop", false, "/tmp/wt");
+        fs::create_dir_all(artifacts_dir(&repo, "task")).unwrap();
         let attach = artifacts_dir(&repo, "task").join("attachments");
         fs::create_dir_all(&attach).unwrap();
         for name in ["oldest.log", "middle.log", "newest.log"] {
@@ -2654,7 +1655,7 @@ unknown = "keep"
     fn next_review_handoff_artifact_name_is_numbered() {
         let repo = unique_temp("alinery_handoff_numbered");
         let _ = fs::remove_dir_all(&repo);
-        write_test_task(&repo, "target", "superdevelop", false, "/tmp/wt");
+        fs::create_dir_all(artifacts_dir(&repo, "target")).unwrap();
         assert_eq!(next_review_handoff_artifact_name(&repo, "target").unwrap(), "review-handoff-001.md");
         fs::write(artifacts_dir(&repo, "target").join("review-handoff-001.md"), "one").unwrap();
         assert_eq!(next_review_handoff_artifact_name(&repo, "target").unwrap(), "review-handoff-002.md");
@@ -2680,6 +1681,8 @@ unknown = "keep"
         let record = ReviewHandoffRecord {
             version: 1,
             direction: "inbound".into(),
+            source_repo_path: "/repos/source".into(),
+            target_repo_path: "/repos/target".into(),
             source_task: "review".into(),
             source_session: "s1".into(),
             source_artifact: "03-review-findings.md".into(),
@@ -2694,132 +1697,6 @@ unknown = "keep"
         assert_eq!(back, record);
     }
 
-    #[test]
-    fn create_session_meta_matches_tauri_defaults() {
-        let repo = unique_temp("alinery_create_session_meta");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, "/tmp/wt");
-        let meta = create_session_meta(
-            &repo,
-            CreateSessionInput {
-                task_slug: "task".into(),
-                phase: "research".into(),
-                harness: "omp".into(),
-                model: String::new(),
-                daemon_namespace: "ns".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(meta.phase, "research");
-        assert_eq!(meta.harness, "omp");
-        assert_eq!(meta.playbook, "superdevelop");
-        assert_eq!(meta.artifact, "02-investigate.md");
-        assert_eq!(meta.daemon_namespace, "ns");
-        assert!(sessions_dir(&repo, "task").join(format!("{}.meta.json", meta.id)).exists());
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn create_session_meta_uses_explicit_external_playbook() {
-        let repo = unique_temp("alinery_external_playbook_session");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, "/tmp/wt");
-        let mut playbooks: PlaybookFile = toml::from_str(&fs::read_to_string(playbooks_toml_path(&repo)).unwrap()).unwrap();
-        let step = playbooks.playbooks.get_mut("one-shot").unwrap().step.get_mut("implementation").unwrap();
-        step.harness = "codex".into();
-        step.artifact = "external-implementation.md".into();
-        fs::write(playbooks_toml_path(&repo), toml::to_string_pretty(&playbooks).unwrap()).unwrap();
-
-        let meta = create_session_meta(
-            &repo,
-            CreateSessionInput {
-                task_slug: "task".into(),
-                playbook: "one-shot".into(),
-                phase: "implementation".into(),
-                harness: "omp".into(),
-                model: "selected-model".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(meta.playbook, "one-shot");
-        assert_eq!(meta.phase, "implementation");
-        assert!(!meta.generic);
-        assert_eq!(meta.harness, "omp");
-        assert_eq!(meta.model, "selected-model");
-        assert_eq!(meta.artifact, "external-implementation.md");
-
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn create_session_meta_validates_phase_in_selected_playbook() {
-        let repo = unique_temp("alinery_external_playbook_validation");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, "/tmp/wt");
-
-        let error = create_session_meta(
-            &repo,
-            CreateSessionInput {
-                task_slug: "task".into(),
-                playbook: "one-shot".into(),
-                phase: "research".into(),
-                harness: "omp".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap_err();
-        assert_eq!(error, "unknown step 'research' for playbook 'one-shot'");
-        let terminal_error = create_session_meta(
-            &repo,
-            CreateSessionInput {
-                task_slug: "task".into(),
-                playbook: "one-shot".into(),
-                phase: "research".into(),
-                harness: NO_HARNESS_KEY.into(),
-                ..Default::default()
-            },
-        )
-        .unwrap_err();
-        assert_eq!(terminal_error, "unknown step 'research' for playbook 'one-shot'");
-
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn create_session_meta_rejects_removed_distill_steps() {
-        let repo = unique_temp("alinery_removed_distill_step_validation");
-        let worktree = repo.join("worktree");
-        let _ = fs::remove_dir_all(&repo);
-        fs::create_dir_all(&worktree).unwrap();
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, worktree.to_str().unwrap());
-
-        for phase in ["distill-to-wiki", "wiki-distill"] {
-            for harness in ["claude", NO_HARNESS_KEY] {
-                let error = create_session_meta_for(
-                    &repo.join("app.toml"),
-                    &repo,
-                    CreateSessionInput {
-                        task_slug: "task".into(),
-                        phase: phase.into(),
-                        harness: harness.into(),
-                        ..Default::default()
-                    },
-                )
-                .unwrap_err();
-                assert_eq!(error, format!("unknown step '{phase}' for playbook 'superdevelop'"));
-            }
-        }
-        assert_eq!(fs::read_dir(sessions_dir(&repo, "task")).map(|entries| entries.count()).unwrap_or(0), 0);
-        assert!(visible_artifact_names(&repo, "task").unwrap().is_empty());
-
-        let _ = fs::remove_dir_all(repo);
-    }
 
     #[test]
     fn prompt_extra_composer_repairs_placeholder_counts_without_reprocessing_extra() {
@@ -2835,852 +1712,6 @@ unknown = "keep"
         assert_eq!(compose_prompt_extra("before {{PROMPT_EXTRA}} after", ""), "before  after");
     }
 
-    #[test]
-    fn create_session_meta_generic_clears_playbook_step_facts() {
-        let repo = unique_temp("alinery_generic_session");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, "/tmp/wt");
-
-        let agent = create_session_meta(
-            &repo,
-            CreateSessionInput {
-                task_slug: "task".into(),
-                generic: true,
-                harness: "omp".into(),
-                model: "sonnet".into(),
-                artifact: "ignored.md".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(agent.playbook, "superdevelop");
-        assert!(agent.generic);
-        assert_eq!(agent.phase, "");
-        assert_eq!(agent.artifact, "");
-        assert_eq!(agent.harness, "omp");
-        assert_eq!(agent.model, "sonnet");
-
-        let terminal = create_session_meta(
-            &repo,
-            CreateSessionInput {
-                task_slug: "task".into(),
-                generic: true,
-                harness: NO_HARNESS_KEY.into(),
-                model: "ignored".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(terminal.playbook, "superdevelop");
-        assert!(terminal.generic);
-        assert_eq!(terminal.phase, "");
-        assert_eq!(terminal.artifact, "");
-        assert_eq!(terminal.harness, NO_HARNESS_KEY);
-        assert_eq!(terminal.model, "");
-
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn generic_prompt_appends_opaque_prompt_extra_exactly_once() {
-        let repo = unique_temp("alinery_generic_prompt_extra");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        let worktree = repo.join("worktree");
-        fs::create_dir_all(&worktree).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, worktree.to_str().unwrap());
-        let extra = "Preserve changes; keep {{PROMPT_EXTRA}} literal.";
-
-        let prompt = preview_session_prompt(
-            &repo,
-            CreateSessionInput {
-                task_slug: "task".into(),
-                generic: true,
-                harness: "omp".into(),
-                prompt_extra: extra.into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-
-        assert!(prompt.contains("Generic Alinery session"));
-        assert!(prompt.contains(&format!("Additional instructions:\n{extra}")));
-        assert_eq!(prompt.matches(extra).count(), 1);
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn generic_session_rejects_playbook_and_phase_before_writing() {
-        let repo = unique_temp("alinery_generic_argument_rejection");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        let worktree = repo.join("worktree");
-        fs::create_dir_all(&worktree).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, worktree.to_str().unwrap());
-
-        let playbook_error = create_session_meta(
-            &repo,
-            CreateSessionInput {
-                task_slug: "task".into(),
-                playbook: "one-shot".into(),
-                generic: true,
-                harness: "omp".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap_err();
-        assert!(playbook_error.contains("generic") && playbook_error.contains("playbook"));
-
-        let phase_error = create_session_meta(
-            &repo,
-            CreateSessionInput {
-                task_slug: "task".into(),
-                phase: "implementation".into(),
-                generic: true,
-                harness: "omp".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap_err();
-        assert!(phase_error.contains("generic") && phase_error.contains("phase"));
-        assert_eq!(fs::read_dir(sessions_dir(&repo, "task")).unwrap().count(), 0);
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn session_creation_rejects_undeliverable_prompt_extra_before_writing() {
-        let repo = unique_temp("alinery_no_harness_prompt_extra");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        let worktree = repo.join("worktree");
-        fs::create_dir_all(&worktree).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, worktree.to_str().unwrap());
-
-        let error = create_session_meta(
-            &repo,
-            CreateSessionInput {
-                task_slug: "task".into(),
-                harness: NO_HARNESS_KEY.into(),
-                prompt_extra: "must be delivered".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap_err();
-
-        assert!(error.contains("no-harness") && error.contains("prompt_extra"));
-        assert_eq!(fs::read_dir(sessions_dir(&repo, "task")).unwrap().count(), 0);
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn session_creation_rejects_unknown_harness_before_writing() {
-        let repo = unique_temp("alinery_unknown_harness_validation");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        let worktree = repo.join("worktree");
-        fs::create_dir_all(&worktree).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, worktree.to_str().unwrap());
-
-        let error = create_session_meta(
-            &repo,
-            CreateSessionInput {
-                task_slug: "task".into(),
-                phase: "research".into(),
-                harness: "not-registered".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap_err();
-
-        assert!(error.contains("unknown harness"));
-        assert_eq!(fs::read_dir(sessions_dir(&repo, "task")).unwrap().count(), 0);
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn session_creation_rejects_missing_worktree_before_writing() {
-        let repo = unique_temp("alinery_missing_worktree_validation");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, repo.join("missing").to_str().unwrap());
-        fs::remove_dir_all(repo.join("missing")).unwrap();
-
-        let error = create_session_meta(
-            &repo,
-            CreateSessionInput {
-                task_slug: "task".into(),
-                phase: "research".into(),
-                harness: "omp".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap_err();
-
-        assert!(error.contains("worktree"));
-        assert_eq!(fs::read_dir(sessions_dir(&repo, "task")).unwrap().count(), 0);
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn session_creation_rejects_unavailable_worktree_shapes_before_writing() {
-        let repo = unique_temp("alinery_worktree_shape_validation");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-
-        write_test_task(&repo, "none", "superdevelop", false, "");
-        let no_worktree = create_session_meta(
-            &repo,
-            CreateSessionInput {
-                task_slug: "none".into(),
-                phase: "research".into(),
-                harness: "omp".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap_err();
-        assert!(no_worktree.contains("worktree"));
-        assert_eq!(fs::read_dir(sessions_dir(&repo, "none")).unwrap().count(), 0);
-
-        let file = repo.join("worktree-file");
-        fs::write(&file, "not a directory").unwrap();
-        write_test_task(&repo, "file", "superdevelop", false, file.to_str().unwrap());
-        let file_worktree = create_session_meta(
-            &repo,
-            CreateSessionInput {
-                task_slug: "file".into(),
-                phase: "research".into(),
-                harness: "omp".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap_err();
-        assert!(file_worktree.contains("worktree"));
-        assert_eq!(fs::read_dir(sessions_dir(&repo, "file")).unwrap().count(), 0);
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn preview_session_prompt_resolves_playbook_and_generic_context() {
-        let repo = unique_temp("alinery_preview_session_prompt");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, "/tmp/task-worktree");
-
-        let playbook_prompt = preview_session_prompt(
-            &repo,
-            CreateSessionInput {
-                task_slug: "task".into(),
-                playbook: "one-shot".into(),
-                phase: "implementation".into(),
-                harness: "omp".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert!(playbook_prompt.contains("one-shot"));
-        assert!(playbook_prompt.contains(&artifacts_dir(&repo, "task").join("01-implementation.md").display().to_string()));
-
-        let generic_prompt = preview_session_prompt(
-            &repo,
-            CreateSessionInput {
-                task_slug: "task".into(),
-                generic: true,
-                harness: "omp".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        for expected in [
-            "Generic Alinery session",
-            "Task playbook: superdevelop",
-            "/tmp/task-worktree",
-            &artifacts_dir(&repo, "task").display().to_string(),
-            &sessions_dir(&repo, "task").display().to_string(),
-            &artifacts_dir(&repo, "task").join("00-ticket.md").display().to_string(),
-        ] {
-            assert!(generic_prompt.contains(expected), "missing {expected}");
-        }
-
-        let terminal_prompt = preview_session_prompt(
-            &repo,
-            CreateSessionInput {
-                task_slug: "task".into(),
-                generic: true,
-                harness: NO_HARNESS_KEY.into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert!(terminal_prompt.is_empty());
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn persisted_prompt_is_the_exact_fresh_spawn_prompt() {
-        let repo = unique_temp("alinery_prompt_override");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, "/tmp/wt");
-
-        let create = |prompt: Option<&str>| {
-            create_session_meta(
-                &repo,
-                CreateSessionInput {
-                    task_slug: "task".into(),
-                    phase: "research".into(),
-                    harness: "omp".into(),
-                    prompt: prompt.map(str::to_string),
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-        };
-
-        let derived = create(None);
-        assert_eq!(derived.prompt, None);
-        let launch = read_meta_launch_fields(&repo, "task", &derived.id).unwrap();
-        assert!(resolve_launch_prompt(&repo, &launch).unwrap().is_some());
-
-        let exact = "  exact\n✓  ";
-        let overridden = create(Some(exact));
-        assert_eq!(overridden.prompt.as_deref(), Some(exact));
-        let launch = read_meta_launch_fields(&repo, "task", &overridden.id).unwrap();
-        assert_eq!(resolve_launch_prompt(&repo, &launch).unwrap().as_deref(), Some(exact));
-
-        let empty = create(Some(""));
-        assert_eq!(empty.prompt.as_deref(), Some(""));
-        let launch = read_meta_launch_fields(&repo, "task", &empty.id).unwrap();
-        assert_eq!(resolve_launch_prompt(&repo, &launch).unwrap(), None);
-
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn create_session_meta_generic_still_requires_active_task() {
-        let repo = unique_temp("alinery_generic_task_boundary");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "archived", "superdevelop", true, "/tmp/wt");
-        let input = |task_slug: &str| CreateSessionInput {
-            task_slug: task_slug.into(),
-            generic: true,
-            harness: "omp".into(),
-            ..Default::default()
-        };
-
-        assert_eq!(create_session_meta(&repo, input("")).unwrap_err(), "sessions must be attached to a task");
-        assert_eq!(create_session_meta(&repo, input("missing")).unwrap_err(), "read task missing: missing task.md");
-        assert_eq!(create_session_meta(&repo, input("archived")).unwrap_err(), "this task is archived — no new sessions");
-
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn create_session_meta_blank_playbook_derives_task_playbook() {
-        let repo = unique_temp("alinery_legacy_playbook_derivation");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "task", "one-shot", false, "/tmp/wt");
-
-        let meta = create_session_meta(
-            &repo,
-            CreateSessionInput {
-                task_slug: "task".into(),
-                phase: "implementation".into(),
-                harness: "omp".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(meta.playbook, "one-shot");
-        assert!(!meta.generic);
-        assert_eq!(meta.phase, "implementation");
-        assert_eq!(meta.artifact, "01-implementation.md");
-
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn exclusive_create_rejects_a_second_session_with_the_same_id() {
-        // Models two reconcilers (on different daemons) racing the same (task, to_phase) edge:
-        // both compute the same id_override; the O_EXCL create must let exactly one win.
-        let repo = unique_temp("alinery_exclusive_create");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, "/tmp/wt");
-        let input = || CreateSessionInput {
-            task_slug: "task".into(),
-            phase: "research".into(),
-            harness: "omp".into(),
-            id_override: Some("sadv-task-superdevelop-research".into()),
-            exclusive_create: true,
-            ..Default::default()
-        };
-        let first = create_session_meta(&repo, input()).expect("first exclusive create wins");
-        assert_eq!(first.id, "sadv-task-superdevelop-research");
-        assert!(first.started_at.is_some(), "the winning claim must not look adoptable");
-        let claimed = read_session_meta_full(&sessions_dir(&repo, "task").join("sadv-task-superdevelop-research.meta.json")).expect("claim is readable");
-        assert!(claimed.started_at.is_some(), "foreign reconcilers must observe the claim as started");
-        let second = create_session_meta(&repo, input());
-        assert!(second.is_err(), "second create with same id must lose the race");
-        // Non-exclusive create with a fresh id still works (manual creation is unaffected).
-        let manual = create_session_meta(
-            &repo,
-            CreateSessionInput {
-                task_slug: "task".into(),
-                phase: "research".into(),
-                harness: "omp".into(),
-                ..Default::default()
-            },
-        );
-        assert!(manual.is_ok());
-        assert!(manual.unwrap().started_at.is_none(), "manual creation still stamps started_at only after spawn");
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn concurrent_exclusive_creates_yield_exactly_one_winner() {
-        // The real bug: two reconcilers on different daemons advance the same edge at once. Here
-        // N threads race the identical exclusive id; the O_EXCL create must let exactly one win,
-        // no matter the interleaving. If exclusivity regresses, more than one succeeds and two
-        // sessions get spawned for one phase (the duplicate-`design` symptom).
-        let repo = unique_temp("alinery_concurrent_exclusive");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, "/tmp/wt");
-        let repo = std::sync::Arc::new(repo);
-        let handles: Vec<_> = (0..8)
-            .map(|_| {
-                let repo = repo.clone();
-                std::thread::spawn(move || {
-                    create_session_meta(
-                        &repo,
-                        CreateSessionInput {
-                            task_slug: "task".into(),
-                            phase: "design".into(),
-                            harness: "omp".into(),
-                            id_override: Some("sadv-task-superdevelop-design".into()),
-                            exclusive_create: true,
-                            ..Default::default()
-                        },
-                    )
-                    .is_ok()
-                })
-            })
-            .collect();
-        let winners = handles.into_iter().map(|h| h.join().unwrap()).filter(|&ok| ok).count();
-        assert_eq!(winners, 1, "exactly one exclusive create must win the race");
-        let _ = fs::remove_dir_all(repo.as_ref());
-    }
-
-    #[test]
-    fn send_review_handoff_writes_numbered_target_artifact_and_records() {
-        let repo = unique_temp("alinery_handoff_write");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "review", "review", false, "/tmp/review");
-        write_test_task(&repo, "target", "superdevelop", false, "/tmp/target");
-        fs::write(artifacts_dir(&repo, "review").join("03-review-findings.md"), "finding").unwrap();
-        let result = send_review_handoff(
-            &repo,
-            ReviewHandoffRequest {
-                source_slug: "review".into(),
-                source_session: "s1".into(),
-                source_artifact: "03-review-findings.md".into(),
-                target_slug: "target".into(),
-                target_phase: "implementation".into(),
-                harness: "omp".into(),
-                model: "opus".into(),
-                prompt_extra: "fix this first".into(),
-            },
-        )
-        .unwrap();
-        assert_eq!(result.target_artifact, "review-handoff-001.md");
-        assert_eq!(result.target_session.phase, "implementation");
-        assert_eq!(result.target_session.model, "opus");
-        assert_eq!(result.target_session.handoff_artifact, "review-handoff-001.md");
-        assert_eq!(result.target_session.prompt_extra, "fix this first");
-        assert!(artifacts_dir(&repo, "target").join("review-handoff-001.md").exists());
-        assert!(artifacts_dir(&repo, "target").join("review-handoff-001.handoff.json").exists());
-        assert!(artifacts_dir(&repo, "review").join("03-review-findings.handoff-001.json").exists());
-        let copied = fs::read_to_string(artifacts_dir(&repo, "target").join("review-handoff-001.md")).unwrap();
-        assert!(copied.contains("finding"));
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn explicit_app_config_controls_session_and_handoff_resume_tokens() {
-        let repo = unique_temp("alinery_explicit_app_config_tokens");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "task", "superdevelop", false, "/tmp/task");
-        write_test_task(&repo, "review", "review", false, "/tmp/review");
-        write_test_task(&repo, "target", "superdevelop", false, "/tmp/target");
-        fs::write(artifacts_dir(&repo, "review").join("03-review-findings.md"), "finding").unwrap();
-
-        let app_config = repo.join("dev-app.toml");
-        let mut global = GlobalSettings::default();
-        global.harnesses.harness.push(Harness {
-            key: "omp".into(),
-            name: "Resume fixture".into(),
-            binary: "fixture".into(),
-            resume: Some(crate::HarnessResume {
-                enabled: true,
-                id_source: "launch".into(),
-                launch_args: vec!["--session-id".into(), "{resume_token}".into()],
-                resume_args: vec!["--resume".into(), "{resume_token}".into()],
-            }),
-            ..Default::default()
-        });
-        write_global_settings(&app_config, &global).unwrap();
-
-        let created = create_session_meta_for(
-            &app_config,
-            &repo,
-            CreateSessionInput {
-                task_slug: "task".into(),
-                phase: "research".into(),
-                harness: "omp".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert!(
-            uuid::Uuid::parse_str(&created.harness_resume_token).is_ok(),
-            "the explicit app config must select the launch-bound resume harness"
-        );
-
-        let handoff = send_review_handoff_for(
-            &app_config,
-            &repo,
-            ReviewHandoffRequest {
-                source_slug: "review".into(),
-                source_session: "s1".into(),
-                source_artifact: "03-review-findings.md".into(),
-                target_slug: "target".into(),
-                target_phase: "implementation".into(),
-                harness: "omp".into(),
-                model: String::new(),
-                prompt_extra: String::new(),
-            },
-        )
-        .unwrap();
-        assert!(uuid::Uuid::parse_str(&handoff.target_session.harness_resume_token).is_ok());
-        assert_ne!(
-            created.harness_resume_token, handoff.target_session.harness_resume_token,
-            "each launch receives its own app-config-selected token"
-        );
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn send_review_handoff_repeats_without_overwrite() {
-        let repo = unique_temp("alinery_handoff_repeat");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "review", "review", false, "/tmp/review");
-        write_test_task(&repo, "target", "superdevelop", false, "/tmp/target");
-        fs::write(artifacts_dir(&repo, "review").join("03-review-findings.md"), "finding").unwrap();
-        let req = ReviewHandoffRequest {
-            source_slug: "review".into(),
-            source_artifact: "03-review-findings.md".into(),
-            target_slug: "target".into(),
-            target_phase: "implementation".into(),
-            harness: "omp".into(),
-            ..Default::default()
-        };
-        let first = send_review_handoff(&repo, req.clone()).unwrap();
-        let first_bytes = fs::read(artifacts_dir(&repo, "target").join(&first.target_artifact)).unwrap();
-        let second = send_review_handoff(&repo, req).unwrap();
-        assert_eq!(second.target_artifact, "review-handoff-002.md");
-        assert_eq!(fs::read(artifacts_dir(&repo, "target").join("review-handoff-001.md")).unwrap(), first_bytes);
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn send_review_handoff_rejects_missing_or_unsafe_source_artifact() {
-        let repo = unique_temp("alinery_handoff_reject_source");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "review", "review", false, "/tmp/review");
-        write_test_task(&repo, "target", "superdevelop", false, "/tmp/target");
-        let base = ReviewHandoffRequest {
-            source_slug: "review".into(),
-            target_slug: "target".into(),
-            target_phase: "implementation".into(),
-            harness: "omp".into(),
-            ..Default::default()
-        };
-        let mut missing = base.clone();
-        missing.source_artifact = "03-review-findings.md".into();
-        assert!(send_review_handoff(&repo, missing).is_err());
-        let mut unsafe_req = base;
-        unsafe_req.source_artifact = "../03-review-findings.md".into();
-        assert!(send_review_handoff(&repo, unsafe_req).is_err());
-        assert!(visible_artifact_names(&repo, "target").unwrap().is_empty());
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn send_review_handoff_defaults_phase_to_implementation() {
-        let repo = unique_temp("alinery_handoff_default_phase");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "review", "review", false, "/tmp/review");
-        write_test_task(&repo, "target", "superdevelop", false, "/tmp/target");
-        fs::write(artifacts_dir(&repo, "review").join("03-review-findings.md"), "finding").unwrap();
-        let result = send_review_handoff(
-            &repo,
-            ReviewHandoffRequest {
-                source_slug: "review".into(),
-                source_artifact: "03-review-findings.md".into(),
-                target_slug: "target".into(),
-                harness: "omp".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(result.target_session.phase, "implementation");
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn send_review_handoff_rejects_archived_source_or_target() {
-        let repo = unique_temp("alinery_handoff_archived");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "review", "review", true, "/tmp/review");
-        write_test_task(&repo, "target", "superdevelop", false, "/tmp/target");
-        fs::write(artifacts_dir(&repo, "review").join("03-review-findings.md"), "finding").unwrap();
-        let req = ReviewHandoffRequest {
-            source_slug: "review".into(),
-            source_artifact: "03-review-findings.md".into(),
-            target_slug: "target".into(),
-            harness: "omp".into(),
-            ..Default::default()
-        };
-        assert!(send_review_handoff(&repo, req).is_err());
-        write_test_task(&repo, "review", "review", false, "/tmp/review");
-        write_test_task(&repo, "target", "superdevelop", true, "/tmp/target");
-        let req = ReviewHandoffRequest {
-            source_slug: "review".into(),
-            source_artifact: "03-review-findings.md".into(),
-            target_slug: "target".into(),
-            harness: "omp".into(),
-            ..Default::default()
-        };
-        assert!(send_review_handoff(&repo, req).is_err());
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn send_review_handoff_rejects_invalid_target_phase() {
-        let repo = unique_temp("alinery_handoff_bad_phase");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "review", "review", false, "/tmp/review");
-        write_test_task(&repo, "target", "superdevelop", false, "/tmp/target");
-        fs::write(artifacts_dir(&repo, "review").join("03-review-findings.md"), "finding").unwrap();
-        let err = send_review_handoff(
-            &repo,
-            ReviewHandoffRequest {
-                source_slug: "review".into(),
-                source_artifact: "03-review-findings.md".into(),
-                target_slug: "target".into(),
-                target_phase: "review-findings".into(),
-                harness: "omp".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap_err();
-        assert!(err.contains("unknown step"), "unexpected error: {err}");
-        assert!(visible_artifact_names(&repo, "target").unwrap().is_empty());
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn send_review_handoff_rejects_no_worktree_target_for_harness_session() {
-        let repo = unique_temp("alinery_handoff_no_worktree");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "review", "review", false, "/tmp/review");
-        write_test_task(&repo, "target", "superdevelop", false, "");
-        fs::write(artifacts_dir(&repo, "review").join("03-review-findings.md"), "finding").unwrap();
-        let err = send_review_handoff(
-            &repo,
-            ReviewHandoffRequest {
-                source_slug: "review".into(),
-                source_artifact: "03-review-findings.md".into(),
-                target_slug: "target".into(),
-                target_phase: "implementation".into(),
-                harness: "omp".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap_err();
-        assert!(err.contains("target task has no worktree"), "unexpected error: {err}");
-        assert!(visible_artifact_names(&repo, "target").unwrap().is_empty());
-        let _ = fs::remove_dir_all(repo);
-    }
-    #[test]
-    fn resolved_session_artifact_falls_back_to_playbook_step() {
-        let repo = unique_temp("alinery_resolved_base");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        assert_eq!(
-            resolved_session_artifact_file(&repo, "task", "superdevelop", "design", "").unwrap(),
-            artifacts_dir(&repo, "task").join("03-decide.md")
-        );
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn resolved_session_artifact_uses_session_override() {
-        let repo = unique_temp("alinery_resolved_override");
-        assert_eq!(
-            resolved_session_artifact_file(&repo, "task", "superdevelop", "design", "03-design-002.md").unwrap(),
-            artifacts_dir(&repo, "task").join("03-design-002.md")
-        );
-    }
-
-    #[test]
-    fn resolved_session_artifact_rejects_unsafe_override() {
-        let repo = unique_temp("alinery_resolved_unsafe");
-        assert!(resolved_session_artifact_file(&repo, "task", "superdevelop", "design", "../03-design.md").is_err());
-    }
-
-    #[test]
-    fn launch_fields_include_artifact_handoff_and_prompt_extra() {
-        let repo = unique_temp("alinery_launch_fields");
-        let _ = fs::remove_dir_all(&repo);
-        write_test_task(&repo, "task", "superdevelop", false, "/tmp/wt");
-        let meta = SessionMeta {
-            id: "s1".into(),
-            worktree: "/tmp/wt".into(),
-            created: 1,
-            phase: "implementation".into(),
-            playbook: "superdevelop".into(),
-            artifact: "06-implementation-002.md".into(),
-            handoff_artifact: "review-handoff-001.md".into(),
-            prompt_extra: "extra".into(),
-            ..Default::default()
-        };
-        fs::write(sessions_dir(&repo, "task").join("s1.meta.json"), serde_json::to_string(&meta).unwrap()).unwrap();
-        let launch = read_meta_launch_fields(&repo, "task", "s1").unwrap();
-        assert_eq!(launch.artifact, "06-implementation-002.md");
-        assert_eq!(launch.handoff_artifact, "review-handoff-001.md");
-        assert_eq!(launch.prompt_extra, "extra");
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-
-    fn bundled_prompts_write_to_artifact_file_token() {
-        for (path, text) in DEFAULT_PLAYBOOK_PROMPTS {
-            assert!(text.contains("{{ARTIFACT_FILE}}"), "{path} must mention ARTIFACT_FILE");
-            assert!(
-                !text.contains("Write `{{ARTIFACTS_DIR}}/") && !text.contains("Write {{ARTIFACTS_DIR}}/"),
-                "{path} must not hard-code a fixed output artifact path"
-            );
-        }
-    }
-
-    #[test]
-    fn bundled_prompts_do_not_consult_project_wiki() {
-        for (path, text) in DEFAULT_PLAYBOOK_PROMPTS {
-            assert!(!text.contains("{{WIKI_DIR}}"), "{path} must not expose WIKI_DIR");
-            assert!(!text.to_lowercase().contains("consult the project wiki"), "{path} must not require wiki consultation");
-        }
-        for (phase, _, text) in crate::prompts::PHASES {
-            assert!(!text.contains("{{WIKI_DIR}}"), "{phase} legacy prompt must not expose WIKI_DIR");
-            assert!(
-                !text.to_lowercase().contains("consult the project wiki"),
-                "{phase} legacy prompt must not require wiki consultation"
-            );
-        }
-    }
-
-    #[test]
-    fn bundled_superdevelop_prompts_include_review_handoff_condition() {
-        for (path, text) in DEFAULT_PLAYBOOK_PROMPTS {
-            assert!(text.contains("{{REVIEW_HANDOFF_FILE}}"), "{path} missing REVIEW_HANDOFF_FILE");
-            assert!(text.contains("{{PROMPT_EXTRA}}"), "{path} missing PROMPT_EXTRA");
-        }
-    }
-
-    #[test]
-    fn bundled_handoff_prompts_resolve_to_concrete_handoff_path() {
-        let repo = unique_temp("alinery_handoff_prompt_resolution");
-        let _ = fs::remove_dir_all(&repo);
-        ensure_playbooks(&repo).unwrap();
-        let playbook_file: PlaybookFile = toml::from_str(DEFAULT_PLAYBOOKS_TOML).unwrap();
-        let artifacts = PathBuf::from("/tmp/artifacts");
-        let handoff = artifacts.join("review-handoff-001.md");
-        let history = PathBuf::from("/tmp/sessions");
-        let ticket = artifacts.join("00-ticket.md");
-
-        for (prompt_path, _) in DEFAULT_PLAYBOOK_PROMPTS {
-            let mut matched = None;
-            for (playbook_key, playbook) in &playbook_file.playbooks {
-                for step_key in &playbook.steps {
-                    let Some(step) = playbook.step.get(step_key) else {
-                        continue;
-                    };
-                    if step.prompt == *prompt_path {
-                        matched = Some((playbook_key.as_str(), step_key.as_str(), step.title.as_str(), step.artifact.as_str()));
-                    }
-                }
-            }
-            let (playbook_key, phase_key, phase_title, artifact_name) = matched.unwrap_or_else(|| panic!("{prompt_path} is not referenced by playbooks.default.toml"));
-            let artifact = artifacts.join(artifact_name);
-            let vars = PromptVars {
-                artifacts_dir: &artifacts,
-                artifact_file: &artifact,
-                review_handoff_file: Some(&handoff),
-                prompt_extra: "handle the transferred review findings first",
-                session_history_dir: &history,
-                task_name: "Task Name",
-                task_slug: "task-name",
-                worktree: "/tmp/worktree",
-                playbook_key,
-                phase_key,
-                phase_title,
-                ticket_file: &ticket,
-            };
-            let prompt = resolve_playbook_step_prompt(&repo, playbook_key, phase_key, &vars).unwrap().unwrap();
-            assert!(prompt.contains("/tmp/artifacts/review-handoff-001.md"), "{prompt_path} missing concrete handoff path");
-            assert!(prompt.contains("handle the transferred review findings first"), "{prompt_path} missing prompt extra");
-            assert!(!prompt.contains("{{REVIEW_HANDOFF_FILE}}"), "{prompt_path} left REVIEW_HANDOFF_FILE unsubstituted");
-            assert!(!prompt.contains("{{PROMPT_EXTRA}}"), "{prompt_path} left PROMPT_EXTRA unsubstituted");
-        }
-
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn review_response_prompt_keeps_approval_harness_owned() {
-        let prompt = DEFAULT_PLAYBOOK_PROMPTS
-            .iter()
-            .find(|(path, _)| *path == "playbooks/review/04-review-response.md")
-            .map(|(_, text)| *text)
-            .unwrap();
-        assert!(prompt.contains("harness-owned"));
-        assert!(prompt.contains("Alinery does not") && prompt.contains("app-level GitHub approval"));
-        assert!(!prompt.contains("Tauri"));
-    }
-
-    #[test]
-    fn review_prompts_read_latest_numbered_prior_artifact() {
-        for path in [
-            "playbooks/review/02-review-checks.md",
-            "playbooks/review/03-review-findings.md",
-            "playbooks/review/04-review-response.md",
-        ] {
-            let prompt = DEFAULT_PLAYBOOK_PROMPTS.iter().find(|(candidate, _)| *candidate == path).map(|(_, text)| *text).unwrap();
-            assert!(prompt.contains("latest/highest-numbered"), "{path} must handle repeated review artifacts");
-        }
-    }
     mod scoped_settings {
         use super::*;
         use crate::paths::harnesses_toml_path;
@@ -3720,7 +1751,10 @@ unknown = "keep"
                 defaults: HarnessChoice {
                     harness: "claude".into(),
                     model: "sonnet".into(),
-                    playbook: "superdevelop".into(),
+                    playbook: crate::playbook::PlaybookRef {
+                        scope: crate::playbook::PlaybookScope::Bundled,
+                        key: "superdevelop".into(),
+                    },
                     draft_autosave: true,
                 },
                 ..default_global_settings()
@@ -4093,38 +2127,10 @@ prompt_injection = "arg"
         }
     }
 
-    mod playbook_registry {
-
-        #[test]
-        fn playbook_defaults_parse_with_five_builtins() {
-            super::playbook_defaults_parse_with_five_builtins();
-        }
-
-        #[test]
-        fn playbook_prompt_substitution_replaces_all_tokens() {
-            super::playbook_prompt_substitution_replaces_all_tokens();
-        }
-
-        #[test]
-        fn playbook_unknown_step_errors_instead_of_unseeded_prompt() {
-            super::playbook_unknown_step_errors_instead_of_unseeded_prompt();
-        }
-
-        #[test]
-        fn ensure_playbooks_preserves_custom_superdevelop_prompts() {
-            super::ensure_playbooks_preserves_custom_superdevelop_prompts();
-        }
-
-        #[test]
-        fn playbook_structure_prompt_resolves_comment_aware_instructions() {
-            super::playbook_structure_prompt_resolves_comment_aware_instructions();
-        }
-    }
 
     mod semantic_control_plane {
         use super::*;
-        use crate::types::{HarnessAdapter, NormalizedSessionStatus, RunnerEventEnvelope, SemanticCheckpoint, RUNNER_EVENT_PROTOCOL_VERSION};
-        use std::os::unix::fs::symlink;
+        use crate::types::{HarnessAdapter, NormalizedSessionStatus, RunnerEventEnvelope, RUNNER_EVENT_PROTOCOL_VERSION};
 
         fn live_omp_state() -> SessionState {
             SessionState {
@@ -4298,250 +2304,8 @@ prompt_injection = "arg"
             assert_eq!(exited.agent, AgentState::Busy);
         }
 
-        #[test]
-        fn latest_completion_source_orders_created_then_id() {
-            let source = SessionMeta {
-                id: "s-b".into(),
-                created: 10,
-                phase: "implementation".into(),
-                playbook: "superdevelop".into(),
-                ..Default::default()
-            };
-            let older_id = SessionMeta {
-                id: "s-a".into(),
-                ..source.clone()
-            };
-            let archived_newer = SessionMeta {
-                id: "s-z".into(),
-                created: 11,
-                archived: true,
-                ..source.clone()
-            };
-            assert!(is_latest_completion_source(
-                &source,
-                &[older_id.clone(), source.clone(), archived_newer],
-                DEFAULT_PLAYBOOK_KEY
-            ));
-            assert!(!is_latest_completion_source(&older_id, &[older_id.clone(), source], DEFAULT_PLAYBOOK_KEY));
-        }
-
-        #[test]
-        fn completion_requires_checkpoint_and_regular_nonempty_artifact() {
-            let repo = unique_temp("alinery_semantic_completion");
-            ensure_playbooks(&repo).unwrap();
-            let slug = "task";
-            fs::create_dir_all(artifacts_dir(&repo, slug)).unwrap();
-            let playbook = get_playbook(&repo, "superdevelop").unwrap();
-            let task = Task {
-                slug: slug.into(),
-                playbook: "superdevelop".into(),
-                auto_advance: vec!["questions_to_research".into()],
-                ..Default::default()
-            };
-            let mut source = SessionMeta {
-                id: "s1".into(),
-                created: 1,
-                phase: "research-questions".into(),
-                playbook: "superdevelop".into(),
-                harness: "omp".into(),
-                artifact: "01-research-questions.md".into(),
-                ..Default::default()
-            };
-            let path = artifacts_dir(&repo, slug).join(&source.artifact);
-            fs::write(&path, "finished").unwrap();
-
-            assert_eq!(
-                completion_decision(&repo, slug, &task, "superdevelop", &playbook, &source, &[source.clone()]),
-                CompletionDecision::Reject(CompletionRejectReason::MissingCheckpoint)
-            );
-
-            source.semantic = SemanticCheckpoint {
-                phase_completed_at: Some(1),
-                omp_session_id: Some("omp-1".into()),
-                omp_turn_id: Some(2),
-            };
-            assert!(matches!(
-                completion_decision(&repo, slug, &task, "superdevelop", &playbook, &source, &[source.clone()]),
-                CompletionDecision::CreateNext(_)
-            ));
-
-            let no_edge_task = Task {
-                auto_advance: vec![],
-                ..task.clone()
-            };
-            assert_eq!(
-                completion_decision(&repo, slug, &no_edge_task, "superdevelop", &playbook, &source, &[source.clone()]),
-                CompletionDecision::Complete
-            );
-
-            let unstarted_target = SessionMeta {
-                id: "s2".into(),
-                created: 2,
-                phase: "research".into(),
-                playbook: "superdevelop".into(),
-                ..Default::default()
-            };
-            assert!(matches!(
-                completion_decision(&repo, slug, &task, "superdevelop", &playbook, &source, &[source.clone(), unstarted_target.clone()]),
-                CompletionDecision::CreateNext(_)
-            ));
-
-            let started_target = SessionMeta {
-                started_at: Some(2),
-                ..unstarted_target
-            };
-            assert_eq!(
-                completion_decision(&repo, slug, &task, "superdevelop", &playbook, &source, &[source.clone(), started_target]),
-                CompletionDecision::Complete
-            );
-
-            let missing_playbook = SessionMeta {
-                playbook: String::new(),
-                ..source.clone()
-            };
-            assert_eq!(
-                completion_decision(&repo, slug, &task, "superdevelop", &playbook, &missing_playbook, std::slice::from_ref(&missing_playbook)),
-                CompletionDecision::Reject(CompletionRejectReason::MissingPlaybook)
-            );
-
-            fs::write(&path, "").unwrap();
-            assert_eq!(validate_expected_artifact(&repo, slug, &source), Err(CompletionRejectReason::EmptyArtifact));
-            fs::remove_file(&path).unwrap();
-            let target = artifacts_dir(&repo, slug).join("target.md");
-            fs::write(&target, "finished").unwrap();
-            symlink(&target, &path).unwrap();
-            assert_eq!(validate_expected_artifact(&repo, slug, &source), Err(CompletionRejectReason::NonRegularArtifact));
-            let _ = fs::remove_dir_all(repo);
-        }
-
-        #[test]
-        fn completion_accepts_non_primary_without_advancing_and_rejects_generic() {
-            let repo = unique_temp("alinery_selected_playbook_completion");
-            ensure_playbooks(&repo).unwrap();
-            let slug = "task";
-            fs::create_dir_all(artifacts_dir(&repo, slug)).unwrap();
-            fs::write(artifacts_dir(&repo, slug).join("01-research-questions.md"), "finished").unwrap();
-            let playbook = get_playbook(&repo, "superdevelop").unwrap();
-            let task = Task {
-                slug: slug.into(),
-                playbook: "one-shot".into(),
-                auto_advance: vec!["questions_to_research".into()],
-                ..Default::default()
-            };
-            let source = SessionMeta {
-                id: "source".into(),
-                created: 2,
-                phase: "research-questions".into(),
-                playbook: "superdevelop".into(),
-                harness: "omp".into(),
-                artifact: "01-research-questions.md".into(),
-                semantic: SemanticCheckpoint {
-                    phase_completed_at: Some(3),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-            let newer_other_playbook = SessionMeta {
-                id: "other-newer".into(),
-                created: 3,
-                phase: source.phase.clone(),
-                playbook: "one-shot".into(),
-                ..Default::default()
-            };
-            let target_other_playbook = SessionMeta {
-                id: "other-target".into(),
-                created: 4,
-                phase: "research".into(),
-                playbook: "one-shot".into(),
-                started_at: Some(4),
-                ..Default::default()
-            };
-            assert_eq!(
-                completion_decision(
-                    &repo,
-                    slug,
-                    &task,
-                    "superdevelop",
-                    &playbook,
-                    &source,
-                    &[source.clone(), newer_other_playbook.clone(), target_other_playbook.clone()]
-                ),
-                CompletionDecision::Complete
-            );
-            let primary_task = Task {
-                playbook: "superdevelop".into(),
-                ..task.clone()
-            };
-            assert!(matches!(
-                completion_decision(
-                    &repo,
-                    slug,
-                    &primary_task,
-                    "superdevelop",
-                    &playbook,
-                    &source,
-                    &[source.clone(), newer_other_playbook, target_other_playbook]
-                ),
-                CompletionDecision::CreateNext(_)
-            ));
-
-            let same_playbook_target = SessionMeta {
-                id: "same-target".into(),
-                created: 5,
-                phase: "research".into(),
-                playbook: "superdevelop".into(),
-                started_at: Some(5),
-                ..Default::default()
-            };
-            assert_eq!(
-                completion_decision(&repo, slug, &primary_task, "superdevelop", &playbook, &source, &[source.clone(), same_playbook_target]),
-                CompletionDecision::Complete
-            );
-            let generic = SessionMeta {
-                generic: true,
-                phase: String::new(),
-                artifact: String::new(),
-                ..source
-            };
-            assert_eq!(
-                completion_decision(&repo, slug, &task, "superdevelop", &playbook, &generic, std::slice::from_ref(&generic)),
-                CompletionDecision::Reject(CompletionRejectReason::Generic)
-            );
-            let _ = fs::remove_dir_all(repo);
-        }
     }
 
-    mod auto_advance {
-        #[test]
-        fn playbook_defaults_include_review_edges() {
-            super::playbook_defaults_parse_with_five_builtins();
-        }
-
-        #[test]
-        fn selected_edge_lookup_ignores_default_enabled_runtime() {
-            super::auto_advance_selected_edge_lookup_ignores_default_enabled_runtime();
-        }
-
-        #[test]
-        fn review_edges_are_default_selected() {
-            super::auto_advance_review_edges_are_default_selected();
-        }
-
-        #[test]
-        fn duplicate_next_session_prevention() {
-            super::auto_advance_duplicate_next_session_prevention();
-        }
-
-        #[test]
-        fn resolve_harness_model_fallback_order() {
-            super::auto_advance_resolve_harness_model_fallback_order();
-        }
-
-        #[test]
-        fn ordered_edges_follow_step_order_not_key_order() {
-            super::ordered_auto_advance_edges_follows_step_order_not_key_order();
-        }
-    }
 
     // ---- Session durability & resume (issue #24) — Phase 1 pure logic ----
     mod durability {
@@ -4910,160 +2674,4 @@ binary = "custom"
         }
     }
 
-    #[test]
-    fn manager_prompt_contains_identity_paths_and_finish_policy() {
-        let repo = unique_temp("alinery_manager_prompt");
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "parent", "superdevelop", false, "/tmp/parent-worktree");
-        let mut parent = crate::task::read_task(&repo, "parent").unwrap();
-        parent.branch = "parent-branch".into();
-        crate::task::write_task(&repo, &parent).unwrap();
-        let meta = SessionMeta {
-            id: "manager-exact-id".into(),
-            worktree: parent.worktree.clone(),
-            created: 1,
-            harness: "omp".into(),
-            playbook: "superdevelop".into(),
-            generic: true,
-            subtask_manager: true,
-            ..Default::default()
-        };
-        write_meta_atomic(&sessions_dir(&repo, "parent").join("manager-exact-id.meta.json"), &serde_json::to_value(meta).unwrap()).unwrap();
-        let launch = read_meta_launch_fields(&repo, "parent", "manager-exact-id").unwrap();
-        let prompt = resolve_launch_prompt(&repo, &launch).unwrap().unwrap();
-        for expected in [
-            "manager-exact-id",
-            "parent-branch",
-            "/tmp/parent-worktree",
-            "Parent worktree status:",
-            "child starts from the parent's committed branch",
-            "alinery_create_subtask",
-            "explicit approval",
-            "Every human-facing question MUST be made by calling the `ask` tool",
-            "so OMP opens its input popup",
-            "Never print a prose question in the terminal",
-            "always mean: call the `ask` tool and wait for its popup result",
-            "Approve creating this sub-task?",
-            "This must open the `ask` popup",
-            "creates and starts the child's first playbook session",
-            "do not retry child creation",
-            "alinery_inspect_subtask_finish",
-            "Integrate code",
-            "Archive without code",
-            "child's code will not reach the parent",
-            "other active parent sessions",
-            "Do not create or hand off to a second integration session",
-        ] {
-            assert!(prompt.contains(expected), "missing manager policy: {expected}");
-        }
-        assert!(!prompt.contains("3. Ask for explicit approval."));
-        assert!(prompt.contains(&artifacts_dir(&repo, "parent").join("00-ticket.md").display().to_string()));
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn recovered_manager_prompt_identifies_child_without_creation_flow() {
-        let repo = unique_temp("alinery_recovered_manager_prompt");
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "parent", "superdevelop", false, "/tmp/parent-worktree");
-        write_test_task(&repo, "child", "review", false, "/tmp/child-worktree");
-        let mut parent = crate::task::read_task(&repo, "parent").unwrap();
-        let mut child = crate::task::read_task(&repo, "child").unwrap();
-        parent.branch = "parent-branch".into();
-        parent.active_subtask = child.slug.clone();
-        child.branch = "child-branch".into();
-        child.parent_task = parent.slug.clone();
-        crate::task::write_task(&repo, &parent).unwrap();
-        crate::task::write_task(&repo, &child).unwrap();
-        let meta = SessionMeta {
-            id: "recovery-manager-id".into(),
-            worktree: parent.worktree.clone(),
-            created: 1,
-            harness: "omp".into(),
-            playbook: "superdevelop".into(),
-            generic: true,
-            subtask_manager: true,
-            subtask_slug: child.slug.clone(),
-            ..Default::default()
-        };
-        write_meta_atomic(&sessions_dir(&repo, "parent").join("recovery-manager-id.meta.json"), &serde_json::to_value(meta).unwrap()).unwrap();
-
-        let launch = read_meta_launch_fields(&repo, "parent", "recovery-manager-id").unwrap();
-        let prompt = resolve_launch_prompt(&repo, &launch).unwrap().unwrap();
-        for expected in [
-            "recovering one already-active",
-            "recovery-manager-id",
-            "Active child name: child",
-            "Active child slug: child",
-            "Active child playbook: review",
-            "Active child branch: child-branch",
-            "/tmp/child-worktree",
-            &artifacts_dir(&repo, "child").join("00-ticket.md").display().to_string(),
-            "alinery_inspect_subtask_finish",
-            "alinery_finalize_subtask",
-            "Every human-facing question MUST be made by calling the `ask` tool",
-            "so OMP opens its input popup",
-            "The choice must come from the `ask` popup, not a prose question",
-        ] {
-            assert!(prompt.contains(expected), "missing recovery context: {expected}");
-        }
-        assert!(!prompt.contains("Approve creating this sub-task?"));
-        assert!(!prompt.contains("call `alinery_create_subtask` with"));
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn child_prompts_append_validated_immediate_parent_context() {
-        let repo = unique_temp("alinery_child_prompt");
-        ensure_playbooks(&repo).unwrap();
-        write_test_task(&repo, "parent", "superdevelop", false, "/tmp/parent");
-        write_test_task(&repo, "child", "superdevelop", false, "/tmp/child");
-        let mut parent = crate::task::read_task(&repo, "parent").unwrap();
-        let mut child = crate::task::read_task(&repo, "child").unwrap();
-        parent.active_subtask = "child".into();
-        child.parent_task = "parent".into();
-        crate::task::write_task(&repo, &parent).unwrap();
-        crate::task::write_task(&repo, &child).unwrap();
-
-        for (id, generic, phase) in [("generic", true, ""), ("playbook", false, "implementation")] {
-            let meta = SessionMeta {
-                id: id.into(),
-                worktree: child.worktree.clone(),
-                created: 1,
-                harness: "omp".into(),
-                playbook: "superdevelop".into(),
-                generic,
-                phase: phase.into(),
-                prompt: None,
-                ..Default::default()
-            };
-            write_meta_atomic(&sessions_dir(&repo, "child").join(format!("{id}.meta.json")), &serde_json::to_value(meta).unwrap()).unwrap();
-            let launch = read_meta_launch_fields(&repo, "child", id).unwrap();
-            let resolved = resolve_launch_prompt(&repo, &launch).unwrap().unwrap();
-            assert_eq!(resolved.matches("Parent task slug: parent").count(), 1, "{id}");
-            assert!(resolved.contains(&artifacts_dir(&repo, "parent").join("00-ticket.md").display().to_string()), "{id}");
-            assert!(resolved.contains(&artifacts_dir(&repo, "parent").display().to_string()), "{id}");
-        }
-
-        let exact = "Stored launch prompt with Parent task slug: parent";
-        let meta = SessionMeta {
-            id: "stored".into(),
-            worktree: child.worktree.clone(),
-            created: 1,
-            harness: "omp".into(),
-            playbook: "superdevelop".into(),
-            generic: true,
-            prompt: Some(exact.into()),
-            ..Default::default()
-        };
-        write_meta_atomic(&sessions_dir(&repo, "child").join("stored.meta.json"), &serde_json::to_value(meta).unwrap()).unwrap();
-        let launch = read_meta_launch_fields(&repo, "child", "stored").unwrap();
-        assert_eq!(resolve_launch_prompt(&repo, &launch).unwrap().as_deref(), Some(exact));
-
-        child.parent_task = "missing".into();
-        crate::task::write_task(&repo, &child).unwrap();
-        let launch = read_meta_launch_fields(&repo, "child", "generic").unwrap();
-        assert!(resolve_launch_prompt(&repo, &launch).unwrap_err().contains("relationship corruption"));
-        let _ = fs::remove_dir_all(repo);
-    }
 }

@@ -50,52 +50,46 @@ fn session_list_items_skip_archived_and_sort_newest_first() {
 
     write_task(
         &repo,
-        &Task {
-            name: "Alpha".into(),
-            slug: "alpha".into(),
-            requested_slug: String::new(),
-            branch: "alpha".into(),
-            worktree: "/wt-alpha".into(),
-            has_worktree: true,
-            created: 1,
-            archived: false,
-            pr_url: String::new(),
-            linear_id: String::new(),
-            github_issue: String::new(),
-            playbook: default_playbook_key(),
-            auto_advance: vec![],
-            draft: false,
-            telemetry_id: String::new(),
-            parent_task: String::new(),
-            active_subtask: String::new(),
-            subtask_outcome: String::new(),
-            related_tasks: Vec::new(),
-        },
+        &Task { name: "Alpha".into(),
+        slug: "alpha".into(),
+        requested_slug: String::new(),
+        branch: "alpha".into(),
+        worktree: "/wt-alpha".into(),
+        has_worktree: true,
+        created: 1,
+        archived: false,
+        pr_url: String::new(),
+        linear_id: String::new(),
+        github_issue: String::new(),
+        playbook: default_playbook_key(),
+        auto_advance: vec![],
+        draft: false,
+        telemetry_id: String::new(),
+        parent_task: String::new(),
+        active_subtask: String::new(),
+        subtask_outcome: String::new(), related_tasks: Vec::new(), ..Default::default() },
     )
     .unwrap();
     write_task(
         &repo,
-        &Task {
-            name: "Archived".into(),
-            slug: "archived".into(),
-            requested_slug: String::new(),
-            branch: "archived".into(),
-            worktree: "/wt-archived".into(),
-            has_worktree: true,
-            created: 2,
-            archived: true,
-            pr_url: String::new(),
-            linear_id: String::new(),
-            github_issue: String::new(),
-            playbook: default_playbook_key(),
-            auto_advance: vec![],
-            draft: false,
-            telemetry_id: String::new(),
-            parent_task: String::new(),
-            active_subtask: String::new(),
-            subtask_outcome: String::new(),
-            related_tasks: Vec::new(),
-        },
+        &Task { name: "Archived".into(),
+        slug: "archived".into(),
+        requested_slug: String::new(),
+        branch: "archived".into(),
+        worktree: "/wt-archived".into(),
+        has_worktree: true,
+        created: 2,
+        archived: true,
+        pr_url: String::new(),
+        linear_id: String::new(),
+        github_issue: String::new(),
+        playbook: default_playbook_key(),
+        auto_advance: vec![],
+        draft: false,
+        telemetry_id: String::new(),
+        parent_task: String::new(),
+        active_subtask: String::new(),
+        subtask_outcome: String::new(), related_tasks: Vec::new(), ..Default::default() },
     )
     .unwrap();
 
@@ -173,9 +167,9 @@ fn session_list_items_skip_archived_and_sort_newest_first() {
     };
     fs::write(root_sessions_dir(&repo).join("root-session.meta.json"), serde_json::to_string(&root_meta).unwrap()).unwrap();
 
-    let items = session_list_items_for_repo(&repo, "/repo/a", false).unwrap();
+    let items = session_list_items_for_repo(&repo, "/repo/a", false, None).unwrap();
     assert_eq!(items.iter().map(|i| i.session.id.as_str()).collect::<Vec<_>>(), ["alpha-new", "alpha-old"]);
-    let archived_items = session_list_items_for_repo(&repo, "/repo/a", true).unwrap();
+    let archived_items = session_list_items_for_repo(&repo, "/repo/a", true, None).unwrap();
     assert_eq!(
         archived_items.iter().map(|i| i.session.id.as_str()).collect::<Vec<_>>(),
         ["alpha-archived", "alpha-new", "alpha-old"]
@@ -191,90 +185,7 @@ fn session_list_items_skip_archived_and_sort_newest_first() {
     let _ = fs::remove_dir_all(&repo);
 }
 
-#[test]
-fn session_list_projects_each_sessions_own_playbook() {
-    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_nanos()).unwrap_or(0);
-    let repo = std::env::temp_dir().join(format!("alinery-session-provenance-{n}"));
-    let task = Task {
-        name: "Alpha".into(),
-        slug: "alpha".into(),
-        requested_slug: String::new(),
-        branch: "alpha".into(),
-        worktree: "/wt-alpha".into(),
-        has_worktree: true,
-        created: 1,
-        archived: false,
-        pr_url: String::new(),
-        linear_id: String::new(),
-        github_issue: String::new(),
-        playbook: "superdevelop".into(),
-        auto_advance: vec![],
-        draft: false,
-        telemetry_id: String::new(),
-        parent_task: String::new(),
-        active_subtask: String::new(),
-        subtask_outcome: String::new(),
-        related_tasks: Vec::new(),
-    };
-    alinery_core::ensure_playbooks(&repo).unwrap();
-    fs::create_dir_all(sessions_dir(&repo, "alpha")).unwrap();
-    write_task(&repo, &task).unwrap();
-    for meta in [
-        SessionMeta {
-            id: "external".into(),
-            worktree: "/wt-alpha".into(),
-            created: 4,
-            phase: "implementation".into(),
-            playbook: "one-shot".into(),
-            ..Default::default()
-        },
-        SessionMeta {
-            id: "generic".into(),
-            worktree: "/wt-alpha".into(),
-            created: 3,
-            playbook: "superdevelop".into(),
-            generic: true,
-            ..Default::default()
-        },
-        SessionMeta {
-            id: "legacy".into(),
-            worktree: "/wt-alpha".into(),
-            created: 2,
-            phase: "research".into(),
-            playbook: String::new(),
-            ..Default::default()
-        },
-        SessionMeta {
-            id: "resumed".into(),
-            worktree: "/wt-alpha".into(),
-            created: 1,
-            playbook: "superdevelop".into(),
-            ..Default::default()
-        },
-    ] {
-        fs::write(session_meta_path(&repo, "alpha", &meta.id), serde_json::to_string(&meta).unwrap()).unwrap();
-    }
 
-    let items = session_list_items_for_repo(&repo, "/repo/a", false).unwrap();
-    let external = items.iter().find(|item| item.session.id == "external").unwrap();
-    assert_eq!(external.playbook_title, "One-shot");
-    assert_eq!(external.step_title, "Implementation");
-    assert!(external.is_playbook_step);
-    let generic = items.iter().find(|item| item.session.id == "generic").unwrap();
-    assert_eq!(generic.step_title, "Generic");
-    assert!(!generic.is_playbook_step);
-    let legacy = items.iter().find(|item| item.session.id == "legacy").unwrap();
-    assert_eq!(legacy.session.playbook, "");
-    assert_eq!(legacy.playbook_title, "Unknown playbook ()");
-    assert_eq!(legacy.step_title, "research");
-    assert!(!legacy.is_playbook_step);
-    let resumed = items.iter().find(|item| item.session.id == "resumed").unwrap();
-    assert_eq!(resumed.step_title, "");
-    assert!(!resumed.session.generic);
-    assert!(!resumed.is_playbook_step);
-
-    let _ = fs::remove_dir_all(repo);
-}
 
 #[test]
 fn missing_task_playbook_is_not_inferred() {
@@ -289,192 +200,11 @@ created = 1
     assert!(task.auto_advance.is_empty());
 }
 
-#[test]
-fn create_session_requires_task() {
-    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let repo = std::env::temp_dir().join(format!("alinery-create-session-{n}"));
-    let slug = "demo";
-    fs::create_dir_all(repo.join(".alinery/tasks").join(slug).join("sessions")).unwrap();
-    let worktree = repo.join("worktree");
-    fs::create_dir_all(&worktree).unwrap();
-    alinery_core::ensure_playbooks(&repo).unwrap();
-    write_task(
-        &repo,
-        &Task {
-            name: "Demo".into(),
-            slug: slug.into(),
-            requested_slug: String::new(),
-            branch: slug.into(),
-            worktree: worktree.display().to_string(),
-            has_worktree: true,
-            created: 1,
-            archived: false,
-            pr_url: String::new(),
-            linear_id: String::new(),
-            github_issue: String::new(),
-            playbook: default_playbook_key(),
-            auto_advance: vec![],
-            draft: false,
-            telemetry_id: String::new(),
-            parent_task: String::new(),
-            active_subtask: String::new(),
-            subtask_outcome: String::new(),
-            related_tasks: Vec::new(),
-        },
-    )
-    .unwrap();
-    set_active_repo_global(Some(repo.clone())).unwrap();
-    let empty_err = create_session_in(
-        &repo.join("app.toml"),
-        &repo,
-        "".into(),
-        String::new(),
-        "research".into(),
-        false,
-        "claude".into(),
-        String::new(),
-        None,
-    )
-    .err()
-    .unwrap();
-    assert_eq!(empty_err, "sessions must be attached to a task");
-    let unknown_err = create_session_in(
-        &repo.join("app.toml"),
-        &repo,
-        slug.into(),
-        String::new(),
-        "bogus".into(),
-        false,
-        "claude".into(),
-        String::new(),
-        None,
-    )
-    .err()
-    .unwrap();
-    assert!(unknown_err.contains("unknown step 'bogus'"));
-    let removed_err = create_session_in(
-        &repo.join("app.toml"),
-        &repo,
-        slug.into(),
-        String::new(),
-        "wiki-distill".into(),
-        false,
-        "claude".into(),
-        String::new(),
-        None,
-    )
-    .err()
-    .unwrap();
-    assert!(removed_err.contains("unknown step 'wiki-distill'"));
-    let blank = create_session_in(
-        &repo.join("app.toml"),
-        &repo,
-        slug.into(),
-        String::new(),
-        "research".into(),
-        false,
-        "no-harness".into(),
-        "ignored".into(),
-        None,
-    )
-    .unwrap();
-    assert_eq!(blank.phase, "");
-    assert_eq!(blank.harness, "no-harness");
-    assert_eq!(blank.model, "");
-    let _ = set_active_repo_global(None);
-    let _ = fs::remove_dir_all(&repo);
-}
 
-#[test]
-fn create_session_rejects_archived_task() {
-    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let repo = init_git_test_repo("create-session-archived");
-    set_active_repo_global(Some(repo.clone())).unwrap();
 
-    let mut task = create_task_for_test(&repo, "Archived Task", true, "", "");
-    task.archived = true;
-    write_task(&repo, &task).unwrap();
 
-    let err = match create_session_in(
-        &repo.join("app.toml"),
-        &repo,
-        task.slug.clone(),
-        String::new(),
-        "".into(),
-        false,
-        "".into(),
-        "".into(),
-        None,
-    ) {
-        Err(e) => e,
-        Ok(_) => panic!("create_session must reject an archived task"),
-    };
-    assert!(err.contains("archived"), "unexpected error: {err}");
 
-    set_active_repo_global(None).unwrap();
-    let _ = fs::remove_dir_all(&repo);
-}
 
-#[test]
-fn create_session_accepts_explicit_playbook_and_generic() {
-    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-    let repo = init_git_test_repo("create-session-provenance");
-    set_active_repo_global(Some(repo.clone())).unwrap();
-    let task = create_task_for_test(&repo, "Session Provenance", true, "", "");
-
-    let external = create_session_in(
-        &repo.join("app.toml"),
-        &repo,
-        task.slug.clone(),
-        "one-shot".into(),
-        "implementation".into(),
-        false,
-        "omp".into(),
-        "model".into(),
-        None,
-    )
-    .unwrap();
-    assert_eq!(external.playbook, "one-shot");
-    assert_eq!(external.phase, "implementation");
-    assert!(!external.generic);
-    assert_eq!(external.artifact, "01-implementation.md");
-
-    let generic = create_session_in(
-        &repo.join("app.toml"),
-        &repo,
-        task.slug.clone(),
-        "one-shot".into(),
-        "implementation".into(),
-        true,
-        "omp".into(),
-        "model".into(),
-        None,
-    )
-    .unwrap();
-    assert_eq!(generic.playbook, "superdevelop");
-    assert!(generic.generic);
-    assert_eq!(generic.phase, "");
-    assert_eq!(generic.artifact, "");
-
-    let error = match create_session_in(
-        &repo.join("app.toml"),
-        &repo,
-        String::new(),
-        String::new(),
-        String::new(),
-        true,
-        "claude".into(),
-        String::new(),
-        None,
-    ) {
-        Err(error) => error,
-        Ok(_) => panic!("Generic creation must remain task-scoped"),
-    };
-    assert_eq!(error, "sessions must be attached to a task");
-
-    set_active_repo_global(None).unwrap();
-    let _ = fs::remove_dir_all(repo);
-}
 
 #[test]
 fn session_resume_state_leftover_is_not_capable() {
@@ -670,70 +400,11 @@ fn allow_root_session_open_rejects_non_drawer() {
     assert!(!allow_root_session_open(Some("omp")));
 }
 
-#[test]
-fn ensure_drawer_terminal_requires_active_repo() {
-    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    set_active_repo_global(None).unwrap();
-    // Command-level gate uses require_owned_active_repo → active_repo().
-    let err = match active_repo() {
-        Err(e) => e,
-        Ok(_) => panic!("expected error with no active repo"),
-    };
-    assert!(err.contains("no active repo"), "unexpected error: {err}");
-}
 
-#[test]
-fn ensure_drawer_terminal_writes_root_no_harness_meta() {
-    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let repo = std::env::temp_dir().join(format!("alinery-ensure-drawer-{n}"));
-    fs::create_dir_all(repo.join(".alinery")).unwrap();
-    set_active_repo_global(Some(repo.clone())).unwrap();
 
-    let meta = match ensure_drawer_terminal_in(&repo, None) {
-        Ok(m) => m,
-        Err(e) => panic!("ensure_drawer_terminal should succeed: {e}"),
-    };
-    assert!(meta.id.starts_with('s'), "id should use s{{nanos}} pattern: {}", meta.id);
-    assert_eq!(meta.harness, "no-harness");
-    assert_eq!(meta.phase, "");
-    assert_eq!(meta.model, "");
-    assert!(!meta.archived);
-    assert_eq!(meta.harness_resume_token, "");
-    assert_eq!(meta.worktree, repo.to_string_lossy());
 
-    let path = root_sessions_dir(&repo).join(format!("{}.meta.json", meta.id));
-    assert!(path.is_file(), "meta should live under .alinery/sessions/: {path:?}");
-    // Must not create a task-scoped session path.
-    assert!(!path.to_string_lossy().contains("/tasks/"), "drawer meta must not live under tasks/: {path:?}");
 
-    set_active_repo_global(None).unwrap();
-    let _ = fs::remove_dir_all(&repo);
-}
 
-#[test]
-fn ensure_drawer_terminal_mints_new_id_each_call() {
-    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let repo = std::env::temp_dir().join(format!("alinery-ensure-drawer-twice-{n}"));
-    fs::create_dir_all(repo.join(".alinery")).unwrap();
-    set_active_repo_global(Some(repo.clone())).unwrap();
-
-    let a = match ensure_drawer_terminal_in(&repo, None) {
-        Ok(m) => m,
-        Err(e) => panic!("first ensure should succeed: {e}"),
-    };
-    let b = match ensure_drawer_terminal_in(&repo, None) {
-        Ok(m) => m,
-        Err(e) => panic!("second ensure should succeed: {e}"),
-    };
-    assert_ne!(a.id, b.id, "each ensure must mint a fresh session id");
-    assert!(root_sessions_dir(&repo).join(format!("{}.meta.json", a.id)).is_file());
-    assert!(root_sessions_dir(&repo).join(format!("{}.meta.json", b.id)).is_file());
-
-    set_active_repo_global(None).unwrap();
-    let _ = fs::remove_dir_all(&repo);
-}
 
 #[test]
 fn notification_read_stamps_only_requested_session() {

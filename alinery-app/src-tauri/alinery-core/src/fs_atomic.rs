@@ -25,6 +25,29 @@ pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
+/// Persist a same-directory replacement through file and directory sync. A failure
+/// after rename cannot promise rollback: callers must inspect durable state.
+pub fn write_bytes_durable(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let parent = path.parent().ok_or("durable write path has no parent")?;
+    fs::create_dir_all(parent).map_err(|e| format!("create durable parent: {e}"))?;
+    let tmp = atomic_tmp_path(path);
+    let before_rename = (|| {
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&tmp)
+            .map_err(|e| format!("create durable temporary file: {e}"))?;
+        file.write_all(bytes).map_err(|e| format!("write durable temporary file: {e}"))?;
+        file.sync_all().map_err(|e| format!("sync durable temporary file: {e}"))?;
+        drop(file);
+        fs::rename(&tmp, path).map_err(|e| format!("rename durable file: {e}"))
+    })();
+    if let Err(error) = before_rename {
+        let _ = fs::remove_file(&tmp);
+        return Err(error);
+    }
+    fs::File::open(parent).and_then(|dir| dir.sync_all())
+        .map_err(|e| format!("ambiguous persistence after rename of {} (parent sync failed): {e}", path.display()))
+}
+
 /// Create `dir` and any missing parent 0700 rather than at the process umask, so a directory
 /// that will hold credentials is never world-listable. An existing directory is left as it is.
 ///

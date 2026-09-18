@@ -1,7 +1,7 @@
 // One-command manual smoke for the real OMP extension -> alinery-runner result path.
 //
 // The local socket deliberately simulates three daemon outcomes for consecutive
-// alinery_phase_complete calls: MissingArtifact rejection, acknowledgement timeout,
+// alinery_phase_complete calls: invalid outputs, acknowledgement timeout,
 // then acceptance. It does not replace alineryd's semantic integration tests; it makes
 // the model-visible OMP tool-result boundary deterministic and easy to inspect.
 
@@ -25,7 +25,7 @@ const transportEnvironment = {
   ALINERY_SESSION_ID: sessionId,
   ALINERY_DAEMON_SOCKET: socketPath,
   ALINERY_DAEMON_NAMESPACE: "manual-completion-smoke",
-  ALINERY_EVENT_PROTOCOL_VERSION: "1",
+  ALINERY_EVENT_PROTOCOL_VERSION: "2",
   ALINERY_EVENT_TOKEN: eventToken,
 };
 
@@ -46,7 +46,7 @@ const server = createServer((connection) => {
       return;
     }
 
-    if (request.op !== "event" || request.version !== 1 || request.session_id !== sessionId || request.token !== eventToken) {
+    if (request.op !== "event" || request.version !== Number(transportEnvironment.ALINERY_EVENT_PROTOCOL_VERSION) || request.session_id !== sessionId || request.token !== eventToken) {
       connection.end('{"error":"invalid-event-auth"}\n');
       return;
     }
@@ -58,12 +58,12 @@ const server = createServer((connection) => {
 
     completionAttempts += 1;
     if (completionAttempts === 1) {
-      connection.end('{"error":"completion-rejected:MissingArtifact"}\n');
+      connection.end('{"ok":true,"completion":{"status":"invalid_outputs","diagnostics":["Missing required output"]}}\n');
     } else if (completionAttempts === 2) {
       // Deliberately leave the connection unanswered. alinery-runner must time out,
       // and the OMP tool must render delivery_failed rather than false success.
     } else {
-      connection.end('{"ok":true}\n');
+      connection.end('{"ok":true,"completion":{"status":"accepted","receipt_id":"manual-smoke-receipt"}}\n');
     }
   });
 });
@@ -110,36 +110,37 @@ async function selfTest() {
     })),
     [
       {
-        code: 2,
+        code: 0,
         result: {
-          status: "rejected",
-          reason: "completion-rejected:MissingArtifact",
+          status: "invalid_outputs",
+          diagnostics: ["Missing required output"],
         },
         stderr: "",
       },
       { code: 3, result: { status: "delivery_failed" }, stderr: "" },
-      { code: 0, result: { status: "accepted" }, stderr: "" },
+      { code: 0, result: { status: "accepted", receipt_id: "manual-smoke-receipt" }, stderr: "" },
     ],
   );
-  process.stdout.write("completion smoke fixture self-test passed: rejected -> delivery_failed -> accepted\n");
+  process.stdout.write("completion smoke fixture self-test passed: invalid_outputs -> delivery_failed -> accepted\n");
 }
 
 async function runOmpSmoke() {
-  const ompBinary = process.env.OMP_BIN || "omp";
+  const ompBinary = process.env.OMP_BIN;
+  if (!ompBinary || !path.isAbsolute(ompBinary)) throw new Error("Set OMP_BIN to the absolute packaged OMP binary path; PATH fallback is not allowed.");
   const prompt = [
     "This is an Alinery completion feedback smoke test.",
     "Call alinery_phase_complete exactly three times, even when an earlier call rejects or fails.",
     "After each call, state the exact tool result before making the next call.",
-    "Do not use any other tools. After the third result, say the smoke sequence is complete and wait.",
+    "Do not use any other tools. After accepted completion do no further work; let ordinary OMP shutdown finish.",
   ].join(" ");
 
   process.stdout.write(
     [
       "Starting real OMP with a deterministic fake alineryd acknowledgement sequence:",
-      "  1. rejected: MissingArtifact",
+      "  1. invalid_outputs: Missing required output",
       "  2. delivery_failed: acknowledgement timeout",
       "  3. accepted",
-      "Inspect the three alinery_phase_complete tool results in OMP, then quit OMP normally (Ctrl+C).\n",
+      "Inspect the tool results and ordinary automatic exit. This fake-daemon smoke does not prove durable acceptance or successor gating.\n",
     ].join("\n"),
   );
 
@@ -148,6 +149,8 @@ async function runOmpSmoke() {
       ...process.env,
       ...transportEnvironment,
       ALINERY_RUNNER_PATH: runnerPath,
+      ALINERY_REPO: root,
+      ALINERY_APP_CONFIG: path.join(root, "app.toml"),
     },
     stdio: "inherit",
   });

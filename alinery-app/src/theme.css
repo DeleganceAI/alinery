@@ -5120,6 +5120,68 @@ dialog.modal::backdrop {
   min-height: 0;
   overflow: auto;
 }
+.playbooks-page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+.playbooks-page .actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.playbooks-page label:not(.opt) {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0;
+}
+.playbooks-page textarea {
+  width: 100%;
+  min-height: 100px;
+  resize: vertical;
+}
+.playbooks-page textarea,
+.playbooks-page input:not([type="checkbox"]),
+.playbooks-page select {
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+}
+.playbooks-page fieldset,
+.playbooks-page section[aria-label="Playbook editor"] {
+  min-width: 0;
+  padding: 16px;
+  margin-top: 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+.playbooks-page ul[aria-label="Playbook library"] {
+  list-style: none;
+  padding: 0;
+}
+.playbooks-page ul[aria-label="Playbook library"] > li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-strong);
+}
+.playbook-graph-view ul[aria-label="Artifact dependencies"] {
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
+.playbook-graph-view ul[aria-label="Artifact dependencies"] li {
+  margin-top: 8px;
+}
+.playbook-graph-view ul[aria-label="Artifact dependencies"] code {
+  display: block;
+  font-size: 0.85em;
+}
 .playbook-graph-view {
   padding: 12px;
 }

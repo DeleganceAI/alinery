@@ -8,6 +8,7 @@ import { mockIpc } from "../test/mockIpc";
 import { toast } from "../toast";
 import type { AgentState, ArtifactListItem, ArtifactTreeNode, SessionObservation, Task } from "../types";
 import { SessionView } from "./SessionView";
+import { executionRecord, executionReply } from "./executionTestFixture";
 
 const scenario = vi.hoisted(() => ({
   itemCalls: 0,
@@ -20,7 +21,7 @@ const scenario = vi.hoisted(() => ({
 }));
 
 const sessionStatus = vi.hoisted(() => vi.fn(async (): Promise<SessionObservation> => ({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} })));
-const spawnSessionDetached = vi.hoisted(() => vi.fn(async () => undefined));
+const startSession = vi.hoisted(() => vi.fn(async () => undefined));
 const restateSession = vi.hoisted(() => vi.fn(async () => undefined));
 const rpcAttachSession = vi.hoisted(() => vi.fn(async (_args: unknown) => undefined));
 const rpcWriteSession = vi.hoisted(() => vi.fn(async (_id: string, _payload: unknown) => undefined));
@@ -34,6 +35,8 @@ const chatFileStat = vi.hoisted(() => vi.fn(async (path: string) => ({ name: pat
 const copyChatAttachments = vi.hoisted(() => vi.fn(async () => ({ copied: [] as string[], failures: [] as string[] })));
 const writeChatAttachmentBytes = vi.hoisted(() => vi.fn(async (_slug: string, fileName: string) => fileName));
 const readChatImage = vi.hoisted(() => vi.fn(async () => ({ mime_type: "image/png", data: "aa" })));
+const getTaskExecution = vi.hoisted(() => vi.fn());
+const allowExecutionCompletion = vi.hoisted(() => vi.fn());
 
 const task: Task = {
   name: "Task",
@@ -83,6 +86,8 @@ vi.mock("../SessionTerminal", () => ({ SessionTerminal: () => <div data-testid="
 vi.mock("../confirm", () => ({ confirmDanger }));
 vi.mock("../ipc", () =>
   mockIpc({
+    getTaskExecution,
+    allowExecutionCompletion,
     listTasks: () => {
       scenario.taskCalls += 1;
       if (scenario.tasksError) return Promise.reject(scenario.tasksError);
@@ -97,7 +102,7 @@ vi.mock("../ipc", () =>
     listArtifactCommentDraftsForRepo: async () => [],
     listArtifactComments: async () => [],
     sessionStatus,
-    spawnSessionDetached,
+    startSession,
     restateSession,
     rpcAttachSession,
     rpcWriteSession,
@@ -1185,5 +1190,71 @@ describe("session chat attach handshake", () => {
     });
     await flushPromises();
     expect(rpcAttachSession).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("session-scoped completion permission", () => {
+  beforeEach(() => {
+    scenario.tasks = [task];
+    scenario.tasksPromise = null;
+    scenario.tasksError = null;
+    scenario.items = [];
+    getTaskExecution.mockReset().mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session" })]));
+    allowExecutionCompletion.mockReset().mockImplementation(async (_slug: string, executionId: string, sessionId: string) => {
+      getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: sessionId, permission: { kind: "human_granted", execution_id: executionId, session_id: sessionId } })]));
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    getTaskExecution.mockReset();
+    allowExecutionCompletion.mockReset();
+  });
+
+  it("grants the displayed owner while preserving the interactive composer", async () => {
+    renderSession();
+    fireEvent.click(await screen.findByText(/Retained worker · running · Owner session/));
+    fireEvent.click(screen.getByRole("button", { name: "Allow this session to complete · session" }));
+    await waitFor(() => expect(allowExecutionCompletion).toHaveBeenCalledWith("task", "execution-a", "session", "/repo"));
+    expect(await screen.findByText("Completion permission: human_granted · session")).toBeDefined();
+    expect(screen.getByLabelText("Message or /command")).toBeDefined();
+    expect(screen.getByText("research/1-request-2.md")).toBeDefined();
+    expect(screen.getByText("research/2-result-10.md")).toBeDefined();
+  });
+
+  it("never grants a replacement from a retired owner's history", async () => {
+    getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "replacement", previous_session_ids: ["session"] })]));
+    renderSession();
+    fireEvent.click(await screen.findByText(/Owner replacement/));
+    expect(screen.getByText("This is a previous owner. Current owner: replacement.")).toBeDefined();
+    expect(screen.queryByRole("button", { name: /Allow this session to complete/ })).toBeNull();
+  });
+});
+
+describe("held task sessions", () => {
+  afterEach(() => {
+    cleanup();
+    startSession.mockReset().mockResolvedValue(undefined);
+    getTaskExecution.mockReset();
+    sessionStatus.mockReset().mockResolvedValue({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} });
+  });
+
+  it("opens queued work without starting it and starts only on explicit request", async () => {
+    startSession.mockClear();
+    scenario.tasks = [task];
+    scenario.tasksPromise = null;
+    scenario.tasksError = null;
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "never_started" }, state: null, checkpoint: {} });
+    getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session", lifecycle: "queued", start_requested: false })]));
+    renderSession({ intent: undefined });
+    const start = await screen.findByRole("button", { name: "Start this queued session" });
+    expect(startSession).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Message or /command")).toBeNull();
+    startSession.mockImplementation(async () => {
+      sessionStatus.mockResolvedValue({ lifecycle: { state: "live" }, state: null, checkpoint: {}, transport: "rpc" });
+      getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session" })]));
+    });
+    fireEvent.click(start);
+    await waitFor(() => expect(startSession).toHaveBeenCalledWith("task", "session", "/repo"));
+    expect(await screen.findByLabelText("Message or /command")).toBeDefined();
   });
 });

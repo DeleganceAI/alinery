@@ -40,7 +40,7 @@ impl TempRepo {
 key = "omp"
 name = "sleep"
 binary = "sh"
-args = ["-c", "sleep 30 # {token}"]
+args = ["-c", "printf ready; sleep 30 # {token}"]
 model_arg = []
 prompt_injection = "arg"
 adapter = "unsupported"
@@ -205,6 +205,36 @@ fn write_meta(repo: &Path, id: &str, ns: &str, started: u64, ended: Option<u64>)
     path
 }
 
+// These transport-only fixtures deliberately have no graph assignment. Primary
+// execution creation and restate are exercised through v2 daemon APIs in rpc_session.
+fn write_auxiliary_meta(repo: &Path, id: &str) -> PathBuf {
+    let task_dir = repo.join(".alinery/tasks/transport");
+    let sessions = task_dir.join("sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    let task = alinery_core::Task {
+        name: "Transport".into(),
+        slug: "transport".into(),
+        branch: "transport".into(),
+        worktree: repo.to_string_lossy().into_owned(),
+        has_worktree: true,
+        created: 1,
+        ..Default::default()
+    };
+    fs::write(task_dir.join("task.md"), toml::to_string(&task).unwrap()).unwrap();
+    let meta = alinery_core::SessionMeta {
+        id: id.into(),
+        worktree: task.worktree,
+        created: 1,
+        generic: true,
+        prompt: Some(String::new()),
+        harness: "omp".into(),
+        ..Default::default()
+    };
+    let path = sessions.join(format!("{id}.meta.json"));
+    fs::write(&path, serde_json::to_vec(&meta).unwrap()).unwrap();
+    path
+}
+
 #[test]
 fn status_unknown_session_is_an_error() {
     let _g = test_lock();
@@ -220,7 +250,7 @@ fn status_unknown_session_is_an_error() {
 }
 
 #[test]
-fn task_spawn_requires_eligible_metadata_and_acknowledges_durable_start() {
+fn auxiliary_spawn_requires_eligible_metadata_and_acknowledges_durable_start() {
     let _guard = test_lock();
     let repo = TempRepo::new();
     let task_slug = "task";
@@ -231,7 +261,7 @@ fn task_spawn_requires_eligible_metadata_and_acknowledges_durable_start() {
         fs::write(
             task_dir.join("task.md"),
             format!(
-                "name = \"Task\"\nslug = \"task\"\nbranch = \"task\"\nworktree = {:?}\nhas_worktree = {has_worktree}\ncreated = 1\narchived = {archived}\nplaybook = \"superdevelop\"\n",
+                "name = \"Task\"\nslug = \"task\"\nbranch = \"task\"\nworktree = {:?}\nhas_worktree = {has_worktree}\ncreated = 1\narchived = {archived}\n",
                 repo.root.display().to_string()
             ),
         )
@@ -244,7 +274,8 @@ fn task_spawn_requires_eligible_metadata_and_acknowledges_durable_start() {
             "created": 1,
             "archived": archived,
             "harness": harness,
-            "playbook": "superdevelop"
+            "generic": true,
+            "prompt": ""
         });
         if let Some(started_at) = started_at {
             value["started_at"] = json!(started_at);
@@ -259,15 +290,16 @@ fn task_spawn_requires_eligible_metadata_and_acknowledges_durable_start() {
 
     let daemon = Daemon::spawn(&repo, None).expect("daemon starts");
     let spawn = |id: &str| daemon.rpc(json!({"op": "spawn", "id": id, "task_slug": task_slug}));
-    assert_eq!(spawn("missing").unwrap()["error"], "missing-session-meta");
-    assert_eq!(spawn("archived").unwrap()["error"], "session-archived");
-    assert!(spawn("started").unwrap()["error"].as_str().unwrap().contains("already-started"));
-    assert!(spawn("unknown-harness").unwrap()["error"].as_str().unwrap().contains("unknown harness"));
+    for id in ["missing", "archived", "started", "unknown-harness"] {
+        let response = spawn(id).unwrap();
+        assert!(response.get("error").is_some(), "ineligible session {id} was launched: {response}");
+        assert!(daemon.rpc(json!({"op": "status", "id": id})).unwrap().get("error").is_some());
+    }
 
     write_task(true, true);
-    assert_eq!(spawn("valid").unwrap()["error"], "task-archived");
+    assert!(spawn("valid").unwrap().get("error").is_some(), "archived task must not launch");
     write_task(false, false);
-    assert_eq!(spawn("valid").unwrap()["error"], "missing-worktree");
+    assert!(spawn("valid").unwrap().get("error").is_some(), "task without a worktree must not launch");
     write_task(false, true);
     let original_mode = fs::metadata(&sessions).unwrap().permissions().mode();
     fs::set_permissions(&sessions, fs::Permissions::from_mode(0o555)).unwrap();
@@ -318,7 +350,7 @@ fn leftover_live_session_refuses_attach_spawn_resume_and_keeps_kill() {
     fs::write(
         task_dir.join("task.md"),
         format!(
-            "name = \"Task\"\nslug = \"task\"\nbranch = \"task\"\nworktree = {:?}\nhas_worktree = true\ncreated = 1\narchived = false\nplaybook = \"superdevelop\"\n",
+            "name = \"Task\"\nslug = \"task\"\nbranch = \"task\"\nworktree = {:?}\nhas_worktree = true\ncreated = 1\narchived = false\n",
             repo.root.display().to_string()
         ),
     )
@@ -331,7 +363,8 @@ fn leftover_live_session_refuses_attach_spawn_resume_and_keeps_kill() {
             "created": 1,
             "archived": false,
             "harness": "omp",
-            "playbook": "superdevelop"
+            "generic": true,
+            "prompt": ""
         }))
         .unwrap(),
     )
@@ -418,7 +451,7 @@ adapter = "unsupported"
     fs::write(
         task_dir.join("task.md"),
         format!(
-            "name = \"Prompt\"\nslug = \"{task_slug}\"\nbranch = \"prompt\"\nworktree = {:?}\nhas_worktree = true\ncreated = 1\nplaybook = \"superdevelop\"\n",
+            "name = \"Prompt\"\nslug = \"{task_slug}\"\nbranch = \"prompt\"\nworktree = {:?}\nhas_worktree = true\ncreated = 1\n",
             repo.root.display().to_string()
         ),
     )
@@ -433,7 +466,7 @@ adapter = "unsupported"
                 "worktree": repo.root.display().to_string(),
                 "created": 1,
                 "harness": "omp",
-                "playbook": "superdevelop",
+                "prompt_extra": "",
                 "generic": true,
                 "prompt": prompt,
             }))
@@ -525,7 +558,7 @@ adapter = "unsupported"
     fs::write(
         task_dir.join("task.md"),
         format!(
-            "name = \"Task\"\nslug = \"{task_slug}\"\nbranch = \"{task_slug}\"\nworktree = {:?}\nhas_worktree = true\ncreated = 1\nplaybook = \"superdevelop\"\n",
+            "name = \"Task\"\nslug = \"{task_slug}\"\nbranch = \"{task_slug}\"\nworktree = {:?}\nhas_worktree = true\ncreated = 1\n",
             repo.root.display().to_string()
         ),
     )
@@ -537,7 +570,6 @@ adapter = "unsupported"
             "created": 1,
             "generic": true,
             "harness": "omp",
-            "playbook": "superdevelop",
             "prompt_extra": prompt_extra,
         });
         fs::write(sessions.join(format!("{id}.meta.json")), serde_json::to_vec(&value).unwrap()).unwrap();
@@ -806,21 +838,12 @@ fn t3_crash_restart_honest_ended_at() {
     let repo = TempRepo::new();
     let d = Daemon::spawn(&repo, None).expect("daemon");
 
-    // Create a root session meta then spawn via protocol.
     let id = "chatty-1";
-    let meta_path = write_meta(&repo.root, id, "", 0, None);
-    // Clear started so spawn accepts it.
-    let mut meta: Value = serde_json::from_str(&fs::read_to_string(&meta_path).unwrap()).unwrap();
-    meta.as_object_mut().unwrap().remove("started_at");
-    meta["harness"] = json!("chatty");
-    fs::write(&meta_path, meta.to_string()).unwrap();
-
-    // spawn (may fail if harness registry shape differs — then soft-skip).
+    let meta_path = write_auxiliary_meta(&repo.root, id);
     let spawn_resp = d.rpc(json!({
         "op": "spawn",
         "id": id,
-        "task_slug": "",
-        "harness": "chatty",
+        "task_slug": "transport",
         "model": "",
         "phase": "",
         "artifact": "",
@@ -829,23 +852,15 @@ fn t3_crash_restart_honest_ended_at() {
         "cols": 80,
         "rows": 24,
     }));
-    if spawn_resp.is_err() || spawn_resp.as_ref().ok().and_then(|v| v.get("error")).is_some() {
-        eprintln!("skip t3: spawn failed: {spawn_resp:?}");
-        d.shutdown().ok();
-        return;
-    }
+    assert_eq!(spawn_resp.expect("spawn transport fixture"), json!({"ok": true}));
 
     // Wait for scrollback sidecar to appear (chatty emits bytes).
-    let scroll = repo.root.join(".alinery").join("sessions").join(format!("{id}.scrollback"));
+    let scroll = repo.root.join(".alinery/tasks/transport/sessions").join(format!("{id}.scrollback"));
     let start = Instant::now();
     while !scroll.exists() && start.elapsed() < Duration::from_secs(5) {
         thread::sleep(Duration::from_millis(100));
     }
-    if !scroll.exists() {
-        eprintln!("skip t3: no scrollback");
-        d.kill_nine();
-        return;
-    }
+    assert!(scroll.exists(), "spawned transport must produce scrollback");
     thread::sleep(Duration::from_millis(500)); // let mtime settle
     let mtime_before = fs::metadata(&scroll)
         .and_then(|m| m.modified())
@@ -906,7 +921,7 @@ adapter = "unsupported"
     fs::write(
         task_dir.join("task.md"),
         format!(
-            "name = \"Verify\"\nslug = \"{task_slug}\"\nbranch = \"verify\"\nworktree = {:?}\nhas_worktree = true\ncreated = 1\nplaybook = \"superdevelop\"\n",
+            "name = \"Verify\"\nslug = \"{task_slug}\"\nbranch = \"verify\"\nworktree = {:?}\nhas_worktree = true\ncreated = 1\n",
             repo.root.display().to_string()
         ),
     )
@@ -920,7 +935,8 @@ adapter = "unsupported"
             "worktree": repo.root.display().to_string(),
             "created": 1,
             "harness": "omp",
-            "playbook": "superdevelop"
+            "generic": true,
+            "prompt": ""
         }))
         .unwrap(),
     )
@@ -1026,7 +1042,7 @@ adapter = "unsupported"
     fs::write(
         task_dir.join("task.md"),
         format!(
-            "name = \"Wedge\"\nslug = \"{task_slug}\"\nbranch = \"wedge\"\nworktree = {:?}\nhas_worktree = true\ncreated = 1\nplaybook = \"superdevelop\"\n",
+            "name = \"Wedge\"\nslug = \"{task_slug}\"\nbranch = \"wedge\"\nworktree = {:?}\nhas_worktree = true\ncreated = 1\n",
             repo.root.display().to_string()
         ),
     )
@@ -1034,7 +1050,7 @@ adapter = "unsupported"
 
     let d = Daemon::spawn(&repo, None).expect("daemon");
 
-    let spawn_one = |id: &str| -> bool {
+    let spawn_one = |id: &str| {
         fs::write(
             sessions_dir.join(format!("{id}.meta.json")),
             serde_json::to_vec(&json!({
@@ -1042,7 +1058,8 @@ adapter = "unsupported"
                 "worktree": repo.root.display().to_string(),
                 "created": 1,
                 "harness": "omp",
-                "playbook": "superdevelop"
+                "generic": true,
+                "prompt": ""
             }))
             .unwrap(),
         )
@@ -1055,19 +1072,11 @@ adapter = "unsupported"
             "cols": 80,
             "rows": 24,
         }));
-        match spawn_resp {
-            Ok(v) if v.get("error").is_none() => true,
-            other => {
-                eprintln!("skip t0_2: spawn {id} failed: {other:?}");
-                false
-            }
-        }
+        assert_eq!(spawn_resp.expect("spawn transport fixture"), json!({"ok": true}));
     };
 
-    if !spawn_one("blocked-a") || !spawn_one("blocked-b") {
-        d.shutdown().ok();
-        return;
-    }
+    spawn_one("blocked-a");
+    spawn_one("blocked-b");
     // 256 KiB: large enough to exercise write_all; stays within what the
     // byte-at-a-time request reader + unix socket will accept on this host.
     // (1 MiB+ request lines observed as Broken pipe here.)
@@ -1271,17 +1280,12 @@ fn t15_version_probes_never_kill_a_live_session() {
     let d = Daemon::spawn(&repo, None).expect("daemon");
 
     let id = "chatty-probe";
-    let meta_path = write_meta(&repo.root, id, "", 0, None);
-    let mut meta: Value = serde_json::from_str(&fs::read_to_string(&meta_path).unwrap()).unwrap();
-    meta.as_object_mut().unwrap().remove("started_at");
-    meta["harness"] = json!("chatty");
-    fs::write(&meta_path, meta.to_string()).unwrap();
+    write_auxiliary_meta(&repo.root, id);
 
     let spawn_resp = d.rpc(json!({
         "op": "spawn",
         "id": id,
-        "task_slug": "",
-        "harness": "chatty",
+        "task_slug": "transport",
         "model": "",
         "phase": "",
         "artifact": "",
@@ -1290,11 +1294,7 @@ fn t15_version_probes_never_kill_a_live_session() {
         "cols": 80,
         "rows": 24,
     }));
-    if spawn_resp.is_err() || spawn_resp.as_ref().ok().and_then(|v| v.get("error")).is_some() {
-        eprintln!("skip t15: spawn failed: {spawn_resp:?}");
-        d.shutdown().ok();
-        return;
-    }
+    assert_eq!(spawn_resp.expect("spawn transport fixture"), json!({"ok": true}));
 
     let start = Instant::now();
     let mut before = harness_pids(&repo.token);
@@ -1311,15 +1311,8 @@ fn t15_version_probes_never_kill_a_live_session() {
     thread::sleep(Duration::from_millis(300));
 
     assert_eq!(before, harness_pids(&repo.token), "version probes must leave every harness pid untouched");
-    let status = d
-        .rpc(json!({"op": "status", "id": id}))
-        .ok()
-        .and_then(|v| v.get("status").and_then(|s| s.as_str().map(String::from)))
-        .unwrap_or_default();
-    assert!(
-        status == "running" || status == "idle",
-        "session must still be live and owned by the same daemon, got {status:?}"
-    );
+    let status = d.rpc(json!({"op": "status", "id": id})).expect("live session status");
+    assert_eq!(status["process"]["state"], "alive", "version probes must preserve the owned process");
 
     d.shutdown().ok();
 }

@@ -60,29 +60,27 @@ pub(crate) struct ArtifactReviewPendingStatus {
 }
 
 pub(crate) fn artifact_comment_stem(name: &str) -> String {
-    Path::new(name).file_stem().and_then(|s| s.to_str()).unwrap_or(name).to_string()
+    Path::new(name).with_extension("").to_string_lossy().into_owned()
 }
 
 pub(crate) fn artifact_comment_json_path(repo: &Path, slug: &str, artifact: &str) -> Result<PathBuf, String> {
-    let artifact_path = artifact_file_path(repo, slug, artifact)?;
-    let stem = artifact_comment_stem(artifact);
-    Ok(artifact_path.with_file_name(format!("{stem}.comments.json")))
+    artifact_file_path(repo, slug, artifact)?;
+    artifact_file_path(repo, slug, &format!("{}.comments.json", artifact_comment_stem(artifact)))
 }
 
-pub(crate) fn artifact_comment_drafts_path(repo: &Path, slug: &str) -> PathBuf {
-    task_dir(repo, slug).join("artifact-comment-drafts.json")
+pub(crate) fn artifact_comment_drafts_path(repo: &Path, slug: &str) -> Result<PathBuf, String> {
+    let slug = alinery_core::safe_component(slug).ok_or("invalid task slug")?;
+    alinery_core::resolve_artifact_path(repo, &format!(".alinery/tasks/{slug}/artifact-comment-drafts.json"))
 }
 
 pub(crate) fn artifact_comment_markdown_path(repo: &Path, slug: &str, artifact: &str) -> Result<PathBuf, String> {
-    let artifact_path = artifact_file_path(repo, slug, artifact)?;
-    let stem = artifact_comment_stem(artifact);
-    Ok(artifact_path.with_file_name(format!("{stem}.comments.md")))
+    artifact_file_path(repo, slug, artifact)?;
+    artifact_file_path(repo, slug, &format!("{}.comments.md", artifact_comment_stem(artifact)))
 }
 
 pub(crate) fn artifact_review_pending_path(repo: &Path, slug: &str, artifact: &str) -> Result<PathBuf, String> {
-    let artifact_path = artifact_file_path(repo, slug, artifact)?;
-    let stem = artifact_comment_stem(artifact);
-    Ok(artifact_path.with_file_name(format!("{stem}.review-pending.json")))
+    artifact_file_path(repo, slug, artifact)?;
+    artifact_file_path(repo, slug, &format!("{}.review-pending.json", artifact_comment_stem(artifact)))
 }
 
 pub(crate) fn artifact_text_hash(text: &str) -> String {
@@ -120,7 +118,7 @@ pub(crate) fn load_artifact_comments_for(repo: &Path, slug: &str, artifact: &str
 }
 
 pub(crate) fn load_artifact_comment_drafts_for(repo: &Path, slug: &str) -> Result<Vec<ArtifactCommentDraft>, String> {
-    let path = artifact_comment_drafts_path(repo, slug);
+    let path = artifact_comment_drafts_path(repo, slug)?;
     if !path.exists() {
         return Ok(vec![]);
     }
@@ -130,7 +128,7 @@ pub(crate) fn load_artifact_comment_drafts_for(repo: &Path, slug: &str) -> Resul
 }
 
 pub(crate) fn write_artifact_comment_drafts_for(repo: &Path, slug: &str, drafts: &[ArtifactCommentDraft]) -> Result<(), String> {
-    let path = artifact_comment_drafts_path(repo, slug);
+    let path = artifact_comment_drafts_path(repo, slug)?;
     if drafts.is_empty() {
         return remove_file_if_exists(&path);
     }
@@ -238,10 +236,10 @@ pub(crate) fn write_artifact_comment_markdown(repo: &Path, slug: &str, artifact:
 }
 
 pub(crate) fn next_artifact_review_markdown_path(repo: &Path, slug: &str, artifact: &str) -> Result<PathBuf, String> {
-    let artifact_path = artifact_file_path(repo, slug, artifact)?;
+    artifact_file_path(repo, slug, artifact)?;
     let stem = artifact_comment_stem(artifact);
     for idx in 1..=999 {
-        let candidate = artifact_path.with_file_name(format!("{stem}.review-{idx:03}.md"));
+        let candidate = artifact_file_path(repo, slug, &format!("{stem}.review-{idx:03}.md"))?;
         if !candidate.exists() {
             return Ok(candidate);
         }
@@ -252,11 +250,7 @@ pub(crate) fn next_artifact_review_markdown_path(repo: &Path, slug: &str, artifa
 pub(crate) fn write_artifact_review_pending(repo: &Path, slug: &str, artifact: &str, review_path: &Path) -> Result<(), String> {
     let path = artifact_review_pending_path(repo, slug, artifact)?;
     let created_at_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
-    let review = review_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| format!("invalid review path: {}", review_path.display()))?
-        .to_string();
+    let review = artifact_relative_name(repo, slug, review_path)?;
     let file = ArtifactReviewPendingFile {
         version: 1,
         artifact: artifact.to_string(),
@@ -294,11 +288,11 @@ pub(crate) fn clear_artifact_review_pending_for(repo: &Path, slug: &str, artifac
 }
 
 fn prepared_review_path(repo: &Path, slug: &str, artifact: &str, markdown: &str) -> Result<PathBuf, String> {
-    let artifact_path = artifact_file_path(repo, slug, artifact)?;
+    artifact_file_path(repo, slug, artifact)?;
     let stem = artifact_comment_stem(artifact);
     let mut first_available = None;
     for idx in 1..=999 {
-        let candidate = artifact_path.with_file_name(format!("{stem}.review-{idx:03}.md"));
+        let candidate = artifact_file_path(repo, slug, &format!("{stem}.review-{idx:03}.md"))?;
         if candidate.exists() {
             if fs::read_to_string(&candidate).map_err(|error| format!("read {}: {error}", candidate.display()))? == markdown {
                 return Ok(candidate);
@@ -308,6 +302,16 @@ fn prepared_review_path(repo: &Path, slug: &str, artifact: &str, markdown: &str)
         }
     }
     first_available.ok_or_else(|| format!("too many review files for {artifact}"))
+}
+
+fn artifact_relative_name(repo: &Path, slug: &str, path: &Path) -> Result<String, String> {
+    let relative = path
+        .strip_prefix(artifacts_dir(repo, slug))
+        .ok()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("invalid artifact path: {}", path.display()))?;
+    artifact_file_path(repo, slug, relative)?;
+    Ok(relative.to_string())
 }
 
 pub(crate) fn prepare_artifact_comments_prompt_for(repo: &Path, slug: &str, artifacts: &[String]) -> Result<PreparedSessionMessageAction, String> {
@@ -328,11 +332,7 @@ pub(crate) fn prepare_artifact_comments_prompt_for(repo: &Path, slug: &str, arti
         if !review_path.exists() {
             fs::write(&review_path, markdown.as_bytes()).map_err(|error| format!("write {}: {error}", review_path.display()))?;
         }
-        let review = review_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| format!("invalid review path: {}", review_path.display()))?
-            .to_string();
+        let review = artifact_relative_name(repo, slug, &review_path)?;
         items.push(PreparedArtifactCommentSnapshot {
             artifact: artifact.clone(),
             review,
@@ -511,14 +511,25 @@ pub(crate) async fn list_artifacts(task_slug: String) -> Result<Vec<String>, Str
 }
 
 #[tauri::command]
-pub(crate) async fn list_artifacts_with_metadata(task_slug: String) -> Result<Vec<alinery_core::ArtifactListItem>, String> {
-    let repo = active_repo()?;
-    alinery_core::list_artifacts_with_metadata_for(&repo, &task_slug)
+pub(crate) async fn list_artifacts_with_metadata(app: AppHandle, state: State<'_, AppState>, task_slug: String) -> Result<Vec<alinery_core::ArtifactListItem>, String> {
+    let repo = require_owned_active_repo(&state)?;
+    let task = read_task(&repo, &task_slug)?;
+    if task.engine_version >= 2 {
+        let execution = task_daemon_for(&repo, &task_slug, &app_config_path(&app)?)?.get_task_execution(
+            &alinery_core::task_creation::GetTaskExecutionRequest { task_slug: task_slug.clone() },
+        )?;
+        alinery_core::list_artifacts_with_execution_metadata(&repo, &task_slug, &execution.state)
+    } else {
+        alinery_core::list_artifacts_with_metadata_for(&repo, &task_slug)
+    }
 }
 
 #[tauri::command]
 pub(crate) fn send_review_handoff(
     app: AppHandle,
+    state: State<'_, AppState>,
+    source_repo_path: String,
+    target_repo_path: String,
     source_slug: String,
     source_session: String,
     source_artifact: String,
@@ -528,10 +539,15 @@ pub(crate) fn send_review_handoff(
     model: String,
     prompt_extra: String,
 ) -> Result<alinery_core::ReviewHandoffResult, String> {
-    let repo = active_repo()?;
-    let result = alinery_core::send_review_handoff_for(
-        &app_config_path(&app)?,
-        &repo,
+    let source_repo = target_repo_for_app(&app, &source_repo_path)?;
+    let target_repo = target_repo_for_app(&app, &target_repo_path)?;
+    require_repo_owned(&state, &source_repo)?;
+    require_repo_owned(&state, &target_repo)?;
+    let daemon = task_daemon_for(&target_repo, &target_slug, &app_config_path(&app)?)?;
+    let result = alinery_core::send_review_handoff_for_repos(
+        &daemon,
+        &source_repo,
+        &target_repo,
         alinery_core::ReviewHandoffRequest {
             source_slug,
             source_session,
@@ -541,6 +557,7 @@ pub(crate) fn send_review_handoff(
             harness,
             model,
             prompt_extra,
+            start: true,
         },
     )?;
     emit(
@@ -574,7 +591,7 @@ pub(crate) fn read_artifact_for_repo(app: AppHandle, repo_path: String, task_slu
 pub(crate) fn attachment_path_in(repo: &Path, task_slug: &str, name: &str) -> Result<String, String> {
     let slug = alinery_core::safe_component(task_slug).ok_or("invalid task slug")?;
     let name = alinery_core::safe_component(name).ok_or_else(|| format!("invalid attachment name: {name}"))?;
-    let path = alinery_core::attachments_dir(repo, slug).join(name);
+    let path = alinery_core::resolve_artifact_path(repo, &format!(".alinery/tasks/{slug}/artifacts/attachments/{name}"))?;
     if !path.is_file() {
         return Err(format!("attachment not found: {name}"));
     }

@@ -1,3 +1,4 @@
+use alinery_core::RUNNER_EVENT_PROTOCOL_VERSION;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -24,7 +25,7 @@ fn runner_command(root: &Path, fixture: &Path) -> Command {
         .env("ALINERY_SESSION_ID", "runner-exec-test")
         .env("ALINERY_DAEMON_SOCKET", root.join("daemon.sock"))
         .env("ALINERY_DAEMON_NAMESPACE", "runner-exec-test")
-        .env("ALINERY_EVENT_PROTOCOL_VERSION", "1")
+        .env("ALINERY_EVENT_PROTOCOL_VERSION", RUNNER_EVENT_PROTOCOL_VERSION.to_string())
         .env("ALINERY_EVENT_TOKEN", "runner-exec-token")
         .env("ALINERY_REPO", root)
         .env("ALINERY_APP_CONFIG", root.join("app.toml"))
@@ -131,7 +132,7 @@ fn run_result_emit(socket: &Path) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_alinery-runner"))
         .env("ALINERY_SESSION_ID", "runner-result-test")
         .env("ALINERY_DAEMON_SOCKET", socket)
-        .env("ALINERY_EVENT_PROTOCOL_VERSION", "1")
+        .env("ALINERY_EVENT_PROTOCOL_VERSION", RUNNER_EVENT_PROTOCOL_VERSION.to_string())
         .env("ALINERY_EVENT_TOKEN", "runner-result-token")
         .args(["emit", "--result"])
         .stdin(Stdio::piped())
@@ -149,20 +150,33 @@ fn run_result_emit(socket: &Path) -> Output {
 }
 
 #[test]
-fn emit_result_preserves_accepted_and_rejected_daemon_acknowledgements() {
-    for (reply, expected_status, expected_code, expected_reason) in [
-        (r#"{"ok":true}"#, "accepted", 0, None),
+fn emit_result_preserves_typed_completion_outcomes_and_protocol_errors() {
+    use serde_json::json;
+    for (reply, expected, expected_code) in [
         (
-            r#"{"error":"completion-rejected:MissingArtifact"}"#,
-            "rejected",
+            json!({"ok": true, "completion": {"status": "accepted", "receipt_id": "receipt-".repeat(100)}}),
+            json!({"status": "accepted", "receipt_id": "receipt-".repeat(100)}),
+            0,
+        ),
+        (
+            json!({"ok": true, "completion": {"status": "human_authorization_required"}}),
+            json!({"status": "human_authorization_required"}),
+            0,
+        ),
+        (
+            json!({"ok": true, "completion": {"status": "invalid_outputs", "diagnostics": ["Missing nested/report.md", &"λ".repeat(800)]}}),
+            json!({"status": "invalid_outputs", "diagnostics": ["Missing nested/report.md", &"λ".repeat(800)]}),
+            0,
+        ),
+        (
+            json!({"error": "execution owner is stale"}),
+            json!({"status": "rejected", "reason": "execution owner is stale"}),
             2,
-            Some("completion-rejected:MissingArtifact"),
         ),
     ] {
         let root = tempfile::tempdir().unwrap();
         let socket = root.path().join("daemon.sock");
         let listener = UnixListener::bind(&socket).unwrap();
-        let reply = reply.to_string();
         let server = thread::spawn(move || {
             let (mut connection, _) = listener.accept().unwrap();
             let mut request = String::new();
@@ -170,6 +184,8 @@ fn emit_result_preserves_accepted_and_rejected_daemon_acknowledgements() {
             let request: serde_json::Value = serde_json::from_str(&request).unwrap();
             assert_eq!(request["op"], "event");
             assert_eq!(request["event"]["type"], "phase_completed");
+            // A durable completion may legitimately outlast the passive ACK budget.
+            thread::sleep(Duration::from_millis(750));
             writeln!(connection, "{reply}").unwrap();
         });
 
@@ -177,9 +193,38 @@ fn emit_result_preserves_accepted_and_rejected_daemon_acknowledgements() {
         server.join().unwrap();
         assert_eq!(output.status.code(), Some(expected_code));
         assert!(output.stderr.is_empty());
-        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(result["status"], expected_status);
-        assert_eq!(result.get("reason").and_then(serde_json::Value::as_str), expected_reason);
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(), expected);
+    }
+}
+
+#[test]
+fn emit_result_rejects_missing_truncated_malformed_and_oversized_completion_ack() {
+    for reply in [
+        b"{\"ok\":true}\n".to_vec(),
+        b"{\"ok\":true,\"completion\":{\"status\":\"accepted\",\"receipt_id\":\"receipt\"}}".to_vec(),
+        b"{\"ok\":true,\"completion\":{\"status\":\"accepted\"}}\n".to_vec(),
+        b"{\"ok\":true,\"completion\":{\"status\":\"invalid_outputs\",\"diagnostics\":[7]}}\n".to_vec(),
+        b"{\"ok\":true,\"completion\":\n".to_vec(),
+        format!("{{\"ok\":true,\"completion\":{{\"status\":\"accepted\",\"receipt_id\":\"{}\"}}}}\n", "r".repeat(64 * 1024)).into_bytes(),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("daemon.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = thread::spawn(move || {
+            let (mut connection, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(&connection).read_line(&mut request).unwrap();
+            // Oversized replies may be rejected while the server is still writing.
+            let _ = connection.write_all(&reply);
+        });
+        let output = run_result_emit(&socket);
+        server.join().unwrap();
+        assert_eq!(output.status.code(), Some(3));
+        assert!(output.stderr.is_empty());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+            serde_json::json!({"status": "delivery_failed"})
+        );
     }
 }
 
@@ -199,11 +244,11 @@ fn emit_result_reports_bounded_delivery_failure_without_terminal_noise() {
     let listener = UnixListener::bind(&slow_socket).unwrap();
     let server = thread::spawn(move || {
         let (_connection, _) = listener.accept().unwrap();
-        thread::sleep(Duration::from_secs(2));
+        thread::sleep(Duration::from_secs(6));
     });
     let started = Instant::now();
     let output = run_result_emit(&slow_socket);
-    assert!(started.elapsed() < Duration::from_secs(1), "completion acknowledgement timeout was not bounded");
+    assert!(started.elapsed() < Duration::from_secs(6), "completion acknowledgement timeout was not bounded");
     assert_eq!(output.status.code(), Some(3));
     assert!(output.stderr.is_empty());
     assert_eq!(

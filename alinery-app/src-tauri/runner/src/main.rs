@@ -20,10 +20,10 @@
 //   ALINERY_SESSION_ID               Alinery session ID
 //   ALINERY_DAEMON_SOCKET            Unix socket path
 //   ALINERY_DAEMON_NAMESPACE         Alinery socket namespace
-//   ALINERY_EVENT_PROTOCOL_VERSION   must be "1"
+//   ALINERY_EVENT_PROTOCOL_VERSION   must match RUNNER_EVENT_PROTOCOL_VERSION
 //   ALINERY_EVENT_TOKEN              per-session secret token
 
-use alinery_core::{HarnessAdapter, RunnerEvent, RunnerEventEnvelope, RUNNER_EVENT_PROTOCOL_VERSION};
+use alinery_core::{CompletionOutcome, HarnessAdapter, RunnerEvent, RunnerEventEnvelope, RUNNER_EVENT_PROTOCOL_VERSION};
 use libc::execvp;
 use serde_json::Value;
 use std::ffi::CString;
@@ -31,7 +31,7 @@ use std::io::{self, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // ---------- embedded OMP extension ----------
 
@@ -63,6 +63,10 @@ const MAX_REQUEST_BYTES: usize = 128 * 1024; // 128 KiB
 
 /// Maximum milliseconds to wait for a daemon acknowledgement.
 const ACK_TIMEOUT_MS: u64 = 250;
+
+/// Completion commits may include durable filesystem writes and output validation.
+const COMPLETION_ACK_TIMEOUT_MS: u64 = 5_000;
+const MAX_ACK_BYTES: usize = 64 * 1024;
 
 // ---------- entry point ----------
 
@@ -231,7 +235,7 @@ fn parse_adapter(s: &str) -> Result<HarnessAdapter, String> {
     }
 }
 
-/// Validate that ALINERY_EVENT_PROTOCOL_VERSION is present and equals "1".
+/// Validate that the inherited version matches the runner event protocol.
 fn validate_protocol_env() -> Result<(), String> {
     let raw = std::env::var(ENV_PROTOCOL_VERSION).map_err(|_| format!("environment variable {ENV_PROTOCOL_VERSION} is not set"))?;
     let version: u16 = raw.trim().parse().map_err(|_| format!("{ENV_PROTOCOL_VERSION} is not a valid integer: '{raw}'"))?;
@@ -416,7 +420,8 @@ fn exec_replace(executable: &str, argv: &[String]) -> Result<(), String> {
 /// The daemon's bounded acknowledgement to one normalized event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DaemonEventAck {
-    Accepted,
+    Passive,
+    Completion(CompletionOutcome),
     Rejected { reason: String },
 }
 
@@ -435,7 +440,8 @@ fn cmd_emit(report_result: bool) -> i32 {
 
 fn emit_report(result: Result<DaemonEventAck, ()>) -> (Value, i32) {
     match result {
-        Ok(DaemonEventAck::Accepted) => (serde_json::json!({"status": "accepted"}), 0),
+        Ok(DaemonEventAck::Completion(outcome)) => (serde_json::to_value(outcome).expect("completion outcome is serializable"), 0),
+        Ok(DaemonEventAck::Passive) => (serde_json::json!({"status": "delivery_failed"}), 3),
         Ok(DaemonEventAck::Rejected { reason }) => (serde_json::json!({"status": "rejected", "reason": reason}), 2),
         Err(()) => (serde_json::json!({"status": "delivery_failed"}), 3),
     }
@@ -457,6 +463,7 @@ fn try_emit() -> Result<DaemonEventAck, ()> {
     let raw = read_stdin_bounded(MAX_STDIN_BYTES)?;
     let event: RunnerEvent = serde_json::from_slice(&raw).map_err(|_| ())?;
     validate_event(&event)?;
+    let completion = matches!(&event, RunnerEvent::PhaseCompleted { .. });
 
     let envelope = RunnerEventEnvelope {
         version: RUNNER_EVENT_PROTOCOL_VERSION,
@@ -469,7 +476,7 @@ fn try_emit() -> Result<DaemonEventAck, ()> {
         return Err(());
     }
 
-    send_event_to_daemon(&socket_path, &request)
+    send_event_to_daemon(&socket_path, &request, completion)
 }
 
 fn read_env(name: &str) -> Result<String, ()> {
@@ -532,41 +539,56 @@ pub fn build_event_request(envelope: &RunnerEventEnvelope) -> Result<Vec<u8>, ()
     Ok(bytes)
 }
 
-/// Connect to the Unix socket, send the request, and preserve the daemon's
-/// accepted/rejected acknowledgement within the bounded timeout.
-fn send_event_to_daemon(socket_path: &str, request: &[u8]) -> Result<DaemonEventAck, ()> {
+/// Read one bounded, newline-terminated acknowledgement within an absolute deadline.
+/// A passive acknowledgement is never sufficient proof of committed completion.
+fn send_event_to_daemon(socket_path: &str, request: &[u8], completion: bool) -> Result<DaemonEventAck, ()> {
     let mut stream = UnixStream::connect(Path::new(socket_path)).map_err(|_| ())?;
-
-    let timeout = Duration::from_millis(ACK_TIMEOUT_MS);
+    let timeout = Duration::from_millis(if completion { COMPLETION_ACK_TIMEOUT_MS } else { ACK_TIMEOUT_MS });
+    let deadline = Instant::now() + timeout;
     stream.set_write_timeout(Some(timeout)).map_err(|_| ())?;
-    stream.set_read_timeout(Some(timeout)).map_err(|_| ())?;
     stream.write_all(request).map_err(|_| ())?;
 
-    let mut ack_buf = Vec::with_capacity(64);
-    let mut byte = [0u8; 1];
+    let mut ack_buf = Vec::with_capacity(256);
+    let mut chunk = [0u8; 4096];
     loop {
-        match stream.read(&mut byte) {
-            Ok(0) => break,
-            Ok(_) => {
-                ack_buf.push(byte[0]);
-                if byte[0] == b'\n' || ack_buf.len() > 256 {
-                    break;
-                }
-            }
-            Err(_) => return Err(()),
+        let remaining = deadline.checked_duration_since(Instant::now()).ok_or(())?;
+        stream.set_read_timeout(Some(remaining)).map_err(|_| ())?;
+        let count = stream.read(&mut chunk).map_err(|_| ())?;
+        if count == 0 {
+            return Err(());
+        }
+        let newline = chunk[..count].iter().position(|byte| *byte == b'\n');
+        let end = newline.map_or(count, |index| index + 1);
+        if ack_buf.len() + end > MAX_ACK_BYTES {
+            return Err(());
+        }
+        ack_buf.extend_from_slice(&chunk[..end]);
+        if newline.is_some() {
+            break;
         }
     }
 
     let ack: Value = serde_json::from_slice(&ack_buf).map_err(|_| ())?;
-    if ack.get("ok").and_then(Value::as_bool) == Some(true) {
-        return Ok(DaemonEventAck::Accepted);
-    }
     if let Some(reason) = ack.get("error").and_then(Value::as_str) {
-        if !reason.is_empty() {
+        if !reason.is_empty() && ack.get("ok").is_none() && ack.get("completion").is_none() {
             return Ok(DaemonEventAck::Rejected { reason: reason.to_string() });
         }
+        return Err(());
     }
-    Err(())
+    if ack.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Err(());
+    }
+    match (completion, ack.get("completion")) {
+        (true, Some(value)) => {
+            let outcome: CompletionOutcome = serde_json::from_value(value.clone()).map_err(|_| ())?;
+            if matches!(&outcome, CompletionOutcome::Accepted { receipt_id } if receipt_id.is_empty()) {
+                return Err(());
+            }
+            Ok(DaemonEventAck::Completion(outcome))
+        }
+        (false, None) => Ok(DaemonEventAck::Passive),
+        _ => Err(()),
+    }
 }
 
 // ---------- tests ----------
@@ -631,17 +653,17 @@ mod tests {
         std::env::set_var(ENV_PROTOCOL_VERSION, "0");
         assert!(validate_protocol_env().is_err(), "version 0 should fail");
 
-        // Version 2.
-        std::env::set_var(ENV_PROTOCOL_VERSION, "2");
-        assert!(validate_protocol_env().is_err(), "version 2 should fail");
+        // A different version must not reuse this transport.
+        std::env::set_var(ENV_PROTOCOL_VERSION, (RUNNER_EVENT_PROTOCOL_VERSION + 1).to_string());
+        assert!(validate_protocol_env().is_err(), "different version should fail");
 
         // Malformed.
         std::env::set_var(ENV_PROTOCOL_VERSION, "not-a-number");
         assert!(validate_protocol_env().is_err(), "malformed should fail");
 
         // Correct version.
-        std::env::set_var(ENV_PROTOCOL_VERSION, "1");
-        assert!(validate_protocol_env().is_ok(), "version 1 should succeed");
+        std::env::set_var(ENV_PROTOCOL_VERSION, RUNNER_EVENT_PROTOCOL_VERSION.to_string());
+        assert!(validate_protocol_env().is_ok(), "current version should succeed");
 
         // Restore.
         match saved {
@@ -749,7 +771,7 @@ mod tests {
     fn emit_builds_one_authenticated_event_request() {
         let event = RunnerEvent::Idle { omp_turn_id: Some(42) };
         let envelope = RunnerEventEnvelope {
-            version: 1,
+            version: RUNNER_EVENT_PROTOCOL_VERSION,
             session_id: "sess-abc".into(),
             token: "tok-xyz".into(),
             event,
@@ -761,7 +783,7 @@ mod tests {
 
         let val: Value = serde_json::from_slice(&req).unwrap();
         assert_eq!(val["op"], "event");
-        assert_eq!(val["version"], 1);
+        assert_eq!(val["version"], RUNNER_EVENT_PROTOCOL_VERSION);
         assert_eq!(val["session_id"], "sess-abc");
         assert_eq!(val["token"], "tok-xyz");
         assert_eq!(val["event"]["type"], "idle");
@@ -777,7 +799,7 @@ mod tests {
             correlation_id: None,
         };
         let envelope = RunnerEventEnvelope {
-            version: 1,
+            version: RUNNER_EVENT_PROTOCOL_VERSION,
             session_id: "s".into(),
             token: "t".into(),
             event,
@@ -810,21 +832,18 @@ mod tests {
             conn.write_all(b"{\"ok\":true}\n").unwrap();
         });
 
-        let event = RunnerEvent::PhaseCompleted {
-            omp_session_id: "omp-sess-1".into(),
-            omp_turn_id: None,
-        };
+        let event = RunnerEvent::Idle { omp_turn_id: None };
         let envelope = RunnerEventEnvelope {
-            version: 1,
+            version: RUNNER_EVENT_PROTOCOL_VERSION,
             session_id: "alinery-s1".into(),
             token: "tok".into(),
             event,
         };
         let req = build_event_request(&envelope).unwrap();
-        let result = send_event_to_daemon(&socket_str, &req);
+        let result = send_event_to_daemon(&socket_str, &req, false);
 
         server.join().unwrap();
-        assert_eq!(result, Ok(DaemonEventAck::Accepted));
+        assert_eq!(result, Ok(DaemonEventAck::Passive));
     }
 
     #[test]
@@ -839,22 +858,25 @@ mod tests {
             let mut reader = BufReader::new(&conn);
             let mut line = String::new();
             reader.read_line(&mut line).unwrap();
-            conn.write_all(b"{\"error\":\"completion-rejected:MissingArtifact\"}\n").unwrap();
+            conn.write_all(b"{\"error\":\"execution owner is stale\"}\n").unwrap();
         });
 
-        let result = send_event_to_daemon(&socket_str, b"{}\n");
+        let result = send_event_to_daemon(&socket_str, b"{}\n", true);
         server.join().unwrap();
         assert_eq!(
             result,
             Ok(DaemonEventAck::Rejected {
-                reason: "completion-rejected:MissingArtifact".into(),
+                reason: "execution owner is stale".into(),
             })
         );
     }
 
     #[test]
     fn emit_result_reports_accepted_rejected_and_delivery_failed() {
-        assert_eq!(emit_report(Ok(DaemonEventAck::Accepted)), (serde_json::json!({"status": "accepted"}), 0));
+        assert_eq!(
+            emit_report(Ok(DaemonEventAck::Completion(CompletionOutcome::Accepted { receipt_id: "receipt-1".into() }))),
+            (serde_json::json!({"status": "accepted", "receipt_id": "receipt-1"}), 0)
+        );
         assert_eq!(
             emit_report(Ok(DaemonEventAck::Rejected {
                 reason: "completion-rejected:StaleSource".into(),
@@ -885,7 +907,7 @@ mod tests {
 
         let event = RunnerEvent::Idle { omp_turn_id: None };
         let envelope = RunnerEventEnvelope {
-            version: 1,
+            version: RUNNER_EVENT_PROTOCOL_VERSION,
             session_id: "s".into(),
             token: "t".into(),
             event,
@@ -893,7 +915,7 @@ mod tests {
         let req = build_event_request(&envelope).unwrap();
 
         let start = std::time::Instant::now();
-        let result = send_event_to_daemon(&socket_str, &req);
+        let result = send_event_to_daemon(&socket_str, &req, false);
         let elapsed = start.elapsed();
 
         assert!(result.is_err(), "must fail when no ack");
@@ -906,7 +928,7 @@ mod tests {
 
     #[test]
     fn emit_silent_on_missing_socket() {
-        let result = send_event_to_daemon("/nonexistent/path/alinery.sock", b"{}\n");
+        let result = send_event_to_daemon("/nonexistent/path/alinery.sock", b"{}\n", false);
         assert!(result.is_err());
     }
 

@@ -47,8 +47,18 @@ import type {
   LinearTicket,
   McpStatus,
   OmpUpdateStatus,
-  PlaybookStepSummary,
-  PlaybookSummary,
+  NormalizedPlaybook,
+  PlaybookCatalog,
+  PlaybookRef,
+  PlaybookValidation,
+  ScopedPlaybook,
+  SavePlaybookRequest,
+  PickerPreferences,
+  CreateTaskRequest,
+  PreparedTaskAttachments,
+  CreateExecutionSessionRequest,
+  CreateExecutionSessionReply,
+  TaskExecutionReply,
   PreparedSessionMessageAction,
   PurgeArchivedResult,
   RelatedTaskRef,
@@ -161,6 +171,8 @@ export const saveArtifactCommentDraftForRepo = (a: {
   body: string;
 }) => invoke<void>("save_artifact_comment_draft_for_repo", a);
 export const sendReviewHandoff = (a: {
+  sourceRepoPath: string;
+  targetRepoPath: string;
   sourceSlug: string;
   sourceSession: string;
   sourceArtifact: string;
@@ -229,25 +241,21 @@ export const setDockBadgeCount = (count: number) => invoke<void>("set_dock_badge
 
 // ── subtask.rs ────────────────────────────────────────────────────────
 export const subtaskState = (taskSlug: string) => invoke<SubtaskManagerState>("subtask_state", { taskSlug });
-export const startSubtaskManager = (taskSlug: string) => invoke<SessionMeta>("start_subtask_manager", { taskSlug });
-export const recoverSubtaskManager = (taskSlug: string) => invoke<SessionMeta>("recover_subtask_manager", { taskSlug });
+export const startSubtaskManager = (taskSlug: string) => invoke<CreateExecutionSessionReply>("start_subtask_manager", { taskSlug });
+export const recoverSubtaskManager = (taskSlug: string) => invoke<CreateExecutionSessionReply>("recover_subtask_manager", { taskSlug });
 export const discardSubtask = (taskSlug: string, managerSessionId: string) => invoke<void>("discard_subtask", { taskSlug, managerSessionId });
 
 // ── session.rs ────────────────────────────────────────────────────────
-type CreateSessionArgs = {
-  taskSlug: string;
-  playbook: string;
-  phase: string;
-  generic: boolean;
-  harness: string;
-  model: string;
-  prompt?: string;
-};
 
 export const archiveSession = (taskSlug: string, id: string) => invoke<void>("archive_session", { taskSlug, id });
 export const archiveSessionForRepo = (repoPath: string, taskSlug: string, id: string) => invoke<void>("archive_session_for_repo", { repoPath, taskSlug, id });
-export const createSession = (a: CreateSessionArgs) => invoke<SessionMeta>("create_session", a);
-export const createSessionForRepo = (a: CreateSessionArgs & { repoPath: string }) => invoke<SessionMeta>("create_session_for_repo", a);
+export const createSession = (request: CreateExecutionSessionRequest) => invoke<CreateExecutionSessionReply>("create_session", { request });
+export const createSessionForRepo = (a: { repoPath: string; request: CreateExecutionSessionRequest }) => invoke<CreateExecutionSessionReply>("create_session_for_repo", a);
+export const getTaskExecution = (taskSlug: string, repoPath?: string) => invoke<TaskExecutionReply>("get_task_execution", { taskSlug, repoPath });
+export const allowExecutionCompletion = (taskSlug: string, executionId: string, sessionId: string, repoPath?: string) =>
+  invoke<void>("allow_execution_completion", { taskSlug, executionId, sessionId, repoPath });
+export const startSession = (taskSlug: string, sessionId: string, repoPath?: string) =>
+  invoke<CreateExecutionSessionReply>("start_session", { taskSlug, sessionId, repoPath });
 export const detachSession = (id: string, attachId: number) => invoke<void>("detach_session", { id, attachId });
 export const ensureDrawerTerminal = () => invoke<SessionMeta>("ensure_drawer_terminal");
 export const killSession = (id: string, taskSlug: string) => invoke<void>("kill_session", { id, taskSlug });
@@ -270,8 +278,6 @@ export const openSession = (a: {
   rows?: number | null;
   onBytes: Channel<ArrayBuffer>;
 }) => invoke<void>("open_session", a);
-export const previewSessionPrompt = (a: { repoPath: string; taskSlug: string; playbook: string; phase: string; generic: boolean; harness: string; model: string }) =>
-  invoke<string>("preview_session_prompt", a);
 export const readSessionHistory = (a: { id: string; taskSlug?: string | null; offset?: number | null; limit?: number | null }) => invoke<number[]>("read_session_history", a);
 // Raw bytes, not number[]: a Vec<u8> return would cross IPC as a JSON array of numbers (3.4x on
 // the wire, and a per-byte JS array before a single row can be parsed).
@@ -281,8 +287,6 @@ export const sessionArtifactReady = (id: string, taskSlug: string) => invoke<boo
 export const sessionListStatuses = (refs: SessionStatusRef[]) => invoke<Record<string, SessionObservation>>("session_list_statuses", { refs });
 export const sessionStatus = (id: string, taskSlug: string | null) => invoke<SessionObservation>("session_status", { id, taskSlug });
 export const sessionStatuses = (ids: string[], taskSlug: string) => invoke<Record<string, SessionObservation>>("session_statuses", { ids, taskSlug });
-export const spawnSessionDetached = (taskSlug: string, id: string) => invoke<void>("spawn_session_detached", { taskSlug, id });
-export const spawnSessionDetachedForRepo = (repoPath: string, taskSlug: string, id: string) => invoke<void>("spawn_session_detached_for_repo", { repoPath, taskSlug, id });
 export const writeSession = (id: string, data: string) => invoke<void>("write_session", { id, data });
 export const restateSession = (id: string, transport: "pty" | "rpc") => invoke<void>("restate_session", { id, transport });
 export const rpcWriteSession = (id: string, payload: unknown) => invoke<void>("rpc_write_session", { id, payload });
@@ -316,24 +320,8 @@ export const writeRepoOverridesForRepo = (repoPath: string, overrides: RepoOverr
 // ── task.rs ───────────────────────────────────────────────────────────
 export const archiveTaskForRepo = (repoPath: string, slug: string) => invoke<void>("archive_task_for_repo", { repoPath, slug });
 export const restoreTaskForRepo = (repoPath: string, slug: string) => invoke<void>("restore_task_for_repo", { repoPath, slug });
-export const createTaskForRepo = (a: {
-  repoPath: string;
-  name: string;
-  taskSlug: string;
-  description: string;
-  evidence: string;
-  attachments: string[];
-  linearId: string;
-  githubIssue: string;
-  playbook: string;
-  harness: string;
-  model: string;
-  autoAdvance?: string[] | null;
-  useWorktree: boolean;
-  branchName: string;
-  worktreeName: string;
-  draftSlug: string;
-}) => invoke<CreateTaskResult>("create_task_for_repo", a);
+export const createTaskForRepo = (a: { repoPath: string; request: CreateTaskRequest }) => invoke<CreateTaskResult>("create_task_for_repo", a);
+export const prepareTaskAttachments = (entries: string[]) => invoke<PreparedTaskAttachments>("prepare_task_attachments", { entries });
 export const duplicateTaskForRepo = (repoPath: string, sourceSlug: string) => invoke<CreateTaskResult>("duplicate_task_for_repo", { repoPath, sourceSlug });
 export const deleteDraftForRepo = (repoPath: string, slug: string) => invoke<void>("delete_draft_for_repo", { repoPath, slug });
 export const getTask = (slug: string) => invoke<Task | null>("get_task", { slug });
@@ -349,11 +337,11 @@ export const writeDraftForRepo = (a: {
   evidence: string;
   linearId: string;
   githubIssue: string;
-  playbook: string;
+  playbook: PlaybookRef;
   harness: string;
   model: string;
   autoAdvance?: string[] | null;
-  useWorktree: boolean;
+  maxLiveSessions: number;
   branchName: string;
   worktreeName: string;
   draftSlug: string;
@@ -369,10 +357,14 @@ export const readChatImage = (taskSlug: string, name: string) => invoke<ChatImag
 
 // ── playbook.rs ───────────────────────────────────────────────────────
 export const listKanbanColumns = (allRepos: boolean) => invoke<KanbanColumn[]>("list_kanban_columns", { allRepos });
-export const listPlaybookSteps = (playbook: string) => invoke<PlaybookStepSummary[]>("list_playbook_steps", { playbook });
-export const listPlaybookStepsForRepo = (repoPath: string, playbook: string) => invoke<PlaybookStepSummary[]>("list_playbook_steps_for_repo", { repoPath, playbook });
-export const listPlaybooks = () => invoke<PlaybookSummary[]>("list_playbooks");
-export const listPlaybooksForRepo = (repoPath: string) => invoke<PlaybookSummary[]>("list_playbooks_for_repo", { repoPath });
+export const listPlaybookCatalog = (repoPath?: string) => invoke<PlaybookCatalog>("list_playbook_catalog", { repoPath });
+export const readPlaybook = (reference: PlaybookRef, repoPath?: string) => invoke<ScopedPlaybook>("read_playbook", { reference, repoPath });
+export const validatePlaybookSource = (source: string) => invoke<PlaybookValidation>("validate_playbook_source", { source });
+export const renderPlaybookSource = (definition: NormalizedPlaybook) => invoke<string>("render_playbook_source", { definition });
+export const savePlaybookSource = (request: SavePlaybookRequest, repoPath?: string) => invoke<ScopedPlaybook>("save_playbook_source", { request, repoPath });
+export const deletePlaybookSource = (reference: PlaybookRef, repoPath?: string) => invoke<void>("delete_playbook_source", { reference, repoPath });
+export const readPlaybookPickerPreferences = () => invoke<PickerPreferences>("read_playbook_picker_preferences");
+export const savePlaybookPickerPreferences = (preferences: PickerPreferences) => invoke<void>("save_playbook_picker_preferences", { preferences });
 
 // ── update.rs ─────────────────────────────────────────────────────────
 export const checkUpdate = () => invoke<UpdateStatus>("check_update");

@@ -10,8 +10,12 @@ fn artifact_file_path_stays_in_artifacts_dir() {
         artifact_file_path(repo, "task", "01-research.md").unwrap(),
         repo.join(".alinery/tasks/task/artifacts/01-research.md")
     );
+    assert_eq!(
+        artifact_file_path(repo, "task", "nested/x.md").unwrap(),
+        repo.join(".alinery/tasks/task/artifacts/nested/x.md")
+    );
 
-    for name in ["", ".", "../x.md", "nested/x.md", "/tmp/x.md", "nested\\x.md"] {
+    for name in ["", ".", "../x.md", "nested/../x.md", "./x.md", "nested//x.md", "/tmp/x.md", "nested\\x.md", "attachments/x.md", "subtasks/child/x.md"] {
         assert!(artifact_file_path(repo, "task", name).is_err(), "{name}");
     }
 }
@@ -28,8 +32,12 @@ fn artifact_comments_paths_stay_in_artifacts_dir() {
         artifact_comment_markdown_path(repo, "task", "03-design.md").unwrap(),
         repo.join(".alinery/tasks/task/artifacts/03-design.comments.md")
     );
+    assert_eq!(
+        artifact_comment_json_path(repo, "task", "research/03-design.md").unwrap(),
+        repo.join(".alinery/tasks/task/artifacts/research/03-design.comments.json")
+    );
 
-    for name in ["", ".", "../x.md", "nested/x.md", "/tmp/x.md", "nested\\x.md"] {
+    for name in ["", ".", "../x.md", "nested/../x.md", "/tmp/x.md", "nested\\x.md", "attachments/x.md", "subtasks/child/x.md"] {
         assert!(artifact_comment_json_path(repo, "task", name).is_err(), "json path should reject {name:?}");
         assert!(artifact_comment_markdown_path(repo, "task", name).is_err(), "markdown path should reject {name:?}");
     }
@@ -70,7 +78,7 @@ fn artifact_comment_drafts_roundtrip_mark_stale_and_delete_cleanly() {
     )
     .unwrap();
 
-    let path = artifact_comment_drafts_path(&repo, "task");
+    let path = artifact_comment_drafts_path(&repo, "task").unwrap();
     assert_eq!(path, repo.join(".alinery/tasks/task/artifact-comment-drafts.json"));
     let stored: ArtifactCommentDraftsFile = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(stored.version, 1);
@@ -185,7 +193,6 @@ fn list_artifacts_hides_handoff_sidecars() {
 
 #[test]
 fn list_artifacts_with_metadata_includes_handoff_records() {
-    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let repo = std::env::temp_dir().join(format!("alinery-handoff-metadata-{n}"));
     let artifacts = repo.join(".alinery/tasks/task/artifacts");
@@ -194,6 +201,8 @@ fn list_artifacts_with_metadata_includes_handoff_records() {
     let record = alinery_core::ReviewHandoffRecord {
         version: 1,
         direction: "inbound".into(),
+        source_repo_path: repo.to_string_lossy().into_owned(),
+        target_repo_path: repo.to_string_lossy().into_owned(),
         source_task: "review".into(),
         source_session: "s1".into(),
         source_artifact: "03-review-findings.md".into(),
@@ -204,18 +213,15 @@ fn list_artifacts_with_metadata_includes_handoff_records() {
         created_at_ms: 7,
     };
     fs::write(artifacts.join("review-handoff-001.handoff.json"), serde_json::to_string(&record).unwrap()).unwrap();
-    set_active_repo_global(Some(repo.clone())).unwrap();
-    let items = tauri::async_runtime::block_on(list_artifacts_with_metadata("task".into())).unwrap();
+    let items = alinery_core::list_artifacts_with_metadata_for(&repo, "task").unwrap();
     let item = items.iter().find(|item| item.name == "review-handoff-001.md").unwrap();
     assert_eq!(item.handoffs, vec![record]);
     assert!(item.modified_at_ms.is_some());
-    set_active_repo_global(None).unwrap();
     let _ = fs::remove_dir_all(&repo);
 }
 
 #[test]
 fn list_artifacts_with_metadata_maps_session_artifact_override() {
-    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let repo = std::env::temp_dir().join(format!("alinery-artifact-session-map-{n}"));
     let artifacts = repo.join(".alinery/tasks/task/artifacts");
@@ -233,12 +239,10 @@ fn list_artifacts_with_metadata_maps_session_artifact_override() {
         ..Default::default()
     };
     fs::write(sessions.join("s1.meta.json"), serde_json::to_string(&meta).unwrap()).unwrap();
-    set_active_repo_global(Some(repo.clone())).unwrap();
-    let items = tauri::async_runtime::block_on(list_artifacts_with_metadata("task".into())).unwrap();
+    let items = alinery_core::list_artifacts_with_metadata_for(&repo, "task").unwrap();
     let item = items.iter().find(|item| item.name == "06-implementation-002.md").unwrap();
     assert_eq!(item.playbook_step, "implementation");
     assert_eq!(item.session_id, "s1");
-    set_active_repo_global(None).unwrap();
     let _ = fs::remove_dir_all(&repo);
 }
 
@@ -391,66 +395,144 @@ fn artifact_comments_archive_without_active_comments_returns_error() {
     let _ = fs::remove_dir_all(&repo);
 }
 
+struct HandoffDaemonFixture {
+    repo: std::path::PathBuf,
+    child: std::process::Child,
+    client: alinery_core::daemon_client::DaemonClient,
+}
+
+impl HandoffDaemonFixture {
+    fn new() -> Self {
+        // Match the real-daemon prerequisite used by mcp/tests/stdio_protocol.rs.
+        let binary = std::env::current_exe().unwrap().parent().and_then(Path::parent).unwrap()
+            .join(format!("alineryd{}", std::env::consts::EXE_SUFFIX));
+        assert!(binary.is_file(), "build the sibling alineryd binary before running artifact handoff tests: {}", binary.display());
+        // Keep Unix socket paths short, including on macOS.
+        let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let repo = std::path::PathBuf::from(format!("/tmp/al-art-{n}"));
+        fs::create_dir_all(repo.join(".alinery")).unwrap();
+        let repo = fs::canonicalize(repo).unwrap();
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "fixture@example.invalid"],
+            vec!["config", "user.name", "Artifact Fixture"],
+            vec!["commit", "--allow-empty", "-qm", "initial"],
+        ] {
+            let output = git_cmd(&repo).args(&args).output().unwrap();
+            assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        }
+        let app_config = repo.join(".alinery/app.toml");
+        fs::write(&app_config, "").unwrap();
+        let child = Command::new(binary).arg("--repo").arg(&repo).arg("--app-config").arg(&app_config)
+            .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::inherit()).spawn().unwrap();
+        let client = alinery_core::daemon_client::DaemonClient::connect_path(alinery_core::alineryd_socket_path(&repo, None)).unwrap();
+        let mut fixture = Self { repo, child, client };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if alinery_core::connect_compatible_once(fixture.client.socket_path.clone(), &app_config).is_ok() {
+                return fixture;
+            }
+            assert!(fixture.child.try_wait().unwrap().is_none(), "artifact fixture daemon exited before readiness");
+            assert!(Instant::now() < deadline, "artifact fixture daemon did not become ready");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn create_task(&self, step: &str, output: &str) -> alinery_core::task_creation::CreateTaskReply {
+        let source = format!(
+            "+++\nversion=2\nkey='artifact-fixture'\ntitle='Artifact fixture'\ndescription=''\ndefault_model=''\ndefault_harness='omp'\n\
+             [[step]]\nkey='{step}'\ntitle='{step}'\nshort=''\ninputs=[]\noutputs=[{{path='{output}'}}]\nmodel=''\nharness=''\nis_coding_step=false\nauto_advance_default=false\n\
+             +++\n<!-- alinery:step {step} -->\nWrite the assigned artifact.\n"
+        );
+        let request = serde_json::from_value(serde_json::json!({
+            "name": "Task", "requested_slug": "task",
+            "playbook": {"reference": {"scope": "bundled", "key": "artifact-fixture"}, "source": source},
+            "start": false
+        })).unwrap();
+        let created = self.client.create_task(&request).unwrap();
+        assert_eq!(created.creation, "ready", "{created:?}");
+        assert!(created.errors.is_empty(), "{created:?}");
+        created
+    }
+}
+
+impl Drop for HandoffDaemonFixture {
+    fn drop(&mut self) {
+        // Only the child process owned by this fixture is terminated.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = fs::remove_dir_all(&self.repo);
+    }
+}
+
 #[test]
-fn send_review_handoff_creates_target_session_with_selected_phase() {
-    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let repo = init_git_test_repo("send-review-handoff-command");
-    set_active_repo_global(Some(repo.clone())).unwrap();
+fn send_review_handoff_preserves_nested_artifact_and_scoped_repo_identity() {
+    let source_fixture = HandoffDaemonFixture::new();
+    let target_fixture = HandoffDaemonFixture::new();
+    let source_created = source_fixture.create_task("review", "findings.md");
+    let source = source_created.task.as_ref().unwrap();
+    let source_session = source_created.sessions.iter().find(|session| session.phase == "review").unwrap();
+    let target_created = target_fixture.create_task("design", "design.md");
+    let target = target_created.task.as_ref().unwrap();
+    // Equal slugs in different repositories must not collapse into one task identity.
+    assert_eq!(source.slug, target.slug);
+    let source_artifacts = artifacts_dir(&source_fixture.repo, &source.slug);
+    fs::create_dir_all(source_artifacts.join("research")).unwrap();
+    fs::write(source_artifacts.join("research/03-review-findings.md"), "# Findings\n\nFix it.\n").unwrap();
+    fs::write(source_artifacts.join("03-review-findings.md"), "unrelated same basename").unwrap();
 
-    let source = create_task_in(
-        &repo,
-        "Review Task".into(),
-        "".into(),
-        "".into(),
-        vec![],
-        "".into(),
-        "".into(),
-        "review".into(),
-        "omp".into(),
-        String::new(),
-        None,
-        true,
-        "".into(),
-        "".into(),
-    )
-    .expect("create review task")
-    .task;
-    let target = create_task_for_test(&repo, "Implementation Task", true, "", "");
-    let source_artifacts = repo.join(".alinery/tasks").join(&source.slug).join("artifacts");
-    fs::write(source_artifacts.join("03-review-findings.md"), "# Findings\n\nFix it.\n").unwrap();
-
-    let result = alinery_core::send_review_handoff_for(
-        &repo.join("app.toml"),
-        &repo,
+    let result = alinery_core::send_review_handoff_for_repos(
+        &target_fixture.client,
+        &source_fixture.repo,
+        &target_fixture.repo,
         alinery_core::ReviewHandoffRequest {
             source_slug: source.slug.clone(),
-            source_session: "source-session".into(),
-            source_artifact: "03-review-findings.md".into(),
+            source_session: source_session.id.clone(),
+            source_artifact: "research/03-review-findings.md".into(),
             target_slug: target.slug.clone(),
             target_phase: "design".into(),
             harness: "omp".into(),
             model: "sonnet".into(),
             prompt_extra: "Use the smallest safe fix.".into(),
+            start: false,
         },
     )
     .expect("handoff");
 
+    assert!(result.errors.is_empty(), "{result:?}");
+    assert_eq!(result.start, "not_requested");
+    assert_eq!(result.target_repo_path, target_fixture.repo.to_string_lossy());
     assert_eq!(result.target_artifact, "review-handoff-001.md");
     assert_eq!(result.target_session.phase, "design");
-    assert_eq!(result.target_session.handoff_artifact, "review-handoff-001.md");
-    assert_eq!(result.target_session.prompt_extra, "Use the smallest safe fix.");
-    let target_dir = repo.join(".alinery/tasks").join(&target.slug).join("artifacts");
-    assert!(target_dir.join("review-handoff-001.md").exists());
-    assert!(target_dir.join("review-handoff-001.handoff.json").exists());
-    assert!(source_artifacts.join("03-review-findings.handoff-001.json").exists());
-
-    set_active_repo_global(None).unwrap();
-    let _ = fs::remove_dir_all(&repo);
-}
-
-#[test]
-fn send_review_handoff_command_returns_target_session() {
-    send_review_handoff_creates_target_session_with_selected_phase();
+    let target_dir = artifacts_dir(&target_fixture.repo, &target.slug);
+    assert!(result.target_session.prompt_extra.contains("Use the smallest safe fix."));
+    assert!(result.target_session.prompt_extra.contains(&target_dir.join(&result.target_artifact).display().to_string()));
+    let state = target_fixture.client.get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest {
+        task_slug: target.slug.clone(),
+    }).unwrap().state;
+    let execution = &state.executions[&result.target_session.execution_id];
+    assert_eq!(execution.owner_session_id, result.target_session.id);
+    assert_eq!(execution.candidate.step_key, "design");
+    assert!(!execution.start_requested);
+    let handed_off = fs::read_to_string(target_dir.join("review-handoff-001.md")).unwrap();
+    assert!(handed_off.contains("# Findings\n\nFix it."));
+    assert!(!handed_off.contains("unrelated same basename"));
+    let inbound: alinery_core::ReviewHandoffRecord =
+        serde_json::from_str(&fs::read_to_string(target_dir.join("review-handoff-001.handoff.json")).unwrap()).unwrap();
+    assert_eq!(inbound, result.target_record);
+    let outbound: alinery_core::ReviewHandoffRecord =
+        serde_json::from_str(&fs::read_to_string(source_artifacts.join("research/03-review-findings.handoff-001.json")).unwrap()).unwrap();
+    assert_eq!(outbound, result.source_record);
+    assert_eq!(outbound.source_artifact, "research/03-review-findings.md");
+    assert_eq!(outbound.source_repo_path, source_fixture.repo.to_string_lossy());
+    assert_eq!(outbound.target_repo_path, target_fixture.repo.to_string_lossy());
+    assert_eq!(outbound.source_session, source_session.id);
+    assert_eq!(inbound.target_session, result.target_session.id);
+    let items = alinery_core::list_artifacts_with_metadata_for(&source_fixture.repo, &source.slug).unwrap();
+    assert_eq!(items.iter().find(|item| item.name == "research/03-review-findings.md").unwrap().handoffs, vec![outbound]);
+    assert!(items.iter().find(|item| item.name == "03-review-findings.md").unwrap().handoffs.is_empty());
+    let target_items = alinery_core::list_artifacts_with_execution_metadata(&target_fixture.repo, &target.slug, &state).unwrap();
+    assert_eq!(target_items.iter().find(|item| item.name == result.target_artifact).unwrap().handoffs, vec![inbound]);
 }
 #[test]
 fn attachment_path_rejects_traversal_and_missing_files() {
@@ -499,4 +581,80 @@ fn artifact_node_adapters_preserve_opaque_owner_aware_resolution() {
     assert!(crate::artifact_node_path_for(&repo, "task", &attachment.id).unwrap().ends_with("evidence.txt"));
     assert!(crate::read_task_artifact_node_for(&repo, "task", &attachment.id).is_err());
     let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn nested_comments_prepare_finalize_and_archive_keep_relative_identity() {
+    let repo = unique_attachment_temp("nested-comments");
+    let root = artifacts_dir(&repo, "task");
+    for (directory, body) in [("research", "first comment"), ("analysis", "second comment")] {
+        fs::create_dir_all(root.join(directory)).unwrap();
+        let artifact = format!("{directory}/2-findings.md");
+        fs::write(root.join(&artifact), directory).unwrap();
+        add_artifact_comment_for(&repo, "task", &artifact, "anchor".into(), "p".into(), "Finding".into(), "Finding".into(), 1, 1, body.into()).unwrap();
+    }
+    let artifact = "research/2-findings.md";
+    let prepared = prepare_artifact_comments_prompt_for(&repo, "task", &[artifact.into()]).unwrap();
+    let crate::SessionMessageActionProvenance::ArtifactComments { items } = prepared.provenance else {
+        panic!("expected artifact comments");
+    };
+    assert_eq!(items[0].review, "research/2-findings.review-001.md");
+    assert!(prepared.text.contains(&root.join(&items[0].review).display().to_string()));
+    assert!(fs::read_to_string(root.join(&items[0].review)).unwrap().contains("first comment"));
+    crate::finalize_artifact_comments_for(&repo, "task", &items).unwrap();
+    assert!(load_artifact_comments_for(&repo, "task", artifact).unwrap().is_empty());
+    assert_eq!(load_artifact_comments_for(&repo, "task", "analysis/2-findings.md").unwrap()[0].body, "second comment");
+    assert_eq!(artifact_review_pending_status_for(&repo, "task", artifact).unwrap().unwrap().review, items[0].review);
+    let archived = archive_artifact_comments_for(&repo, "task", "analysis/2-findings.md").unwrap();
+    assert_eq!(archived, root.join("analysis/2-findings.review-001.md"));
+    assert!(fs::read_to_string(archived).unwrap().contains("second comment"));
+    fs::remove_dir_all(repo).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn artifact_consumers_reject_symlink_parents_and_sidecars() {
+    use std::os::unix::fs::symlink;
+
+    let repo = unique_attachment_temp("artifact-consumer-symlinks");
+    let root = artifacts_dir(&repo, "task");
+    let nested = root.join("research");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(nested.join("findings.md"), "findings").unwrap();
+    let protected = repo.join("protected.txt");
+    fs::write(&protected, "protected").unwrap();
+    let comments = nested.join("findings.comments.json");
+    symlink(&protected, &comments).unwrap();
+    assert!(load_artifact_comments_for(&repo, "task", "research/findings.md").is_err());
+    assert!(add_artifact_comment_for(&repo, "task", "research/findings.md", "a".into(), "p".into(), "".into(), "".into(), 1, 1, "comment".into()).is_err());
+    assert_eq!(fs::read_to_string(&protected).unwrap(), "protected");
+    fs::remove_file(comments).unwrap();
+    let moved = root.join("original");
+    fs::rename(&nested, &moved).unwrap();
+    symlink(&moved, &nested).unwrap();
+    assert!(crate::read_artifact_for_repo_in(&repo, "task", "research/findings.md").is_err());
+    assert!(artifact_comment_json_path(&repo, "task", "research/findings.md").is_err());
+    assert!(list_artifacts_for(&repo, "task").is_err());
+    fs::remove_file(&nested).unwrap();
+    symlink(repo.join("missing"), &nested).unwrap();
+    assert!(artifact_file_path(&repo, "task", "research/new.md").is_err());
+    fs::remove_dir_all(repo).unwrap();
+}
+
+#[test]
+fn nested_artifact_list_sorts_numerically_and_excludes_reserved_namespaces() {
+    let repo = unique_attachment_temp("nested-artifact-list");
+    let root = artifacts_dir(&repo, "task");
+    for directory in ["research", "attachments", "subtasks/child"] {
+        fs::create_dir_all(root.join(directory)).unwrap();
+    }
+    for name in ["research/2-result-2.md", "research/2-result-10.md", "research/10-result-1.md", "attachments/input.md", "subtasks/child/result.md"] {
+        fs::write(root.join(name), name).unwrap();
+    }
+    assert_eq!(list_artifacts_for(&repo, "task").unwrap(), [
+        "research/10-result-1.md",
+        "research/2-result-10.md",
+        "research/2-result-2.md",
+    ]);
+    fs::remove_dir_all(repo).unwrap();
 }

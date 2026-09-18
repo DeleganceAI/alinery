@@ -65,6 +65,7 @@ import {
   ArtifactProvenanceBadges,
   ContextActionBar,
   finalizedSubtaskNotice,
+  findOwnedArtifactNode,
   harnessDisplayName,
   InlineStatus,
   isAllowedLaunchHarness,
@@ -83,6 +84,7 @@ import type {
   SessionMessageActionProvenance,
   SessionObservation,
   Task,
+  TaskExecutionReply,
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
@@ -251,6 +253,11 @@ export function SessionView({
   const recoverableArtifactDraftAnchorIds = recoverableArtifactDrafts.map((draft) => draft.anchor_id);
   const [task, setTask] = useState<Task | null>(null);
   const [parentTask, setParentTask] = useState<Task | null>(null);
+  const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
+  const [executionError, setExecutionError] = useState("");
+  const [completionBusy, setCompletionBusy] = useState(false);
+  const execution = Object.values(executionView?.state.executions ?? {}).find((record) => record.owner_session_id === id || record.previous_session_ids.includes(id));
+  const executionStep = executionView?.definition.step.find((step) => step.key === execution?.candidate.step_key);
   const [reviewFindingsComments, setReviewFindingsComments] = useState<ArtifactComment[]>([]);
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [approvalStatus, setApprovalStatus] = useState("");
@@ -516,6 +523,44 @@ export function SessionView({
     };
   }, [id, taskSlug, repoPath, intent]);
 
+  useEffect(() => {
+    let alive = true;
+    setExecutionView(null);
+    setExecutionError("");
+    if (!taskSlug) return;
+    const refresh = async () => {
+      try {
+        const next = await ipc.getTaskExecution(taskSlug, repoPath);
+        if (alive) {
+          setExecutionView(next);
+          setExecutionError("");
+        }
+      } catch (error) {
+        if (alive) setExecutionError(String(error));
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 1500);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [taskSlug, repoPath, id]);
+
+  const allowCompletion = async () => {
+    if (!execution || execution.owner_session_id !== id) return;
+    setCompletionBusy(true);
+    try {
+      await ipc.allowExecutionCompletion(taskSlug, execution.id, id, repoPath);
+      setExecutionView(await ipc.getTaskExecution(taskSlug, repoPath));
+      setExecutionError("");
+    } catch (error) {
+      setExecutionError(String(error));
+    } finally {
+      setCompletionBusy(false);
+    }
+  };
+
   const handleArchive = async () => {
     // archive_session kills+reaps a live pty before archiving, so a live session
     // must state that consequence first (DESIGN.md: consequences before confirmation).
@@ -712,7 +757,7 @@ export function SessionView({
   );
   const commentableArtifactNames = artifactItems.map((item) => item.name).filter((name) => !name.endsWith(".comments.md"));
   const commentableArtifactSignature = commentableArtifactNames.join("|");
-  const effectivePlaybook = playbook || task?.playbook || "";
+  const effectivePlaybook = executionView?.definition.key ?? playbook ?? task?.playbook ?? "";
   const commentsNewerThanFindings = Boolean(
     latestReviewFindings?.modified_at_ms && reviewFindingsComments.some((comment) => comment.created_at_ms > (latestReviewFindings.modified_at_ms ?? 0)),
   );
@@ -1119,6 +1164,7 @@ export function SessionView({
             tone: "normal" as const,
             onClick: () =>
               onStartReviewHandoff({
+                source_repo_path: repoPath,
                 source_slug: taskSlug,
                 source_session: id,
                 source_artifact: latestReviewFindings.name,
@@ -1131,6 +1177,7 @@ export function SessionView({
   // Pick the terminal intent from the classification (or the explicit navigation intent); a
   // null intent + non-null lifecycle means an orphaned/interrupted/exited row -> action panel.
   // explicitIntent is true only for spawn|resume (see above), so no non-null assert needed.
+  const effectiveLifecycle = observation?.lifecycle ?? lifecycle;
   const termIntent: "attach" | "spawn" | "resume" | null =
     leftover || intent === "history"
       ? null
@@ -1138,15 +1185,15 @@ export function SessionView({
         ? intent === "spawn" || intent === "resume"
           ? intent
           : null
-        : lifecycle === null
+        : effectiveLifecycle === null
           ? null
-          : lifecycle.state === "live" || lifecycle.state === "live_exited"
+          : effectiveLifecycle.state === "live" || effectiveLifecycle.state === "live_exited"
             ? "attach"
-            : lifecycle.state === "never_started"
+            : effectiveLifecycle.state === "never_started" && !hasTask
               ? "spawn"
               : null;
   const navHistory = intent === "history";
-  const showPanel = leftover ? !navHistory && lifecycle !== null : !explicitIntent && lifecycle !== null && termIntent === null;
+  const showPanel = leftover ? !navHistory && effectiveLifecycle !== null : !explicitIntent && effectiveLifecycle !== null && termIntent === null;
   const composerEligible = shouldShowChatComposer({
     hasWritableTerminal: Boolean(termIntent),
     history: navHistory,
@@ -1166,14 +1213,14 @@ export function SessionView({
     if (ompStartRef.current === id) return;
     ompStartRef.current = id;
     void ipc
-      .spawnSessionDetached(taskSlug, id)
+      .startSession(taskSlug, id, repoPath)
       .then(() => ipc.sessionStatus(id, taskSlug || null))
       .then((next) => setObservation(next))
       .catch((error) => {
         setTerminalConnection("failed");
         toast(String(error), "error");
       });
-  }, [showChat, termIntent, observation?.transport, id, taskSlug, cwd, resumeToken]);
+  }, [showChat, termIntent, observation?.transport, id, taskSlug, repoPath, cwd, resumeToken]);
 
   // Fresh OMP starts as RPC. If Settings prefers Terminal, restate once after the session is live.
   useEffect(() => {
@@ -1675,7 +1722,7 @@ export function SessionView({
             {task?.name || taskSlug}
           </span>
         )}
-        {phase && <span className="pill">{phase}</span>}
+        {(executionStep || phase) && <span className="pill">{executionStep?.title ?? phase}</span>}
         <span className="pill">{harnessDisplayName(harness) + (model ? ` · ${model}` : "")}</span>
         <StatusDot id={id} slug={taskSlug} repoPath={repoPath} observation={observation} />
         <span className="session-path dim mono">
@@ -1694,6 +1741,52 @@ export function SessionView({
         <CopyTextButton text={cwd} label="worktree path" />
       </div>
       {finalizedNotice && <InlineStatus tone="warning">{finalizedNotice}</InlineStatus>}
+      {hasTask && !navHistory && effectiveLifecycle?.state === "never_started" && (
+        <div className="session-execution">
+          <p>{execution?.start_requested ? "Start requested; waiting for the daemon to acquire capacity." : "This session is queued. Opening it does not start it."}</p>
+          <button type="button" className="btn small" disabled={completionBusy || !!execution?.start_requested} onClick={async () => {
+            setCompletionBusy(true);
+            try {
+              await ipc.startSession(taskSlug, id, repoPath);
+              setObservation(await ipc.sessionStatus(id, taskSlug));
+              setReclassifyTick((tick) => tick + 1);
+              setExecutionView(await ipc.getTaskExecution(taskSlug, repoPath));
+              setExecutionError("");
+            } catch (error) {
+              setExecutionError(String(error));
+            } finally {
+              setCompletionBusy(false);
+            }
+          }}>Start this queued session</button>
+        </div>
+      )}
+      {executionError && <InlineStatus tone="warning" detail={executionError}>Execution state unavailable; completion grants are disabled.</InlineStatus>}
+      {execution && executionView && (
+        <details className="session-execution" aria-label="Session execution">
+          <summary>{executionStep?.title ?? execution.candidate.step_key} · {execution.lifecycle} · Owner {execution.owner_session_id}</summary>
+          <p className="mono">Execution {execution.id}</p>
+          {execution.owner_session_id !== id && <p>This is a previous owner. Current owner: {execution.owner_session_id}.</p>}
+          {execution.lifecycle === "finishing" && <p>Outputs accepted; waiting for confirmed shutdown. The session remains interactive until it exits.</p>}
+          {execution.lifecycle === "interrupted" && <p>Ownership is uncertain; no replacement can start until shutdown is confirmed.</p>}
+          {execution.error && <InlineStatus tone="error">{execution.error}</InlineStatus>}
+          <ul aria-label="Execution inputs">
+            {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) => ids.map((occurrenceId) => {
+              const occurrence = executionView.state.occurrences[occurrenceId];
+              return <li key={`${selector}:${occurrenceId}`}><code>{selector}</code> ← <code>{occurrence?.relative_path ?? occurrenceId}</code> · occurrence {occurrenceId} · producer {occurrence?.producer_execution_id ?? "seed"}</li>;
+            }))}
+          </ul>
+          <ul aria-label="Execution outputs">
+            {execution.outputs.map((output) => <li key={output.relative_path}><code>{output.selector}</code> → <code>{output.relative_path}</code> · {execution.receipt_id ? "accepted" : "pending"}</li>)}
+            {Object.values(executionView.state.occurrences).filter((occurrence) => occurrence.producer_execution_id === execution.id && occurrence.selector.includes("*")).map((occurrence) => <li key={occurrence.id}>Accepted member <code>{occurrence.relative_path}</code> · occurrence {occurrence.id}</li>)}
+          </ul>
+          <p>Completion permission: {execution.permission.kind}{execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}</p>
+          {execution.owner_session_id === id && execution.permission.kind === "locked" && execution.lifecycle === "running" && (
+            <button type="button" className="btn small" disabled={completionBusy || !!executionError} onClick={() => void allowCompletion()}>
+              Allow this session to complete · {id}
+            </button>
+          )}
+        </details>
+      )}
       <div className={`sessionbody${hasTask ? "" : " no-artifacts"}`} style={{ ["--artifact-width" as string]: `${artifactWidth}px` }}>
         <div className="termhost" ref={termhostRef}>
           {(viewBusy || (ompCoding && Boolean(termIntent) && !liveRpc && !livePty)) && (
@@ -2086,13 +2179,16 @@ export function SessionView({
                     )}
                     {displayedArtifactItems.map((item) => {
                       const commentCount = artifactCommentCountByArtifact[item.name] ?? 0;
+                      const node = findOwnedArtifactNode(artifactTree, item.name);
+                      const available = Boolean(item.attachment || node);
                       return (
                         <div
                           key={item.name}
                           className={`artifactitem${item.attachment ? " attachment" : ""}`}
                           title={item.name}
                           role="button"
-                          tabIndex={0}
+                          tabIndex={available ? 0 : -1}
+                          aria-disabled={!available}
                           onKeyDown={(e) => {
                             if ((e.key !== "Enter" && e.key !== " ") || e.target !== e.currentTarget) return;
                             e.preventDefault();
@@ -2106,13 +2202,16 @@ export function SessionView({
                                 .catch((error) => setArtifactErr(String(error)));
                               return;
                             }
-                            setSelectedArtifactNode(artifactTree.find((node) => node.source === "owned" && node.kind === "owned" && node.label === item.name) ?? null);
+                            if (!node) return;
+                            setSelectedArtifactNode(node);
                             setSelectedArtifact(item.name);
                             setArtifactMode("preview");
                             setArtifactErr("");
                           }}
                         >
                           <span className="artifactitem-name">{item.name}</span>
+                          {item.execution_id && <span className="dim">Execution {item.execution_id} · {item.step_key} · {item.accepted ? "accepted" : "pending"}</span>}
+                          {!available && <span className="pill">Not yet readable</span>}
                           {commentCount > 0 && (
                             <span
                               className="artifact-comment-count"

@@ -1,3 +1,5 @@
+// App is imported inside each case after the shared board stub is initialized;
+// static import would execute the hoisted mock factory before that stub exists.
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "./appearance";
@@ -11,7 +13,7 @@ const appConfig: AppConfig = {
   appearance: DEFAULT_APPEARANCE,
 };
 
-const sourceTask = {
+const sourceTask: Task = {
   name: "Source",
   slug: "source",
   requested_slug: "source",
@@ -24,11 +26,13 @@ const sourceTask = {
   linear_id: "",
   github_issue: "",
   playbook: "superdevelop",
+  engine_version: 2,
+  playbook_ref: { scope: "bundled", key: "superdevelop" },
   auto_advance: [],
   draft: false,
-} as Task;
+};
 
-const sourceBoardTask = {
+const sourceBoardTask: BoardTask = {
   ...sourceTask,
   repo_path: "/repo-b",
   session_count: 1,
@@ -40,11 +44,11 @@ const sourceBoardTask = {
   latest_session_column_key: "research-design",
   current_column_key: "research-design",
   current_column_title: "Research & Design",
-} as BoardTask;
+};
 
 const duplicateResult = (slug = "source-2", harness = "claude"): CreateTaskResult => ({
   task: { ...sourceTask, slug, branch: slug, worktree: `/repo-b/.alinery/worktrees/${slug}` },
-  session: {
+  sessions: [{
     id: `s-${slug}`,
     worktree: `/repo-b/.alinery/worktrees/${slug}`,
     created: 2,
@@ -62,13 +66,17 @@ const duplicateResult = (slug = "source-2", harness = "claude"): CreateTaskResul
     ended_at: null,
     exit_code: null,
     harness_resume_token: "",
-  },
+  }],
+  executions: [],
+  creation: "ready",
+  start: "started",
+  errors: [],
   attachment_errors: [],
 });
 
 const mocks = vi.hoisted(() => ({
   duplicateTaskForRepo: vi.fn(),
-  spawnSessionDetachedForRepo: vi.fn(),
+  startSession: vi.fn(),
   setActiveRepo: vi.fn(),
   readAppConfig: vi.fn(),
   toast: vi.fn(),
@@ -83,7 +91,7 @@ vi.mock("./ipc", () =>
     listBoardTasks: async () => [],
     listKanbanColumns: async () => [],
     duplicateTaskForRepo: mocks.duplicateTaskForRepo,
-    spawnSessionDetachedForRepo: mocks.spawnSessionDetachedForRepo,
+    startSession: mocks.startSession,
     setActiveRepo: mocks.setActiveRepo,
     getCurrentWindow: (() => ({ onCloseRequested: mocks.onCloseRequested, destroy: vi.fn() })) as never,
   }),
@@ -133,7 +141,7 @@ beforeEach(() => {
     },
   );
   mocks.duplicateTaskForRepo.mockReset();
-  mocks.spawnSessionDetachedForRepo.mockReset().mockResolvedValue(undefined);
+  mocks.startSession.mockReset();
   mocks.readAppConfig.mockReset().mockResolvedValue(appConfig);
   mocks.setActiveRepo.mockReset().mockImplementation(async (path: string) => ({ ...appConfig, active_repo: path }));
   mocks.toast.mockReset();
@@ -175,41 +183,46 @@ describe("App duplicate coordinator", () => {
     render(<App />);
     fireEvent.click(await screen.findByText("duplicate-source"));
 
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("TASK DUPLICATION FAILED: Error: copy failed"));
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith(expect.stringContaining("copy failed")));
     expect(screen.getByText("duplicate-source")).toBeDefined();
     expect(mocks.setActiveRepo).not.toHaveBeenCalled();
-    expect(mocks.spawnSessionDetachedForRepo).not.toHaveBeenCalled();
+    expect(mocks.startSession).not.toHaveBeenCalled();
     mocks.duplicateTaskForRepo.mockResolvedValue(duplicateResult());
     fireEvent.click(screen.getByText("duplicate-source"));
     await screen.findByText("task:source-2");
     expect(mocks.duplicateTaskForRepo).toHaveBeenCalledTimes(2);
   });
 
-  it("switches to the source repository, opens the clone, and keeps it when launch fails", async () => {
-    mocks.duplicateTaskForRepo.mockResolvedValue(duplicateResult());
-    mocks.setActiveRepo.mockResolvedValue({ ...appConfig, active_repo: "/repo-b" });
-    mocks.spawnSessionDetachedForRepo.mockRejectedValue(new Error("binary missing"));
+  it("opens the persisted clone and reports backend launch failure without launching again", async () => {
+    mocks.duplicateTaskForRepo.mockResolvedValue({
+      ...duplicateResult(),
+      creation: "partial",
+      start: "failed",
+      errors: [{ stage: "launch", code: "launch_failed", message: "binary missing" }],
+    } satisfies CreateTaskResult);
     const { default: App } = await import("./App");
     render(<App />);
     fireEvent.click(await screen.findByText("duplicate-source"));
 
     await screen.findByText("task:source-2");
     expect(mocks.setActiveRepo).toHaveBeenCalledWith("/repo-b", null);
-    expect(mocks.spawnSessionDetachedForRepo).toHaveBeenCalledWith("/repo-b", "source-2", "s-source-2");
-    expect(mocks.toast).toHaveBeenCalledWith("TASK DUPLICATED");
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("SESSION NOT STARTED: Error: binary missing"));
+    expect(mocks.startSession).not.toHaveBeenCalled();
+    expect(mocks.toast).toHaveBeenCalledWith(expect.stringContaining("binary missing"));
   });
 
-  it("skips detached launch for no-harness and still opens the clone", async () => {
-    mocks.duplicateTaskForRepo.mockResolvedValue(duplicateResult("source-2", "no-harness"));
-    mocks.setActiveRepo.mockResolvedValue({ ...appConfig, active_repo: "/repo-b" });
+  it("keeps the source available when the backend returns no task", async () => {
+    mocks.duplicateTaskForRepo.mockResolvedValue({
+      task: null, sessions: [], executions: [], creation: "partial", start: "not_requested",
+      errors: [{ stage: "copy", code: "copy_failed", message: "source unavailable" }],
+    } satisfies CreateTaskResult);
     const { default: App } = await import("./App");
     render(<App />);
     fireEvent.click(await screen.findByText("duplicate-source"));
 
-    await screen.findByText("task:source-2");
-    expect(mocks.spawnSessionDetachedForRepo).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith("TASK DUPLICATED");
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith(expect.stringContaining("source unavailable"), "error"));
+    expect(screen.getByText("duplicate-source")).toBeTruthy();
+    expect(mocks.setActiveRepo).not.toHaveBeenCalled();
+    expect(mocks.startSession).not.toHaveBeenCalled();
   });
 
   it("restores the source repository when the active repository changes during creation", async () => {
@@ -231,7 +244,7 @@ describe("App duplicate coordinator", () => {
     resolveDuplicate(duplicateResult());
     await screen.findByText("task:source-2");
     expect(mocks.setActiveRepo).toHaveBeenLastCalledWith("/repo-b", null);
-    expect(mocks.spawnSessionDetachedForRepo).toHaveBeenCalledWith("/repo-b", "source-2", "s-source-2");
+    expect(mocks.startSession).not.toHaveBeenCalled();
   });
 
   it("reports a routing failure without claiming the completed clone failed", async () => {
@@ -241,10 +254,10 @@ describe("App duplicate coordinator", () => {
     render(<App />);
     fireEvent.click(await screen.findByText("duplicate-source"));
 
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("TASK DUPLICATED BUT NOT OPENED: /repo-b/source-2: Error: switch failed"));
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith(expect.stringContaining("/repo-b/source-2: Error: switch failed")));
     expect(screen.getByText("duplicate-source")).toBeDefined();
     expect(screen.queryByText("task:source-2")).toBeNull();
-    expect(mocks.spawnSessionDetachedForRepo).not.toHaveBeenCalled();
+    expect(mocks.startSession).not.toHaveBeenCalled();
     expect(mocks.toast).not.toHaveBeenCalledWith(expect.stringContaining("TASK DUPLICATION FAILED"));
   });
 });
