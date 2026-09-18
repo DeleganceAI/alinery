@@ -94,10 +94,8 @@ pub(crate) fn compare_url(remote: &str, base: &str, branch: &str) -> Option<Stri
         rest.to_string() // ssh://[user@]host[:port]/owner/repo — userinfo/port handled below
     } else if let Some(rest) = remote.strip_prefix("https://") {
         rest.to_string()
-    } else if let Some(rest) = remote.strip_prefix("http://") {
-        rest.to_string()
     } else {
-        return None;
+        remote.strip_prefix("http://")?.to_string()
     };
     let hostpath = hostpath.trim_end_matches('/').trim_end_matches(".git");
     let (host, ownerrepo) = hostpath.split_once('/')?;
