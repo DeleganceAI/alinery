@@ -50,16 +50,18 @@ pub(crate) fn remove_worktree_in(app: &AppHandle, repo: &Path, slug: String) -> 
 }
 
 #[tauri::command]
-pub(crate) fn remove_worktree(app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<(), String> {
+pub(crate) async fn remove_worktree(app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<(), String> {
     let repo = require_owned_active_repo(&state)?;
-    remove_worktree_in(&app, &repo, slug)
+    let result = tauri::async_runtime::spawn_blocking(move || remove_worktree_in(&app, &repo, slug)).await;
+    result.map_err(|e| format!("remove worktree task: {e}"))?
 }
 
 #[tauri::command]
-pub(crate) fn remove_worktree_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
+pub(crate) async fn remove_worktree_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
-    remove_worktree_in(&app, &repo, slug)
+    let result = tauri::async_runtime::spawn_blocking(move || remove_worktree_in(&app, &repo, slug)).await;
+    result.map_err(|e| format!("remove worktree task: {e}"))?
 }
 
 // ---- M5 worktree existence check ---------------------------------------------
@@ -180,16 +182,18 @@ pub(crate) fn push_and_compare_url_in(app: &AppHandle, repo: &Path, slug: String
 }
 
 #[tauri::command]
-pub(crate) fn push_and_compare_url(app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<String, String> {
+pub(crate) async fn push_and_compare_url(app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<String, String> {
     let repo = require_owned_active_repo(&state)?;
-    push_and_compare_url_in(&app, &repo, slug)
+    let result = tauri::async_runtime::spawn_blocking(move || push_and_compare_url_in(&app, &repo, slug)).await;
+    result.map_err(|e| format!("push task: {e}"))?
 }
 
 #[tauri::command]
-pub(crate) fn push_and_compare_url_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<String, String> {
+pub(crate) async fn push_and_compare_url_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<String, String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
-    push_and_compare_url_in(&app, &repo, slug)
+    let result = tauri::async_runtime::spawn_blocking(move || push_and_compare_url_in(&app, &repo, slug)).await;
+    result.map_err(|e| format!("push task: {e}"))?
 }
 
 // Hand-edit the PR link to the real PR URL once it exists (compare URL is just the prefill).
@@ -219,9 +223,14 @@ pub(crate) fn set_pr_url_for_repo(app: AppHandle, state: State<'_, AppState>, re
 // main repo when the task opted out of one). Local commit only — no push. Protects in-progress
 // code from remove_worktree's --force discard.
 #[tauri::command]
-pub(crate) fn commit_worktree(app: AppHandle, state: State<'_, AppState>, slug: String, message: String) -> Result<(), String> {
+pub(crate) async fn commit_worktree(app: AppHandle, state: State<'_, AppState>, slug: String, message: String) -> Result<(), String> {
     let repo = require_owned_active_repo(&state)?;
-    commit_worktree_in(&repo, slug, message)?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        commit_worktree_in(&repo, slug, message)?;
+        Ok::<_, String>(repo)
+    })
+    .await;
+    let repo = result.map_err(|e| format!("commit task: {e}"))??;
     publish_auto_backup(&app, &repo, alinery_core::BackupTrigger::PostPushCommit);
     emit(
         &app,
@@ -233,10 +242,15 @@ pub(crate) fn commit_worktree(app: AppHandle, state: State<'_, AppState>, slug: 
 }
 
 #[tauri::command]
-pub(crate) fn commit_worktree_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String, message: String) -> Result<(), String> {
+pub(crate) async fn commit_worktree_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String, message: String) -> Result<(), String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
-    commit_worktree_in(&repo, slug, message)?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        commit_worktree_in(&repo, slug, message)?;
+        Ok::<_, String>(repo)
+    })
+    .await;
+    let repo = result.map_err(|e| format!("commit task: {e}"))??;
     publish_auto_backup(&app, &repo, alinery_core::BackupTrigger::PostPushCommit);
     Ok(())
 }

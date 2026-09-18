@@ -43,6 +43,7 @@ export function SessionActionPanel({
   taskSlug,
   onStartFresh,
   onArchive,
+  archiveBusy,
   onViewHistory,
   onKilled,
 }: {
@@ -56,6 +57,7 @@ export function SessionActionPanel({
   taskSlug: string;
   onStartFresh: () => void;
   onArchive: () => void;
+  archiveBusy: boolean;
   onViewHistory: () => void;
   onKilled: () => void;
 }) {
@@ -73,17 +75,17 @@ export function SessionActionPanel({
       {hint ? <p className="sap-hint dim">{hint}</p> : null}
       <div className="sap-actions">
         {!unsupported && (
-          <button type="button" className="btn" onClick={onStartFresh}>
+          <button type="button" className="btn" disabled={archiveBusy} onClick={onStartFresh}>
             Start fresh
           </button>
         )}
-        <button type="button" className="btn ghost" onClick={onViewHistory}>
+        <button type="button" className="btn ghost" disabled={archiveBusy} onClick={onViewHistory}>
           View history
         </button>
         {unsupported && <KillButton id={id} slug={taskSlug} repoPath={repoPath} live={state.state === "live"} onKilled={onKilled} />}
 
-        <button type="button" className="btn ghost sap-archive" onClick={onArchive}>
-          Archive session
+        <button type="button" className="btn ghost sap-archive" disabled={archiveBusy} onClick={onArchive}>
+          {archiveBusy ? "Archiving session…" : "Archive session"}
         </button>
       </div>
     </div>

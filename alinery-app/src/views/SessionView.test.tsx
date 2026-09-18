@@ -5,7 +5,7 @@ import { DEFAULT_APPEARANCE } from "../appearance";
 import type { QueuedFollowUp } from "../chat/queue";
 import type { SessionMessageDraft } from "../sessionMessage";
 import { mockIpc } from "../test/mockIpc";
-import { toast } from "../toast";
+import { Toast, toast } from "../toast";
 import type { AgentState, ArtifactListItem, ArtifactTreeNode, SessionObservation, Task } from "../types";
 import { SessionView } from "./SessionView";
 
@@ -29,6 +29,7 @@ const readOmpModelRoles = vi.hoisted(() => vi.fn(async () => ({}) as Record<stri
 const writeOmpModelRoles = vi.hoisted(() => vi.fn(async (roles: Record<string, string>) => roles));
 const openUrl = vi.hoisted(() => vi.fn(async (_url: string | URL, _openWith?: string): Promise<void> => undefined));
 const confirmDanger = vi.hoisted(() => vi.fn(async () => true));
+const archiveSession = vi.hoisted(() => vi.fn());
 const pickAttachmentFilesDialog = vi.hoisted(() => vi.fn(async (): Promise<string[]> => []));
 const chatFileStat = vi.hoisted(() => vi.fn(async (path: string) => ({ name: path.split("/").pop() ?? path, bytes: 12 })));
 const copyChatAttachments = vi.hoisted(() => vi.fn(async () => ({ copied: [] as string[], failures: [] as string[] })));
@@ -97,6 +98,7 @@ vi.mock("../ipc", () =>
     listArtifactCommentDraftsForRepo: async () => [],
     listArtifactComments: async () => [],
     sessionStatus,
+    archiveSession,
     spawnSessionDetached,
     restateSession,
     rpcAttachSession,
@@ -257,6 +259,65 @@ function sessionView(overrides: Partial<ComponentProps<typeof SessionView>> = {}
 function renderSession(overrides: Partial<ComponentProps<typeof SessionView>> = {}) {
   return render(sessionView(overrides));
 }
+
+describe("session archive pending feedback", () => {
+  beforeEach(() => {
+    scenario.tasks = [{ ...task }];
+    scenario.tasksPromise = null;
+    scenario.tasksError = null;
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} });
+    confirmDanger.mockReset().mockResolvedValue(true);
+    archiveSession.mockReset();
+  });
+
+  afterEach(cleanup);
+
+  it("waits for archive settlement, blocks duplicates, and recovers after an error", async () => {
+    const pending = deferred<void>();
+    archiveSession.mockReturnValue(pending.promise);
+    const onBack = vi.fn();
+    render(<Toast />);
+    renderSession({ harness: "claude", onBack });
+    const button = await screen.findByRole("button", { name: "Archive session" });
+    act(() => {
+      fireEvent.click(button);
+      fireEvent.click(button);
+    });
+    const busy = await screen.findByRole("button", { name: "Archiving session…" });
+    expect((busy as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(busy);
+    expect(confirmDanger).toHaveBeenCalledTimes(1);
+    expect(archiveSession).toHaveBeenCalledTimes(1);
+    expect(archiveSession).toHaveBeenCalledWith("task", "session");
+    expect(onBack).not.toHaveBeenCalled();
+    await act(async () => pending.reject(new Error("daemon timed out")));
+    expect((screen.getByRole("button", { name: "Archive session" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(onBack).not.toHaveBeenCalled();
+
+    expect(screen.getByText("Error: daemon timed out")).toBeDefined();
+    const retry = deferred<void>();
+    archiveSession.mockReturnValue(retry.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Archive session" }));
+    await screen.findByRole("button", { name: "Archiving session…" });
+    expect(archiveSession).toHaveBeenCalledTimes(2);
+    await act(async () => retry.resolve());
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows confirmation again after cancellation without archiving", async () => {
+    confirmDanger.mockResolvedValueOnce(false);
+    const pending = deferred<void>();
+    archiveSession.mockReturnValue(pending.promise);
+    renderSession({ harness: "claude" });
+    fireEvent.click(await screen.findByRole("button", { name: "Archive session" }));
+    await flushPromises();
+    expect(archiveSession).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Archive session" }));
+    await screen.findByRole("button", { name: "Archiving session…" });
+    expect(archiveSession).toHaveBeenCalledTimes(1);
+    await act(async () => pending.resolve());
+  });
+});
 
 describe("the session toolbar names the parent task", () => {
   beforeEach(() => {
