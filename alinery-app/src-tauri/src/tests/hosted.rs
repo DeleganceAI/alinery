@@ -28,6 +28,25 @@ const MINT: &str = r#"{
   ]
 }"#;
 
+// A stale hosted block so tests can prove write replaces it rather than appending to it.
+const STALE_ALINERY_BLOCK: &str = "  alinery:\n    baseUrl: \"https://old.inference.alinery.ai/v1\"\n    api: openai-completions\n    apiKey: inf_stale_token\n    models:\n      - id: stale-model\n        name: Stale Model\n        contextWindow: 1\n        maxTokens: 1\n";
+
+const LOCAL_BLOCK: &str =
+    "  local:\n    baseUrl: http://localhost:11434/v1\n    api: openai-completions\n    apiKey: local\n    compat: openai\n    discovery:\n      type: openai-models-list\n";
+
+const DELEGANCE_BLOCK: &str = "  deleganceLab1:\n    baseUrl: http://127.0.0.1:8080/v1\n    api: openai-completions\n    apiKey: mlx-serve\n    compat: openai\n    discovery:\n      type: openai-models-list\n";
+
+// Writes `existing` to models.yml under a fresh temp app-config dir and returns (dir, app_config).
+fn setup_models_yml(name: &str, existing: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let dir = unique_attachment_temp(name);
+    let app_config = dir.join("app.toml");
+    fs::write(&app_config, b"").unwrap();
+    let yml = models_yml_path(&app_config);
+    fs::create_dir_all(yml.parent().unwrap()).unwrap();
+    fs::write(&yml, existing.as_bytes()).unwrap();
+    (dir, app_config)
+}
+
 #[test]
 fn is_paid_plan_is_founders_or_teams() {
     assert!(is_paid_plan("founders"));
@@ -185,6 +204,85 @@ fn models_yml_is_owner_only() {
     write_hosted_models_yml(&app_config, &catalog, "inf_test_abc").unwrap();
     let mode = fs::metadata(models_yml_path(&app_config)).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
+}
+
+#[test]
+fn write_hosted_models_yml_replaces_an_alinery_only_document() {
+    let (_dir, app_config) = setup_models_yml("hosted-yml-replace", &format!("providers:\n{STALE_ALINERY_BLOCK}"));
+    let catalog = parse_hosted_catalog_body(CATALOG.as_bytes()).unwrap();
+    write_hosted_models_yml(&app_config, &catalog, "inf_test_abc").unwrap();
+    let after = fs::read_to_string(models_yml_path(&app_config)).unwrap();
+    assert_eq!(after, render_models_yml(&catalog, "inf_test_abc"));
+    assert!(!after.contains("stale-model"));
+    assert!(!after.contains("inf_stale_token"));
+}
+
+#[test]
+fn write_hosted_models_yml_merges_with_user_providers() {
+    let existing = format!("providers:\n{STALE_ALINERY_BLOCK}{LOCAL_BLOCK}{DELEGANCE_BLOCK}");
+    let (_dir, app_config) = setup_models_yml("hosted-yml-merge", &existing);
+    let catalog = parse_hosted_catalog_body(CATALOG.as_bytes()).unwrap();
+    write_hosted_models_yml(&app_config, &catalog, "inf_test_abc").unwrap();
+    let after = fs::read_to_string(models_yml_path(&app_config)).unwrap();
+    let rendered = render_models_yml(&catalog, "inf_test_abc");
+    let block = rendered.strip_prefix("providers:\n").unwrap();
+    let expected = format!("providers:\n{block}{LOCAL_BLOCK}{DELEGANCE_BLOCK}");
+    assert_eq!(after, expected);
+}
+
+#[test]
+fn write_hosted_models_yml_inserts_alinery_before_user_providers() {
+    let existing = format!("providers:\n{LOCAL_BLOCK}");
+    let (_dir, app_config) = setup_models_yml("hosted-yml-insert", &existing);
+    let catalog = parse_hosted_catalog_body(CATALOG.as_bytes()).unwrap();
+    write_hosted_models_yml(&app_config, &catalog, "inf_test_abc").unwrap();
+    let after = fs::read_to_string(models_yml_path(&app_config)).unwrap();
+    let rendered = render_models_yml(&catalog, "inf_test_abc");
+    let block = rendered.strip_prefix("providers:\n").unwrap();
+    assert_eq!(after, format!("providers:\n{block}{LOCAL_BLOCK}"));
+}
+
+#[test]
+fn write_hosted_models_yml_keeps_an_empty_file_alinery_only() {
+    let (_dir, app_config) = setup_models_yml("hosted-yml-empty", "");
+    let catalog = parse_hosted_catalog_body(CATALOG.as_bytes()).unwrap();
+    write_hosted_models_yml(&app_config, &catalog, "inf_test_abc").unwrap();
+    assert_eq!(fs::read_to_string(models_yml_path(&app_config)).unwrap(), render_models_yml(&catalog, "inf_test_abc"));
+}
+
+#[test]
+fn write_hosted_models_yml_refuses_a_file_without_providers() {
+    let existing = "this is not yaml\n";
+    let (_dir, app_config) = setup_models_yml("hosted-yml-garbage", existing);
+    let catalog = parse_hosted_catalog_body(CATALOG.as_bytes()).unwrap();
+    let err = write_hosted_models_yml(&app_config, &catalog, "inf_test_abc").unwrap_err();
+    assert!(err.contains("providers"));
+    assert_eq!(fs::read_to_string(models_yml_path(&app_config)).unwrap(), existing);
+}
+
+#[test]
+fn wipe_hosted_files_keeps_user_providers_and_strips_alinery() {
+    let existing = format!("providers:\n{STALE_ALINERY_BLOCK}{LOCAL_BLOCK}");
+    let (dir, app_config) = setup_models_yml("hosted-wipe-keep", &existing);
+    let inf = inference_path(&dir);
+    fs::write(&inf, b"{}").unwrap();
+    wipe_hosted_files(&dir, &app_config);
+    assert!(!inf.exists());
+    let after = fs::read_to_string(models_yml_path(&app_config)).unwrap();
+    assert_eq!(after, format!("providers:\n{LOCAL_BLOCK}"));
+    assert!(!after.contains("alinery"));
+    assert!(!after.contains("inf_"));
+}
+
+#[test]
+fn wipe_hosted_files_deletes_models_yml_when_alinery_was_the_last_block() {
+    let existing = format!("providers:\n{STALE_ALINERY_BLOCK}");
+    let (dir, app_config) = setup_models_yml("hosted-wipe-last", &existing);
+    let inf = inference_path(&dir);
+    fs::write(&inf, b"{}").unwrap();
+    wipe_hosted_files(&dir, &app_config);
+    assert!(!inf.exists());
+    assert!(!models_yml_path(&app_config).exists());
 }
 
 const CREDITS_OK: &str = r#"{

@@ -348,8 +348,9 @@ fn yaml_scalar(value: &str) -> String {
     }
 }
 
-pub(crate) fn render_models_yml(catalog: &HostedCatalog, token: &str) -> String {
-    let mut out = String::from("providers:\n  alinery:\n");
+/// The `  alinery:` provider block (no `providers:` wrapper), rendered from the catalog.
+fn render_alinery_block(catalog: &HostedCatalog, token: &str) -> String {
+    let mut out = String::from("  alinery:\n");
     out.push_str(&format!("    baseUrl: {}\n", yaml_scalar(&catalog.base_url)));
     out.push_str("    api: openai-completions\n");
     out.push_str(&format!("    apiKey: {}\n", yaml_scalar(token)));
@@ -360,6 +361,12 @@ pub(crate) fn render_models_yml(catalog: &HostedCatalog, token: &str) -> String 
         out.push_str(&format!("        contextWindow: {}\n", model.context_window));
         out.push_str(&format!("        maxTokens: {}\n", model.max_tokens));
     }
+    out
+}
+
+pub(crate) fn render_models_yml(catalog: &HostedCatalog, token: &str) -> String {
+    let mut out = String::from("providers:\n");
+    out.push_str(&render_alinery_block(catalog, token));
     out
 }
 
@@ -388,13 +395,137 @@ pub(crate) fn write_inference_file(path: &Path, token: &str, expires_at: u64, se
     write_owner_only_bytes(path, &bytes)
 }
 
+/// Column-0 `key:` line — the `providers:` map itself or any later top-level key.
+fn top_level_key(seg: &str) -> Option<&str> {
+    let line = seg.trim_end_matches(['\n', '\r']);
+    if line.is_empty() {
+        return None;
+    }
+    let first = line.as_bytes()[0];
+    if first == b' ' || first == b'\t' || first == b'#' {
+        return None;
+    }
+    let (key, _) = line.split_once(':')?;
+    if key.chars().any(char::is_whitespace) {
+        return None;
+    }
+    Some(key)
+}
+
+/// Exactly-two-space `name:` line — the start of a provider block inside `providers:`.
+fn provider_key(seg: &str) -> Option<&str> {
+    let line = seg.trim_end_matches(['\n', '\r']);
+    let rest = line.strip_prefix("  ")?;
+    if rest.starts_with(' ') {
+        return None;
+    }
+    let (key, _) = rest.split_once(':')?;
+    if key.is_empty() || key.chars().any(char::is_whitespace) {
+        return None;
+    }
+    Some(key)
+}
+
+/// One splice path for the hosted block, shared by write (upsert) and wipe (remove).
+///
+/// `alinery_block`: `Some(text)` replaces the existing `alinery:` provider or inserts it
+/// first under `providers:`; `None` removes the `alinery:` provider. Every other provider
+/// block is preserved byte-for-byte, in order.
+///
+/// `Ok(Some(text))`: new file content. `Ok(None)`: removal leaves `providers:` empty
+/// (caller deletes the file). `Err(_)`: no recognisable `providers:` map — caller must
+/// not overwrite a foreign file.
+fn splice_alinery(yml: &str, alinery_block: Option<&str>) -> Result<Option<String>, String> {
+    let segments: Vec<&str> = yml.split_inclusive('\n').collect();
+    let providers_line = segments
+        .iter()
+        .position(|seg| top_level_key(seg) == Some("providers"))
+        .ok_or_else(|| "models.yml has no providers: map".to_string())?;
+
+    // (key, start segment, end segment) for each 2-space provider block.
+    let mut blocks: Vec<(&str, usize, usize)> = Vec::new();
+    let mut i = providers_line + 1;
+    while i < segments.len() {
+        if let Some(key) = provider_key(segments[i]) {
+            let start = i;
+            i += 1;
+            while i < segments.len() && provider_key(segments[i]).is_none() && top_level_key(segments[i]).is_none() {
+                i += 1;
+            }
+            blocks.push((key, start, i));
+        } else {
+            i += 1;
+        }
+    }
+
+    match alinery_block {
+        Some(block) => {
+            let merged = match blocks.iter().find(|(key, _, _)| *key == "alinery") {
+                Some((_, start, end)) => {
+                    let mut out = String::with_capacity(yml.len() + block.len());
+                    out.push_str(&segments[..*start].concat());
+                    out.push_str(block);
+                    out.push_str(&segments[*end..].concat());
+                    out
+                }
+                None => {
+                    let mut out = String::with_capacity(yml.len() + block.len());
+                    out.push_str(&segments[..=providers_line].concat());
+                    out.push_str(block);
+                    out.push_str(&segments[providers_line + 1..].concat());
+                    out
+                }
+            };
+            Ok(Some(merged))
+        }
+        None => match blocks.iter().position(|(key, _, _)| *key == "alinery") {
+            Some(index) => {
+                let (_, start, end) = blocks[index];
+                if blocks.len() == 1 {
+                    return Ok(None);
+                }
+                let mut out = String::with_capacity(yml.len());
+                out.push_str(&segments[..start].concat());
+                out.push_str(&segments[end..].concat());
+                Ok(Some(out))
+            }
+            None => {
+                if blocks.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(yml.to_string()))
+                }
+            }
+        },
+    }
+}
+
 pub(crate) fn write_hosted_models_yml(app_config: &Path, catalog: &HostedCatalog, token: &str) -> Result<(), String> {
-    write_owner_only_bytes(&models_yml_path(app_config), render_models_yml(catalog, token).as_bytes())
+    let yml_path = models_yml_path(app_config);
+    let block = render_alinery_block(catalog, token);
+    let merged = match fs::read_to_string(&yml_path) {
+        Ok(existing) if !existing.trim().is_empty() => splice_alinery(&existing, Some(&block))?.ok_or_else(|| "models.yml upsert left an empty providers map".to_string())?,
+        _ => render_models_yml(catalog, token),
+    };
+    write_owner_only_bytes(&yml_path, merged.as_bytes())
 }
 
 pub(crate) fn wipe_hosted_files(config_dir: &Path, app_config: &Path) {
     let _ = fs::remove_file(inference_path(config_dir));
-    let _ = fs::remove_file(models_yml_path(app_config));
+    let yml_path = models_yml_path(app_config);
+    let existing = match fs::read_to_string(&yml_path) {
+        Ok(text) => text,
+        Err(_) => return,
+    };
+    match splice_alinery(&existing, None) {
+        Ok(Some(remaining)) => {
+            let _ = write_owner_only_bytes(&yml_path, remaining.as_bytes());
+        }
+        Ok(None) => {
+            let _ = fs::remove_file(&yml_path);
+        }
+        Err(_) => {} // foreign file: leave it untouched
+    }
 }
 
 fn model_view(model: HostedModel) -> HostedModelView {
