@@ -2137,7 +2137,7 @@ export function Settings({
           <>
             {!isGlobal && globalOnly("Experimental settings")}
             <Checkbox
-              checked={global.experiments?.show_original_kanban ?? false}
+              checked={global.experiments?.show_original_kanban ?? true}
               disabled={!isGlobal}
               onChange={setShowOriginalKanban}
               label={
