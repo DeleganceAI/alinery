@@ -649,7 +649,8 @@ endpoint = "{endpoint}"
         assert_eq!(obj["event"], "app.open");
         assert_eq!(obj["anon_id"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
         assert_eq!(obj["app_version"], env!("CARGO_PKG_VERSION"));
-        assert_eq!(obj["os"], "macos");
+        // Host OS, not a Mac-only constant — Linux CI would otherwise fail here.
+        assert_eq!(obj["os"], app_os());
         let props = obj["props"].as_object().expect("nested props");
         assert_eq!(props.len(), 1);
         assert_eq!(props["cold_start"], true);
