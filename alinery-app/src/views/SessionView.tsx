@@ -263,6 +263,7 @@ export function SessionView({
   const [messageInterrupting, setMessageInterrupting] = useState(false);
   const [messageError, setMessageError] = useState("");
   const [chat, setChat] = useState<ChatTranscriptState>(emptyTranscript);
+  const [eventCount, setEventCount] = useState<number | null>(null);
   const [modelDialog, setModelDialog] = useState<{ tab: ProvidersDialogTab; preselect: string; setup?: boolean } | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
   const [modelRoles, setModelRoles] = useState<ModelRolesMap>({});
@@ -1195,6 +1196,31 @@ export function SessionView({
       .finally(() => setViewBusy(false));
   }, [ompCoding, observation?.lifecycle.state, observation?.transport, termIntent, id, taskSlug, appearance.session_default_view]);
 
+  useEffect(() => {
+    setEventCount(null);
+    if (harness !== "omp") return;
+    let alive = true;
+    let pending = false;
+    const refresh = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const total = await ipc.readSessionEventCount(id, taskSlug || null);
+        if (alive) setEventCount(total);
+      } catch {
+        // Keep the last durable total on a transient read failure.
+      } finally {
+        pending = false;
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 1500);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [id, taskSlug, repoPath, harness]);
+
   // The journal owns committed history. It is read straight off disk, so it works for a dead
   // session with no daemon, it survives a busy OMP that refuses RPC history, and it still holds
   // the turns compaction dropped from OMP's context.
@@ -1562,7 +1588,7 @@ export function SessionView({
   const chatMeta = [
     chat.sessionMeta.model || model,
     chat.sessionMeta.thinking,
-    `${chat.entries.length} event${chat.entries.length === 1 ? "" : "s"}`,
+    eventCount == null ? "" : `${eventCount} event${eventCount === 1 ? "" : "s"}`,
     formatContextUsage(chat.sessionMeta.contextUsage?.tokens, chat.sessionMeta.contextUsage?.contextWindow),
     queuedMeta > 0 ? `${queuedMeta} queued` : "",
   ]
