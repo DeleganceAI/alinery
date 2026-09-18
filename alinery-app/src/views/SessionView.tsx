@@ -1744,48 +1744,90 @@ export function SessionView({
       {hasTask && !navHistory && effectiveLifecycle?.state === "never_started" && (
         <div className="session-execution">
           <p>{execution?.start_requested ? "Start requested; waiting for the daemon to acquire capacity." : "This session is queued. Opening it does not start it."}</p>
-          <button type="button" className="btn small" disabled={completionBusy || !!execution?.start_requested} onClick={async () => {
-            setCompletionBusy(true);
-            try {
-              await ipc.startSession(taskSlug, id, repoPath);
-              setObservation(await ipc.sessionStatus(id, taskSlug));
-              setReclassifyTick((tick) => tick + 1);
-              setExecutionView(await ipc.getTaskExecution(taskSlug, repoPath));
-              setExecutionError("");
-            } catch (error) {
-              setExecutionError(String(error));
-            } finally {
-              setCompletionBusy(false);
-            }
-          }}>Start this queued session</button>
+          <button
+            type="button"
+            className="btn small"
+            disabled={completionBusy || !!execution?.start_requested}
+            onClick={async () => {
+              setCompletionBusy(true);
+              try {
+                await ipc.startSession(taskSlug, id, repoPath);
+                setObservation(await ipc.sessionStatus(id, taskSlug));
+                setReclassifyTick((tick) => tick + 1);
+                setExecutionView(await ipc.getTaskExecution(taskSlug, repoPath));
+                setExecutionError("");
+              } catch (error) {
+                setExecutionError(String(error));
+              } finally {
+                setCompletionBusy(false);
+              }
+            }}
+          >
+            Start this queued session
+          </button>
         </div>
       )}
-      {executionError && <InlineStatus tone="warning" detail={executionError}>Execution state unavailable; completion grants are disabled.</InlineStatus>}
+      {executionError && (
+        <InlineStatus tone="warning" detail={executionError}>
+          Execution state unavailable; completion grants are disabled.
+        </InlineStatus>
+      )}
       {execution && executionView && (
-        <details className="session-execution" aria-label="Session execution">
-          <summary>{executionStep?.title ?? execution.candidate.step_key} · {execution.lifecycle} · Owner {execution.owner_session_id}</summary>
-          <p className="mono">Execution {execution.id}</p>
-          {execution.owner_session_id !== id && <p>This is a previous owner. Current owner: {execution.owner_session_id}.</p>}
-          {execution.lifecycle === "finishing" && <p>Outputs accepted; waiting for confirmed shutdown. The session remains interactive until it exits.</p>}
-          {execution.lifecycle === "interrupted" && <p>Ownership is uncertain; no replacement can start until shutdown is confirmed.</p>}
-          {execution.error && <InlineStatus tone="error">{execution.error}</InlineStatus>}
-          <ul aria-label="Execution inputs">
-            {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) => ids.map((occurrenceId) => {
-              const occurrence = executionView.state.occurrences[occurrenceId];
-              return <li key={`${selector}:${occurrenceId}`}><code>{selector}</code> ← <code>{occurrence?.relative_path ?? occurrenceId}</code> · occurrence {occurrenceId} · producer {occurrence?.producer_execution_id ?? "seed"}</li>;
-            }))}
-          </ul>
-          <ul aria-label="Execution outputs">
-            {execution.outputs.map((output) => <li key={output.relative_path}><code>{output.selector}</code> → <code>{output.relative_path}</code> · {execution.receipt_id ? "accepted" : "pending"}</li>)}
-            {Object.values(executionView.state.occurrences).filter((occurrence) => occurrence.producer_execution_id === execution.id && occurrence.selector.includes("*")).map((occurrence) => <li key={occurrence.id}>Accepted member <code>{occurrence.relative_path}</code> · occurrence {occurrence.id}</li>)}
-          </ul>
-          <p>Completion permission: {execution.permission.kind}{execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}</p>
+        <div className="session-execution-bar">
+          <details className="session-execution" aria-label="Session execution">
+            <summary>
+              {executionStep?.title ?? execution.candidate.step_key} · {execution.lifecycle} · Owner {execution.owner_session_id}
+            </summary>
+            <p className="mono">Execution {execution.id}</p>
+            {execution.owner_session_id !== id && <p>This is a previous owner. Current owner: {execution.owner_session_id}.</p>}
+            {execution.lifecycle === "finishing" && <p>Outputs accepted; waiting for confirmed shutdown. The session remains interactive until it exits.</p>}
+            {execution.lifecycle === "interrupted" && <p>Ownership is uncertain; no replacement can start until shutdown is confirmed.</p>}
+            {execution.error && <InlineStatus tone="error">{execution.error}</InlineStatus>}
+            <ul aria-label="Execution inputs">
+              {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) =>
+                ids.map((occurrenceId) => {
+                  const occurrence = executionView.state.occurrences[occurrenceId];
+                  return (
+                    <li key={`${selector}:${occurrenceId}`}>
+                      <code>{selector}</code> ← <code>{occurrence?.relative_path ?? occurrenceId}</code> · occurrence {occurrenceId} · producer{" "}
+                      {occurrence?.producer_execution_id ?? "seed"}
+                    </li>
+                  );
+                }),
+              )}
+            </ul>
+            <ul aria-label="Execution outputs">
+              {execution.outputs.map((output) => (
+                <li key={output.relative_path}>
+                  <code>{output.selector}</code> → <code>{output.relative_path}</code> · {execution.receipt_id ? "accepted" : "pending"}
+                </li>
+              ))}
+              {Object.values(executionView.state.occurrences)
+                .filter((occurrence) => occurrence.producer_execution_id === execution.id && occurrence.selector.includes("*"))
+                .map((occurrence) => (
+                  <li key={occurrence.id}>
+                    Accepted member <code>{occurrence.relative_path}</code> · occurrence {occurrence.id}
+                  </li>
+                ))}
+            </ul>
+            <p>
+              Completion permission: {execution.permission.kind}
+              {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
+            </p>
+          </details>
           {execution.owner_session_id === id && execution.permission.kind === "locked" && execution.lifecycle === "running" && (
-            <button type="button" className="btn small" disabled={completionBusy || !!executionError} onClick={() => void allowCompletion()}>
-              Allow this session to complete · {id}
+            <button
+              type="button"
+              className="btn small"
+              aria-label={`Allow this session to complete · ${id}`}
+              title={`Allow session ${id} to request completion`}
+              disabled={completionBusy || !!executionError}
+              onClick={() => void allowCompletion()}
+            >
+              Allow this session to complete
             </button>
           )}
-        </details>
+        </div>
       )}
       <div className={`sessionbody${hasTask ? "" : " no-artifacts"}`} style={{ ["--artifact-width" as string]: `${artifactWidth}px` }}>
         <div className="termhost" ref={termhostRef}>
@@ -2210,7 +2252,11 @@ export function SessionView({
                           }}
                         >
                           <span className="artifactitem-name">{item.name}</span>
-                          {item.execution_id && <span className="dim">Execution {item.execution_id} · {item.step_key} · {item.accepted ? "accepted" : "pending"}</span>}
+                          {item.execution_id && (
+                            <span className="dim">
+                              Execution {item.execution_id} · {item.step_key} · {item.accepted ? "accepted" : "pending"}
+                            </span>
+                          )}
                           {!available && <span className="pill">Not yet readable</span>}
                           {commentCount > 0 && (
                             <span

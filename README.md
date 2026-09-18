@@ -15,6 +15,14 @@ Drag the divider between the graph and description to resize them. The focused d
 
 **Editor** fills the remaining vertical space and shows the complete `playbook.md` with soft-wrapped text, aligned source line numbers, and simple TOML/Markdown highlighting. Switching views retains unsaved changes; the graph updates only after a validated save succeeds. Bundled documents are read-only: choose **Make a copy to edit**, then a destination scope and key. **Import** accepts a local file or pasted source. Library edits and deletion affect future task selections, never existing tasks' retained definitions.
 
+In **Task detail → Playbook**, **List** remains the default, showing active counts and automatic-completion settings. **Graph** displays only the task's retained definition graph and artifact arrows, without a step inspector or divider. Select a step to highlight its connections. The full Playbooks library keeps its step inspector. The list's **Artifact dependencies** section describes output-to-input connections, not automatic-completion decisions.
+
+Task detail's right-side **History** tab shows execution states, assigned inputs/outputs, and completion permissions. History scrolls independently from the sessions table on the left. Long task metadata is also scrollable without pushing sessions out of view.
+
+The sessions toolbar shows **N queued** immediately before **Priority**. It counts executions whose start was requested and which are still queued; deliberately held sessions are excluded. The count updates with task state and includes zero once loaded.
+
+For a human-gated running session, **Allow this session to complete** is visible beside the execution disclosure even when it is collapsed. This grants permission only; the agent still needs to request completion after finishing its assigned outputs.
+
 ## Install
 
 ```bash

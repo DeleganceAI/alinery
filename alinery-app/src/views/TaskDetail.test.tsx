@@ -3,16 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
 import { navReady, requireNav } from "../test/nav";
-import type {
-  BoardNav,
-  BoardTask,
-  SessionMeta,
-  SessionObservation,
-  SubtaskManagerState,
-  Task,
-  TaskActivityRef,
-  TaskActivitySummary,
-} from "../types";
+import type { BoardNav, BoardTask, SessionMeta, SessionObservation, SubtaskManagerState, Task, TaskActivityRef, TaskActivitySummary } from "../types";
 import { executionRecord, executionReply } from "./executionTestFixture";
 import { TaskDetail } from "./TaskDetail";
 
@@ -218,7 +209,6 @@ const observation = (agent: "busy" | "idle"): SessionObservation => ({
   checkpoint: {},
 });
 
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -230,6 +220,13 @@ function deferred<T>() {
 }
 
 beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   scenario.task = { ...parentTask };
   scenario.relatedTasks = [];
   scenario.state = state();
@@ -326,6 +323,34 @@ async function renderDetail(slug = "parent") {
   await screen.findByRole("heading", { name: scenario.task.name });
   return { onOpenSession, onOpenRelatedTask, onNewSession };
 }
+
+it("switches the retained task playbook between its live list and graph-only canvas", async () => {
+  const retained = executionReply();
+  retained.state.enabled_steps = ["worker"];
+  mocks.getTaskExecution.mockResolvedValue(retained);
+  await renderDetail();
+  const modes = within(screen.getByRole("group", { name: "Task playbook view" }));
+  expect(modes.getByRole("button", { name: "List" }).getAttribute("aria-pressed")).toBe("true");
+  expect(await screen.findByLabelText("Retained worker: 1 active sessions")).toBeTruthy();
+  expect(screen.getByText("Automatic")).toBeTruthy();
+
+  fireEvent.click(modes.getByRole("button", { name: "Graph" }));
+  fireEvent.click(screen.getByRole("button", { name: "Highlight Retained worker" }));
+  expect(screen.getByRole("button", { name: "Highlight Retained worker" }).getAttribute("aria-pressed")).toBe("true");
+  expect(screen.getByRole("region", { name: "Dependency graph canvas" })).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Retained worker definition" })).toBeNull();
+  expect(screen.queryByRole("separator", { name: "Resize graph and description" })).toBeNull();
+  expect(screen.queryByLabelText("Retained worker: 1 active sessions")).toBeNull();
+
+  const sideTabs = within(screen.getByRole("group", { name: "Task side panel" }));
+  fireEvent.click(sideTabs.getByRole("button", { name: "Artifacts" }));
+  fireEvent.click(sideTabs.getByRole("button", { name: "Playbook" }));
+  expect(screen.getByRole("button", { name: "Graph" }).getAttribute("aria-pressed")).toBe("true");
+
+  fireEvent.click(screen.getByRole("button", { name: "List" }));
+  expect(screen.getByLabelText("Retained worker: 1 active sessions")).toBeTruthy();
+  expect(screen.getByText("Automatic")).toBeTruthy();
+});
 
 describe("removed distill surfaces", () => {
   it("keeps a historical session visible without offering Distill or a Wiki tab", async () => {
@@ -932,21 +957,29 @@ describe("authoritative task execution", () => {
   it("shows concurrent primary work without newer auxiliary sessions changing progress", async () => {
     const fixture = task();
     mocks.getTask.mockResolvedValue(fixture);
-    mocks.getTaskExecution.mockResolvedValue(executionReply([
-      executionRecord(),
-      executionRecord({ id: "execution-b", owner_session_id: "owner-b", lifecycle: "finishing", receipt_id: "accepted-b" }),
-      executionRecord({ id: "execution-old", owner_session_id: "owner-old", lifecycle: "completed", receipt_id: "accepted-old", shutdown_confirmed: true }),
-    ]));
+    mocks.getTaskExecution.mockResolvedValue(
+      executionReply([
+        executionRecord(),
+        executionRecord({ id: "execution-b", owner_session_id: "owner-b", lifecycle: "finishing", receipt_id: "accepted-b" }),
+        executionRecord({ id: "execution-old", owner_session_id: "owner-old", lifecycle: "completed", receipt_id: "accepted-old", shutdown_confirmed: true }),
+      ]),
+    );
     mocks.listSessions.mockResolvedValue([
       session({ id: "auxiliary-newest", created: 100, generic: true, phase: "" }),
-      session({ id: "owner-b", created: 3 }), session({ id: "owner-a", created: 2 }),
+      session({ id: "owner-b", created: 3 }),
+      session({ id: "owner-a", created: 2 }),
     ]);
     renderSeededDetail({ initialTask: fixture });
+    expect(screen.queryByRole("region", { name: "Task executions" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
     expect(await screen.findByText(/2 active executions \/ 3 slots/)).toBeDefined();
     expect(within(screen.getByRole("article", { name: "Execution execution-b" })).getByText("finishing")).toBeDefined();
     expect(within(screen.getByRole("article", { name: "Execution execution-old" })).getByText("completed")).toBeDefined();
     expect(screen.getByText("Auxiliary")).toBeDefined();
     expect(screen.queryByText("superdevelop")).toBeNull();
+    fireEvent.click(within(screen.getByRole("group", { name: "Task side panel" })).getByRole("button", { name: "Playbook" }));
+    expect(screen.queryByRole("region", { name: "Task executions" })).toBeNull();
+    expect(screen.getByText("Auxiliary")).toBeDefined();
   });
 
   it("grants the displayed execution owner without granting a replacement after stale ownership", async () => {
@@ -955,6 +988,7 @@ describe("authoritative task execution", () => {
     mocks.getTaskExecution.mockResolvedValue(executionReply());
     mocks.allowExecutionCompletion.mockRejectedValue(new Error("owner changed"));
     renderSeededDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
     fireEvent.click(await screen.findByRole("button", { name: "Allow this session to complete · owner-a" }));
     await waitFor(() => expect(mocks.allowExecutionCompletion).toHaveBeenCalledWith("a-task", "execution-a", "owner-a", "/r"));
     expect(await screen.findByText(/Execution state unavailable/)).toBeDefined();
@@ -965,6 +999,8 @@ describe("authoritative task execution", () => {
     const fixture = task();
     const retained = executionReply([
       executionRecord({ lifecycle: "queued", start_requested: false }),
+      executionRecord({ id: "queued-a", owner_session_id: "queued-owner-a", lifecycle: "queued", start_requested: true }),
+      executionRecord({ id: "queued-b", owner_session_id: "queued-owner-b", lifecycle: "queued", start_requested: true }),
       executionRecord({ id: "uncertain", lifecycle: "interrupted", owner_session_id: "owner-uncertain", error: "Process disposition unknown" }),
       executionRecord({ id: "finishing", lifecycle: "finishing", receipt_id: "accepted", owner_session_id: "owner-finishing" }),
     ]);
@@ -973,7 +1009,9 @@ describe("authoritative task execution", () => {
     mocks.getTask.mockResolvedValue(fixture);
     mocks.getTaskExecution.mockResolvedValue(retained);
     renderSeededDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
     expect(await screen.findByText("One root could not launch")).toBeDefined();
+    expect(screen.getByRole("status", { name: "Queued sessions" }).textContent).toBe("2 queued");
     const queued = within(screen.getByRole("article", { name: "Execution execution-a" }));
     expect(queued.getByText("Held until explicitly started")).toBeDefined();
     fireEvent.click(queued.getByText("Inputs and outputs"));

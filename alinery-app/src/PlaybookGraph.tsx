@@ -29,6 +29,7 @@ export function PlaybookGraph({
   countsByStep = {},
   selectedAutoAdvance = [],
   variant = "execution",
+  showInspector = true,
   defaultModel = "",
   defaultHarness = "",
   graphFraction,
@@ -39,6 +40,7 @@ export function PlaybookGraph({
   countsByStep?: Record<string, number>;
   selectedAutoAdvance?: string[];
   variant?: "definition" | "execution";
+  showInspector?: boolean;
   defaultModel?: string;
   defaultHarness?: string;
   graphFraction?: number;
@@ -106,20 +108,20 @@ export function PlaybookGraph({
   }, [layout]);
 
   if (variant === "definition" && layout) {
-    const selectedEdges = edges.filter(({ from, to }) => from.key === selectedStep?.key || to.key === selectedStep?.key);
+    const selectedEdges = showInspector ? edges.filter(({ from, to }) => from.key === selectedStep?.key || to.key === selectedStep?.key) : [];
     const stepsByKey = Object.fromEntries(steps.map((step) => [step.key, step]));
     const arrowId = `${inspectorId}-arrow`;
     const selectedArrowId = `${inspectorId}-selected-arrow`;
     return (
       <section className="playbook-graph-view playbook-definition-graph" aria-label={`${title} graph`}>
         <p className="playbook-definition-hint">
-          Select a step to inspect it. Arrows name the artifacts; dashed arrows return to earlier steps.
+          {showInspector ? "Select a step to inspect it." : "Select a step to highlight its connections."} Arrows name the artifacts; dashed arrows return to earlier steps.
           {layout.ellipses.length > 0 && " Three example instances illustrate fan-out; actual counts vary."}
         </p>
         <div
           ref={splitRef}
           className={`playbook-definition-layout${resizing ? " resizing" : ""}`}
-          style={{ gridTemplateColumns: `minmax(0, ${fraction}fr) var(--playbook-divider-width) minmax(0, ${1 - fraction}fr)` }}
+          style={{ gridTemplateColumns: showInspector ? `minmax(0, ${fraction}fr) var(--playbook-divider-width) minmax(0, ${1 - fraction}fr)` : "minmax(0, 1fr)" }}
         >
           <div className="playbook-definition-map">
             {steps.length > 0 ? (
@@ -182,9 +184,9 @@ export function PlaybookGraph({
                             width: `calc(${GRAPH_NODE_WIDTH}px * var(--ui-scale))`,
                             height: `calc(${GRAPH_NODE_HEIGHT}px * var(--ui-scale))`,
                           }}
-                          aria-label={`Inspect ${step.title}${instance === null ? "" : ` — example ${instance}`}`}
+                          aria-label={`${showInspector ? "Inspect" : "Highlight"} ${step.title}${instance === null ? "" : ` — example ${instance}`}`}
                           aria-pressed={selectedStep?.key === key}
-                          aria-controls={inspectorId}
+                          aria-controls={showInspector ? inspectorId : undefined}
                           title={`${step.title}${instance === null ? "" : " — illustrative instance, not a fixed count"}`}
                           onClick={() => setSelectedKey(key)}
                         >
@@ -211,7 +213,7 @@ export function PlaybookGraph({
             )}
             {edges.length === 0 && steps.length > 0 && <p className="playbook-definition-hint">No matching artifact selectors connect these steps.</p>}
           </div>
-          {selectedStep && (
+          {showInspector && selectedStep && (
             <div
               ref={dividerRef}
               className="playbook-definition-divider"
@@ -259,7 +261,7 @@ export function PlaybookGraph({
               }}
             />
           )}
-          {selectedStep && (
+          {showInspector && selectedStep && (
             <section className="playbook-definition-inspector" id={inspectorId} aria-label={`${selectedStep.title} definition`}>
               <h3>{selectedStep.title}</h3>
               {selectedStep.inputs.some((input) => input.mode === "each") && (
@@ -356,6 +358,10 @@ export function PlaybookGraph({
           </div>
         ))}
       </div>
+      <h3 className="playbook-dependencies-title">Artifact dependencies</h3>
+      <p className="playbook-dependencies-hint">
+        Producer → consumer, matched by output → input path. The input mode is shown in parentheses; these connections do not indicate automatic completion.
+      </p>
       <ul aria-label="Artifact dependencies">
         {edges.map(({ from, to, input, output }) => (
           <li key={`${from.key}:${output.path}:${to.key}:${input.path}`} aria-label={`${from.title} to ${to.title}: ${input.mode}`}>

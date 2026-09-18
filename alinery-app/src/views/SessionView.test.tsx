@@ -7,8 +7,8 @@ import type { SessionMessageDraft } from "../sessionMessage";
 import { mockIpc } from "../test/mockIpc";
 import { toast } from "../toast";
 import type { AgentState, ArtifactListItem, ArtifactTreeNode, SessionObservation, Task } from "../types";
-import { SessionView } from "./SessionView";
 import { executionRecord, executionReply } from "./executionTestFixture";
+import { SessionView } from "./SessionView";
 
 const scenario = vi.hoisted(() => ({
   itemCalls: 0,
@@ -1201,7 +1201,9 @@ describe("session-scoped completion permission", () => {
     scenario.items = [];
     getTaskExecution.mockReset().mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session" })]));
     allowExecutionCompletion.mockReset().mockImplementation(async (_slug: string, executionId: string, sessionId: string) => {
-      getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: sessionId, permission: { kind: "human_granted", execution_id: executionId, session_id: sessionId } })]));
+      getTaskExecution.mockResolvedValue(
+        executionReply([executionRecord({ owner_session_id: sessionId, permission: { kind: "human_granted", execution_id: executionId, session_id: sessionId } })]),
+      );
     });
   });
   afterEach(() => {
@@ -1210,11 +1212,16 @@ describe("session-scoped completion permission", () => {
     allowExecutionCompletion.mockReset();
   });
 
-  it("grants the displayed owner while preserving the interactive composer", async () => {
+  it("grants the displayed owner from the collapsed header while preserving the interactive composer", async () => {
     renderSession();
-    fireEvent.click(await screen.findByText(/Retained worker · running · Owner session/));
-    fireEvent.click(screen.getByRole("button", { name: "Allow this session to complete · session" }));
+    const allow = await screen.findByRole("button", { name: "Allow this session to complete · session" });
+    const disclosure = screen.getByLabelText("Session execution") as HTMLDetailsElement;
+    expect(disclosure.open).toBe(false);
+    fireEvent.click(allow);
     await waitFor(() => expect(allowExecutionCompletion).toHaveBeenCalledWith("task", "execution-a", "session", "/repo"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Allow this session to complete · session" })).toBeNull());
+    expect(disclosure.open).toBe(false);
+    fireEvent.click(screen.getByText(/Retained worker · running · Owner session/));
     expect(await screen.findByText("Completion permission: human_granted · session")).toBeDefined();
     expect(screen.getByLabelText("Message or /command")).toBeDefined();
     expect(screen.getByText("research/1-request-2.md")).toBeDefined();
