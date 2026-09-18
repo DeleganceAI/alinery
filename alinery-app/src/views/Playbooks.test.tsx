@@ -274,4 +274,18 @@ describe("graph-first playbook management", () => {
     expect(screen.getByLabelText("Playbook source")).toHaveProperty("value", draft);
     expect(stored[2].definition.description).toBe("Review work");
   });
+
+  it("retains the chosen pane split across mode and playbook changes", async () => {
+    render(<Playbooks repoPath="/repo" />);
+    await openRepo();
+    const divider = screen.getByRole("separator", { name: "Resize graph and description" });
+    fireEvent.keyDown(divider, { key: "Home" });
+    const chosen = divider.getAttribute("aria-valuenow");
+    fireEvent.click(screen.getByRole("button", { name: "Editor" }));
+    fireEvent.click(screen.getByRole("button", { name: "Graph" }));
+    expect(screen.getByRole("separator", { name: "Resize graph and description" }).getAttribute("aria-valuenow")).toBe(chosen);
+    fireEvent.click(screen.getByRole("button", { name: "Review Bundled" }));
+    await screen.findByRole("button", { name: "Make a copy to edit" });
+    expect(screen.getByRole("separator", { name: "Resize graph and description" }).getAttribute("aria-valuenow")).toBe(chosen);
+  });
 });

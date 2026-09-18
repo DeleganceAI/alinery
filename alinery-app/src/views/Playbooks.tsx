@@ -42,6 +42,7 @@ export function Playbooks({ repoPath }: { repoPath?: string }) {
   const [scope, setScope] = useState<"repo" | "global">(repoPath ? "repo" : "global");
   const [key, setKey] = useState("new-playbook");
   const [mode, setMode] = useState<"graph" | "editor">("graph");
+  const [graphFraction, setGraphFraction] = useState(2 / 3);
   const [query, setQuery] = useState("");
   const [showImport, setShowImport] = useState(false);
   const [diagnostics, setDiagnostics] = useState<PlaybookValidationError[]>([]);
@@ -424,13 +425,15 @@ export function Playbooks({ repoPath }: { repoPath?: string }) {
                       steps={selected.definition.step}
                       defaultModel={selected.definition.default_model}
                       defaultHarness={selected.definition.default_harness}
+                      graphFraction={graphFraction}
+                      onGraphFractionChange={setGraphFraction}
                     />
                   ) : (
                     <p className="playbooks-empty">Save this definition before a graph is available. Continue editing in Editor.</p>
                   )}
                 </>
               ) : (
-                <section aria-label="Playbook editor">
+                <section className="playbooks-editor-panel" aria-label="Playbook editor">
                   {readOnly && <p className="playbooks-context">Bundled source is read-only. Make a copy to edit it.</p>}
                   <PlaybookSourceEditor
                     value={source}

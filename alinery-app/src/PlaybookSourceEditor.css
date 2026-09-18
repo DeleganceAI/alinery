@@ -1,7 +1,9 @@
 .playbook-source-editor {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  height: clamp(280px, 56vh, 640px);
+  grid-template-rows: minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);

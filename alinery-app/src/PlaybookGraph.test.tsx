@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PlaybookGraph } from "./PlaybookGraph";
 import { GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH, layoutDefinitionGraph } from "./playbookGraphLayout";
 import type { NormalizedStep } from "./types";
@@ -16,7 +16,19 @@ const step = (key: string, inputs: string[], outputs: string[]): NormalizedStep 
   is_coding_step: false,
   auto_advance_default: false,
 });
-afterEach(cleanup);
+beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 it("renders shuffled selector forks, joins, cycles and concurrent active counts without document-neighbor edges", () => {
   render(
@@ -226,4 +238,37 @@ it("illustrates wildcard workers converging into one collector with artifact lab
   fireEvent.click(examples[1]);
   expect(screen.getByLabelText("square prompt").textContent).toBe(worker.prompt);
   for (const example of examples) expect(example.getAttribute("aria-pressed")).toBe("true");
+});
+
+it("resizes the graph with keyboard controls while keeping both panes available", () => {
+  render(<PlaybookGraph variant="definition" title="Review" steps={[step("inspect", [], ["result.md"])]} />);
+  const divider = screen.getByRole("separator", { name: "Resize graph and description" });
+  const initial = Number(divider.getAttribute("aria-valuenow"));
+  fireEvent.keyDown(divider, { key: "ArrowLeft" });
+  expect(Number(divider.getAttribute("aria-valuenow"))).toBeLessThan(initial);
+  fireEvent.keyDown(divider, { key: "ArrowRight" });
+  expect(Number(divider.getAttribute("aria-valuenow"))).toBe(initial);
+  fireEvent.keyDown(divider, { key: "Home" });
+  expect(divider.getAttribute("aria-valuenow")).toBe(divider.getAttribute("aria-valuemin"));
+  fireEvent.keyDown(divider, { key: "ArrowLeft" });
+  expect(divider.getAttribute("aria-valuenow")).toBe(divider.getAttribute("aria-valuemin"));
+  fireEvent.keyDown(divider, { key: "End" });
+  expect(divider.getAttribute("aria-valuenow")).toBe(divider.getAttribute("aria-valuemax"));
+  expect(screen.getByRole("region", { name: "inspect definition" })).toBeTruthy();
+});
+
+it("stops resizing on pointer cancellation without losing the chosen width", () => {
+  render(<PlaybookGraph variant="definition" title="Review" steps={[step("inspect", [], ["result.md"])]} />);
+  const divider = screen.getByRole("separator", { name: "Resize graph and description" });
+  const container = divider.parentElement as HTMLElement;
+  vi.spyOn(container, "getBoundingClientRect").mockReturnValue({ width: 1000 } as DOMRect);
+  const initial = Number(divider.getAttribute("aria-valuenow"));
+  fireEvent.pointerDown(divider, { button: 0, clientX: 650, pointerId: 1 });
+  fireEvent.pointerMove(window, { clientX: 450, pointerId: 1 });
+  const chosen = divider.getAttribute("aria-valuenow");
+  expect(Number(chosen)).toBeLessThan(initial);
+  fireEvent.pointerCancel(window, { clientX: 0, pointerId: 1 });
+  fireEvent.pointerMove(window, { clientX: 900, pointerId: 1 });
+  fireEvent.pointerUp(window, { clientX: 900, pointerId: 1 });
+  expect(divider.getAttribute("aria-valuenow")).toBe(chosen);
 });

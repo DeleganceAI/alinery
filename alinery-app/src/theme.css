@@ -5258,6 +5258,15 @@ dialog.modal::backdrop {
   flex: 1 0 240px;
   min-height: 240px;
 }
+.playbooks-body > .playbooks-editor-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 240px;
+  min-height: 240px;
+}
+.playbooks-editor-panel > .playbooks-context {
+  flex-shrink: 0;
+}
 .playbooks-detail-header {
   height: auto;
   padding: 0;

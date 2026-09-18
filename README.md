@@ -11,7 +11,9 @@ Using Alinery requires a mindset shift from other AI coding approaches. It encou
 
 The **Playbooks** tab opens a searchable library beside a saved-definition graph that fills the available pane height. Directed arrows are labelled with artifact paths and show forks, joins, and dashed return paths. Wildcard `each` workers appear as three illustrative instances with an ellipsis, converging on their consumers; actual instance counts are not fixed. Select any example to inspect the shared step's prompt, inputs, outputs, coding flag, automatic-completion default, and connection details. Connections come from artifact selectors; this is not a live execution view or a graph editor.
 
-**Editor** shows the complete `playbook.md` with soft-wrapped text, aligned source line numbers, and simple TOML/Markdown highlighting. Switching views retains unsaved changes; the graph updates only after a validated save succeeds. Bundled documents are read-only: choose **Make a copy to edit**, then a destination scope and key. **Import** accepts a local file or pasted source. Library edits and deletion affect future task selections, never existing tasks' retained definitions.
+Drag the divider between the graph and description to resize them. The focused divider also supports Left/Right arrows and Home/End. The chosen split is retained while browsing playbooks and switching between Graph and Editor.
+
+**Editor** fills the remaining vertical space and shows the complete `playbook.md` with soft-wrapped text, aligned source line numbers, and simple TOML/Markdown highlighting. Switching views retains unsaved changes; the graph updates only after a validated save succeeds. Bundled documents are read-only: choose **Make a copy to edit**, then a destination scope and key. **Import** accepts a local file or pasted source. Library edits and deletion affect future task selections, never existing tasks' retained definitions.
 
 ## Install
 

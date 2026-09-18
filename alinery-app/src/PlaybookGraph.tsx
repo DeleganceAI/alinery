@@ -2,6 +2,7 @@ import { ArrowRight } from "lucide-react";
 import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH, layoutDefinitionGraph } from "./playbookGraphLayout";
 import type { NormalizedStep } from "./types";
+import { usePointerDrag } from "./usePointerDrag";
 import "./PlaybookGraph.css";
 
 /** The same literal-plus-one-star language as core; source order is not an edge. */
@@ -30,6 +31,8 @@ export function PlaybookGraph({
   variant = "execution",
   defaultModel = "",
   defaultHarness = "",
+  graphFraction,
+  onGraphFractionChange,
 }: {
   title: string;
   steps: NormalizedStep[];
@@ -38,10 +41,25 @@ export function PlaybookGraph({
   variant?: "definition" | "execution";
   defaultModel?: string;
   defaultHarness?: string;
+  graphFraction?: number;
+  onGraphFractionChange?: (fraction: number) => void;
 }) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const inspectorId = useId();
   const viewportRef = useRef<HTMLDivElement>(null);
+  const splitRef = useRef<HTMLDivElement>(null);
+  const dividerRef = useRef<HTMLDivElement>(null);
+  const [localFraction, setLocalFraction] = useState(2 / 3);
+  const [availableWidth, setAvailableWidth] = useState(0);
+  const [resizing, setResizing] = useState(false);
+  const { start: startPointerDrag } = usePointerDrag();
+  const minimumFraction = availableWidth > 0 ? Math.min(0.45, (GRAPH_NODE_WIDTH + 16) / availableWidth) : 0.2;
+  const fraction = Math.max(minimumFraction, Math.min(1 - minimumFraction, graphFraction ?? localFraction));
+  const changeFraction = (next: number) => {
+    const bounded = Math.max(minimumFraction, Math.min(1 - minimumFraction, next));
+    if (onGraphFractionChange) onGraphFractionChange(bounded);
+    else setLocalFraction(bounded);
+  };
   const selectedStep = steps.find((step) => step.key === selectedKey) ?? steps[0];
   const edges = useMemo(
     () =>
@@ -68,15 +86,23 @@ export function PlaybookGraph({
 
   useLayoutEffect(() => {
     if (!layout) return;
-    const revealSelection = () => {
-      const viewport = viewportRef.current;
-      const selected = viewport?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]');
-      if (!viewport || !selected || !viewport.clientWidth) return;
-      viewport.scrollLeft = Math.max(0, selected.offsetLeft + selected.offsetWidth / 2 - viewport.clientWidth / 2);
+    const split = splitRef.current;
+    const viewport = viewportRef.current;
+    if (!split || !viewport) return;
+    let previousViewportWidth = 0;
+    const measure = () => {
+      const width = split.clientWidth - (dividerRef.current?.offsetWidth ?? 0);
+      if (width > 0) setAvailableWidth(width);
+      if (!viewport.clientWidth || viewport.clientWidth === previousViewportWidth) return;
+      previousViewportWidth = viewport.clientWidth;
+      const selected = viewport.querySelector<HTMLButtonElement>('button[aria-pressed="true"]');
+      if (selected) viewport.scrollLeft = Math.max(0, selected.offsetLeft + selected.offsetWidth / 2 - viewport.clientWidth / 2);
     };
-    revealSelection();
-    window.addEventListener("resize", revealSelection);
-    return () => window.removeEventListener("resize", revealSelection);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(split);
+    observer.observe(viewport);
+    return () => observer.disconnect();
   }, [layout]);
 
   if (variant === "definition" && layout) {
@@ -90,10 +116,14 @@ export function PlaybookGraph({
           Select a step to inspect it. Arrows name the artifacts; dashed arrows return to earlier steps.
           {layout.ellipses.length > 0 && " Three example instances illustrate fan-out; actual counts vary."}
         </p>
-        <div className="playbook-definition-layout">
+        <div
+          ref={splitRef}
+          className={`playbook-definition-layout${resizing ? " resizing" : ""}`}
+          style={{ gridTemplateColumns: `minmax(0, ${fraction}fr) var(--playbook-divider-width) minmax(0, ${1 - fraction}fr)` }}
+        >
           <div className="playbook-definition-map">
             {steps.length > 0 ? (
-              <div ref={viewportRef} className="playbook-definition-viewport" role="region" aria-label="Dependency graph canvas">
+              <div ref={viewportRef} id={`${inspectorId}-graph`} className="playbook-definition-viewport" role="region" aria-label="Dependency graph canvas">
                 <div className="playbook-definition-canvas" style={{ width: `calc(${layout.width}px * var(--ui-scale))`, height: `calc(${layout.height}px * var(--ui-scale))` }}>
                   <svg className="playbook-definition-connections" viewBox={`0 0 ${layout.width} ${layout.height}`} role="group" aria-label="Artifact dependency connections">
                     <defs>
@@ -181,6 +211,54 @@ export function PlaybookGraph({
             )}
             {edges.length === 0 && steps.length > 0 && <p className="playbook-definition-hint">No matching artifact selectors connect these steps.</p>}
           </div>
+          {selectedStep && (
+            <div
+              ref={dividerRef}
+              className="playbook-definition-divider"
+              role="separator"
+              aria-label="Resize graph and description"
+              aria-orientation="vertical"
+              aria-controls={`${inspectorId}-graph ${inspectorId}`}
+              aria-valuemin={Math.round(minimumFraction * 100)}
+              aria-valuemax={Math.round((1 - minimumFraction) * 100)}
+              aria-valuenow={Math.round(fraction * 100)}
+              aria-valuetext={`Graph ${Math.round(fraction * 100)}%, description ${Math.round((1 - fraction) * 100)}%`}
+              tabIndex={0}
+              title="Drag to resize graph and description. Arrow keys adjust; Home and End reach the limits."
+              onPointerDown={(event) => {
+                if (event.button !== 0) return;
+                const width = (splitRef.current?.getBoundingClientRect().width ?? 0) - event.currentTarget.offsetWidth;
+                if (width <= 0) return;
+                event.preventDefault();
+                event.currentTarget.focus();
+                const startX = event.clientX;
+                const startFraction = fraction;
+                setResizing(true);
+                startPointerDrag(event, {
+                  onMove: (move) => changeFraction(startFraction + (move.clientX - startX) / width),
+                  onComplete: (end) => {
+                    if (end.type !== "pointercancel") changeFraction(startFraction + (end.clientX - startX) / width);
+                    setResizing(false);
+                  },
+                });
+              }}
+              onKeyDown={(event) => {
+                const next =
+                  event.key === "ArrowLeft"
+                    ? fraction - 0.025
+                    : event.key === "ArrowRight"
+                      ? fraction + 0.025
+                      : event.key === "Home"
+                        ? minimumFraction
+                        : event.key === "End"
+                          ? 1 - minimumFraction
+                          : null;
+                if (next === null) return;
+                event.preventDefault();
+                changeFraction(next);
+              }}
+            />
+          )}
           {selectedStep && (
             <section className="playbook-definition-inspector" id={inspectorId} aria-label={`${selectedStep.title} definition`}>
               <h3>{selectedStep.title}</h3>
