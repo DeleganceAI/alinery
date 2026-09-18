@@ -50,7 +50,6 @@ import type {
   AppearancePrefs,
   ArtifactListItem,
   ArtifactTreeNode,
-  TaskExecutionReply,
   BoardNav,
   BoardTask,
   RelatedTaskRef,
@@ -59,6 +58,7 @@ import type {
   SubtaskManagerState,
   Task,
   TaskActivitySummary,
+  TaskExecutionReply,
   TaskPanelRow,
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
@@ -168,8 +168,10 @@ export function TaskDetail({
   const executionRequest = useRef(0);
   const steps = executionView?.definition.step ?? [];
   const executions = Object.values(executionView?.state.executions ?? {});
-  const executionForSession = (session: SessionMeta) => executions.find((execution) => execution.owner_session_id === session.id || execution.previous_session_ids.includes(session.id));
+  const executionForSession = (session: SessionMeta) =>
+    executions.find((execution) => execution.owner_session_id === session.id || execution.previous_session_ids.includes(session.id));
   const activeExecutions = executions.filter((execution) => ["starting", "running", "finishing", "interrupted"].includes(execution.lifecycle));
+  const queuedExecutionCount = executions.filter((execution) => execution.lifecycle === "queued" && execution.start_requested).length;
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [sessionStatuses, setSessionStatuses] = useState<Record<string, SessionObservation>>({});
@@ -248,7 +250,8 @@ export function TaskDetail({
   const [artifactText, setArtifactText] = useState("");
   const [artifactMode, setArtifactMode] = useState<"preview" | "raw">("preview");
   const [artifactErr, setArtifactErr] = useState<ErrState>(null);
-  const [sideTab, setSideTab] = useState<"playbook" | "artifacts">("playbook");
+  const [sideTab, setSideTab] = useState<"playbook" | "artifacts" | "history">("playbook");
+  const [playbookView, setPlaybookView] = useState<"list" | "graph">("list");
   const [artifactTab, setArtifactTab] = useState<ArtifactPaneTab>("playbook");
   const selectedArtifactTreeId = selectedArtifactNode?.id;
   const [artifactComments, setArtifactComments] = useState<ArtifactComment[]>([]);
@@ -303,7 +306,6 @@ export function TaskDetail({
     setSubtaskState(fetched);
     await refreshChildActivity(fetched, epoch);
   };
-
 
   const commitFetchedTask = (fetched: Task | null, epoch: number) => {
     if (epoch !== taskMutationEpoch.current) return;
@@ -411,7 +413,12 @@ export function TaskDetail({
       setArtifactsError(String(artifactsResult.error));
     }
 
-    const statuses = await ipc.sessionStatuses(ss.map((session) => session.id), slug).catch(() => ({}) as Record<string, SessionObservation>);
+    const statuses = await ipc
+      .sessionStatuses(
+        ss.map((session) => session.id),
+        slug,
+      )
+      .catch(() => ({}) as Record<string, SessionObservation>);
     setSessionStatuses((current) => (sameSessionObservationMaps(current, statuses) ? current : statuses));
   };
 
@@ -751,7 +758,7 @@ export function TaskDetail({
   return (
     <div className="detail taskdetail" style={{ ["--artifact-width" as string]: `${artifactWidth}px` }}>
       <main className="detailmain">
-        <section className="task-panel task-info-panel">
+        <section className="task-panel task-info-panel" aria-label="Task information">
           <div className="task-panel-head task-info-head">
             <div>
               <div className="task-panel-label">Task</div>
@@ -770,43 +777,10 @@ export function TaskDetail({
 
           {finalizedNotice && <InlineStatus tone="warning">{finalizedNotice}</InlineStatus>}
 
-          {executionError && <InlineStatus tone="error" detail={executionError}>Execution state unavailable. Last known state is shown; completion grants are disabled.</InlineStatus>}
-          {executionView && (
-            <section aria-label="Task executions">
-              <h3>{executionView.definition.title}</h3>
-              <p>{activeExecutions.length} active executions / {executionView.state.max_live_sessions} slots · Creation: {executionView.state.creation}</p>
-              {executionView.state.creation_error && <InlineStatus tone="error">{executionView.state.creation_error}</InlineStatus>}
-              {executions.map((execution) => (
-                <article key={execution.id} aria-label={`Execution ${execution.id}`}>
-                  <strong>{steps.find((step) => step.key === execution.candidate.step_key)?.title ?? execution.candidate.step_key}</strong>
-                  <span className="pill">{execution.lifecycle}</span>
-                  <p className="mono">Execution {execution.id} · Owner {execution.owner_session_id}</p>
-                  {execution.lifecycle === "queued" && <p>{execution.start_requested ? "Waiting for capacity or coding ownership" : "Held until explicitly started"}</p>}
-                  {execution.lifecycle === "finishing" && <p>Outputs accepted; waiting for confirmed session shutdown.</p>}
-                  {execution.lifecycle === "interrupted" && <p>Process ownership is uncertain; capacity remains reserved.</p>}
-                  {execution.error && <InlineStatus tone="error">{execution.error}</InlineStatus>}
-                  <details>
-                    <summary>Inputs and outputs</summary>
-                    <ul aria-label="Execution inputs">
-                      {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) => ids.map((occurrenceId) => {
-                        const occurrence = executionView.state.occurrences[occurrenceId];
-                        return <li key={`${selector}:${occurrenceId}`}><code>{selector}</code> ← <code>{occurrence?.relative_path ?? occurrenceId}</code> · occurrence {occurrenceId} · producer {occurrence?.producer_execution_id ?? "seed"}</li>;
-                      }))}
-                    </ul>
-                    <ul aria-label="Execution outputs">
-                      {execution.outputs.map((output) => <li key={output.relative_path}><code>{output.selector}</code> → <code>{output.relative_path}</code> · {execution.receipt_id ? "accepted" : "pending"}</li>)}
-                      {Object.values(executionView.state.occurrences).filter((occurrence) => occurrence.producer_execution_id === execution.id && occurrence.selector.includes("*")).map((occurrence) => <li key={occurrence.id}>Accepted member <code>{occurrence.relative_path}</code> · occurrence {occurrence.id}</li>)}
-                    </ul>
-                  </details>
-                  <p>Completion permission: {execution.permission.kind}{execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}</p>
-                  {execution.permission.kind === "locked" && execution.lifecycle === "running" && (
-                    <button type="button" className="btn small" disabled={!!busy || !!executionError} onClick={() => void allowCompletion(execution.id, execution.owner_session_id)}>
-                      Allow this session to complete · {execution.owner_session_id}
-                    </button>
-                  )}
-                </article>
-              ))}
-            </section>
+          {executionError && (
+            <InlineStatus tone="error" detail={executionError}>
+              Execution state unavailable. Last known state is shown; completion grants are disabled.
+            </InlineStatus>
           )}
 
           <div className="task-info-grid">
@@ -964,6 +938,16 @@ export function TaskDetail({
           <div className="task-panel-head">
             <h3 className="task-panel-title">Sessions</h3>
             <div className="task-session-controls">
+              {executionView && (
+                <span
+                  className="dim task-session-queue"
+                  role="status"
+                  aria-label="Queued sessions"
+                  title="Start requested; waiting for capacity or coding ownership. Held sessions are not counted."
+                >
+                  {queuedExecutionCount} queued
+                </span>
+              )}
               <button
                 type="button"
                 className={`btn ghost small session-sort-control${sessionSort.field === "priority" ? " active" : ""}`}
@@ -1206,7 +1190,13 @@ export function TaskDetail({
                   const execution = executionForSession(s);
                   const superseded = Boolean(execution && execution.owner_session_id !== s.id);
                   const stepTitle = steps.find((step) => step.key === execution?.candidate.step_key)?.title ?? execution?.candidate.step_key;
-                  const sessionType = s.subtask_manager ? "Sub-task manager" : execution ? `${executionView?.definition.title} · ${stepTitle}` : s.generic ? "Auxiliary" : s.phase || "Historical session";
+                  const sessionType = s.subtask_manager
+                    ? "Sub-task manager"
+                    : execution
+                      ? `${executionView?.definition.title} · ${stepTitle}`
+                      : s.generic
+                        ? "Auxiliary"
+                        : s.phase || "Historical session";
                   const harnessLabel = `${harnessDisplayName(s.harness)}${s.model ? ` · ${s.model}` : ""}`;
                   const unreadCompletion = classifySessionNotice(s, obs ?? undefined) === "unread_completion";
                   const openable = Boolean(task?.worktree) && !s.archived;
@@ -1457,17 +1447,121 @@ export function TaskDetail({
                 >
                   Artifacts
                 </button>
+                <button type="button" aria-pressed={sideTab === "history"} className={`artifacttab${sideTab === "history" ? " on" : ""}`} onClick={() => setSideTab("history")}>
+                  History
+                </button>
               </div>
               {sideTab === "artifacts" && <span className="pill">{artifactNames.length}</span>}
             </div>
             {sideTab === "playbook" ? (
-              <div className="playbook-side-scroll">
+              <div className={`playbook-side-scroll${playbookView === "graph" ? " playbook-side-graph" : ""}`}>
+                <div className="task-playbook-toolbar">
+                  <div className="artifacttabs" role="group" aria-label="Task playbook view">
+                    <button
+                      type="button"
+                      className={`artifacttab${playbookView === "list" ? " on" : ""}`}
+                      aria-pressed={playbookView === "list"}
+                      onClick={() => setPlaybookView("list")}
+                    >
+                      List
+                    </button>
+                    <button
+                      type="button"
+                      className={`artifacttab${playbookView === "graph" ? " on" : ""}`}
+                      aria-pressed={playbookView === "graph"}
+                      onClick={() => setPlaybookView("graph")}
+                    >
+                      Graph
+                    </button>
+                  </div>
+                  {playbookView === "graph" && <p>Retained task definition · See List for active counts and automatic completion.</p>}
+                </div>
                 <PlaybookGraph
+                  variant={playbookView === "graph" ? "definition" : "execution"}
+                  showInspector={false}
                   title={executionView?.definition.title ?? "Retained task playbook"}
                   steps={steps}
                   countsByStep={Object.fromEntries(steps.map((step) => [step.key, activeExecutions.filter((execution) => execution.candidate.step_key === step.key).length]))}
                   selectedAutoAdvance={executionView?.state.enabled_steps}
                 />
+              </div>
+            ) : sideTab === "history" ? (
+              <div className="task-history-pane">
+                {executionView && (
+                  <section aria-label="Task executions">
+                    <h3 className="task-history-title">{executionView.definition.title}</h3>
+                    <p className="task-history-summary">
+                      {activeExecutions.length} active executions / {executionView.state.max_live_sessions} slots · Creation: {executionView.state.creation}
+                    </p>
+                    {executionView.state.creation_error && <InlineStatus tone="error">{executionView.state.creation_error}</InlineStatus>}
+                    {executions.map((execution) => (
+                      <article className="task-history-entry" key={execution.id} aria-label={`Execution ${execution.id}`}>
+                        <div className="task-history-entry-heading">
+                          <h4>{steps.find((step) => step.key === execution.candidate.step_key)?.title ?? execution.candidate.step_key}</h4>
+                          <span className="pill">{execution.lifecycle}</span>
+                        </div>
+                        <dl className="task-history-metadata">
+                          <dt>Execution</dt>
+                          <dd>
+                            <code>{execution.id}</code>
+                          </dd>
+                          <dt>Owner</dt>
+                          <dd>
+                            <code>{execution.owner_session_id}</code>
+                          </dd>
+                        </dl>
+                        {execution.lifecycle === "queued" && <p>{execution.start_requested ? "Waiting for capacity or coding ownership" : "Held until explicitly started"}</p>}
+                        {execution.lifecycle === "finishing" && <p>Outputs accepted; waiting for confirmed session shutdown.</p>}
+                        {execution.lifecycle === "interrupted" && <p>Process ownership is uncertain; capacity remains reserved.</p>}
+                        {execution.error && <InlineStatus tone="error">{execution.error}</InlineStatus>}
+                        <details>
+                          <summary>Inputs and outputs</summary>
+                          <ul aria-label="Execution inputs">
+                            {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) =>
+                              ids.map((occurrenceId) => {
+                                const occurrence = executionView.state.occurrences[occurrenceId];
+                                return (
+                                  <li key={`${selector}:${occurrenceId}`}>
+                                    <code>{selector}</code> ← <code>{occurrence?.relative_path ?? occurrenceId}</code> · occurrence {occurrenceId} · producer{" "}
+                                    {occurrence?.producer_execution_id ?? "seed"}
+                                  </li>
+                                );
+                              }),
+                            )}
+                          </ul>
+                          <ul aria-label="Execution outputs">
+                            {execution.outputs.map((output) => (
+                              <li key={output.relative_path}>
+                                <code>{output.selector}</code> → <code>{output.relative_path}</code> · {execution.receipt_id ? "accepted" : "pending"}
+                              </li>
+                            ))}
+                            {Object.values(executionView.state.occurrences)
+                              .filter((occurrence) => occurrence.producer_execution_id === execution.id && occurrence.selector.includes("*"))
+                              .map((occurrence) => (
+                                <li key={occurrence.id}>
+                                  Accepted member <code>{occurrence.relative_path}</code> · occurrence {occurrence.id}
+                                </li>
+                              ))}
+                          </ul>
+                        </details>
+                        <p className="task-history-permission">
+                          Completion permission: {execution.permission.kind}
+                          {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
+                        </p>
+                        {execution.permission.kind === "locked" && execution.lifecycle === "running" && (
+                          <button
+                            type="button"
+                            className="btn small"
+                            disabled={!!busy || !!executionError}
+                            onClick={() => void allowCompletion(execution.id, execution.owner_session_id)}
+                          >
+                            Allow this session to complete · {execution.owner_session_id}
+                          </button>
+                        )}
+                      </article>
+                    ))}
+                  </section>
+                )}
               </div>
             ) : (
               <>
@@ -1507,40 +1601,44 @@ export function TaskDetail({
                     const node = findOwnedArtifactNode(artifactTree, item.name);
                     const available = Boolean(item.attachment || node);
                     return (
-                    // div, not <button>: the provenance badges inside are buttons themselves,
-                    // and button-in-button is invalid HTML (same pattern as SessionView).
-                    <div
-                      key={item.name}
-                      className={`artifactitem${item.attachment ? " attachment" : ""}`}
-                      title={item.name}
-                      role="button"
-                      tabIndex={available ? 0 : -1}
-                      aria-disabled={!available}
-                      onKeyDown={(e) => {
-                        if ((e.key !== "Enter" && e.key !== " ") || e.target !== e.currentTarget) return;
-                        e.preventDefault();
-                        e.currentTarget.click();
-                      }}
-                      onClick={() => {
-                        if (item.attachment) {
-                          ipc
-                            .attachmentPath(slug, item.name)
-                            .then(ipc.revealItemInDir)
-                            .catch((e) => setArtifactErr({ msg: "Couldn't reveal the attachment.", detail: String(e) }));
-                          return;
-                        }
-                        if (!node) return;
-                        setSelectedArtifactNode(node);
-                        setSelectedArtifact(item.name);
-                        setArtifactMode("preview");
-                        setArtifactErr(null);
-                      }}
-                    >
-                      <span className="artifactitem-name">{item.name}</span>
-                      {item.execution_id && <span className="dim">Execution {item.execution_id} · {item.step_key} · {item.accepted ? "accepted" : "pending"}</span>}
-                      {!available && <span className="pill">Not yet readable</span>}
-                      <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
-                    </div>
+                      // div, not <button>: the provenance badges inside are buttons themselves,
+                      // and button-in-button is invalid HTML (same pattern as SessionView).
+                      <div
+                        key={item.name}
+                        className={`artifactitem${item.attachment ? " attachment" : ""}`}
+                        title={item.name}
+                        role="button"
+                        tabIndex={available ? 0 : -1}
+                        aria-disabled={!available}
+                        onKeyDown={(e) => {
+                          if ((e.key !== "Enter" && e.key !== " ") || e.target !== e.currentTarget) return;
+                          e.preventDefault();
+                          e.currentTarget.click();
+                        }}
+                        onClick={() => {
+                          if (item.attachment) {
+                            ipc
+                              .attachmentPath(slug, item.name)
+                              .then(ipc.revealItemInDir)
+                              .catch((e) => setArtifactErr({ msg: "Couldn't reveal the attachment.", detail: String(e) }));
+                            return;
+                          }
+                          if (!node) return;
+                          setSelectedArtifactNode(node);
+                          setSelectedArtifact(item.name);
+                          setArtifactMode("preview");
+                          setArtifactErr(null);
+                        }}
+                      >
+                        <span className="artifactitem-name">{item.name}</span>
+                        {item.execution_id && (
+                          <span className="dim">
+                            Execution {item.execution_id} · {item.step_key} · {item.accepted ? "accepted" : "pending"}
+                          </span>
+                        )}
+                        {!available && <span className="pill">Not yet readable</span>}
+                        <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
+                      </div>
                     );
                   })}
                   {contextualArtifactTree.length > 0 && (
