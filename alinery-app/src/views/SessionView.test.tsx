@@ -26,6 +26,7 @@ const rpcAttachSession = vi.hoisted(() => vi.fn(async (_args: unknown) => undefi
 const rpcWriteSession = vi.hoisted(() => vi.fn(async (_id: string, _payload: unknown) => undefined));
 const detachSession = vi.hoisted(() => vi.fn(async () => undefined));
 const readOmpModelRoles = vi.hoisted(() => vi.fn(async () => ({}) as Record<string, string>));
+const readSessionEventCount = vi.hoisted(() => vi.fn(async (_id: string, _taskSlug: string | null) => 0));
 const writeOmpModelRoles = vi.hoisted(() => vi.fn(async (roles: Record<string, string>) => roles));
 const openUrl = vi.hoisted(() => vi.fn(async (_url: string | URL, _openWith?: string): Promise<void> => undefined));
 const confirmDanger = vi.hoisted(() => vi.fn(async () => true));
@@ -103,6 +104,7 @@ vi.mock("../ipc", () =>
     rpcWriteSession,
     detachSession,
     readOmpModelRoles,
+    readSessionEventCount,
     writeOmpModelRoles,
     openUrl,
     prepareReviewApprovalPrompt: async () => ({
@@ -257,6 +259,53 @@ function sessionView(overrides: Partial<ComponentProps<typeof SessionView>> = {}
 function renderSession(overrides: Partial<ComponentProps<typeof SessionView>> = {}) {
   return render(sessionView(overrides));
 }
+
+describe("session event totals", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    readSessionEventCount.mockResolvedValue(40);
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    readSessionEventCount.mockResolvedValue(0);
+    rpcAttachSession.mockImplementation(async () => undefined);
+  });
+
+  it("keeps the session total across remounts and counts activity while closed", async () => {
+    const slot: { current?: (line: string) => void } = {};
+    captureRpcOnLine(slot);
+    const first = renderSession();
+    await flushPromises();
+    expect(screen.getByText("40 events")).toBeTruthy();
+    act(() => slot.current?.(JSON.stringify({ type: "turn_start" })));
+    expect(screen.getByText("40 events")).toBeTruthy();
+    first.unmount();
+    readSessionEventCount.mockResolvedValue(45);
+    renderSession();
+    await flushPromises();
+    expect(screen.getByText("45 events")).toBeTruthy();
+    readSessionEventCount.mockResolvedValue(46);
+    await act(async () => vi.advanceTimersByTimeAsync(1500));
+    expect(screen.getByText("46 events")).toBeTruthy();
+  });
+
+  it("ignores an old session's late count and preserves the total on read failure", async () => {
+    const old = deferred<number>();
+    readSessionEventCount.mockReturnValueOnce(old.promise).mockResolvedValue(1);
+    const view = renderSession();
+    view.rerender(sessionView({ id: "other" }));
+    await flushPromises();
+    expect(screen.getByText("1 event")).toBeTruthy();
+    await act(async () => old.resolve(99));
+    expect(screen.queryByText("99 events")).toBeNull();
+    readSessionEventCount.mockRejectedValueOnce(new Error("temporary"));
+    await act(async () => vi.advanceTimersByTimeAsync(1500));
+    expect(screen.getByText("1 event")).toBeTruthy();
+  });
+});
 
 describe("the session toolbar names the parent task", () => {
   beforeEach(() => {

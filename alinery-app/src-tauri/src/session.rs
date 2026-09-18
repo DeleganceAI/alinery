@@ -1188,6 +1188,14 @@ pub(crate) fn session_artifact_ready(id: String, task_slug: String) -> bool {
         .is_some_and(|metadata| metadata.is_file() && metadata.len() > 0)
 }
 
+#[tauri::command]
+pub(crate) async fn read_session_event_count(id: String, task_slug: Option<String>) -> Result<u64, String> {
+    let repo = active_repo()?;
+    tauri::async_runtime::spawn_blocking(move || alinery_core::read_omp_event_count(&repo, &task_slug.unwrap_or_default(), &id))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 // One backward page of a session's OMP journal, as a JSON header line followed by the raw window
 // bytes. The body crosses IPC as `tauri::ipc::Response` (an ArrayBuffer): a `Vec<u8>` return would
 // be serialized as a JSON array of numbers, which measures 3.4x on the wire and forces the webview

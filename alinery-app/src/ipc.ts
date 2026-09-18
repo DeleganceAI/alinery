@@ -276,6 +276,7 @@ export const readSessionHistory = (a: { id: string; taskSlug?: string | null; of
 // Raw bytes, not number[]: a Vec<u8> return would cross IPC as a JSON array of numbers (3.4x on
 // the wire, and a per-byte JS array before a single row can be parsed).
 export const readSessionOmp = (a: { id: string; taskSlug?: string | null; end?: number | null; want?: number | null }) => invoke<ArrayBuffer>("read_session_omp", a);
+export const readSessionEventCount = (id: string, taskSlug: string | null) => invoke<number>("read_session_event_count", { id, taskSlug });
 export const resizeSession = (id: string, cols: number, rows: number) => invoke<void>("resize_session", { id, cols, rows });
 export const sessionArtifactReady = (id: string, taskSlug: string) => invoke<boolean>("session_artifact_ready", { id, taskSlug });
 export const sessionListStatuses = (refs: SessionStatusRef[]) => invoke<Record<string, SessionObservation>>("session_list_statuses", { refs });

@@ -233,6 +233,7 @@ pub fn run() {
             kill_session_for_repo,
             read_session_history,
             read_session_omp,
+            read_session_event_count,
             daemon_status,
             read_config,
             read_config_for_repo,

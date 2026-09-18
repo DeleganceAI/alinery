@@ -1,7 +1,7 @@
 use crate::{alinery_dir, read_task, safe_component, session_meta_path, session_omp_dir, sessions_dir, SessionMeta};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
@@ -250,6 +250,70 @@ fn validate_omp_session(repo: &Path, task_slug: &str, session_id: &str) -> Resul
     Ok(resolved)
 }
 
+#[derive(Default)]
+struct OmpEventCount {
+    identity: (u64, u64),
+    length: u64,
+    modified: Option<std::time::SystemTime>,
+    offset: u64,
+    total: u64,
+}
+
+#[derive(Deserialize)]
+struct OmpEventHeader {
+    #[serde(rename = "type")]
+    kind: String,
+}
+
+/// Count committed journal events, not view-local transcript rows or streaming deltas.
+/// Session headers and the rewritable title record are metadata, not events. Compaction
+/// leaves the journal intact, so this includes events no longer in the model's context.
+pub fn read_omp_event_count(repo: &Path, task_slug: &str, session_id: &str) -> Result<u64, String> {
+    static COUNTS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<PathBuf, OmpEventCount>>> =
+        std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let dir = validate_omp_session(repo, task_slug, session_id)?;
+    let Some(path) = newest_omp_jsonl(&dir) else {
+        return Ok(0);
+    };
+    let mut file = fs::File::open(&path).map_err(|error| error.to_string())?;
+    let meta = file.metadata().map_err(|error| error.to_string())?;
+    let identity = (meta.dev(), meta.ino());
+    let modified = meta.modified().ok();
+    let mut counts = COUNTS.lock().map_err(|error| error.to_string())?;
+    // This is only a scan accelerator. Eviction or app restart reconstructs the total from disk.
+    if counts.len() >= 128 && !counts.contains_key(&path) {
+        counts.clear();
+    }
+    let count = counts.entry(path).or_default();
+    if count.identity == identity && count.length == meta.len() && count.modified == modified {
+        return Ok(count.total);
+    }
+    if count.identity != identity || meta.len() < count.length || (meta.len() == count.length && modified != count.modified) {
+        *count = OmpEventCount::default();
+    }
+    file.seek(SeekFrom::Start(count.offset)).map_err(|error| error.to_string())?;
+    let base = count.offset;
+    // Deserialize only the discriminator; large message/tool payloads are skipped without
+    // allocating them. Limit the reader to this snapshot, leaving concurrent appends for next time.
+    let mut rows = serde_json::Deserializer::from_reader(BufReader::new(file.take(meta.len() - base))).into_iter::<OmpEventHeader>();
+    while let Some(row) = rows.next() {
+        match row {
+            Ok(row) => {
+                if row.kind != "session" && row.kind != "title" {
+                    count.total += 1;
+                }
+                count.offset = base + rows.byte_offset() as u64;
+            }
+            Err(error) if error.is_eof() => break, // Retry a partially written row on the next poll.
+            Err(error) => return Err(format!("read OMP events: {error}")),
+        }
+    }
+    count.identity = identity;
+    count.length = meta.len();
+    count.modified = modified;
+    Ok(count.total)
+}
+
 /// Read the rows ending at `end`, covering roughly `want` bytes backward.
 ///
 /// Pass `end = None` for the tail of the journal, then feed each result's `start` back as the next
@@ -399,6 +463,44 @@ mod tests {
                     .to_string()
             })
             .collect()
+    }
+
+    #[test]
+    fn event_count_covers_history_and_appends_independently_of_pages() {
+        use std::io::Write;
+        let body = format!(
+            "{{\"type\":\"session\"}}\n{{\"type\":\"title\",\"title\":\"Task\"}}\n{}{{\"type\":\"compaction\"}}\n",
+            (0..40).map(|i| row(&format!("r{i}"), &"x".repeat(200))).collect::<String>()
+        );
+        let repo = omp_fixture("omp_event_count", &[("2026-01-01_a.jsonl", &body)]);
+        let path = session_omp_dir(&repo, "task", "s1").join("2026-01-01_a.jsonl");
+        assert_eq!(read_omp_event_count(&repo, "task", "s1").unwrap(), 41);
+        let page = read_omp_window(&repo, "task", "s1", None, Some(1024)).unwrap();
+        assert!(page.start > 0);
+        assert_eq!(read_omp_event_count(&repo, "task", "s1").unwrap(), 41);
+
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(b"{\"type\":\"mess").unwrap();
+        assert_eq!(read_omp_event_count(&repo, "task", "s1").unwrap(), 41);
+        file.write_all(b"age\",\"message\":{\"role\":\"user\",\"content\":\"while closed\"}}\n").unwrap();
+        assert_eq!(read_omp_event_count(&repo, "task", "s1").unwrap(), 42);
+        assert_eq!(read_omp_event_count(&repo, "task", "s1").unwrap(), 42);
+        fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[test]
+    fn event_count_resets_for_replaced_journals_and_isolates_sessions() {
+        let repo = omp_fixture("omp_event_replace", &[("2026-01-01_a.jsonl", &(row("a", "one") + &row("b", "two")))]);
+        let other = omp_fixture("omp_event_other", &[("2026-01-01_a.jsonl", &row("a", "different repo"))]);
+        assert_eq!(read_omp_event_count(&repo, "task", "s1").unwrap(), 2);
+        assert_eq!(read_omp_event_count(&other, "task", "s1").unwrap(), 1);
+        let dir = session_omp_dir(&repo, "task", "s1");
+        fs::write(dir.join("2026-01-01_a.jsonl"), row("c", "short")).unwrap();
+        assert_eq!(read_omp_event_count(&repo, "task", "s1").unwrap(), 1);
+        fs::write(dir.join("2026-02-01_b.jsonl"), row("d", "new") + &row("e", "new")).unwrap();
+        assert_eq!(read_omp_event_count(&repo, "task", "s1").unwrap(), 2);
+        fs::remove_dir_all(repo).unwrap();
+        fs::remove_dir_all(other).unwrap();
     }
 
     // OMP names journals `<timestamp>_<uuidv7>.jsonl`, both monotonic. mtime is not usable:
