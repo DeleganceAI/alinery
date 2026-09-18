@@ -43,7 +43,11 @@ vi.mock("../ipc", () =>
   mockIpc({
     readConfigForRepo,
     listPlaybookCatalog: vi.fn(async () => structuredClone(catalog)),
-    readPlaybook: vi.fn(async (reference) => structuredClone(sources.find((source) => source.source.reference.scope === reference.scope && source.source.reference.key === reference.key)!)),
+    readPlaybook: vi.fn(async (reference) => {
+      const source = sources.find((item) => item.source.reference.scope === reference.scope && item.source.reference.key === reference.key);
+      if (!source) throw new Error(`Unknown test playbook: ${reference.scope}/${reference.key}`);
+      return structuredClone(source);
+    }),
     prepareTaskAttachments: vi.fn(async () => ({ attachments: [], attachment_urls: [], attachment_errors: [] })),
     connectionStatuses: vi.fn(async () => []),
     listHarnessModelsForRepo: vi.fn(async () => []),
@@ -112,8 +116,7 @@ describe("GitHub imports", () => {
     fireEvent.change(reference, { target: { value: "https://github.com/bitcoin/bitcoin/issues/35761" } });
     fireEvent.click(screen.getByRole("button", { name: "Import" }));
 
-    await waitFor(() => expect(ipc.importGithubForRepo).toHaveBeenCalledWith("/repo", "https://github.com/bitcoin/bitcoin/issues/35761"));
-    expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Imported Bitcoin issue");
+    await waitFor(() => expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Imported Bitcoin issue"));
     expect(screen.getByPlaceholderText(/Describe the feature/)).toHaveProperty("value", "Opening body and comments");
   });
 

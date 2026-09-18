@@ -7,6 +7,12 @@ Using Alinery requires a mindset shift from other AI coding approaches. It encou
 - Chatting directly with an agent is a low-level, almost debugging like behavior that is discouraged as much as possible; spend more time reviewing artifacts and code and less time reading long chat messages from agents or watching them while they work.
 - Customize your playbooks so they are better adapted to your specific work and maintain accurate mental models of the process that the AI is following.
 
+## Playbook library
+
+The **Playbooks** tab opens a searchable library beside a saved-definition graph that fills the available pane height. Directed arrows are labelled with artifact paths and show forks, joins, and dashed return paths. Wildcard `each` workers appear as three illustrative instances with an ellipsis, converging on their consumers; actual instance counts are not fixed. Select any example to inspect the shared step's prompt, inputs, outputs, coding flag, automatic-completion default, and connection details. Connections come from artifact selectors; this is not a live execution view or a graph editor.
+
+**Editor** shows the complete `playbook.md` with soft-wrapped text, aligned source line numbers, and simple TOML/Markdown highlighting. Switching views retains unsaved changes; the graph updates only after a validated save succeeds. Bundled documents are read-only: choose **Make a copy to edit**, then a destination scope and key. **Import** accepts a local file or pasted source. Library edits and deletion affect future task selections, never existing tasks' retained definitions.
+
 ## Install
 
 ```bash

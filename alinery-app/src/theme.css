@@ -816,6 +816,10 @@ main {
   padding: 16px 16px 8px;
   overflow: hidden;
 }
+/* Retained views must stay hidden even when their layout sets display. */
+.view[hidden] {
+  display: none;
+}
 .view.nopad,
 .view.grid-view-shell {
   padding: 0;
@@ -5120,56 +5124,231 @@ dialog.modal::backdrop {
   min-height: 0;
   overflow: auto;
 }
-.playbooks-page {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 24px;
+.playbooks-view {
+  display: flex;
+  flex-direction: column;
 }
-.playbooks-page .actions {
+.playbooks-page {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  flex: 1;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  width: 100%;
+  text-align: left;
+}
+.playbooks-library {
+  padding: 16px;
+  border-right: 1px solid var(--border);
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.playbooks-page h1,
+.playbooks-page h2 {
+  margin: 0 0 12px;
+  color: var(--text-strong);
+  font-size: calc(20px * var(--ui-scale));
+}
+.playbooks-page .actions,
+.playbooks-toolbar,
+.playbooks-savebar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
-.playbooks-page label:not(.opt) {
+.playbooks-search,
+.playbooks-destination label,
+.playbooks-import label {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin: 12px 0;
+  margin: 16px 0;
+  font-size: calc(12px * var(--ui-scale));
 }
-.playbooks-page textarea {
-  width: 100%;
-  min-height: 100px;
-  resize: vertical;
-}
-.playbooks-page textarea,
-.playbooks-page input:not([type="checkbox"]),
+.playbooks-page input,
 .playbooks-page select {
+  min-width: 0;
+  width: 100%;
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   padding: 8px;
-}
-.playbooks-page fieldset,
-.playbooks-page section[aria-label="Playbook editor"] {
-  min-width: 0;
-  padding: 16px;
-  margin-top: 20px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  font: inherit;
 }
 .playbooks-page ul[aria-label="Playbook library"] {
   list-style: none;
   padding: 0;
+  margin: 12px 0;
 }
-.playbooks-page ul[aria-label="Playbook library"] > li {
+.playbooks-library-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.playbooks-library-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.playbooks-library-row small,
+.playbooks-context,
+.playbooks-library-note,
+.playbooks-provenance,
+.playbooks-savebar > span {
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.playbooks-library-row:hover:not(:disabled),
+.playbooks-library-row[aria-current="true"] {
+  background: var(--surface-subtle);
+  border-color: var(--border-strong);
+}
+.playbooks-library-row[aria-current="true"] {
+  box-shadow: inset 2px 0 var(--text-muted);
+}
+.playbooks-library-row:disabled {
+  cursor: default;
+}
+.playbooks-page :focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.playbooks-detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  min-width: 0;
+  padding: 24px;
+}
+.playbooks-workspace {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  outline: none;
+}
+.playbooks-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.playbooks-body > * {
+  flex-shrink: 0;
+}
+.playbooks-body > .playbook-definition-graph {
+  flex: 1 0 240px;
+  min-height: 240px;
+}
+.playbooks-detail-header {
+  height: auto;
+  padding: 0;
+  border: 0;
+  position: static;
+  z-index: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.playbooks-detail-header > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.playbooks-detail-header p {
+  margin: 0 0 16px;
+  max-width: 75ch;
+  line-height: 1.5;
+}
+.playbooks-detail-header h2 {
+  margin-top: 6px;
+}
+.playbooks-toolbar {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+.playbooks-provenance {
+  margin-bottom: 16px;
+}
+.playbooks-provenance summary {
+  cursor: pointer;
+  min-height: 28px;
+  padding: 4px 0;
+}
+.playbooks-provenance dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 16px;
+}
+.playbooks-provenance dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.playbooks-destination {
+  display: flex;
   flex-wrap: wrap;
   gap: 12px;
+  margin: 0 0 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.playbooks-destination label {
+  margin: 8px 0;
+  flex: 1 1 160px;
+}
+.playbooks-destination p {
+  flex-basis: 100%;
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+.playbooks-empty {
+  padding: 24px 0;
+  color: var(--text-muted);
+}
+.playbooks-savebar {
+  height: auto;
+  flex-shrink: 0;
   padding: 12px 0;
-  border-bottom: 1px solid var(--border-strong);
+  margin-top: 12px;
+  background: var(--canvas);
+  border-top: 1px solid var(--border);
+}
+.playbooks-savebar .playbooks-delete {
+  margin-left: auto;
+}
+@media (max-width: 1000px) {
+  .playbooks-page {
+    grid-template-columns: 210px minmax(0, 1fr);
+  }
+  .playbooks-library,
+  .playbooks-detail {
+    padding: 12px;
+  }
+  .playbooks-library-row {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
 }
 .playbook-graph-view ul[aria-label="Artifact dependencies"] {
   padding-left: 18px;

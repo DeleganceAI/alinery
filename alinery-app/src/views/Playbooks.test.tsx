@@ -1,111 +1,277 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfirmHost } from "../confirm";
-import type { NormalizedPlaybook, PlaybookCatalog, PlaybookRef, SavePlaybookRequest, ScopedPlaybook } from "../types";
-import type * as Shared from "../shared";
 import type * as IpcFixtures from "../test/mockIpc";
+import type { NormalizedPlaybook, PlaybookCatalog, PlaybookRef, SavePlaybookRequest, ScopedPlaybook } from "../types";
 import { Playbooks } from "./Playbooks";
 
-const mocks = vi.hoisted(() => ({ listPlaybookCatalog: vi.fn(), readPlaybook: vi.fn(), validatePlaybookSource: vi.fn(), renderPlaybookSource: vi.fn(), savePlaybookSource: vi.fn(), deletePlaybookSource: vi.fn(), readConfigForRepo: vi.fn(), readGlobalSettings: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  listPlaybookCatalog: vi.fn(),
+  readPlaybook: vi.fn(),
+  validatePlaybookSource: vi.fn(),
+  renderPlaybookSource: vi.fn(),
+  savePlaybookSource: vi.fn(),
+  deletePlaybookSource: vi.fn(),
+}));
 vi.mock("../ipc", async () => {
-  // ConfirmHost imports the shared window surface before static IPC helpers initialize.
   const { mockIpc } = await vi.importActual<typeof IpcFixtures>("../test/mockIpc");
   return mockIpc(mocks);
 });
-vi.mock("../shared", async () => {
-  const actual = await vi.importActual<typeof Shared>("../shared");
-  return { ...actual, ModelInput: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => <input value={value} onChange={(e) => onChange(e.target.value)} /> };
-});
-
-const definition: NormalizedPlaybook = { version: 2, key: "review", title: "Review", description: "Review work", default_model: "default-model", default_harness: "omp", preamble: "Keep this prose.\n", section_order: ["inspect"], step: [{ key: "inspect", title: "Inspect", short: "Inspect", is_coding_step: false, auto_advance_default: false, inputs: [{ path: "ticket.md", mode: "single" }], outputs: [{ path: "findings.md" }], model: "", harness: "", prompt: "Read assigned inputs.\n" }] };
+const definition: NormalizedPlaybook = {
+  version: 2,
+  key: "review",
+  title: "Review",
+  description: "Review work",
+  default_model: "default-model",
+  default_harness: "omp",
+  preamble: "Keep this prose.\n",
+  section_order: ["inspect"],
+  step: [
+    {
+      key: "inspect",
+      title: "Inspect",
+      short: "Inspect",
+      is_coding_step: false,
+      auto_advance_default: false,
+      inputs: [{ path: "ticket.md", mode: "single" }],
+      outputs: [{ path: "findings.md" }],
+      model: "",
+      harness: "",
+      prompt: "Read assigned inputs.\n",
+    },
+  ],
+};
 let stored: ScopedPlaybook[];
 const identity = (ref: PlaybookRef) => `${ref.scope}/${ref.key}`;
-const entry = (scope: PlaybookRef["scope"]): ScopedPlaybook => ({ source: { reference: { scope, key: "review" }, path: scope === "bundled" ? null : `/${scope}/review/playbook.md` }, definition: structuredClone(definition), source_text: JSON.stringify(definition), modified_at_ms: scope === "bundled" ? null : 1234 });
+const entry = (scope: PlaybookRef["scope"]): ScopedPlaybook => ({
+  source: { reference: { scope, key: "review" }, path: scope === "bundled" ? null : `/${scope}/review/playbook.md` },
+  definition: structuredClone(definition),
+  source_text: JSON.stringify(definition),
+  modified_at_ms: scope === "bundled" ? null : 1234,
+});
 
 beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
   vi.clearAllMocks();
   stored = [entry("bundled"), entry("global"), entry("repo")];
-  mocks.listPlaybookCatalog.mockImplementation(async (): Promise<PlaybookCatalog> => ({ candidates: stored.map((item) => ({ source: item.source, title: item.definition.title, description: item.definition.description, modified_at_ms: item.modified_at_ms, diagnostics: [] })), picker_preferences: { order: [], entries: [] }, diagnostics: [] }));
+  mocks.listPlaybookCatalog.mockImplementation(
+    async (): Promise<PlaybookCatalog> => ({
+      candidates: stored.map((item) => ({
+        source: item.source,
+        title: item.definition.title,
+        description: item.definition.description,
+        modified_at_ms: item.modified_at_ms,
+        diagnostics: [],
+      })),
+      picker_preferences: { order: [], entries: [] },
+      diagnostics: [],
+    }),
+  );
   mocks.readPlaybook.mockImplementation(async (ref: PlaybookRef) => structuredClone(stored.find((item) => identity(item.source.reference) === identity(ref))));
   mocks.validatePlaybookSource.mockImplementation(async (source: string) => {
-    try { return { definition: JSON.parse(source), diagnostics: [] }; }
-    catch { return { definition: null, diagnostics: [{ code: "overlapping_outputs", message: "inspect and build overlap findings.md", line: 12, field: "step.outputs", severity: "error" }] }; }
+    try {
+      return { definition: JSON.parse(source), diagnostics: [] };
+    } catch {
+      return {
+        definition: null,
+        diagnostics: [{ code: "overlapping_outputs", message: "inspect and build overlap findings.md", line: 12, field: "step.outputs", severity: "error" }],
+      };
+    }
   });
   mocks.renderPlaybookSource.mockImplementation(async (value: NormalizedPlaybook) => JSON.stringify(value));
   mocks.savePlaybookSource.mockImplementation(async (request: SavePlaybookRequest) => {
     const index = stored.findIndex((item) => identity(item.source.reference) === identity(request.target));
     if (index >= 0 && !request.overwrite) throw { kind: "conflict" };
-    const saved = { source: { reference: request.target, path: `/library/${request.target.key}/playbook.md` }, definition: JSON.parse(request.source), source_text: request.source, modified_at_ms: 2345 };
-    if (index >= 0) stored[index] = saved; else stored.push(saved);
+    const saved = {
+      source: { reference: request.target, path: `/library/${request.target.key}/playbook.md` },
+      definition: JSON.parse(request.source),
+      source_text: request.source,
+      modified_at_ms: 2345,
+    };
+    if (index >= 0) stored[index] = saved;
+    else stored.push(saved);
     return saved;
   });
-  mocks.deletePlaybookSource.mockImplementation(async (reference: PlaybookRef) => { stored = stored.filter((item) => identity(item.source.reference) !== identity(reference)); });
-  mocks.readConfigForRepo.mockResolvedValue({ defaults: { model: "product-model" } });
-  mocks.readGlobalSettings.mockResolvedValue({ defaults: { model: "product-model" } });
+  mocks.deletePlaybookSource.mockImplementation(async (reference: PlaybookRef) => {
+    stored = stored.filter((item) => identity(item.source.reference) !== identity(reference));
+  });
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 async function openRepo() {
-  const rows = await screen.findAllByRole("button", { name: "Review" });
-  fireEvent.click(rows[2]);
-  await screen.findByRole("region", { name: "Playbook editor" });
+  fireEvent.click(await screen.findByRole("button", { name: "Review Repository" }));
+  await screen.findByRole("region", { name: "Review graph" });
+}
+function edit(value: string) {
+  fireEvent.click(screen.getByRole("button", { name: "Editor" }));
+  fireEvent.change(screen.getByLabelText("Playbook source"), { target: { value } });
+}
+async function overwrite() {
+  fireEvent.click(screen.getByRole("button", { name: "Save definition" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Overwrite" }));
 }
 
-describe("canonical playbook management", () => {
-  it("invalid edit preserves stored definition and retains the buffer with diagnostics", async () => {
-    render(<><Playbooks repoPath="/repo" /><ConfirmHost /></>);
+describe("graph-first playbook management", () => {
+  it("keeps the saved graph through mode switches and updates it only after persistence", async () => {
+    render(
+      <>
+        <Playbooks repoPath="/repo" />
+        <ConfirmHost />
+      </>,
+    );
     await openRepo();
-    fireEvent.change(screen.getByLabelText("Playbook source"), { target: { value: "invalid edit" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save definition" }));
-    expect(await screen.findByText("inspect and build overlap findings.md", { exact: false })).toBeTruthy();
-    expect((screen.getByLabelText("Playbook source") as HTMLTextAreaElement).value).toBe("invalid edit");
-    expect(stored[2].source_text).toBe(JSON.stringify(definition));
-    fireEvent.click(screen.getByRole("button", { name: "Close editor" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Keep editing" }));
-    expect((screen.getByLabelText("Playbook source") as HTMLTextAreaElement).value).toBe("invalid edit");
-    fireEvent.click(screen.getByRole("button", { name: "Close editor" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
-    await openRepo();
-    expect((screen.getByLabelText("Playbook source") as HTMLTextAreaElement).value).toBe(JSON.stringify(definition));
+    expect(screen.queryByLabelText("Playbook source")).toBeNull();
+    const next = { ...definition, step: [{ ...definition.step[0], title: "Revised inspection", prompt: "New prompt" }] };
+    const draft = JSON.stringify(next);
+    edit(draft);
+    fireEvent.click(screen.getByRole("button", { name: "Graph" }));
+    expect(screen.getByText("Showing saved version · Unsaved changes in editor.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Revised inspection/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Editor" }));
+    expect(screen.getByLabelText("Playbook source")).toHaveProperty("value", draft);
+    await overwrite();
+    await screen.findByText("Definition saved.");
+    fireEvent.click(screen.getByRole("button", { name: "Graph" }));
+    expect(screen.getByRole("button", { name: /Revised inspection/ })).toBeTruthy();
+    expect(stored[2].source_text).toBe(draft);
   });
 
-  it("copy, overwrite and deletion affect only the explicitly selected writable identity", async () => {
-    render(<><Playbooks repoPath="/repo" /><ConfirmHost /></>);
-    fireEvent.click((await screen.findAllByRole("button", { name: "Review" }))[0]);
-    await screen.findByRole("region", { name: "Playbook editor" });
-    fireEvent.change(screen.getByLabelText("Save scope"), { target: { value: "repo" } });
-    fireEvent.change(screen.getByLabelText("Save key"), { target: { value: "review-copy" } });
+  it("invalid source retains its draft, diagnostics and previous saved graph", async () => {
+    render(
+      <>
+        <Playbooks repoPath="/repo" />
+        <ConfirmHost />
+      </>,
+    );
+    await openRepo();
+    edit("invalid edit");
     fireEvent.click(screen.getByRole("button", { name: "Save definition" }));
-    await waitFor(() => expect(stored.some((item) => identity(item.source.reference) === "repo/review-copy")).toBe(true));
+    const diagnostics = await screen.findByRole("list", { name: "Validation diagnostics" });
+    expect(diagnostics.textContent).toContain("step.outputs");
+    expect(diagnostics.textContent).toContain("Line 12");
+    expect(screen.getByLabelText("Playbook source")).toHaveProperty("value", "invalid edit");
+    fireEvent.click(screen.getByRole("button", { name: "Graph" }));
+    expect(screen.getByRole("region", { name: "Review graph" })).toBeTruthy();
+    expect(stored[2].source_text).toBe(JSON.stringify(definition));
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+  });
+
+  it("failed persistence does not install a validated draft as the saved graph", async () => {
+    render(
+      <>
+        <Playbooks repoPath="/repo" />
+        <ConfirmHost />
+      </>,
+    );
+    await openRepo();
+    const draft = JSON.stringify({ ...definition, title: "Not saved" });
+    edit(draft);
+    mocks.savePlaybookSource.mockRejectedValueOnce("Disk is read-only");
+    await overwrite();
+    await screen.findByText("Disk is read-only");
+    expect(screen.getByLabelText("Playbook source")).toHaveProperty("value", draft);
+    fireEvent.click(screen.getByRole("button", { name: "Graph" }));
+    expect(screen.getByRole("region", { name: "Review graph" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Not saved graph" })).toBeNull();
+  });
+
+  it("bundled source is read-only and copying creates a distinct writable identity", async () => {
+    render(
+      <>
+        <Playbooks repoPath="/repo" />
+        <ConfirmHost />
+      </>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Review Bundled" }));
+    await screen.findByRole("region", { name: "Review graph" });
+    fireEvent.click(screen.getByRole("button", { name: "Editor" }));
+    expect(screen.getByLabelText("Playbook source")).toHaveProperty("readOnly", true);
+    expect(screen.queryByRole("button", { name: "Save definition" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Make a copy to edit" }));
+    await screen.findByLabelText("Save key");
+    expect(screen.getByLabelText("Playbook source")).toHaveProperty("readOnly", false);
+    fireEvent.click(screen.getByRole("button", { name: "Graph" }));
+    expect(screen.queryByRole("region", { name: "Review graph" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Save definition" }));
+    await screen.findByText("Definition saved.");
+    expect(stored.map((item) => identity(item.source.reference))).toEqual(["bundled/review", "global/review", "repo/review", "repo/review-copy"]);
+    fireEvent.click(screen.getByRole("button", { name: "Delete definition" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(stored).toHaveLength(3));
+    expect(stored[0].source_text).toBe(JSON.stringify(definition));
+  });
+
+  it("cancelled discard protects selection and close restores library focus only after discard", async () => {
+    render(
+      <>
+        <Playbooks repoPath="/repo" />
+        <ConfirmHost />
+      </>,
+    );
+    await openRepo();
+    edit("unsaved buffer");
+    fireEvent.click(screen.getByRole("button", { name: "Review Global" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Keep editing" }));
+    expect(screen.getByLabelText("Playbook source")).toHaveProperty("value", "unsaved buffer");
+    fireEvent.click(screen.getByRole("button", { name: "Close editor" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Playbook details" })).toBeNull());
+    expect(document.activeElement).toBe(screen.getByLabelText("Search playbooks"));
+  });
+
+  it("repository changes retain draft ownership even when save finishes in another repository", async () => {
+    const view = render(
+      <>
+        <Playbooks repoPath="/repo-a" />
+        <ConfirmHost />
+      </>,
+    );
+    await openRepo();
+    edit(JSON.stringify({ ...definition, description: "Draft in A" }));
+    view.rerender(
+      <>
+        <Playbooks repoPath="/repo-b" />
+        <ConfirmHost />
+      </>,
+    );
+    expect(screen.getByText(/This definition belongs to \/repo-a/)).toBeTruthy();
+    await overwrite();
+    await screen.findByText("Definition saved.");
+    expect(mocks.savePlaybookSource).toHaveBeenCalledWith(expect.anything(), "/repo-a");
+    expect(screen.getByRole("button", { name: "Review Repository" }).getAttribute("aria-current")).toBeNull();
+  });
+
+  it("filters all scopes without discarding selection and preserves pasted source on cancelled overwrite", async () => {
+    render(
+      <>
+        <Playbooks repoPath="/repo" />
+        <ConfirmHost />
+      </>,
+    );
+    await openRepo();
+    fireEvent.change(screen.getByLabelText("Search playbooks"), { target: { value: "bundled/review" } });
+    expect(within(screen.getByRole("list", { name: "Playbook library" })).getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByRole("region", { name: "Review graph" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    fireEvent.click(screen.getByRole("button", { name: "Paste source" }));
+    await screen.findByLabelText("Save key");
+    const draft = JSON.stringify({ ...definition, description: "Pasted source" });
+    edit(draft);
     fireEvent.change(screen.getByLabelText("Save key"), { target: { value: "review" } });
     fireEvent.click(screen.getByRole("button", { name: "Save definition" }));
     fireEvent.click(await screen.findByText("Cancel", { selector: "button" }));
-    expect(stored.find((item) => identity(item.source.reference) === "repo/review")?.source_text).toBe(JSON.stringify(definition));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save definition" })).toHaveProperty("disabled", false));
-    fireEvent.click(screen.getByRole("button", { name: "Save definition" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Overwrite" }));
-    await waitFor(() => expect(screen.getByRole("heading", { name: "repo/review" })).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: "Delete definition" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
-    await waitFor(() => expect(stored.map((item) => identity(item.source.reference))).toEqual(["bundled/review", "global/review", "repo/review-copy"]));
-  });
-
-  it("form edits round trip through canonical source and retain inherited choices", async () => {
-    render(<><Playbooks repoPath="/repo" /><ConfirmHost /></>);
-    await openRepo();
-    fireEvent.click(screen.getByRole("button", { name: "Edit form" }));
-    const fieldset = await screen.findByRole("group", { name: "Inspect" });
-    fireEvent.change(within(fieldset).getByLabelText("Step model"), { target: { value: "worker-model" } });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Edit source" }).hasAttribute("disabled")).toBe(false));
-    fireEvent.click(within(fieldset).getByLabelText("Coding step"));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Edit source" }).hasAttribute("disabled")).toBe(false));
-    fireEvent.click(screen.getByRole("button", { name: "Edit source" }));
-    const roundTrip = JSON.parse((screen.getByLabelText("Playbook source") as HTMLTextAreaElement).value) as NormalizedPlaybook;
-    expect(roundTrip.step[0]).toMatchObject({ model: "worker-model", harness: "", is_coding_step: true });
-    expect(roundTrip.preamble).toBe(definition.preamble);
-    expect(roundTrip.step[0].prompt).toBe(definition.step[0].prompt);
-    fireEvent.click(screen.getByRole("button", { name: "Save definition" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Overwrite" }));
-    await waitFor(() => expect(stored[2].definition.step[0].model).toBe("worker-model"));
+    await waitFor(() => expect(screen.getByLabelText("Playbook source")).toHaveProperty("disabled", false));
+    expect(screen.getByLabelText("Playbook source")).toHaveProperty("value", draft);
+    expect(stored[2].definition.description).toBe("Review work");
   });
 });

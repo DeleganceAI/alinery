@@ -999,7 +999,14 @@ export default function App() {
             {header}
             {/* Backend ownership gate is the source of truth; blank main so the busy
               banner is the only actionable surface (defense-in-depth). */}
-            <main>{daemon.repo_busy ? null : content}</main>
+            <main>
+              {daemon.repo_busy ? null : content}
+              {playbooksVisited && (
+                <div className="view playbooks-view" hidden={view.kind !== "playbooks" || daemon.repo_busy}>
+                  <Playbooks repoPath={appConfig?.active_repo || undefined} />
+                </div>
+              )}
+            </main>
             <HotkeyBar
               view={view.kind}
               daemon={daemon}
@@ -1051,14 +1058,13 @@ export default function App() {
     );
   if (!appConfig.active_repo)
     return chrome(
-      view.kind === "playbooks" ? <div className="view scroll"><button type="button" onClick={goBack}>Back</button><Playbooks /></div> :
-      <div className="view scroll first-run-view">
+      <div className="view scroll first-run-view" hidden={view.kind === "playbooks"}>
         <img className="first-run-logo" src={alineryIcon} alt="Alinery" />
         <p className="first-run-tagline">
           Increase your <span>token:attention</span> ratio.
         </p>
         <RepoPicker appConfig={appConfig} error={repoErr} onSelect={setRepo} onRemove={removeRepo} onAdd={addRepo} />
-        <button type="button" onClick={() => switchTop("playbooks")}>Playbooks</button>
+        <button className="btn ghost" type="button" onClick={() => switchTop("playbooks")}>Playbooks</button>
       </div>,
       minimalHeader,
     );
@@ -1333,10 +1339,6 @@ export default function App() {
           )}
         </div>
       )}
-      {playbooksVisited && <div className="view scroll" hidden={view.kind !== "playbooks"}>
-        {playbooksReturnView.current && <button type="button" onClick={goBack}>Back to previous view</button>}
-        <Playbooks repoPath={appConfig.active_repo || undefined} />
-      </div>}
       {keptGridViews.map((gridView) => {
         const active = view.kind === "grid" && view.gridViewId === gridView.id;
         return (
