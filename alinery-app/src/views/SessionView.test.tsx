@@ -1018,6 +1018,108 @@ describe("session chat send routing", () => {
     error.mockRestore();
   });
 
+  it.each([
+    { button: "Send", command: "prompt", busy: false },
+    { button: "Queue", command: "follow_up", busy: true },
+    { button: "Send now", command: "abort_and_prompt", busy: true },
+  ])("preserves the caption and image for retry when $button exceeds the daemon request limit", async ({ button, command, busy }) => {
+    sessionStatus.mockResolvedValue(busy ? liveObservation("rpc", { state: "busy" }) : liveObservation("rpc"));
+    const onDraftChange = vi.fn();
+    const onQueuedFollowUpsChange = vi.fn();
+    const rejection = new Error("request-too-large: control request exceeds the 67108864 byte limit");
+    const attempts: unknown[] = [];
+    rpcWriteSession.mockImplementation(async (_id: string, payload: unknown) => {
+      if ((payload as { type?: string } | null)?.type !== command) return;
+      attempts.push(payload);
+      if (attempts.length === 1) throw rejection;
+    });
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    try {
+      renderSession({
+        messageDraft: { body: "keep this caption", pendingActions: [], attachments: [blobPng] },
+        onMessageDraftChange: onDraftChange,
+        queuedFollowUps: [],
+        onQueuedFollowUpsChange,
+      });
+      await flushPromises();
+      fireEvent.click(screen.getByRole("button", { name: button }));
+
+      expect(await screen.findByText(String(rejection))).toBeDefined();
+      expect(attempts).toEqual([
+        expect.objectContaining({
+          type: command,
+          message: "keep this caption",
+          images: [{ type: "image", data: "aa", mimeType: "image/png" }],
+        }),
+      ]);
+      expect((screen.getByRole("textbox", { name: busy ? "Send after this turn…" : "Message or /command" }) as HTMLTextAreaElement).value).toBe("keep this caption");
+      const preview = screen.getByRole("button", { name: "Remove paste.png" }).parentElement?.querySelector("img");
+      expect(preview?.getAttribute("src")).toBe(blobPng.previewUrl);
+      expect(revoke).not.toHaveBeenCalled();
+      expect(onDraftChange).not.toHaveBeenCalled();
+      expect(onQueuedFollowUpsChange).not.toHaveBeenCalled();
+      expect(within(screen.getByTestId("chat-pane")).queryByText("keep this caption")).toBeNull();
+      expect(screen.queryByText("queued · after this turn")).toBeNull();
+
+      fireEvent.click(screen.getByRole("button", { name: button }));
+      await waitFor(() => expect(onDraftChange).toHaveBeenCalledWith({ body: "", pendingActions: [], attachments: [] }));
+      expect(attempts).toHaveLength(2);
+      expect(attempts[1]).toMatchObject({
+        type: command,
+        message: "keep this caption",
+        images: [{ type: "image", data: "aa", mimeType: "image/png" }],
+      });
+      expect(screen.queryByText(String(rejection))).toBeNull();
+    } finally {
+      revoke.mockRestore();
+    }
+  });
+
+  it("keeps an image follow-up queued when Send now is rejected and retries the same attachment", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    const onDraftChange = vi.fn();
+    const onQueuedFollowUpsChange = vi.fn();
+    const rejection = new Error("request-too-large: control request exceeds the 67108864 byte limit");
+    const attempts: unknown[] = [];
+    rpcWriteSession.mockImplementation(async (_id: string, payload: unknown) => {
+      if ((payload as { type?: string } | null)?.type !== "abort_and_prompt") return;
+      attempts.push(payload);
+      if (attempts.length === 1) throw rejection;
+    });
+    renderSession({
+      messageDraft: { body: "", pendingActions: [], attachments: [] },
+      onMessageDraftChange: onDraftChange,
+      queuedFollowUps: [{ text: "keep this queued caption", attachments: [blobPng] }],
+      onQueuedFollowUpsChange,
+    });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+
+    expect(await screen.findByText(String(rejection))).toBeDefined();
+    expect(within(screen.getByTestId("chat-pane")).getByText("keep this queued caption")).toBeDefined();
+    expect(screen.getByText("queued · after this turn")).toBeDefined();
+    expect(onQueuedFollowUpsChange).not.toHaveBeenCalled();
+    expect(onDraftChange).not.toHaveBeenCalled();
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        type: "abort_and_prompt",
+        message: "keep this queued caption",
+        images: [{ type: "image", data: "aa", mimeType: "image/png" }],
+      }),
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    await waitFor(() => expect(onQueuedFollowUpsChange).toHaveBeenCalledWith([]));
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toMatchObject({
+      type: "abort_and_prompt",
+      message: "keep this queued caption",
+      images: [{ type: "image", data: "aa", mimeType: "image/png" }],
+    });
+    expect(screen.queryByText("queued · after this turn")).toBeNull();
+    expect(screen.queryByText(String(rejection))).toBeNull();
+  });
+
   it("refuses slash plus attachments without writing", async () => {
     const error = vi.spyOn(toast, "error").mockImplementation(() => undefined);
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
