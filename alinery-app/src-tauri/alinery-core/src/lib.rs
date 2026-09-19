@@ -7,6 +7,7 @@ pub mod daemon_client;
 pub mod fs_atomic;
 pub mod git;
 pub mod history;
+pub mod hosted_inference;
 pub mod lockfile;
 pub mod log;
 pub mod message;
@@ -29,6 +30,12 @@ pub use daemon_client::*;
 pub use fs_atomic::{create_dir_owner_only, write_bytes_atomic, write_owner_only_bytes};
 pub use git::*;
 pub use history::*;
+pub use hosted_inference::{
+    ensure_hosted_inference_for_spawn, ensure_hosted_inference_for_spawn_at, hosted_models_yml_unavailable, inference_path, inference_spawn_cache_fresh, is_hosted_model,
+    minted_catalog_if_unexpired, models_yml_path, pairing_config_dir, parse_hosted_catalog_body, parse_hosted_error, parse_inference_session_body, render_models_yml,
+    revoke_hosted_inference, sync_hosted_inference, wipe_hosted_files, write_hosted_models_yml, write_inference_file, HostedApiError, HostedCatalog, HostedModel,
+    HOSTED_MODEL_UNAVAILABLE,
+};
 pub use lockfile::*;
 pub use log::*;
 pub use message::*;

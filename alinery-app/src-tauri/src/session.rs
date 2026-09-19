@@ -664,6 +664,19 @@ pub(crate) fn allow_root_session_open(meta_harness: Option<&str>) -> bool {
     }
 }
 
+pub(crate) fn hosted_refresh_needed(intent: &str, harness: &str, model: &str) -> bool {
+    harness == alinery_core::DEFAULT_HARNESS_KEY && matches!(intent, daemon_client::ops::SPAWN | daemon_client::ops::RESUME) && (model.trim().is_empty() || is_hosted_model(model))
+}
+
+async fn refresh_hosted_inference_before_open(app: AppHandle, intent: &str, harness: &str, model: &str) -> Result<(), String> {
+    if !hosted_refresh_needed(intent, harness, model) {
+        return Ok(());
+    }
+    tauri::async_runtime::spawn_blocking(move || refresh_hosted_inference_for_spawn(&app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 // Dedicated ensure for the global terminal drawer (root no-harness bookkeeping).
 // Always mints a fresh id and writes meta under `.alinery/sessions/` — does not spawn a pty.
 pub(crate) fn ensure_drawer_terminal_in(repo: &Path, app_config: Option<&Path>) -> Result<SessionMeta, String> {
@@ -716,7 +729,7 @@ pub(crate) fn ensure_drawer_terminal(app: AppHandle, state: State<'_, AppState>)
 // prompt is delivered come from the session's harness (read from its meta), not hardcoded.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
-pub(crate) fn open_session(
+pub(crate) async fn open_session(
     state: State<'_, AppState>,
     app: AppHandle,
     id: String,
@@ -748,13 +761,20 @@ pub(crate) fn open_session(
         return Err(format!("unknown session intent '{intent}'"));
     }
     let repo = require_owned_active_repo(&state)?;
+    let mut harness = String::new();
+    let mut session_model = model.clone().filter(|m| !m.is_empty()).unwrap_or_default();
     if !slug_trim.is_empty() {
         if let Some(launch) = alinery_core::read_meta_launch_fields(&repo, slug_trim, &id) {
             if !alinery_core::is_allowed_launch_harness(&launch.harness) {
                 return Err(format!("unknown harness '{}'", launch.harness));
             }
+            harness = launch.harness;
+            if session_model.is_empty() {
+                session_model = launch.model;
+            }
         }
     }
+    refresh_hosted_inference_before_open(app.clone(), intent, &harness, &session_model).await?;
     let daemon = if intent == daemon_client::ops::ATTACH {
         client_for_session(&state, &repo, slug_trim, &id)?
     } else {
@@ -1128,16 +1148,24 @@ pub(crate) fn rpc_attach_session(state: State<'_, AppState>, app: AppHandle, id:
 }
 
 #[tauri::command]
-pub(crate) async fn spawn_session_detached(state: State<'_, AppState>, task_slug: String, id: String) -> Result<(), String> {
-    let _repo = require_owned_active_repo(&state)?;
+pub(crate) async fn spawn_session_detached(state: State<'_, AppState>, app: AppHandle, task_slug: String, id: String) -> Result<(), String> {
+    let repo = require_owned_active_repo(&state)?;
+    let (harness, model) = alinery_core::read_meta_launch_fields(&repo, &task_slug, &id)
+        .map(|launch| (launch.harness, launch.model))
+        .unwrap_or_default();
+    refresh_hosted_inference_before_open(app, daemon_client::ops::SPAWN, &harness, &model).await?;
     let daemon = state.daemon().ok_or("daemon not connected")?;
     daemon.spawn_session(&id, &task_slug)
 }
 
 #[tauri::command]
-pub(crate) fn spawn_session_detached_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, task_slug: String, id: String) -> Result<(), String> {
+pub(crate) async fn spawn_session_detached_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, task_slug: String, id: String) -> Result<(), String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
+    let (harness, model) = alinery_core::read_meta_launch_fields(&repo, &task_slug, &id)
+        .map(|launch| (launch.harness, launch.model))
+        .unwrap_or_default();
+    refresh_hosted_inference_before_open(app.clone(), daemon_client::ops::SPAWN, &harness, &model).await?;
     let daemon = state.daemon_for(&repo).ok_or("daemon not connected")?;
     daemon.spawn_session(&id, &task_slug)
 }
