@@ -1,16 +1,23 @@
-import { CircleAlert, CircleCheck, Info, X } from "lucide-react";
+import { CircleAlert, CircleCheck, Info, LoaderCircle, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 // Module-level pub/sub so any component can fire a toast without prop-drilling.
 // Stacking toasts.
-export type ToastTone = "info" | "success" | "error";
+export type ToastTone = "info" | "success" | "error" | "loading";
 /** "short" is a bare acknowledgement — the user knows what they asked for and
     there is nothing to read; "long" is the default, for a message that carries
     information. */
 export type ToastLength = "short" | "long";
 export type ToastEntry = { id: string; msg: string; tone: ToastTone; length?: ToastLength; removing?: boolean; expanded?: boolean };
 
-type Fn = (entry: Omit<ToastEntry, "id">) => void;
+/** Handle for a toast that reports work in progress: resolving it transitions that same
+    entry in place, however much the message text changes on the way. */
+export type LoadingToast = { success: (msg: string, length?: ToastLength) => void; error: (msg: string) => void };
+
+/** `id` pins an update to one existing entry — a loading toast being resolved. Without it
+    the message text identifies the entry, which is how repeats refresh in place. */
+type ToastMessage = Omit<ToastEntry, "id"> & { id?: string };
+type Fn = (entry: ToastMessage) => void;
 const listeners = new Set<Fn>();
 
 export function toast(msg: string, tone: ToastTone = "info", length: ToastLength = "long") {
@@ -20,10 +27,26 @@ toast.success = (msg: string, length?: ToastLength) => toast(msg, "success", len
 toast.error = (msg: string) => toast(msg, "error");
 toast.info = (msg: string, length?: ToastLength) => toast(msg, "info", length);
 
+// A loading toast is the one tone whose caller owns the ending: it stays up until the
+// work it announces settles, so the entry is pinned by id rather than by its message —
+// which necessarily changes when it resolves.
+let loadingSeq = 0;
+toast.loading = (msg: string): LoadingToast => {
+  const id = `loading:${++loadingSeq}`;
+  const resolve = (next: Omit<ToastEntry, "id">) => {
+    for (const l of listeners) l({ ...next, id });
+  };
+  resolve({ msg, tone: "loading" });
+  return {
+    success: (next, length) => resolve({ msg: next, tone: "success", length }),
+    error: (next) => resolve({ msg: next, tone: "error" }),
+  };
+};
+
 const AUTO_DISMISS_MS: Record<ToastLength, number> = { short: 1800, long: 4000 };
 // Matches the --dur-overlay exit transition in theme.css.
 const REMOVE_MS = 200;
-const ICONS: Record<ToastTone, typeof Info> = { info: Info, success: CircleCheck, error: CircleAlert };
+const ICONS: Record<ToastTone, typeof Info> = { info: Info, success: CircleCheck, error: CircleAlert, loading: LoaderCircle };
 
 // A toast is identified by what it says, so firing the same message again
 // refreshes that toast in place instead of stacking a copy of it. Repeat
@@ -52,7 +75,7 @@ export function Toast() {
   useEffect(() => {
     const timeouts = timers.current;
     const l: Fn = (e) => {
-      const id = entryId(e);
+      const id = e.id ?? entryId(e);
       // A refresh moves the entry to the end so it reads as the newest —
       // otherwise a repeat of an already-overflowed toast stays hidden.
       setToasts((prev) => [...prev.filter((t) => t.id !== id), { ...e, id }]);
@@ -60,7 +83,9 @@ export function Toast() {
       // Refreshing restarts the dismiss countdown; the previous one is void.
       clearTimeout(timeouts.get(id));
       timeouts.delete(id);
-      if (e.tone !== "error") {
+      // Errors hold detail the user may need to read; a loading toast is held by the
+      // caller that started it, which resolves this same entry when the work settles.
+      if (e.tone !== "error" && e.tone !== "loading") {
         timeouts.set(
           id,
           setTimeout(

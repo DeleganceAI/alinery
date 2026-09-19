@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as taskMutationGuard from "../taskMutationGuard";
 import { mockIpc } from "../test/mockIpc";
-import type { Config, PlaybookStepSummary, PlaybookSummary, Task } from "../types";
+import type { Config, CreateTaskResult, PlaybookStepSummary, PlaybookSummary, SessionMeta, TargetedCreateResult, Task } from "../types";
 import { CreateTaskPage } from "./CreateTaskPage";
 
 const playbooks = [
@@ -54,6 +55,14 @@ vi.mock("../ipc", () =>
 
 import * as ipc from "../ipc";
 
+// The loading toast is how the form proves work started, and the guard refuses a
+// concurrent mutation through this same module, so both are asserted from these spies.
+const toastSpies = vi.hoisted(() => {
+  const handle = { success: vi.fn(), error: vi.fn() };
+  return { handle, loading: vi.fn(() => handle), toast: vi.fn() };
+});
+vi.mock("../toast", () => ({ Toast: () => null, toast: Object.assign(toastSpies.toast, { loading: toastSpies.loading }) }));
+
 beforeEach(() => {
   vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => {} });
   readConfigForRepo.mockResolvedValue({
@@ -64,6 +73,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+  taskMutationGuard.release();
 });
 
 describe("provider imports", () => {
@@ -198,5 +208,59 @@ describe("OMP model default", () => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("radiogroup", { name: "Choose playbook" });
     await waitFor(() => expect((screen.getByLabelText("Model") as HTMLInputElement).value).toBe(""));
+  });
+});
+
+describe("task creation feedback", () => {
+  const startCreate = async (onCreated: (result: TargetedCreateResult) => void) => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={onCreated} />);
+    fireEvent.change(await screen.findByPlaceholderText("New task name…"), { target: { value: "Slow task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+  };
+
+  it("shows the loader the instant Create is clicked and resolves it when the task lands", async () => {
+    const result: CreateTaskResult = {
+      task: { name: "Slow task", slug: "slow-task", branch: "slow-task", worktree: "/repo/.alinery/worktrees/slow-task" } as Task,
+      session: { id: "s-slow-task", harness: "omp" } as SessionMeta,
+      attachment_errors: [],
+    };
+    let finishCreate!: (result: CreateTaskResult) => void;
+    vi.mocked(ipc.createTaskForRepo).mockReturnValue(
+      new Promise<CreateTaskResult>((resolve) => {
+        finishCreate = resolve;
+      }),
+    );
+    const onCreated = vi.fn();
+    await startCreate(onCreated);
+
+    await waitFor(() => expect(toastSpies.loading).toHaveBeenCalledWith("Creating New Task…"));
+    expect(toastSpies.handle.success).not.toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+
+    finishCreate(result);
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith({ repoPath: "/repo", task: result.task, session: result.session }));
+    expect(toastSpies.handle.success).toHaveBeenCalledWith("Task created");
+    expect(toastSpies.handle.error).not.toHaveBeenCalled();
+  });
+
+  it("resolves the loader to an error and keeps the typed name when creation fails", async () => {
+    vi.mocked(ipc.createTaskForRepo).mockRejectedValue(new Error("worktree add failed"));
+    const onCreated = vi.fn();
+    await startCreate(onCreated);
+
+    await waitFor(() => expect(toastSpies.handle.error).toHaveBeenCalledWith("Couldn't create the task: Error: worktree add failed"));
+    expect(toastSpies.handle.success).not.toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Slow task");
+  });
+
+  it("refuses to start while a duplicate from another surface is running", async () => {
+    const onCreated = vi.fn();
+    taskMutationGuard.claim("duplicate");
+    await startCreate(onCreated);
+
+    await waitFor(() => expect(toastSpies.toast).toHaveBeenCalledWith("A task is already being duplicated — wait for it to finish.", "error"));
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    expect(toastSpies.loading).not.toHaveBeenCalled();
   });
 });

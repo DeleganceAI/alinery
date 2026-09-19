@@ -6260,6 +6260,22 @@ dialog.modal::backdrop {
 .toast.success > svg {
   color: var(--success);
 }
+/* Work in progress: the loader spins for as long as the entry is up, which is until
+   whoever started it resolves it. */
+.toast.loading > svg {
+  color: var(--accent);
+  animation: toast-spin 1s linear infinite;
+}
+@keyframes toast-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast.loading > svg {
+    animation: none;
+  }
+}
 .toast.error {
   border-color: var(--danger);
 }

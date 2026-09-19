@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import * as ipc from "../ipc";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { Checkbox, InlineStatus, ModelInput, ompDefaultModel } from "../shared";
+import * as taskMutationGuard from "../taskMutationGuard";
+import { toast } from "../toast";
 import type { BoardTask, DraftOrigin, PlaybookStepSummary, PlaybookSummary, TargetedCreateResult } from "../types";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
@@ -60,12 +62,11 @@ export function CreateTaskPage({
   const [draftAutosave, setDraftAutosave] = useState(true);
   const [draftSlug, setDraftSlug] = useState(initialDraft?.slug ?? "");
   const [draftOrigins, setDraftOrigins] = useState<DraftOrigin[]>(initialDraft ? [{ repoPath: initialDraft.repo_path, slug: initialDraft.slug }] : []);
-  const [creating, setCreating] = useState(false);
+  const [mutationKind, setMutationKind] = useState<taskMutationGuard.TaskMutationKind | null>(taskMutationGuard.currentKind());
   const [playbookNeedsReselection, setPlaybookNeedsReselection] = useState(false);
   const [modelNeedsReselection, setModelNeedsReselection] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   const draftSlugRef = useRef(initialDraft?.slug ?? "");
-  const creatingRef = useRef(false);
   const draftSaveInFlightRef = useRef<Promise<void> | null>(null);
   const targetRequest = useRef(0);
   const modelRequest = useRef(0);
@@ -78,6 +79,11 @@ export function CreateTaskPage({
     draftSlugRef.current = slug;
     setDraftSlug(slug);
   };
+
+  // The busy flag is the shared guard, not this component's own: a create started from
+  // the ⌘N form and a duplicate started from a board are the same slot.
+  const creating = mutationKind === "create";
+  useEffect(() => taskMutationGuard.subscribe(setMutationKind), []);
 
   useEffect(() => {
     const t = window.setTimeout(() => titleRef.current?.focus(), 40);
@@ -187,12 +193,12 @@ export function CreateTaskPage({
 
   // Debounced draft write — only after user edit and when setting is on.
   useEffect(() => {
-    if (!draftAutosave || !dirtyRef.current || creatingRef.current) return;
+    if (!draftAutosave || !dirtyRef.current || taskMutationGuard.currentKind()) return;
     const n = name.trim();
     if (!n || !playbook || !harness) return;
     const target = repoPath;
     const handle = window.setTimeout(() => {
-      if (!dirtyRef.current || creatingRef.current) return;
+      if (!dirtyRef.current || taskMutationGuard.currentKind()) return;
       const save = ipc
         .writeDraftForRepo({
           repoPath: target,
@@ -252,12 +258,14 @@ export function CreateTaskPage({
 
   const create = () => {
     const n = name.trim();
-    if (!n || !taskSlug || creatingRef.current || !playbook || playbookNeedsReselection || modelNeedsReselection) return;
-    creatingRef.current = true;
+    if (!n || !taskSlug || !playbook || playbookNeedsReselection || modelNeedsReselection) return;
+    // A create or duplicate already running owns the slot; this attempt is refused out
+    // loud rather than queued behind a worktree checkout of unknown length.
+    if (!taskMutationGuard.claim("create")) return;
     dirtyRef.current = false;
-    setCreating(true);
     setErr(null);
     const target = repoPath;
+    const loading = toast.loading("Creating New Task…");
     const pendingDraftSave = draftSaveInFlightRef.current;
     const createAfterDraftSettles = () =>
       ipc.createTaskForRepo({
@@ -281,6 +289,8 @@ export function CreateTaskPage({
     (pendingDraftSave ?? Promise.resolve())
       .then(createAfterDraftSettles)
       .then(({ task, session, attachment_errors }) => {
+        // The task is on disk now, whether or not the form navigates away next.
+        loading.success("Task created");
         const origins = [...draftOrigins, { repoPath: target, slug: draftSlugRef.current || task.slug }, { repoPath: target, slug: task.slug }].filter(
           (origin, index, all) => all.findIndex((item) => item.repoPath === origin.repoPath && item.slug === origin.slug) === index,
         );
@@ -292,7 +302,8 @@ export function CreateTaskPage({
           ),
         );
         if (attachment_errors?.length) {
-          // Navigation deferred, not cancelled — creating stays true so the form cannot re-create.
+          // Navigation deferred, not cancelled — the guard is already free, but the form
+          // stays up so the attachment warning is read before the task opens.
           setAttachmentErrors(attachment_errors);
           setCreated({ repoPath: target, task, session });
           return;
@@ -300,11 +311,11 @@ export function CreateTaskPage({
         onCreated({ repoPath: target, task, session });
       })
       .catch((e) => {
-        creatingRef.current = false;
         dirtyRef.current = true;
-        setCreating(false);
+        loading.error(`Couldn't create the task: ${e}`);
         if (repoRef.current === target) setErr({ msg: "Couldn't create the task.", detail: String(e) });
-      });
+      })
+      .finally(taskMutationGuard.release);
   };
 
   const addAttachmentEntries = (raw: string) => {
