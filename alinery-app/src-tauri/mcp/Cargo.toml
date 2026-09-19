@@ -1,6 +1,6 @@
 [package]
 name = "alinery-mcp"
-version = "0.16.2"
+version = "0.16.3"
 license = "Apache-2.0"
 edition = "2021"
 
