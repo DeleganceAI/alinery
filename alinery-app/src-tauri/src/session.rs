@@ -665,7 +665,7 @@ pub(crate) fn allow_root_session_open(meta_harness: Option<&str>) -> bool {
 }
 
 pub(crate) fn hosted_refresh_needed(intent: &str, harness: &str, model: &str) -> bool {
-    harness == alinery_core::DEFAULT_HARNESS_KEY && matches!(intent, daemon_client::ops::SPAWN | daemon_client::ops::RESUME) && is_hosted_model(model)
+    harness == alinery_core::DEFAULT_HARNESS_KEY && matches!(intent, daemon_client::ops::SPAWN | daemon_client::ops::RESUME) && (model.trim().is_empty() || is_hosted_model(model))
 }
 
 async fn refresh_hosted_inference_before_open(app: AppHandle, intent: &str, harness: &str, model: &str) -> Result<(), String> {

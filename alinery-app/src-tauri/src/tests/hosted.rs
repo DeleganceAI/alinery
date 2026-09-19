@@ -366,7 +366,10 @@ fn mint_success_with_foreign_models_yml_returns_err_and_leaves_files() {
     let (base, server) = serve_routes(vec![("/api/desktop/inference-session".into(), 200, MINT)]);
     let result = sync_hosted_inference(&dir, &app_config, &base, "access", "sess", true);
     server.join().unwrap();
-    assert_eq!(result, Err(HOSTED_MODEL_UNAVAILABLE.to_string()));
+    let err = result.unwrap_err();
+    assert_eq!(err, hosted_models_yml_unavailable(&app_config));
+    assert!(err.contains("models.yml"));
+    assert!(!err.contains("inf_"));
     assert!(!inf.exists());
     assert_eq!(fs::read_to_string(&yml).unwrap(), existing);
 }
@@ -374,6 +377,7 @@ fn mint_success_with_foreign_models_yml_returns_err_and_leaves_files() {
 #[test]
 fn is_hosted_model_requires_alinery_provider_and_id() {
     assert!(is_hosted_model("alinery/Qwen3.6-35B-A3B"));
+    assert!(is_hosted_model(" alinery/Qwen3.6-35B-A3B "));
     assert!(!is_hosted_model("anthropic/claude"));
     assert!(!is_hosted_model("alinery"));
     assert!(!is_hosted_model("alinery/"));
@@ -443,7 +447,7 @@ fn write_hosted_models_yml_refuses_a_file_without_providers() {
     let (_dir, app_config) = setup_models_yml("hosted-yml-garbage", existing);
     let catalog = parse_hosted_catalog_body(CATALOG.as_bytes()).unwrap();
     let err = write_hosted_models_yml(&app_config, &catalog, "inf_test_abc").unwrap_err();
-    assert!(err.contains("providers"));
+    assert_eq!(err, hosted_models_yml_unavailable(&app_config));
     assert_eq!(fs::read_to_string(models_yml_path(&app_config)).unwrap(), existing);
 }
 

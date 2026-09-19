@@ -1083,28 +1083,14 @@ fn sync_hosted_from_auth(app: &AppHandle, auth_path: &Path, status: &AccountStat
 }
 
 pub(crate) fn refresh_hosted_inference_for_spawn(app: &AppHandle) -> Result<(), String> {
-    let auth_path = account_auth_path(app).map_err(|_| HOSTED_MODEL_UNAVAILABLE.to_string())?;
     let app_config = app_config_path(app).map_err(|_| HOSTED_MODEL_UNAVAILABLE.to_string())?;
-    refresh_hosted_inference_for_spawn_at(&auth_path, &app_config, &accounts_url(), SUPABASE_URL, SUPABASE_URL)
+    alinery_core::ensure_hosted_inference_for_spawn(&app_config)
 }
 
-pub(crate) fn refresh_hosted_inference_for_spawn_at(auth_path: &Path, app_config: &Path, accounts_url: &str, supabase_url: &str, entitlement_base: &str) -> Result<(), String> {
-    let status = account_status_from_path(auth_path);
-    let status = if status.signed_in {
-        refresh_account_at(auth_path, supabase_url, entitlement_base)
-    } else {
-        status
-    };
-    if !(status.signed_in && status.paid) {
-        return Ok(());
-    }
-    let Some(config_dir) = auth_path.parent() else {
-        return Err(HOSTED_MODEL_UNAVAILABLE.into());
-    };
-    let Some(tokens) = load_tokens_from_path(auth_path).ok().flatten() else {
-        return Err(HOSTED_MODEL_UNAVAILABLE.into());
-    };
-    sync_hosted_inference(config_dir, app_config, accounts_url, &tokens.access_token, &tokens.session_id, true)
+#[cfg(test)]
+pub(crate) fn refresh_hosted_inference_for_spawn_at(auth_path: &Path, app_config: &Path, accounts_url: &str, supabase_url: &str, _entitlement_base: &str) -> Result<(), String> {
+    let _ = auth_path;
+    alinery_core::ensure_hosted_inference_for_spawn_at(app_config, accounts_url, supabase_url)
 }
 
 #[tauri::command]
