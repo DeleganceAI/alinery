@@ -522,6 +522,19 @@ pub fn ingest_url(endpoint: &str) -> String {
     format!("{}/api/{TELEMETRY_ORG}/{TELEMETRY_STREAM}/_json", endpoint.trim_end_matches('/'))
 }
 
+/// Length of a complete HTTP/1 request in `buf` (headers + `Content-Length` body).
+/// Ingest test sinks wait for this: Linux often splits headers and JSON across reads,
+/// and stopping at `\r\n\r\n` ACK's an empty body.
+pub fn complete_http_request_len(buf: &[u8]) -> Option<usize> {
+    let header_end = buf.windows(4).position(|window| window == b"\r\n\r\n")?;
+    let headers = std::str::from_utf8(&buf[..header_end]).ok()?;
+    let content_length = headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("content-length").then(|| value.trim().parse::<usize>().ok()).flatten()
+    })?;
+    Some(header_end + 4 + content_length)
+}
+
 // ponytail: one event per POST, no batching. APP.md § "Client rules" prescribes batching and
 // the endpoint takes an array, so a short coalescing window would cut request count several-fold
 // and make the 60/min per-IP budget generous even behind a NAT (see APP.md § "What the per-IP
@@ -715,14 +728,13 @@ endpoint = "{endpoint}"
         assert_eq!(ingest_url("http://127.0.0.1:5080/"), expected);
     }
 
-    fn complete_http_request_len(buf: &[u8]) -> Option<usize> {
-        let header_end = buf.windows(4).position(|window| window == b"\r\n\r\n")?;
-        let headers = std::str::from_utf8(&buf[..header_end]).ok()?;
-        let content_length = headers.lines().find_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            name.eq_ignore_ascii_case("content-length").then(|| value.trim().parse::<usize>().ok()).flatten()
-        })?;
-        Some(header_end + 4 + content_length)
+    #[test]
+    fn complete_http_request_len_waits_for_the_body() {
+        let headers = b"POST /x HTTP/1.1\r\nContent-Length: 2\r\n\r\n";
+        assert_eq!(complete_http_request_len(headers), Some(headers.len() + 2));
+        assert!(headers.len() < complete_http_request_len(headers).unwrap());
+        let complete = b"POST /x HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}";
+        assert_eq!(complete_http_request_len(complete), Some(complete.len()));
     }
 
     fn serve_one(listener: TcpListener) -> std::thread::JoinHandle<Vec<u8>> {
@@ -742,7 +754,7 @@ endpoint = "{endpoint}"
                     Ok(n) => n,
                 };
                 buf.extend_from_slice(&chunk[..n]);
-                if complete_http_request_len(&buf).is_some_and(|len| buf.len() >= len) {
+                if crate::complete_http_request_len(&buf).is_some_and(|len| buf.len() >= len) {
                     break;
                 }
             }

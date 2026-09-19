@@ -3934,21 +3934,17 @@ endpoint = "{endpoint}"
                 Ok(pair) => pair,
                 Err(_) => return Vec::new(),
             };
-            let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
             let mut buf = Vec::new();
             let mut chunk = [0u8; 8192];
-            loop {
-                match stream.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        buf.extend_from_slice(&chunk[..n]);
-                        if buf.windows(4).any(|w| w == b"\r\n\r\n") {
-                            break;
-                        }
-                    }
-                    Err(_) if std::time::Instant::now() < deadline => continue,
-                    Err(_) => break,
+            while buf.len() < 64 * 1024 {
+                let n = match stream.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                buf.extend_from_slice(&chunk[..n]);
+                if alinery_core::complete_http_request_len(&buf).is_some_and(|len| buf.len() >= len) {
+                    break;
                 }
             }
             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}");
