@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Toast, toast } from "./toast";
+import { type LoadingToast, Toast, toast } from "./toast";
 
 // The tone contract is behavioural, not visual: confirmations may vanish on a
 // timer, errors must not — they hold detail the user may need to read or copy.
@@ -50,6 +50,62 @@ describe("Toast tones", () => {
     expect(entry().className).toContain("info");
     act(() => vi.advanceTimersByTime(4100));
     expect(entry().className).not.toContain("on");
+  });
+});
+
+describe("Toast loading tone", () => {
+  it("holds a loading toast until its caller resolves it", () => {
+    const { container } = render(<Toast />);
+    const entry = () => container.querySelector(".toast") as HTMLElement;
+    act(() => toast.loading("Creating New Task…"));
+    expect(entry().className).toContain("loading");
+    expect(entry().textContent).toContain("Creating New Task…");
+    act(() => vi.advanceTimersByTime(60000));
+    expect(entry().className).toContain("on");
+  });
+
+  it("resolves the loading entry in place instead of stacking the result beside it", () => {
+    const { container } = render(<Toast />);
+    const entries = () => [...container.querySelectorAll(".toast")] as HTMLElement[];
+    let loading: LoadingToast;
+    act(() => {
+      loading = toast.loading("Creating New Task…");
+    });
+    act(() => loading.success("Task created"));
+    expect(entries()).toHaveLength(1);
+    expect(entries()[0].className).toContain("success");
+    expect(entries()[0].textContent).toContain("Task created");
+    act(() => vi.advanceTimersByTime(4100));
+    expect(entries()[0].className).not.toContain("on");
+  });
+
+  it("keeps a failed mutation's message up until it is dismissed", () => {
+    const { container } = render(<Toast />);
+    const entry = () => container.querySelector(".toast") as HTMLElement;
+    let loading: LoadingToast;
+    act(() => {
+      loading = toast.loading("Creating New Task…");
+    });
+    act(() => loading.error("Couldn't create the task: worktree add failed"));
+    expect(entry().className).toContain("error");
+    expect(entry().textContent).toContain("Couldn't create the task: worktree add failed");
+    act(() => vi.advanceTimersByTime(60000));
+    expect(entry().className).toContain("on");
+  });
+
+  it("still reports the result when the user dismissed the loader", () => {
+    const { container } = render(<Toast />);
+    const entries = () => [...container.querySelectorAll(".toast")] as HTMLElement[];
+    let loading: LoadingToast;
+    act(() => {
+      loading = toast.loading("Duplicating Task…");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    act(() => vi.advanceTimersByTime(300));
+    expect(entries()).toHaveLength(0);
+    act(() => loading.success("TASK DUPLICATED"));
+    expect(entries()).toHaveLength(1);
+    expect(entries()[0].textContent).toContain("TASK DUPLICATED");
   });
 });
 

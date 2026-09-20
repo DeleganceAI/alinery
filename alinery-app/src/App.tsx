@@ -35,6 +35,7 @@ import { EMPTY_SESSION_MESSAGE_DRAFT, type SessionMessageDraft, sessionMessageDr
 import { ALL_REPOS, isDevelopmentProductName, LoadingState, RepoPicker, repoName, TopBar } from "./shared";
 import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, TerminalDrawer } from "./TerminalDrawer";
 import { gridViewIdOf, isPrimaryTab, primaryTabOf, viewFadeClass } from "./tabMotion";
+import * as taskMutationGuard from "./taskMutationGuard";
 import { shouldAskTelemetryConsent, TELEMETRY_CONSENT_CHOICES, telemetryConsentWrite } from "./telemetry-consent";
 import { Toast, toast } from "./toast";
 import type {
@@ -135,8 +136,11 @@ export default function App() {
   const [sessionQueuedFollowUps, setSessionQueuedFollowUps] = useState<Map<string, QueuedFollowUp[]>>(() => new Map());
   const [productName, setProductName] = useState("");
   const [appVersion, setAppVersion] = useState("");
-  const duplicatingRef = useRef(false);
-  const [duplicating, setDuplicating] = useState(false);
+  // The single-flight slot for create/duplicate lives in taskMutationGuard so it survives
+  // this component's re-renders and any view it started from. Mirrored here only to drive
+  // the surfaces that disable their own action while a mutation is running.
+  const [mutationKind, setMutationKind] = useState<taskMutationGuard.TaskMutationKind | null>(taskMutationGuard.currentKind());
+  useEffect(() => taskMutationGuard.subscribe(setMutationKind), []);
   const [updating, setUpdating] = useState(false);
   // Presentation preferences live for this app process only. Each surface keeps its own
   // choice while navigation unmounts and remounts the list.
@@ -761,20 +765,23 @@ export default function App() {
 
   const openCreate = () => {
     setSearchOpen(false);
+    // Opening the form is not itself a mutation, but it is how a second create gets
+    // started — while one is already running there is nothing useful to type into it.
+    if (taskMutationGuard.refuseIfBusy()) return;
     setView({ kind: "create", from: view });
   };
 
   const duplicateTask = async ({ repoPath, sourceSlug }: { repoPath: string; sourceSlug: string }) => {
-    if (!appConfigRef.current || duplicatingRef.current) return;
+    if (!appConfigRef.current) return;
+    if (!taskMutationGuard.claim("duplicate")) return;
     const invocationView = view;
-    duplicatingRef.current = true;
-    setDuplicating(true);
+    const loading = toast.loading("Duplicating Task…");
     try {
       let created: CreateTaskResult;
       try {
         created = await ipc.duplicateTaskForRepo(repoPath, sourceSlug);
       } catch (e) {
-        toast(`TASK DUPLICATION FAILED: ${e}`);
+        loading.error(`TASK DUPLICATION FAILED: ${e}`);
         return;
       }
 
@@ -788,17 +795,17 @@ export default function App() {
         }
         setScope("active");
         refreshBoards();
-        toast("TASK DUPLICATED");
+        // The clone is on disk; only opening it can still fail from here.
+        loading.success("TASK DUPLICATED");
         if (session.harness !== "no-harness") {
           ipc.spawnSessionDetachedForRepo(repoPath, task.slug, session.id).catch((e) => toast(`SESSION NOT STARTED: ${e}`));
         }
         setView({ kind: "task", slug: task.slug, from: invocationView });
       } catch (e) {
-        toast(`TASK DUPLICATED BUT NOT OPENED: ${repoPath}/${task.slug}: ${e}`);
+        loading.error(`TASK DUPLICATED BUT NOT OPENED: ${repoPath}/${task.slug}: ${e}`);
       }
     } finally {
-      duplicatingRef.current = false;
-      setDuplicating(false);
+      taskMutationGuard.release();
     }
   };
 
@@ -1109,7 +1116,6 @@ export default function App() {
                       setScope("active");
                     }
                     refreshBoards();
-                    toast("Task created", "success");
                     if (session.harness !== "no-harness") {
                       ipc.spawnSessionDetached(task.slug, session.id).catch((e) => toast(`Session not started: ${e}`, "error"));
                     }
@@ -1228,7 +1234,7 @@ export default function App() {
                   }
                   onOpenRelatedTask={openRelatedTask}
                   onDuplicate={(task) => duplicateTask({ repoPath: appConfig.active_repo, sourceSlug: task.slug })}
-                  duplicating={duplicating}
+                  duplicating={mutationKind === "duplicate"}
                   registerNav={registerNav}
                   appearance={appearance}
                   onAppearanceChange={onAppearanceChange}
