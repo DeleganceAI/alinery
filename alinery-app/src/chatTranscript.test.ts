@@ -145,6 +145,27 @@ describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
     expect(state.entries.filter((e) => e.type === "turn_marker")).toHaveLength(2);
   });
 
+  it("shows a nested turn_end 401 and tells the user to Kill then Start fresh", () => {
+    const state = applyRpcLines([
+      { type: "turn_start" },
+      {
+        type: "turn_end",
+        message: {
+          content: [],
+          stopReason: "error",
+          errorStatus: 401,
+          errorMessage: "401 Invalid API key. (type=invalid_request_error param=invalid_api_key)",
+        },
+      },
+    ]);
+    expect(state.entries.filter((e) => e.type === "error")).toEqual([
+      expect.objectContaining({
+        type: "error",
+        text: "401 Invalid API key. (type=invalid_request_error param=invalid_api_key) Kill this session, then Start fresh.",
+      }),
+    ]);
+  });
+
   it("marks an optimistic slash local when the prompt did not invoke the agent", () => {
     const seeded = appendOptimisticUser(emptyTranscript(), "/thinking high", "slash", { name: "thinking", args: "high" });
     const state = applyRpcLine(seeded, { type: "response", command: "prompt", success: true, data: { agentInvoked: false } });
