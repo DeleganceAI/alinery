@@ -157,6 +157,7 @@ type SettingsScope = { kind: "global" } | { kind: "repo"; repoPath: string };
 type ChoiceKey = "defaults";
 type ChoiceBoolField = "draft_autosave";
 
+const SETTINGS_SCOPE_EMPTY_TITLE = "Select a settings scope to see these settings";
 const GLOBAL_SOURCE: SettingSource = "global";
 const REPO_SOURCE: SettingSource = "repository";
 
@@ -369,13 +370,6 @@ export function Settings({
     void ompUpdate.checkNow();
   }, [activeSection, ompUpdate.checkNow]);
 
-  const switchScope = (nextScope: SettingsScope) => {
-    setScope(nextScope);
-    if (nextScope.kind === "global" && activeSection === "backup") {
-      setActiveSection("notifications");
-    }
-  };
-
   const loadScope = (nextScope: SettingsScope) => {
     if (nextScope.kind === "global") {
       ipc
@@ -399,9 +393,9 @@ export function Settings({
       .catch((e) => reportError(e, "Couldn't load settings"));
   };
 
-  const loadStorage = () =>
+  const loadStorage = (repoPath: string) =>
     ipc
-      .storageInfo()
+      .storageInfo(repoPath)
       .then((info) => {
         setStorage(info);
         setStorageErr("");
@@ -413,11 +407,33 @@ export function Settings({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope.kind, scope.kind === "repo" ? scope.repoPath : "global"]);
 
-  // storageInfo() walks disk — load it lazily when the section is opened rather than on
-  // every settings mount, matching the backup section's own lazy-load pattern below.
+  // storageInfo walks disk — load it lazily when Storage is opened on a repository
+  // chip. All repositories skips the walk; the panel shows the shared empty placeholder.
   useEffect(() => {
     if (activeSection !== "storage") return;
-    loadStorage();
+    if (scope.kind !== "repo") {
+      setStorage(null);
+      setStorageErr("");
+      return;
+    }
+    const repoPath = scope.repoPath;
+    let alive = true;
+    setStorage(null);
+    setStorageErr("");
+    ipc
+      .storageInfo(repoPath)
+      .then((info) => {
+        if (alive) {
+          setStorage(info);
+          setStorageErr("");
+        }
+      })
+      .catch((e) => {
+        if (alive) setStorageErr(String(e));
+      });
+    return () => {
+      alive = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection, scope.kind, scope.kind === "repo" ? scope.repoPath : "global"]);
   useEffect(() => {
@@ -527,8 +543,8 @@ export function Settings({
   };
 
   // ---- Backup (issue #79) ----
-  // Repo scope only: backup settings are per-repository, and the global tier exists purely
-  // as the inheritance base. Every control writes through saveRepoOverrides immediately.
+  // Per-repository. All repositories shows the same empty placeholder as Storage;
+  // controls write through saveRepoOverrides immediately.
 
   const refreshBackups = () => {
     if (scope.kind !== "repo") return;
@@ -701,7 +717,7 @@ export function Settings({
   // Irreversible: archived tasks, archived sessions and the worktrees of archived tasks.
   // Reload the numbers even on failure — a partial purge already changed the disk.
   const purgeArchived = async () => {
-    if (!storage) return;
+    if (scope.kind !== "repo" || !storage) return;
     const n = storage.archived_task_count;
     const m = storage.archived_session_count;
     const ok = await confirmDanger(
@@ -719,7 +735,7 @@ export function Settings({
     setPurgeBusy(true);
     setPurgeErrors([]);
     try {
-      const res = await ipc.deleteAllArchivedStorage();
+      const res = await ipc.deleteAllArchivedStorage(scope.repoPath);
       setPurgeErrors(res.errors);
       if (res.errors.length) {
         toast.error(`Deleted ${res.deleted_tasks} task(s), ${res.deleted_sessions} session(s) — ${res.errors.length} failed (listed below)`);
@@ -729,7 +745,7 @@ export function Settings({
     } catch (e) {
       reportError(e, "Delete failed");
     } finally {
-      await loadStorage();
+      await loadStorage(scope.repoPath);
       setPurgeBusy(false);
     }
   };
@@ -863,7 +879,7 @@ export function Settings({
   const globalOnly = (label: string) => (
     <div className="dim" style={{ marginBottom: 12 }}>
       {label} are global-only. Switch to{" "}
-      <button type="button" className="btn ghost small" onClick={() => switchScope({ kind: "global" })}>
+      <button type="button" className="btn ghost small" onClick={() => setScope({ kind: "global" })}>
         Global
       </button>{" "}
       to edit them.
@@ -1418,7 +1434,7 @@ export function Settings({
   );
 
   const renderBackup = () => {
-    if (scope.kind !== "repo") return null;
+    if (scope.kind !== "repo") return <EmptyState title={SETTINGS_SCOPE_EMPTY_TITLE} />;
     const backup = effective.backup;
     const hasDest = backup.destination.trim() !== "";
     const retention = retentionDraft ?? backup.retention;
@@ -1612,6 +1628,9 @@ export function Settings({
         );
       }
       case "storage":
+        if (isGlobal) {
+          return <EmptyState title={SETTINGS_SCOPE_EMPTY_TITLE} />;
+        }
         return (
           <div className="mcp-guide">
             {storageErr ? (
@@ -1651,7 +1670,7 @@ export function Settings({
                   )}
                 </div>
                 {storageRow("App config", storage.app_config_path)}
-                {storageRow("Active repo", storage.active_repo)}
+                {storageRow("Repository", storage.repo_path)}
                 {storageRow(".alinery", storage.alinery_dir)}
                 {storageRow("Repo config", storage.repo_config_path)}
                 {storageRow("Harnesses", storage.harnesses_path)}
@@ -2309,7 +2328,7 @@ export function Settings({
           <div className="settings-scope-detail">{selectedScopeDetail}</div>
         </div>
         <div className="settings-scope-actions" role="group" aria-label="Choose settings scope">
-          <button className={`scope-chip${isGlobal ? " on" : ""}`} type="button" onClick={() => switchScope({ kind: "global" })}>
+          <button className={`scope-chip${isGlobal ? " on" : ""}`} type="button" onClick={() => setScope({ kind: "global" })}>
             All repositories
           </button>
           {repoOptions.map((repo) => (
@@ -2318,7 +2337,7 @@ export function Settings({
               className={`scope-chip${!isGlobal && selectedRepo === repo ? " on" : ""}`}
               type="button"
               title={repo}
-              onClick={() => switchScope({ kind: "repo", repoPath: repo })}
+              onClick={() => setScope({ kind: "repo", repoPath: repo })}
             >
               {repoName(repo)}
             </button>
@@ -2327,23 +2346,18 @@ export function Settings({
       </div>
       <div className="settings-shell">
         <nav className="settings-nav">
-          {visibleSections.map((s) => {
-            const isDisabled = s.key === "backup" && isGlobal;
-            return (
-              <button
-                type="button"
-                key={s.key}
-                className={`settings-navitem${visibleActiveSection === s.key ? " on" : ""}`}
-                disabled={isDisabled}
-                title={isDisabled ? "Backup is only available when a repository is selected." : undefined}
-                onClick={() => {
-                  setActiveSection(s.key);
-                }}
-              >
-                {s.label}
-              </button>
-            );
-          })}
+          {visibleSections.map((s) => (
+            <button
+              type="button"
+              key={s.key}
+              className={`settings-navitem${visibleActiveSection === s.key ? " on" : ""}`}
+              onClick={() => {
+                setActiveSection(s.key);
+              }}
+            >
+              {s.label}
+            </button>
+          ))}
         </nav>
         <div className="settings-panel">{renderSection(visibleActiveSection)}</div>
       </div>

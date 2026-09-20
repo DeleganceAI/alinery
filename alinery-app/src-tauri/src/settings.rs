@@ -259,7 +259,7 @@ pub(crate) fn write_config(app: AppHandle, state: State<'_, AppState>, config: a
 #[derive(Serialize)]
 pub(crate) struct StorageInfo {
     pub(crate) app_config_path: String,
-    pub(crate) active_repo: String,
+    pub(crate) repo_path: String,
     pub(crate) alinery_dir: String,
     pub(crate) repo_config_path: String,
     pub(crate) harnesses_path: String,
@@ -278,16 +278,16 @@ pub(crate) struct StorageInfo {
 }
 
 #[tauri::command]
-pub(crate) fn storage_info(app: AppHandle) -> Result<StorageInfo, String> {
+pub(crate) fn storage_info(app: AppHandle, repo_path: String) -> Result<StorageInfo, String> {
     let app_config = app_config_path(&app)?;
-    let repo = active_repo()?;
+    let repo = target_repo_for_app(&app, &repo_path)?;
     let stats = alinery_core::storage_stats(&repo);
     let alinery = alinery_dir(&repo);
     let path = |p: PathBuf| p.to_string_lossy().to_string();
 
     Ok(StorageInfo {
         app_config_path: path(app_config),
-        active_repo: repo.to_string_lossy().to_string(),
+        repo_path: repo.to_string_lossy().to_string(),
         alinery_dir: path(alinery.clone()),
         repo_config_path: path(config_toml_path(&repo)),
         harnesses_path: path(alinery.join("harnesses.toml")),
@@ -307,8 +307,9 @@ pub(crate) fn storage_info(app: AppHandle) -> Result<StorageInfo, String> {
 // Irreversible, local-only: drops every archived task dir, every archived session's files, and
 // the worktrees of archived tasks. Live data is never a target (alinery-core owns the walk).
 #[tauri::command]
-pub(crate) fn delete_all_archived_storage(app: AppHandle, state: State<'_, AppState>) -> Result<alinery_core::PurgeArchivedResult, String> {
-    let repo = require_owned_active_repo(&state)?;
+pub(crate) fn delete_all_archived_storage(app: AppHandle, state: State<'_, AppState>, repo_path: String) -> Result<alinery_core::PurgeArchivedResult, String> {
+    let repo = target_repo_for_app(&app, &repo_path)?;
+    require_repo_owned(&state, &repo)?;
     let kill = |task_slug: &str, id: &str| {
         let owned = with_session_client(&state, &repo, task_slug, id, |d| d.session_status_observed(id))
             .map(|s| s.is_some())
