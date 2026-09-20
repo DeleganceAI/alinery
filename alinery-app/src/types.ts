@@ -315,7 +315,7 @@ export type AppConfig = {
 };
 export type StorageInfo = {
   app_config_path: string;
-  active_repo: string;
+  repo_path: string;
   alinery_dir: string;
   repo_config_path: string;
   harnesses_path: string;
