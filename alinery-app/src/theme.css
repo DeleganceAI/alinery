@@ -1056,6 +1056,17 @@ main {
   color: var(--text-strong);
   background: var(--danger-subtle);
 }
+.task-mutation-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--accent);
+  color: var(--text);
+  background: var(--accent-subtle);
+  font-size: calc(13px * var(--ui-scale));
+}
 .artifact-review-pending {
   display: flex;
   align-items: center;
@@ -6262,6 +6273,9 @@ dialog.modal::backdrop {
 }
 /* Work in progress: the loader spins for as long as the entry is up, which is until
    whoever started it resolves it. */
+.toast.loading {
+  border-color: var(--accent);
+}
 .toast.loading > svg {
   color: var(--accent);
   animation: toast-spin 1s linear infinite;

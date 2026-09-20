@@ -11,7 +11,7 @@ export type TaskMutationKind = "create" | "duplicate";
 // the mutation. A `useRef` scoped to the create form is exactly the gap this replaces —
 // navigating away mid-flight used to hand the slot back while the backend was still busy.
 let current: TaskMutationKind | null = null;
-const listeners = new Set<(kind: TaskMutationKind | null) => void>();
+const listeners = new Set<() => void>();
 
 /** The task mutation running right now, or null. */
 export function currentKind(): TaskMutationKind | null {
@@ -45,8 +45,9 @@ export function release(): void {
   notify();
 }
 
-/** Observes the slot, for a surface that disables its own action while any mutation runs. */
-export function subscribe(fn: (kind: TaskMutationKind | null) => void): () => void {
+/** Observes the slot. Signature matches `useSyncExternalStore` — read `currentKind()`
+    in the snapshot, don't take the kind from this callback. */
+export function subscribe(fn: () => void): () => void {
   listeners.add(fn);
   return () => {
     listeners.delete(fn);
@@ -54,7 +55,7 @@ export function subscribe(fn: (kind: TaskMutationKind | null) => void): () => vo
 }
 
 function notify() {
-  for (const l of listeners) l(current);
+  for (const l of listeners) l();
 }
 
 // One message, one home: every refusal names the operation actually holding the slot.

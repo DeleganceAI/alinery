@@ -16,7 +16,8 @@ import {
   Terminal,
   X,
 } from "lucide-react";
-import { type CSSProperties, lazy, type ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, lazy, type ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { flushSync } from "react-dom";
 import { ThinkingOrb } from "thinking-orbs";
 import { applyAppearance, DEFAULT_APPEARANCE } from "./appearance";
 import alineryIcon from "./assets/alinery-icon-white-plain.png";
@@ -137,10 +138,10 @@ export default function App() {
   const [productName, setProductName] = useState("");
   const [appVersion, setAppVersion] = useState("");
   // The single-flight slot for create/duplicate lives in taskMutationGuard so it survives
-  // this component's re-renders and any view it started from. Mirrored here only to drive
-  // the surfaces that disable their own action while a mutation is running.
-  const [mutationKind, setMutationKind] = useState<taskMutationGuard.TaskMutationKind | null>(taskMutationGuard.currentKind());
-  useEffect(() => taskMutationGuard.subscribe(setMutationKind), []);
+  // this component's re-renders and any view it started from. Read with useSyncExternalStore
+  // so the chrome banner and Duplicate disable paint in the same turn as claim(), not after
+  // the worktree checkout has already finished.
+  const mutationKind = useSyncExternalStore(taskMutationGuard.subscribe, taskMutationGuard.currentKind);
   const [updating, setUpdating] = useState(false);
   // Presentation preferences live for this app process only. Each surface keeps its own
   // choice while navigation unmounts and remounts the list.
@@ -775,7 +776,12 @@ export default function App() {
     if (!appConfigRef.current) return;
     if (!taskMutationGuard.claim("duplicate")) return;
     const invocationView = view;
-    const loading = toast.loading("Duplicating Task…");
+    // Commit the loader before the IPC promise is scheduled — otherwise the webview
+    // can stay on the pre-click frame for the whole `git worktree add`.
+    let loading!: ReturnType<typeof toast.loading>;
+    flushSync(() => {
+      loading = toast.loading("Duplicating Task…");
+    });
     try {
       let created: CreateTaskResult;
       try {
@@ -993,6 +999,12 @@ export default function App() {
               </div>
             )}
             {header}
+            {mutationKind && (
+              <div className="task-mutation-banner" role="status">
+                <ThinkingOrb state="working" size={20} aria-hidden="true" />
+                <span>{mutationKind === "duplicate" ? "Duplicating Task…" : "Creating New Task…"}</span>
+              </div>
+            )}
             {/* Backend ownership gate is the source of truth; blank main so the busy
               banner is the only actionable surface (defense-in-depth). */}
             <main>{daemon.repo_busy ? null : content}</main>

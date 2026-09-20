@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { flushSync } from "react-dom";
 import * as ipc from "../ipc";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { Checkbox, InlineStatus, ModelInput, ompDefaultModel } from "../shared";
@@ -62,7 +63,7 @@ export function CreateTaskPage({
   const [draftAutosave, setDraftAutosave] = useState(true);
   const [draftSlug, setDraftSlug] = useState(initialDraft?.slug ?? "");
   const [draftOrigins, setDraftOrigins] = useState<DraftOrigin[]>(initialDraft ? [{ repoPath: initialDraft.repo_path, slug: initialDraft.slug }] : []);
-  const [mutationKind, setMutationKind] = useState<taskMutationGuard.TaskMutationKind | null>(taskMutationGuard.currentKind());
+  const mutationKind = useSyncExternalStore(taskMutationGuard.subscribe, taskMutationGuard.currentKind);
   const [playbookNeedsReselection, setPlaybookNeedsReselection] = useState(false);
   const [modelNeedsReselection, setModelNeedsReselection] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -83,7 +84,6 @@ export function CreateTaskPage({
   // The busy flag is the shared guard, not this component's own: a create started from
   // the ⌘N form and a duplicate started from a board are the same slot.
   const creating = mutationKind === "create";
-  useEffect(() => taskMutationGuard.subscribe(setMutationKind), []);
 
   useEffect(() => {
     const t = window.setTimeout(() => titleRef.current?.focus(), 40);
@@ -265,7 +265,13 @@ export function CreateTaskPage({
     dirtyRef.current = false;
     setErr(null);
     const target = repoPath;
-    const loading = toast.loading("Creating New Task…");
+    // Commit the loader before any IPC is scheduled. A pending `git worktree add`
+    // can otherwise hold the pre-click frame for the whole checkout, so the toast
+    // and "Creating…" never appear until the task is already done.
+    let loading!: ReturnType<typeof toast.loading>;
+    flushSync(() => {
+      loading = toast.loading("Creating New Task…");
+    });
     const pendingDraftSave = draftSaveInFlightRef.current;
     const createAfterDraftSettles = () =>
       ipc.createTaskForRepo({
@@ -708,6 +714,7 @@ export function CreateTaskPage({
             ))}
           </InlineStatus>
         )}
+        {creating && <InlineStatus tone="info">Creating New Task… You can keep using Alinery while the worktree is set up.</InlineStatus>}
         {err && (
           <InlineStatus tone="error" detail={err.detail}>
             {err.msg}

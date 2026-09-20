@@ -41,7 +41,7 @@ describe("task mutation guard", () => {
 
   it("reopens the slot on release and reports every change to subscribers", () => {
     const seen: (string | null)[] = [];
-    const unsubscribe = subscribe((kind) => seen.push(kind));
+    const unsubscribe = subscribe(() => seen.push(currentKind()));
     claim("create");
     release();
     unsubscribe();

@@ -233,6 +233,8 @@ describe("task creation feedback", () => {
     const onCreated = vi.fn();
     await startCreate(onCreated);
 
+    expect(screen.getByRole("button", { name: "Creating…" })).toBeDefined();
+    expect(screen.getByText(/Creating New Task… You can keep using Alinery/)).toBeDefined();
     await waitFor(() => expect(toastSpies.loading).toHaveBeenCalledWith("Creating New Task…"));
     expect(toastSpies.handle.success).not.toHaveBeenCalled();
     expect(onCreated).not.toHaveBeenCalled();

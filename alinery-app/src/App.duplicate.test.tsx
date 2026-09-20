@@ -282,7 +282,8 @@ describe("App duplicate coordinator", () => {
     render(<App />);
     fireEvent.click(await screen.findByText("duplicate-source"));
 
-    // The loader is the only feedback until the worktree checkout finishes.
+    // Chrome banner + loading toast both announce the in-flight clone.
+    expect(screen.getByText("Duplicating Task…")).toBeDefined();
     expect(mocks.toastLoading).toHaveBeenCalledWith("Duplicating Task…");
     expect(mocks.loadingHandle.success).not.toHaveBeenCalled();
 
