@@ -314,26 +314,25 @@ fn unexpired_fresh_minted_at_reuses_token_without_minting() {
 }
 
 #[test]
-fn unexpired_stale_minted_at_remints_and_writes_new_token() {
-    let (dir, app_config) = hosted_sync_dirs("hosted-debounce-remint");
+fn unexpired_old_minted_at_reuses_token_without_minting() {
+    let (dir, app_config) = hosted_sync_dirs("hosted-old-mint-reuse");
     let now = now_epoch();
-    write_cached_inference(&dir, &app_config, "inf_stale", now + 86_400, Some(now.saturating_sub(301)));
-    let (base, server) = serve_routes(vec![("/api/desktop/inference-session".into(), 200, MINT_ROTATED)]);
+    write_cached_inference(&dir, &app_config, "inf_stale", now + 86_400, Some(now.saturating_sub(600)));
+    // Catalog-only server: a mint POST to /inference-session fails this assertion.
+    let (base, server) = serve_routes(vec![("/api/desktop/hosted-models".into(), 200, CATALOG)]);
     let result = sync_hosted_inference(&dir, &app_config, &base, "access", "sess", true);
     server.join().unwrap();
     assert_eq!(result, Ok(()));
-    assert!(models_yml(&app_config).contains("apiKey: inf_test_rotated"));
-    assert!(!models_yml(&app_config).contains("inf_stale"));
-    let file = inference_value(&dir);
-    assert_eq!(file["token"], "inf_test_rotated");
-    assert!(file["minted_at"].as_u64().unwrap() >= now);
+    assert!(models_yml(&app_config).contains("apiKey: inf_stale"));
+    assert_eq!(inference_value(&dir)["minted_at"], now.saturating_sub(600));
+    assert_eq!(inference_value(&dir)["token"], "inf_stale");
 }
 
 #[test]
-fn remint_failure_with_valid_cache_falls_back_to_cached_token() {
-    let (dir, app_config) = hosted_sync_dirs("hosted-remint-fallback");
+fn near_expiry_mint_failure_falls_back_to_cached_token() {
+    let (dir, app_config) = hosted_sync_dirs("hosted-renewal-fallback");
     let now = now_epoch();
-    write_cached_inference(&dir, &app_config, "inf_stale", now + 86_400, Some(now.saturating_sub(301)));
+    write_cached_inference(&dir, &app_config, "inf_stale", now + 1_800, Some(now.saturating_sub(86_400 - 1_800)));
     let (base, server) = serve_routes(vec![("/api/desktop/inference-session".into(), 500, "boom")]);
     let result = sync_hosted_inference(&dir, &app_config, &base, "access", "sess", true);
     server.join().unwrap();
@@ -343,16 +342,33 @@ fn remint_failure_with_valid_cache_falls_back_to_cached_token() {
 }
 
 #[test]
-fn missing_minted_at_defaults_to_zero_and_remints() {
+fn missing_minted_at_unexpired_reuses_token() {
     let (dir, app_config) = hosted_sync_dirs("hosted-missing-minted-at");
     let now = now_epoch();
     write_cached_inference(&dir, &app_config, "inf_stale", now + 86_400, None);
     assert!(inference_value(&dir).get("minted_at").is_none());
+    let (base, server) = serve_routes(vec![("/api/desktop/hosted-models".into(), 200, CATALOG)]);
+    let result = sync_hosted_inference(&dir, &app_config, &base, "access", "sess", true);
+    server.join().unwrap();
+    assert_eq!(result, Ok(()));
+    assert!(models_yml(&app_config).contains("apiKey: inf_stale"));
+    assert_eq!(inference_value(&dir)["token"], "inf_stale");
+}
+
+#[test]
+fn near_expiry_remints_and_writes_new_token() {
+    let (dir, app_config) = hosted_sync_dirs("hosted-renewal-remint");
+    let now = now_epoch();
+    write_cached_inference(&dir, &app_config, "inf_stale", now + 1_800, Some(now.saturating_sub(86_400 - 1_800)));
     let (base, server) = serve_routes(vec![("/api/desktop/inference-session".into(), 200, MINT_ROTATED)]);
     let result = sync_hosted_inference(&dir, &app_config, &base, "access", "sess", true);
     server.join().unwrap();
     assert_eq!(result, Ok(()));
     assert!(models_yml(&app_config).contains("apiKey: inf_test_rotated"));
+    assert!(!models_yml(&app_config).contains("inf_stale"));
+    let file = inference_value(&dir);
+    assert_eq!(file["token"], "inf_test_rotated");
+    assert!(file["minted_at"].as_u64().unwrap() >= now);
 }
 
 #[test]

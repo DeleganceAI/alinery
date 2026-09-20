@@ -14,12 +14,12 @@
 // Use alinery-core for all pure FS/path/harness/phase/status logic (pty bits stay local to alineryd).
 use alinery_core::{
     alinery_dir, alineryd_lock_path, alineryd_reconciler_lock_path, alineryd_socket_path, all_session_meta_paths, completion_decision, create_session_meta_for,
-    ensure_hosted_inference_for_spawn, get_playbook, list_tasks_for_repo, login_shell_path, normalized_session_status, process_exited, process_started, read_meta_launch_fields,
-    read_session_meta_full, read_task, reduce_runner_event, resolve_launch_prompt, resolved_session_artifact_file, safe_component, session_meta_path, session_omp_dir,
-    session_scrollback_path, sessions_dir, stamp_meta, strip_terminal_queries, subst, sweep_ends_session, validate_message_body, validate_task_session_start, write_message,
-    AutoAdvanceCreate, CompletionDecision, CreateSessionInput, Harness, HarnessAdapter, LaunchFields, MessageAdapter, PlaybookState, ProcessState, RpcChunkAssembler, RunnerEvent,
-    RunnerEventEnvelope, SessionMeta, SessionState, SessionTransport, Task, DAEMON_CONTROL_TIMEOUT, DEFAULT_PLAYBOOK_KEY, NO_HARNESS_KEY, PROTOCOL_VERSION,
-    RUNNER_EVENT_PROTOCOL_VERSION,
+    ensure_hosted_inference_for_spawn, get_playbook, is_hosted_model, list_tasks_for_repo, login_shell_path, normalized_session_status, process_exited, process_started,
+    read_meta_launch_fields, read_session_meta_full, read_task, reduce_runner_event, resolve_launch_prompt, resolved_session_artifact_file, safe_component, session_meta_path,
+    session_omp_dir, session_scrollback_path, sessions_dir, stamp_meta, strip_terminal_queries, subst, sweep_ends_session, validate_message_body, validate_task_session_start,
+    write_message, AutoAdvanceCreate, CompletionDecision, CreateSessionInput, Harness, HarnessAdapter, LaunchFields, MessageAdapter, PlaybookState, ProcessState,
+    RpcChunkAssembler, RunnerEvent, RunnerEventEnvelope, SessionMeta, SessionState, SessionTransport, Task, DAEMON_CONTROL_TIMEOUT, DEFAULT_PLAYBOOK_KEY, NO_HARNESS_KEY,
+    PROTOCOL_VERSION, RUNNER_EVENT_PROTOCOL_VERSION,
 };
 
 use alinery_core::lockfile::{try_lock_exclusive, LockFile};
@@ -1592,7 +1592,7 @@ fn spawn_session(
     if harness.adapter == HarnessAdapter::Omp && protected_host.as_ref().is_none() {
         return Err(OMP_HOST_PROTECTION_ERROR.into());
     }
-    if harness.adapter == HarnessAdapter::Omp {
+    if harness.adapter == HarnessAdapter::Omp && (model.trim().is_empty() || is_hosted_model(&model)) {
         ensure_hosted_inference_for_spawn(app_config)?;
     }
     // Fresh OMP (spawn / resume / auto-advance) is RPC. Restate honors the requested transport.

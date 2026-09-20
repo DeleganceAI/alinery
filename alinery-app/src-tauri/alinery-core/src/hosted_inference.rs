@@ -18,7 +18,7 @@ use crate::write_owner_only_bytes;
 const HOSTED_PROVIDER: &str = "alinery";
 const INFERENCE_JSON: &str = "inference.json";
 const INFERENCE_SKEW_SECS: u64 = 120;
-const MINT_DEBOUNCE_SECS: u64 = 300;
+const RENEWAL_LEAD_SECS: u64 = 3600;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_ACCOUNTS_URL: &str = "https://accounts.alinery.ai";
 // Keep in sync with alinery-app `account.rs`. Publishable key, not a secret.
@@ -236,12 +236,12 @@ fn inference_unexpired(file: &InferenceFile, now: u64) -> bool {
     now.saturating_add(INFERENCE_SKEW_SECS) < file.expires_at
 }
 
-fn mint_debounce_fresh(file: &InferenceFile, now: u64) -> bool {
-    now.saturating_sub(file.minted_at) < MINT_DEBOUNCE_SECS
+fn inference_due_for_renewal(file: &InferenceFile, now: u64) -> bool {
+    file.expires_at.saturating_sub(now) < RENEWAL_LEAD_SECS
 }
 
 pub fn inference_spawn_cache_fresh(config_dir: &Path, now: u64) -> bool {
-    load_inference_file(&inference_path(config_dir)).is_some_and(|file| inference_unexpired(&file, now) && mint_debounce_fresh(&file, now))
+    load_inference_file(&inference_path(config_dir)).is_some_and(|file| inference_unexpired(&file, now) && !inference_due_for_renewal(&file, now))
 }
 
 pub fn minted_catalog_if_unexpired(config_dir: &Path) -> Option<HostedCatalog> {
@@ -464,11 +464,13 @@ pub fn sync_hosted_inference(config_dir: &Path, app_config: &Path, accounts_url:
         return Ok(());
     }
     let inf_path = inference_path(config_dir);
+    let lock_path = inf_path.with_extension("json.lock");
+    let _lock = lock_exclusive_blocking(&lock_path).map_err(|e| e.to_string())?;
     let now = now_secs();
     let existing = load_inference_file(&inf_path);
     if let Some(file) = existing.filter(|file| inference_unexpired(file, now)) {
-        if mint_debounce_fresh(&file, now) {
-            return write_hosted_models_yml(app_config, &file.catalog, &file.token);
+        if !inference_due_for_renewal(&file, now) {
+            return reuse_cached_inference(&inf_path, app_config, accounts_url, session_id, &file);
         }
         return match mint_inference_session(accounts_url, access_token, session_id) {
             Ok((token, expires_at, catalog)) => persist_minted_inference(&inf_path, app_config, &token, expires_at, session_id, now, &catalog),
@@ -537,7 +539,7 @@ fn refresh_jwt_access_token(supabase_url: &str, auth_path: &Path, tokens: &mut V
 }
 
 /// Refresh hosted inference before an OMP process starts. Unsigned/unpaid is `Ok` (BYOK).
-/// Debounce-fresh cache skips JWT and mint HTTP.
+/// Unexpired cache that is not due for renewal skips JWT and mint HTTP.
 pub fn ensure_hosted_inference_for_spawn(app_config: &Path) -> Result<(), String> {
     ensure_hosted_inference_for_spawn_at(app_config, &accounts_url(), SUPABASE_URL)
 }
