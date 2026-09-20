@@ -4,6 +4,10 @@ import { type LoadingToast, Toast, toast } from "./toast";
 
 // The tone contract is behavioural, not visual: confirmations may vanish on a
 // timer, errors must not — they hold detail the user may need to read or copy.
+// Toasts portal to document.body, so queries go there — not the RTL container.
+
+const entry = () => document.querySelector(".toast") as HTMLElement;
+const entries = () => [...document.querySelectorAll(".toast")] as HTMLElement[];
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -16,8 +20,7 @@ afterEach(() => {
 
 describe("Toast tones", () => {
   it("auto-dismisses success confirmations", () => {
-    const { container } = render(<Toast />);
-    const entry = () => container.querySelector(".toast") as HTMLElement;
+    render(<Toast />);
     act(() => toast("Task created", "success"));
     expect(entry().className).toContain("on");
     act(() => vi.advanceTimersByTime(4100));
@@ -25,8 +28,7 @@ describe("Toast tones", () => {
   });
 
   it("keeps errors visible until dismissed", () => {
-    const { container } = render(<Toast />);
-    const entry = () => container.querySelector(".toast") as HTMLElement;
+    render(<Toast />);
     act(() => toast("Session not started: spawn failed", "error"));
     act(() => vi.advanceTimersByTime(60000));
     expect(entry().className).toContain("on");
@@ -36,16 +38,14 @@ describe("Toast tones", () => {
   });
 
   it("clears a short confirmation well before the standard deadline", () => {
-    const { container } = render(<Toast />);
-    const entry = () => container.querySelector(".toast") as HTMLElement;
+    render(<Toast />);
     act(() => toast("Appearance saved", "success", "short"));
     act(() => vi.advanceTimersByTime(1900));
     expect(entry().className).not.toContain("on");
   });
 
   it("defaults to the info tone for bare calls", () => {
-    const { container } = render(<Toast />);
-    const entry = () => container.querySelector(".toast") as HTMLElement;
+    render(<Toast />);
     act(() => toast("Syncing…"));
     expect(entry().className).toContain("info");
     act(() => vi.advanceTimersByTime(4100));
@@ -55,18 +55,17 @@ describe("Toast tones", () => {
 
 describe("Toast loading tone", () => {
   it("holds a loading toast until its caller resolves it", () => {
-    const { container } = render(<Toast />);
-    const entry = () => container.querySelector(".toast") as HTMLElement;
+    render(<Toast />);
     act(() => toast.loading("Creating New Task…"));
     expect(entry().className).toContain("loading");
     expect(entry().textContent).toContain("Creating New Task…");
+    expect(entry().style.opacity).toBe("1");
     act(() => vi.advanceTimersByTime(60000));
     expect(entry().className).toContain("on");
   });
 
   it("resolves the loading entry in place instead of stacking the result beside it", () => {
-    const { container } = render(<Toast />);
-    const entries = () => [...container.querySelectorAll(".toast")] as HTMLElement[];
+    render(<Toast />);
     let loading: LoadingToast;
     act(() => {
       loading = toast.loading("Creating New Task…");
@@ -80,8 +79,7 @@ describe("Toast loading tone", () => {
   });
 
   it("keeps a failed mutation's message up until it is dismissed", () => {
-    const { container } = render(<Toast />);
-    const entry = () => container.querySelector(".toast") as HTMLElement;
+    render(<Toast />);
     let loading: LoadingToast;
     act(() => {
       loading = toast.loading("Creating New Task…");
@@ -94,8 +92,7 @@ describe("Toast loading tone", () => {
   });
 
   it("still reports the result when the user dismissed the loader", () => {
-    const { container } = render(<Toast />);
-    const entries = () => [...container.querySelectorAll(".toast")] as HTMLElement[];
+    render(<Toast />);
     let loading: LoadingToast;
     act(() => {
       loading = toast.loading("Duplicating Task…");
@@ -111,8 +108,7 @@ describe("Toast loading tone", () => {
 
 describe("Toast stacking", () => {
   it("refreshes a repeated message in place instead of stacking copies", () => {
-    const { container } = render(<Toast />);
-    const entries = () => container.querySelectorAll(".toast");
+    render(<Toast />);
     act(() => toast("Appearance saved", "success"));
     act(() => vi.advanceTimersByTime(3000));
     act(() => toast("Appearance saved", "success"));
@@ -120,21 +116,20 @@ describe("Toast stacking", () => {
     expect(entries()).toHaveLength(1);
     // The repeat restarted the countdown, so the original 4s deadline passes silently.
     act(() => vi.advanceTimersByTime(1500));
-    expect((entries()[0] as HTMLElement).className).toContain("on");
+    expect(entries()[0].className).toContain("on");
     act(() => vi.advanceTimersByTime(2600));
-    expect((entries()[0] as HTMLElement).className).not.toContain("on");
+    expect(entries()[0].className).not.toContain("on");
   });
 
   it("still stacks distinct messages", () => {
-    const { container } = render(<Toast />);
+    render(<Toast />);
     act(() => toast("Appearance saved", "success"));
     act(() => toast("Settings saved", "success"));
-    expect(container.querySelectorAll(".toast")).toHaveLength(2);
+    expect(entries()).toHaveLength(2);
   });
 
   it("brings a repeated overflowed toast back into view as the newest", () => {
-    const { container } = render(<Toast />);
-    const entries = () => [...container.querySelectorAll(".toast")] as HTMLElement[];
+    render(<Toast />);
     act(() => toast("first"));
     act(() => toast("second"));
     act(() => toast("third"));
@@ -150,13 +145,13 @@ describe("Toast stacking", () => {
   });
 
   it("paints the newest toast above older ones", () => {
-    const { container } = render(<Toast />);
+    render(<Toast />);
     act(() => toast("first"));
     act(() => toast("second"));
     act(() => toast("third"));
-    const entries = [...container.querySelectorAll(".toast")] as HTMLElement[];
-    expect(entries).toHaveLength(3);
-    const z = entries.map((el) => Number(el.style.zIndex));
+    const stacked = entries();
+    expect(stacked).toHaveLength(3);
+    const z = stacked.map((el) => Number(el.style.zIndex));
     // DOM order is oldest-first; the newest (last) must have the highest z-index.
     expect(z[2]).toBeGreaterThan(z[1]);
     expect(z[1]).toBeGreaterThan(z[0]);
@@ -165,14 +160,32 @@ describe("Toast stacking", () => {
 
 describe("Toast live region", () => {
   it("announces through a live region that exists before any toast fires", () => {
-    const { container } = render(<Toast />);
+    render(<Toast />);
     const viewport = screen.getByRole("status");
     expect(viewport.className).toContain("toast-viewport");
     expect(viewport.getAttribute("aria-live")).toBe("polite");
-    expect(container.querySelectorAll(".toast")).toHaveLength(0);
+    expect(entries()).toHaveLength(0);
     act(() => toast("Task created", "success"));
     // The entry lands inside the pre-existing region and carries no competing role.
     expect(viewport.querySelector(".toast")).not.toBeNull();
     expect(viewport.querySelector(".toast")?.getAttribute("role")).toBeNull();
+  });
+});
+
+describe("Toast busy slot", () => {
+  it("renders the create loader from the shared slot without toast.loading()", () => {
+    render(<Toast busy="create" />);
+    expect(entry().className).toContain("loading");
+    expect(entry().textContent).toContain("Creating New Task…");
+  });
+
+  it("renders the duplicate loader from the shared slot", () => {
+    render(<Toast busy="duplicate" />);
+    expect(entry().textContent).toContain("Duplicating Task…");
+  });
+
+  it("renders the opening-create loader from the shared slot", () => {
+    render(<Toast busy="open-create" />);
+    expect(entry().textContent).toContain("Opening New Task…");
   });
 });

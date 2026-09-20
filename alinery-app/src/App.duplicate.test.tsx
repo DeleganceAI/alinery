@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "./appearance";
 import * as taskMutationGuard from "./taskMutationGuard";
 import { mockIpc } from "./test/mockIpc";
-import type { AppConfig, BoardTask, CreateTaskResult, Task } from "./types";
+import type { AppConfig, BoardTask, Config, CreateTaskResult, Task } from "./types";
 
 const appConfig: AppConfig = {
   active_repo: "/repo-a",
@@ -68,17 +68,14 @@ const duplicateResult = (slug = "source-2", harness = "claude"): CreateTaskResul
 });
 
 const mocks = vi.hoisted(() => {
-  // The loading handle is one object: resolving a mutation's loader in place is what
-  // the duplicate coordinator is asserting, so both resolutions are spies on it.
-  const loadingHandle = { success: vi.fn(), error: vi.fn() };
   return {
     duplicateTaskForRepo: vi.fn(),
     spawnSessionDetachedForRepo: vi.fn(),
     setActiveRepo: vi.fn(),
     readAppConfig: vi.fn(),
     toast: vi.fn(),
-    loadingHandle,
-    toastLoading: vi.fn(() => loadingHandle),
+    toastSuccess: vi.fn(),
+    toastError: vi.fn(),
     onCloseRequested: vi.fn(async () => () => {}),
   };
 });
@@ -94,17 +91,25 @@ vi.mock("./ipc", () =>
     spawnSessionDetachedForRepo: mocks.spawnSessionDetachedForRepo,
     setActiveRepo: mocks.setActiveRepo,
     getCurrentWindow: (() => ({ onCloseRequested: mocks.onCloseRequested, destroy: vi.fn() })) as never,
+    getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) as unknown as ReturnType<typeof import("./ipc").getCurrentWebview>,
+    readConfigForRepo: async () => ({ defaults: { harness: "omp", model: "", playbook: "superdevelop", draft_autosave: true } }) as Config,
+    listPlaybooksForRepo: async () => [],
+    listPlaybookStepsForRepo: async () => [],
+    listHarnessModelsForRepo: async () => [],
+    connectionStatuses: async () => [],
   }),
 );
-vi.mock("./toast", () => ({
-  Toast: () => null,
-  toast: Object.assign(mocks.toast, {
-    loading: mocks.toastLoading,
-    success: vi.fn(),
-    error: vi.fn(),
-    info: vi.fn(),
-  }),
-}));
+vi.mock("./toast", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./toast")>();
+  return {
+    ...actual,
+    toast: Object.assign(mocks.toast, {
+      success: mocks.toastSuccess,
+      error: mocks.toastError,
+      info: vi.fn(),
+    }),
+  };
+});
 vi.mock("./BackgroundFX", () => ({ BackgroundFX: () => null }));
 vi.mock("./Boot", () => ({ Boot: () => null }));
 vi.mock("./HotkeyBar", () => ({ HotkeyBar: () => null }));
@@ -153,9 +158,8 @@ beforeEach(() => {
   mocks.readAppConfig.mockReset().mockResolvedValue(appConfig);
   mocks.setActiveRepo.mockReset().mockImplementation(async (path: string) => ({ ...appConfig, active_repo: path }));
   mocks.toast.mockReset();
-  mocks.toastLoading.mockReset().mockImplementation(() => mocks.loadingHandle);
-  mocks.loadingHandle.success.mockReset();
-  mocks.loadingHandle.error.mockReset();
+  mocks.toastSuccess.mockReset();
+  mocks.toastError.mockReset();
   mocks.onCloseRequested.mockClear();
 });
 
@@ -179,10 +183,10 @@ describe("App duplicate coordinator", () => {
 
     fireEvent.click(trigger);
     fireEvent.click(trigger);
-    expect(mocks.duplicateTaskForRepo).toHaveBeenCalledTimes(1);
-    expect(mocks.duplicateTaskForRepo).toHaveBeenCalledWith("/repo-b", "source");
     // The refused attempt is not silent: it says which operation is still running.
     expect(mocks.toast).toHaveBeenCalledWith("A task is already being duplicated — wait for it to finish.", "error");
+    await waitFor(() => expect(mocks.duplicateTaskForRepo).toHaveBeenCalledTimes(1));
+    expect(mocks.duplicateTaskForRepo).toHaveBeenCalledWith("/repo-b", "source");
 
     resolveDuplicate(duplicateResult());
     await screen.findByText("task:source-2");
@@ -197,7 +201,7 @@ describe("App duplicate coordinator", () => {
     render(<App />);
     fireEvent.click(await screen.findByText("duplicate-source"));
 
-    await waitFor(() => expect(mocks.loadingHandle.error).toHaveBeenCalledWith("TASK DUPLICATION FAILED: Error: copy failed"));
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith("TASK DUPLICATION FAILED: Error: copy failed"));
     expect(screen.getByText("duplicate-source")).toBeDefined();
     expect(mocks.setActiveRepo).not.toHaveBeenCalled();
     expect(mocks.spawnSessionDetachedForRepo).not.toHaveBeenCalled();
@@ -218,7 +222,7 @@ describe("App duplicate coordinator", () => {
     await screen.findByText("task:source-2");
     expect(mocks.setActiveRepo).toHaveBeenCalledWith("/repo-b", null);
     expect(mocks.spawnSessionDetachedForRepo).toHaveBeenCalledWith("/repo-b", "source-2", "s-source-2");
-    expect(mocks.loadingHandle.success).toHaveBeenCalledWith("TASK DUPLICATED");
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("TASK DUPLICATED");
     await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("SESSION NOT STARTED: Error: binary missing"));
   });
 
@@ -231,7 +235,7 @@ describe("App duplicate coordinator", () => {
 
     await screen.findByText("task:source-2");
     expect(mocks.spawnSessionDetachedForRepo).not.toHaveBeenCalled();
-    expect(mocks.loadingHandle.success).toHaveBeenCalledWith("TASK DUPLICATED");
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("TASK DUPLICATED");
   });
 
   it("restores the source repository when the active repository changes during creation", async () => {
@@ -263,12 +267,12 @@ describe("App duplicate coordinator", () => {
     render(<App />);
     fireEvent.click(await screen.findByText("duplicate-source"));
 
-    await waitFor(() => expect(mocks.loadingHandle.error).toHaveBeenCalledWith("TASK DUPLICATED BUT NOT OPENED: /repo-b/source-2: Error: switch failed"));
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith("TASK DUPLICATED BUT NOT OPENED: /repo-b/source-2: Error: switch failed"));
     expect(screen.getByText("duplicate-source")).toBeDefined();
     expect(screen.queryByText("task:source-2")).toBeNull();
     expect(mocks.spawnSessionDetachedForRepo).not.toHaveBeenCalled();
-    expect(mocks.loadingHandle.success).not.toHaveBeenCalled();
-    expect(mocks.loadingHandle.error).not.toHaveBeenCalledWith(expect.stringContaining("TASK DUPLICATION FAILED"));
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+    expect(mocks.toastError).not.toHaveBeenCalledWith(expect.stringContaining("TASK DUPLICATION FAILED"));
   });
 
   it("keeps a loader up for the whole clone and resolves it in place", async () => {
@@ -280,16 +284,16 @@ describe("App duplicate coordinator", () => {
     );
     const { default: App } = await import("./App");
     render(<App />);
-    fireEvent.click(await screen.findByText("duplicate-source"));
+    const trigger = await screen.findByText("duplicate-source");
+    fireEvent.click(trigger);
 
-    // Chrome banner + loading toast both announce the in-flight clone.
     expect(screen.getByText("Duplicating Task…")).toBeDefined();
-    expect(mocks.toastLoading).toHaveBeenCalledWith("Duplicating Task…");
-    expect(mocks.loadingHandle.success).not.toHaveBeenCalled();
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
 
     resolveDuplicate(duplicateResult());
     await screen.findByText("task:source-2");
-    expect(mocks.loadingHandle.success).toHaveBeenCalledWith("TASK DUPLICATED");
+    expect(screen.queryByText("Duplicating Task…")).toBeNull();
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("TASK DUPLICATED");
   });
 
   it("refuses the new-task hotkey while a clone is running", async () => {
@@ -312,5 +316,17 @@ describe("App duplicate coordinator", () => {
 
     resolveDuplicate(duplicateResult());
     await screen.findByText("task:source-2");
+  });
+
+  it("shows opening toast until the create form is ready, then hides it", async () => {
+    const { default: App } = await import("./App");
+    render(<App />);
+    await screen.findByText("duplicate-source");
+
+    fireEvent.keyDown(document.body, { key: "n", metaKey: true });
+    expect(screen.getByText("Opening New Task…")).toBeDefined();
+
+    await screen.findByPlaceholderText("New task name…");
+    await waitFor(() => expect(screen.queryByText("Opening New Task…")).toBeNull());
   });
 });

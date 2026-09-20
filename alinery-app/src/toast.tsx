@@ -1,9 +1,18 @@
 import { CircleAlert, CircleCheck, Info, LoaderCircle, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 // Module-level pub/sub so any component can fire a toast without prop-drilling.
 // Stacking toasts.
+export type ToastBusy = "open-create" | "create" | "duplicate";
 export type ToastTone = "info" | "success" | "error" | "loading";
+
+export function taskBusyLabel(busy: ToastBusy): string {
+  if (busy === "duplicate") return "Duplicating Task…";
+  if (busy === "open-create") return "Opening New Task…";
+  return "Creating New Task…";
+}
+
 /** "short" is a bare acknowledgement — the user knows what they asked for and
     there is nothing to read; "long" is the default, for a message that carries
     information. */
@@ -18,7 +27,15 @@ export type LoadingToast = { success: (msg: string, length?: ToastLength) => voi
     the message text identifies the entry, which is how repeats refresh in place. */
 type ToastMessage = Omit<ToastEntry, "id"> & { id?: string };
 type Fn = (entry: ToastMessage) => void;
-const listeners = new Set<Fn>();
+// Survive Vite HMR: a new module copy would otherwise notify an empty Set while
+// the mounted <Toast> is still subscribed to the previous one — toasts fire, nothing paints.
+const listeners: Set<Fn> = (() => {
+  const g = globalThis as typeof globalThis & { __alineryToastListeners?: Set<Fn> };
+  if (!g.__alineryToastListeners) {
+    g.__alineryToastListeners = new Set();
+  }
+  return g.__alineryToastListeners;
+})();
 
 export function toast(msg: string, tone: ToastTone = "info", length: ToastLength = "long") {
   for (const l of listeners) l({ msg, tone, length });
@@ -54,7 +71,7 @@ const ICONS: Record<ToastTone, typeof Info> = { info: Info, success: CircleCheck
 // scale slider saves once per step, and that has to read as a single toast.
 const entryId = (e: Omit<ToastEntry, "id">) => `${e.tone}:${e.msg}`;
 
-export function Toast() {
+export function Toast({ busy = null }: { busy?: ToastBusy | null }) {
   const [toasts, setToasts] = useState<ToastEntry[]>([]);
   const [expanded, setExpanded] = useState(false);
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
@@ -116,11 +133,15 @@ export function Toast() {
   };
 
   const VISIBLE_COUNT = 3;
+  const busyToast: ToastEntry | null = busy ? { id: "task-mutation", msg: taskBusyLabel(busy), tone: "loading" } : null;
+  const shown = busyToast ? [...toasts.filter((t) => t.id !== "task-mutation"), busyToast] : toasts;
 
-  return (
+  const viewport = (
     // The live region must exist before content arrives — AT reliably announces
     // insertions into a pre-existing region, not regions created with their content
     // (same pattern as the palette count region in CommandPalette).
+    // Layout is inline: theme.css has lost these toasts before (0-height clip,
+    // opacity:0 via dropped CSS variables). document.body portal escapes app-shell stacking.
     <div
       className="toast-viewport"
       role="status"
@@ -132,59 +153,50 @@ export function Toast() {
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setExpanded(false);
       }}
+      style={{
+        position: "fixed",
+        right: 16,
+        bottom: "calc(var(--h-foot) + 56px)",
+        zIndex: 2147483646,
+        display: "flex",
+        flexDirection: "column-reverse",
+        alignItems: "flex-end",
+        gap: 8,
+        maxWidth: "min(560px, calc(100vw - 32px))",
+        pointerEvents: "none",
+      }}
     >
-      {toasts.map((entry, index) => {
+      {shown.map((entry, index) => {
         const Icon = ICONS[entry.tone];
-        // Calculate offset from the *end* of the array (most recent is at the end)
-        const reverseIndex = toasts.length - 1 - index;
-        // Overflow toasts past the visible window: fully hidden (inert removes
-        // them from tab order and hit testing), not just faded to opacity 0.
+        const reverseIndex = shown.length - 1 - index;
         const hiddenOverflow = !expanded && reverseIndex >= VISIBLE_COUNT;
-        const isRemoving = entry.removing || hiddenOverflow;
-
-        let yOffset = 0;
-        let scale = 1;
-        let opacity = 1;
-
-        if (isRemoving) {
-          yOffset = 20;
-          scale = 0.9;
-          opacity = 0;
-        } else if (expanded) {
-          // When expanded, list them vertically
-          yOffset = -(reverseIndex * 56); // approximate height + gap
-          scale = 1;
-          opacity = 1;
-        } else {
-          // Sonner stacking effect
-          yOffset = -(reverseIndex * 14);
-          scale = 1 - reverseIndex * 0.05;
-          opacity = 1 - reverseIndex * 0.15;
-        }
+        const isRemoving = Boolean(entry.removing);
 
         return (
           <div
             key={entry.id}
-            className={`toast ${entry.tone}${entry.removing ? "" : " on"}`}
+            className={`toast ${entry.tone}${isRemoving ? "" : " on"}`}
             inert={hiddenOverflow}
-            style={
-              {
-                "--y": `${yOffset}px`,
-                "--scale": scale,
-                "--opacity": opacity,
-                // Entries are appended, so a higher index is newer — it must paint on top.
-                zIndex: index + 1,
-              } as React.CSSProperties
-            }
+            style={{
+              position: "relative",
+              pointerEvents: hiddenOverflow ? "none" : "auto",
+              display: hiddenOverflow ? "none" : "inline-flex",
+              opacity: isRemoving ? 0 : 1,
+              zIndex: index + 1,
+            }}
           >
             <Icon size={16} strokeWidth={2} aria-hidden="true" />
             <span className="toast-msg">{entry.msg}</span>
-            <button type="button" className="toast-dismiss" aria-label="Dismiss" title="Dismiss" onClick={(e) => dismiss(entry.id, e)}>
-              <X size={14} strokeWidth={1.5} aria-hidden="true" />
-            </button>
+            {entry.id !== "task-mutation" && (
+              <button type="button" className="toast-dismiss" aria-label="Dismiss" title="Dismiss" onClick={(e) => dismiss(entry.id, e)}>
+                <X size={14} strokeWidth={1.5} aria-hidden="true" />
+              </button>
+            )}
           </div>
         );
       })}
     </div>
   );
+
+  return createPortal(viewport, document.body);
 }

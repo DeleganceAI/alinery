@@ -1056,17 +1056,6 @@ main {
   color: var(--text-strong);
   background: var(--danger-subtle);
 }
-.task-mutation-banner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--accent);
-  color: var(--text);
-  background: var(--accent-subtle);
-  font-size: calc(13px * var(--ui-scale));
-}
 .artifact-review-pending {
   display: flex;
   align-items: center;
@@ -6221,35 +6210,13 @@ dialog.modal::backdrop {
 
 /* toast — stacking notifications */
 .toast-viewport {
-  position: fixed;
-  right: 16px;
-  bottom: calc(var(--h-foot) + 16px);
-  /* Explicit width: the absolutely-positioned toasts size against this
-     containing block, so it must never collapse to zero. */
-  width: min(560px, calc(100vw - 32px));
-  z-index: 90;
+  /* Position, flex, and z-index are inline on the node — WKWebView has
+     clipped a CSS-only viewport to 0px before. */
   pointer-events: none;
 }
 
 .toast {
-  position: absolute;
-  right: 0;
-  bottom: 0;
   width: fit-content;
-  /* stacking offsets injected via inline style custom properties */
-  transform: translateY(var(--y, 0)) scale(var(--scale, 1));
-  opacity: var(--opacity, 0);
-  transition:
-    transform var(--dur-overlay) ease-out,
-    opacity var(--dur-overlay) ease-out,
-    visibility var(--dur-overlay);
-  /* Cards are fit-content, so widths differ down the stack; scaling from the
-     anchored corner keeps their right edges flush instead of ragged. */
-  transform-origin: bottom right;
-  pointer-events: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
   max-width: 100%;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -6258,6 +6225,8 @@ dialog.modal::backdrop {
   padding: 8px 8px 8px 14px;
   font-size: calc(13px * var(--ui-scale));
   box-shadow: var(--shadow-menu);
+  align-items: center;
+  gap: 8px;
 }
 /* Overflow toasts are inert (removed from tab order and hit testing); the
    visibility transition lets the opacity fade finish before they vanish. */

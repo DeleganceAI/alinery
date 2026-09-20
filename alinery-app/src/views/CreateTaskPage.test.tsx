@@ -58,10 +58,16 @@ import * as ipc from "../ipc";
 // The loading toast is how the form proves work started, and the guard refuses a
 // concurrent mutation through this same module, so both are asserted from these spies.
 const toastSpies = vi.hoisted(() => {
-  const handle = { success: vi.fn(), error: vi.fn() };
-  return { handle, loading: vi.fn(() => handle), toast: vi.fn() };
+  return { toast: vi.fn(), loading: vi.fn(), success: vi.fn(), error: vi.fn() };
 });
-vi.mock("../toast", () => ({ Toast: () => null, toast: Object.assign(toastSpies.toast, { loading: toastSpies.loading }) }));
+vi.mock("../toast", () => ({
+  Toast: () => null,
+  toast: Object.assign(toastSpies.toast, {
+    loading: toastSpies.loading,
+    success: toastSpies.success,
+    error: toastSpies.error,
+  }),
+}));
 
 beforeEach(() => {
   vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => {} });
@@ -212,6 +218,21 @@ describe("OMP model default", () => {
 });
 
 describe("task creation feedback", () => {
+  it("signals opened only after repository settings settle", async () => {
+    let finishConfig!: (config: Config) => void;
+    readConfigForRepo.mockReturnValue(
+      new Promise<Config>((resolve) => {
+        finishConfig = resolve;
+      }),
+    );
+    const onOpened = vi.fn();
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} onOpened={onOpened} />);
+    expect(onOpened).not.toHaveBeenCalled();
+
+    finishConfig({ defaults: { harness: "claude", model: "", playbook: "superdevelop", draft_autosave: true } } as Config);
+    await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(1));
+  });
+
   const startCreate = async (onCreated: (result: TargetedCreateResult) => void) => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={onCreated} />);
     fireEvent.change(await screen.findByPlaceholderText("New task name…"), { target: { value: "Slow task" } });
@@ -231,18 +252,21 @@ describe("task creation feedback", () => {
       }),
     );
     const onCreated = vi.fn();
-    await startCreate(onCreated);
-
+    const onBusy = vi.fn();
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={onCreated} onBusy={onBusy} />);
+    fireEvent.change(await screen.findByPlaceholderText("New task name…"), { target: { value: "Slow task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    expect(onBusy).toHaveBeenCalledWith("create");
     expect(screen.getByRole("button", { name: "Creating…" })).toBeDefined();
     expect(screen.getByText(/Creating New Task… You can keep using Alinery/)).toBeDefined();
-    await waitFor(() => expect(toastSpies.loading).toHaveBeenCalledWith("Creating New Task…"));
-    expect(toastSpies.handle.success).not.toHaveBeenCalled();
+    expect(toastSpies.success).not.toHaveBeenCalled();
     expect(onCreated).not.toHaveBeenCalled();
 
     finishCreate(result);
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith({ repoPath: "/repo", task: result.task, session: result.session }));
-    expect(toastSpies.handle.success).toHaveBeenCalledWith("Task created");
-    expect(toastSpies.handle.error).not.toHaveBeenCalled();
+    expect(onBusy).toHaveBeenCalledWith(null);
+    expect(toastSpies.success).toHaveBeenCalledWith("Task created");
+    expect(toastSpies.error).not.toHaveBeenCalled();
   });
 
   it("resolves the loader to an error and keeps the typed name when creation fails", async () => {
@@ -250,8 +274,8 @@ describe("task creation feedback", () => {
     const onCreated = vi.fn();
     await startCreate(onCreated);
 
-    await waitFor(() => expect(toastSpies.handle.error).toHaveBeenCalledWith("Couldn't create the task: Error: worktree add failed"));
-    expect(toastSpies.handle.success).not.toHaveBeenCalled();
+    await waitFor(() => expect(toastSpies.error).toHaveBeenCalledWith("Couldn't create the task: Error: worktree add failed"));
+    expect(toastSpies.success).not.toHaveBeenCalled();
     expect(onCreated).not.toHaveBeenCalled();
     expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Slow task");
   });

@@ -960,7 +960,7 @@ export function TaskDetail({
           </div>
           <div className="crow task-actions-row">
             <button type="button" className="btn ghost small" disabled={!task || duplicating} title="Duplicate task (⌘D)" onClick={() => task && onDuplicate(task)}>
-              Duplicate Task · ⌘D
+              {duplicating ? "Duplicating…" : "Duplicate Task · ⌘D"}
             </button>
             {task?.archived ? (
               task.parent_task ? (

@@ -10,21 +10,31 @@ export type TaskMutationKind = "create" | "duplicate";
 // Module-level, like toast and confirm: the guard must outlive the component that started
 // the mutation. A `useRef` scoped to the create form is exactly the gap this replaces —
 // navigating away mid-flight used to hand the slot back while the backend was still busy.
-let current: TaskMutationKind | null = null;
-const listeners = new Set<() => void>();
+//
+// Held on globalThis so Vite HMR does not split the slot: a new module copy would
+// otherwise leave App subscribed to an empty listener set while CreateTaskPage claims
+// a different `current`.
+type GuardState = { current: TaskMutationKind | null; listeners: Set<() => void> };
+const guard: GuardState = (() => {
+  const g = globalThis as typeof globalThis & { __alineryTaskMutation?: GuardState };
+  if (!g.__alineryTaskMutation) {
+    g.__alineryTaskMutation = { current: null, listeners: new Set() };
+  }
+  return g.__alineryTaskMutation;
+})();
 
 /** The task mutation running right now, or null. */
 export function currentKind(): TaskMutationKind | null {
-  return current;
+  return guard.current;
 }
 
 /** Claims the one slot, or refuses with the shared error toast. */
 export function claim(kind: TaskMutationKind): boolean {
-  if (current) {
-    refuse(current);
+  if (guard.current) {
+    refuse(guard.current);
     return false;
   }
-  current = kind;
+  guard.current = kind;
   notify();
   return true;
 }
@@ -33,29 +43,29 @@ export function claim(kind: TaskMutationKind): boolean {
     create form. Refuses in the same words as `claim`, so a second ⌘N reads like a second
     click on a board's Duplicate. */
 export function refuseIfBusy(): boolean {
-  if (!current) return false;
-  refuse(current);
+  if (!guard.current) return false;
+  refuse(guard.current);
   return true;
 }
 
 /** Frees the slot. Callers hold it from the moment the backend call starts until that
     promise settles — not until the user navigates. */
 export function release(): void {
-  current = null;
+  guard.current = null;
   notify();
 }
 
 /** Observes the slot. Signature matches `useSyncExternalStore` — read `currentKind()`
     in the snapshot, don't take the kind from this callback. */
 export function subscribe(fn: () => void): () => void {
-  listeners.add(fn);
+  guard.listeners.add(fn);
   return () => {
-    listeners.delete(fn);
+    guard.listeners.delete(fn);
   };
 }
 
 function notify() {
-  for (const l of listeners) l();
+  for (const l of guard.listeners) l();
 }
 
 // One message, one home: every refusal names the operation actually holding the slot.

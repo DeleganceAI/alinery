@@ -1075,6 +1075,7 @@ describe("Task Detail duplicate action", () => {
       />,
     );
     await waitFor(() => expect((screen.getByTitle("Duplicate task (⌘D)") as HTMLButtonElement).disabled).toBe(true));
+    expect(screen.getByTitle("Duplicate task (⌘D)").textContent).toContain("Duplicating…");
   });
 });
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
+import { afterPaint } from "../afterPaint";
 import * as ipc from "../ipc";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { Checkbox, InlineStatus, ModelInput, ompDefaultModel } from "../shared";
@@ -21,12 +22,16 @@ const slugifyTaskName = (value: string) => {
 export function CreateTaskPage({
   onCancel,
   onCreated,
+  onBusy = () => {},
+  onOpened = () => {},
   initialDraft,
   activeRepo,
   knownRepos,
 }: {
   onCancel: () => void;
-  onCreated: (result: TargetedCreateResult) => void;
+  onCreated: (result: TargetedCreateResult) => void | Promise<void>;
+  onBusy?: (kind: "create" | "duplicate" | null) => void;
+  onOpened?: () => void;
   initialDraft?: BoardTask;
   activeRepo: string;
   knownRepos: string[];
@@ -74,6 +79,8 @@ export function CreateTaskPage({
   const initialTargetLoaded = useRef(false);
   const repoRef = useRef(repoPath);
   const ticketLoaded = useRef(false);
+  const onOpenedRef = useRef(onOpened);
+  onOpenedRef.current = onOpened;
   // dirty only after a real user edit (or reopen of an existing draft).
   const dirtyRef = useRef(!!initialDraft);
   const setCurrentDraftSlug = (slug: string) => {
@@ -147,6 +154,9 @@ export function CreateTaskPage({
       })
       .catch((e) => {
         if (alive && request === targetRequest.current) setErr({ msg: "Couldn't load repository settings.", detail: String(e) });
+      })
+      .finally(() => {
+        if (alive && request === targetRequest.current) onOpenedRef.current();
       });
     return () => {
       alive = false;
@@ -263,14 +273,10 @@ export function CreateTaskPage({
     // loud rather than queued behind a worktree checkout of unknown length.
     if (!taskMutationGuard.claim("create")) return;
     dirtyRef.current = false;
-    setErr(null);
     const target = repoPath;
-    // Commit the loader before any IPC is scheduled. A pending `git worktree add`
-    // can otherwise hold the pre-click frame for the whole checkout, so the toast
-    // and "Creating…" never appear until the task is already done.
-    let loading!: ReturnType<typeof toast.loading>;
     flushSync(() => {
-      loading = toast.loading("Creating New Task…");
+      onBusy("create");
+      setErr(null);
     });
     const pendingDraftSave = draftSaveInFlightRef.current;
     const createAfterDraftSettles = () =>
@@ -292,11 +298,12 @@ export function CreateTaskPage({
         worktreeName: worktreeName.trim(),
         taskSlug,
       });
-    (pendingDraftSave ?? Promise.resolve())
+    afterPaint()
+      .then(() => pendingDraftSave ?? Promise.resolve())
       .then(createAfterDraftSettles)
-      .then(({ task, session, attachment_errors }) => {
+      .then(async ({ task, session, attachment_errors }) => {
         // The task is on disk now, whether or not the form navigates away next.
-        loading.success("Task created");
+        toast.success("Task created");
         const origins = [...draftOrigins, { repoPath: target, slug: draftSlugRef.current || task.slug }, { repoPath: target, slug: task.slug }].filter(
           (origin, index, all) => all.findIndex((item) => item.repoPath === origin.repoPath && item.slug === origin.slug) === index,
         );
@@ -314,14 +321,17 @@ export function CreateTaskPage({
           setCreated({ repoPath: target, task, session });
           return;
         }
-        onCreated({ repoPath: target, task, session });
+        await onCreated({ repoPath: target, task, session });
       })
       .catch((e) => {
         dirtyRef.current = true;
-        loading.error(`Couldn't create the task: ${e}`);
+        toast.error(`Couldn't create the task: ${e}`);
         if (repoRef.current === target) setErr({ msg: "Couldn't create the task.", detail: String(e) });
       })
-      .finally(taskMutationGuard.release);
+      .finally(() => {
+        taskMutationGuard.release();
+        onBusy(null);
+      });
   };
 
   const addAttachmentEntries = (raw: string) => {
