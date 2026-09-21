@@ -2318,6 +2318,18 @@ textarea.field-input {
   background: var(--danger-subtle);
   color: var(--danger);
 }
+.connections-xai {
+  border-top: 1px solid var(--border);
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+}
+.connections-xai h3 {
+  margin: 0;
+  font-size: calc(16px * var(--ui-scale));
+  font-weight: 600;
+  color: var(--text-strong);
+}
 .connections-note {
   border-top: 1px solid var(--border);
   margin: 0;
@@ -2861,6 +2873,45 @@ footer {
   gap: 4px;
   color: var(--warning);
 }
+/* Orbitron's mode and zoom tier, folded into the status bar. Icon then word, the same shape
+   as every other footer segment. */
+.fstat .fcanvas {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.fstat .fcanvas svg {
+  color: var(--text-faint);
+}
+/* The POC's zoom-detail meter: three rising bars, lit up to the current tier, so the zoom
+   level is legible at a glance instead of only as a word. */
+.tierbar {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 10px;
+}
+.tierbar i {
+  width: 3px;
+  border-radius: 1px;
+  background: var(--text-faint);
+  opacity: 0.3;
+  transition: opacity var(--dur-fast) ease, background var(--dur-fast) ease;
+}
+.tierbar i:nth-child(1) {
+  height: 4px;
+}
+.tierbar i:nth-child(2) {
+  height: 7px;
+}
+.tierbar i:nth-child(3) {
+  height: 10px;
+}
+.tierbar i.on {
+  background: var(--text-strong);
+  opacity: 1;
+}
+
 .keys {
   display: flex;
   gap: 12px;
@@ -6301,6 +6352,450 @@ dialog.modal::backdrop {
   font-size: calc(13px * var(--ui-scale));
 }
 
+
+/* Fills the view outright rather than sizing to content: every child here is absolutely
+   positioned, so an in-flow box would collapse to zero height — taking the stage's hit area
+   with it and throwing `bottom`-anchored chrome above the top edge. */
+.orbitron {
+  position: absolute;
+  inset: 0;
+  background: var(--canvas);
+  /* Width of the docked agent pane, 0 when it is closed. Every right-anchored piece of
+     chrome offsets by it, so the pane never covers the tools (CanvasView sets it). */
+  --agent-w: 0px;
+}
+.orbitron-stage {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* The board owns the pointer: a pan must not select text or trigger browser gestures. */
+  touch-action: none;
+  user-select: none;
+  outline: none;
+}
+.orbitron-status {
+  position: absolute;
+  top: 52px;
+  left: 12px;
+  right: calc(var(--agent-w) + 12px);
+  z-index: 2;
+  max-width: 620px;
+}
+.orbitron-chrome {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.orbitron-exit {
+  height: var(--control-h);
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: calc(13px * var(--ui-scale));
+  cursor: pointer;
+  transition: border-color var(--dur-fast) ease, color var(--dur-fast) ease, background var(--dur-fast) ease;
+}
+.orbitron-exit:hover {
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+}
+/* The view's name, so it reads as a title rather than as one more status word. The mode and
+   zoom tier that used to sit beside it are in the footer now. */
+.orbitron-title {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: calc(17px * var(--ui-scale));
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+/* Icon stack, not a wide text toolbar: the board is the content and the chrome stays out
+   of it. Every button is a real <button> with a hover/focus tooltip naming the action. */
+.orbitron-toolbar {
+  position: absolute;
+  right: calc(var(--agent-w) + 12px);
+  bottom: 12px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.orbitron-tool {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h);
+  height: var(--control-h);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) ease, color var(--dur-fast) ease, background var(--dur-fast) ease;
+}
+.orbitron-tool:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+}
+.orbitron-tool.on {
+  border-color: var(--accent);
+  color: var(--text-strong);
+}
+.orbitron-tool:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.orbitron-tooltip {
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-menu);
+  color: var(--text-strong);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.25;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) ease;
+}
+.orbitron-tool:hover .orbitron-tooltip,
+.orbitron-tool:focus-visible .orbitron-tooltip {
+  opacity: 1;
+}
+.orbitron-tooltip b {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--ui-scale));
+  font-weight: 500;
+}
+/* Add-existing picker: an in-app panel, not a native menu — the pool can be long, rows carry
+   draft/archived state, and the selection is multiple. */
+.orbitron-panel {
+  position: absolute;
+  right: calc(var(--agent-w) + 60px);
+  bottom: 12px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+  max-height: min(60vh, 480px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-menu);
+  overflow: hidden;
+}
+.orbitron-panel-hd {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.orbitron-panel-title {
+  color: var(--text-strong);
+  font-size: calc(13px * var(--ui-scale));
+  font-weight: 600;
+}
+.orbitron-panel-count {
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
+}
+.orbitron-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+}
+.orbitron-panel-foot {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+.orbitron-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: calc(13px * var(--ui-scale));
+  text-align: left;
+  cursor: pointer;
+}
+.orbitron-pick:hover {
+  background: var(--surface-subtle);
+}
+.orbitron-pick.on {
+  border-color: var(--accent);
+  color: var(--text-strong);
+}
+.orbitron-pick-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.orbitron-relpick {
+  width: 240px;
+}
+/* An anchored panel sits beside the card it names, so the paint pass owns its position and the
+   stylesheet must not also pin it to a corner — the two would fight and it would land twice. */
+.orbitron-anchored {
+  right: auto;
+  bottom: auto;
+  left: 0;
+  top: 0;
+  max-height: none;
+}
+/* Inline rename: a real <input> sitting on the painted label, placed and scaled from the
+   camera by the view. Only the look lives here — every geometry property is set inline,
+   because the label's position is world space and CSS knows nothing about the camera. */
+.orbitron-rename {
+  position: absolute;
+  z-index: 3;
+  box-sizing: border-box;
+  padding: 0 3px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-strong);
+  font-family: var(--font-ui);
+  font-weight: 600;
+  line-height: 1;
+}
+.orbitron-rename:focus {
+  outline: none;
+}
+/* Connect mode is modeful, so it says so: the board looks the same but right-click means
+   something different until the user finishes or cancels. */
+.orbitron-connect {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  z-index: 3;
+  padding: 6px 10px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.orbitron-connect b {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+/* Agent pane. Docked, not floating, so it reads as a panel the board talks to rather than a
+   transient popover. Its width comes from the same custom property the board's chrome offsets
+   by, so the two can never disagree about where the pane's edge is. */
+.orbitron-agent {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  width: var(--agent-w);
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+}
+/* While a drag is below the closing threshold the pane says so by fading, so releasing is a
+   confirmation rather than a surprise. Opacity only — the width is already moving. */
+.orbitron-agent.is-closing {
+  opacity: 0.5;
+}
+/* The drag target straddles the border it moves: 3px of pane and 3px of board, which is the
+   smallest thing a pointer reliably lands on without becoming a visible bar. */
+.orbitron-agent-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  z-index: 1;
+  cursor: col-resize;
+}
+.orbitron-agent-grip:hover {
+  background: var(--border-strong);
+}
+.orbitron-agent .x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.orbitron-agent .x:hover {
+  border-color: var(--border);
+  color: var(--text-strong);
+}
+.orbitron-agent-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+.orbitron-agent-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.orbitron-agent-modes {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+/* One turn. The gap between turns is what separates them, so neither role gets a border. */
+.orbitron-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.orbitron-turn-who {
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 500;
+}
+.orbitron-turn-text {
+  color: var(--text);
+  font-size: calc(14px * var(--ui-scale));
+  line-height: 1.55;
+  /* A dragged-wide pane must not turn a reply into one 160-character line: reading measure
+     is capped and the rest of the width stays whitespace. `ch` is the width of a zero, so
+     64ch lands near the 75 characters DESIGN.md §Typography asks for. */
+  max-width: 64ch;
+  text-wrap: pretty;
+  /* Both voices are reproduced exactly, newlines included (DESIGN.md §Content voice) — the
+     agent writes short paragraphs and lists, and collapsing them would run them together. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* The user's turn is an inset block and the agent's is plain prose on the panel. That
+   asymmetry is the whole treatment: mirrored bubbles would add a container per line and say
+   nothing the attribution does not (DESIGN.md — this app is not a chat application). */
+.orbitron-turn.user .orbitron-turn-text {
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--surface-subtle);
+}
+.orbitron-agent-activity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.orbitron-agent-notice {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: calc(12px * var(--ui-scale));
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--border);
+}
+.orbitron-agent-transcript {
+  display: flex;
+  flex-direction: column;
+  /* One step above the 8px inside a turn, so a turn reads as one block and the transcript as
+     a sequence of them (DESIGN.md §Spacing). */
+  gap: 16px;
+}
+/* The decision the agent is blocked on. A card here is earned: it carries a state, a
+   sentence naming the exact change, and two answers (DESIGN.md AI patterns → Confirmation). */
+.orbitron-agent-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* Same column as the turns it interrupts, so a wide pane does not stretch the decision
+     across the whole panel while the sentences beside it stay narrow. */
+  max-width: 64ch;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+.orbitron-agent-wait {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 2px 8px;
+  border: 1px solid var(--warning);
+  border-radius: 999px;
+  background: var(--warning-subtle);
+  color: var(--text-strong);
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 500;
+}
+.orbitron-agent-wait svg {
+  width: calc(14px * var(--ui-scale));
+  height: calc(14px * var(--ui-scale));
+  color: var(--warning);
+}
+.orbitron-agent-ask {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: calc(13px * var(--ui-scale));
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.orbitron-agent-decide {
+  display: flex;
+  gap: 8px;
+}
+.orbitron-agent-composer {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+.orbitron-agent-composer textarea {
+  flex: 1 1 auto;
+  min-height: 48px;
+}
+.orbitron-panel-title svg {
+  vertical-align: -2px;
+  margin-right: 4px;
+}
 
 /* scrollbars */
 ::-webkit-scrollbar {

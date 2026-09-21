@@ -32,7 +32,20 @@ pub const BACKUP_META_NAME: &str = "backup-meta.json";
 /// lock files, and MCP status sidecars — all runtime-only and meaningless after a restore.
 /// `sessions/` is the root (taskless) session store and IS durable data, so it is included;
 /// backing it up but not clearing it would leave stale sessions pointing at replaced tasks.
-pub const CURATED_ALINERY_PATHS: &[&str] = &["tasks", "sessions", "config.toml", "harnesses.toml", "playbooks.toml", "playbooks"];
+/// `canvas.json` is the Orbitron View spatial sidecar — durable, hand-authored layout that a
+/// restore would otherwise silently drop.
+/// `orbitron-agent/` is the per-repo manager session dir (pointer + jsonl). The isolated
+/// profile home is installation-global and is not backed up.
+pub const CURATED_ALINERY_PATHS: &[&str] = &[
+    "tasks",
+    "sessions",
+    "config.toml",
+    "harnesses.toml",
+    "playbooks.toml",
+    "playbooks",
+    "canvas.json",
+    "orbitron-agent",
+];
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

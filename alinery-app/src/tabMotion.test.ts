@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyTabPill, isPrimaryTab, layoutTabPill, primaryTabOf, viewFadeClass } from "./tabMotion";
+import { applyTabPill, gridViewIdOf, isPrimaryTab, layoutTabPill, primaryTabOf, viewFadeClass } from "./tabMotion";
 import type { View } from "./types";
 
 describe("layoutTabPill", () => {
@@ -102,5 +102,16 @@ describe("primaryTabOf", () => {
     };
     expect(primaryTabOf(direct)).toBe("notifications");
     expect(primaryTabOf(nested)).toBe("notifications");
+  });
+
+  // Orbitron carries no `from`: the chord opens it from anywhere and it owns no tab. Walking
+  // off the end of the chain threw inside App's render, so the whole window went blank the
+  // moment the view opened — a crash, not a layout bug. Grid is the product default here.
+  it("parks on the default tab for a view that nests back to nothing", () => {
+    expect(primaryTabOf({ kind: "canvas" })).toBe("grid");
+  });
+
+  it("does not throw when gridViewIdOf walks a view with no from", () => {
+    expect(gridViewIdOf({ kind: "canvas" })).toBeUndefined();
   });
 });

@@ -37,6 +37,9 @@ const handlers = (overrides: Partial<Handlers> = {}): Handlers => ({
   moveCol: vi.fn(),
   toggleTerminalDrawer: vi.fn(),
   killTerminalDrawer: vi.fn(),
+  toggleCanvas: vi.fn(),
+  canvasEscape: undefined,
+  canvasKey: undefined,
   ...overrides,
 });
 
@@ -142,5 +145,77 @@ describe("useHotkeys", () => {
     fireEvent.keyDown(document.body, { key: "6", metaKey: true });
 
     for (const callback of commandCallbacks(active)) expect(callback).not.toHaveBeenCalled();
+  });
+
+  it("toggles Orbitron View with Command-Shift-O and does not go back", () => {
+    const active = handlers();
+    render(<Probe handlers={active} />);
+
+    fireEvent.keyDown(document.body, { key: "o", metaKey: true, shiftKey: true });
+
+    expect(active.toggleCanvas).toHaveBeenCalledOnce();
+    expect(active.back).not.toHaveBeenCalled();
+    expect(active.toggleGlow).not.toHaveBeenCalled();
+  });
+
+  it("does not bind Command-Shift-C to toggleCanvas", () => {
+    const active = handlers();
+    render(<Probe handlers={active} />);
+    fireEvent.keyDown(document.body, { key: "c", metaKey: true, shiftKey: true });
+
+    expect(active.toggleCanvas).not.toHaveBeenCalled();
+  });
+
+  it("routes Escape to canvasEscape instead of back when provided", () => {
+    const canvasEscape = vi.fn();
+    const active = handlers({ canvasEscape });
+    render(<Probe handlers={active} />);
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+
+    expect(canvasEscape).toHaveBeenCalledOnce();
+    expect(active.back).not.toHaveBeenCalled();
+  });
+
+  it("does not call back when canvasEscape is a no-op", () => {
+    const active = handlers({ canvasEscape: () => {} });
+    render(<Probe handlers={active} />);
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(active.back).not.toHaveBeenCalled();
+  });
+
+  it("still calls back on Escape when canvasEscape is absent", () => {
+    const active = handlers();
+    render(<Probe handlers={active} />);
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+
+    expect(active.back).toHaveBeenCalledOnce();
+  });
+
+  // `canvasKey`'s return value is the whole contract: true = consumed. Both branches are
+  // asserted against a live nav key on a board, so neither assertion can pass vacuously.
+  it("lets canvasKey consume a bare nav key before the board sees it", () => {
+    const canvasKey = vi.fn().mockReturnValue(true);
+    const active = handlers({ board: "kanban", canvasKey });
+    render(<Probe handlers={active} />);
+
+    const notPrevented = fireEvent.keyDown(document.body, { key: "j" });
+
+    expect(canvasKey).toHaveBeenCalledOnce();
+    expect(active.moveRow).not.toHaveBeenCalled();
+    expect(notPrevented).toBe(false);
+  });
+
+  it("falls through to the board when canvasKey declines the key", () => {
+    const canvasKey = vi.fn().mockReturnValue(false);
+    const active = handlers({ board: "kanban", canvasKey });
+    render(<Probe handlers={active} />);
+
+    fireEvent.keyDown(document.body, { key: "j" });
+
+    expect(canvasKey).toHaveBeenCalledOnce();
+    expect(active.moveRow).toHaveBeenCalledWith(1);
   });
 });

@@ -65,6 +65,39 @@ describe("HotkeyBar runtime status", () => {
     expect(html).not.toContain('class="keys"');
     expect(html).not.toContain("Search");
   });
+
+  it("shows Orbitron cancel hints, not esc Back", () => {
+    const html = renderToStaticMarkup(<HotkeyBar view="canvas" daemon={daemon} mcp={mcp} />);
+    expect(html).toContain("⌘⇧O");
+    expect(html).toContain("Exit");
+    expect(html).toContain("Create");
+    expect(html).toContain("Archive");
+    expect(html).toContain("Tools");
+    expect(html).toContain("Fit");
+    expect(html).toContain("Cancel");
+    expect(html).not.toContain("</b>Back");
+  });
+
+  // The mode and zoom tier are the canvas's own status, but they render here: the board keeps
+  // only its title. If this segment stops appearing, zooming has no visible indicator at all.
+  it("shows the canvas mode and a zoom meter lit to the tier", () => {
+    const html = renderToStaticMarkup(<HotkeyBar view="canvas" daemon={daemon} mcp={mcp} canvas={{ tool: "edit", tier: 1 }} />);
+    expect(html).toContain("Edit concepts");
+    expect(html).toContain("Tasks");
+    // Two of three bars lit at the middle tier.
+    expect(html.match(/class="on"/g)).toHaveLength(2);
+  });
+
+  it("lights every bar at the deepest tier and none of them off the canvas", () => {
+    const deep = renderToStaticMarkup(<HotkeyBar view="canvas" daemon={daemon} mcp={mcp} canvas={{ tool: "pan", tier: 2 }} />);
+    expect(deep).toContain("Viewing");
+    expect(deep).toContain("Task detail");
+    expect(deep.match(/class="on"/g)).toHaveLength(3);
+
+    const kanban = renderToStaticMarkup(<HotkeyBar view="kanban" daemon={daemon} mcp={mcp} />);
+    expect(kanban).not.toContain("tierbar");
+    expect(kanban).not.toContain("Viewing");
+  });
 });
 
 describe("HotkeyBar named Grid hints", () => {

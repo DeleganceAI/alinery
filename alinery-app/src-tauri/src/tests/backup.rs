@@ -35,6 +35,10 @@ fn fixture_repo(name: &str) -> (PathBuf, PathBuf) {
     plant(alinery.join("harnesses.toml"), b"[[harness]]\n");
     plant(alinery.join("playbooks.toml"), b"[[playbook]]\n");
     plant(alinery.join("playbooks/custom.md"), b"custom\n");
+    plant(
+        alinery.join("canvas.json"),
+        b"{\"version\":1,\"concepts\":[],\"placements\":{},\"relations\":[],\"view\":{\"camX\":0,\"camY\":0,\"scale\":1,\"autoArrange\":false}}\n",
+    );
     plant(alinery.join("worktrees/alpha/README.md"), b"uncommitted work\n");
     plant(alinery.join("alineryd.sock"), b"");
     plant(alinery.join(".alineryd.lock"), b"");
@@ -194,5 +198,55 @@ fn restore_round_trips_curated_data_and_keeps_worktrees() {
     assert!(alinery_dir(&repo).join("sessions/root1.meta.json").is_file());
     assert!(alinery_dir(&repo).join("worktrees/alpha/README.md").is_file());
     assert!(alinery_dir(&repo).join("alineryd.sock").exists());
+    cleanup(&repo);
+}
+
+#[test]
+fn curated_paths_include_canvas_json() {
+    assert!(
+        CURATED_ALINERY_PATHS.contains(&"canvas.json"),
+        "canvas.json must be in CURATED_ALINERY_PATHS so restore cannot drop the sidecar"
+    );
+}
+
+#[test]
+fn restore_round_trips_canvas_json() {
+    let (repo, dest) = fixture_repo("restore-canvas-json");
+    let path = alinery_dir(&repo).join("canvas.json");
+    let original = fs::read(&path).unwrap();
+    backup_now_with(&repo, &ready(&dest)).unwrap();
+    let zip = only_zip(&dest);
+    fs::write(&path, b"clobbered").unwrap();
+
+    restore_backup_into(&repo, &zip).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), original, "restore must put canvas.json bytes back");
+    cleanup(&repo);
+}
+
+#[test]
+fn curated_paths_include_orbitron_agent() {
+    assert!(
+        CURATED_ALINERY_PATHS.contains(&"orbitron-agent"),
+        "orbitron-agent must be in CURATED_ALINERY_PATHS so restore cannot drop the manager session dir"
+    );
+}
+
+#[test]
+fn restore_round_trips_orbitron_agent() {
+    let (repo, dest) = fixture_repo("restore-orbitron-agent");
+    let dir = alinery_dir(&repo).join("orbitron-agent");
+    plant(dir.join("current.json"), br#"{"sessionFile":"sess.jsonl"}"#);
+    plant(dir.join("sess.jsonl"), b"dummy\n");
+    let original = fs::read(dir.join("current.json")).unwrap();
+    backup_now_with(&repo, &ready(&dest)).unwrap();
+    let zip = only_zip(&dest);
+    fs::write(dir.join("current.json"), b"clobbered").unwrap();
+
+    restore_backup_into(&repo, &zip).unwrap();
+    assert_eq!(
+        fs::read(dir.join("current.json")).unwrap(),
+        original,
+        "restore must put orbitron-agent/current.json bytes back"
+    );
     cleanup(&repo);
 }

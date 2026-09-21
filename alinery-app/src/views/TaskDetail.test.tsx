@@ -140,6 +140,8 @@ const childBoardTask: BoardTask = {
   latest_session_column_key: "review",
   current_column_key: "review",
   current_column_title: "Review",
+  artifact_count: 0,
+  sessions: [],
 };
 
 const manager: SessionMeta = {

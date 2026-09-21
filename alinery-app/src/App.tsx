@@ -6,6 +6,7 @@ import {
   FolderPlus,
   Grid3X3,
   List,
+  Orbit,
   Play,
   Plus,
   RefreshCw,
@@ -23,6 +24,7 @@ import { afterPaint } from "./afterPaint";
 import { applyAppearance, DEFAULT_APPEARANCE } from "./appearance";
 import alineryIcon from "./assets/alinery-icon-white-plain.png";
 import { GlobalSearch, type SearchItem } from "./CommandPalette";
+import { nextViewAfterCreate } from "./canvas/create-landing";
 import type { QueuedFollowUp } from "./chat/queue";
 import { askConfirm, ConfirmHost, confirmDanger } from "./confirm";
 import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner } from "./DaemonConflictBanner";
@@ -46,6 +48,7 @@ import type {
   AppearancePrefs,
   BoardNav,
   BoardTask,
+  CanvasStatus,
   CreateTaskResult,
   NotificationPrefs,
   RepoScope,
@@ -55,6 +58,7 @@ import type {
   SettingsSectionKey,
   Tab,
   TaskActivitySession,
+  TaskId,
   View,
 } from "./types";
 import { useDaemonStatus } from "./useDaemonStatus";
@@ -64,6 +68,7 @@ import { useMcpStatus } from "./useMcpStatus";
 import { useOmpUpdateStatus } from "./useOmpUpdateStatus";
 import { useSessionNoticeSnapshot } from "./useSessionNoticeSnapshot";
 import { useUpdateStatus } from "./useUpdateStatus";
+import { type CanvasHotkeys, CanvasView } from "./views/CanvasView";
 import { CreateSessionPage } from "./views/CreateSessionPage";
 import { CreateTaskPage } from "./views/CreateTaskPage";
 import { Grid } from "./views/Grid";
@@ -182,6 +187,10 @@ export default function App() {
   const selectedGridViewId = gridViewIdOf(view);
   useEffect(() => {
     if (!appConfig) return;
+    // Orbitron owns no tab and has no `from`. Treating that as "not a grid" would
+    // wipe the remembered Grid view — ⌘⇧O from Grid, then quit/reload, lands on
+    // the default Grid rather than the one the user was on.
+    if (view.kind === "canvas") return;
     try {
       if (selectedGridViewId && gridViews.some((gridView) => gridView.id === selectedGridViewId)) {
         window.localStorage.setItem(ACTIVE_GRID_VIEW_STORAGE_KEY, selectedGridViewId);
@@ -191,13 +200,26 @@ export default function App() {
     } catch {
       // The in-memory route still works when browser storage is unavailable.
     }
-  }, [appConfig, gridViews, selectedGridViewId]);
+  }, [appConfig, gridViews, selectedGridViewId, view.kind]);
   const knownReposRef = useRef<string | null>(null);
 
   const navRef = useRef<BoardNav | null>(null);
   const registerNav = useCallback((n: BoardNav | null) => {
     navRef.current = n;
   }, []);
+
+  // Orbitron View is a top-level sibling, not a tab, so it needs its own return target:
+  // ⌘⇧O / Back must land back where the user was, which is not necessarily the default Grid.
+  const [orbitronReturnTo, setOrbitronReturnTo] = useState<View>(initialView);
+  // Filled by CanvasView while it is mounted. Esc and bare tool keys route through here
+  // so App keeps its single window keydown listener.
+  const canvasHotkeysRef = useRef<CanvasHotkeys | null>(null);
+  // The slug of a task just created from Orbitron, handed to the view so it can place the
+  // new card where the user asked for it.
+  const [placeSlug, setPlaceSlug] = useState<TaskId | undefined>(undefined);
+  // Orbitron's mode and zoom tier, shown in the footer beside the daemon state. Only the
+  // canvas knows them, and only the footer renders them, so App is the seam between the two.
+  const [canvasStatus, setCanvasStatus] = useState<CanvasStatus | null>(null);
 
   const daemon = useDaemonStatus();
   const mcp = useMcpStatus();
@@ -830,6 +852,23 @@ export default function App() {
 
   const hasRepo = Boolean(appConfig?.active_repo);
 
+  // Orbitron is per-repository: concepts, placements and relations all live in one repo's
+  // `.alinery/canvas.json`, so there is no coherent All-repos board to show.
+  const toggleCanvas = () => {
+    if (!hasRepo) return;
+    if (view.kind === "canvas") {
+      setView(orbitronReturnTo);
+      return;
+    }
+    if (scope === "all") {
+      toast("Orbitron View is per-repository — pick one repo");
+      return;
+    }
+    setSearchOpen(false);
+    setOrbitronReturnTo(view);
+    setView({ kind: "canvas" });
+  };
+
   useHotkeys({
     overlayOpen,
     isFullscreen,
@@ -877,6 +916,11 @@ export default function App() {
     killTerminalDrawer: () => {
       void killDrawer();
     },
+    toggleCanvas,
+    // Present only while Orbitron shows. `useHotkeys` reads the presence of `canvasEscape`
+    // as "the canvas owns Esc", so these must stay undefined everywhere else.
+    canvasEscape: view.kind === "canvas" ? () => canvasHotkeysRef.current?.escape() : undefined,
+    canvasKey: view.kind === "canvas" ? (e: KeyboardEvent) => canvasHotkeysRef.current?.key(e) ?? false : undefined,
   });
 
   // Actions call the same callbacks as their direct shortcuts.
@@ -904,6 +948,7 @@ export default function App() {
           action("sessions", pi(SquareTerminal), "Go to Sessions", "⌘7", () => switchTop("sessions", { instant: true })),
           action("notifications", pi(Bell), "Go to Notifications", "⌘8", () => switchTop("notifications", { instant: true })),
           action("settings", pi(SettingsIcon), "Open Settings", "⌘9", () => openSettings(undefined, { instant: true })),
+          action("orbitron", pi(Orbit), "Toggle Orbitron View", "⌘⇧O", toggleCanvas),
           ...SETTINGS_SECTIONS.map((section) =>
             action(`settings-${section.key}`, pi(ChevronRight), `Settings — ${section.label}`, "", () => openSettings(section.key, { instant: true })),
           ),
@@ -1009,6 +1054,7 @@ export default function App() {
                   ? gridViewShortcut(gridViews.findIndex((gridView) => gridView.id === view.gridViewId))
                   : undefined
               }
+              canvas={view.kind === "canvas" ? canvasStatus : null}
             />
           </div>
         </div>
@@ -1060,11 +1106,13 @@ export default function App() {
 
   const gridStorageScopeKey = scope === "all" ? "all-repositories" : appConfig.active_repo;
 
+  // Orbitron owns no tab, so the pill parks on the one the chord was pressed from — the same
+  // thing every other non-tab surface does through its `from` chain.
   const header = (
     <TopBar
       isDev={isDev}
-      active={primaryTabOf(view)}
-      activeGridViewId={gridViewIdOf(view)}
+      active={primaryTabOf(view.kind === "canvas" ? orbitronReturnTo : view)}
+      activeGridViewId={gridViewIdOf(view.kind === "canvas" ? orbitronReturnTo : view)}
       scope={scope}
       appConfig={appConfig}
       gridViews={gridViews}
@@ -1125,7 +1173,9 @@ export default function App() {
                     if (session.harness !== "no-harness") {
                       ipc.spawnSessionDetached(task.slug, session.id).catch((e) => toast(`Session not started: ${e}`, "error"));
                     }
-                    setView({ kind: "task", slug: task.slug, repoPath, from: view.from, initialTask: task });
+                    const landing = nextViewAfterCreate(view.from, task);
+                    if (landing.placeSlug) setPlaceSlug(landing.placeSlug);
+                    setView(landing.view.kind === "task" ? { kind: "task", slug: task.slug, repoPath, from: view.from, initialTask: task } : landing.view);
                   } catch (e) {
                     setRepoErr(String(e));
                   }
@@ -1143,6 +1193,23 @@ export default function App() {
                 onOpenActiveSession={openActiveTaskSession}
                 registerNav={registerNav}
                 onCreate={openCreate}
+              />
+            </div>
+          )}
+          {view.kind === "canvas" && (
+            <div className="view nopad">
+              <CanvasView
+                key={`canvas:${repoKey}`}
+                repoPath={appConfig.active_repo}
+                mcpEnabled={appConfig.mcp_enabled}
+                onExit={toggleCanvas}
+                onCreate={openCreate}
+                onOpen={openBoardTask}
+                registerNav={registerNav}
+                canvasHotkeysRef={canvasHotkeysRef}
+                placeSlug={placeSlug}
+                onPlaced={() => setPlaceSlug(undefined)}
+                onStatus={setCanvasStatus}
               />
             </div>
           )}

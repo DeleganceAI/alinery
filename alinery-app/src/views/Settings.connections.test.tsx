@@ -41,6 +41,8 @@ vi.mock("../ipc", () =>
       throw new Error("Storage is not used by this test");
     },
     connectionStatuses: vi.fn(async () => []),
+    orbitronXaiKeyStatus: vi.fn(async () => ({ present: false })),
+    clearOrbitronXaiKey: vi.fn(async () => ({ present: false })),
   }),
 );
 
@@ -164,5 +166,42 @@ describe("provider connections", () => {
     fireEvent.click(await screen.findByRole("button", { name: "GitHub connection actions" }));
     expect(screen.getByRole("menuitem", { name: "Reconnect" })).toBeTruthy();
     expect(screen.queryByRole("menuitem", { name: "Remove connection" })).toBeNull();
+  });
+
+  it("loads xAI key status only after Connections opens", async () => {
+    render(<Settings mcp={mcp} activeRepo="/r" knownRepos={["/r"]} appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} onNotificationsChange={() => {}} />);
+    expect(ipc.orbitronXaiKeyStatus).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "Connections" }));
+    await waitFor(() => expect(ipc.orbitronXaiKeyStatus).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows Set when absent and Replace plus Clear when present", async () => {
+    vi.mocked(ipc.orbitronXaiKeyStatus).mockResolvedValueOnce({ present: false });
+    const { unmount } = render(
+      <Settings mcp={mcp} activeRepo="/r" knownRepos={["/r"]} appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} onNotificationsChange={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Connections" }));
+    expect(await screen.findByRole("button", { name: "Set" })).toBeTruthy();
+    expect(ipc.connectGithub).not.toHaveBeenCalled();
+    expect(ipc.connectLinear).not.toHaveBeenCalled();
+    unmount();
+
+    vi.mocked(ipc.orbitronXaiKeyStatus).mockResolvedValueOnce({ present: true });
+    render(<Settings mcp={mcp} activeRepo="/r" knownRepos={["/r"]} appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} onNotificationsChange={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Connections" }));
+    expect(await screen.findByRole("button", { name: "Replace" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Clear" })).toBeTruthy();
+  });
+
+  it("clears the xAI key through confirmDanger not window.confirm", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm");
+    vi.mocked(ipc.orbitronXaiKeyStatus).mockResolvedValue({ present: true });
+    render(<Settings mcp={mcp} activeRepo="/r" knownRepos={["/r"]} appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} onNotificationsChange={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Connections" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Clear" }));
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(confirmDanger).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(ipc.clearOrbitronXaiKey).toHaveBeenCalledTimes(1));
+    confirmSpy.mockRestore();
   });
 });

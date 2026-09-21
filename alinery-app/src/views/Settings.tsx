@@ -52,6 +52,7 @@ import type {
 import { type McpStatus, type McpStatusHandle, mcpDotColor, mcpStatusLabel } from "../useMcpStatus";
 import { useOmpUpdateStatus } from "../useOmpUpdateStatus";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
+import { XaiKeyDialog } from "./XaiKeyDialog";
 
 /** Kebab menu for a connected row: the actions that only make sense once a connection exists.
  *  Follows RepoSelect's dropdown idiom — outside click and Escape close it, Escape returns focus. */
@@ -274,6 +275,8 @@ export function Settings({
   const [backupBusy, setBackupBusy] = useState(false);
   const [connections, setConnections] = useState<ConnectionStatus[] | null>(null);
   const [connecting, setConnecting] = useState<ConnectionStatus["provider"] | "">("");
+  const [xaiKey, setXaiKey] = useState<{ present: boolean } | null>(null);
+  const [xaiDialog, setXaiDialog] = useState(false);
   // Local while dragging so the slider does not write config.toml on every step.
   const [retentionDraft, setRetentionDraft] = useState<number | null>(null);
   const [scaleDraft, setScaleDraft] = useState<number | null>(null);
@@ -440,6 +443,7 @@ export function Settings({
     if (activeSection !== "connections") return;
     let alive = true;
     setConnections(null);
+    setXaiKey(null);
     ipc
       .connectionStatuses()
       .then((loaded) => {
@@ -447,6 +451,14 @@ export function Settings({
       })
       .catch((e) => {
         if (alive) reportError(e, "Couldn't load connections");
+      });
+    ipc
+      .orbitronXaiKeyStatus()
+      .then((loaded) => {
+        if (alive) setXaiKey(loaded);
+      })
+      .catch((e) => {
+        if (alive) reportError(e, "Couldn't load the xAI key status");
       });
     return () => {
       alive = false;
@@ -1029,9 +1041,52 @@ export function Settings({
           ))}
         </ul>
       )}
+      <div className="connections-xai">
+        <h3>xAI (Orbitron agent)</h3>
+        <p className="dim">{xaiKey === null ? "…" : xaiKey.present ? "Saved" : "Not set"}</p>
+        <div className="connection-status">
+          {xaiKey?.present ? (
+            <>
+              <button type="button" className="btn small" onClick={() => setXaiDialog(true)}>
+                Replace
+              </button>
+              <button
+                type="button"
+                className="btn ghost small"
+                onClick={async () => {
+                  const ok = await confirmDanger("Clear xAI key", "The Orbitron agent will not start until a key is saved again.", "Clear");
+                  if (!ok) return;
+                  ipc
+                    .clearOrbitronXaiKey()
+                    .then((status) => setXaiKey(status))
+                    .catch((e) => reportError(e, "Couldn't save the xAI key."));
+                }}
+              >
+                Clear
+              </button>
+            </>
+          ) : (
+            <button type="button" className="btn small" disabled={xaiKey === null} onClick={() => setXaiDialog(true)}>
+              Set
+            </button>
+          )}
+        </div>
+      </div>
       <p className="dim connections-note">
         Connections are shared across all repositories. GitHub uses the <span className="mono">gh</span> CLI store; only Linear OAuth tokens go in the macOS Keychain.
       </p>
+      {xaiDialog && (
+        <XaiKeyDialog
+          onClose={() => setXaiDialog(false)}
+          onSaved={() => {
+            setXaiDialog(false);
+            ipc
+              .orbitronXaiKeyStatus()
+              .then(setXaiKey)
+              .catch((e) => reportError(e, "Couldn't load the xAI key status"));
+          }}
+        />
+      )}
     </section>
   );
 

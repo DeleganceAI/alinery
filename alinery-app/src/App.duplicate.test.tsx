@@ -41,6 +41,8 @@ const sourceBoardTask = {
   latest_session_column_key: "research-design",
   current_column_key: "research-design",
   current_column_title: "Research & Design",
+  artifact_count: 0,
+  sessions: [],
 } as BoardTask;
 
 const duplicateResult = (slug = "source-2", harness = "claude"): CreateTaskResult => ({

@@ -87,6 +87,18 @@ describe("TopBar product identity", () => {
 
     expect(html).not.toMatch(/>DEV</);
   });
+
+  // Orbitron View is hotkey-gated on purpose: adding `{ kind: "canvas" }` to `View` must
+  // not grow a sixth tab. Adding "canvas" to `Tab` typechecks fine, so only a render
+  // assertion catches it.
+  it("does not render an Orbitron tab", () => {
+    const html = renderToStaticMarkup(
+      <TopBar active="list" scope="active" appConfig={appConfig} isDev={false} showOriginalKanban gridViews={[{ id: "kanban-plus", name: "Kanban+", slot: 1 }]} {...callbacks} />,
+    );
+
+    expect(html).not.toMatch(/Orbitron|Canvas/i);
+    expect(html.match(/class="tab[ "]/g)).toHaveLength(5);
+  });
 });
 
 describe("TopBar task views", () => {

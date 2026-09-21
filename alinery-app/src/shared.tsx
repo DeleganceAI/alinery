@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from "react";
 import { type OrbState, ThinkingOrb } from "thinking-orbs";
 import { AccountMenu } from "./AccountMenu";
 import { pickEmptyStateArt } from "./emptyStateArt";
+import { formatAbsolute, formatAge } from "./format";
 import { gridViewShortcut, gridViewShortcutDigit } from "./gridViews";
 import { IdleDot, ORB_SPEED, ORB_STATE, RunningIndicator, StateIcon } from "./Indicators";
 import * as ipc from "./ipc";
@@ -286,27 +287,9 @@ export function sameTaskActivityMaps(left: TaskActivityMap, right: TaskActivityM
   );
 }
 
-// Shared age formatters (T0-6): used by TaskList's Updated/Created columns and Kanban's
-// card age slot. No seconds unit — anything under a minute reads "now".
-export function formatAge(epochSeconds: number | null | undefined, nowSeconds = Math.floor(Date.now() / 1000)) {
-  if (!epochSeconds) return "—";
-  const diff = Math.max(0, nowSeconds - epochSeconds);
-  if (diff < 60) return "now";
-  const units: [number, string][] = [
-    [31536000, "y"],
-    [2592000, "mo"],
-    [604800, "w"],
-    [86400, "d"],
-    [3600, "h"],
-    [60, "m"],
-  ];
-  const unit = units.find(([seconds]) => diff >= seconds);
-  return unit ? `${Math.floor(diff / unit[0])}${unit[1]}` : "now";
-}
-
-export function formatAbsolute(epochSeconds: number | null | undefined) {
-  return epochSeconds ? new Date(epochSeconds * 1000).toLocaleString() : "";
-}
+// Re-exported so the many existing `from "../shared"` call sites keep working; the
+// implementation moved to a React-free module the canvas paint path can import too.
+export { formatAbsolute, formatAge };
 
 export function useMinuteNow(): number {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));

@@ -1,4 +1,6 @@
-import type { DaemonStatus } from "./types";
+import { MousePointer2, Pencil, SquareDashedMousePointer } from "lucide-react";
+import { lodLabel, toolLabel } from "./canvas/camera";
+import type { CanvasStatus, DaemonStatus } from "./types";
 import { type McpStatus, mcpFooterLabel } from "./useMcpStatus";
 
 type Hint = [string, string];
@@ -50,6 +52,16 @@ const HINTS: Record<string, Hint[]> = {
     ["⌘D", "Duplicate"],
     ["esc", "Back"],
   ],
+  // Orbitron: no `esc Back` row. Esc cancels a gesture there and never leaves the view,
+  // so advertising it as "Back" would be a lie that costs the user their place.
+  canvas: [
+    ["⌘⇧O", "Exit"],
+    ["⌘N", "Create"],
+    ["⌘E", "Archive"],
+    ["d e a n", "Tools"],
+    ["0", "Fit"],
+    ["esc", "Cancel"],
+  ],
   session: [
     ["⌘K", "Search"],
     ["esc", "Back"],
@@ -64,6 +76,7 @@ export function HotkeyBar({
   version = "",
   gridViewName,
   gridViewShortcut,
+  canvas,
 }: {
   view: string;
   daemon: DaemonStatus;
@@ -72,6 +85,8 @@ export function HotkeyBar({
   version?: string;
   gridViewName?: string;
   gridViewShortcut?: string;
+  /** Present only while Orbitron is showing: its mode and zoom tier, folded in beside the brand. */
+  canvas?: CanvasStatus | null;
 }) {
   const baseHints = HINTS[view] ?? HINTS.kanban;
   const hints = view === "grid" && gridViewName && gridViewShortcut ? [...baseHints, [gridViewShortcut, gridViewName] satisfies Hint] : baseHints;
@@ -106,6 +121,20 @@ export function HotkeyBar({
           </span>
         </span>
         {version && <span className="footer-version">v{version}</span>}
+        {canvas && (
+          <>
+            <span className="sep">·</span>
+            <span className="fcanvas">
+              <ToolIcon tool={canvas.tool} />
+              {toolLabel(canvas.tool)}
+            </span>
+            <span className="sep">·</span>
+            <span className="fcanvas">
+              <TierBar tier={canvas.tier} />
+              {lodLabel(canvas.tier)}
+            </span>
+          </>
+        )}
       </div>
       {showHints && (
         <div className="keys">
@@ -120,5 +149,26 @@ export function HotkeyBar({
         </div>
       )}
     </footer>
+  );
+}
+
+/** The same glyph the canvas toolbar uses for that tool, so the footer names what is lit up there. */
+function ToolIcon({ tool }: { tool: CanvasStatus["tool"] }) {
+  const Glyph = tool === "draw" ? Pencil : tool === "edit" ? SquareDashedMousePointer : MousePointer2;
+  return <Glyph size={13} strokeWidth={1.5} aria-hidden="true" />;
+}
+
+/**
+ * The POC's zoom-detail meter: three rising bars, lit up to the current tier. Decorative —
+ * the tier's name is the text beside it — but it is the part that reads at a glance, which is
+ * why zooming felt unindicated once it was gone.
+ */
+function TierBar({ tier }: { tier: CanvasStatus["tier"] }) {
+  return (
+    <span className="tierbar" aria-hidden="true">
+      {[0, 1, 2].map((i) => (
+        <i className={i <= tier ? "on" : undefined} key={i} />
+      ))}
+    </span>
   );
 }

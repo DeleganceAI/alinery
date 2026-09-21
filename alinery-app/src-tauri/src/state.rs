@@ -9,6 +9,41 @@ pub(crate) struct ManagedMcpChild {
     pub(crate) child: std::process::Child,
 }
 
+/// Everything the RPC reader thread and the Tauri commands both touch, shared by `Arc`
+/// and deliberately NOT reachable through `AppState.orbitron_agent`: that mutex is held
+/// across spawn *and* bootstrap, while `omp` emits its first `extension_ui_request`
+/// before the spawn call returns. A reader that reached for the outer lock would
+/// deadlock the very launch that started it.
+#[derive(Default)]
+pub(crate) struct OrbitronRuntime {
+    /// The child's stdin. Both the reader thread (extension-UI answers) and the commands
+    /// (prompt, host-tool results, tool re-registration) write here, so one lock owns it.
+    pub(crate) stdin: Mutex<Option<std::process::ChildStdin>>,
+    /// The pane's event channel, replaced on reattach so a reopened pane gets the frames.
+    pub(crate) channel: Mutex<Option<Channel<crate::OrbitronAgentEvent>>>,
+    /// `<repo>/.alinery/orbitron-agent/agent.log`, opened once at spawn.
+    pub(crate) log: Mutex<Option<std::fs::File>>,
+    /// Redaction target for the log, never a source of the key for anything else.
+    pub(crate) key: Mutex<Option<String>>,
+    /// Where the session pointer goes once `get_state` names the session file.
+    pub(crate) dir: PathBuf,
+    pub(crate) streaming: AtomicBool,
+    pub(crate) compacting: AtomicBool,
+    /// RPC id of the one in-flight mutating host-tool call, per `reject_second_write`.
+    pub(crate) pending_write_id: Mutex<Option<String>>,
+}
+
+pub(crate) struct ManagedOrbitronAgent {
+    pub(crate) repo: PathBuf,
+    pub(crate) child: Option<std::process::Child>,
+    pub(crate) pid: u32,
+    pub(crate) mcp_seeded: bool,
+    pub(crate) spawn_count: usize,
+    pub(crate) rt: std::sync::Arc<OrbitronRuntime>,
+    pub(crate) stdin_writes: usize,
+    pub(crate) attached: bool,
+}
+
 /// What the app knows about one repo's daemon. Exactly the two outcomes of
 /// `ensure_daemon`, so "conflicted but still holding a client" is unrepresentable.
 #[derive(Clone)]
@@ -39,6 +74,7 @@ pub(crate) struct AppState {
     // R2: managed MCP child (one per active repo). Killed on app exit / repo switch.
     pub(crate) mcp_child: Mutex<Option<ManagedMcpChild>>,
     pub(crate) mcp_spawn_error: Mutex<Option<String>>,
+    pub(crate) orbitron_agent: Mutex<Option<ManagedOrbitronAgent>>,
     // B6/#132: one exclusive flock for every repository this window has open. Active
     // repository selection is only a UI scope over this map; switching repositories must
     // not release an inactive repository that remains in `known_repos`.
@@ -263,6 +299,14 @@ impl AppState {
         if let Ok(mut guard) = self.mcp_child.lock() {
             if let Some(mut managed) = guard.take() {
                 Self::stop_mcp_child(&mut managed);
+            }
+        }
+    }
+
+    pub(crate) fn stop_orbitron_agent(&self) {
+        if let Ok(mut guard) = self.orbitron_agent.lock() {
+            if let Some(mut managed) = guard.take() {
+                crate::stop_managed_orbitron(&mut managed);
             }
         }
     }

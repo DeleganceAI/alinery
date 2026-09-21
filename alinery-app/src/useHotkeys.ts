@@ -26,6 +26,12 @@ export type Handlers = {
   moveCol: (d: number) => void;
   toggleTerminalDrawer: () => void;
   killTerminalDrawer: () => void;
+  /** ⌘⇧O — toggle Orbitron View. */
+  toggleCanvas?: () => void;
+  /** Present only while Orbitron is showing. Invoked instead of back(). */
+  canvasEscape?: () => void;
+  /** Bare (non-cmd) keys while Orbitron is showing. true = consumed. */
+  canvasKey?: (e: KeyboardEvent) => boolean;
 };
 
 // One global keydown listener installed once at App level (plan §5.3). Reads the latest
@@ -54,8 +60,18 @@ export function useHotkeys(handlers: Handlers) {
       // 4. Bare Esc backs out of the current view — except in native fullscreen, where
       //    Esc is macOS's own "exit fullscreen" shortcut; let the OS own it exclusively
       //    there instead of also firing back-navigation underneath it.
+      //
+      //    Orbitron owns Esc outright: the presence of `canvasEscape` means that view is
+      //    showing, and there Esc cancels a gesture or clears a selection. It must never
+      //    fall through to `back()`, even when there is nothing to cancel — leaving a
+      //    spatial view by accident loses the user's place in it.
       if (k === "Escape") {
-        if (!H.isFullscreen) H.back();
+        if (H.isFullscreen) return;
+        if (H.canvasEscape) {
+          H.canvasEscape();
+          return;
+        }
+        H.back();
         return;
       }
       // 5. ⌘+key commands.
@@ -80,10 +96,18 @@ export function useHotkeys(handlers: Handlers) {
         if (lk === "g") return end(e, H.toggleGlow);
         if (lk === "r" && e.shiftKey) return end(e, H.sync);
         if (k === "Enter") return end(e, H.openSelected);
+        if (lk === "o" && e.shiftKey) return end(e, () => H.toggleCanvas?.());
         if (NAV_REQUIRES_CMD) navKey(e, k, H);
         return;
       }
-      // 6. Bare nav on board views.
+      // 6. Orbitron's own bare keys (tools, fit, arrows) get first refusal. `board` is
+      //    null while that view shows, but the guard is on `canvasKey` rather than on
+      //    `board` so the ownership is explicit rather than a side effect.
+      if (H.canvasKey?.(e)) {
+        e.preventDefault();
+        return;
+      }
+      // 7. Bare nav on board views.
       if (!NAV_REQUIRES_CMD && H.board) navKey(e, k, H);
     };
     window.addEventListener("keydown", onKey);

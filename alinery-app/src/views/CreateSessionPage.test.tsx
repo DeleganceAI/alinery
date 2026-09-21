@@ -35,6 +35,8 @@ const task: BoardTask = {
   current_column_title: "Research & Design",
   latest_session_title: "",
   latest_session_column_key: "",
+  artifact_count: 0,
+  sessions: [],
 } as BoardTask;
 
 const secondTask: BoardTask = {

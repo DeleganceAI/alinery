@@ -35,6 +35,8 @@ import type {
   BackupListItem,
   BackupMeta,
   BoardTask,
+  CanvasDoc,
+  CanvasEditMode,
   Config,
   ConnectionStatus,
   CreateTaskResult,
@@ -47,6 +49,9 @@ import type {
   LinearTicket,
   McpStatus,
   OmpUpdateStatus,
+  OrbitronAgentAvailability,
+  OrbitronAgentEvent,
+  OrbitronXaiKeyStatus,
   PlaybookStepSummary,
   PlaybookSummary,
   PreparedSessionMessageAction,
@@ -177,6 +182,22 @@ export const backupNow = (repoPath: string | null) => invoke<BackupMeta>("backup
 export const listBackups = (repoPath: string | null) => invoke<BackupListItem[]>("list_backups", { repoPath });
 export const pickBackupDestinationDialog = (repoPath: string) => invoke<string | null>("pick_backup_destination_dialog", { repoPath });
 export const restoreBackup = (repoPath: string | null, backupPath: string) => invoke<void>("restore_backup", { repoPath, backupPath });
+
+// ── canvas.rs ─────────────────────────────────────────────────────────
+// Active repo only: Orbitron is per-repository, so there is no `_for_repo` twin.
+// Reading claims nothing; writing needs the GUI flock on the Rust side.
+export const readCanvas = () => invoke<CanvasDoc>("read_canvas");
+export const writeCanvas = (doc: CanvasDoc) => invoke<void>("write_canvas", { doc });
+
+// ── orbitron_agent.rs ─────────────────────────────────────────────────
+export const orbitronXaiKeyStatus = () => invoke<OrbitronXaiKeyStatus>("orbitron_xai_key_status");
+export const setOrbitronXaiKey = (key: string) => invoke<OrbitronXaiKeyStatus>("set_orbitron_xai_key", { key });
+export const clearOrbitronXaiKey = () => invoke<OrbitronXaiKeyStatus>("clear_orbitron_xai_key");
+export const orbitronAgentAvailability = () => invoke<OrbitronAgentAvailability>("orbitron_agent_availability");
+export const startOrbitronAgent = (a: { repoPath: string; onEvent: Channel<OrbitronAgentEvent> }) => invoke<void>("start_orbitron_agent", a);
+export const sendOrbitronAgentPrompt = (a: { repoPath: string; text: string; streamingBehavior?: "followUp" | "steer" }) => invoke<void>("send_orbitron_agent_prompt", a);
+export const orbitronHostToolResult = (a: { repoPath: string; id: string; result: unknown; isError: boolean }) => invoke<void>("orbitron_host_tool_result", a);
+export const setOrbitronAgentMode = (a: { repoPath: string; mode: CanvasEditMode }) => invoke<void>("set_orbitron_agent_mode", a);
 
 // ── daemon.rs ─────────────────────────────────────────────────────────
 export const cancelQuit = () => invoke<void>("cancel_quit");

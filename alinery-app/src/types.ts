@@ -99,7 +99,18 @@ export type BoardTask = Task & {
   latest_session_column_key: string;
   current_column_key: string;
   current_column_title: string;
+  artifact_count: number;
+  /** Live sessions, newest first. */
+  sessions: BoardSession[];
 };
+/**
+ * Durable session lifecycle as a card shows it (mirrors Rust `BoardSessionState`). Derived from
+ * the meta, never from a live daemon: `running` means "launched and never stamped an end", which
+ * a daemon boot sweep turns into `interrupted` if it actually crashed. Live/idle/waiting is the
+ * separate `TaskActivityStatus` channel.
+ */
+export type BoardSessionState = "not_started" | "running" | "interrupted" | "exited" | "failed";
+export type BoardSession = { id: string; title: string; harness: string; state: BoardSessionState; exit_code: number | null };
 export type TaskActivityRef = { repoPath: string; taskSlug: string };
 export type TaskActivitySession = {
   id: string;
@@ -617,6 +628,111 @@ export type ReviewHandoffDraft = ReviewHandoffSource & {
   prompt_extra: string;
 };
 
+// ---- Orbitron View spatial sidecar (mirrors src-tauri/src/canvas.rs) ----------
+// These live here rather than under views/ because ipc.ts imports them, and ipc.ts must
+// not depend on the views it exists to serve.
+//
+// The join key is the task slug: `task.md` gains no field, so identity and position stay
+// separable and a repo that never opens Orbitron never grows the sidecar.
+export type TaskId = Task["slug"];
+
+/** "same surface" in the UI is `surface` on disk. */
+export type CanvasRelationKind = "blocks" | "surface" | "informs";
+
+export type CanvasConcept = {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Sized by hand: packing may grow this hull, never shrink it. */
+  manual: boolean;
+};
+
+export type CanvasPlacement = {
+  /** `concepts[0]` is the primary placement — which hull holds the card. The rest are chips. */
+  concepts: string[];
+  x: number;
+  y: number;
+  placed: boolean;
+};
+
+/** Undirected: endpoints are stored sorted, one kind per pair. */
+export type CanvasRelation = { a: TaskId; b: TaskId; kind: CanvasRelationKind };
+export type CanvasEditMode = "autoEdit" | "readOnly" | "requestApproval";
+
+export type CanvasViewPrefs = {
+  camX: number;
+  camY: number;
+  scale: number;
+  autoArrange: boolean;
+  canvasEditMode: CanvasEditMode;
+};
+
+export type CanvasDoc = {
+  version: 1;
+  concepts: CanvasConcept[];
+  placements: Record<TaskId, CanvasPlacement>;
+  relations: CanvasRelation[];
+  view: CanvasViewPrefs;
+};
+
+export type HostToolName =
+  | "board_get"
+  | "concept_create"
+  | "concept_rename"
+  | "concept_delete"
+  | "task_place"
+  | "task_unplace"
+  | "task_tag"
+  | "task_untag"
+  | "relation_upsert"
+  | "relation_delete"
+  | "board_arrange";
+
+export type HostToolCall =
+  | { toolName: "board_get"; arguments: Record<string, never> }
+  | { toolName: "concept_create"; arguments: { name: string } }
+  | { toolName: "concept_rename"; arguments: { id: string; name: string } }
+  | { toolName: "concept_delete"; arguments: { id: string } }
+  | { toolName: "task_place"; arguments: { slug: TaskId; conceptId?: string } }
+  | { toolName: "task_unplace"; arguments: { slug: TaskId } }
+  | { toolName: "task_tag"; arguments: { slug: TaskId; conceptId: string; primary?: boolean } }
+  | { toolName: "task_untag"; arguments: { slug: TaskId; conceptId: string } }
+  | { toolName: "relation_upsert"; arguments: { a: TaskId; b: TaskId; kind: CanvasRelationKind } }
+  | { toolName: "relation_delete"; arguments: { a: TaskId; b: TaskId } }
+  | { toolName: "board_arrange"; arguments: Record<string, never> };
+
+export type OrbitronAgentStatus = "idle" | "thinking" | "updatingBoard" | "compacting";
+
+export type OrbitronAgentEvent =
+  | { type: "ready" }
+  | { type: "status"; status: OrbitronAgentStatus }
+  | { type: "message"; role: "user" | "assistant"; text: string; done: boolean }
+  | { type: "hostToolCall"; id: string; toolCallId: string; toolName: HostToolName; arguments: unknown }
+  | { type: "error"; message: string }
+  | { type: "exited" };
+
+export type OrbitronAgentAvailability = {
+  ompFound: boolean;
+  ompPath: string | null;
+  keyPresent: boolean;
+  mcpEnabled: boolean;
+};
+
+export type OrbitronXaiKeyStatus = { present: boolean };
+
+/** The canvas's active tool: chosen in its toolbar, named in the footer. */
+export type CanvasTool = "pan" | "draw" | "edit";
+
+/**
+ * What Orbitron tells the footer about itself. The mode and zoom tier used to be painted in
+ * the canvas's own top-left chrome; they live in the status bar with every other "what state
+ * am I in" fact, and only the view's name stays on the board.
+ */
+export type CanvasStatus = { tool: CanvasTool; tier: 0 | 1 | 2 };
+
 export type SettingsSectionKey = "connections" | "notifications" | "telemetry" | "updates" | "storage" | "appearance" | "chat" | "gridViews" | "experimental" | "mcp" | "backup";
 
 export type View =
@@ -626,6 +742,9 @@ export type View =
   | { kind: "sessions" }
   | { kind: "notifications" }
   | { kind: "settings"; section?: SettingsSectionKey }
+  // Orbitron View. Deliberately absent from `Tab`: this surface is hotkey-gated (⌘⇧O)
+  // and must not grow a sixth top-bar tab.
+  | { kind: "canvas" }
   | { kind: "create"; from: View; draft?: BoardTask }
   | { kind: "createSession"; from: View; initialTask?: { repo_path: string; slug: string } }
   | { kind: "task"; slug: string; from: View; repoPath?: string; initialTask?: Task }

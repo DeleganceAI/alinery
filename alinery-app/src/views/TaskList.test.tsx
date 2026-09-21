@@ -52,6 +52,8 @@ function task(slugOrOverrides: string | Partial<BoardTask> = "a-task", taskOverr
     latest_session_column_key: "implementation",
     current_column_key: "implementation",
     current_column_title: "Implementation",
+    artifact_count: 0,
+    sessions: [],
     ...overrides,
   };
 }

@@ -653,6 +653,7 @@ pub(crate) fn stop_daemon(app: AppHandle, state: State<'_, AppState>, path: Opti
     let is_active = active_repo().ok().as_deref() == Some(repo.as_path());
     if is_active {
         state.kill_mcp(); // R2
+        state.stop_orbitron_agent();
     }
     let daemon = state.daemon_for(&repo).ok_or("daemon not running")?;
     daemon.call(&daemon_client::shutdown_request()).map(|_| ())?;
@@ -806,6 +807,7 @@ pub(crate) fn close_all_repos(app: AppHandle, state: State<'_, AppState>) -> Res
     // Stop the app-managed session producer before freezing the plan. The quit latch
     // already prevents the GUI pollers and commands from starting replacement work.
     state.kill_mcp();
+    state.stop_orbitron_agent();
     // `sanitize_app_config` keeps a non-empty `active_repo` inside `known_repos`, so this
     // list is the complete set of repos this app has open.
     let repos = load_app_config(&app)

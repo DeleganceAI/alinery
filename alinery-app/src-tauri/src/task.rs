@@ -58,6 +58,47 @@ pub(crate) struct Task {
     pub(crate) telemetry_id: String,
 }
 
+/// How a session ended, from its meta alone. Derived from `alinery_core::classify` with no
+/// daemon process state, because these rows are built inside a 3s catalog poll and must not
+/// put a socket round-trip per task in that path: they are the *durable* lifecycle, which is
+/// exactly what survives a quit. Live/idle/waiting is the separate `TaskActivityStatus` channel.
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum BoardSessionState {
+    /// Created but never launched — a row a user can still start.
+    NotStarted,
+    /// Launched and never stamped an end. Believed running; a daemon boot sweep is what
+    /// turns a crashed one into `Interrupted`.
+    Running,
+    /// Ended without an exit code: the daemon died with it.
+    Interrupted,
+    Exited,
+    /// Exited non-zero. Split from `Exited` so a card can show failure without reading a number.
+    Failed,
+}
+
+/// One line of a card's session list at the detail tier.
+#[derive(Serialize, Clone)]
+pub(crate) struct BoardSession {
+    pub(crate) id: String,
+    /// The playbook step this session is on, or "Generic" for an auxiliary one.
+    pub(crate) title: String,
+    pub(crate) harness: String,
+    pub(crate) state: BoardSessionState,
+    pub(crate) exit_code: Option<i32>,
+}
+
+fn board_session_state(meta: &SessionMeta) -> BoardSessionState {
+    // `None` for the daemon process: durable facts only (see BoardSessionState).
+    match alinery_core::classify(meta.started_at, meta.ended_at, meta.exit_code, None) {
+        alinery_core::LifecycleState::NeverStarted => BoardSessionState::NotStarted,
+        alinery_core::LifecycleState::Orphaned | alinery_core::LifecycleState::Live | alinery_core::LifecycleState::LiveExited => BoardSessionState::Running,
+        alinery_core::LifecycleState::Interrupted => BoardSessionState::Interrupted,
+        alinery_core::LifecycleState::Exited { code: 0 } => BoardSessionState::Exited,
+        alinery_core::LifecycleState::Exited { .. } => BoardSessionState::Failed,
+    }
+}
+
 #[derive(Serialize, Clone)]
 pub(crate) struct BoardTask {
     #[serde(flatten)]
@@ -72,6 +113,10 @@ pub(crate) struct BoardTask {
     pub(crate) latest_session_column_key: String,
     pub(crate) current_column_key: String,
     pub(crate) current_column_title: String,
+    /// Visible artifacts on disk (attachments deliberately excluded, as everywhere else).
+    pub(crate) artifact_count: usize,
+    /// Live sessions, newest first — the order the card lists them in.
+    pub(crate) sessions: Vec<BoardSession>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -1577,6 +1622,21 @@ pub(crate) fn task_updated_at(repo: &Path, task: &Task, sessions: &[SessionMeta]
     updated
 }
 
+/// The step a session sits on, worded as a column header or a card row shows it. "Generic" for
+/// an auxiliary session, "No step" when the meta carries no phase at all. Extracted so the
+/// card's per-session rows and the board's `latest_session_title` cannot word it differently.
+fn session_step_title(repo: &Path, session: &SessionMeta, task_playbook: &str) -> String {
+    if session.generic {
+        return "Generic".into();
+    }
+    let session_playbook = if session.playbook.trim().is_empty() { task_playbook } else { &session.playbook };
+    if session.phase.trim().is_empty() {
+        "No step".into()
+    } else {
+        step_title(repo, session_playbook, &session.phase)
+    }
+}
+
 pub(crate) fn board_task(repo: &Path, repo_path: &str, task: Task) -> BoardTask {
     let sessions = list_sessions_for_repo(repo, &task.slug).unwrap_or_default();
     let live: Vec<&SessionMeta> = sessions.iter().filter(|s| !s.archived).collect();
@@ -1588,22 +1648,17 @@ pub(crate) fn board_task(repo: &Path, repo_path: &str, task: Task) -> BoardTask 
     let (latest_session_title, latest_session_column_key) = if task.draft {
         ("Draft".into(), String::new())
     } else if let Some(session) = live.last() {
-        if session.generic {
-            ("Generic".into(), String::new())
+        let column_key = if session.generic {
+            String::new()
         } else {
             let session_playbook = if session.playbook.trim().is_empty() { &playbook } else { &session.playbook };
-            let session_step = if session.phase.trim().is_empty() {
-                "No step".into()
-            } else {
-                step_title(repo, session_playbook, &session.phase)
-            };
-            let column_key = if playbook_step_exists(repo, session_playbook, &session.phase) {
+            if playbook_step_exists(repo, session_playbook, &session.phase) {
                 column_for_phase(repo, session_playbook, &session.phase).0
             } else {
                 String::new()
-            };
-            (session_step, column_key)
-        }
+            }
+        };
+        (session_step_title(repo, session, &playbook), column_key)
     } else {
         ("No sessions".into(), String::new())
     };
@@ -1625,6 +1680,19 @@ pub(crate) fn board_task(repo: &Path, repo_path: &str, task: Task) -> BoardTask 
     } else {
         step_title(repo, &playbook, &current_phase)
     };
+    // One read_dir per task, beside the session metas this function already reads.
+    let artifact_count = list_artifacts_for(repo, &task.slug).map(|names| names.len()).unwrap_or(0);
+    let session_rows: Vec<BoardSession> = live
+        .iter()
+        .rev()
+        .map(|session| BoardSession {
+            id: session.id.clone(),
+            title: session_step_title(repo, session, &playbook),
+            harness: session.harness.clone(),
+            state: board_session_state(session),
+            exit_code: session.exit_code,
+        })
+        .collect();
     BoardTask {
         task,
         repo_path: repo_path.to_string(),
@@ -1637,6 +1705,8 @@ pub(crate) fn board_task(repo: &Path, repo_path: &str, task: Task) -> BoardTask 
         latest_session_column_key,
         current_column_key,
         current_column_title,
+        artifact_count,
+        sessions: session_rows,
     }
 }
 

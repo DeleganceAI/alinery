@@ -80,6 +80,7 @@ mod account;
 mod app_config;
 mod artifacts;
 mod backup;
+mod canvas;
 mod connections;
 mod daemon;
 mod git_ops;
@@ -88,6 +89,7 @@ mod imports;
 mod mcp;
 mod notify;
 mod omp_update;
+mod orbitron_agent;
 mod paths;
 mod playbook;
 mod session;
@@ -102,6 +104,7 @@ use account::*;
 use app_config::*;
 use artifacts::*;
 use backup::*;
+use canvas::*;
 use connections::*;
 use daemon::*;
 use git_ops::*;
@@ -110,6 +113,7 @@ use imports::*;
 use mcp::*;
 use notify::*;
 use omp_update::*;
+use orbitron_agent::*;
 use paths::*;
 use playbook::*;
 use session::*;
@@ -161,6 +165,16 @@ pub fn run() {
             archive_task_for_repo,
             restore_task_for_repo,
             set_related_tasks_for_repo,
+            read_canvas,
+            orbitron_xai_key_status,
+            set_orbitron_xai_key,
+            clear_orbitron_xai_key,
+            orbitron_agent_availability,
+            start_orbitron_agent,
+            send_orbitron_agent_prompt,
+            orbitron_host_tool_result,
+            set_orbitron_agent_mode,
+            write_canvas,
             create_session,
             create_session_for_repo,
             preview_session_prompt,
@@ -304,6 +318,7 @@ pub fn run() {
             if matches!(event, tauri::RunEvent::Exit) {
                 if let Some(state) = app.try_state::<AppState>() {
                     state.kill_mcp(); // R2: ensure managed child dies with app
+                    state.stop_orbitron_agent();
                 }
             }
             // alineryd remains detached (on purpose)

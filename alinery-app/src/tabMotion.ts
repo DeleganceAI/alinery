@@ -32,16 +32,27 @@ export function isPrimaryTab(kind: string): boolean {
 /** Every drill-down view (task, session, create, ...) nests back to the primary
     tab it was opened from. The tab bar has nothing to highlight for the raw
     view kind — resolve to that owning tab so the pill stays parked instead of
-    collapsing to zero width. */
+    collapsing to zero width.
+
+    Not every view carries `from`: Orbitron is reached by chord from anywhere and
+    deliberately owns no tab (see AGENTS.md "Orbitron View"). Walking off the end of
+    the chain used to dereference `undefined` and throw *during App's render*, which
+    blanked the entire window — so the walk stops at the default surface instead. */
 export function primaryTabOf(view: View): Tab {
   let v: View = view;
-  while (!isPrimaryTab(v.kind)) v = (v as Extract<View, { from: View }>).from;
+  while (!isPrimaryTab(v.kind)) {
+    if (!("from" in v)) return "grid";
+    v = v.from;
+  }
   return v.kind as Tab;
 }
 
 export function gridViewIdOf(view: View): string | undefined {
   let v: View = view;
-  while (!isPrimaryTab(v.kind)) v = (v as Extract<View, { from: View }>).from;
+  while (!isPrimaryTab(v.kind)) {
+    if (!("from" in v)) return undefined;
+    v = v.from;
+  }
   return v.kind === "grid" ? v.gridViewId : undefined;
 }
 

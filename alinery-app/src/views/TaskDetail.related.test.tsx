@@ -38,6 +38,8 @@ const board = (over: Partial<BoardTask> = {}): BoardTask =>
     latest_session_column_key: "",
     current_column_key: "research",
     current_column_title: "Research",
+    artifact_count: 0,
+    sessions: [],
     ...over,
   }) as BoardTask;
 

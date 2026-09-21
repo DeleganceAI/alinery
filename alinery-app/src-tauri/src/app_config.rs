@@ -358,6 +358,7 @@ pub(crate) fn set_active_repo(app: AppHandle, state: State<'_, AppState>, path: 
     reservation.commit(&state);
     set_active_repo_global(Some(repo.clone()))?;
     attach_repo_daemon(&state, &repo, &app_config);
+    state.stop_orbitron_agent();
     ensure_mcp_server(&app, &repo);
     emit(
         &app,
@@ -423,6 +424,7 @@ pub(crate) fn remove_repo(app: AppHandle, path: String) -> Result<AppConfig, Str
     if was_active {
         if let Some(state) = state.as_ref() {
             state.kill_mcp();
+            state.stop_orbitron_agent();
         }
         set_active_repo_global(None)?;
     }

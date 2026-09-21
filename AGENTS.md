@@ -32,6 +32,8 @@ Never launch, build-and-open, or `open` the desktop app (`npm run tauri dev` or 
     sessions/<id>.meta.json
     sessions/<id>.scrollback
   worktrees/<slug>/
+  canvas.json               # Orbitron View spatial sidecar (absent until first write)
+  orbitron-agent/           # manager `omp --mode rpc` log (not an alineryd session)
 ```
 
 The app is not locked to a single hardcoded target repo. Global process log (not per-repo): `<app_config_dir>/logs/alinery.log` (1 MB × 5 files; written by the app, alineryd, and alinery-mcp). No UI.
@@ -80,6 +82,8 @@ Bundled playbooks live in `alinery-app/src-tauri/playbooks/` with the registry i
 | `mcp.rs` | managed MCP child lifecycle and status |
 | `notify.rs` | notification sound + attention notifications |
 | `backup.rs` / `backup_queue.rs` | auto-backup queue, backup/restore |
+| `canvas.rs` | `.alinery/canvas.json` — Orbitron View spatial sidecar (concepts, placements, relations, camera) plus `read_canvas` / `write_canvas`. Validates and normalizes only; never invents layout, never drops a placement whose slug is absent from the catalog |
+| `orbitron_agent.rs` | installation-global `tokens.toml`, the Orbitron manager `omp --mode rpc` child, and the stdio transport to it: bootstrap, the reader thread, `agent.log`. Not an `alineryd` session, and not on the alineryd wire — its contract is `omp://rpc.md`. Spawn uses packaged OMP (`resolve_packaged_omp_path`), `env_clear` + isolated HOME, and fail-closes with `bundled OMP not found` |
 | `git_ops.rs` | worktree removal, compare URL; re-exports `alinery_core::git_cmd` (the only git spawn) |
 | `connections.rs` | GitHub browser login plus Linear OAuth PKCE |
 | `imports.rs` | Linear and GitHub issue import |
@@ -95,6 +99,8 @@ A new command goes in the module that owns its data; `lib.rs` only gains a name 
 - Task: `create_task`, `list_tasks`, `archive_task`, `restore_task_for_repo`, `attachment_path`
 - Session (proxy to daemon): `create_session`, `list_sessions`, `archive_session`, `open_session`, `write_session`, `resize_session`, `detach_session`, `session_status`, `kill_session`, `resume_session`, `set_resume_token`, `session_resume_state`, `read_session_history`
 - Playbook/Harness: `list_phases`, `list_playbooks`, `list_harness_models`, `list_artifacts`
+- Orbitron View (canvas): `read_canvas` (active repo, claims nothing — missing sidecar reads as the empty board), `write_canvas` (requires the GUI flock; validates, normalizes relations to sorted endpoints with one kind per pair, then writes atomically so a refused write leaves the previous board untouched)
+- Orbitron agent: `orbitron_xai_key_status`, `set_orbitron_xai_key`, `clear_orbitron_xai_key` (installation-global `tokens.toml`; JS never reads the secret), `orbitron_agent_availability`, `start_orbitron_agent`, `send_orbitron_agent_prompt`, `orbitron_host_tool_result`, `set_orbitron_agent_mode`
 - Daemon/repo: `stop_daemon`, `takeover_repo_daemon`, `close_all_repos`, `repo_live_sessions`, `set_active_repo`, `remove_repo`, `pick_repo_dialog`, `read_app_config`
 - Connections/import: `connection_statuses`, `connect_github`, `connect_linear`, `import_linear`, `import_github`
 - Update: `check_update` (never Err; silent no-offer), `download_update`, `apply_update` — prod-only
@@ -104,9 +110,38 @@ MCP session tools: `alinery_create_session` / `alinery_start_session` / `alinery
 
 ## Frontend Views (no router)
 
-`useState` switch: Task list, Grid, Kanban, Task detail, Session (xterm.js). Reuse `<SessionTerminal>` everywhere.
+`useState` switch: Task list, Grid, Kanban, Task detail, Session (xterm.js), Orbitron View (`{ kind: "canvas" }`, hotkey-gated). Reuse `<SessionTerminal>` everywhere.
 
 **Never use `window.confirm` / `alert` / `prompt`.** `tauri_plugin_dialog::init()` injects an init script that replaces them: `window.confirm` becomes **async**, so `if (!window.confirm(msg)) return;` tests a Promise (always truthy) and the destructive action runs with no dialog. Every confirmation goes through `alinery-app/src/confirm.tsx`: `await confirmDanger(...)` for yes/no, `await askConfirm({choices, defaultKey})` when there are more than two answers. Default focus is the safe choice, never the danger button. Guarded by `scripts/tests/check-no-window-confirm.sh`.
+
+### Orbitron View (spatial authoring canvas)
+
+A sixth top-level `View` (`{ kind: "canvas" }`) reached only by `⌘⇧O` or the command palette entry "Toggle Orbitron View". Deliberately **not** a `Tab`: Grid stays the default surface, and `TopBar` must not grow an Orbitron tab (`src/TopBar.test.tsx` asserts it, because adding `"canvas"` to `Tab` typechecks fine). It is per-repository — All repos toasts and stays put. The name is the view's, never a typeface.
+
+**Esc belongs to the canvas.** `useHotkeys` treats the presence of `canvasEscape` as "Orbitron is showing" and never falls through to `back()` there, even when there is nothing to cancel: leaving a spatial view by accident loses the user's place in it. Exit is the explicit Back control or the same chord. `H.board` stays `null`, so `j/k/h/l` are dead; bare tool keys route through `canvasKey`, which returns `true` for the keys it consumed. Still one `window` keydown listener.
+
+The board is one `<canvas>` painted from a dirty flag, one paint per frame. Camera, gesture and document mirrors live in refs — a 60 fps pan must not re-render the tree, and paint must see the newest value synchronously — while React state carries only chrome-visible facts. Scene logic is React-free and unit-tested under `alinery-app/src/canvas/`.
+
+**Pipes are routed, not drawn straight.** Every pipe is an orthogonal polyline through gutters the packer already leaves empty. The invariant that keeps this honest lives in `pipes.test.ts`: **no segment of a pipe may pass through the interior of any card, including the two it connects.** Touching a face is how a pipe docks; entering the box is the bug.
+
+The join key is `Task.slug` (`task.md` gains no field). Archiving a task **keeps** its placement — the card greys out in place. Card fields come from `board_task` (durable `BoardSessionState`, not a live daemon round-trip). Mode words live in `canvas/camera.ts` beside `lodLabel`; the resting tool is "Viewing".
+
+Six invariants live in `scripts/tests/check-canvas-invariants.sh` (registered in `check.sh`): no `getComputedStyle` on the paint path (`canvas/tokens.ts` is the only reader), no "lite card while panning", the agent pane talks through `ipc.ts` and consults `CanvasEditMode` via `applyBoardToolForMode` (never raw `invoke`/`fetch`, never `Accept (MCP apply)`), no Sample data control, the Orbitron typeface is never loaded, and `.orbitron` must be `position: absolute; inset: 0` (not `flex`). jsdom has no layout engine, so verifying this view in a real window is opt-in only.
+
+#### The agent pane (chrome, not a chat app)
+
+Attributed turns, not mirrored bubbles. Activity is the last row of the transcript (`RunningIndicator` while thinking / updating board / compacting; nothing when idle). A held host call is the one earned card: Accept / Reject. Pane width is `AGENT_MIN_WIDTH` in `views/orbitron-agent.ts`, also the close threshold. Live width is `--agent-w` on `.orbitron`.
+
+#### The manager agent's transport (`omp --mode rpc`)
+
+`orbitron_agent.rs` owns a plain child process on stdio; the contract is `omp://rpc.md`. This is **not** an `alineryd` session. Spawn resolves packaged OMP (`resolve_packaged_omp_path`), `env_clear()`s, injects `XAI_API_KEY` plus isolated `PI_CODING_AGENT_DIR` / `PI_CONFIG_DIR`, and fail-closes with `bundled OMP not found`. MCP include list uses playbook tools, not workflows. Four load-bearing wire rules:
+
+1. **Every command is keyed `type`.** `{"op": …}` is answered `Unknown command: undefined`. `omp_rpc` inserts the discriminator rather than writing it in the literal, because `check-wire-parsing-boundary.sh` reads an `op`-keyed literal as an alineryd request.
+2. **`extension_ui_request` MUST be answered.** Unanswered, the turn never completes. Alinery renders no OMP widgets, so the reader answers all of them `{ cancelled: true }`.
+3. **Host tools are correlated by the RPC call id**, not the tool name. `set_host_tools` names its schema field `parameters` (the MCP spelling `inputSchema` registers a tool that takes no arguments).
+4. **Assistant text is `assistantMessageEvent` deltas**: only `text_start` / `text_delta` are transcript. `thinking_*` never reaches the pane, and `text_end` repeats the whole message.
+
+Frames in and out, plus the child's stderr, are appended to `<repo>/.alinery/orbitron-agent/agent.log`. The xAI key is installation-global `tokens.toml` beside `app.toml`; JS only ever sees `{ present }`.
 
 ## Engineering rules
 
@@ -194,6 +229,7 @@ These run from `scripts/check.sh`. Source guards also run under `--quick`; the b
 - `check-git-env-scrub.sh` — no raw `Command::new("git")` outside `alinery-core/src/git.rs`
 - `check-no-auto-session-kill.sh` — `shutdown` senders stay on the four-name allowlist
 - `check-no-window-confirm.sh` — no `window.confirm|alert|prompt` in `alinery-app/src`
+- `check-canvas-invariants.sh` — Orbitron View source guard (no getComputedStyle in paint, no lite cards, agent pane uses ipc + mode-gated apply, no Sample data, no Orbitron font, stage fills the view)
 - `check-protocol-version-bump.sh` / `check-wire-parsing-boundary.sh` / `protocol_gate_test.sh` — wire protocol
 - `check-ipc-boundary.sh` / `check-ipc-commands.sh` — IPC seam
 - `check-omp-no-path-fallback.sh` / `omp_lib_test.sh` / `dev_fetch_omp_test.sh` / `install_omp_place_test.sh` — packaged OMP

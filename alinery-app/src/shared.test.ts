@@ -275,6 +275,8 @@ describe("re-render comparators", () => {
       current_step_title: "Design",
       current_column_key: "research-design",
       current_column_title: "Research & Design",
+      artifact_count: 0,
+      sessions: [],
       ...over,
     }) as BoardTask;
 

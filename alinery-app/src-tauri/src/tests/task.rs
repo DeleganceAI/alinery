@@ -92,6 +92,83 @@ fn board_task_counts_live_sessions_and_current_phase() {
 }
 
 #[test]
+fn board_task_reports_artifact_count_and_durable_session_states() {
+    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let repo = std::env::temp_dir().join(format!("alinery-board-detail-{n}"));
+    let slug = "demo";
+    alinery_core::ensure_playbooks(&repo).unwrap();
+    fs::create_dir_all(repo.join(".alinery/tasks").join(slug).join("sessions")).unwrap();
+    let artifacts = repo.join(".alinery/tasks").join(slug).join("artifacts");
+    fs::create_dir_all(artifacts.join("attachments")).unwrap();
+    fs::write(artifacts.join("00-ticket.md"), b"t").unwrap();
+    fs::write(artifacts.join("01-research.md"), b"r").unwrap();
+    fs::write(artifacts.join("attachments").join("spec.pdf"), b"p").unwrap();
+
+    let session = |id: &str, created: u64, phase: &str, started: Option<u64>, ended: Option<u64>, exit: Option<i32>| SessionMeta {
+        id: id.into(),
+        worktree: "/wt".into(),
+        created,
+        archived: false,
+        phase: phase.into(),
+        harness: "claude".into(),
+        model: String::new(),
+        playbook: default_playbook_key(),
+        started_at: started,
+        ended_at: ended,
+        exit_code: exit,
+        ..Default::default()
+    };
+    for meta in [
+        session("s1", 1, "research", Some(10), Some(20), Some(0)),
+        session("s2", 2, "design", Some(30), Some(40), Some(2)),
+        session("s3", 3, "tdd", Some(50), Some(60), None),
+        session("s4", 4, "implementation", Some(70), None, None),
+        session("s5", 5, "design", None, None, None),
+    ] {
+        fs::write(session_meta_path(&repo, slug, &meta.id), serde_json::to_string(&meta).unwrap()).unwrap();
+    }
+    let task = Task {
+        name: "Demo".into(),
+        slug: slug.into(),
+        requested_slug: String::new(),
+        parent_task: String::new(),
+        active_subtask: String::new(),
+        subtask_outcome: String::new(),
+        related_tasks: Vec::new(),
+        branch: slug.into(),
+        worktree: "/wt".into(),
+        has_worktree: true,
+        created: 1,
+        archived: false,
+        pr_url: String::new(),
+        linear_id: String::new(),
+        github_issue: String::new(),
+        playbook: default_playbook_key(),
+        auto_advance: vec![],
+        draft: false,
+        telemetry_id: String::new(),
+    };
+
+    let row = board_task(&repo, "/repo/a", task);
+
+    assert_eq!(row.artifact_count, 2, "attachments must not count as artifacts");
+    assert_eq!(row.sessions.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), vec!["s5", "s4", "s3", "s2", "s1"]);
+    assert_eq!(
+        row.sessions.iter().map(|s| s.state).collect::<Vec<_>>(),
+        vec![
+            BoardSessionState::NotStarted,
+            BoardSessionState::Running,
+            BoardSessionState::Interrupted,
+            BoardSessionState::Failed,
+            BoardSessionState::Exited,
+        ]
+    );
+    assert_eq!(row.sessions[0].title, "Decide", "a known playbook step is titled from playbooks.toml, not from the phase key");
+    assert_eq!(row.sessions[3].exit_code, Some(2));
+    let _ = fs::remove_dir_all(&repo);
+}
+
+#[test]
 fn board_task_ignores_external_and_generic_colliding_phases() {
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let repo = std::env::temp_dir().join(format!("alinery-board-provenance-{n}"));

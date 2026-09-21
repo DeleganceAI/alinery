@@ -31,6 +31,8 @@ const task: BoardTask = {
   latest_session_column_key: "planning",
   current_column_key: "planning",
   current_column_title: "Planning",
+  artifact_count: 0,
+  sessions: [],
 };
 
 const activeDraft: BoardTask = {
