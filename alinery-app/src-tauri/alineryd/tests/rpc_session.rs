@@ -1,4 +1,4 @@
-//! Fake-child coverage for daemon RPC transport and restate.
+//! Fake-child coverage for native RPC transport and v2 execution-owner restate.
 //! Unix-socket + overlay TOML; never launches live omp.
 
 use std::fs;
@@ -11,8 +11,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-use alinery_core::daemon_client::{DaemonClient, MAX_CONTROL_REQUEST_BYTES};
-use alinery_core::{SessionMeta, Task};
+use alinery_core::daemon_client::{DaemonClient, MAX_CONTROL_HEADER_BYTES};
+use alinery_core::SessionMeta;
 use serde_json::{json, Value};
 
 static ROOT_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -58,6 +58,28 @@ fn read_line_retry(stream: &mut UnixStream) -> String {
     }
 }
 
+const PLAYBOOK: &str = r#"+++
+version = 2
+key = "transport"
+title = "Transport fixture"
+description = ""
+default_model = ""
+default_harness = "omp"
+[[step]]
+key = "run"
+title = "Run"
+short = ""
+is_coding_step = false
+auto_advance_default = false
+model = ""
+inputs = [{path = "ticket.md", mode = "single"}]
+outputs = [{path = "result.md"}]
+harness = "omp"
++++
+<!-- alinery:step run -->
+TRANSPORT_SEED_SENTINEL: read {{TICKET_FILE}} and produce the assigned result.
+"#;
+
 const FIXTURE_SCRIPT: &str = r#"#!/bin/sh
 # Publish complete captures: readers use file existence as the readiness signal.
 printf '%s\n' "$0" "$@" > "$ALINERY_REPO/argv.$ALINERY_SESSION_ID.tmp"
@@ -94,6 +116,13 @@ if [ "$rpc" = 1 ]; then
   done
   exit 0
 fi
+if [ -n "${ALINERY_PTY_INITIAL_PROMPT-}" ]; then
+  printf '%s' "$ALINERY_PTY_INITIAL_PROMPT" > "$ALINERY_REPO/editor.$ALINERY_SESSION_ID"
+  printf '%s' "$ALINERY_EVENT_TOKEN" > "$ALINERY_REPO/token.$ALINERY_SESSION_ID"
+  if IFS= read -r submitted; then
+    printf '%s' "$ALINERY_PTY_INITIAL_PROMPT" > "$ALINERY_REPO/submitted.$ALINERY_SESSION_ID"
+  fi
+fi
 sleep 30
 "#;
 
@@ -102,12 +131,29 @@ struct Fixture {
     socket: PathBuf,
     child: Child,
     host: PathBuf,
+    session_id: String,
 }
 
 impl Fixture {
     fn new() -> Self {
         let root = unique_root();
         fs::create_dir_all(root.join(".alinery")).unwrap();
+        for args in [
+            vec!["init", "--quiet"],
+            vec![
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                "fixture",
+            ],
+        ] {
+            assert!(alinery_core::git_cmd(&root).args(args).status().unwrap().success());
+        }
         fs::write(root.join("host-executable"), b"host fixture").unwrap();
         let mut host_permissions = fs::metadata(root.join("host-executable")).unwrap().permissions();
         host_permissions.set_mode(0o755);
@@ -170,38 +216,64 @@ resume_args = ["--resume={{resume_token}}"]
         .unwrap();
 
         let (child, socket) = start_daemon(&root, &runner, &capture, Some(&host));
-        Self { root, socket, child, host }
+        let mut fixture = Self {
+            root,
+            socket,
+            child,
+            host,
+            session_id: String::new(),
+        };
+        let created = fixture.rpc(json!({"op": "create_task", "request": {
+            "name": "task", "requested_slug": "task",
+            "playbook": {"reference": {"scope": "repo", "key": "transport"}, "source": PLAYBOOK},
+            "start": false
+        }}));
+        assert_eq!(created["creation"], "ready", "{created}");
+        assert_eq!(created["errors"], json!([]), "{created}");
+        fixture.session_id = created["sessions"][0]["id"].as_str().expect("reserved owner").into();
+        fixture
     }
 
-    fn rpc(&self, request: Value) -> Value {
+    fn rpc(&self, mut request: Value) -> Value {
+        if request["op"] == "create_task" {
+            let client = alinery_core::DaemonClient { socket_path: self.socket.clone() };
+            let request = serde_json::from_value(request.get_mut("request").unwrap().take()).unwrap();
+            return match client.create_task(&request) {
+                Ok(reply) => serde_json::to_value(reply).unwrap(),
+                Err(error) => json!({"error": error}),
+            };
+        }
         let mut stream = UnixStream::connect(&self.socket).unwrap();
         writeln!(stream, "{request}").unwrap();
         let line = read_line_retry(&mut stream);
         serde_json::from_str(line.trim()).unwrap_or_else(|error| panic!("bad json {error}: {line}"))
     }
 
-    fn spawn_omp(&self, id: &str) {
-        write_task_and_source(&self.root, id);
-        let reply = self.rpc(json!({
-            "op": "spawn",
-            "id": id,
-            "cwd": self.root,
-            "task_slug": "task",
-            "harness": "omp",
-            "model": "",
-            "phase": "research-questions",
-        }));
-        assert_eq!(reply.get("ok"), Some(&json!(true)), "spawn response: {reply}");
+    fn spawn_omp(&self) -> &str {
+        let reply = self.rpc(json!({"op": "start_session", "request": {
+            "task_slug": "task", "session_id": self.session_id
+        }}));
+        assert_eq!(reply["start"], "started", "start response: {reply}");
+        assert_eq!(reply["errors"], json!([]), "{reply}");
+        &self.session_id
     }
 
-    fn spawn_capture_omp(&self, id: &str) {
+    fn execution(&self) -> Value {
+        let reply = self.rpc(json!({"op": "get_task_execution", "request": {"task_slug": "task"}}));
+        let id = self.meta(&self.session_id).execution_id;
+        reply["state"]["executions"][&id].clone()
+    }
+
+    fn spawn_capture_omp(&self) -> &str {
         // Shell read/sed is prohibitively slow for multi-megabyte lines. Keep normal
         // fixture responses unchanged; these tests only need lossless stdin capture.
+        let id = &self.session_id;
         fs::write(self.root.join(format!("capture-only.{id}")), b"").unwrap();
-        self.spawn_omp(id);
+        self.spawn_omp();
         wait_until(Duration::from_secs(5), || {
             fs::metadata(self.root.join(format!("pid.{id}"))).is_ok_and(|meta| meta.len() > 0)
         });
+        id
     }
 
     fn assert_payload_delivered(&self, id: &str, expected: &Value) {
@@ -338,75 +410,95 @@ fn start_daemon(root: &Path, runner: &Path, capture: &Path, protected_host: Opti
     panic!("alineryd did not become ready");
 }
 
-fn write_task_and_source(root: &Path, id: &str) {
-    let task_dir = root.join(".alinery/tasks/task");
-    let sessions = task_dir.join("sessions");
-    fs::create_dir_all(task_dir.join("artifacts")).unwrap();
-    fs::create_dir_all(&sessions).unwrap();
-    let task = Task {
-        name: "task".into(),
-        slug: "task".into(),
-        branch: "task".into(),
-        worktree: root.to_string_lossy().into_owned(),
-        has_worktree: true,
-        created: 1,
-        playbook: "superdevelop".into(),
-        ..Default::default()
-    };
-    fs::write(task_dir.join("task.md"), toml::to_string(&task).unwrap()).unwrap();
-    let source = SessionMeta {
-        id: id.into(),
-        worktree: root.to_string_lossy().into_owned(),
-        created: 1,
-        phase: "research-questions".into(),
-        harness: "omp".into(),
-        playbook: "superdevelop".into(),
-        artifact: "01-research-questions.md".into(),
-        ..Default::default()
-    };
-    fs::write(sessions.join(format!("{id}.meta.json")), serde_json::to_vec(&source).unwrap()).unwrap();
-}
-
 #[test]
 fn spawn_omp_is_rpc_and_restate_pty_keeps_id() {
     let fixture = Fixture::new();
-    fixture.spawn_omp("s1");
-    let status = fixture.rpc(json!({"op": "status", "id": "s1"}));
+    let id = fixture.spawn_omp();
+    let before = fixture.execution();
+    assert_eq!(before["lifecycle"], "running", "{before}");
+    let status = fixture.rpc(json!({"op": "status", "id": id}));
     assert_eq!(status["transport"], "rpc", "{status}");
-    let reply = fixture.restate("s1", "pty");
+    let reply = fixture.restate(id, "pty");
     assert_eq!(reply.get("ok"), Some(&json!(true)), "restate reply: {reply}");
-    let meta = fixture.meta("s1");
+    let meta = fixture.meta(id);
     assert!(meta.started_at.is_some());
     assert!(meta.ended_at.is_none());
-    let status = fixture.rpc(json!({"op": "status", "id": "s1"}));
+    let status = fixture.rpc(json!({"op": "status", "id": id}));
     assert_ne!(status.get("error"), Some(&json!("unknown-session")));
     assert_eq!(status["transport"], "pty");
+    let after = fixture.execution();
+    assert_eq!(after["id"], before["id"], "restate must preserve the execution");
+    assert_eq!(after["owner_session_id"], id, "restate must preserve the owner");
+    assert_eq!(after["lifecycle"], "running", "{after}");
+}
+
+#[test]
+#[ignore = "subprocess fixture for delayed RPC output drain"]
+fn delayed_rpc_output_child() {
+    let root = PathBuf::from(std::env::var("ALINERY_REPO").unwrap());
+    assert_ne!(unsafe { libc::setsid() }, -1);
+    fs::write(root.join("output-holder-ready"), "").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while root.exists() && !root.join("release-output-holder").exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[test]
+fn failed_restate_recovers_after_delayed_output_drain() {
+    let fixture = Fixture::new();
+    let helper = std::env::current_exe().unwrap().display().to_string().replace('\'', "'\\''");
+    fs::write(
+        fixture.root.join("omp-fixture"),
+        FIXTURE_SCRIPT.replacen(
+            "#!/bin/sh\n",
+            &format!("#!/bin/sh\n'{helper}' --ignored --exact delayed_rpc_output_child --nocapture &\n"),
+            1,
+        ),
+    )
+    .unwrap();
+    let id = fixture.spawn_omp();
+    wait_until(Duration::from_secs(5), || fixture.root.join("output-holder-ready").exists());
+    let reply = fixture.restate(id, "pty");
+    assert!(reply["error"].as_str().is_some_and(|error| error.contains("not proven")), "{reply}");
+    let pending = fixture.execution();
+    assert_eq!(pending["lifecycle"], "interrupted");
+    assert_eq!(pending["shutdown_confirmed"], false);
+    fs::write(fixture.root.join("release-output-holder"), "").unwrap();
+    wait_until(Duration::from_secs(5), || fixture.execution()["shutdown_confirmed"] == true);
+    let stopped = fixture.execution();
+    assert_eq!(stopped["lifecycle"], "failed");
+    let recovered = fixture.rpc(json!({"op": "create_execution_session", "request": {
+        "task_slug": "task",
+        "target": {"kind": "primary", "step_key": "run", "execution_id": stopped["id"]},
+        "start": false
+    }}));
+    assert_eq!(recovered["start"], "not_requested", "{recovered}");
+    assert_ne!(recovered["session"]["id"], id);
 }
 
 #[test]
 fn rpc_negotiates_protocol_v2_before_seed_prompt() {
     let fixture = Fixture::new();
-    fixture.spawn_omp("s1");
-    let stdin_path = fixture.root.join("stdin.s1");
+    let id = fixture.spawn_omp();
+    let stdin_path = fixture.root.join(format!("stdin.{id}"));
     wait_until(Duration::from_secs(5), || {
-        stdin_path.is_file() && fs::read_to_string(&stdin_path).unwrap().contains("negotiate_protocol")
+        fs::read_to_string(&stdin_path).is_ok_and(|text| text.contains("TRANSPORT_SEED_SENTINEL"))
     });
     let stdin = fs::read_to_string(&stdin_path).unwrap();
     let negotiate = stdin.find("negotiate_protocol").expect("negotiate_protocol missing");
-    let seed = stdin.find(r#""type":"prompt""#).or_else(|| stdin.find(r#""type": "prompt""#));
-    if let Some(seed) = seed {
-        assert!(negotiate < seed, "negotiate must precede seed prompt:\n{stdin}");
-    }
+    let seed = stdin.find(r#""type":"prompt""#).or_else(|| stdin.find(r#""type": "prompt""#)).expect("seed prompt missing");
+    assert!(negotiate < seed, "negotiate must precede seed prompt:\n{stdin}");
     assert!(stdin.contains(r#""protocolVersion":2"#) || stdin.contains(r#""protocolVersion": 2"#), "{stdin}");
 }
 
 #[test]
 fn rpc_attach_forwards_ready_and_get_messages_thinking() {
     let fixture = Fixture::new();
-    fixture.spawn_omp("s1");
-    let mut attach = fixture.rpc_attach("s1");
+    let id = fixture.spawn_omp();
+    let mut attach = fixture.rpc_attach(id);
     let request = json!({"id": "1", "type": "get_messages"});
-    let write = fixture.rpc(json!({"op": "rpc_write", "id": "s1", "payload": request}));
+    let write = fixture.rpc(json!({"op": "rpc_write", "id": id, "payload": request}));
     assert_eq!(write.get("ok"), Some(&json!(true)), "rpc_write: {write}");
     let lines = Fixture::read_lines(&mut attach, 5);
     let joined = lines.join("\n");
@@ -418,7 +510,7 @@ fn rpc_attach_forwards_ready_and_get_messages_thinking() {
 #[test]
 fn rpc_write_delivers_800_kib_base64_image_through_core_client() {
     let fixture = Fixture::new();
-    fixture.spawn_capture_omp("s1");
+    let id = fixture.spawn_capture_omp();
     let client = DaemonClient::connect_path(fixture.socket.clone()).unwrap();
     // 800 KiB raw image data expands past the old 1 MiB request limit.
     let mut data = "QUJD".repeat(800 * 1024 / 3);
@@ -430,14 +522,14 @@ fn rpc_write_delivers_800_kib_base64_image_through_core_client() {
         "images": [{"type": "image", "mimeType": "image/png", "data": data}],
     });
 
-    client.rpc_write_session("s1", &payload).unwrap();
-    fixture.assert_payload_delivered("s1", &payload);
+    client.rpc_write_session(id, &payload).unwrap();
+    fixture.assert_payload_delivered(id, &payload);
 }
 
 #[test]
 fn rpc_write_delivers_four_maximum_images_and_text_through_core_client() {
     let fixture = Fixture::new();
-    fixture.spawn_capture_omp("s1");
+    let id = fixture.spawn_capture_omp();
     let client = DaemonClient::connect_path(fixture.socket.clone()).unwrap();
     // Each valid base64 value encodes exactly 5 MiB. Distinct contents catch
     // dropped, reordered, or duplicated images as well as truncation.
@@ -458,13 +550,13 @@ fn rpc_write_delivers_four_maximum_images_and_text_through_core_client() {
         "images": images,
     });
 
-    client.rpc_write_session("s1", &payload).unwrap();
-    fixture.assert_payload_delivered("s1", &payload);
+    client.rpc_write_session(id, &payload).unwrap();
+    fixture.assert_payload_delivered(id, &payload);
 }
 
 fn raw_status_request_with_size(fixture: &Fixture, bytes: usize) -> Value {
     // Include the JSON envelope in the byte budget, but not the framing newline.
-    let mut request = json!({"op": "status", "id": "s1", "padding": ""});
+    let mut request = json!({"op": "status", "id": fixture.session_id, "padding": ""});
     let overhead = serde_json::to_vec(&request).unwrap().len();
     request["padding"] = Value::String("x".repeat(bytes - overhead));
     let encoded = serde_json::to_vec(&request).unwrap();
@@ -480,9 +572,9 @@ fn raw_status_request_with_size(fixture: &Fixture, bytes: usize) -> Value {
 #[test]
 fn raw_control_request_at_exact_limit_is_accepted() {
     let fixture = Fixture::new();
-    fixture.spawn_capture_omp("s1");
+    fixture.spawn_capture_omp();
 
-    let reply = raw_status_request_with_size(&fixture, MAX_CONTROL_REQUEST_BYTES);
+    let reply = raw_status_request_with_size(&fixture, MAX_CONTROL_HEADER_BYTES);
     assert_eq!(reply["transport"], "rpc", "{reply}");
     assert_eq!(reply["process"]["state"], "alive", "{reply}");
 }
@@ -490,24 +582,25 @@ fn raw_control_request_at_exact_limit_is_accepted() {
 #[test]
 fn raw_control_request_one_byte_over_limit_preserves_live_session() {
     let fixture = Fixture::new();
-    fixture.spawn_capture_omp("s1");
-    let original_pid = fs::read_to_string(fixture.root.join("pid.s1")).unwrap();
-    let original_started_at = fixture.meta("s1").started_at;
+    let id = fixture.spawn_capture_omp();
+    let pid_path = fixture.root.join(format!("pid.{id}"));
+    let original_pid = fs::read_to_string(&pid_path).unwrap();
+    let original_started_at = fixture.meta(id).started_at;
 
-    let reply = raw_status_request_with_size(&fixture, MAX_CONTROL_REQUEST_BYTES + 1);
+    let reply = raw_status_request_with_size(&fixture, MAX_CONTROL_HEADER_BYTES + 1);
     let error = reply["error"].as_str().expect("oversize request must return an explicit error");
     assert!(error.starts_with("request-too-large"), "{reply}");
-    assert!(error.contains(&MAX_CONTROL_REQUEST_BYTES.to_string()), "{reply}");
+    assert!(error.contains(&MAX_CONTROL_HEADER_BYTES.to_string()), "{reply}");
 
-    let status = fixture.rpc(json!({"op": "status", "id": "s1"}));
+    let status = fixture.rpc(json!({"op": "status", "id": id}));
     assert_eq!(status["transport"], "rpc", "{status}");
     assert_eq!(status["process"]["state"], "alive", "{status}");
     let client = DaemonClient::connect_path(fixture.socket.clone()).unwrap();
     let payload = json!({"id": "after-rejection", "type": "prompt", "message": "Still usable."});
-    client.rpc_write_session("s1", &payload).unwrap();
-    fixture.assert_payload_delivered("s1", &payload);
-    assert_eq!(fs::read_to_string(fixture.root.join("pid.s1")).unwrap(), original_pid);
-    let meta = fixture.meta("s1");
+    client.rpc_write_session(id, &payload).unwrap();
+    fixture.assert_payload_delivered(id, &payload);
+    assert_eq!(fs::read_to_string(&pid_path).unwrap(), original_pid);
+    let meta = fixture.meta(id);
     assert_eq!(meta.started_at, original_started_at);
     assert!(meta.ended_at.is_none());
 }
@@ -515,18 +608,18 @@ fn raw_control_request_one_byte_over_limit_preserves_live_session() {
 #[test]
 fn pty_ops_on_rpc_are_wrong_transport() {
     let fixture = Fixture::new();
-    fixture.spawn_omp("s1");
+    let id = fixture.spawn_omp();
     for request in [
-        json!({"op": "attach", "id": "s1", "attach_id": 1}),
-        json!({"op": "write", "id": "s1", "data": "x"}),
-        json!({"op": "resize", "id": "s1", "cols": 80, "rows": 24}),
+        json!({"op": "attach", "id": id, "attach_id": 1}),
+        json!({"op": "write", "id": id, "data": "x"}),
+        json!({"op": "resize", "id": id, "cols": 80, "rows": 24}),
     ] {
         let reply = fixture.rpc(request.clone());
         let error = reply.get("error").and_then(Value::as_str).unwrap_or("");
         assert!(error.contains("wrong-transport"), "{request} => {reply}");
     }
     let mut stream = UnixStream::connect(&fixture.socket).unwrap();
-    writeln!(stream, "{}", json!({"op": "send_message", "id": "s1", "body_bytes": 1})).unwrap();
+    writeln!(stream, "{}", json!({"op": "send_message", "id": id, "body_bytes": 1})).unwrap();
     stream.write_all(b"x").unwrap();
     stream.flush().unwrap();
     let line = read_line_retry(&mut stream);
@@ -536,9 +629,9 @@ fn pty_ops_on_rpc_are_wrong_transport() {
 #[test]
 fn rpc_write_on_pty_is_wrong_transport() {
     let fixture = Fixture::new();
-    fixture.spawn_omp("s1");
-    assert_eq!(fixture.restate("s1", "pty").get("ok"), Some(&json!(true)));
-    let reply = fixture.rpc(json!({"op": "rpc_write", "id": "s1", "payload": {"type": "prompt", "message": "hi"}}));
+    let id = fixture.spawn_omp();
+    assert_eq!(fixture.restate(id, "pty").get("ok"), Some(&json!(true)));
+    let reply = fixture.rpc(json!({"op": "rpc_write", "id": id, "payload": {"type": "prompt", "message": "hi"}}));
     let error = reply.get("error").and_then(Value::as_str).unwrap_or("");
     assert!(error.contains("wrong-transport"), "{reply}");
 }
@@ -546,18 +639,18 @@ fn rpc_write_on_pty_is_wrong_transport() {
 #[test]
 fn status_and_list_report_rpc_on_omp_spawn() {
     let fixture = Fixture::new();
-    fixture.spawn_omp("s1");
-    let status = fixture.rpc(json!({"op": "status", "id": "s1"}));
+    let id = fixture.spawn_omp();
+    let status = fixture.rpc(json!({"op": "status", "id": id}));
     assert_eq!(status["transport"], "rpc");
     let list = fixture.rpc(json!({"op": "list"}));
     let sessions = list["sessions"].as_array().expect("sessions");
-    assert!(sessions.iter().any(|session| session["id"] == "s1" && session["transport"] == "rpc"));
+    assert!(sessions.iter().any(|session| session["id"] == id && session["transport"] == "rpc"));
 }
 
 #[test]
 fn failed_rpc_restate_does_not_silent_pty_attach() {
     let fixture = Fixture::new();
-    fixture.spawn_omp("s1");
+    let id = fixture.spawn_omp();
     // Restate must exec a new file (Darwin often keeps the running omp-fixture inode)
     // and skip the OMP runner: runner+shell routinely outlives the 300ms crash-before-ready
     // window under cargo-test load, so restate returned ok and this assertion flaked.
@@ -575,13 +668,17 @@ adapter = "unsupported"
 "#,
     )
     .unwrap();
-    let reply = fixture.restate("s1", "rpc");
+    let reply = fixture.restate(id, "rpc");
     assert!(reply.get("error").is_some(), "failed restate should error: {reply}");
-    let meta = fixture.meta("s1");
+    let meta = fixture.meta(id);
     let ended_or_interrupted =
-        meta.ended_at.is_some() || (meta.started_at.is_some() && fixture.rpc(json!({"op": "status", "id": "s1"})).get("error") == Some(&json!("unknown-session")));
+        meta.ended_at.is_some() || (meta.started_at.is_some() && fixture.rpc(json!({"op": "status", "id": id})).get("error") == Some(&json!("unknown-session")));
     assert!(ended_or_interrupted, "failed restate must classify ended or interrupted");
-    let attach = fixture.rpc(json!({"op": "attach", "id": "s1", "attach_id": 1}));
+    let execution = fixture.execution();
+    assert_eq!(execution["owner_session_id"], id);
+    assert!(matches!(execution["lifecycle"].as_str(), Some("launch_failed" | "interrupted")), "{execution}");
+    assert!(execution["receipt_id"].is_null(), "failed restate cannot complete graph work");
+    let attach = fixture.rpc(json!({"op": "attach", "id": id, "attach_id": 1}));
     let error = attach.get("error").and_then(Value::as_str).unwrap_or("");
     assert!(
         error.contains("unknown-session") || error.contains("wrong-transport"),
@@ -592,37 +689,37 @@ adapter = "unsupported"
 #[test]
 fn kill_after_rpc_stamps_ended_at() {
     let fixture = Fixture::new();
-    fixture.spawn_omp("s1");
-    let kill = fixture.rpc(json!({"op": "kill", "id": "s1"}));
+    let id = fixture.spawn_omp();
+    let kill = fixture.rpc(json!({"op": "kill", "id": id}));
     assert_eq!(kill.get("ok"), Some(&json!(true)), "{kill}");
-    wait_until(Duration::from_secs(5), || fixture.meta("s1").ended_at.is_some());
-    assert_eq!(fixture.rpc(json!({"op": "status", "id": "s1"}))["error"], "unknown-session");
+    wait_until(Duration::from_secs(5), || fixture.meta(id).ended_at.is_some());
+    assert_eq!(fixture.rpc(json!({"op": "status", "id": id}))["error"], "unknown-session");
 }
 
 #[test]
 fn rpc_argv_has_extension_mode_thinking_session_dir() {
     let fixture = Fixture::new();
-    fixture.spawn_omp("s1");
-    let argv = fixture.argv("s1");
+    let id = fixture.spawn_omp();
+    let argv = fixture.argv(id);
     assert!(argv.contains("--extension"), "{argv}");
     assert!(argv.contains("--mode"), "{argv}");
     assert!(argv.contains("rpc"), "{argv}");
     assert!(argv.contains("--thinking"), "{argv}");
     assert!(argv.contains("high"), "{argv}");
     assert!(argv.contains("--session-dir"), "{argv}");
-    assert!(argv.contains("s1.omp"), "{argv}");
+    assert!(argv.contains(&format!("{id}.omp")), "{argv}");
     assert!(!argv.contains("--trusted-extension"), "{argv}");
-    wait_until(Duration::from_secs(5), || fixture.root.join("host.s1").is_file());
-    assert_eq!(fs::read_to_string(fixture.root.join("host.s1")).unwrap(), fixture.host.to_string_lossy());
+    wait_until(Duration::from_secs(5), || fixture.root.join(format!("host.{id}")).is_file());
+    assert_eq!(fs::read_to_string(fixture.root.join(format!("host.{id}"))).unwrap(), fixture.host.to_string_lossy());
 }
 
 #[test]
 fn pty_argv_omits_mode_rpc_and_thinking_high() {
     let fixture = Fixture::new();
-    fixture.spawn_omp("s1");
-    let _ = fs::remove_file(fixture.root.join("argv.s1"));
-    assert_eq!(fixture.restate("s1", "pty").get("ok"), Some(&json!(true)));
-    let argv = fixture.argv("s1");
+    let id = fixture.spawn_omp();
+    let _ = fs::remove_file(fixture.root.join(format!("argv.{id}")));
+    assert_eq!(fixture.restate(id, "pty").get("ok"), Some(&json!(true)));
+    let argv = fixture.argv(id);
     assert!(argv.contains("--session-dir"), "{argv}");
     assert!(!argv.contains("--mode"), "{argv}");
     assert!(!argv.contains("\nrpc\n") && !argv.ends_with("rpc"), "{argv}");
@@ -637,8 +734,8 @@ fn pty_argv_omits_mode_rpc_and_thinking_high() {
 #[test]
 fn restate_resume_uses_newest_jsonl_in_session_dir() {
     let fixture = Fixture::new();
-    fixture.spawn_omp("s1");
-    let dir = fixture.root.join(".alinery/tasks/task/sessions/s1.omp");
+    let id = fixture.spawn_omp();
+    let dir = fixture.root.join(format!(".alinery/tasks/task/sessions/{id}.omp"));
     fs::create_dir_all(&dir).unwrap();
     let older = dir.join("2026-01-01T00-00-00Z_0193a1.jsonl");
     let newer = dir.join("2026-02-01T00-00-00Z_0193b2.jsonl");
@@ -646,58 +743,79 @@ fn restate_resume_uses_newest_jsonl_in_session_dir() {
     thread::sleep(Duration::from_millis(20));
     fs::write(&older, "old\n").unwrap();
     let _ = filetime_touch(&newer, SystemTime::now() - Duration::from_secs(3600));
-    let _ = fs::remove_file(fixture.root.join("argv.s1"));
-    assert_eq!(fixture.restate("s1", "rpc").get("ok"), Some(&json!(true)));
-    let argv = fixture.argv("s1");
+    let _ = fs::remove_file(fixture.root.join(format!("argv.{id}")));
+    assert_eq!(fixture.restate(id, "rpc").get("ok"), Some(&json!(true)));
+    let argv = fixture.argv(id);
     let newer_abs = fs::canonicalize(&newer).unwrap();
     assert!(
         argv.contains(&format!("--resume\n{}", newer_abs.display())) || argv.contains(&newer_abs.display().to_string()),
         "{argv}"
     );
-    let meta = fixture.meta("s1");
+    let meta = fixture.meta(id);
     assert_eq!(meta.harness_resume_token, newer_abs.to_string_lossy());
     assert_eq!(meta.harness, "omp");
-    assert_eq!(meta.id, "s1");
+    assert_eq!(meta.id, id);
 }
 
 #[test]
 fn restate_without_jsonl_passes_session_dir_only() {
     let fixture = Fixture::new();
-    fixture.spawn_omp("s1");
-    assert_eq!(fixture.restate("s1", "rpc").get("ok"), Some(&json!(true)));
-    let argv = fixture.argv("s1");
+    let id = fixture.spawn_omp();
+    assert_eq!(fixture.restate(id, "rpc").get("ok"), Some(&json!(true)));
+    let argv = fixture.argv(id);
     assert!(argv.contains("--session-dir"), "{argv}");
     assert!(!argv.contains("--resume"), "{argv}");
 }
-
-// The tail of the OMP seed, so its presence in argv also proves the whole prompt was written.
-const SEED_CONTRACT: &str = "Alinery completion contract: after the requested artifact";
 
 // A restate kills the current child, and the Settings "prefer Terminal" restate fires as soon as
 // the session goes live — possibly before the RPC child ever reached `ready` and got its seed.
 // The journal, not the restate flag, says whether anything durable survived that kill.
 #[test]
-fn restate_reseeds_phase_prompt_only_without_jsonl() {
+fn restate_reseeds_assigned_prompt_only_without_jsonl() {
     let fixture = Fixture::new();
-    fixture.spawn_omp("s1");
-    let argv_path = fixture.root.join("argv.s1");
+    let id = fixture.spawn_omp();
+    let argv_path = fixture.root.join(format!("argv.{id}"));
 
     let _ = fs::remove_file(&argv_path);
-    assert_eq!(fixture.restate("s1", "pty").get("ok"), Some(&json!(true)));
-    wait_until(Duration::from_secs(5), || fs::read_to_string(&argv_path).is_ok_and(|argv| argv.contains(SEED_CONTRACT)));
-    let argv = fixture.argv("s1");
-    assert_eq!(argv.matches(SEED_CONTRACT).count(), 1, "seed must reach the replacement exactly once: {argv}");
-    assert!(argv.contains("--"), "seed must be injected as a prompt arg: {argv}");
+    assert_eq!(fixture.restate(id, "pty").get("ok"), Some(&json!(true)));
+    let editor = fixture.root.join(format!("editor.{id}"));
+    let submitted = fixture.root.join(format!("submitted.{id}"));
+    wait_until(Duration::from_secs(5), || editor.is_file() && fixture.root.join(format!("token.{id}")).is_file());
+    let token = fs::read_to_string(fixture.root.join(format!("token.{id}"))).unwrap();
+    assert!(!submitted.exists(), "the seed must wait until the editor reports readiness");
+    assert_eq!(
+        fixture.rpc(json!({"op":"event", "version":alinery_core::RUNNER_EVENT_PROTOCOL_VERSION, "session_id":id, "token":token, "event":{"type":"idle"}}))["ok"],
+        true
+    );
+    wait_until(Duration::from_secs(5), || {
+        fs::read_to_string(&submitted).is_ok_and(|body| body.contains("TRANSPORT_SEED_SENTINEL"))
+    });
+    let body = fs::read_to_string(&submitted).unwrap();
+    assert_eq!(body.matches("TRANSPORT_SEED_SENTINEL").count(), 1);
+    let execution = fixture.execution();
+    let assigned_output = fixture
+        .root
+        .join(".alinery/tasks/task/artifacts")
+        .join(execution["outputs"][0]["relative_path"].as_str().unwrap());
+    assert!(
+        body.contains(assigned_output.to_str().unwrap()),
+        "the replacement must receive its actual output assignment"
+    );
+    let argv = fixture.argv(id);
     assert!(!argv.contains("--resume"), "{argv}");
 
-    let dir = fixture.root.join(".alinery/tasks/task/sessions/s1.omp");
+    let dir = fixture.root.join(format!(".alinery/tasks/task/sessions/{id}.omp"));
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("2026-03-01T00-00-00Z_0193c3.jsonl"), "turn\n").unwrap();
     let _ = fs::remove_file(&argv_path);
-    assert_eq!(fixture.restate("s1", "pty").get("ok"), Some(&json!(true)));
-    let argv = fixture.argv("s1");
+    fs::remove_file(&editor).unwrap();
+    fs::remove_file(&submitted).unwrap();
+    assert_eq!(fixture.restate(id, "pty").get("ok"), Some(&json!(true)));
+    let argv = fixture.argv(id);
     assert!(argv.contains("--resume"), "{argv}");
-    assert!(!argv.contains(SEED_CONTRACT), "a resumed restate must not replay the seed: {argv}");
+    assert!(!argv.contains("TRANSPORT_SEED_SENTINEL"), "a resumed restate must not replay the seed: {argv}");
+    assert!(!editor.exists(), "resuming a journal must not overwrite the editor with a fresh seed");
+    assert!(!submitted.exists());
 }
 
 #[test]
@@ -716,9 +834,9 @@ fn rpc_unknown_id() {
 #[test]
 fn rpc_does_not_create_scrollback() {
     let fixture = Fixture::new();
-    fixture.spawn_omp("s1");
+    let id = fixture.spawn_omp();
     thread::sleep(Duration::from_millis(100));
-    let scrollback = fixture.root.join(".alinery/tasks/task/sessions/s1.scrollback");
+    let scrollback = fixture.root.join(format!(".alinery/tasks/task/sessions/{id}.scrollback"));
     if scrollback.exists() {
         let bytes = fs::read(&scrollback).unwrap();
         let text = String::from_utf8_lossy(&bytes);
@@ -729,10 +847,9 @@ fn rpc_does_not_create_scrollback() {
 #[test]
 fn rpc_chunk_reassembles_before_clients() {
     let fixture = Fixture::new();
-    write_task_and_source(&fixture.root, "s1");
-    fs::write(fixture.root.join("emit-chunk.s1"), b"").unwrap();
-    fixture.spawn_omp("s1");
-    let mut attach = fixture.rpc_attach("s1");
+    fs::write(fixture.root.join(format!("emit-chunk.{}", fixture.session_id)), b"").unwrap();
+    let id = fixture.spawn_omp();
+    let mut attach = fixture.rpc_attach(id);
     let lines = Fixture::read_lines(&mut attach, 2);
     let joined = lines.join("\n");
     assert!(joined.contains(r#""text":"chunk-ok""#), "lines: {joined}");
@@ -751,7 +868,6 @@ fn filetime_touch(path: &Path, when: SystemTime) -> std::io::Result<()> {
 #[test]
 fn omp_setup_session_is_attachable_but_never_a_listed_session() {
     let fixture = Fixture::new();
-    write_task_and_source(&fixture.root, "unused");
 
     let opened = fixture.rpc(json!({"op": "omp_setup"}));
     assert_eq!(opened["ok"], json!(true), "omp_setup: {opened}");

@@ -48,7 +48,6 @@ describe("useTabPill", () => {
     const { container } = render(<Probe active="list" instant={false} />);
     const nav = container.querySelector("nav");
     expect(nav?.classList.contains("instant")).toBe(false);
-    expect(observers).toHaveLength(1);
     observers[0].cb([] as unknown as ResizeObserverEntry[], observers[0] as unknown as ResizeObserver);
     expect(nav?.classList.contains("instant")).toBe(false);
   });

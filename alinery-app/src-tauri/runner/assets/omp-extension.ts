@@ -3,8 +3,8 @@
 // Injected at session startup via --extension <path>. Registers OMP lifecycle
 // callbacks and the alinery_phase_complete and alinery_ask_approval tools. Passive callbacks emit one
 // normalized RunnerEvent with bounded, terminal-silent, fail-open delivery.
-// Phase completion preserves the daemon acknowledgement and reports accepted,
-// rejected, or delivery-failed status to the OMP model.
+// Phase completion preserves typed daemon outcomes and requests ordinary OMP
+// shutdown only after accepted completion.
 //
 // The module exports registerCallbacks() so the test suite can inject fake OMP
 // API objects without launching OMP. The default export captures the transport
@@ -16,7 +16,7 @@
 //   ALINERY_SESSION_ID               Alinery session ID
 //   ALINERY_DAEMON_SOCKET            Unix socket path
 //   ALINERY_DAEMON_NAMESPACE         daemon socket namespace
-//   ALINERY_EVENT_PROTOCOL_VERSION   "1"
+//   ALINERY_EVENT_PROTOCOL_VERSION   runner event protocol version
 //   ALINERY_EVENT_TOKEN              per-session secret token
 //   ALINERY_HOST_EXECUTABLE          canonical host app executable (launch-only)
 
@@ -39,8 +39,10 @@ export interface OmpExtensionContext {
   readonly sessionManager: {
     getSessionId(): string;
   };
+  shutdown(): void;
   readonly ui?: {
     confirm(title: string, message: string): Promise<boolean>;
+    setEditorText?(text: string): void;
   };
 }
 
@@ -90,11 +92,7 @@ export interface OmpToolDefinition {
     onUpdate: unknown,
     context: OmpExtensionContext,
   ): Promise<{
-    // The only implementation (alinery_phase_complete) returns a one-element array and a
-    // details object carrying {status, reason?}. The previous declaration said
-    // `readonly [..]` and `Record<string, never>` — a fixed 1-tuple and an object with no
-    // properties permitted — which described neither. Nothing caught it because this file
-    // was outside every tsconfig until now.
+    // Completion details preserve the daemon outcome, including receipt/diagnostics.
     content: readonly { readonly type: "text"; readonly text: string }[];
     details: Record<string, unknown>;
   }>;
@@ -112,6 +110,7 @@ export interface OmpExtensionAPI {
       string(): unknown;
     };
   };
+  on(event: "session_start", handler: (payload: unknown, context: OmpExtensionContext) => void | Promise<void>): void;
   on(event: "agent_start", handler: (payload: OmpAgentStartPayload) => void | Promise<void>): void;
   on(event: "agent_end", handler: (payload: OmpAgentEndPayload) => void | Promise<void>): void;
   on(event: "session_stop", handler: (payload: OmpSessionStopPayload, context: OmpExtensionContext) => void | Promise<void>): void;
@@ -159,7 +158,11 @@ type RunnerEvent = RunnerEventBusy | RunnerEventIdle | RunnerEventWaitingForInpu
 
 export type Emitter = (event: RunnerEvent) => Promise<void>;
 
-export type CompletionOutcome = { readonly status: "accepted" } | { readonly status: "rejected"; readonly reason: string };
+export type CompletionOutcome =
+  | { readonly status: "accepted"; readonly receipt_id: string }
+  | { readonly status: "human_authorization_required" }
+  | { readonly status: "invalid_outputs"; readonly diagnostics: readonly string[] }
+  | { readonly status: "rejected"; readonly reason: string };
 
 export type CompletionEmitter = (event: RunnerEventPhaseCompleted) => Promise<CompletionOutcome>;
 
@@ -178,6 +181,7 @@ const RUNNER_ENV_NAMES = [
 ] as const;
 
 const HOST_ENV_NAME = "ALINERY_HOST_EXECUTABLE";
+const PTY_PROMPT_ENV_NAME = "ALINERY_PTY_INITIAL_PROMPT";
 const PROTECTED_PRODUCTION_SUFFIXES = ["/Alinery.app/Contents/MacOS/Alinery", "/alinery.app/Contents/MacOS/alinery"] as const;
 export const HOST_GUARD_REASON =
   "Alinery blocks browser app.path from targeting the host or an installed Alinery app. Use ordinary browser mode, app.cdp_url, the browser relay, or native computer automation.";
@@ -190,6 +194,13 @@ export function captureProtectedHost(environment: Record<string, string | undefi
   delete environment[HOST_ENV_NAME];
   return host;
 }
+
+export function captureInitialPtyPrompt(environment: Record<string, string | undefined> = process.env): string | undefined {
+  const prompt = environment[PTY_PROMPT_ENV_NAME];
+  delete environment[PTY_PROMPT_ENV_NAME];
+  return prompt || undefined;
+}
+
 function normalizeAtPrefix(filePath: string): string {
   if (!filePath.startsWith("@")) return filePath;
   const withoutAt = filePath.slice(1);
@@ -349,47 +360,61 @@ export function makeProductionCompletionEmitter(config: RunnerConfig | undefined
       });
       let settled = false;
       let output = "";
-      const fail = () => {
+      let outputBytes = 0;
+      const fail = (error: unknown = new Error("runner delivery failed")) => {
         if (settled) return;
         settled = true;
         clearTimeout(watchdog);
-        reject(new Error("runner delivery failed"));
+        reject(error instanceof Error ? error : new Error(String(error)));
       };
       const finish = () => {
         if (settled) return;
-        settled = true;
-        clearTimeout(watchdog);
         try {
+          if (!output.endsWith("\n")) throw new Error("runner acknowledgement is truncated");
           const result = JSON.parse(output) as {
             status?: unknown;
+            receipt_id?: unknown;
+            diagnostics?: unknown;
             reason?: unknown;
           };
-          if (result.status === "accepted") {
-            resolve({ status: "accepted" });
+          let outcome: CompletionOutcome;
+          if (result.status === "accepted" && typeof result.receipt_id === "string" && result.receipt_id.length > 0) {
+            outcome = { status: "accepted", receipt_id: result.receipt_id };
+          } else if (result.status === "human_authorization_required") {
+            outcome = { status: "human_authorization_required" };
+          } else if (result.status === "invalid_outputs" && Array.isArray(result.diagnostics) && result.diagnostics.every((item) => typeof item === "string")) {
+            outcome = { status: "invalid_outputs", diagnostics: result.diagnostics };
           } else if (result.status === "rejected" && typeof result.reason === "string" && result.reason.length > 0) {
-            resolve({ status: "rejected", reason: result.reason });
+            outcome = { status: "rejected", reason: result.reason };
           } else {
-            reject(new Error("runner delivery failed"));
+            throw new Error("runner delivery failed");
           }
-        } catch {
-          reject(new Error("runner delivery failed"));
+          settled = true;
+          clearTimeout(watchdog);
+          resolve(outcome);
+        } catch (error) {
+          fail(error);
         }
       };
       const watchdog = setTimeout(() => {
         child.kill();
-        fail();
-      }, 500);
+        fail(new Error("runner acknowledgement timed out"));
+      }, 6_000); // Runner's completion ACK deadline is 5s; allow startup and pipe drain.
 
       child.stdout?.setEncoding("utf8");
       child.stdout?.on("data", (chunk) => {
-        output += chunk;
-        if (output.length > 4096) {
+        outputBytes += Buffer.byteLength(chunk, "utf8");
+        if (outputBytes > 64 * 1024) {
           child.kill();
-          fail();
+          fail(new Error("runner acknowledgement exceeds 64 KiB"));
+          return;
         }
+        output += chunk;
       });
       child.on("error", fail);
       child.on("close", finish);
+      child.stdin?.on("error", fail);
+      child.stdout?.on("error", fail);
       try {
         // @types/node declares this callback as `() => void`, but node really does invoke
         // it with a write error. Declaring the parameter optional keeps the runtime
@@ -397,11 +422,11 @@ export function makeProductionCompletionEmitter(config: RunnerConfig | undefined
         child.stdin?.end(JSON.stringify(event), "utf8", (error?: Error | null) => {
           if (!error) return;
           child.kill();
-          fail();
+          fail(error);
         });
-      } catch {
+      } catch (error) {
         child.kill();
-        fail();
+        fail(error);
       }
     });
   };
@@ -413,7 +438,23 @@ export function makeProductionCompletionEmitter(config: RunnerConfig | undefined
  * Register all Alinery OMP callbacks and the alinery_phase_complete and alinery_ask_approval tools against api.
  * Exported for testability: tests supply a fake api and emitter.
  */
-export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompletion: CompletionEmitter, protectedHost: string | undefined): void {
+export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompletion: CompletionEmitter, protectedHost: string | undefined, initialPtyPrompt?: string): void {
+  let shutdownSessionId: string | undefined;
+  let pendingPtyPrompt = initialPtyPrompt;
+  api.on("session_start", async (_payload, context) => {
+    shutdownSessionId = undefined;
+    if (pendingPtyPrompt !== undefined) {
+      if (!context.ui?.setEditorText) {
+        await safeEmit(emit, { type: "adapter_error", detail: "OMP PTY editor is unavailable for initial prompt delivery" });
+        return;
+      }
+      context.ui.setEditorText(pendingPtyPrompt);
+      pendingPtyPrompt = undefined;
+    }
+    // Acknowledge only after the initial editor text is ready for the daemon's Enter.
+    await safeEmit(emit, { type: "idle" });
+  });
+
   // OMP's agent lifecycle hooks do not expose turn ids. The normalized field is
   // optional, so these callbacks report only the fact OMP actually provides.
   api.on("agent_start", async (_payload: OmpAgentStartPayload) => {
@@ -477,8 +518,9 @@ export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompl
     label: "Complete Alinery Phase",
     description:
       "Signal that the current playbook phase is complete. " +
-      "Call this exactly once after the required artifact has been written. " +
-      "Do not call this to end a turn — only when the phase deliverable is finished.",
+      "Finish every required output and handoff before calling. " +
+      "If accepted, do no further work: ordinary OMP shutdown has been requested. " +
+      "If authorization or output correction is required, keep the session open.",
     parameters: api.zod.z.object({}),
     async execute(_toolCallId: string, _input: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, context: OmpExtensionContext) {
       const sessionId = context.sessionManager.getSessionId();
@@ -489,27 +531,38 @@ export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompl
         );
       }
 
+      let outcome: CompletionOutcome;
       try {
-        const outcome = await emitCompletion({
+        outcome = await emitCompletion({
           type: "phase_completed",
           omp_session_id: sessionId,
         });
-        if (outcome.status === "accepted") {
-          return completionToolResult("accepted", "Alinery accepted phase completion.");
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        return completionToolResult("delivery_failed", `Alinery could not confirm phase completion: ${reason}. Retry after the Alinery daemon is available.`, { reason });
+      }
+      if (outcome.status === "accepted") {
+        if (shutdownSessionId !== sessionId) {
+          shutdownSessionId = sessionId;
+          context.shutdown();
         }
-
-        const reason = outcome.reason.replace(/^completion-rejected:/, "");
+        return completionToolResult("accepted", "Alinery accepted phase completion. Do no further work; this session is finishing.", { receipt_id: outcome.receipt_id });
+      }
+      if (outcome.status === "human_authorization_required") {
+        return completionToolResult(outcome.status, "Human authorization is required. Ask the user to allow this session to complete in Alinery; keep this session open.");
+      }
+      if (outcome.status === "invalid_outputs") {
         return completionToolResult(
-          "rejected",
-          `Alinery rejected phase completion: ${reason}. Fix the required artifact or session ownership, then call alinery_phase_complete again.`,
-          outcome.reason,
-        );
-      } catch {
-        return completionToolResult(
-          "delivery_failed",
-          "Alinery could not confirm phase completion because delivery failed. Retry alinery_phase_complete after the Alinery daemon is available.",
+          outcome.status,
+          `Required outputs need correction:\n${outcome.diagnostics.join("\n")}\nCorrect them before calling alinery_phase_complete again.`,
+          {
+            diagnostics: outcome.diagnostics,
+          },
         );
       }
+      return completionToolResult("rejected", `Alinery rejected phase completion: ${outcome.reason}. Keep this session open and resolve the ownership or protocol error.`, {
+        reason: outcome.reason,
+      });
     },
   });
 
@@ -524,8 +577,8 @@ export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompl
     async execute(toolCallId: string, input: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, context: OmpExtensionContext) {
       const title = typeof input.title === "string" && input.title !== "" ? input.title : "Approval required";
       const message = typeof input.message === "string" && input.message !== "" ? input.message : "Approval needed.";
-      const confirm = context.ui?.confirm;
-      if (typeof confirm !== "function") {
+      const ui = context.ui;
+      if (typeof ui?.confirm !== "function") {
         return {
           content: [{ type: "text" as const, text: "Approval UI is unavailable. Do not proceed with the gated action." }],
           details: { approved: false, status: "unavailable" },
@@ -534,7 +587,7 @@ export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompl
 
       await safeEmit(emit, { type: "waiting_for_approval", correlation_id: toolCallId });
       try {
-        const ok = await confirm(title, message);
+        const ok = await ui.confirm(title, message);
         if (ok) {
           return {
             content: [{ type: "text" as const, text: "User approved. You may proceed with the gated action." }],
@@ -563,10 +616,10 @@ async function safeEmit(emit: Emitter, event: RunnerEvent): Promise<void> {
   }
 }
 
-function completionToolResult(status: "accepted" | "rejected" | "delivery_failed", text: string, reason?: string) {
+function completionToolResult(status: CompletionOutcome["status"] | "delivery_failed", text: string, details: Record<string, unknown> = {}) {
   return {
     content: [{ type: "text" as const, text }],
-    details: reason ? { status, reason } : { status },
+    details: { status, ...details },
   };
 }
 
@@ -574,6 +627,7 @@ function completionToolResult(status: "accepted" | "rejected" | "delivery_failed
 // transport credential before any repository tool subprocess can inherit it.
 export default function (api: OmpExtensionAPI): void {
   const protectedHost = captureProtectedHost();
+  const initialPtyPrompt = captureInitialPtyPrompt();
   const config = captureRunnerConfig();
-  registerCallbacks(api, makeProductionEmitter(config), makeProductionCompletionEmitter(config), protectedHost);
+  registerCallbacks(api, makeProductionEmitter(config), makeProductionCompletionEmitter(config), protectedHost, initialPtyPrompt);
 }

@@ -27,6 +27,36 @@ describe("ChatComposer", () => {
     expect(onSend).toHaveBeenCalledWith("hello");
   });
 
+  it("uses Control-K to delete from the caret to the end of the current line", () => {
+    const onBodyChange = vi.fn();
+    const onSend = vi.fn();
+    render(<ChatComposer body={"abc def\nnext"} status="idle" catalog={catalog} onBodyChange={onBodyChange} onSend={onSend} onAbort={vi.fn()} />);
+    const field = screen.getByLabelText("Message or /command") as HTMLTextAreaElement;
+    field.setSelectionRange(4, 4);
+
+    const event = createEvent.keyDown(field, { key: "k", code: "KeyK", ctrlKey: true, cancelable: true });
+    fireEvent(field, event);
+
+    expect(onBodyChange).toHaveBeenCalledWith("abc \nnext");
+    expect(event.defaultPrevented).toBe(true);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("uses Control-K to delete the selected chat text", () => {
+    const onBodyChange = vi.fn();
+    const onSend = vi.fn();
+    render(<ChatComposer body="alpha beta" status="idle" catalog={catalog} onBodyChange={onBodyChange} onSend={onSend} onAbort={vi.fn()} />);
+    const field = screen.getByLabelText("Message or /command") as HTMLTextAreaElement;
+    field.setSelectionRange(2, 7);
+
+    const event = createEvent.keyDown(field, { key: "k", code: "KeyK", ctrlKey: true, cancelable: true });
+    fireEvent(field, event);
+
+    expect(onBodyChange).toHaveBeenCalledWith("aleta");
+    expect(event.defaultPrevented).toBe(true);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   it("shows draft chars in the hints row", () => {
     const html = renderToStaticMarkup(<ChatComposer body="hello" status="idle" catalog={[]} onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} />);
     expect(html).toContain("5 chars");

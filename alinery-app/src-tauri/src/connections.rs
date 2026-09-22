@@ -217,6 +217,9 @@ mod macos_keychain {
 /// the row. A Keychain read, a refresh, or a network failure may work on the next try — the label
 /// must survive those, or a dropped connection quietly demotes a healthy row.
 pub(crate) enum LinearTokenError {
+    /// Built only when a Keychain blob is parsed (macOS, and tests). Linux status
+    /// never reads a blob, so clippy would otherwise flag this as dead.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Corrupt(String),
     Transient(String),
 }
@@ -242,6 +245,7 @@ impl LinearTokenError {
     }
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn parse_linear_oauth_tokens(value: &[u8]) -> Result<LinearOAuthTokens, LinearTokenError> {
     serde_json::from_slice(value).map_err(|e| LinearTokenError::Corrupt(format!("invalid Linear credential in Keychain: {e}")))
 }
@@ -318,11 +322,16 @@ fn save_linear_account(app: &AppHandle, account: &str) -> Result<(), String> {
 }
 
 fn save_linear_oauth_tokens(tokens: &LinearOAuthTokens) -> Result<(), String> {
-    let value = serde_json::to_string(tokens).map_err(|e| e.to_string())?;
     #[cfg(target_os = "macos")]
-    return macos_keychain::write(LINEAR_KEYCHAIN_SERVICE, "linear", value.as_bytes());
+    {
+        let value = serde_json::to_string(tokens).map_err(|e| e.to_string())?;
+        macos_keychain::write(LINEAR_KEYCHAIN_SERVICE, "linear", value.as_bytes())
+    }
     #[cfg(not(target_os = "macos"))]
-    Err("Linear connections require macOS Keychain".into())
+    {
+        let _ = tokens;
+        Err("Linear connections require macOS Keychain".into())
+    }
 }
 
 fn output_with_timeout(mut cmd: Command, timeout: Duration) -> std::io::Result<std::process::Output> {

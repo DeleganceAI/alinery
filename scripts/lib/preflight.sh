@@ -155,6 +155,20 @@ parse_alineryd_repo_from_ps_line() {
   normalize_repo_path "$repo"
 }
 
+# PID + full argv for matching daemons.
+#
+# procps-ng (`pgrep -l`) is PID + 15-char comm — no `--repo`, so discovery
+# reports a quiet machine. `--list-full` (`-a`) is the Linux flag. BSD pgrep
+# has no `-a`; `-fl` already prints the matching command. Feature-detect the
+# help text so Ubuntu CI and a Mac laptop share one path.
+_pgrep_daemon_listing() {
+  if pgrep --help 2>&1 | grep -q -- '--list-full'; then
+    pgrep -fa "$ALINERYD_PROCESS_PATTERN" 2>/dev/null || true
+  else
+    pgrep -fl "$ALINERYD_PROCESS_PATTERN" 2>/dev/null || true
+  fi
+}
+
 # Repos whose product daemons are running *right now*, discovered from the process
 # list — not only from app.toml known_repos. Pre-#132 delist-left-daemon orphans and
 # any daemon whose repo was never written to known_repos would otherwise be invisible
@@ -169,7 +183,7 @@ discover_live_daemon_repos() {
     repo="$(parse_alineryd_repo_from_ps_line "$line")"
     [ -n "$repo" ] || continue
     printf '%s\n' "$repo"
-  done < <(pgrep -fl "$ALINERYD_PROCESS_PATTERN" 2>/dev/null || true)
+  done < <(_pgrep_daemon_listing)
 }
 
 # Is an Alinery.app (or leftover alinery.app) GUI process running? (`pgrep -f` so a bundle/install
