@@ -182,8 +182,8 @@ pub fn ensure_task_data_ignored(repo: &Path) -> Result<(), String> {
     crate::fs_atomic::write_bytes_durable(&path, contents.as_bytes())
 }
 
-/// Validates the complete package before reserving intent. Git runs after the intent
-/// transaction and outside the repository lock; an uncertain outcome is never retried.
+/// Validates the complete package and branch namespace before reserving intent.
+/// Worktree creation runs outside the repository lock; an uncertain outcome is never retried.
 pub fn provision_task(repo: &Path, lane: &str, app_config_identity: &str, request: &CreateTaskRequest) -> Result<CreateTaskReply, String> {
     if !request.parent_task.is_empty() {
         return Err("child creation requires an authorized subtask manager".into());
@@ -247,18 +247,28 @@ pub fn provision_task_with_reservation(
     let task = crate::with_task_mutation_lock(repo, "reserve task provisioning", || {
         before_reserve()?;
         let reserved_tasks = crate::list_tasks_for_repo(repo);
-        let branch_occupied = |branch: &str| {
-            reserved_tasks.iter().any(|task| task.branch == branch)
-                || crate::git_cmd(repo)
-                    .args(["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")])
-                    .status()
-                    .is_ok_and(|s| s.success())
-        };
+        let refs = crate::git_cmd(repo)
+            .args(["for-each-ref", "--format=%(refname:strip=2)", "refs/heads"])
+            .output()
+            .map_err(|error| format!("list local Git branches: {error}"))?;
+        if !refs.status.success() {
+            return Err(format!("list local Git branches: {}", String::from_utf8_lossy(&refs.stderr).trim()));
+        }
+        let refs = String::from_utf8(refs.stdout).map_err(|error| format!("decode local Git branches: {error}"))?;
+        let branches = || refs.lines().chain(reserved_tasks.iter().map(|task| task.branch.as_str()));
+        let branch_occupied = |candidate: &str| branches().any(|existing| crate::branch_names_conflict(existing, candidate));
         if !request.parent_task.is_empty()
             && (crate::task_dir(repo, &requested).exists() || crate::worktrees_dir(repo).join(&worktree_base).exists() || branch_occupied(&branch_base))
         {
             return Err("child task identity is already occupied".into());
         }
+        // Suffixing the leaf cannot escape an occupied parent namespace.
+        if let Some(parent) = branches().find(|existing| crate::git::branch_is_parent(existing, &branch_base)) {
+            return Err(format!(
+                "branch '{branch_base}' is blocked by existing or reserved parent branch '{parent}'; choose a branch outside '{parent}/'"
+            ));
+        }
+        let branch = unique_name(branch_occupied, &branch_base);
         ensure_task_data_ignored(repo)?;
         let draft = match request.draft_slug.as_deref().filter(|s| !s.is_empty()) {
             Some(slug) => {
@@ -283,7 +293,6 @@ pub fn provision_task_with_reservation(
         fs::create_dir_all(crate::sessions_dir(repo, &slug)).map_err(|e| e.to_string())?;
         fs::create_dir_all(crate::artifacts_dir(repo, &slug)).map_err(|e| e.to_string())?;
         fs::create_dir_all(crate::worktrees_dir(repo)).map_err(|e| e.to_string())?;
-        let branch = unique_name(branch_occupied, &branch_base);
         let worktree_leaf = unique_name(
             |s| crate::worktrees_dir(repo).join(s).exists() || reserved_tasks.iter().any(|t| Path::new(&t.worktree).file_name().is_some_and(|n| n == s)),
             &worktree_base,
@@ -392,4 +401,188 @@ pub fn provision_task_with_reservation(
         }
     }
     Ok(reply)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn git(repo: &Path, args: &[&str]) -> String {
+        let output = crate::git_cmd(repo).args(args).output().unwrap();
+        assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        String::from_utf8(output.stdout).unwrap()
+    }
+
+    fn repo() -> PathBuf {
+        let repo = std::env::temp_dir().join(format!("alinery-provisioning-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-b", "main"]);
+        git(&repo, &["config", "user.name", "Test"]);
+        git(&repo, &["config", "user.email", "test@example.com"]);
+        git(&repo, &["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "initial"]);
+        repo
+    }
+
+    fn request(branch: &str) -> CreateTaskRequest {
+        serde_json::from_value(serde_json::json!({
+            "name": "New task",
+            "branch_name": branch,
+            "playbook": {
+                "reference": { "scope": "bundled", "key": "one-shot" },
+                "source": include_str!("../../playbooks/one-shot/playbook.md")
+            },
+            "start": false
+        }))
+        .unwrap()
+    }
+
+    fn occupy(repo: &Path, branch: &str, reservation: bool) {
+        if reservation {
+            let mut request = request(branch);
+            request.name = format!("Reservation {branch}");
+            let reply = provision_task_with_reservation(repo, "", "fixture", &request, || Ok(()), |_| Err("stop before git".into())).unwrap();
+            assert_eq!(reply.creation, "partial");
+            let task = reply.task.unwrap();
+            assert_eq!(task.branch, branch);
+            assert!(!Path::new(&task.worktree).exists());
+            assert_eq!(git(repo, &["for-each-ref", "--format=%(refname)", &format!("refs/heads/{branch}")]), "");
+        } else {
+            git(repo, &["branch", branch]);
+        }
+    }
+
+    #[test]
+    fn descendant_conflicts_dedupe_every_candidate_before_provisioning() {
+        for reservation in [false, true] {
+            let repo = repo();
+            occupy(&repo, "feat/one", reservation);
+            occupy(&repo, "feat-1/one", reservation);
+            // Packed refs must be checked too, not just loose ref paths.
+            git(&repo, &["pack-refs", "--all", "--prune"]);
+            let previous = crate::list_tasks_for_repo(&repo).len();
+            let mut request = request("feat");
+            request.name = "Feat".into();
+            request.branch_name = None;
+            request.worktree_name = Some("explicit-tree".into());
+            let reply = provision_task(&repo, "", "fixture", &request).unwrap();
+            assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+            let task = reply.task.unwrap();
+            assert_eq!(task.slug, "feat");
+            assert_eq!(task.branch, "feat-2");
+            assert_eq!(Path::new(&task.worktree).file_name().unwrap(), "explicit-tree");
+            assert_eq!(git(Path::new(&task.worktree), &["branch", "--show-current"]).trim(), task.branch);
+            assert_eq!(crate::list_tasks_for_repo(&repo).len(), previous + 1);
+            assert_eq!(read_execution_state(&repo, &task.slug).unwrap().creation, "ready");
+            assert!(!crate::task_dir(&repo, "feat-1").exists());
+            fs::remove_dir_all(repo).unwrap();
+        }
+    }
+
+    #[test]
+    fn parent_conflicts_reject_without_new_task_or_worktree_state() {
+        for reservation in [false, true] {
+            let repo = repo();
+            occupy(&repo, "feat", reservation);
+            let previous = crate::list_tasks_for_repo(&repo).len();
+            let worktrees = git(&repo, &["worktree", "list", "--porcelain"]);
+            let error = provision_task(&repo, "", "fixture", &request("feat/area/one")).unwrap_err();
+            assert!(error.contains("feat/area/one") && error.contains("'feat'") && error.contains("choose"), "{error}");
+            assert_eq!(crate::list_tasks_for_repo(&repo).len(), previous);
+            assert!(!crate::task_dir(&repo, "new-task").exists());
+            assert!(!crate::worktrees_dir(&repo).join("new-task").exists());
+            assert_eq!(git(&repo, &["worktree", "list", "--porcelain"]), worktrees);
+            fs::remove_dir_all(repo).unwrap();
+        }
+    }
+
+    #[test]
+    fn parent_conflict_does_not_promote_or_rename_a_draft() {
+        let repo = repo();
+        occupy(&repo, "feat", false);
+        let draft = Task {
+            name: "Draft".into(),
+            slug: "draft".into(),
+            draft: true,
+            ..Task::default()
+        };
+        crate::task::write_task_unlocked(&repo, &draft).unwrap();
+        let path = crate::task_dir(&repo, "draft").join("task.md");
+        let before = fs::read(&path).unwrap();
+        let mut request = request("feat/one");
+        request.draft_slug = Some("draft".into());
+        assert!(provision_task(&repo, "", "fixture", &request).is_err());
+        assert_eq!(fs::read(path).unwrap(), before);
+        assert!(!crate::task_dir(&repo, "new-task").exists());
+        assert!(!crate::worktrees_dir(&repo).exists());
+        fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[test]
+    fn child_namespace_conflicts_never_suffix_the_identity() {
+        for reservation in [false, true] {
+            let repo = repo();
+            occupy(&repo, "feat/one", reservation);
+            let mut request = request("feat");
+            request.parent_task = "parent".into();
+            let error = provision_task_with_reservation(&repo, "", "fixture", &request, || Ok(()), |_| Ok(())).unwrap_err();
+            assert!(error.contains("child task identity"), "{error}");
+            assert!(!crate::task_dir(&repo, "new-task").exists());
+            assert!(!crate::worktrees_dir(&repo).join("new-task").exists());
+            assert_eq!(git(&repo, &["for-each-ref", "--format=%(refname)", "refs/heads/feat-1"]), "");
+            fs::remove_dir_all(repo).unwrap();
+        }
+    }
+
+    #[test]
+    fn exact_conflicts_dedupe_but_similar_names_remain_usable() {
+        let repo = repo();
+        occupy(&repo, "feat", false);
+        let similar = provision_task(&repo, "", "fixture", &request("feature")).unwrap();
+        assert_eq!(similar.creation, "ready");
+        assert_eq!(similar.task.unwrap().branch, "feature");
+        let exact = provision_task(&repo, "", "fixture", &request("feat")).unwrap();
+        assert_eq!(exact.creation, "ready");
+        assert_eq!(exact.task.unwrap().branch, "feat-1");
+        fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[test]
+    fn ref_enumeration_failure_is_not_branch_availability() {
+        let repo = repo();
+        fs::write(repo.join(".git/packed-refs"), "invalid packed ref\n").unwrap();
+        let error = provision_task(&repo, "", "fixture", &request("feat")).unwrap_err();
+        assert!(error.contains("list local Git branches"), "{error}");
+        assert!(!crate::task_dir(&repo, "new-task").exists());
+        assert!(!crate::worktrees_dir(&repo).exists());
+        fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[test]
+    fn external_ref_race_still_retains_partial_provisioning_evidence() {
+        let repo = repo();
+        let reply = provision_task_with_reservation(
+            &repo,
+            "",
+            "fixture",
+            &request("feat/one"),
+            || Ok(()),
+            |_| {
+                // An independent Git writer can race the completed preflight.
+                git(&repo, &["branch", "feat"]);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(reply.creation, "partial");
+        assert!(reply.errors.iter().any(|error| error.stage == "git_worktree" && error.message.contains("feat")));
+        let task = reply.task.unwrap();
+        assert_eq!(crate::read_task(&repo, &task.slug).unwrap().branch, "feat/one");
+        assert!(!Path::new(&task.worktree).exists());
+        let state = read_execution_state(&repo, &task.slug).unwrap();
+        assert_eq!(state.creation, "partial");
+        assert!(state.creation_error.unwrap().contains("git_worktree"));
+        assert!(task_playbook_path(&repo, &task.slug).unwrap().exists());
+        fs::remove_dir_all(repo).unwrap();
+    }
 }

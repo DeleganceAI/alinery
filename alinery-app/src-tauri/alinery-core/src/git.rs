@@ -37,6 +37,15 @@ pub fn git_cmd(dir: impl AsRef<OsStr>) -> Command {
     cmd
 }
 
+pub(crate) fn branch_is_parent(parent: &str, branch: &str) -> bool {
+    branch.strip_prefix(parent).is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+/// Git refs conflict on equality or a slash boundary, not merely a shared prefix.
+pub fn branch_names_conflict(existing: &str, candidate: &str) -> bool {
+    existing == candidate || branch_is_parent(existing, candidate) || branch_is_parent(candidate, existing)
+}
+
 /// Canonicalized top-level directory of the Git working tree containing `path`. The single
 /// place that turns an arbitrary caller-supplied path into a trustworthy repo identity —
 /// `git rev-parse --show-toplevel` rejects anything that is not a real, locally accessible

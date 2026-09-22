@@ -28,6 +28,13 @@ Each v2 task retains one validated `playbook.md`, one dedicated worktree, and fi
 complete-set merges, and fresh-artifact loops. Coding ownership and the task's live-session
 capacity remain held through human review and confirmed process shutdown.
 
+Task creation checks local Git branches and durable task branch reservations before recording
+new intent. Exact names and slash-prefix conflicts are deduplicated with numeric suffixes when
+possible (`feat/one` can make a requested `feat` become `feat-1`). If an existing or reserved
+parent branch blocks every suffix (`feat` blocks `feat/one`), choose a branch outside that
+namespace. Child-task identities are never silently renamed. Git errors fail preflight; later
+failures, including races with external Git writers, still retain partial-task recovery evidence.
+
 Reusable definitions live in bundled, global, and repository scopes; identical keys do not
 shadow each other. Legacy `playbooks.toml` and split prompt files remain untouched in user
 repositories but are not v2 runtime inputs. Historical pre-v2 tasks remain readable; launching
