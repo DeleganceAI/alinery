@@ -52,7 +52,14 @@ pub const DAEMON_OBSERVATION_TIMEOUT: Duration = Duration::from_millis(250);
 //         budget: a healthy ack is milliseconds.
 pub const DAEMON_CONTROL_TIMEOUT: Duration = Duration::from_secs(100);
 
-pub const MAX_CONTROL_HEADER_BYTES: usize = 128 * 1024;
+/// Serialized JSON bytes, excluding the trailing newline. Four 5 MiB images need
+/// ~27 MiB of base64; even a 4 MiB caption escaped at 6x fits with JSON overhead.
+pub const MAX_CONTROL_HEADER_BYTES: usize = 64 * 1024 * 1024;
+
+pub fn control_request_size_error() -> String {
+    format!("request-too-large: encoded daemon request exceeds {MAX_CONTROL_HEADER_BYTES} bytes (64 MiB); reduce the message or attachments")
+}
+
 pub const MAX_CONTROL_BODY_BYTES: usize = 512 * 1024 * 1024;
 
 fn serialize_control_body(request: &CreateTaskRequest, limit: usize) -> Result<Vec<u8>, String> {
@@ -385,14 +392,18 @@ impl DaemonClient {
 
     // Timeouts are set before write_all so a wedged daemon can't hang the write side either.
     pub fn send(&self, request: &Value) -> Result<UnixStream, String> {
-        let header = request.to_string();
-        if header.len() > MAX_CONTROL_HEADER_BYTES {
-            return Err("control-header-too-large".into());
+        self.send_with_timeout(request, DAEMON_CONTROL_TIMEOUT)
+    }
+
+    fn send_with_timeout(&self, request: &Value, timeout: Duration) -> Result<UnixStream, String> {
+        let encoded = request.to_string();
+        if encoded.len() > MAX_CONTROL_HEADER_BYTES {
+            return Err(control_request_size_error());
         }
         let mut stream = UnixStream::connect(&self.socket_path).map_err(|error| error.to_string())?;
-        stream.set_read_timeout(Some(DAEMON_CONTROL_TIMEOUT)).map_err(|error| error.to_string())?;
-        stream.set_write_timeout(Some(DAEMON_CONTROL_TIMEOUT)).map_err(|error| error.to_string())?;
-        stream.write_all(header.as_bytes()).map_err(format_socket_write_error)?;
+        stream.set_read_timeout(Some(timeout)).map_err(|error| error.to_string())?;
+        stream.set_write_timeout(Some(timeout)).map_err(|error| error.to_string())?;
+        stream.write_all(encoded.as_bytes()).map_err(format_socket_write_error)?;
         stream.write_all(b"\n").map_err(format_socket_write_error)?;
         stream.flush().map_err(format_socket_write_error)?;
         Ok(stream)
@@ -405,16 +416,7 @@ impl DaemonClient {
     }
 
     pub fn call_with_timeout(&self, request: &Value, timeout: Duration) -> Result<Value, String> {
-        let header = request.to_string();
-        if header.len() > MAX_CONTROL_HEADER_BYTES {
-            return Err("control-header-too-large".into());
-        }
-        let mut stream = UnixStream::connect(&self.socket_path).map_err(|error| error.to_string())?;
-        stream.set_read_timeout(Some(timeout)).map_err(|error| error.to_string())?;
-        stream.set_write_timeout(Some(timeout)).map_err(|error| error.to_string())?;
-        stream.write_all(header.as_bytes()).map_err(format_socket_write_error)?;
-        stream.write_all(b"\n").map_err(format_socket_write_error)?;
-        stream.flush().map_err(format_socket_write_error)?;
+        let mut stream = self.send_with_timeout(request, timeout)?;
         let line = read_reply_line(&mut stream, timeout)?;
         serde_json::from_str(&line).map_err(|error| error.to_string())
     }
@@ -743,7 +745,6 @@ mod tests {
             assert_eq!(header["op"], "create_task");
             assert!(header.get("request").is_none());
             let length = header["body_bytes"].as_u64().unwrap() as usize;
-            assert!(length > MAX_CONTROL_HEADER_BYTES);
             let mut body = vec![0; length];
             reader.read_exact(&mut body).unwrap();
             let request: CreateTaskRequest = serde_json::from_slice(&body).unwrap();
@@ -760,7 +761,7 @@ mod tests {
     }
 
     #[test]
-    fn create_body_and_inline_headers_reject_excess_before_delivery() {
+    fn create_body_rejects_excess_before_delivery() {
         let request = binary_create_request();
         let body = serialize_control_body(&request, MAX_CONTROL_BODY_BYTES).unwrap();
         assert_eq!(serialize_control_body(&request, body.len()).unwrap(), body);
@@ -768,15 +769,6 @@ mod tests {
         assert!(serialize_control_body(&request, request.attachments[0].bytes.len())
             .unwrap_err()
             .contains("create-task-body-too-large"));
-        let client = DaemonClient {
-            socket_path: socket_path("absent"),
-        };
-        let oversized_header = json!({"op":"write","data":"x".repeat(MAX_CONTROL_HEADER_BYTES)});
-        assert_eq!(client.send(&oversized_header).unwrap_err(), "control-header-too-large");
-        assert_eq!(
-            client.call_with_timeout(&oversized_header, DAEMON_OBSERVATION_TIMEOUT).unwrap_err(),
-            "control-header-too-large"
-        );
     }
 
     fn serve_version(name: &str, reply: Value) -> (PathBuf, thread::JoinHandle<Value>) {
@@ -850,6 +842,20 @@ mod tests {
         assert!(!is_known_open_intent("rpc_attach"));
         assert!(!is_known_open_intent("restate"));
         assert!(!is_known_open_intent("rpc_write"));
+    }
+
+    #[test]
+    fn oversized_encoded_requests_are_rejected_before_connecting() {
+        let client = DaemonClient::connect_path(socket_path("oversized")).unwrap();
+        // Raw text fits, but JSON escaping plus envelope bytes exceeds the wire cap.
+        let request = rpc_write_request("session", &json!({"type": "prompt", "message": "\0".repeat(MAX_CONTROL_HEADER_BYTES / 6)}));
+        for error in [
+            client.send(&request).unwrap_err(),
+            client.call_with_timeout(&request, DAEMON_OBSERVATION_TIMEOUT).unwrap_err(),
+        ] {
+            assert!(error.starts_with("request-too-large:"), "{error}");
+            assert!(error.contains(&MAX_CONTROL_HEADER_BYTES.to_string()), "{error}");
+        }
     }
 
     #[test]

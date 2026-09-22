@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
+use alinery_core::daemon_client::{DaemonClient, MAX_CONTROL_HEADER_BYTES};
 use alinery_core::SessionMeta;
 use serde_json::{json, Value};
 
@@ -80,8 +81,11 @@ TRANSPORT_SEED_SENTINEL: read {{TICKET_FILE}} and produce the assigned result.
 "#;
 
 const FIXTURE_SCRIPT: &str = r#"#!/bin/sh
-printf '%s\n' "$0" "$@" > "$ALINERY_REPO/argv.$ALINERY_SESSION_ID"
-printf '%s' "${ALINERY_HOST_EXECUTABLE-}" > "$ALINERY_REPO/host.$ALINERY_SESSION_ID"
+# Publish complete captures: readers use file existence as the readiness signal.
+printf '%s\n' "$0" "$@" > "$ALINERY_REPO/argv.$ALINERY_SESSION_ID.tmp"
+mv "$ALINERY_REPO/argv.$ALINERY_SESSION_ID.tmp" "$ALINERY_REPO/argv.$ALINERY_SESSION_ID"
+printf '%s' "${ALINERY_HOST_EXECUTABLE-}" > "$ALINERY_REPO/host.$ALINERY_SESSION_ID.tmp"
+mv "$ALINERY_REPO/host.$ALINERY_SESSION_ID.tmp" "$ALINERY_REPO/host.$ALINERY_SESSION_ID"
 rpc=0
 prev=
 for a in "$@"; do
@@ -93,6 +97,10 @@ if [ "$rpc" = 1 ]; then
   if [ -f "$ALINERY_REPO/emit-chunk.$ALINERY_SESSION_ID" ]; then
     printf '%s\n' '{"type":"rpc_chunk","chunkId":"rpc-1","index":0,"count":2,"byteLength":35,"data":"eyJ0eXBlIjoibm90aWNlIiw="}'
     printf '%s\n' '{"type":"rpc_chunk","chunkId":"rpc-1","index":1,"count":2,"byteLength":35,"data":"InRleHQiOiJjaHVuay1vayJ9"}'
+  fi
+  if [ -f "$ALINERY_REPO/capture-only.$ALINERY_SESSION_ID" ]; then
+    printf '%s\n' "$$" > "$ALINERY_REPO/pid.$ALINERY_SESSION_ID"
+    exec cat >> "$ALINERY_REPO/stdin.$ALINERY_SESSION_ID"
   fi
   while IFS= read -r line; do
     printf '%s\n' "$line" >> "$ALINERY_REPO/stdin.$ALINERY_SESSION_ID"
@@ -254,6 +262,40 @@ resume_args = ["--resume={{resume_token}}"]
         let reply = self.rpc(json!({"op": "get_task_execution", "request": {"task_slug": "task"}}));
         let id = self.meta(&self.session_id).execution_id;
         reply["state"]["executions"][&id].clone()
+    }
+
+    fn spawn_capture_omp(&self) -> &str {
+        // Shell read/sed is prohibitively slow for multi-megabyte lines. Keep normal
+        // fixture responses unchanged; these tests only need lossless stdin capture.
+        let id = &self.session_id;
+        fs::write(self.root.join(format!("capture-only.{id}")), b"").unwrap();
+        self.spawn_omp();
+        wait_until(Duration::from_secs(5), || {
+            fs::metadata(self.root.join(format!("pid.{id}"))).is_ok_and(|meta| meta.len() > 0)
+        });
+        id
+    }
+
+    fn assert_payload_delivered(&self, id: &str, expected: &Value) {
+        let path = self.root.join(format!("stdin.{id}"));
+        wait_until(Duration::from_secs(5), || path.is_file());
+        let mut reader = BufReader::new(fs::File::open(path).unwrap());
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut line = String::new();
+        loop {
+            reader.read_line(&mut line).unwrap();
+            if line.ends_with('\n') {
+                let actual: Value = serde_json::from_str(&line).expect("fixture received invalid JSON");
+                if actual["id"] == expected["id"] {
+                    // Avoid printing tens of megabytes of image data on failure.
+                    assert!(actual == *expected, "fixture received a changed RPC payload");
+                    return;
+                }
+                line.clear();
+            }
+            assert!(Instant::now() < deadline, "fixture did not receive payload {}", expected["id"]);
+            thread::sleep(Duration::from_millis(25));
+        }
     }
 
     fn restate(&self, id: &str, transport: &str) -> Value {
@@ -463,6 +505,104 @@ fn rpc_attach_forwards_ready_and_get_messages_thinking() {
     assert!(joined.contains(r#""type":"ready""#), "lines: {joined}");
     assert!(joined.contains(r#""type":"thinking""#), "lines: {joined}");
     assert!(!lines.iter().any(|line| line == &request.to_string()), "stdin echoed: {joined}");
+}
+
+#[test]
+fn rpc_write_delivers_800_kib_base64_image_through_core_client() {
+    let fixture = Fixture::new();
+    let id = fixture.spawn_capture_omp();
+    let client = DaemonClient::connect_path(fixture.socket.clone()).unwrap();
+    // 800 KiB raw image data expands past the old 1 MiB request limit.
+    let mut data = "QUJD".repeat(800 * 1024 / 3);
+    data.push_str("QUI=");
+    let payload = json!({
+        "id": "image-800-kib",
+        "type": "prompt",
+        "message": "Inspect this screenshot.",
+        "images": [{"type": "image", "mimeType": "image/png", "data": data}],
+    });
+
+    client.rpc_write_session(id, &payload).unwrap();
+    fixture.assert_payload_delivered(id, &payload);
+}
+
+#[test]
+fn rpc_write_delivers_four_maximum_images_and_text_through_core_client() {
+    let fixture = Fixture::new();
+    let id = fixture.spawn_capture_omp();
+    let client = DaemonClient::connect_path(fixture.socket.clone()).unwrap();
+    // Each valid base64 value encodes exactly 5 MiB. Distinct contents catch
+    // dropped, reordered, or duplicated images as well as truncation.
+    let image_bytes = 5 * 1024 * 1024;
+    let images: Vec<Value> = [("QUJD", "QUI="), ("REVG", "REU="), ("R0hJ", "R0g="), ("SktM", "Sks=")]
+        .into_iter()
+        .map(|(triplet, remainder)| {
+            let mut data = triplet.repeat(image_bytes / 3);
+            data.push_str(remainder);
+            json!({"type": "image", "mimeType": "image/png", "data": data})
+        })
+        .collect();
+    let payload = json!({
+        "id": "four-maximum-images",
+        "type": "prompt",
+        // Exercise the maximum six-byte JSON escaping overhead for 4 MiB text.
+        "message": "\0".repeat(4 * 1024 * 1024),
+        "images": images,
+    });
+
+    client.rpc_write_session(id, &payload).unwrap();
+    fixture.assert_payload_delivered(id, &payload);
+}
+
+fn raw_status_request_with_size(fixture: &Fixture, bytes: usize) -> Value {
+    // Include the JSON envelope in the byte budget, but not the framing newline.
+    let mut request = json!({"op": "status", "id": fixture.session_id, "padding": ""});
+    let overhead = serde_json::to_vec(&request).unwrap().len();
+    request["padding"] = Value::String("x".repeat(bytes - overhead));
+    let encoded = serde_json::to_vec(&request).unwrap();
+    assert_eq!(encoded.len(), bytes);
+    let mut stream = UnixStream::connect(&fixture.socket).unwrap();
+    stream.set_write_timeout(Some(Duration::from_secs(30))).unwrap();
+    stream.write_all(&encoded).unwrap();
+    stream.write_all(b"\n").unwrap();
+    let line = read_line_retry(&mut stream);
+    serde_json::from_str(&line).unwrap()
+}
+
+#[test]
+fn raw_control_request_at_exact_limit_is_accepted() {
+    let fixture = Fixture::new();
+    fixture.spawn_capture_omp();
+
+    let reply = raw_status_request_with_size(&fixture, MAX_CONTROL_HEADER_BYTES);
+    assert_eq!(reply["transport"], "rpc", "{reply}");
+    assert_eq!(reply["process"]["state"], "alive", "{reply}");
+}
+
+#[test]
+fn raw_control_request_one_byte_over_limit_preserves_live_session() {
+    let fixture = Fixture::new();
+    let id = fixture.spawn_capture_omp();
+    let pid_path = fixture.root.join(format!("pid.{id}"));
+    let original_pid = fs::read_to_string(&pid_path).unwrap();
+    let original_started_at = fixture.meta(id).started_at;
+
+    let reply = raw_status_request_with_size(&fixture, MAX_CONTROL_HEADER_BYTES + 1);
+    let error = reply["error"].as_str().expect("oversize request must return an explicit error");
+    assert!(error.starts_with("request-too-large"), "{reply}");
+    assert!(error.contains(&MAX_CONTROL_HEADER_BYTES.to_string()), "{reply}");
+
+    let status = fixture.rpc(json!({"op": "status", "id": id}));
+    assert_eq!(status["transport"], "rpc", "{status}");
+    assert_eq!(status["process"]["state"], "alive", "{status}");
+    let client = DaemonClient::connect_path(fixture.socket.clone()).unwrap();
+    let payload = json!({"id": "after-rejection", "type": "prompt", "message": "Still usable."});
+    client.rpc_write_session(id, &payload).unwrap();
+    fixture.assert_payload_delivered(id, &payload);
+    assert_eq!(fs::read_to_string(&pid_path).unwrap(), original_pid);
+    let meta = fixture.meta(id);
+    assert_eq!(meta.started_at, original_started_at);
+    assert!(meta.ended_at.is_none());
 }
 
 #[test]

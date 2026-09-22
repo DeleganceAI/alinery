@@ -15,7 +15,7 @@
 // Use alinery-core for all pure FS/path/harness/phase/status logic (pty bits stay local to alineryd).
 mod execution;
 mod ui_control;
-use alinery_core::daemon_client::{MAX_CONTROL_BODY_BYTES, MAX_CONTROL_HEADER_BYTES};
+use alinery_core::daemon_client::{control_request_size_error, MAX_CONTROL_BODY_BYTES, MAX_CONTROL_HEADER_BYTES};
 use alinery_core::execution::{CompletionOutcome, ExecutionLifecycle};
 use alinery_core::{
     alinery_dir, alineryd_lock_path, alineryd_reconciler_lock_path, alineryd_socket_path, all_session_meta_paths, ensure_hosted_inference_for_spawn, is_hosted_model,
@@ -46,6 +46,7 @@ use std::time::{Duration, Instant};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde_json::{json, Value};
 
+const MAX_EVENT_REQUEST_BYTES: usize = 128 * 1024;
 const MAX_MESSAGE_BODY_BYTES: usize = 4 * 1024 * 1024;
 const MAX_IN_FLIGHT_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_IN_FLIGHT_CONTROL_BODY_BYTES: usize = MAX_CONTROL_BODY_BYTES;
@@ -712,7 +713,7 @@ fn read_request_header(stream: &mut UnixStream, max_bytes: usize) -> Result<Stri
         let newline = bytes.iter().position(|b| *b == b'\n');
         let payload = newline.unwrap_or(bytes.len());
         if line.len().checked_add(payload).is_none_or(|length| length > max_bytes) {
-            return Err("request-too-large".to_string());
+            return Err(control_request_size_error());
         }
         let consume = payload + usize::from(newline.is_some());
         stream.read_exact(&mut chunk[..consume]).map_err(|error| format!("read-request-header: {error}"))?;
@@ -1074,15 +1075,27 @@ fn handle_conn(
     protected_host: &ProtectedHost,
 ) {
     // The listener is non-blocking so the accept loop can poll the signal pipe.
-    // On macOS, accept() inherits O_NONBLOCK. read_line then treats a drained
-    // socket buffer as EOF (WouldBlock → None), so a request larger than the
-    // ~8 KiB unix-socket buffer (the oversized-event case) flakes with EPIPE.
+    // On macOS accept() inherits O_NONBLOCK; a temporary gap must not be EOF.
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(DAEMON_CONTROL_TIMEOUT));
     let line = match read_request_header(&mut stream, MAX_CONTROL_HEADER_BYTES) {
         Ok(line) => line,
         Err(error) => {
             reply(&mut stream, json!({"error": error}));
+            if error.starts_with("request-too-large:") {
+                // Reply before draining: unterminated peers see the error promptly,
+                // while write-then-read clients can finish without a broken pipe.
+                let mut chunk = [0_u8; 8192];
+                loop {
+                    match stream.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(count) if chunk[..count].contains(&b'\n') => break,
+                        Ok(_) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                        Err(_) => break,
+                    }
+                }
+            }
             return;
         }
     };
@@ -1091,6 +1104,11 @@ fn handle_conn(
         return;
     };
     let op = req.get("op").and_then(|v| v.as_str()).unwrap_or("");
+    if op == "event" && line.len() > MAX_EVENT_REQUEST_BYTES {
+        reply(&mut stream, json!({"error": "request-too-large"}));
+        return;
+    }
+    drop(line);
     let id = || req.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
     match op {
@@ -1454,7 +1472,7 @@ fn handle_conn(
             }
         }
         "rpc_write" => {
-            let Some(payload) = req.get("payload").cloned().filter(|value| value.is_object()) else {
+            let Some(payload) = req.get("payload").filter(|value| value.is_object()) else {
                 reply(&mut stream, json!({"error": "missing payload"}));
                 return;
             };
@@ -3246,21 +3264,31 @@ mod request_limits {
     use std::os::unix::net::UnixStream;
     use std::thread;
 
-    fn socket_line(bytes: Vec<u8>, max_bytes: usize) -> Option<String> {
+    fn socket_line(bytes: Vec<u8>, max_bytes: usize) -> Result<String, String> {
         let (mut server, mut client) = UnixStream::pair().unwrap();
         let writer = thread::spawn(move || {
             client.write_all(&bytes).unwrap();
         });
-        let line = read_line(&mut server, max_bytes);
+        let line = read_request_header(&mut server, max_bytes);
         writer.join().unwrap();
         line
     }
 
     #[test]
     fn request_line_reader_accepts_the_limit_and_rejects_before_overallocation() {
-        assert_eq!(socket_line(b"1234\n".to_vec(), 4).as_deref(), Some("1234"));
-        assert_eq!(socket_line(b"12345\n".to_vec(), 4), None);
-        assert_eq!(socket_line(b"1234".to_vec(), 4), None);
+        assert_eq!(socket_line(b"1234\n".to_vec(), 4).as_deref(), Ok("1234"));
+        assert_eq!(socket_line(b"12345\n".to_vec(), 4), Err(control_request_size_error()));
+        assert_eq!(socket_line(b"1234".to_vec(), 4), Err("incomplete-request-header".into()));
+    }
+
+    #[test]
+    fn request_line_reader_leaves_coalesced_message_body_on_socket() {
+        let (mut server, mut client) = UnixStream::pair().unwrap();
+        client.write_all(b"header\nbody\n").unwrap();
+        assert_eq!(read_line(&mut server, 6).unwrap(), "header");
+        let mut body = [0u8; 5];
+        server.read_exact(&mut body).unwrap();
+        assert_eq!(&body, b"body\n");
     }
 
     #[test]
@@ -3292,7 +3320,9 @@ mod request_limits {
         client.write_all(&header).unwrap();
         let mut response = String::new();
         std::io::BufReader::new(&mut client).read_line(&mut response).unwrap();
-        assert_eq!(serde_json::from_str::<Value>(&response).unwrap()["error"], "request-too-large");
+        let error = serde_json::from_str::<Value>(&response).unwrap()["error"].as_str().unwrap().to_owned();
+        assert!(error.starts_with("request-too-large:"), "{error}");
+        client.shutdown(std::net::Shutdown::Write).unwrap();
         handler.join().unwrap();
     }
 
@@ -3306,7 +3336,6 @@ mod request_limits {
             "start": false
         }))
         .unwrap();
-        assert!(body.len() > MAX_CONTROL_HEADER_BYTES);
         let body_bytes = body.len();
         let (mut server, mut client) = UnixStream::pair().unwrap();
         server.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
