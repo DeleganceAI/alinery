@@ -203,6 +203,7 @@ fn effective_identifier_alone_selects_the_daemon_lane() {
 fn recording_lane(socket_path: std::path::PathBuf, live_sessions: usize) -> (std::sync::Arc<Mutex<Vec<String>>>, std::thread::JoinHandle<()>) {
     use std::io::{BufRead, BufReader};
     use std::os::unix::net::UnixListener;
+    fs::create_dir_all(socket_path.parent().unwrap()).unwrap();
 
     let listener = UnixListener::bind(&socket_path).unwrap();
     listener.set_nonblocking(true).unwrap();

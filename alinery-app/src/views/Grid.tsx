@@ -1,9 +1,11 @@
 import { type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { archiveBoardTask } from "../archiveTask";
 import * as ipc from "../ipc";
+import { PullRequestIndicator } from "../PullRequestIndicator";
 import { ArchiveTaskModal, Checkbox, EMPTY_TASK_ACTIVITY, repoName, sameBoardTasks, sameKanbanColumns, TaskActivityIndicators, taskKey, useBoardTaskActivity } from "../shared";
-import type { BoardNav, BoardTask, KanbanColumn, PlaybookStepSummary, TaskActivityStatus } from "../types";
+import type { BoardNav, BoardTask, KanbanColumn, NormalizedStep, TaskActivityStatus, TaskExecutionReply } from "../types";
 import { usePointerDrag } from "../usePointerDrag";
+import { useTaskPullRequests } from "../useTaskPullRequests";
 
 type PresetKey = "kanban" | "steps" | "quadrants" | "atlas" | "age" | "progress";
 type PresetSelection = PresetKey | "custom";
@@ -22,7 +24,7 @@ type SortField = "manual" | "updatedHours" | "createdAtAsc" | "createdDays" | "i
 type CardMode = "detail" | "compact" | "icon";
 type TaskFilter = "all" | "active" | "attention";
 type Brightness = "updatedHours" | "none";
-type CardProperty = "activity" | "name" | "repo" | "playbook" | "stage" | "status" | "sessions" | "updatedHours" | "createdDays" | "attention";
+type CardProperty = "activity" | "pullRequest" | "name" | "repo" | "playbook" | "stage" | "status" | "sessions" | "updatedHours" | "createdDays" | "attention";
 
 type GridConfig = {
   position: PositionModel;
@@ -66,8 +68,8 @@ type TaskFacts = {
   createdWindow: string;
 };
 
-type ProgressCell = { key: string; label: string };
-type PlaybookRef = { key: string; repoPath: string; playbook: string };
+type ProgressCell = { key: string; label: string; summary?: string; active?: boolean };
+type ExecutionRef = { key: string; repoPath: string; slug: string };
 type MovementHistory = Record<string, Partial<Record<ProgressField, string[]>>>;
 type GridActivityState = TaskActivityStatus | "none";
 type LaneDragPreview = {
@@ -206,6 +208,7 @@ const CARD_PROPERTIES: { value: CardProperty; label: string }[] = [
   { value: "updatedHours", label: "updated" },
   { value: "createdDays", label: "created" },
   { value: "attention", label: "attention" },
+  { value: "pullRequest", label: "pull request" },
 ];
 
 const PRESETS: Record<PresetKey, GridConfig> = {
@@ -445,27 +448,6 @@ function randomGridConfig(random: RandomSource): GridConfig {
   };
 }
 
-function playbookRefKey(repoPath: string, playbook: string) {
-  return `${repoPath}\u0000${playbook}`;
-}
-function samePlaybookSteps(left: PlaybookStepSummary[], right: PlaybookStepSummary[]) {
-  return (
-    left.length === right.length &&
-    left.every((step, index) => {
-      const other = right[index];
-      return (
-        other !== undefined &&
-        step.key === other.key &&
-        step.title === other.title &&
-        step.short === other.short &&
-        step.artifact === other.artifact &&
-        step.column === other.column &&
-        step.harness === other.harness
-      );
-    })
-  );
-}
-
 function ageIn(epochSeconds: number, unitSeconds: number) {
   if (!epochSeconds) return 0;
   return Math.max(0, Math.floor((Date.now() / 1000 - epochSeconds) / unitSeconds));
@@ -521,18 +503,48 @@ function borderTone(field: BorderField, fact: TaskFacts, values: string[], none:
   return stableTone(field, field === "accent" ? "Accent" : factValue(fact, field), "border", values);
 }
 
-function stagePath(fact: TaskFacts, playbooks: Record<string, PlaybookStepSummary[]>): ProgressCell[] {
-  const steps = playbooks[playbookRefKey(fact.task.repo_path, fact.task.playbook)] ?? [];
-  const path = steps.map((step) => ({ key: step.key, label: step.short || step.title || step.key }));
-  const current = fact.task.current_phase || path[0]?.key || fact.stage;
-  if (!path.some((step) => step.key === current)) path.push({ key: current, label: fact.stage });
-  return path.length ? path : [{ key: current, label: fact.stage }];
+function stagePath(fact: TaskFacts, executions: Record<string, TaskExecutionReply>): ProgressCell[] {
+  const execution = executions[fact.id];
+  const states = new Map<string, Map<string, number>>();
+  if (execution) {
+    for (const record of Object.values(execution.state.executions)) {
+      const key = record.candidate.step_key;
+      let counts = states.get(key);
+      if (!counts) {
+        counts = new Map();
+        states.set(key, counts);
+      }
+      counts.set(record.lifecycle, (counts.get(record.lifecycle) ?? 0) + 1);
+    }
+  }
+  const steps: NormalizedStep[] = execution?.definition.step ?? [];
+  const path: ProgressCell[] = steps.map((step) => {
+    const counts = states.get(step.key);
+    return {
+      key: step.key,
+      label: step.short || step.title || step.key,
+      active: Boolean(counts?.has("starting") || counts?.has("running") || counts?.has("finishing")),
+      summary: counts
+        ? [...counts]
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([state, count]) => `${count} ${state.replace(/_/g, " ")}`)
+            .join(", ")
+        : execution?.state.enabled_steps.includes(step.key)
+          ? "Not started"
+          : "Not started · Human completion required",
+    };
+  });
+  const current = fact.task.current_phase || "";
+  if (!path.some((step) => step.key === current)) {
+    path.push({ key: current, label: fact.stage, summary: execution ? undefined : "Execution unavailable" });
+  }
+  return path.sort((left, right) => left.label.localeCompare(right.label) || left.key.localeCompare(right.key));
 }
 
-function currentProgressKey(fact: TaskFacts, field: ProgressField, playbooks: Record<string, PlaybookStepSummary[]>) {
+function currentProgressKey(fact: TaskFacts, field: ProgressField) {
   switch (field) {
     case "stage":
-      return fact.task.current_phase || stagePath(fact, playbooks)[0].key;
+      return fact.task.current_phase || "";
     case "column":
       return fact.task.current_column_key || fact.column;
     case "status":
@@ -542,8 +554,8 @@ function currentProgressKey(fact: TaskFacts, field: ProgressField, playbooks: Re
   }
 }
 
-function progressPath(fact: TaskFacts, field: ProgressField, columns: KanbanColumn[], playbooks: Record<string, PlaybookStepSummary[]>): ProgressCell[] {
-  if (field === "stage") return stagePath(fact, playbooks);
+function progressPath(fact: TaskFacts, field: ProgressField, columns: KanbanColumn[], executions: Record<string, TaskExecutionReply>): ProgressCell[] {
+  if (field === "stage") return stagePath(fact, executions);
   if (field === "status") return STATUS_ORDER.map((key) => ({ key, label: STATUS_LABELS[key] }));
   if (field === "createdWindow") return AGE_WINDOWS.map((value) => ({ key: value, label: value }));
   const path = columns.map((column) => ({ key: column.key, label: column.title || column.key }));
@@ -552,13 +564,10 @@ function progressPath(fact: TaskFacts, field: ProgressField, columns: KanbanColu
   return path.length ? path : [{ key: current, label: fact.column }];
 }
 
-function orderedFieldValues(field: DataField, facts: TaskFacts[], columns: KanbanColumn[], playbooks: Record<string, PlaybookStepSummary[]>) {
+function orderedFieldValues(field: DataField, facts: TaskFacts[], columns: KanbanColumn[]) {
   const found = [...new Set(facts.map((fact) => factValue(fact, field)))];
   let requested: string[] = [];
   if (field === "column") requested = columns.map((column) => column.title || column.key);
-  if (field === "stage") {
-    requested = [...new Set(Object.values(playbooks).flatMap((steps) => steps.map((step) => step.short || step.title || step.key)))];
-  }
   if (field === "createdWindow") requested = AGE_WINDOWS;
   if (field === "status") requested = STATUS_ORDER.map((status) => STATUS_LABELS[status]);
   if (field === "attention") requested = ATTENTION_ORDER;
@@ -599,7 +608,7 @@ export function reorderGridTasks(order: string[], participating: Set<string>, ta
   return next.every((id, index) => id === order[index]) ? order : next;
 }
 
-function propertyValue(fact: TaskFacts, property: Exclude<CardProperty, "activity" | "name">) {
+function propertyValue(fact: TaskFacts, property: Exclude<CardProperty, "activity" | "pullRequest" | "name">) {
   switch (property) {
     case "repo":
       return fact.repo;
@@ -714,11 +723,10 @@ export function Grid({
   const initialWorkspace = useMemo(() => loadGridWorkspace(storageKey, initialPreset), [storageKey, initialPreset]);
   const [tasks, setTasks] = useState<BoardTask[]>([]);
   const [columns, setColumns] = useState<KanbanColumn[]>([]);
-  const [playbooks, setPlaybooks] = useState<Record<string, PlaybookStepSummary[]>>({});
-  const playbooksRef = useRef<Record<string, PlaybookStepSummary[]>>({});
+  const [executions, setExecutions] = useState<Record<string, TaskExecutionReply>>({});
   const [loaded, setLoaded] = useState(false);
   const [err, setErr] = useState("");
-  const [playbookErr, setPlaybookErr] = useState("");
+  const [executionErr, setExecutionErr] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(initialWorkspace.settingsOpen);
   const [preset, setPreset] = useState<PresetSelection>(initialWorkspace.preset);
   const [config, setConfig] = useState<GridConfig>(initialWorkspace.config);
@@ -774,12 +782,12 @@ export function Grid({
     return () => window.clearInterval(timer);
   }, [active, load]);
 
-  const playbookRefs = useMemo(() => {
-    const refs = new Map<string, PlaybookRef>();
+  const executionRefs = useMemo(() => {
+    const refs = new Map<string, ExecutionRef>();
     for (const task of tasks) {
       if (!showArchived && task.archived) continue;
-      const key = playbookRefKey(task.repo_path, task.playbook);
-      refs.set(key, { key, repoPath: task.repo_path, playbook: task.playbook });
+      const key = taskKey(task);
+      refs.set(key, { key, repoPath: task.repo_path, slug: task.slug });
     }
     return [...refs.values()].sort((left, right) => left.key.localeCompare(right.key));
   }, [tasks, showArchived]);
@@ -787,40 +795,32 @@ export function Grid({
   useEffect(() => {
     if (!active) return;
     let alive = true;
-    const loadPlaybooks = async () => {
+    let loading = false;
+    const loadExecutions = async () => {
+      if (loading) return;
+      loading = true;
       const entries = await Promise.all(
-        playbookRefs.map(async (ref) => {
+        executionRefs.map(async (ref) => {
           try {
-            return { ref, steps: await ipc.listPlaybookStepsForRepo(ref.repoPath, ref.playbook), error: "" };
+            return { ref, execution: await ipc.getTaskExecution(ref.slug, ref.repoPath), error: "" };
           } catch (error) {
-            return { ref, steps: null, error: String(error) };
+            return { ref, execution: null, error: String(error) };
           }
         }),
       );
+      loading = false;
       if (!alive) return;
-
-      const current = playbooksRef.current;
-      const activeKeys = new Set(playbookRefs.map((ref) => ref.key));
-      const next = Object.fromEntries(Object.entries(current).filter(([key]) => activeKeys.has(key)));
-      for (const entry of entries) {
-        if (entry.steps === null) continue;
-        next[entry.ref.key] = samePlaybookSteps(current[entry.ref.key] ?? [], entry.steps) ? (current[entry.ref.key] ?? entry.steps) : entry.steps;
-      }
-      playbooksRef.current = next;
-      if (Object.keys(current).length !== Object.keys(next).length || Object.keys(next).some((key) => next[key] !== current[key])) setPlaybooks(next);
-
-      const missing = entries.filter((entry) => entry.steps === null && !(entry.ref.key in current));
-      setPlaybookErr(
-        missing.length ? `Couldn't load playbook steps for ${missing.map((entry) => entry.ref.playbook).join(", ")}. ${missing.map((entry) => entry.error).join("; ")}` : "",
-      );
+      setExecutions(Object.fromEntries(entries.flatMap(({ ref, execution }) => (execution ? [[ref.key, execution]] : []))));
+      const failures = entries.filter((entry) => entry.execution === null);
+      setExecutionErr(failures.length ? `Couldn't load task executions. ${failures.map(({ ref, error }) => `${ref.repoPath}:${ref.slug}: ${error}`).join("; ")}` : "");
     };
-    void loadPlaybooks();
-    const timer = window.setInterval(loadPlaybooks, 3000);
+    void loadExecutions();
+    const timer = window.setInterval(loadExecutions, 3000);
     return () => {
       alive = false;
       window.clearInterval(timer);
     };
-  }, [active, playbookRefs]);
+  }, [active, executionRefs]);
 
   const facts = useMemo(() => {
     return tasks
@@ -863,13 +863,13 @@ export function Grid({
       facts.map((fact) => ({
         id: fact.id,
         values: {
-          stage: currentProgressKey(fact, "stage", playbooks),
-          column: currentProgressKey(fact, "column", playbooks),
-          status: currentProgressKey(fact, "status", playbooks),
-          createdWindow: currentProgressKey(fact, "createdWindow", playbooks),
+          stage: currentProgressKey(fact, "stage"),
+          column: currentProgressKey(fact, "column"),
+          status: currentProgressKey(fact, "status"),
+          createdWindow: currentProgressKey(fact, "createdWindow"),
         },
       })),
-    [facts, playbooks],
+    [facts],
   );
 
   useEffect(() => {
@@ -900,12 +900,12 @@ export function Grid({
     return facts;
   }, [facts, config.filter]);
 
-  const stageOrder = useMemo(() => orderedFieldValues("stage", facts, columns, playbooks), [facts, columns, playbooks]);
+  const stageOrder = useMemo(() => orderedFieldValues("stage", facts, columns), [facts, columns]);
   const groups = useMemo(() => {
     if (config.group === "none") {
       return [{ key: "all", label: "All tasks", tasks: sortFacts(visibleFacts, config.sort, manualOrder, stageOrder) }];
     }
-    const values = orderedFieldValues(config.group, visibleFacts, columns, playbooks);
+    const values = orderedFieldValues(config.group, visibleFacts, columns);
     return values.map((value) => ({
       key: value,
       label: value,
@@ -916,10 +916,19 @@ export function Grid({
         stageOrder,
       ),
     }));
-  }, [config.group, config.sort, visibleFacts, columns, playbooks, manualOrder, stageOrder]);
+  }, [config.group, config.sort, visibleFacts, columns, manualOrder, stageOrder]);
+  const collapsibleGroups = config.position === "packed" && config.placement === "columns";
   const displayFacts = useMemo(
-    () => groups.filter((group) => !hiddenGroupKeys.has(`${config.group}:${group.key}`)).flatMap((group) => group.tasks),
-    [groups, hiddenGroupKeys, config.group],
+    () => groups.filter((group) => !collapsibleGroups || !hiddenGroupKeys.has(`${config.group}:${group.key}`)).flatMap((group) => group.tasks),
+    [groups, hiddenGroupKeys, config.group, collapsibleGroups],
+  );
+  const showPullRequest = config.properties.includes("pullRequest");
+  const pullRequests = useTaskPullRequests(
+    active && showPullRequest
+      ? displayFacts
+          .filter((fact) => !fact.task.draft && (config.position !== "lanes" || !hiddenTaskIds.has(fact.id)))
+          .map((fact) => ({ repoPath: fact.task.repo_path, taskSlug: fact.task.slug }))
+      : [],
   );
 
   useEffect(() => {
@@ -1053,12 +1062,12 @@ export function Grid({
   const groupsWrapWidth = groupTracks * groupOuterWidth + Math.max(0, groupTracks - 1) * config.columnSpacing;
   const planText =
     config.position === "lanes"
-      ? `fixed task lanes · row-local paths · progress by ${optionLabel(PROGRESS_OPTIONS, config.progress).toLowerCase()} · forward is ${config.direction === "ltr" ? "left → right" : "right → left"}`
+      ? `fixed task lanes · ${config.progress === "stage" ? "retained step membership · actual execution counts · alphabetical layout, not execution order" : `position by ${optionLabel(PROGRESS_OPTIONS, config.progress).toLowerCase()}`}`
       : `outer grid: ${groupTracks} group track${groupTracks === 1 ? "" : "s"} · ${config.columnCards} card${config.columnCards === 1 ? "" : "s"} per column · ${config.columnFlow === "scroll" ? "single scrolling row" : "wrapped rows"} · ${config.width} × ${config.height}px task cells`;
-  const fillLegendValues = config.fill === "none" ? [] : orderedFieldValues(config.fill, visibleFacts, columns, playbooks);
-  const borderLegendValues = config.border === "none" ? [] : config.border === "accent" ? ["Accent"] : orderedFieldValues(config.border, visibleFacts, columns, playbooks);
-  const fillToneValues = config.fill === "none" ? [] : orderedFieldValues(config.fill, facts, columns, playbooks);
-  const borderToneValues = config.border === "none" ? [] : config.border === "accent" ? ["Accent"] : orderedFieldValues(config.border, facts, columns, playbooks);
+  const fillLegendValues = config.fill === "none" ? [] : orderedFieldValues(config.fill, visibleFacts, columns);
+  const borderLegendValues = config.border === "none" ? [] : config.border === "accent" ? ["Accent"] : orderedFieldValues(config.border, visibleFacts, columns);
+  const fillToneValues = config.fill === "none" ? [] : orderedFieldValues(config.fill, facts, columns);
+  const borderToneValues = config.border === "none" ? [] : config.border === "accent" ? ["Accent"] : orderedFieldValues(config.border, facts, columns);
 
   const renderCard = (fact: TaskFacts, placement?: { column: number }) => {
     const fillValue = config.fill === "none" ? "" : factValue(fact, config.fill);
@@ -1068,12 +1077,14 @@ export function Grid({
       "--task-grid-border": borderTone(config.border, fact, borderToneValues, "transparent"),
       "--task-grid-opacity": opacity,
       gridColumn: placement ? String(placement.column + 1) : undefined,
+      gridRow: placement && config.progress === "stage" ? "2" : undefined,
     } as CSSProperties;
     const label = `${fact.name}, ${fact.repo}, ${fact.playbook}, ${fact.stage}, ${fact.status}`;
     return (
-      <button
+      <div
         key={`${fact.id}:${placement?.column ?? "packed"}`}
-        type="button"
+        role="button"
+        tabIndex={0}
         className={`task-grid-card task-grid-card-${config.mode}${selectedTaskKey === fact.id ? " selected" : ""}`}
         style={style}
         aria-label={label}
@@ -1082,10 +1093,17 @@ export function Grid({
         onFocus={() => setSelectedTaskKey(fact.id)}
         onMouseDown={() => setSelectedTaskKey(fact.id)}
         onClick={() => onOpen(fact.task)}
+        onKeyDown={(event) => {
+          if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            if (!event.repeat) onOpen(fact.task);
+          }
+        }}
       >
-        {config.properties.includes("activity") && (
-          <span className="task-grid-card-activity">
-            <TaskActivityIndicators activity={activity[fact.id] ?? EMPTY_TASK_ACTIVITY} />
+        {(config.properties.includes("activity") || showPullRequest) && (
+          <span className="task-grid-card-indicators">
+            {config.properties.includes("activity") && <TaskActivityIndicators activity={activity[fact.id] ?? EMPTY_TASK_ACTIVITY} />}
+            {showPullRequest && <PullRequestIndicator snapshot={pullRequests[fact.id]} compact />}
           </span>
         )}
         <span className="task-grid-icon" aria-hidden="true">
@@ -1094,18 +1112,20 @@ export function Grid({
         {config.properties.includes("name") && <span className="task-grid-card-name">{fact.name}</span>}
         <span className="task-grid-card-meta">
           {config.properties
-            .filter((property): property is Exclude<CardProperty, "activity" | "name"> => property !== "activity" && property !== "name")
+            .filter(
+              (property): property is Exclude<CardProperty, "activity" | "pullRequest" | "name"> => property !== "activity" && property !== "pullRequest" && property !== "name",
+            )
             .map((property) => (
               <span key={property}>{propertyValue(fact, property)}</span>
             ))}
         </span>
-      </button>
+      </div>
     );
   };
 
   const renderLane = (fact: TaskFacts) => {
-    const semanticCells = progressPath(fact, config.progress, columns, playbooks);
-    const currentKey = currentProgressKey(fact, config.progress, playbooks);
+    const semanticCells = progressPath(fact, config.progress, columns, executions);
+    const currentKey = currentProgressKey(fact, config.progress);
     const currentSemanticIndex = Math.max(
       0,
       semanticCells.findIndex((cell) => cell.key === currentKey),
@@ -1174,22 +1194,28 @@ export function Grid({
           </div>
           {!hidden && <small>{`${fact.repo} · ${fact.playbook}`}</small>}
         </div>
-        <fieldset className="task-grid-lane-track" aria-label={`${fact.name} playbook path, ${semanticCells.length} steps`}>
+        <fieldset className="task-grid-lane-track" aria-label={`${fact.name} ${config.progress === "stage" ? "retained steps" : "positions"}`}>
           {!hidden && (
             <>
               {visualCells.map((cell, visualIndex) => {
                 const semanticIndex = semanticCells.findIndex((candidate) => candidate.key === cell.key);
-                const showLabel = semanticIndex !== currentSemanticIndex && (config.path === "all" || (config.path === "next" && semanticIndex === currentSemanticIndex + 1));
+                const showLabel =
+                  config.progress === "stage"
+                    ? config.path === "all" || (config.path === "next" && cell.active)
+                    : semanticIndex !== currentSemanticIndex && (config.path === "all" || (config.path === "next" && semanticIndex === currentSemanticIndex + 1));
                 if (!showLabel) return null;
-                const stateClass = semanticIndex < currentSemanticIndex ? " past" : semanticIndex === currentSemanticIndex + 1 ? " next" : "";
                 return (
-                  <span key={cell.key} className={`task-grid-lane-step${stateClass}`} style={{ gridColumn: visualIndex + 1 }}>
+                  <span
+                    key={cell.key}
+                    className="task-grid-lane-step"
+                    style={{ gridColumn: visualIndex + 1, gridRow: config.progress === "stage" ? "1" : undefined, opacity: config.progress === "stage" ? 1 : undefined }}
+                  >
                     {cell.label}
-                    {semanticIndex < currentSemanticIndex ? " ✓" : ""}
+                    {cell.summary ? ` · ${cell.summary}` : ""}
                   </span>
                 );
               })}
-              {config.memory !== "current" && hasMovement && (
+              {config.progress !== "stage" && config.memory !== "current" && hasMovement && (
                 <>
                   <span
                     role="img"
@@ -1289,9 +1315,29 @@ export function Grid({
             {config.position === "lanes" && (
               <>
                 <SelectField label="Progress by" value={config.progress} options={PROGRESS_OPTIONS} onChange={(value) => setField("progress", value as ProgressField)} />
-                <SelectField label="Forward direction" value={config.direction} options={DIRECTION_OPTIONS} onChange={(value) => setField("direction", value as Direction)} />
-                <SelectField label="Movement memory" value={config.memory} options={MEMORY_OPTIONS} onChange={(value) => setField("memory", value as MovementMemory)} />
-                <SelectField label="Path labels" value={config.path} options={PATH_OPTIONS} onChange={(value) => setField("path", value as PathLabels)} />
+                <SelectField
+                  label={config.progress === "stage" ? "Display direction" : "Forward direction"}
+                  value={config.direction}
+                  options={DIRECTION_OPTIONS}
+                  onChange={(value) => setField("direction", value as Direction)}
+                />
+                {config.progress !== "stage" && (
+                  <SelectField label="Movement memory" value={config.memory} options={MEMORY_OPTIONS} onChange={(value) => setField("memory", value as MovementMemory)} />
+                )}
+                <SelectField
+                  label="Path labels"
+                  value={config.path}
+                  options={
+                    config.progress === "stage"
+                      ? [
+                          { value: "all", label: "All steps" },
+                          { value: "next", label: "Active steps" },
+                          { value: "none", label: "None" },
+                        ]
+                      : PATH_OPTIONS
+                  }
+                  onChange={(value) => setField("path", value as PathLabels)}
+                />
               </>
             )}
             <SelectField label="Group by" value={config.group} options={GROUP_OPTIONS} onChange={(value) => setField("group", value as GroupField)} />
@@ -1386,9 +1432,9 @@ export function Grid({
           {err}
         </div>
       )}
-      {playbookErr && (
+      {executionErr && (
         <div className="errbar" role="alert">
-          {playbookErr}
+          {executionErr}
         </div>
       )}
       <div className="task-grid-board-wrap">
@@ -1396,9 +1442,8 @@ export function Grid({
         {loaded && !err && visibleFacts.length === 0 && <div className="task-grid-empty">No tasks match this grid configuration.</div>}
         <div className="task-grid-groups" data-position={config.position} data-placement={config.placement} data-column-flow={config.columnFlow} data-card-mode={config.mode}>
           {groups.map((group) => {
-            const collapsible = config.position === "packed" && config.placement === "columns";
             const visibilityKey = `${config.group}:${group.key}`;
-            if (collapsible && hiddenGroupKeys.has(visibilityKey)) {
+            if (collapsibleGroups && hiddenGroupKeys.has(visibilityKey)) {
               return (
                 <button
                   key={group.key}
@@ -1417,7 +1462,7 @@ export function Grid({
                 <div className="task-grid-group-head">
                   <span>{group.label}</span>
                   <span className="task-grid-group-count">{group.tasks.length}</span>
-                  {collapsible && (
+                  {collapsibleGroups && (
                     <button
                       type="button"
                       className="task-grid-hide task-grid-hide-group"
@@ -1506,7 +1551,13 @@ export function Grid({
             </span>
           </div>
           <div className="task-grid-legend-note">
-            <span>{config.position === "lanes" ? `movement = ${optionLabel(MEMORY_OPTIONS, config.memory)}` : `brightness = ${optionLabel(BRIGHTNESS_OPTIONS, config.fade)}`}</span>
+            <span>
+              {config.position === "lanes"
+                ? config.progress === "stage"
+                  ? "counts = recorded execution states, not step order"
+                  : `movement = ${optionLabel(MEMORY_OPTIONS, config.memory)}`
+                : `brightness = ${optionLabel(BRIGHTNESS_OPTIONS, config.fade)}`}
+            </span>
             <span>click any task to open</span>
           </div>
         </section>

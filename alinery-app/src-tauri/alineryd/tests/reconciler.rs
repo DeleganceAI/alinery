@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use alinery_core::{ensure_playbooks, read_task, SemanticCheckpoint, SessionMeta, Task};
+use alinery_core::{read_task, SemanticCheckpoint, SessionMeta, Task};
 
 static BIN: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from(env!("CARGO_BIN_EXE_alineryd")));
 
@@ -65,7 +65,7 @@ fn t7b_prod_and_dev_both_live() {
 }
 
 #[test]
-fn non_primary_playbook_checkpoint_does_not_auto_advance() {
+fn legacy_checkpoints_remain_readable_without_auto_advance() {
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_nanos()).unwrap_or(0);
     let root = PathBuf::from("/tmp").join(format!("al-selected-playbook-{n}"));
     let task_dir = root.join(".alinery/tasks/task");
@@ -73,7 +73,6 @@ fn non_primary_playbook_checkpoint_does_not_auto_advance() {
     let artifacts_dir = task_dir.join("artifacts");
     fs::create_dir_all(&sessions_dir).unwrap();
     fs::create_dir_all(&artifacts_dir).unwrap();
-    ensure_playbooks(&root).unwrap();
     fs::write(
         root.join(".alinery/harnesses.toml"),
         r#"
@@ -150,18 +149,15 @@ adapter = "unsupported"
         .unwrap();
 
     thread::sleep(Duration::from_millis(750));
-    assert!(daemon.try_wait().unwrap().is_none(), "daemon must stay alive while reconciling a non-primary checkpoint");
+    assert!(daemon.try_wait().unwrap().is_none(), "daemon must preserve legacy history without launching it");
     let metas = fs::read_dir(&sessions_dir)
         .unwrap()
         .flatten()
         .filter_map(|entry| fs::read(entry.path()).ok())
         .filter_map(|raw| serde_json::from_slice::<SessionMeta>(&raw).ok())
         .collect::<Vec<_>>();
-    assert_eq!(metas.len(), 2, "non-primary and Generic checkpoints must not create target sessions");
-    assert!(
-        !metas.iter().any(|meta| meta.playbook == "superdevelop" && meta.phase == "research"),
-        "an explicit non-primary playbook session is a single-step run"
-    );
+    assert_eq!(metas.len(), 2, "legacy and auxiliary checkpoints must not create graph executions");
+    assert!(!task_dir.join("execution.json").exists(), "legacy data is never automatically migrated");
     assert_eq!(read_task(&root, "task").unwrap().playbook, "one-shot");
     let generic_after = metas.iter().find(|meta| meta.id == generic.id).unwrap();
     assert_eq!(generic_after.semantic.phase_completed_at, Some(3));

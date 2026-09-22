@@ -122,6 +122,12 @@ check "parses --repo=/path form" \
   "/Users/me/code" "$(parse_alineryd_repo_from_ps_line '99 alineryd --repo=/Users/me/code --other')"
 check "ignores a line with no --repo" \
   "" "$(parse_alineryd_repo_from_ps_line '4242 /usr/bin/something-else --foo bar')"
+# Ubuntu `pgrep -l` (no --list-full) looks like this. Treating it as a hit is how
+# preflight_live_test went green on a Mac and red on the Actions Ubuntu job.
+check "procps pgrep -l name-only line has no repo path" \
+  "" "$(parse_alineryd_repo_from_ps_line '12345 alineryd')"
+check "daemon listing uses pgrep -fa when procps supports --list-full" "1" \
+  "$(grep -c 'pgrep -fa' "$ROOT/scripts/lib/preflight.sh" | tr -d '[:space:]')"
 # A repo under "~/My Projects" is ordinary on macOS. Cutting the value at the first space
 # truncated the path, the socket probe missed, and a live daemon read as "machine quiet".
 check "keeps spaces in the repo path (value ends at the next --option)" \

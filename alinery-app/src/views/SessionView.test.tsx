@@ -7,6 +7,7 @@ import type { SessionMessageDraft } from "../sessionMessage";
 import { mockIpc } from "../test/mockIpc";
 import { toast } from "../toast";
 import type { AgentState, ArtifactListItem, ArtifactTreeNode, SessionObservation, Task } from "../types";
+import { executionRecord, executionReply } from "./executionTestFixture";
 import { SessionView } from "./SessionView";
 
 const scenario = vi.hoisted(() => ({
@@ -20,7 +21,8 @@ const scenario = vi.hoisted(() => ({
 }));
 
 const sessionStatus = vi.hoisted(() => vi.fn(async (): Promise<SessionObservation> => ({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} })));
-const spawnSessionDetached = vi.hoisted(() => vi.fn(async () => undefined));
+const sessionArtifactReady = vi.hoisted(() => vi.fn(async () => false));
+const startSession = vi.hoisted(() => vi.fn(async () => undefined));
 const restateSession = vi.hoisted(() => vi.fn(async () => undefined));
 const rpcAttachSession = vi.hoisted(() => vi.fn(async (_args: unknown) => undefined));
 const rpcWriteSession = vi.hoisted(() => vi.fn(async (_id: string, _payload: unknown) => undefined));
@@ -35,6 +37,8 @@ const chatFileStat = vi.hoisted(() => vi.fn(async (path: string) => ({ name: pat
 const copyChatAttachments = vi.hoisted(() => vi.fn(async () => ({ copied: [] as string[], failures: [] as string[] })));
 const writeChatAttachmentBytes = vi.hoisted(() => vi.fn(async (_slug: string, fileName: string) => fileName));
 const readChatImage = vi.hoisted(() => vi.fn(async () => ({ mime_type: "image/png", data: "aa" })));
+const getTaskExecution = vi.hoisted(() => vi.fn());
+const allowExecutionCompletion = vi.hoisted(() => vi.fn());
 
 const task: Task = {
   name: "Task",
@@ -84,6 +88,8 @@ vi.mock("../SessionTerminal", () => ({ SessionTerminal: () => <div data-testid="
 vi.mock("../confirm", () => ({ confirmDanger }));
 vi.mock("../ipc", () =>
   mockIpc({
+    getTaskExecution,
+    allowExecutionCompletion,
     listTasks: () => {
       scenario.taskCalls += 1;
       if (scenario.tasksError) return Promise.reject(scenario.tasksError);
@@ -98,7 +104,8 @@ vi.mock("../ipc", () =>
     listArtifactCommentDraftsForRepo: async () => [],
     listArtifactComments: async () => [],
     sessionStatus,
-    spawnSessionDetached,
+    sessionArtifactReady,
+    startSession,
     restateSession,
     rpcAttachSession,
     rpcWriteSession,
@@ -359,6 +366,70 @@ function liveObservation(transport: "rpc" | "pty", agent: AgentState = { state: 
     checkpoint: {},
   };
 }
+
+describe("session lifecycle polling", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    scenario.tasks = [task];
+    scenario.tasksPromise = null;
+    scenario.tasksError = null;
+    sessionStatus.mockResolvedValue(liveObservation("pty"));
+    sessionArtifactReady.mockReset().mockResolvedValue(false);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    sessionStatus.mockReset().mockResolvedValue({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} });
+    sessionArtifactReady.mockReset().mockResolvedValue(false);
+  });
+
+  it("replaces a live terminal with the polled interruption and preserved-work explanation", async () => {
+    renderSession({ intent: undefined });
+    await flushPromises();
+    expect(screen.getByTestId("terminal")).toBeDefined();
+
+    sessionArtifactReady.mockResolvedValue(true);
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "interrupted" }, state: null, checkpoint: {} });
+    await act(async () => vi.advanceTimersByTimeAsync(1500));
+
+    expect(screen.queryByTestId("terminal")).toBeNull();
+    expect(screen.getByText("Interrupted")).toBeDefined();
+    expect(screen.getByText(/daemon was killed mid-run.*expected artifact exists and work is preserved/)).toBeDefined();
+  });
+
+  it("explains an orphaned session without claiming an artifact was preserved", async () => {
+    renderSession({ intent: undefined });
+    await flushPromises();
+    expect(screen.getByTestId("terminal")).toBeDefined();
+
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "orphaned" }, state: null, checkpoint: {} });
+    await act(async () => vi.advanceTimersByTimeAsync(1500));
+
+    expect(screen.queryByTestId("terminal")).toBeNull();
+    expect(screen.getByText("Orphaned")).toBeDefined();
+    expect(screen.getByText(/daemon died.*live output is gone/)).toBeDefined();
+    expect(screen.queryByText(/work is preserved/)).toBeNull();
+  });
+
+  it("keeps daemon-owned exits attachable, then shows the detached exit code", async () => {
+    renderSession({ intent: undefined });
+    await flushPromises();
+    expect(screen.getByTestId("terminal")).toBeDefined();
+
+    sessionStatus.mockResolvedValue({ ...liveObservation("pty"), lifecycle: { state: "live_exited" } });
+    await act(async () => vi.advanceTimersByTimeAsync(1500));
+    expect(screen.getByTestId("terminal")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Start fresh" })).toBeNull();
+
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "exited", code: 23 }, state: null, checkpoint: {} });
+    await act(async () => vi.advanceTimersByTimeAsync(1500));
+    expect(screen.queryByTestId("terminal")).toBeNull();
+    expect(screen.getByText("Exited (code 23)")).toBeDefined();
+    expect(screen.getByText("The harness process finished.")).toBeDefined();
+  });
+});
 
 function captureRpcOnLine(slot: { current?: (line: string) => void }) {
   rpcAttachSession.mockImplementation(async (args: unknown) => {
@@ -1067,6 +1138,108 @@ describe("session chat send routing", () => {
     error.mockRestore();
   });
 
+  it.each([
+    { button: "Send", command: "prompt", busy: false },
+    { button: "Queue", command: "follow_up", busy: true },
+    { button: "Send now", command: "abort_and_prompt", busy: true },
+  ])("preserves the caption and image for retry when $button exceeds the daemon request limit", async ({ button, command, busy }) => {
+    sessionStatus.mockResolvedValue(busy ? liveObservation("rpc", { state: "busy" }) : liveObservation("rpc"));
+    const onDraftChange = vi.fn();
+    const onQueuedFollowUpsChange = vi.fn();
+    const rejection = new Error("request-too-large: control request exceeds the 67108864 byte limit");
+    const attempts: unknown[] = [];
+    rpcWriteSession.mockImplementation(async (_id: string, payload: unknown) => {
+      if ((payload as { type?: string } | null)?.type !== command) return;
+      attempts.push(payload);
+      if (attempts.length === 1) throw rejection;
+    });
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    try {
+      renderSession({
+        messageDraft: { body: "keep this caption", pendingActions: [], attachments: [blobPng] },
+        onMessageDraftChange: onDraftChange,
+        queuedFollowUps: [],
+        onQueuedFollowUpsChange,
+      });
+      await flushPromises();
+      fireEvent.click(screen.getByRole("button", { name: button }));
+
+      expect(await screen.findByText(String(rejection))).toBeDefined();
+      expect(attempts).toEqual([
+        expect.objectContaining({
+          type: command,
+          message: "keep this caption",
+          images: [{ type: "image", data: "aa", mimeType: "image/png" }],
+        }),
+      ]);
+      expect((screen.getByRole("textbox", { name: busy ? "Send after this turn…" : "Message or /command" }) as HTMLTextAreaElement).value).toBe("keep this caption");
+      const preview = screen.getByRole("button", { name: "Remove paste.png" }).parentElement?.querySelector("img");
+      expect(preview?.getAttribute("src")).toBe(blobPng.previewUrl);
+      expect(revoke).not.toHaveBeenCalled();
+      expect(onDraftChange).not.toHaveBeenCalled();
+      expect(onQueuedFollowUpsChange).not.toHaveBeenCalled();
+      expect(within(screen.getByTestId("chat-pane")).queryByText("keep this caption")).toBeNull();
+      expect(screen.queryByText("queued · after this turn")).toBeNull();
+
+      fireEvent.click(screen.getByRole("button", { name: button }));
+      await waitFor(() => expect(onDraftChange).toHaveBeenCalledWith({ body: "", pendingActions: [], attachments: [] }));
+      expect(attempts).toHaveLength(2);
+      expect(attempts[1]).toMatchObject({
+        type: command,
+        message: "keep this caption",
+        images: [{ type: "image", data: "aa", mimeType: "image/png" }],
+      });
+      expect(screen.queryByText(String(rejection))).toBeNull();
+    } finally {
+      revoke.mockRestore();
+    }
+  });
+
+  it("keeps an image follow-up queued when Send now is rejected and retries the same attachment", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    const onDraftChange = vi.fn();
+    const onQueuedFollowUpsChange = vi.fn();
+    const rejection = new Error("request-too-large: control request exceeds the 67108864 byte limit");
+    const attempts: unknown[] = [];
+    rpcWriteSession.mockImplementation(async (_id: string, payload: unknown) => {
+      if ((payload as { type?: string } | null)?.type !== "abort_and_prompt") return;
+      attempts.push(payload);
+      if (attempts.length === 1) throw rejection;
+    });
+    renderSession({
+      messageDraft: { body: "", pendingActions: [], attachments: [] },
+      onMessageDraftChange: onDraftChange,
+      queuedFollowUps: [{ text: "keep this queued caption", attachments: [blobPng] }],
+      onQueuedFollowUpsChange,
+    });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+
+    expect(await screen.findByText(String(rejection))).toBeDefined();
+    expect(within(screen.getByTestId("chat-pane")).getByText("keep this queued caption")).toBeDefined();
+    expect(screen.getByText("queued · after this turn")).toBeDefined();
+    expect(onQueuedFollowUpsChange).not.toHaveBeenCalled();
+    expect(onDraftChange).not.toHaveBeenCalled();
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        type: "abort_and_prompt",
+        message: "keep this queued caption",
+        images: [{ type: "image", data: "aa", mimeType: "image/png" }],
+      }),
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    await waitFor(() => expect(onQueuedFollowUpsChange).toHaveBeenCalledWith([]));
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toMatchObject({
+      type: "abort_and_prompt",
+      message: "keep this queued caption",
+      images: [{ type: "image", data: "aa", mimeType: "image/png" }],
+    });
+    expect(screen.queryByText("queued · after this turn")).toBeNull();
+    expect(screen.queryByText(String(rejection))).toBeNull();
+  });
+
   it("refuses slash plus attachments without writing", async () => {
     const error = vi.spyOn(toast, "error").mockImplementation(() => undefined);
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
@@ -1234,5 +1407,78 @@ describe("session chat attach handshake", () => {
     });
     await flushPromises();
     expect(rpcAttachSession).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("session-scoped completion permission", () => {
+  beforeEach(() => {
+    scenario.tasks = [task];
+    scenario.tasksPromise = null;
+    scenario.tasksError = null;
+    scenario.items = [];
+    getTaskExecution.mockReset().mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session" })]));
+    allowExecutionCompletion.mockReset().mockImplementation(async (_slug: string, executionId: string, sessionId: string) => {
+      getTaskExecution.mockResolvedValue(
+        executionReply([executionRecord({ owner_session_id: sessionId, permission: { kind: "human_granted", execution_id: executionId, session_id: sessionId } })]),
+      );
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    getTaskExecution.mockReset();
+    allowExecutionCompletion.mockReset();
+  });
+
+  it("grants the displayed owner from the collapsed header while preserving the interactive composer", async () => {
+    renderSession();
+    const allow = await screen.findByRole("button", { name: "Allow this session to complete · session" });
+    const disclosure = screen.getByLabelText("Session execution") as HTMLDetailsElement;
+    expect(disclosure.open).toBe(false);
+    fireEvent.click(allow);
+    await waitFor(() => expect(allowExecutionCompletion).toHaveBeenCalledWith("task", "execution-a", "session", "/repo"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Allow this session to complete · session" })).toBeNull());
+    expect(disclosure.open).toBe(false);
+    fireEvent.click(screen.getByText(/Retained worker · running · Owner session/));
+    expect(await screen.findByText("Completion permission: human_granted · session")).toBeDefined();
+    expect(screen.getByLabelText("Message or /command")).toBeDefined();
+    expect(screen.getByText("research/1-request-2.md")).toBeDefined();
+    expect(screen.getByText("research/2-result-10.md")).toBeDefined();
+  });
+
+  it("never grants a replacement from a retired owner's history", async () => {
+    getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "replacement", previous_session_ids: ["session"] })]));
+    renderSession();
+    fireEvent.click(await screen.findByText(/Owner replacement/));
+    expect(screen.getByText("This is a previous owner. Current owner: replacement.")).toBeDefined();
+    expect(screen.queryByRole("button", { name: /Allow this session to complete/ })).toBeNull();
+  });
+});
+
+describe("held task sessions", () => {
+  afterEach(() => {
+    cleanup();
+    startSession.mockReset().mockResolvedValue(undefined);
+    getTaskExecution.mockReset();
+    sessionStatus.mockReset().mockResolvedValue({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} });
+  });
+
+  it("opens queued work without starting it and starts only on explicit request", async () => {
+    startSession.mockClear();
+    scenario.tasks = [task];
+    scenario.tasksPromise = null;
+    scenario.tasksError = null;
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "never_started" }, state: null, checkpoint: {} });
+    getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session", lifecycle: "queued", start_requested: false })]));
+    renderSession({ intent: undefined });
+    const start = await screen.findByRole("button", { name: "Start this queued session" });
+    expect(startSession).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Message or /command")).toBeNull();
+    startSession.mockImplementation(async () => {
+      sessionStatus.mockResolvedValue({ lifecycle: { state: "live" }, state: null, checkpoint: {}, transport: "rpc" });
+      getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session" })]));
+    });
+    fireEvent.click(start);
+    await waitFor(() => expect(startSession).toHaveBeenCalledWith("task", "session", "/repo"));
+    expect(await screen.findByLabelText("Message or /command")).toBeDefined();
   });
 });

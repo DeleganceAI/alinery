@@ -2,288 +2,130 @@
 //!
 //! `use super::*` reaches the shared imports and fixtures in tests/mod.rs.
 use super::*;
-use crate::{
-    artifacts_dir, chat_file_stat, copy_chat_attachments_in, duplicate_fail_key, duplicate_task_in, first_step_for_playbook, list_sessions_for_repo, read_chat_image_in,
-    write_chat_attachment_bytes_in, CreateTaskResult, FAIL_DUPLICATE_AFTER_WORKTREE, MAX_CHAT_IMAGE_BYTES,
-};
+use crate::{artifacts_dir, chat_file_stat, copy_chat_attachments_in, read_chat_image_in, write_chat_attachment_bytes_in, MAX_CHAT_IMAGE_BYTES};
+use std::collections::BTreeSet;
 
 #[test]
-fn board_task_counts_live_sessions_and_current_phase() {
-    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let repo = std::env::temp_dir().join(format!("alinery-board-{n}"));
-    let slug = "demo";
-    fs::create_dir_all(repo.join(".alinery/tasks").join(slug).join("sessions")).unwrap();
-    for meta in [
-        SessionMeta {
-            id: "s1".into(),
-            worktree: "/wt".into(),
-            created: 1,
-            archived: false,
-            phase: "research".into(),
-            harness: "claude".into(),
-            model: String::new(),
-            playbook: default_playbook_key(),
-            ..Default::default()
-        },
-        SessionMeta {
-            id: "s2".into(),
-            worktree: "/wt".into(),
-            created: 2,
-            archived: true,
-            phase: "design".into(),
-            harness: "claude".into(),
-            model: String::new(),
-            playbook: default_playbook_key(),
-            ..Default::default()
-        },
-        SessionMeta {
-            id: "s3".into(),
-            worktree: "/wt".into(),
-            created: 3,
-            archived: false,
-            phase: "tdd".into(),
-            harness: "claude".into(),
-            model: String::new(),
-            playbook: default_playbook_key(),
-            ..Default::default()
-        },
-        SessionMeta {
-            id: "s4".into(),
-            worktree: "/wt".into(),
-            created: 4,
-            archived: false,
-            phase: "removed-step".into(),
-            harness: "claude".into(),
-            model: String::new(),
-            playbook: default_playbook_key(),
-            ..Default::default()
-        },
+fn durable_board_discovery_keeps_offline_and_archived_owners_and_retained_titles() {
+    let repo = activity_repo("durable-board");
+    for (slug, lane, archived) in [
+        ("healthy", "healthy", false),
+        ("offline", "offline", false),
+        ("archived", "offline", true),
+        ("incompatible", "incompatible", false),
+        ("foreign-config", "foreign-config", false),
     ] {
-        fs::write(session_meta_path(&repo, slug, &meta.id), serde_json::to_string(&meta).unwrap()).unwrap();
+        write_retained_discovery_task(&repo, slug, lane, archived);
+        let meta = SessionMeta {
+            id: format!("{slug}-session"),
+            phase: "implementation".into(),
+            execution_id: "execution-1".into(),
+            daemon_namespace: lane.into(),
+            ..Default::default()
+        };
+        fs::write(session_meta_path(&repo, slug, &meta.id), serde_json::to_vec(&meta).unwrap()).unwrap();
     }
-    let task = Task {
-        name: "Demo".into(),
-        slug: slug.into(),
-        requested_slug: String::new(),
-        branch: slug.into(),
-        worktree: "/wt".into(),
-        has_worktree: true,
-        created: 1,
-        archived: false,
-        pr_url: String::new(),
-        linear_id: String::new(),
-        github_issue: String::new(),
-        playbook: default_playbook_key(),
-        auto_advance: vec![],
-        draft: false,
-        telemetry_id: String::new(),
-        parent_task: String::new(),
-        active_subtask: String::new(),
-        subtask_outcome: String::new(),
-        related_tasks: Vec::new(),
-    };
-
-    let row = board_task(&repo, "/repo/a", task);
-
-    assert_eq!(row.repo_path, "/repo/a");
-    assert_eq!(row.session_count, 3); // includes the stored session for the removed step
-    assert_eq!(row.current_phase, "tdd"); // unknown playbook steps do not affect phase derivation
-    let _ = fs::remove_dir_all(&repo);
-}
-
-#[test]
-fn board_task_ignores_external_and_generic_colliding_phases() {
-    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let repo = std::env::temp_dir().join(format!("alinery-board-provenance-{n}"));
-    let slug = "demo";
-    alinery_core::ensure_playbooks(&repo).unwrap();
-    fs::create_dir_all(repo.join(".alinery/tasks").join(slug).join("sessions")).unwrap();
-    let task = Task {
-        name: "Demo".into(),
-        slug: slug.into(),
-        requested_slug: String::new(),
-        branch: slug.into(),
-        worktree: "/wt".into(),
-        has_worktree: true,
-        created: 1,
-        archived: false,
-        pr_url: String::new(),
-        linear_id: String::new(),
-        github_issue: String::new(),
-        playbook: "superdevelop".into(),
-        auto_advance: vec![],
-        draft: false,
-        telemetry_id: String::new(),
-        parent_task: String::new(),
-        active_subtask: String::new(),
-        subtask_outcome: String::new(),
-        related_tasks: Vec::new(),
-    };
-    write_task(&repo, &task).unwrap();
-
-    for meta in [
-        serde_json::json!({
-            "id": "primary-tdd",
-            "worktree": "/wt",
-            "created": 1,
-            "phase": "tdd",
-            "harness": "claude",
-            "playbook": "superdevelop",
-            "generic": false
-        }),
-        serde_json::json!({
-            "id": "external-implementation",
-            "worktree": "/wt",
-            "created": 2,
-            "phase": "implementation",
-            "harness": "claude",
-            "playbook": "one-shot",
-            "generic": false
-        }),
-        serde_json::json!({
-            "id": "generic-implementation",
-            "worktree": "/wt",
-            "created": 3,
-            "phase": "implementation",
-            "harness": "claude",
-            "playbook": "superdevelop",
-            "generic": true
-        }),
-    ] {
-        let id = meta["id"].as_str().unwrap();
-        fs::write(session_meta_path(&repo, slug, id), serde_json::to_string(&meta).unwrap()).unwrap();
-    }
-
-    let row = board_task(&repo, "/repo/a", task.clone());
-
-    assert_eq!(row.session_count, 3);
-    assert_eq!(row.current_phase, "tdd");
-    assert_eq!(row.current_column_key, "planning");
-    assert_eq!(row.playbook_title, "SuperDevelop");
-    assert_eq!(row.current_step_title, "Define Tests");
-    assert_eq!(row.latest_session_title, "Generic");
-    assert_eq!(row.latest_session_column_key, "");
-
-    let generic_path = session_meta_path(&repo, slug, "generic-implementation");
-    let mut generic: SessionMeta = serde_json::from_str(&fs::read_to_string(&generic_path).unwrap()).unwrap();
-    generic.archived = true;
-    fs::write(&generic_path, serde_json::to_string(&generic).unwrap()).unwrap();
-
-    let row = board_task(&repo, "/repo/a", task);
-    assert_eq!(row.session_count, 2);
-    assert_eq!(row.current_phase, "tdd");
-    assert_eq!(row.current_column_key, "planning");
-    assert_eq!(row.latest_session_title, "Implementation");
-    assert_eq!(row.latest_session_column_key, "implementation");
-    let _ = fs::remove_dir_all(&repo);
-}
-
-#[test]
-fn board_task_ignores_unknown_phase_and_uses_first_column() {
-    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let repo = std::env::temp_dir().join(format!("alinery-board-other-{n}"));
-    let slug = "demo";
-    fs::create_dir_all(repo.join(".alinery/tasks").join(slug).join("sessions")).unwrap();
-    let meta = SessionMeta {
-        id: "s1".into(),
-        worktree: "/wt".into(),
-        created: 1,
-        archived: false,
-        phase: "mystery".into(),
-        harness: "claude".into(),
-        model: String::new(),
-        playbook: default_playbook_key(),
-        ..Default::default()
-    };
-    fs::write(session_meta_path(&repo, slug, &meta.id), serde_json::to_string(&meta).unwrap()).unwrap();
-    let task = Task {
-        name: "Demo".into(),
-        slug: slug.into(),
-        requested_slug: String::new(),
-        branch: slug.into(),
-        worktree: "/wt".into(),
-        has_worktree: true,
-        created: 1,
-        archived: false,
-        pr_url: String::new(),
-        linear_id: String::new(),
-        github_issue: String::new(),
-        playbook: default_playbook_key(),
-        auto_advance: vec![],
-        draft: false,
-        telemetry_id: String::new(),
-        parent_task: String::new(),
-        active_subtask: String::new(),
-        subtask_outcome: String::new(),
-        related_tasks: Vec::new(),
-    };
-    let row = board_task(&repo, "/repo/a", task);
-    assert_eq!(row.session_count, 1);
-    assert_eq!(row.current_phase, "");
-    assert_eq!(row.current_column_key, "research-design");
-    assert_eq!(row.playbook_title, "SuperDevelop");
-    assert_eq!(row.current_step_title, "Clarify");
-    let _ = fs::remove_dir_all(&repo);
-}
-
-#[test]
-fn create_task_worktree_toggle_and_name_dedupe() {
-    let repo = init_git_test_repo("create-task-toggle");
-
-    // Toggle ON, blank names: branch and worktree both default to the slug, and a real
-    // worktree checkout exists on disk and in `git worktree list`.
-    let t1 = create_task_for_test(&repo, "Demo Task", true, "", "");
-    assert!(t1.has_worktree);
-    assert_eq!(t1.branch, t1.slug);
-    assert!(Path::new(&t1.worktree).exists());
-    let list = git_cmd(&repo).args(["worktree", "list"]).output().unwrap();
-    assert!(String::from_utf8_lossy(&list.stdout).contains(&t1.slug));
-
-    // Toggle OFF: branch is created directly in the main repo (worktree == repo path,
-    // no new dir under .alinery/worktrees/), and the repo's checked-out branch switches.
-    let t2 = create_task_for_test(&repo, "Second Task", false, "", "");
-    assert!(!t2.has_worktree);
-    assert_eq!(t2.worktree, repo.to_string_lossy().to_string());
-    assert!(!worktrees_dir(&repo).join(&t2.slug).exists());
-    let head = git_cmd(&repo).args(["rev-parse", "--abbrev-ref", "HEAD"]).output().unwrap();
-    assert_eq!(String::from_utf8_lossy(&head.stdout).trim(), t2.branch);
-
-    // Reusing an existing branch name: never checked out as-is, a random suffix is
-    // appended instead.
-    let t3 = create_task_for_test(&repo, "Third Task", true, &t1.branch, "");
-    assert_ne!(t3.branch, t1.branch);
-    assert!(t3.branch.starts_with(&format!("{}-", t1.branch)));
-
-    // Reusing an existing worktree folder name: same treatment.
-    let t4 = create_task_for_test(&repo, "Fourth Task", true, "", &t1.slug);
-    let t4_leaf = Path::new(&t4.worktree).file_name().unwrap().to_string_lossy().to_string();
-    assert_ne!(t4_leaf, t1.slug);
-    assert!(t4_leaf.starts_with(&format!("{}-", t1.slug)));
-
-    // A worktree name that would escape .alinery/worktrees/ is rejected outright.
-    let result = create_task_in(
-        &repo,
-        "Bad Name Task".into(),
-        "".into(),
-        "".into(),
-        vec![],
-        "".into(),
-        "".into(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        true,
-        "".into(),
-        "../evil".into(),
+    let app_config = repo.join("app.toml");
+    let version = |protocol, identity: String| format!("{}\n", serde_json::json!({"protocol": protocol, "build_id": "fixture", "app_config_identity": identity}));
+    let identity = alinery_core::app_config_identity(&app_config);
+    let healthy = status_list_socket(
+        alinery_core::alineryd_socket_path(&repo, Some("healthy")),
+        Some(&version(PROTOCOL_VERSION, identity.clone())),
     );
-    let err = match result {
-        Err(e) => e,
-        Ok(_) => panic!("expected an error for an escaping worktree name"),
-    };
-    assert!(err.contains("invalid worktree name"), "unexpected error: {err}");
+    let incompatible = status_list_socket(
+        alinery_core::alineryd_socket_path(&repo, Some("incompatible")),
+        Some(&version(PROTOCOL_VERSION + 1, identity)),
+    );
+    let foreign_config = status_list_socket(
+        alinery_core::alineryd_socket_path(&repo, Some("foreign-config")),
+        Some(&version(PROTOCOL_VERSION, "different-config".into())),
+    );
+    assert!(crate::task_daemon_for(&repo, "healthy", &app_config).is_ok());
+    assert!(crate::task_daemon_for(&repo, "offline", &app_config).err().unwrap().contains("unreachable"));
+    assert!(crate::task_daemon_for(&repo, "incompatible", &app_config).err().unwrap().contains("repo-protocol-mismatch"));
+    assert!(crate::task_daemon_for(&repo, "foreign-config", &app_config)
+        .err()
+        .unwrap()
+        .contains("repo-app-config-mismatch"));
+    let library = repo.join(".alinery/playbooks/one-shot");
+    fs::create_dir_all(&library).unwrap();
+    let library_file = library.join("playbook.md");
+    let source = include_str!("../../playbooks/one-shot/playbook.md");
+    fs::write(&library_file, source.replace("One-shot", "Replacement").replace("Implement and Verify", "Changed step")).unwrap();
+    for deleted in [false, true] {
+        if deleted {
+            fs::remove_file(&library_file).unwrap();
+        }
+        let rows = board_tasks_for_repo(&repo, &repo.display().to_string()).unwrap();
+        let slugs: BTreeSet<_> = rows.iter().map(|row| row.task.slug.as_str()).collect();
+        assert_eq!(slugs, BTreeSet::from(["healthy", "offline", "archived", "incompatible", "foreign-config"]));
+        for row in rows {
+            assert_eq!(row.playbook_title, "One-shot");
+            assert_eq!(row.current_step_title, "Implement and Verify");
+            assert_eq!(row.session_count, 1);
+            assert_eq!(row.task.archived, row.task.slug == "archived");
+        }
+        let sessions = session_list_items_for_repo(&repo, &repo.display().to_string(), false).unwrap();
+        assert_eq!(
+            sessions.iter().map(|item| item.task_slug.as_str()).collect::<BTreeSet<_>>(),
+            BTreeSet::from(["healthy", "offline", "incompatible", "foreign-config"])
+        );
+        for item in sessions {
+            assert_eq!(item.playbook_title, "One-shot");
+            assert_eq!(item.step_title, "Implement and Verify");
+        }
+    }
+    // Only the explicit compatibility probes above connect (liveness + version).
+    // Discovery must not query, launch, or take over any owner.
+    assert_eq!(healthy.join().unwrap(), 2);
+    assert_eq!(incompatible.join().unwrap(), 2);
+    assert_eq!(foreign_config.join().unwrap(), 2);
+    assert!(!alinery_core::alineryd_socket_path(&repo, Some("offline")).exists());
+    let _ = fs::remove_dir_all(repo);
+}
 
-    let _ = fs::remove_dir_all(&repo);
+#[test]
+fn durable_discovery_reports_task_scoped_storage_errors() {
+    let repo = activity_repo("durable-errors");
+    let task = write_retained_discovery_task(&repo, "broken", "offline", false);
+    let state_path = alinery_core::execution::execution_state_path(&repo, &task.slug).unwrap();
+    let definition_path = alinery_core::execution::task_playbook_path(&repo, &task.slug).unwrap();
+    let state = fs::read(&state_path).unwrap();
+    let definition = fs::read(&definition_path).unwrap();
+    for (path, corrupt) in [(&state_path, false), (&state_path, true), (&definition_path, false), (&definition_path, true)] {
+        if corrupt {
+            fs::write(path, "not valid retained data").unwrap();
+        } else {
+            fs::remove_file(path).unwrap();
+        }
+        let board_error = board_tasks_for_repo(&repo, &repo.display().to_string())
+            .err()
+            .expect("board must report unreadable durable data");
+        let session_error = session_list_items_for_repo(&repo, &repo.display().to_string(), false)
+            .err()
+            .expect("session discovery must report unreadable durable data");
+        for error in [board_error, session_error] {
+            assert!(error.contains(&repo.display().to_string()), "{error}");
+            assert!(error.contains("broken"), "{error}");
+            assert!(!error.contains("daemon"), "{error}");
+        }
+        fs::write(&state_path, &state).unwrap();
+        fs::write(&definition_path, &definition).unwrap();
+    }
+    for path in [session_meta_path(&repo, &task.slug, "corrupt"), task_dir(&repo, &task.slug).join("task.md")] {
+        fs::write(&path, "invalid saved metadata").unwrap();
+        let board_error = board_tasks_for_repo(&repo, &repo.display().to_string())
+            .err()
+            .expect("corrupt metadata must not silently remove a row");
+        let session_error = session_list_items_for_repo(&repo, &repo.display().to_string(), false)
+            .err()
+            .expect("corrupt metadata must not silently remove a session");
+        for error in [board_error, session_error] {
+            assert!(error.contains(&path.display().to_string()), "{error}");
+        }
+        fs::remove_file(&path).unwrap();
+    }
+    let _ = fs::remove_dir_all(repo);
 }
 
 #[test]
@@ -325,92 +167,6 @@ fn read_task_opt_returns_some_for_a_real_task() {
 }
 
 #[test]
-fn board_task_draft_uses_research_design_column() {
-    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let repo = std::env::temp_dir().join(format!("alinery-board-draft-{n}"));
-    let slug = "my-draft";
-    fs::create_dir_all(repo.join(".alinery/tasks").join(slug)).unwrap();
-    let task = Task {
-        name: "My Draft".into(),
-        slug: slug.into(),
-        requested_slug: String::new(),
-        branch: String::new(),
-        worktree: String::new(),
-        has_worktree: false,
-        created: 1,
-        archived: false,
-        pr_url: String::new(),
-        linear_id: String::new(),
-        github_issue: String::new(),
-        playbook: default_playbook_key(),
-        auto_advance: vec![],
-        draft: true,
-        telemetry_id: String::new(),
-        parent_task: String::new(),
-        active_subtask: String::new(),
-        subtask_outcome: String::new(),
-        related_tasks: Vec::new(),
-    };
-    write_task(&repo, &task).unwrap();
-
-    let row = board_task(&repo, "/repo/a", task);
-
-    assert!(row.task.draft);
-    assert_eq!(row.current_column_key, "research-design");
-    assert_eq!(row.current_column_title, "Research & Design");
-    assert_eq!(row.session_count, 0);
-    let _ = fs::remove_dir_all(&repo);
-}
-
-#[test]
-fn board_task_draft_ignores_playbook_sessions_for_column() {
-    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let repo = std::env::temp_dir().join(format!("alinery-board-draft-sessions-{n}"));
-    let slug = "draft-with-sessions";
-    fs::create_dir_all(repo.join(".alinery/tasks").join(slug).join("sessions")).unwrap();
-    let meta = SessionMeta {
-        id: "s1".into(),
-        worktree: "/wt".into(),
-        created: 1,
-        archived: false,
-        phase: "tdd".into(),
-        harness: "claude".into(),
-        model: String::new(),
-        playbook: default_playbook_key(),
-        ..Default::default()
-    };
-    fs::write(session_meta_path(&repo, slug, &meta.id), serde_json::to_string(&meta).unwrap()).unwrap();
-    let task = Task {
-        name: "Draft".into(),
-        slug: slug.into(),
-        requested_slug: String::new(),
-        branch: String::new(),
-        worktree: String::new(),
-        has_worktree: false,
-        created: 1,
-        archived: false,
-        pr_url: String::new(),
-        linear_id: String::new(),
-        github_issue: String::new(),
-        playbook: default_playbook_key(),
-        auto_advance: vec![],
-        draft: true,
-        telemetry_id: String::new(),
-        parent_task: String::new(),
-        active_subtask: String::new(),
-        subtask_outcome: String::new(),
-        related_tasks: Vec::new(),
-    };
-    write_task(&repo, &task).unwrap();
-
-    let row = board_task(&repo, "/repo/a", task);
-
-    assert_eq!(row.current_phase, "tdd");
-    assert_eq!(row.current_column_key, "research-design");
-    let _ = fs::remove_dir_all(&repo);
-}
-
-#[test]
 fn list_tasks_for_repo_returns_draft_flag() {
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let repo = std::env::temp_dir().join(format!("alinery-list-draft-{n}"));
@@ -437,6 +193,7 @@ fn list_tasks_for_repo_returns_draft_flag() {
             active_subtask: String::new(),
             subtask_outcome: String::new(),
             related_tasks: Vec::new(),
+            ..Default::default()
         },
     )
     .unwrap();
@@ -453,18 +210,24 @@ fn write_draft_in_rejects_empty_name() {
     let repo = std::env::temp_dir().join(format!("alinery-write-draft-empty-{n}"));
     fs::create_dir_all(&repo).unwrap();
 
-    let err = write_draft_in(
+    let err = write_draft_in_with_slug(
         &repo,
+        None,
+        "",
+        "",
         "  ".into(),
         "desc".into(),
         "".into(),
         "".into(),
         "".into(),
-        default_playbook_key(),
+        alinery_core::playbook::PlaybookRef {
+            scope: alinery_core::playbook::PlaybookScope::Bundled,
+            key: default_playbook_key(),
+        },
         "claude".into(),
         String::new(),
         None,
-        true,
+        10,
         "".into(),
         "".into(),
     )
@@ -478,20 +241,25 @@ fn write_draft_in_writes_task_md_with_draft_true() {
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let repo = std::env::temp_dir().join(format!("alinery-write-draft-{n}"));
     fs::create_dir_all(&repo).unwrap();
-    alinery_core::ensure_playbooks(&repo).unwrap();
 
-    let task = write_draft_in(
+    let task = write_draft_in_with_slug(
         &repo,
+        None,
+        "",
+        "",
         "Autosave Me".into(),
         "partial desc".into(),
         "".into(),
         "ENG-1".into(),
         "owner/repo#9".into(),
-        default_playbook_key(),
+        alinery_core::playbook::PlaybookRef {
+            scope: alinery_core::playbook::PlaybookScope::Bundled,
+            key: default_playbook_key(),
+        },
         "claude".into(),
         "opus".into(),
         Some(vec!["tdd".into()]),
-        false,
+        10,
         "feat/x".into(),
         "wt-x".into(),
     )
@@ -502,11 +270,6 @@ fn write_draft_in_writes_task_md_with_draft_true() {
     assert_eq!(task.slug, "autosave-me");
     assert_eq!(task.linear_id, "ENG-1");
     assert_eq!(task.github_issue, "owner/repo#9");
-    assert!(!task.has_worktree);
-    assert!(task.worktree.is_empty());
-
-    let raw = fs::read_to_string(repo.join(".alinery/tasks/autosave-me/task.md")).unwrap();
-    assert!(raw.contains("draft = true"), "task.md must contain draft = true");
     assert!(!repo.join(".alinery/tasks/autosave-me/sessions").exists());
     assert!(!repo.join(".alinery/worktrees").exists() || fs::read_dir(worktrees_dir(&repo)).map(|mut d| d.next().is_none()).unwrap_or(true));
     let _ = fs::remove_dir_all(&repo);
@@ -517,36 +280,47 @@ fn write_draft_in_updates_same_slug() {
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let repo = std::env::temp_dir().join(format!("alinery-write-draft-update-{n}"));
     fs::create_dir_all(&repo).unwrap();
-    alinery_core::ensure_playbooks(&repo).unwrap();
 
-    let first = write_draft_in(
+    let first = write_draft_in_with_slug(
         &repo,
+        None,
+        "",
+        "",
         "Same Name".into(),
         "v1".into(),
         "".into(),
         "".into(),
         "".into(),
-        default_playbook_key(),
+        alinery_core::playbook::PlaybookRef {
+            scope: alinery_core::playbook::PlaybookScope::Bundled,
+            key: default_playbook_key(),
+        },
         "claude".into(),
         String::new(),
         None,
-        true,
+        10,
         "".into(),
         "".into(),
     )
     .unwrap();
-    let second = write_draft_in(
+    let second = write_draft_in_with_slug(
         &repo,
+        None,
+        "",
+        "",
         "Same Name".into(),
         "v2".into(),
         "".into(),
         "".into(),
         "".into(),
-        default_playbook_key(),
+        alinery_core::playbook::PlaybookRef {
+            scope: alinery_core::playbook::PlaybookScope::Bundled,
+            key: default_playbook_key(),
+        },
         "codex".into(),
         "gpt".into(),
         None,
-        false,
+        10,
         "".into(),
         "".into(),
     )
@@ -563,19 +337,25 @@ fn write_draft_in_updates_same_slug() {
 #[test]
 fn archived_draft_is_not_reused_by_same_name_autosave() {
     let repo = init_git_test_repo("archived-draft-autosave");
-    alinery_core::ensure_playbooks(&repo).unwrap();
-    let archived = write_draft_in(
+
+    let archived = write_draft_in_with_slug(
         &repo,
+        None,
+        "",
+        "",
         "Archived Draft".into(),
         "keep this body".into(),
         "".into(),
         "ENG-1".into(),
         "".into(),
-        default_playbook_key(),
+        alinery_core::playbook::PlaybookRef {
+            scope: alinery_core::playbook::PlaybookScope::Bundled,
+            key: default_playbook_key(),
+        },
         "claude".into(),
         String::new(),
         None,
-        false,
+        10,
         "".into(),
         "".into(),
     )
@@ -586,18 +366,24 @@ fn archived_draft_is_not_reused_by_same_name_autosave() {
     })
     .unwrap();
 
-    let replacement = write_draft_in(
+    let replacement = write_draft_in_with_slug(
         &repo,
+        None,
+        "",
+        "",
         "Archived Draft".into(),
         "new body".into(),
         "".into(),
         "ENG-2".into(),
         "".into(),
-        default_playbook_key(),
+        alinery_core::playbook::PlaybookRef {
+            scope: alinery_core::playbook::PlaybookScope::Bundled,
+            key: default_playbook_key(),
+        },
         "claude".into(),
         String::new(),
         None,
-        false,
+        10,
         "".into(),
         "".into(),
     )
@@ -616,100 +402,53 @@ fn archived_draft_is_not_reused_by_same_name_autosave() {
 }
 
 #[test]
-fn archived_draft_is_not_promoted_by_same_name_create() {
-    let repo = init_git_test_repo("archived-draft-create");
-    alinery_core::ensure_playbooks(&repo).unwrap();
-    let archived = write_draft_in(
-        &repo,
-        "Archived Draft".into(),
-        "keep this body".into(),
-        "".into(),
-        "ENG-1".into(),
-        "".into(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        true,
-        "".into(),
-        "".into(),
-    )
-    .unwrap();
-    alinery_core::mutate_task(&repo, &archived.slug, "archive test draft", |task| {
-        task.archived = true;
-        Ok(())
-    })
-    .unwrap();
-
-    let created = create_task_in_with_draft_slug(
-        &repo,
-        None,
-        &archived.slug,
-        "",
-        "Archived Draft".into(),
-        "new body".into(),
-        "".into(),
-        vec![],
-        "ENG-2".into(),
-        "".into(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        true,
-        "".into(),
-        "".into(),
-    )
-    .unwrap();
-
-    assert_ne!(created.task.slug, archived.slug);
-    assert!(!created.task.draft);
-    assert!(!created.task.archived);
-    let preserved = read_task(&repo, &archived.slug).unwrap();
-    assert!(preserved.draft);
-    assert!(preserved.archived);
-    assert_eq!(preserved.linear_id, "ENG-1");
-    let ticket = fs::read_to_string(artifacts_dir(&repo, &archived.slug).join("00-ticket.md")).unwrap();
-    assert_eq!(ticket, "# Archived Draft\n\nkeep this body\n");
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
 fn draft_duplicate_regression_write_draft_reuses_suffixed_draft_when_base_slug_is_task() {
     let repo = init_git_test_repo("draft-duplicate-reuse");
-    alinery_core::ensure_playbooks(&repo).unwrap();
+
     let real = create_task_for_test(&repo, "Duplicate Title", false, "", "");
     assert_eq!(real.slug, "duplicate-title");
     assert!(!real.draft);
 
-    let first = write_draft_in(
+    let first = write_draft_in_with_slug(
         &repo,
+        None,
+        "",
+        "",
         "Duplicate Title".into(),
         "first autosave".into(),
         "".into(),
         "ENG-1".into(),
         "".into(),
-        default_playbook_key(),
+        alinery_core::playbook::PlaybookRef {
+            scope: alinery_core::playbook::PlaybookScope::Bundled,
+            key: default_playbook_key(),
+        },
         "claude".into(),
         String::new(),
         None,
-        false,
+        10,
         "".into(),
         "".into(),
     )
     .unwrap();
-    let second = write_draft_in(
+    let second = write_draft_in_with_slug(
         &repo,
+        None,
+        "",
+        "",
         "Duplicate Title".into(),
         "second autosave".into(),
         "".into(),
         "ENG-2".into(),
         "".into(),
-        default_playbook_key(),
+        alinery_core::playbook::PlaybookRef {
+            scope: alinery_core::playbook::PlaybookScope::Bundled,
+            key: default_playbook_key(),
+        },
         "codex".into(),
         "gpt".into(),
         None,
-        false,
+        10,
         "".into(),
         "".into(),
     )
@@ -729,23 +468,29 @@ fn draft_duplicate_regression_write_draft_reuses_suffixed_draft_when_base_slug_i
 #[test]
 fn draft_duplicate_regression_supplied_draft_slug_updates_in_place_when_base_slug_is_task() {
     let repo = init_git_test_repo("draft-duplicate-update-supplied");
-    alinery_core::ensure_playbooks(&repo).unwrap();
+
     let real = create_task_for_test(&repo, "Supplied Draft", false, "", "");
     assert_eq!(real.slug, "supplied-draft");
     assert!(!real.draft);
 
-    let draft = write_draft_in(
+    let draft = write_draft_in_with_slug(
         &repo,
+        None,
+        "",
+        "",
         "Supplied Draft".into(),
         "first body".into(),
         "".into(),
         "ENG-1".into(),
         "".into(),
-        default_playbook_key(),
+        alinery_core::playbook::PlaybookRef {
+            scope: alinery_core::playbook::PlaybookScope::Bundled,
+            key: default_playbook_key(),
+        },
         "claude".into(),
         String::new(),
         None,
-        false,
+        10,
         "".into(),
         "".into(),
     )
@@ -762,11 +507,14 @@ fn draft_duplicate_regression_supplied_draft_slug_updates_in_place_when_base_slu
         "".into(),
         "ENG-2".into(),
         "owner/repo#42".into(),
-        default_playbook_key(),
+        alinery_core::playbook::PlaybookRef {
+            scope: alinery_core::playbook::PlaybookScope::Bundled,
+            key: default_playbook_key(),
+        },
         "codex".into(),
         "gpt".into(),
         None,
-        false,
+        10,
         "updated-branch".into(),
         "".into(),
     )
@@ -781,218 +529,6 @@ fn draft_duplicate_regression_supplied_draft_slug_updates_in_place_when_base_slu
     let tasks = list_tasks_for_repo(&repo).unwrap();
     assert_eq!(tasks.iter().filter(|task| task.name == "Supplied Draft" && task.draft).count(), 1, "{tasks:?}");
     assert!(!task_dir(&repo, "supplied-draft-3").exists());
-    let _ = fs::remove_dir_all(&repo);
-}
-
-#[test]
-fn draft_duplicate_regression_create_task_promotes_supplied_draft_slug_when_base_slug_is_task() {
-    let repo = init_git_test_repo("draft-duplicate-promote-supplied");
-    alinery_core::ensure_playbooks(&repo).unwrap();
-    let real = create_task_for_test(&repo, "Promote Occupied", false, "", "");
-    assert_eq!(real.slug, "promote-occupied");
-    assert!(!real.draft);
-
-    let draft = write_draft_in(
-        &repo,
-        "Promote Occupied".into(),
-        "draft body".into(),
-        "".into(),
-        "".into(),
-        "".into(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        false,
-        "".into(),
-        "".into(),
-    )
-    .unwrap();
-    assert_eq!(draft.slug, "promote-occupied-2");
-    assert!(draft.draft);
-
-    let result = create_task_in_with_draft_slug(
-        &repo,
-        None,
-        &draft.slug,
-        "",
-        "Promote Occupied".into(),
-        "final body".into(),
-        "".into(),
-        vec![],
-        "ENG-3".into(),
-        "owner/repo#7".into(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        false,
-        "promote-occupied-draft".into(),
-        "".into(),
-    )
-    .expect("promote supplied draft slug");
-
-    assert_eq!(result.task.slug, draft.slug);
-    assert!(!result.task.draft);
-    assert!(!result.session.id.is_empty());
-    let on_disk = read_task(&repo, &draft.slug).unwrap();
-    assert!(!on_disk.draft);
-
-    let tasks = list_tasks_for_repo(&repo).unwrap();
-    let tasks_for_title: Vec<_> = tasks.iter().filter(|task| task.name == "Promote Occupied").collect();
-    assert_eq!(tasks_for_title.len(), 2, "{tasks:?}");
-    assert_eq!(tasks_for_title.iter().filter(|task| task.draft).count(), 0);
-    assert!(tasks_for_title.iter().any(|task| task.slug.as_str() == real.slug.as_str() && !task.draft));
-    assert!(tasks_for_title.iter().any(|task| task.slug.as_str() == draft.slug.as_str() && !task.draft));
-    assert!(!task_dir(&repo, "promote-occupied-3").exists());
-    let _ = fs::remove_dir_all(&repo);
-}
-
-#[test]
-fn create_task_uses_visible_slug_avoids_ref_prefixes_and_preserves_draft_on_failure() {
-    let repo = init_git_test_repo("visible-task-slug");
-    alinery_core::ensure_playbooks(&repo).unwrap();
-    let out = git_cmd(&repo).args(["branch", "fix/existing"]).output().unwrap();
-    assert!(out.status.success());
-
-    let draft = write_draft_in_with_slug(
-        &repo,
-        None,
-        "",
-        "fix",
-        "Fix".into(),
-        "".into(),
-        "".into(),
-        "".into(),
-        "".into(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        true,
-        "".into(),
-        "".into(),
-    )
-    .unwrap();
-    assert_eq!(draft.slug, "fix");
-
-    let draft = write_draft_in_with_slug(
-        &repo,
-        None,
-        &draft.slug,
-        "fix-sessions-performance",
-        "Fix-sessions-performance".into(),
-        "".into(),
-        "".into(),
-        "".into(),
-        "".into(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        true,
-        "".into(),
-        "".into(),
-    )
-    .unwrap();
-    let old_draft_slug = draft.slug.clone();
-    assert_eq!(draft.requested_slug, "fix-sessions-performance");
-
-    let result = create_task_in_with_draft_slug(
-        &repo,
-        None,
-        &old_draft_slug,
-        "fix-sessions-performance",
-        "Fix-sessions-performance".into(),
-        "".into(),
-        "".into(),
-        vec![],
-        "".into(),
-        "".into(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        true,
-        "".into(),
-        "".into(),
-    )
-    .unwrap();
-    assert_eq!(result.task.slug, "fix-sessions-performance");
-    assert_eq!(result.task.branch, "fix-sessions-performance");
-    assert_eq!(Path::new(&result.task.worktree).file_name().unwrap().to_string_lossy(), "fix-sessions-performance");
-    assert!(!task_dir(&repo, &old_draft_slug).exists());
-
-    let collision = create_task_in_with_draft_slug(
-        &repo,
-        None,
-        "",
-        "fix",
-        "Fix".into(),
-        "".into(),
-        "".into(),
-        vec![],
-        "".into(),
-        "".into(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        true,
-        "".into(),
-        "".into(),
-    )
-    .unwrap();
-    assert_eq!(collision.task.slug, "fix-2");
-    assert_eq!(collision.task.branch, "fix-2");
-
-    let draft = write_draft_in_with_slug(
-        &repo,
-        None,
-        "",
-        "keep-me",
-        "Keep me".into(),
-        "".into(),
-        "".into(),
-        "".into(),
-        "".into(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        true,
-        "".into(),
-        "".into(),
-    )
-    .unwrap();
-    let failed = create_task_in_with_draft_slug(
-        &repo,
-        None,
-        &draft.slug,
-        "renamed-keep-me",
-        "Renamed keep me".into(),
-        "".into(),
-        "".into(),
-        vec![],
-        "".into(),
-        "".into(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        true,
-        "bad..branch".into(),
-        "".into(),
-    );
-    let err = match failed {
-        Err(err) => err,
-        Ok(_) => panic!("expected invalid branch creation to fail"),
-    };
-    assert!(err.contains("git worktree add failed"), "{err}");
-    assert!(task_dir(&repo, &draft.slug).exists());
-    assert!(!task_dir(&repo, "renamed-keep-me").exists());
-    assert!(read_task(&repo, &draft.slug).unwrap().draft);
-
     let _ = fs::remove_dir_all(&repo);
 }
 
@@ -1245,122 +781,27 @@ fn copy_chat_attachments_copies_files_and_drops_urls() {
 }
 
 #[test]
-fn create_task_writes_evidence_and_attachment_lines_into_the_ticket() {
-    let repo = init_git_test_repo("create-evidence-ticket");
-    let src = repo.join("trace.log");
-    fs::write(&src, "boom").unwrap();
-
-    let result = create_task_in(
-        &repo,
-        "Evidence Task".into(),
-        "the ask".into(),
-        "stack trace attached".into(),
-        vec!["https://ci.example/build/42".into(), src.to_string_lossy().to_string(), "/definitely/not/here.log".into()],
-        String::new(),
-        String::new(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        false,
-        String::new(),
-        String::new(),
-    )
-    .expect("create task with evidence");
-
-    let ticket = fs::read_to_string(repo.join(".alinery/tasks").join(&result.task.slug).join("artifacts/00-ticket.md")).unwrap();
-    assert!(ticket.starts_with("# Evidence Task\n\nthe ask\n\n## Evidence & Pointers\n"), "{ticket}");
-    assert!(ticket.contains("\nstack trace attached\n"), "{ticket}");
-    assert!(ticket.contains("\n- https://ci.example/build/42\n"), "{ticket}");
-    assert!(ticket.contains("\n- attachments/trace.log\n"), "{ticket}");
-    assert!(ticket.contains("\n- (not copied: /definitely/not/here.log — "), "{ticket}");
-    assert_eq!(fs::read_to_string(attachments_of(&repo, &result.task.slug).join("trace.log")).unwrap(), "boom");
-    let _ = fs::remove_dir_all(&repo);
-}
-
-#[test]
-fn create_task_with_a_bad_attachment_keeps_the_worktree() {
-    let repo = init_git_test_repo("create-bad-attachment");
-    let result = create_task_in(
-        &repo,
-        "Kept Task".into(),
-        "the ask".into(),
-        String::new(),
-        vec!["/definitely/not/here.log".into()],
-        String::new(),
-        String::new(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        true,
-        String::new(),
-        String::new(),
-    )
-    .expect("a bad attachment must never fail the create");
-
-    assert_eq!(result.attachment_errors.len(), 1, "{:?}", result.attachment_errors);
-    assert!(result.attachment_errors[0].starts_with("/definitely/not/here.log — "), "{:?}", result.attachment_errors);
-    // Nothing was rolled back: task dir, task.md, branch and worktree all survive.
-    assert!(task_dir(&repo, &result.task.slug).exists());
-    assert!(task_dir(&repo, &result.task.slug).join("task.md").exists());
-    assert!(!result.task.draft);
-    assert!(!result.task.worktree.is_empty());
-    assert!(Path::new(&result.task.worktree).is_dir());
-    let branches = git_cmd(&repo).args(["branch", "--list", &result.task.branch]).output().unwrap();
-    assert!(
-        !String::from_utf8_lossy(&branches.stdout).trim().is_empty(),
-        "branch {} was rolled back",
-        result.task.branch
-    );
-    let _ = fs::remove_dir_all(&repo);
-}
-
-#[test]
-fn create_task_with_no_evidence_writes_the_legacy_ticket() {
-    let repo = init_git_test_repo("create-legacy-ticket");
-    let result = create_task_in(
-        &repo,
-        "Legacy Task".into(),
-        "  desc  ".into(),
-        String::new(),
-        vec![],
-        String::new(),
-        String::new(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        false,
-        String::new(),
-        String::new(),
-    )
-    .expect("create task");
-
-    assert!(result.attachment_errors.is_empty(), "{:?}", result.attachment_errors);
-    let ticket = fs::read_to_string(repo.join(".alinery/tasks").join(&result.task.slug).join("artifacts/00-ticket.md")).unwrap();
-    assert_eq!(ticket, "# Legacy Task\n\ndesc\n");
-    assert!(!attachments_of(&repo, &result.task.slug).exists());
-    let _ = fs::remove_dir_all(&repo);
-}
-
-#[test]
 fn draft_ticket_carries_evidence_and_never_attachments() {
     let repo = unique_attachment_temp("draft-evidence");
-    alinery_core::ensure_playbooks(&repo).unwrap();
 
-    let draft = write_draft_in(
+    let draft = write_draft_in_with_slug(
         &repo,
+        None,
+        "",
+        "",
         "Draft Task".into(),
         "the ask".into(),
         "log line one".into(),
         String::new(),
         String::new(),
-        default_playbook_key(),
+        alinery_core::playbook::PlaybookRef {
+            scope: alinery_core::playbook::PlaybookScope::Bundled,
+            key: default_playbook_key(),
+        },
         "claude".into(),
         String::new(),
         None,
-        false,
+        10,
         String::new(),
         String::new(),
     )
@@ -1377,20 +818,25 @@ fn delete_draft_in_removes_task_dir() {
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let repo = std::env::temp_dir().join(format!("alinery-delete-draft-{n}"));
     fs::create_dir_all(&repo).unwrap();
-    alinery_core::ensure_playbooks(&repo).unwrap();
 
-    let task = write_draft_in(
+    let task = write_draft_in_with_slug(
         &repo,
+        None,
+        "",
+        "",
         "Gone".into(),
         "".into(),
         "".into(),
         "".into(),
         "".into(),
-        default_playbook_key(),
+        alinery_core::playbook::PlaybookRef {
+            scope: alinery_core::playbook::PlaybookScope::Bundled,
+            key: default_playbook_key(),
+        },
         "claude".into(),
         String::new(),
         None,
-        true,
+        10,
         "".into(),
         "".into(),
     )
@@ -1406,18 +852,24 @@ fn delete_draft_in_removes_task_dir() {
 #[test]
 fn delete_draft_respects_the_task_mutation_lock() {
     let repo = init_git_test_repo("delete-draft-lock");
-    let task = write_draft_in(
+    let task = write_draft_in_with_slug(
         &repo,
+        None,
+        "",
+        "",
         "Locked Draft".into(),
         String::new(),
         String::new(),
         String::new(),
         String::new(),
-        default_playbook_key(),
+        alinery_core::playbook::PlaybookRef {
+            scope: alinery_core::playbook::PlaybookScope::Bundled,
+            key: default_playbook_key(),
+        },
         "claude".into(),
         String::new(),
         None,
-        false,
+        10,
         String::new(),
         String::new(),
     )
@@ -1432,58 +884,6 @@ fn delete_draft_respects_the_task_mutation_lock() {
     .unwrap();
 
     let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn create_task_in_promotes_existing_draft() {
-    let repo = init_git_test_repo("promote-draft");
-    alinery_core::ensure_playbooks(&repo).unwrap();
-
-    let draft = write_draft_in(
-        &repo,
-        "Promote Me".into(),
-        "ticket body".into(),
-        "".into(),
-        "".into(),
-        "".into(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        true,
-        "".into(),
-        "".into(),
-    )
-    .unwrap();
-    assert!(draft.draft);
-
-    let result = create_task_in(
-        &repo,
-        "Promote Me".into(),
-        "ticket body".into(),
-        "".into(),
-        vec![],
-        "".into(),
-        "".into(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        true,
-        "".into(),
-        "".into(),
-    )
-    .expect("promote draft to real task");
-
-    assert_eq!(result.task.slug, draft.slug);
-    assert!(!result.task.draft);
-    assert!(result.task.has_worktree);
-    assert!(Path::new(&result.task.worktree).exists());
-    assert!(!result.session.id.is_empty());
-
-    let on_disk = read_task(&repo, &draft.slug).unwrap();
-    assert!(!on_disk.draft);
-    let _ = fs::remove_dir_all(&repo);
 }
 
 #[test]
@@ -1509,24 +909,29 @@ fn targeted_draft_writes_land_only_in_selected_repo() {
     let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let repo_a = init_git_test_repo("targeted-draft-a");
     let repo_b = init_git_test_repo("targeted-draft-b");
-    alinery_core::ensure_playbooks(&repo_a).unwrap();
-    alinery_core::ensure_playbooks(&repo_b).unwrap();
+
     set_active_repo_global(Some(repo_a.clone())).unwrap();
     let known = vec![repo_a.display().to_string(), repo_b.display().to_string()];
     let target = validate_known_target_repo(&known, &repo_b.display().to_string()).unwrap();
 
-    let draft = write_draft_in(
+    let draft = write_draft_in_with_slug(
         &target,
+        None,
+        "",
+        "",
         "Only In B".into(),
         "draft body".into(),
         "".into(),
         "".into(),
         "".into(),
-        default_playbook_key(),
+        alinery_core::playbook::PlaybookRef {
+            scope: alinery_core::playbook::PlaybookScope::Bundled,
+            key: default_playbook_key(),
+        },
         "claude".into(),
         String::new(),
         None,
-        true,
+        10,
         "".into(),
         "".into(),
     )
@@ -1544,102 +949,32 @@ fn targeted_draft_writes_land_only_in_selected_repo() {
 }
 
 #[test]
-fn targeted_create_promotes_only_the_target_draft() {
-    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let repo_a = init_git_test_repo("targeted-create-a");
-    let repo_b = init_git_test_repo("targeted-create-b");
-    alinery_core::ensure_playbooks(&repo_a).unwrap();
-    alinery_core::ensure_playbooks(&repo_b).unwrap();
-    set_active_repo_global(Some(repo_a.clone())).unwrap();
-    let draft_args = |repo: &Path| {
-        write_draft_in(
-            repo,
-            "Same Slug".into(),
-            "".into(),
-            "".into(),
-            "".into(),
-            "".into(),
-            default_playbook_key(),
-            "claude".into(),
-            String::new(),
-            None,
-            true,
-            "".into(),
-            "".into(),
-        )
-        .unwrap()
-    };
-    let draft_a = draft_args(&repo_a);
-    let draft_b = draft_args(&repo_b);
-
-    let result = create_task_in(
-        &repo_b,
-        "Same Slug".into(),
-        "".into(),
-        "".into(),
-        vec![],
-        "".into(),
-        "".into(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        true,
-        "".into(),
-        "".into(),
-    )
-    .unwrap();
-
-    assert_eq!(result.task.slug, draft_b.slug);
-    assert!(!read_task(&repo_b, &draft_b.slug).unwrap().draft);
-    assert!(crate::sessions_dir(&repo_b, &draft_b.slug).join(format!("{}.meta.json", result.session.id)).exists());
-    assert!(read_task(&repo_a, &draft_a.slug).unwrap().draft);
-    assert!(!crate::sessions_dir(&repo_a, &draft_a.slug).exists());
-    assert_eq!(crate::active_repo().unwrap(), repo_a);
-
-    set_active_repo_global(None).unwrap();
-    let _ = fs::remove_dir_all(repo_a);
-    let _ = fs::remove_dir_all(repo_b);
-}
-
-#[test]
 fn targeted_draft_cleanup_deletes_only_still_drafts() {
     let repo = init_git_test_repo("targeted-cleanup");
-    alinery_core::ensure_playbooks(&repo).unwrap();
-    let draft = write_draft_in(
+
+    let draft = write_draft_in_with_slug(
         &repo,
+        None,
+        "",
+        "",
         "Draft Origin".into(),
         "".into(),
         "".into(),
         "".into(),
         "".into(),
-        default_playbook_key(),
+        alinery_core::playbook::PlaybookRef {
+            scope: alinery_core::playbook::PlaybookScope::Bundled,
+            key: default_playbook_key(),
+        },
         "claude".into(),
         String::new(),
         None,
-        true,
+        10,
         "".into(),
         "".into(),
     )
     .unwrap();
-    let promoted = create_task_in(
-        &repo,
-        "Promoted Origin".into(),
-        "".into(),
-        "".into(),
-        vec![],
-        "".into(),
-        "".into(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        true,
-        "".into(),
-        "".into(),
-    )
-    .unwrap()
-    .task;
+    let promoted = create_task_for_test(&repo, "Promoted Origin", true, "", "");
 
     delete_draft_in(&repo, None, &draft.slug).unwrap();
     assert!(!task_dir(&repo, &draft.slug).exists());
@@ -1653,16 +988,11 @@ fn targeted_helpers_do_not_depend_on_active_repo() {
     let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let repo_a = init_git_test_repo("targeted-helper-a");
     let repo_b = init_git_test_repo("targeted-helper-b");
-    alinery_core::ensure_playbooks(&repo_a).unwrap();
-    alinery_core::ensure_playbooks(&repo_b).unwrap();
+
     git_cmd(&repo_a).args(["remote", "add", "origin", "https://github.com/example/a.git"]).output().unwrap();
     git_cmd(&repo_b).args(["remote", "add", "origin", "https://github.com/example/b.git"]).output().unwrap();
     set_active_repo_global(Some(repo_a.clone())).unwrap();
 
-    assert!(!list_playbooks_in(&repo_b).is_empty());
-    let app_config = repo_b.join("app.toml");
-    alinery_core::write_global_settings(&app_config, &alinery_core::default_global_settings()).unwrap();
-    assert!(!alinery_core::load_harnesses_for(&app_config, &repo_b).is_empty());
     assert_eq!(parse_github_ref("#42", active_github_repo(&repo_b)).unwrap().label(), "example/b#42");
     assert_eq!(crate::active_repo().unwrap(), repo_a);
 
@@ -2313,110 +1643,6 @@ fn task_activity_repository_failure_isolated() {
     }
 }
 
-fn duplicate_source(repo: &Path, name: &str, harness: &str, model: &str) -> CreateTaskResult {
-    create_task_in(
-        repo,
-        name.into(),
-        "description".into(),
-        String::new(),
-        vec![],
-        String::new(),
-        String::new(),
-        default_playbook_key(),
-        harness.into(),
-        model.into(),
-        Some(vec!["implement".into()]),
-        true,
-        name.into(),
-        name.into(),
-    )
-    .expect("create duplicate source")
-}
-
-fn git_output(repo: &Path, args: &[&str]) -> String {
-    let output = git_cmd(repo).args(args).output().expect("run git");
-    assert!(output.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&output.stderr));
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
-}
-
-#[test]
-fn duplicate_task_copies_only_original_inputs_and_freshens_identity() {
-    let repo = init_git_test_repo("duplicate-inputs");
-    let created = duplicate_source(&repo, "prototype", "claude", "model-a");
-    let mut source = created.task;
-    source.created = 1;
-    source.archived = true;
-    source.pr_url = "https://example.test/pr/1".into();
-    source.linear_id = "LIN-42".into();
-    source.github_issue = "owner/repo#7".into();
-    source.auto_advance = vec!["implement".into(), "verify".into()];
-    source.related_tasks = vec![alinery_core::RelatedTaskRef {
-        repo_path: "/other".into(),
-        slug: "related-task".into(),
-        name: "Related task".into(),
-    }];
-    write_task(&repo, &source).unwrap();
-
-    let raw_ticket = b"\n# prototype\n\n# repeated\n\0\xff\n";
-    fs::write(artifacts_dir(&repo, &source.slug).join("00-ticket.md"), raw_ticket).unwrap();
-    fs::create_dir_all(attachments_of(&repo, &source.slug)).unwrap();
-    fs::write(attachments_of(&repo, &source.slug).join("trace.bin"), [0, 1, 2, 255]).unwrap();
-    fs::write(attachments_of(&repo, &source.slug).join("notes.txt"), b"notes").unwrap();
-    fs::write(artifacts_dir(&repo, &source.slug).join("01-research.md"), b"generated").unwrap();
-    fs::write(artifacts_dir(&repo, &source.slug).join("03-design.review-001.md"), b"review").unwrap();
-    fs::write(sessions_dir(&repo, &source.slug).join("old.scrollback"), b"history").unwrap();
-    let mut source_session = created.session;
-    source_session.created = 2;
-    source_session.started_at = Some(3);
-    source_session.ended_at = Some(4);
-    source_session.exit_code = Some(0);
-    source_session.harness = "claude".into();
-    source_session.model = "model-a".into();
-    source_session.harness_resume_token = "resume".into();
-    fs::write(session_meta_path(&repo, &source.slug, &source_session.id), serde_json::to_string(&source_session).unwrap()).unwrap();
-
-    let duplicate = duplicate_task_in(&repo, &source.slug).expect("duplicate task");
-    assert!(duplicate.attachment_errors.is_empty());
-    assert_eq!(duplicate.task.name, "prototype D+1");
-    assert_eq!(duplicate.task.linear_id, "LIN-42");
-    assert_eq!(duplicate.task.github_issue, "owner/repo#7");
-    assert_eq!(duplicate.task.playbook, source.playbook);
-    assert_eq!(duplicate.task.auto_advance, source.auto_advance);
-    assert_eq!(duplicate.task.related_tasks, source.related_tasks);
-    assert_eq!(duplicate.task.slug, "prototype-2");
-    assert_ne!(duplicate.task.branch, source.branch);
-    assert_ne!(duplicate.task.worktree, source.worktree);
-    assert!(duplicate.task.has_worktree);
-    assert!(!duplicate.task.archived);
-    assert!(!duplicate.task.draft);
-    assert!(duplicate.task.requested_slug.is_empty());
-    assert!(duplicate.task.pr_url.is_empty());
-    assert_ne!(duplicate.task.created, source.created);
-    assert_eq!(fs::read(artifacts_dir(&repo, &duplicate.task.slug).join("00-ticket.md")).unwrap(), raw_ticket);
-    assert_eq!(fs::read(attachments_of(&repo, &duplicate.task.slug).join("trace.bin")).unwrap(), [0, 1, 2, 255]);
-    assert_eq!(fs::read(attachments_of(&repo, &duplicate.task.slug).join("notes.txt")).unwrap(), b"notes");
-    assert!(!artifacts_dir(&repo, &duplicate.task.slug).join("01-research.md").exists());
-    assert!(!artifacts_dir(&repo, &duplicate.task.slug).join("03-design.review-001.md").exists());
-    assert!(!sessions_dir(&repo, &duplicate.task.slug).join("old.scrollback").exists());
-
-    let sessions = list_sessions_for_repo(&repo, &duplicate.task.slug).unwrap();
-    assert_eq!(sessions.len(), 1);
-    let session = &sessions[0];
-    assert_ne!(session.id, source_session.id);
-    assert_ne!(session.created, source_session.created);
-    assert_eq!(session.harness, "omp");
-    assert_eq!(session.model, "");
-    assert_eq!(session.worktree, duplicate.task.worktree);
-    assert_eq!(session.phase, first_step_for_playbook(&repo, &source.playbook));
-    assert_eq!(session.started_at, None);
-    assert_eq!(session.ended_at, None);
-    assert_eq!(session.exit_code, None);
-    assert!(session.harness_resume_token.is_empty());
-    let _ = git_cmd(&repo).args(["worktree", "remove", "--force", &duplicate.task.worktree]).output();
-    let _ = git_cmd(&repo).args(["worktree", "remove", "--force", &source.worktree]).output();
-    let _ = fs::remove_dir_all(repo);
-}
-
 #[test]
 fn archive_task_adapter_refuses_active_parent_and_child() {
     let repo = activity_repo("archive-subtask");
@@ -2436,224 +1662,6 @@ fn archive_task_adapter_refuses_active_parent_and_child() {
     );
     assert!(!read_task(&repo, "parent").unwrap().archived);
     assert!(!read_task(&repo, "child").unwrap().archived);
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn duplicate_task_streams_managed_attachment_larger_than_create_limit() {
-    let repo = init_git_test_repo("duplicate-large-input");
-    let source = duplicate_source(&repo, "large-input", "claude", "").task;
-    let source_attachments = attachments_of(&repo, &source.slug);
-    fs::create_dir_all(&source_attachments).unwrap();
-    let source_file = source_attachments.join("manually-managed.bin");
-    let large_len = MAX_ATTACHMENT_SET_BYTES + 1;
-    fs::File::create(&source_file).unwrap().set_len(large_len).unwrap();
-
-    let duplicate = duplicate_task_in(&repo, &source.slug).expect("duplicate large managed input");
-    let copied_file = attachments_of(&repo, &duplicate.task.slug).join("manually-managed.bin");
-    assert_eq!(fs::metadata(copied_file).unwrap().len(), large_len);
-
-    let _ = git_cmd(&repo).args(["worktree", "remove", "--force", &duplicate.task.worktree]).output();
-    let _ = git_cmd(&repo).args(["worktree", "remove", "--force", &source.worktree]).output();
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn duplicate_task_title_suffix_increments_when_cloning_a_clone() {
-    let repo = init_git_test_repo("duplicate-title");
-    let source = duplicate_source(&repo, "Prototype", "claude", "").task;
-
-    let first = duplicate_task_in(&repo, &source.slug).unwrap();
-    let second = duplicate_task_in(&repo, &first.task.slug).unwrap();
-    let third = duplicate_task_in(&repo, &second.task.slug).unwrap();
-
-    assert_eq!(
-        (first.task.name.as_str(), first.task.slug.as_str(), first.task.branch.as_str()),
-        ("Prototype D+1", "prototype-2", "Prototype-2")
-    );
-    assert_eq!(
-        (second.task.name.as_str(), second.task.slug.as_str(), second.task.branch.as_str()),
-        ("Prototype D+2", "prototype-3", "Prototype-3")
-    );
-    assert_eq!(
-        (third.task.name.as_str(), third.task.slug.as_str(), third.task.branch.as_str()),
-        ("Prototype D+3", "prototype-4", "Prototype-4")
-    );
-    assert_eq!(Path::new(&first.task.worktree).file_name().unwrap(), "Prototype-2");
-    assert_eq!(Path::new(&second.task.worktree).file_name().unwrap(), "Prototype-3");
-    assert_eq!(Path::new(&third.task.worktree).file_name().unwrap(), "Prototype-4");
-    for task in [&third.task, &second.task, &first.task, &source] {
-        let _ = git_cmd(&repo).args(["worktree", "remove", "--force", &task.worktree]).output();
-    }
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn duplicate_task_uses_oldest_primary_creation_session() {
-    let repo = init_git_test_repo("duplicate-session");
-    let created = duplicate_source(&repo, "session-source", "claude", "old-model");
-    fs::remove_file(session_meta_path(&repo, &created.task.slug, &created.session.id)).unwrap();
-    let oldest = SessionMeta {
-        id: "s-a-oldest".into(),
-        created: 10,
-        harness: "codex".into(),
-        model: "original-model".into(),
-        ..created.session.clone()
-    };
-    let later = SessionMeta {
-        id: "s-z-later".into(),
-        created: 10,
-        harness: "opencode".into(),
-        model: "later-model".into(),
-        ..created.session.clone()
-    };
-    let generic = SessionMeta {
-        id: "s-generic".into(),
-        created: 5,
-        generic: true,
-        harness: "ds4".into(),
-        ..created.session.clone()
-    };
-    // Write the later session first so provenance cannot depend on directory insertion order.
-    for session in [&later, &oldest, &generic] {
-        fs::write(session_meta_path(&repo, &created.task.slug, &session.id), serde_json::to_string(session).unwrap()).unwrap();
-    }
-    // The historical phase no longer exists and the current first step now overrides its harness.
-    // Duplication must preserve the recorded launch pair while using the current first step.
-    fs::write(
-        repo.join(".alinery/playbooks.toml"),
-        r#"
-version = 1
-default = "superdevelop"
-
-[playbooks.superdevelop]
-title = "SuperDevelop"
-kind = "linear"
-default_harness = "claude"
-steps = ["replacement"]
-
-[playbooks.superdevelop.step.replacement]
-title = "Replacement"
-prompt = ""
-harness = "opencode"
-"#,
-    )
-    .unwrap();
-
-    let duplicate = duplicate_task_in(&repo, &created.task.slug).unwrap();
-    assert_eq!(duplicate.session.harness, "omp");
-    assert_eq!(duplicate.session.model, "");
-    assert_eq!(duplicate.session.phase, "replacement");
-    assert!(!duplicate.session.generic);
-    assert!(!duplicate.session.archived);
-    let _ = git_cmd(&repo).args(["worktree", "remove", "--force", &duplicate.task.worktree]).output();
-    let _ = git_cmd(&repo).args(["worktree", "remove", "--force", &created.task.worktree]).output();
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn duplicate_task_always_creates_worktree_from_repository_head_for_archived_removed_source() {
-    let repo = init_git_test_repo("duplicate-head");
-    let created = duplicate_source(&repo, "head-source", "claude", "");
-    let source_tip = git_output(&repo, &["rev-parse", &created.task.branch]);
-    let remove = git_cmd(&repo).args(["worktree", "remove", "--force", &created.task.worktree]).output().unwrap();
-    assert!(remove.status.success());
-    let mut source = created.task;
-    source.archived = true;
-    source.worktree.clear();
-    write_task(&repo, &source).unwrap();
-    fs::write(repo.join("head-marker"), b"head").unwrap();
-    git_output(&repo, &["add", "head-marker"]);
-    git_output(&repo, &["commit", "-m", "advance main"]);
-    let repository_head = git_output(&repo, &["rev-parse", "HEAD"]);
-    assert_ne!(repository_head, source_tip);
-
-    let duplicate = duplicate_task_in(&repo, &source.slug).unwrap();
-    assert!(duplicate.task.has_worktree);
-    assert!(Path::new(&duplicate.task.worktree).is_dir());
-    assert!(!duplicate.task.archived);
-    assert_eq!(git_output(&repo, &["rev-parse", &duplicate.task.branch]), repository_head);
-    assert_ne!(git_output(&repo, &["rev-parse", &duplicate.task.branch]), source_tip);
-    assert!(Path::new(&duplicate.task.worktree).file_name().unwrap().to_string_lossy().starts_with("head-source"));
-    let _ = git_cmd(&repo).args(["worktree", "remove", "--force", &duplicate.task.worktree]).output();
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn duplicate_task_dedupes_slug_branch_and_worktree_independently() {
-    let repo = init_git_test_repo("duplicate-dedupe");
-    let mut source = duplicate_source(&repo, "dedupe", "claude", "").task;
-    source.branch = "topic".into();
-    write_task(&repo, &source).unwrap();
-    git_output(&repo, &["branch", "topic/existing"]);
-    let first = duplicate_task_in(&repo, &source.slug).unwrap();
-    let second = duplicate_task_in(&repo, &source.slug).unwrap();
-    assert_eq!(first.task.slug, "dedupe-2");
-    assert_eq!(second.task.slug, "dedupe-3");
-    assert_eq!(first.task.branch, "topic-2");
-    assert_eq!(second.task.branch, "topic-3");
-    assert_eq!(Path::new(&first.task.worktree).file_name().unwrap(), "dedupe-2");
-    assert_eq!(Path::new(&second.task.worktree).file_name().unwrap(), "dedupe-3");
-    for task in [&first.task, &second.task, &source] {
-        let _ = git_cmd(&repo).args(["worktree", "remove", "--force", &task.worktree]).output();
-    }
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn duplicate_task_rejects_invalid_draft_missing_session_and_managed_non_file_before_mutation() {
-    let repo = init_git_test_repo("duplicate-reject");
-    for invalid in ["../task", "/absolute", "nested/task"] {
-        assert!(duplicate_task_in(&repo, invalid)
-            .err()
-            .expect("invalid source must fail")
-            .contains("invalid duplicate source slug"));
-    }
-
-    let mut draft = duplicate_source(&repo, "draft-source", "claude", "").task;
-    draft.draft = true;
-    write_task(&repo, &draft).unwrap();
-    assert!(duplicate_task_in(&repo, &draft.slug)
-        .err()
-        .expect("draft must fail")
-        .contains("draft tasks cannot be duplicated"));
-    assert!(!task_dir(&repo, "draft-source-2").exists());
-
-    let no_session = duplicate_source(&repo, "no-session", "claude", "").task;
-    fs::remove_dir_all(sessions_dir(&repo, &no_session.slug)).unwrap();
-    assert!(duplicate_task_in(&repo, &no_session.slug)
-        .err()
-        .expect("missing source session must fail")
-        .contains("no original primary playbook session"));
-    assert!(!task_dir(&repo, "no-session-2").exists());
-
-    let invalid_attachment = duplicate_source(&repo, "bad-attachment", "claude", "").task;
-    fs::create_dir_all(attachments_of(&repo, &invalid_attachment.slug).join("directory")).unwrap();
-    assert!(duplicate_task_in(&repo, &invalid_attachment.slug)
-        .err()
-        .expect("managed directory must fail")
-        .contains("not a regular file"));
-    assert!(!task_dir(&repo, "bad-attachment-2").exists());
-    for task in [&draft, &no_session, &invalid_attachment] {
-        let _ = git_cmd(&repo).args(["worktree", "remove", "--force", &task.worktree]).output();
-    }
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn duplicate_task_rolls_back_post_worktree_failure() {
-    let repo = init_git_test_repo("duplicate-rollback");
-    let source = duplicate_source(&repo, "rollback-source", "claude", "").task;
-    FAIL_DUPLICATE_AFTER_WORKTREE.store(duplicate_fail_key(&source.slug), std::sync::atomic::Ordering::SeqCst);
-    let error = duplicate_task_in(&repo, &source.slug).err().expect("injected failure must fail");
-    assert!(error.contains("injected duplicate failure after worktree creation"));
-    assert!(!task_dir(&repo, "rollback-source-2").exists());
-    assert!(!worktrees_dir(&repo).join("rollback-source-2").exists());
-    let branch = git_cmd(&repo).args(["show-ref", "--verify", "--quiet", "refs/heads/rollback-source-2"]).status().unwrap();
-    assert!(!branch.success());
-    let worktrees = git_output(&repo, &["worktree", "list", "--porcelain"]);
-    assert!(!worktrees.contains("rollback-source-2"));
-    let _ = git_cmd(&repo).args(["worktree", "remove", "--force", &source.worktree]).output();
     let _ = fs::remove_dir_all(repo);
 }
 
@@ -2708,6 +1716,7 @@ fn board_tasks_reject_missing_and_cyclic_relationships() {
         related_tasks: Vec::new(),
         draft: false,
         telemetry_id: String::new(),
+        ..Default::default()
     };
     write_task(&repo, &parent).unwrap();
     assert!(board_tasks_for_repo(&repo, "/repo")
@@ -2735,6 +1744,7 @@ fn board_tasks_reject_missing_and_cyclic_relationships() {
         related_tasks: Vec::new(),
         draft: false,
         telemetry_id: String::new(),
+        ..Default::default()
     };
     parent.parent_task = "child".into();
     parent.active_subtask = "child".into();
@@ -2752,60 +1762,6 @@ fn task_activity_stale_source_failure_is_ignored() {
     stale.state.playbook = alinery_core::PlaybookState::Failed { reason: "StaleSource".into() };
     let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[stale]);
     assert_eq!(activity_summary(&activity, &repo, "task"), &crate::TaskActivitySummary::default());
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn task_activity_active_session_uses_actual_playbook_metadata() {
-    let repo = activity_repo("active-metadata");
-    write_activity_task(&repo, "task", "tdd", false);
-    write_activity_session(
-        &repo,
-        "task",
-        SessionMeta {
-            id: "external-review".into(),
-            worktree: "/worktree/external".into(),
-            created: 30,
-            phase: "review-findings".into(),
-            harness: "claude".into(),
-            model: "opus".into(),
-            playbook: "review".into(),
-            ..Default::default()
-        },
-    );
-    write_activity_session(
-        &repo,
-        "task",
-        SessionMeta {
-            id: "generic".into(),
-            worktree: "/worktree/generic".into(),
-            created: 40,
-            phase: "ignored".into(),
-            harness: "no-harness".into(),
-            playbook: "free-form".into(),
-            generic: true,
-            ..Default::default()
-        },
-    );
-    let external = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[activity_status_busy("external-review")]);
-    let session = activity_summary(&external, &repo, "task").active_session.as_ref().unwrap();
-    assert_eq!(
-        session,
-        &crate::TaskActivitySession {
-            id: "external-review".into(),
-            worktree: "/worktree/external".into(),
-            phase: "review-findings".into(),
-            harness: "claude".into(),
-            model: "opus".into(),
-            playbook: "review".into(),
-            generic: false,
-            step_title: "Review Findings".into(),
-        }
-    );
-    let generic = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[activity_status_busy("generic")]);
-    let session = activity_summary(&generic, &repo, "task").active_session.as_ref().unwrap();
-    assert!(session.generic);
-    assert_eq!(session.step_title, "Generic");
     let _ = fs::remove_dir_all(repo);
 }
 
@@ -2873,6 +1829,7 @@ fn set_related_tasks_writes_tags_and_task_dir_symlinks() {
             active_subtask: String::new(),
             subtask_outcome: String::new(),
             related_tasks: Vec::new(),
+            ..Default::default()
         },
     )
     .unwrap();
@@ -2930,6 +1887,7 @@ fn targeted_restore_changes_only_selected_repository() {
                 draft: false,
                 telemetry_id: String::new(),
                 related_tasks: Vec::new(),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2945,4 +1903,185 @@ fn targeted_restore_changes_only_selected_repository() {
     assert_eq!(restored.name, "Repository B");
     let _ = fs::remove_dir_all(repo_a);
     let _ = fs::remove_dir_all(repo_b);
+}
+
+fn retained_duplicate_fixture(repo: &Path) -> Task {
+    let source = include_str!("../../playbooks/one-shot/playbook.md");
+    let reference = alinery_core::playbook::PlaybookRef {
+        scope: alinery_core::playbook::PlaybookScope::Repo,
+        key: "one-shot".into(),
+    };
+    let task = Task {
+        name: "Original".into(),
+        slug: "original".into(),
+        branch: "original".into(),
+        worktree: repo.join(".alinery/worktrees/original").display().to_string(),
+        engine_version: 2,
+        playbook_ref: Some(reference.clone()),
+        ..Default::default()
+    };
+    fs::create_dir_all(artifacts_dir(repo, &task.slug)).unwrap();
+    fs::create_dir_all(sessions_dir(repo, &task.slug)).unwrap();
+    fs::write(task_dir(repo, &task.slug).join("playbook.md"), source).unwrap();
+    fs::write(artifacts_dir(repo, &task.slug).join("00-ticket.md"), "# Edited original\nKeep exact bytes.\n").unwrap();
+    let mut execution = alinery_core::execution::new_execution_state(reference, source, String::new(), 10, Default::default(), Default::default()).unwrap();
+    execution.creation = "ready".into();
+    alinery_core::execution::write_execution_state_unlocked(repo, &task.slug, &mut execution).unwrap();
+    write_task(repo, &task).unwrap();
+    task
+}
+
+#[test]
+fn duplicate_package_retains_definition_ticket_and_large_managed_input_without_history() {
+    let repo = unique_attachment_temp("duplicate-retained");
+    let task = retained_duplicate_fixture(&repo);
+    let library = repo.join(".alinery/playbooks/one-shot");
+    fs::create_dir_all(&library).unwrap();
+    fs::write(library.join("playbook.md"), "invalid replacement").unwrap();
+    fs::remove_dir_all(library).unwrap();
+    let attachments = attachments_of(&repo, &task.slug);
+    fs::create_dir_all(&attachments).unwrap();
+    fs::File::create(attachments.join("managed.bin")).unwrap().set_len(MAX_ATTACHMENT_BYTES + 1).unwrap();
+    fs::write(artifacts_dir(&repo, &task.slug).join("9-generated-1.md"), "not original input").unwrap();
+    let package = crate::duplicate_task_package(&repo, &task.slug).unwrap();
+    assert_eq!(package.playbook.source, include_str!("../../playbooks/one-shot/playbook.md"));
+    assert_eq!(package.original_ticket.as_deref(), Some("# Edited original\nKeep exact bytes.\n"));
+    assert_eq!(package.attachments.iter().map(|attachment| attachment.name.as_str()).collect::<Vec<_>>(), ["managed.bin"]);
+    assert_eq!(package.attachments[0].bytes.len() as u64, MAX_ATTACHMENT_BYTES + 1);
+    assert_eq!(package.name, "Original D+1");
+    assert!(package.draft_slug.is_none());
+    fs::remove_dir_all(repo).unwrap();
+}
+
+#[test]
+fn duplicate_reports_broken_retained_definition_instead_of_library_fallback() {
+    let repo = unique_attachment_temp("retained-integrity");
+    let task = retained_duplicate_fixture(&repo);
+    fs::write(task_dir(&repo, &task.slug).join("playbook.md"), "changed").unwrap();
+    assert!(crate::duplicate_task_package(&repo, &task.slug).is_err());
+    fs::remove_dir_all(repo).unwrap();
+}
+
+#[test]
+fn autosave_cannot_recreate_promoted_storage_slug_after_restore() {
+    let repo = init_git_test_repo("promotion-autosave");
+    let reference = alinery_core::playbook::PlaybookRef {
+        scope: alinery_core::playbook::PlaybookScope::Bundled,
+        key: "one-shot".into(),
+    };
+    let draft = write_draft_in_with_slug(
+        &repo,
+        None,
+        "",
+        "final-name",
+        "Draft".into(),
+        "before".into(),
+        String::new(),
+        String::new(),
+        String::new(),
+        reference.clone(),
+        String::new(),
+        String::new(),
+        None,
+        10,
+        String::new(),
+        String::new(),
+    )
+    .unwrap();
+    let request: alinery_core::CreateTaskRequest = serde_json::from_value(serde_json::json!({
+        "name": "Draft", "draft_slug": draft.slug, "requested_slug": "final-name", "description": "before",
+        "playbook": { "reference": reference, "source": include_str!("../../playbooks/one-shot/playbook.md") },
+        "start": false
+    }))
+    .unwrap();
+    let created = alinery_core::provision_task(&repo, "", "fixture", &request).unwrap();
+    assert_eq!(created.creation, "ready");
+    let destination = repo.join("backups");
+    fs::create_dir_all(&destination).unwrap();
+    let settings = alinery_core::BackupDefaults {
+        destination: destination.display().to_string(),
+        enabled: true,
+        ..Default::default()
+    };
+    alinery_core::create_backup(&repo, &settings, alinery_core::BackupTrigger::Manual, "test").unwrap();
+    let archive = alinery_core::list_backups(&repo, &settings).unwrap().remove(0);
+    let restored = repo.join("restored");
+    fs::create_dir_all(&restored).unwrap();
+    alinery_core::extract_backup_into(Path::new(&archive.path), &restored.join(".alinery"), Some(&repo)).unwrap();
+    let late_save = write_draft_in_with_slug(
+        &restored,
+        None,
+        &draft.slug,
+        "final-name",
+        "Draft".into(),
+        "after".into(),
+        String::new(),
+        String::new(),
+        String::new(),
+        reference,
+        String::new(),
+        String::new(),
+        None,
+        10,
+        String::new(),
+        String::new(),
+    );
+    let resurrected = task_dir(&restored, &draft.slug).exists();
+    let final_ticket = fs::read_to_string(artifacts_dir(&restored, "final-name").join("00-ticket.md")).unwrap();
+    let replayed_promotion = alinery_core::provision_task(&restored, "", "fixture", &request);
+    fs::remove_dir_all(repo).unwrap();
+    assert!(late_save.is_err(), "a restored promotion must still close the old autosave identity");
+    assert!(!resurrected);
+    assert!(final_ticket.contains("before"));
+    assert!(replayed_promotion.is_err(), "a repeated promotion must not create another task after restore");
+}
+
+#[test]
+fn provisioning_reserves_branches_before_git_and_retains_failed_intent() {
+    let repo = init_git_test_repo("provisioning-branch-reservation");
+    let mut request: alinery_core::CreateTaskRequest = serde_json::from_value(serde_json::json!({
+        "name": "Reserved",
+        "branch_name": "reserved",
+        "playbook": {
+            "reference": { "scope": "bundled", "key": "one-shot" },
+            "source": include_str!("../../playbooks/one-shot/playbook.md")
+        },
+        "start": false
+    }))
+    .unwrap();
+    assert!(git_cmd(&repo).args(["branch", "reserved-1"]).status().unwrap().success());
+    let existing = git_cmd(&repo).args(["rev-parse", "reserved-1"]).output().unwrap().stdout;
+    let mut reservations = Vec::new();
+    for expected_branch in ["reserved", "reserved-2"] {
+        let reply = alinery_core::provision_task_with_reservation(&repo, "", "fixture", &request, || Ok(()), |_| Err("stop before git".into())).unwrap();
+        assert_eq!(reply.creation, "partial");
+        assert!(reply.errors.iter().any(|error| error.stage == "relationships" && error.message == "stop before git"));
+        let task = reply.task.unwrap();
+        assert_eq!(task.branch, expected_branch);
+        assert_eq!(
+            git_cmd(&repo)
+                .args(["show-ref", "--verify", "--quiet", &format!("refs/heads/{}", task.branch)])
+                .status()
+                .unwrap()
+                .code(),
+            Some(1)
+        );
+        assert!(!Path::new(&task.worktree).exists());
+        assert_eq!(alinery_core::read_task(&repo, &task.slug).unwrap().branch, expected_branch);
+        let state = alinery_core::execution::read_execution_state(&repo, &task.slug).unwrap();
+        assert_eq!(state.creation, "partial");
+        assert!(state.creation_error.as_deref().is_some_and(|error| error.contains("stop before git")));
+        reservations.push(task);
+    }
+    assert_ne!(reservations[0].slug, reservations[1].slug);
+    assert_ne!(reservations[0].worktree, reservations[1].worktree);
+    assert_eq!(git_cmd(&repo).args(["rev-parse", "reserved-1"]).output().unwrap().stdout, existing);
+
+    // Child identities are explicit: a durable branch reservation must reject,
+    // rather than silently suffixing the requested branch.
+    request.parent_task = "parent".into();
+    request.requested_slug = Some("child".into());
+    assert!(alinery_core::provision_task_with_reservation(&repo, "", "fixture", &request, || Ok(()), |_| Ok(())).is_err());
+    assert!(!task_dir(&repo, "child").exists());
+    fs::remove_dir_all(repo).unwrap();
 }

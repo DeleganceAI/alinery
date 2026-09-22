@@ -3,7 +3,8 @@
 #
 #   Telemetry payloads are allow-listed. A future field added to Task / SessionMeta
 #   must never leak into alinery_core::telemetry by accident, and no call site outside
-#   the wrapper may construct OpenObserve requests or shell out to curl.
+#   the wrapper may construct OpenObserve requests or shell out to curl. Hosted
+#   inference may use ureq against accounts.alinery.ai; that is not ingest.
 #
 # A unit test that serializes a closed enum cannot catch a later author reaching
 # for `ureq::` or stuffing `worktree` into TelemetryEvent. Hence a source-level
@@ -50,14 +51,21 @@ if grep -nE "$blocklist_pat" "$TELEMETRY_RS"; then
   status=1
 fi
 
-# Transport stays inside the wrapper. Fail if any other workspace .rs file
-# constructs the OpenObserve request.
+# OpenObserve ingest stays inside the wrapper. Hosted inference uses the same
+# ureq crate against accounts.alinery.ai — that is not telemetry.
 while IFS= read -r f; do
   case "$f" in
     */telemetry.rs) continue ;;
   esac
-  if grep -nE 'ureq::|Authorization: Basic|/api/\{|/_json' "$f"; then
-    echo "ERROR: transport leaked outside telemetry.rs: $f" >&2
+  if grep -nE 'Authorization: Basic|/api/\{|/_json' "$f"; then
+    echo "ERROR: OpenObserve ingest leaked outside telemetry.rs: $f" >&2
+    status=1
+  fi
+  case "$f" in
+    */hosted_inference.rs) continue ;;
+  esac
+  if grep -nE 'ureq::' "$f"; then
+    echo "ERROR: ureq transport leaked outside telemetry.rs / hosted_inference.rs: $f" >&2
     status=1
   fi
 done < <(find "$CORE_SRC" -name '*.rs' -print)

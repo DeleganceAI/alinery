@@ -129,10 +129,8 @@ pub(crate) fn github_repo_from_remote(remote: &str) -> Option<(String, String)> 
         rest.to_string()
     } else if let Some(rest) = remote.strip_prefix("https://") {
         rest.to_string()
-    } else if let Some(rest) = remote.strip_prefix("http://") {
-        rest.to_string()
     } else {
-        return None;
+        remote.strip_prefix("http://")?.to_string()
     };
     let (host, path) = hostpath.split_once('/')?;
     let host = host.rsplit_once('@').map(|(_, h)| h).unwrap_or(host);
