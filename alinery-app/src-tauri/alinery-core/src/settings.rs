@@ -589,6 +589,21 @@ mod tests {
     }
 
     #[test]
+    fn original_kanban_defaults_on_without_overriding_saved_opt_out() {
+        let (dir, app_config) = temp_app("alinery_original_kanban");
+        assert!(load_global_settings(&app_config).experiments.show_original_kanban);
+        assert!(parse_global_settings("[global]").unwrap().experiments.show_original_kanban);
+        assert!(parse_global_settings("[global.experiments]").unwrap().experiments.show_original_kanban);
+
+        fs::write(&app_config, "[global.experiments]\nshow_original_kanban = false\n").unwrap();
+        let saved = load_global_settings(&app_config);
+        assert!(!saved.experiments.show_original_kanban);
+        write_global_settings(&app_config, &saved).unwrap();
+        assert!(!load_global_settings(&app_config).experiments.show_original_kanban);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn grid_views_trim_names_follow_explicit_slots_and_keep_stable_ids() {
         let prepared = prepare_grid_views(vec![
             GridViewDefinition {
@@ -682,11 +697,11 @@ mod tests {
         let (dir, app_config) = temp_app("alinery_log_grid_settings");
         write_global_settings(&app_config, &default_global_settings()).unwrap();
         let mut next = default_global_settings();
-        next.experiments.show_original_kanban = true;
+        next.experiments.show_original_kanban = false;
         next.grid_views[0].name = "Private planning name".into();
         write_global_settings(&app_config, &next).unwrap();
         let text = log_text(&app_config);
-        assert!(text.contains("experiments.show_original_kanban=true"), "{text}");
+        assert!(text.contains("experiments.show_original_kanban=false"), "{text}");
         assert!(text.contains("grid_views=changed"), "{text}");
         assert!(!text.contains("Private planning name"), "{text}");
         let _ = fs::remove_dir_all(dir);

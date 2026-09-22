@@ -93,6 +93,8 @@ pub(crate) struct AppearancePrefs {
     pub(crate) chat_show_actor_labels: bool,
     #[serde(default = "default_true")]
     pub(crate) chat_show_agent_bubbles: bool,
+    #[serde(default = "default_true")]
+    pub(crate) chat_show_copy_buttons: bool,
     #[serde(default = "default_session_default_view")]
     pub(crate) session_default_view: String,
     /// "system" | "light" | "dark" — absent in pre-reskin configs (serde default).
@@ -129,6 +131,7 @@ impl Default for AppearancePrefs {
             chat_show_time: true,
             chat_show_actor_labels: true,
             chat_show_agent_bubbles: true,
+            chat_show_copy_buttons: true,
             session_default_view: default_session_default_view(),
             mode: default_appearance_mode(),
         }
@@ -235,6 +238,7 @@ pub(crate) fn sanitize_appearance(prefs: AppearancePrefs) -> AppearancePrefs {
         chat_show_time: prefs.chat_show_time,
         chat_show_actor_labels: prefs.chat_show_actor_labels,
         chat_show_agent_bubbles: prefs.chat_show_agent_bubbles,
+        chat_show_copy_buttons: prefs.chat_show_copy_buttons,
         session_default_view: match prefs.session_default_view.trim() {
             "terminal" => "terminal".into(),
             _ => default_session_default_view(),

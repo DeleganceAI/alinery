@@ -57,6 +57,8 @@ export type AppearancePrefs = {
   chat_show_actor_labels?: boolean;
   /** Filled bubble around agent text replies only. Absent → true. */
   chat_show_agent_bubbles?: boolean;
+  /** Per-message copy icon inside chat bubbles. Absent → true. */
+  chat_show_copy_buttons?: boolean;
   /** Preferred OMP session hatch (Chat vs Terminal) for new starts. Absent → "chat". */
   session_default_view?: SessionDefaultView;
   /** Absent in pre-reskin configs; normalizers default it to "system". */
@@ -187,7 +189,7 @@ export type BackupListItem = {
 export type TelemetryPrefs = { enabled: boolean; prompted: boolean; install_id: string; endpoint: string };
 export type UpdatePrefs = { check_enabled: boolean };
 export type ExperimentalFeatures = {
-  /** Opt-in classic Kanban tab (⌘3). Absent/false = Grid-only. */
+  /** Classic Kanban tab (⌘3). Absent = enabled; false hides the tab. */
   show_original_kanban?: boolean;
 };
 export type GridViewDefinition = { id: string; name: string; slot: number };
@@ -317,7 +319,7 @@ export type AppConfig = {
 };
 export type StorageInfo = {
   app_config_path: string;
-  active_repo: string;
+  repo_path: string;
   alinery_dir: string;
   repo_config_path: string;
   harnesses_path: string;

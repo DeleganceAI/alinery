@@ -499,6 +499,19 @@ pub(crate) fn allow_root_session_open(meta_harness: Option<&str>) -> bool {
     }
 }
 
+pub(crate) fn hosted_refresh_needed(intent: &str, harness: &str, model: &str) -> bool {
+    harness == alinery_core::DEFAULT_HARNESS_KEY && matches!(intent, daemon_client::ops::SPAWN | daemon_client::ops::RESUME) && (model.trim().is_empty() || is_hosted_model(model))
+}
+
+async fn refresh_hosted_inference_before_open(app: AppHandle, intent: &str, harness: &str, model: &str) -> Result<(), String> {
+    if !hosted_refresh_needed(intent, harness, model) {
+        return Ok(());
+    }
+    tauri::async_runtime::spawn_blocking(move || refresh_hosted_inference_for_spawn(&app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub(crate) fn ensure_drawer_terminal(state: State<'_, AppState>) -> Result<SessionMeta, String> {
     let repo = require_owned_active_repo(&state)?;
@@ -529,7 +542,7 @@ pub(crate) fn ensure_drawer_terminal(state: State<'_, AppState>) -> Result<Sessi
 // prompt is delivered come from the session's harness (read from its meta), not hardcoded.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
-pub(crate) fn open_session(
+pub(crate) async fn open_session(
     state: State<'_, AppState>,
     app: AppHandle,
     id: String,
@@ -561,6 +574,8 @@ pub(crate) fn open_session(
         return Err(format!("unknown session intent '{intent}'"));
     }
     let repo = require_owned_active_repo(&state)?;
+    let mut harness = String::new();
+    let mut session_model = model.clone().filter(|m| !m.is_empty()).unwrap_or_default();
     if !slug_trim.is_empty() {
         let task = read_task(&repo, slug_trim)?;
         if task.engine_version < 2 {
@@ -574,8 +589,13 @@ pub(crate) fn open_session(
             if !alinery_core::is_allowed_launch_harness(&launch.harness) {
                 return Err(format!("unknown harness '{}'", launch.harness));
             }
+            harness = launch.harness;
+            if session_model.is_empty() {
+                session_model = launch.model;
+            }
         }
     }
+    refresh_hosted_inference_before_open(app.clone(), intent, &harness, &session_model).await?;
     let daemon = if intent == daemon_client::ops::ATTACH {
         client_for_session(&state, &repo, slug_trim, &id)?
     } else {

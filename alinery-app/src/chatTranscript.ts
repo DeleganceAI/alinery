@@ -927,8 +927,16 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
     return openTurn(state);
   }
   if (event.type === "agent_end" || event.type === "turn_end") {
-    const stop = asString(event.stopReason) ?? (event.isTerminal === false ? undefined : asString(event.reason));
-    return closeTurn(state, stop);
+    const message = asRecord(event.message);
+    const stop = asString(event.stopReason) ?? asString(message?.stopReason) ?? (event.isTerminal === false ? undefined : asString(event.reason));
+    let next = closeTurn(state, stop);
+    const errorText = asString(message?.errorMessage);
+    if (stop === "error" && errorText) {
+      const hostedKeyDeath = message?.errorStatus === 401 && /invalid_api_key/i.test(errorText);
+      const text = hostedKeyDeath ? `${errorText} Kill this session, then Start fresh.` : errorText;
+      next = appendEntry(next, { actor: ACTOR.omp, type: "error", text, at: Date.now() });
+    }
+    return next;
   }
 
   if (event.type === "subagent_lifecycle" || event.type === "subagent_progress" || event.type === "subagent_event" || event.type === "subagent_status") {

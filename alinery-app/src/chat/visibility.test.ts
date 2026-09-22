@@ -57,6 +57,7 @@ describe("chatVisibilityFromAppearance", () => {
         chat_show_date: true,
         chat_show_actor_labels: true,
         chat_show_agent_bubbles: true,
+        chat_show_copy_buttons: false,
       }),
     ).toEqual({
       ...DEFAULT_CHAT_VISIBILITY,
@@ -66,6 +67,7 @@ describe("chatVisibilityFromAppearance", () => {
       fontSize: 18,
       railFontSize: 14,
       maxWidth: "600",
+      showCopyButtons: false,
     });
   });
 

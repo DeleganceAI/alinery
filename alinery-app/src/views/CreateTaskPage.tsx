@@ -1,7 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { flushSync } from "react-dom";
+import { afterPaint } from "../afterPaint";
 import * as ipc from "../ipc";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { Checkbox, InlineStatus, ModelInput, ompDefaultModel, orderPlaybookCandidates, playbookPickerAppearance, playbookRefKey, samePlaybookRef } from "../shared";
+import * as taskMutationGuard from "../taskMutationGuard";
+import { toast } from "../toast";
 import type { BoardTask, DraftOrigin, PickerPreferences, PlaybookCandidate, PlaybookRef, ScopedPlaybook, TargetedCreateResult } from "../types";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
@@ -18,12 +22,16 @@ const slugifyTaskName = (value: string) => {
 export function CreateTaskPage({
   onCancel,
   onCreated,
+  onBusy = () => {},
+  onOpened = () => {},
   initialDraft,
   activeRepo,
   knownRepos,
 }: {
   onCancel: () => void;
-  onCreated: (result: TargetedCreateResult) => void;
+  onCreated: (result: TargetedCreateResult) => void | Promise<void>;
+  onBusy?: (kind: "create" | "duplicate" | null) => void;
+  onOpened?: () => void;
   initialDraft?: BoardTask;
   activeRepo: string;
   knownRepos: string[];
@@ -65,7 +73,7 @@ export function CreateTaskPage({
   const [draftAutosave, setDraftAutosave] = useState(true);
   const [draftSlug, setDraftSlug] = useState(initialDraft?.slug ?? "");
   const [draftOrigins, setDraftOrigins] = useState<DraftOrigin[]>(initialDraft ? [{ repoPath: initialDraft.repo_path, slug: initialDraft.slug }] : []);
-  const [creating, setCreating] = useState(false);
+  const mutationKind = useSyncExternalStore(taskMutationGuard.subscribe, taskMutationGuard.currentKind);
   const [playbookNeedsReselection, setPlaybookNeedsReselection] = useState(false);
   const [modelNeedsReselection, setModelNeedsReselection] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -78,10 +86,16 @@ export function CreateTaskPage({
   const initialTargetLoaded = useRef(false);
   const repoRef = useRef(repoPath);
   const ticketLoaded = useRef(false);
+  const onOpenedRef = useRef(onOpened);
+  onOpenedRef.current = onOpened;
   // dirty only after a real user edit (or reopen of an existing draft).
   const dirtyRef = useRef(!!initialDraft);
   const cap = Number(maxLiveSessions);
   const validCap = /^\d+$/.test(maxLiveSessions) && Number.isInteger(cap) && cap > 0 && cap <= 4_294_967_295;
+
+  // The busy flag is the shared guard, not this component's own: a create started from
+  // the ⌘N form and a duplicate started from a board are the same slot.
+  const creating = mutationKind === "create";
 
   useEffect(() => {
     const t = window.setTimeout(() => titleRef.current?.focus(), 40);
@@ -143,6 +157,9 @@ export function CreateTaskPage({
           setPlaybookNeedsReselection(true);
           setErr({ msg: "Couldn't load repository settings.", detail: String(e) });
         }
+      })
+      .finally(() => {
+        if (alive && request === targetRequest.current) onOpenedRef.current();
       });
     return () => {
       alive = false;
@@ -199,16 +216,16 @@ export function CreateTaskPage({
 
   // Debounced draft write — only after user edit and when setting is on.
   useEffect(() => {
-    if (!draftAutosave || !dirtyRef.current || creatingRef.current || !validCap) return;
+    if (!draftAutosave || !dirtyRef.current || creatingRef.current || taskMutationGuard.currentKind() || !validCap) return;
     const n = name.trim();
     if (!n || !playbook || !harness) return;
     const target = repoPath;
     const generation = draftWriteGeneration.current;
     const handle = window.setTimeout(() => {
-      if (!dirtyRef.current || creatingRef.current || generation !== draftWriteGeneration.current) return;
+      if (!dirtyRef.current || creatingRef.current || taskMutationGuard.currentKind() || generation !== draftWriteGeneration.current) return;
       const save = draftSaveInFlightRef.current
         .then(async () => {
-          if (creatingRef.current || generation !== draftWriteGeneration.current) return;
+          if (creatingRef.current || taskMutationGuard.currentKind() || generation !== draftWriteGeneration.current) return;
           const t = await ipc.writeDraftForRepo({
             repoPath: target,
             draftSlug: draftIdentities.current.get(target) ?? "",
@@ -238,7 +255,24 @@ export function CreateTaskPage({
       draftSaveInFlightRef.current = save;
     }, 400);
     return () => window.clearTimeout(handle);
-  }, [repoPath, name, desc, evidence, linearId, githubIssue, playbook, harness, model, autoAdvance, branchName, worktreeName, taskSlug, draftAutosave, maxLiveSessions]);
+  }, [
+    repoPath,
+    name,
+    desc,
+    evidence,
+    linearId,
+    githubIssue,
+    playbook,
+    harness,
+    model,
+    autoAdvance,
+    branchName,
+    worktreeName,
+    taskSlug,
+    draftAutosave,
+    maxLiveSessions,
+    mutationKind,
+  ]);
 
   // onDragDropEvent carries `paths` on "enter" and "drop" only, and "enter" fires first —
   // so the highlight predicate is enter||over, not drop.
@@ -265,15 +299,25 @@ export function CreateTaskPage({
   const sourceReady = selectedSource !== null && samePlaybookRef(selectedSource.source.reference, playbook) && !catalogLoading && !playbookNeedsReselection;
   const create = () => {
     const n = name.trim();
-    if (!n || !taskSlug || creatingRef.current || !sourceReady || !selectedSource || modelNeedsReselection || !validCap) return;
+    if (!n || !taskSlug || !sourceReady || !selectedSource || modelNeedsReselection || !validCap) return;
+    if (creatingRef.current) {
+      taskMutationGuard.refuseIfBusy();
+      return;
+    }
+    // A create or duplicate already running owns the slot; refuse rather than queue.
+    if (!taskMutationGuard.claim("create")) return;
     creatingRef.current = true;
     draftWriteGeneration.current += 1;
     dirtyRef.current = false;
-    setCreating(true);
-    setErr(null);
     const target = repoPath;
+    flushSync(() => {
+      onBusy("create");
+      setErr(null);
+    });
     let provisioningRequested = false;
-    draftSaveInFlightRef.current
+    let resultReceived = false;
+    afterPaint()
+      .then(() => draftSaveInFlightRef.current)
       .then(async () => {
         const prepared = await ipc.prepareTaskAttachments(attachments);
         provisioningRequested = true;
@@ -299,8 +343,14 @@ export function CreateTaskPage({
           },
         });
       })
-      .then((result) => {
+      .then(async (result) => {
+        resultReceived = true;
         setCreated({ ...result, repoPath: target });
+        if (result.creation !== "ready" || !result.task || result.start === "failed" || result.errors.length) {
+          toast.error(`Task creation needs attention: ${result.errors.map((error) => error.message).join("; ") || "Inspect the creation result."}`);
+        } else {
+          toast.success("Task created");
+        }
         if (result.creation === "ready" && result.task) {
           const origins = [...draftOrigins, ...Array.from(draftIdentities.current, ([originRepo, slug]) => ({ repoPath: originRepo, slug }))];
           for (const origin of origins) {
@@ -309,20 +359,28 @@ export function CreateTaskPage({
             });
           }
           if (result.start !== "failed" && result.errors.length === 0 && !result.attachment_errors?.length) {
-            onCreated({ ...result, repoPath: target });
+            await onCreated({ ...result, repoPath: target });
           }
         }
       })
       .catch((e) => {
-        if (provisioningRequested) {
+        if (resultReceived) {
+          toast.error(`Couldn't open the task: ${e}`);
+          setErr({ msg: "Couldn't open the task.", detail: String(e) });
+        } else if (provisioningRequested) {
           // A lost reply can follow durable provisioning. Never blindly retry it.
+          toast.error(`Creation outcome is unknown. Inspect the repository before creating another task: ${e}`);
           setErr({ msg: "Creation outcome is unknown. Inspect the repository before creating another task.", detail: String(e) });
         } else {
           creatingRef.current = false;
-          setCreating(false);
           dirtyRef.current = true;
+          toast.error(`Couldn't prepare task attachments. No creation was requested: ${e}`);
           setErr({ msg: "Couldn't prepare task attachments. No creation was requested.", detail: String(e) });
         }
+      })
+      .finally(() => {
+        taskMutationGuard.release();
+        onBusy(null);
       });
   };
 
@@ -737,6 +795,7 @@ export function CreateTaskPage({
             {!created.task && <InlineStatus tone="warning">No task identity was returned. Inspect the repository before trying again.</InlineStatus>}
           </section>
         )}
+        {creating && <InlineStatus tone="info">Creating New Task… You can keep using Alinery while the worktree is set up.</InlineStatus>}
         {err && (
           <InlineStatus tone="error" detail={err.detail}>
             {err.msg}
@@ -748,13 +807,13 @@ export function CreateTaskPage({
               Open task
             </button>
           ) : (
-            <button type="button" className="btn" disabled={creating || !!createBlockedReason || !taskSlug} onClick={create}>
+            <button type="button" className="btn" disabled={creating || creatingRef.current || !!createBlockedReason || !taskSlug} onClick={create}>
               {creating ? "Creating…" : "Create task"}
             </button>
           )}
           {!created && createBlockedReason && !creating && <span className="hint">{createBlockedReason}</span>}
           {draftSlug ? (
-            <button className="btn ghost" disabled={creating} onClick={clearDraft} type="button">
+            <button className="btn ghost" disabled={creating || creatingRef.current} onClick={clearDraft} type="button">
               Clear draft
             </button>
           ) : null}

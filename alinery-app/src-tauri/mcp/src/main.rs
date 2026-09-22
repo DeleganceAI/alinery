@@ -1537,6 +1537,31 @@ mod tests {
     }
 
     #[test]
+    fn alinery_create_task_rejects_unknown_playbook() {
+        let repo = unique_repo("create-task-bad-playbook");
+        let config = repo.join("app.toml");
+        std::fs::write(&config, "").unwrap();
+        let init = alinery_core::git_cmd(&repo).args(["init"]).output().expect("git init");
+        assert!(init.status.success(), "git init: {:?}", init);
+        let result = handle_tool_call(
+            json!({
+                "name": "alinery_create_task",
+                "arguments": {"name": "bogus-playbook-task", "playbook": {"scope": "bundled", "key": "not-a-real-playbook"}}
+            }),
+            repo.to_str().unwrap(),
+            Some(&config),
+        );
+        let text = text_content(&result).to_string();
+        assert!(
+            text.starts_with("error:") && text.contains("not-a-real-playbook"),
+            "expected unknown playbook error, got: {text}"
+        );
+        // No task should have been created (no worktree left behind, no dirs written).
+        assert!(alinery_core::list_tasks_for_repo(&repo).is_empty());
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
     fn list_repos_omits_app_level_secrets() {
         let path = std::env::temp_dir().join(format!("alinery-mcp-app-{}.toml", now_nanos()));
         std::fs::write(

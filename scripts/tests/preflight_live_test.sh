@@ -149,9 +149,10 @@ check "…and it still answers" "1" \
   "$(printf '%s' "$(probe_version "$SOCK")" | grep -c . | tr -d '[:space:]')"
 
 # --- 4b. the REAL pgrep discovery finds this suite's running daemon ----------------------
-# The stub above proves the gate consumes discovery; it cannot prove `pgrep -fl` actually
-# matches a product `alineryd --repo …`. That is the whole of finding 6, so run the real
-# function against the real daemon this suite started.
+# The stub above proves the gate consumes discovery; it cannot prove process listing
+# actually matches a product `alineryd --repo …`. That is the whole of finding 6, so run
+# the real function against the real daemon this suite started. Listing must be full
+# argv: Linux `pgrep -l` is comm-only and would miss `--repo`.
 check "real process discovery finds the running daemon by its command line" "1" \
   "$(discover_live_daemon_repos | grep -cx "$TMPR" | tr -d '[:space:]')"
 

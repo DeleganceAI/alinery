@@ -3,8 +3,9 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "./appearance";
+import * as taskMutationGuard from "./taskMutationGuard";
 import { mockIpc } from "./test/mockIpc";
-import type { AppConfig, BoardTask, CreateTaskResult, Task } from "./types";
+import type { AppConfig, BoardTask, Config, CreateTaskResult, Task } from "./types";
 
 const appConfig: AppConfig = {
   active_repo: "/repo-a",
@@ -81,7 +82,10 @@ const mocks = vi.hoisted(() => ({
   startSession: vi.fn(),
   setActiveRepo: vi.fn(),
   readAppConfig: vi.fn(),
+  readConfigForRepo: vi.fn(),
   toast: vi.fn(),
+  toastSuccess: vi.fn(),
+  toastError: vi.fn(),
   onCloseRequested: vi.fn(async () => () => {}),
 }));
 
@@ -96,9 +100,24 @@ vi.mock("./ipc", () =>
     startSession: mocks.startSession,
     setActiveRepo: mocks.setActiveRepo,
     getCurrentWindow: (() => ({ onCloseRequested: mocks.onCloseRequested, destroy: vi.fn() })) as never,
+    getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) as unknown as ReturnType<typeof import("./ipc").getCurrentWebview>,
+    readConfigForRepo: mocks.readConfigForRepo,
+    listPlaybookCatalog: async () => ({ candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [] }),
+    listHarnessModelsForRepo: async () => [],
+    connectionStatuses: async () => [],
   }),
 );
-vi.mock("./toast", () => ({ Toast: () => null, toast: mocks.toast }));
+vi.mock("./toast", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./toast")>();
+  return {
+    ...actual,
+    toast: Object.assign(mocks.toast, {
+      success: mocks.toastSuccess,
+      error: mocks.toastError,
+      info: vi.fn(),
+    }),
+  };
+});
 vi.mock("./BackgroundFX", () => ({ BackgroundFX: () => null }));
 vi.mock("./Boot", () => ({ Boot: () => null }));
 vi.mock("./HotkeyBar", () => ({ HotkeyBar: () => null }));
@@ -145,14 +164,20 @@ beforeEach(() => {
   mocks.duplicateTaskForRepo.mockReset();
   mocks.startSession.mockReset();
   mocks.readAppConfig.mockReset().mockResolvedValue(appConfig);
+  mocks.readConfigForRepo.mockReset().mockResolvedValue({
+    defaults: { harness: "omp", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
+  } as Config);
   mocks.setActiveRepo.mockReset().mockImplementation(async (path: string) => ({ ...appConfig, active_repo: path }));
   mocks.toast.mockReset();
+  mocks.toastSuccess.mockReset();
+  mocks.toastError.mockReset();
   mocks.onCloseRequested.mockClear();
 });
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  taskMutationGuard.release();
 });
 
 describe("App duplicate coordinator", () => {
@@ -169,7 +194,8 @@ describe("App duplicate coordinator", () => {
 
     fireEvent.click(trigger);
     fireEvent.click(trigger);
-    expect(mocks.duplicateTaskForRepo).toHaveBeenCalledTimes(1);
+    expect(mocks.toast).toHaveBeenCalledWith(expect.any(String), "error");
+    await waitFor(() => expect(mocks.duplicateTaskForRepo).toHaveBeenCalledTimes(1));
     expect(mocks.duplicateTaskForRepo).toHaveBeenCalledWith("/repo-b", "source");
 
     resolveDuplicate(duplicateResult());
@@ -185,7 +211,7 @@ describe("App duplicate coordinator", () => {
     render(<App />);
     fireEvent.click(await screen.findByText("duplicate-source"));
 
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith(expect.stringContaining("copy failed")));
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining("copy failed")));
     expect(screen.getByText("duplicate-source")).toBeDefined();
     expect(mocks.setActiveRepo).not.toHaveBeenCalled();
     expect(mocks.startSession).not.toHaveBeenCalled();
@@ -209,7 +235,8 @@ describe("App duplicate coordinator", () => {
     await screen.findByText("task:source-2");
     expect(mocks.setActiveRepo).toHaveBeenCalledWith("/repo-b", null);
     expect(mocks.startSession).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith(expect.stringContaining("binary missing"));
+    expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining("binary missing"));
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
   });
 
   it("keeps the source available when the backend returns no task", async () => {
@@ -225,7 +252,7 @@ describe("App duplicate coordinator", () => {
     render(<App />);
     fireEvent.click(await screen.findByText("duplicate-source"));
 
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith(expect.stringContaining("source unavailable"), "error"));
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining("source unavailable")));
     expect(screen.getByText("duplicate-source")).toBeTruthy();
     expect(mocks.setActiveRepo).not.toHaveBeenCalled();
     expect(mocks.startSession).not.toHaveBeenCalled();
@@ -242,6 +269,7 @@ describe("App duplicate coordinator", () => {
     const { default: App } = await import("./App");
     render(<App />);
     fireEvent.click(await screen.findByText("duplicate-source"));
+    await waitFor(() => expect(mocks.duplicateTaskForRepo).toHaveBeenCalledOnce());
 
     fireEvent.click(screen.getByRole("button", { name: "Repository" }));
     fireEvent.click(screen.getByTitle("/repo-a"));
@@ -260,10 +288,78 @@ describe("App duplicate coordinator", () => {
     render(<App />);
     fireEvent.click(await screen.findByText("duplicate-source"));
 
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith(expect.stringContaining("/repo-b/source-2: Error: switch failed")));
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining("/repo-b/source-2: Error: switch failed")));
     expect(screen.getByText("duplicate-source")).toBeDefined();
     expect(screen.queryByText("task:source-2")).toBeNull();
     expect(mocks.startSession).not.toHaveBeenCalled();
-    expect(mocks.toast).not.toHaveBeenCalledWith(expect.stringContaining("TASK DUPLICATION FAILED"));
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("keeps a loader up for the whole clone and clears it after navigation", async () => {
+    let resolveDuplicate: (result: CreateTaskResult) => void = () => {};
+    mocks.duplicateTaskForRepo.mockReturnValue(
+      new Promise<CreateTaskResult>((resolve) => {
+        resolveDuplicate = resolve;
+      }),
+    );
+    const { default: App } = await import("./App");
+    render(<App />);
+    const trigger = await screen.findByText("duplicate-source");
+    fireEvent.click(trigger);
+
+    const notifications = screen.getByRole("status", { name: "Notifications" });
+    expect(notifications.querySelector(".toast.loading")).not.toBeNull();
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+    await waitFor(() => expect(mocks.duplicateTaskForRepo).toHaveBeenCalledOnce());
+
+    resolveDuplicate(duplicateResult());
+    await screen.findByText("task:source-2");
+    expect(notifications.querySelector(".toast.loading")).toBeNull();
+    expect(mocks.toastSuccess).toHaveBeenCalledOnce();
+  });
+
+  it("refuses the new-task hotkey while a clone is running", async () => {
+    let resolveDuplicate: (result: CreateTaskResult) => void = () => {};
+    mocks.duplicateTaskForRepo.mockReturnValue(
+      new Promise<CreateTaskResult>((resolve) => {
+        resolveDuplicate = resolve;
+      }),
+    );
+    const { default: App } = await import("./App");
+    render(<App />);
+    fireEvent.click(await screen.findByText("duplicate-source"));
+
+    fireEvent.keyDown(document.body, { key: "n", metaKey: true });
+
+    expect(mocks.toast).toHaveBeenCalledWith(expect.any(String), "error");
+    // The create form never mounts, so the user stays on the board they were looking at.
+    expect(screen.queryByPlaceholderText("New task name…")).toBeNull();
+    expect(screen.getByText("duplicate-source")).toBeDefined();
+    await waitFor(() => expect(mocks.duplicateTaskForRepo).toHaveBeenCalledOnce());
+
+    resolveDuplicate(duplicateResult());
+    await screen.findByText("task:source-2");
+  });
+
+  it("shows opening toast until the create form is ready, then hides it", async () => {
+    let resolveConfig: (config: Config) => void = () => {};
+    const config = await mocks.readConfigForRepo();
+    mocks.readConfigForRepo.mockReturnValue(
+      new Promise<Config>((resolve) => {
+        resolveConfig = resolve;
+      }),
+    );
+    const { default: App } = await import("./App");
+    render(<App />);
+    await screen.findByText("duplicate-source");
+
+    fireEvent.keyDown(document.body, { key: "n", metaKey: true });
+    const notifications = screen.getByRole("status", { name: "Notifications" });
+    expect(notifications.querySelector(".toast.loading")).not.toBeNull();
+
+    await screen.findByPlaceholderText("New task name…");
+    expect(notifications.querySelector(".toast.loading")).not.toBeNull();
+    resolveConfig(config);
+    await waitFor(() => expect(notifications.querySelector(".toast.loading")).toBeNull());
   });
 });

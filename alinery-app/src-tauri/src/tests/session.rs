@@ -448,6 +448,23 @@ fn allow_root_session_open_rejects_non_drawer() {
 }
 
 #[test]
+fn hosted_refresh_needed_only_for_omp_hosted_spawn_and_resume() {
+    assert!(hosted_refresh_needed("spawn", "omp", "alinery/Qwen3.6-35B-A3B"));
+    assert!(hosted_refresh_needed("resume", "omp", "alinery/Qwen3.6-35B-A3B"));
+    assert!(hosted_refresh_needed("spawn", "omp", " alinery/Qwen3.6-35B-A3B "));
+    assert!(hosted_refresh_needed("spawn", "omp", ""));
+    assert!(hosted_refresh_needed("resume", "omp", "   "));
+    assert!(!hosted_refresh_needed("spawn", "omp", "anthropic/claude"));
+    assert!(!hosted_refresh_needed("resume", "omp", "xai/grok"));
+    assert!(!hosted_refresh_needed("attach", "omp", "alinery/Qwen3.6-35B-A3B"));
+    assert!(!hosted_refresh_needed("spawn", "no-harness", "alinery/Qwen3.6-35B-A3B"));
+    assert!(!hosted_refresh_needed("resume", "no-harness", "alinery/Qwen3.6-35B-A3B"));
+    assert!(!hosted_refresh_needed("spawn", "", "alinery/Qwen3.6-35B-A3B"));
+    assert!(!hosted_refresh_needed("attach", "no-harness", "alinery/Qwen3.6-35B-A3B"));
+}
+
+#[test]
+
 fn notification_read_stamps_only_requested_session() {
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let repo = std::env::temp_dir().join(format!("alinery-notification-read-{n}"));

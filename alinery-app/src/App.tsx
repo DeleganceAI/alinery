@@ -17,7 +17,9 @@ import {
   X,
 } from "lucide-react";
 import { type CSSProperties, lazy, type ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { ThinkingOrb } from "thinking-orbs";
+import { afterPaint } from "./afterPaint";
 import { applyAppearance, DEFAULT_APPEARANCE } from "./appearance";
 import alineryIcon from "./assets/alinery-icon-white-plain.png";
 import { GlobalSearch, type SearchItem } from "./CommandPalette";
@@ -35,8 +37,9 @@ import { EMPTY_SESSION_MESSAGE_DRAFT, type SessionMessageDraft, sessionMessageDr
 import { ALL_REPOS, isDevelopmentProductName, LoadingState, RepoPicker, repoName, TopBar } from "./shared";
 import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, TerminalDrawer } from "./TerminalDrawer";
 import { gridViewIdOf, isPrimaryTab, primaryTabOf, viewFadeClass } from "./tabMotion";
+import * as taskMutationGuard from "./taskMutationGuard";
 import { shouldAskTelemetryConsent, TELEMETRY_CONSENT_CHOICES, telemetryConsentWrite } from "./telemetry-consent";
-import { Toast, toast } from "./toast";
+import { Toast, type ToastBusy, toast } from "./toast";
 import type {
   AppConfig,
   AppearanceMode,
@@ -138,8 +141,7 @@ export default function App() {
   const [sessionQueuedFollowUps, setSessionQueuedFollowUps] = useState<Map<string, QueuedFollowUp[]>>(() => new Map());
   const [productName, setProductName] = useState("");
   const [appVersion, setAppVersion] = useState("");
-  const duplicatingRef = useRef(false);
-  const [duplicating, setDuplicating] = useState(false);
+  const [busy, setBusy] = useState<ToastBusy | null>(null);
   const [updating, setUpdating] = useState(false);
   // Presentation preferences live for this app process only. Each surface keeps its own
   // choice while navigation unmounts and remounts the list.
@@ -157,7 +159,7 @@ export default function App() {
   const appConfigRef = useRef(appConfig);
   appConfigRef.current = appConfig;
   const gridViews = useMemo(() => normalizeGridViews(appConfig?.global?.grid_views), [appConfig?.global?.grid_views]);
-  const showOriginalKanban = appConfig?.global?.experiments?.show_original_kanban ?? false;
+  const showOriginalKanban = appConfig?.global?.experiments?.show_original_kanban ?? true;
   const repoKey = appConfig?.active_repo ? `${scope}:${appConfig.active_repo}:${appConfig.known_repos.join("|")}:${reloadNonce}` : "";
   const activeGridViewId = view.kind === "grid" && gridViews.some((gridView) => gridView.id === view.gridViewId) ? view.gridViewId : undefined;
   const [mountedGridViews, setMountedGridViews] = useState<{ repoKey: string; ids: string[] }>({ repoKey: "", ids: [] });
@@ -771,26 +773,32 @@ export default function App() {
 
   const openCreate = () => {
     setSearchOpen(false);
-    setView({ kind: "create", from: view });
+    if (taskMutationGuard.refuseIfBusy()) return;
+    // Top bar / task list / ⌘N all land here. Paint the opening toast before the
+    // form mounts — its settings IPC is what freezes the window.
+    const from = view;
+    flushSync(() => setBusy("open-create"));
+    void afterPaint().then(() => setView({ kind: "create", from }));
   };
 
   const duplicateTask = async ({ repoPath, sourceSlug }: { repoPath: string; sourceSlug: string }) => {
-    if (!appConfigRef.current || duplicatingRef.current) return;
+    if (!appConfigRef.current) return;
+    if (!taskMutationGuard.claim("duplicate")) return;
     const invocationView = view;
-    duplicatingRef.current = true;
-    setDuplicating(true);
+    flushSync(() => setBusy("duplicate"));
+    await afterPaint();
     try {
       let created: CreateTaskResult;
       try {
         created = await ipc.duplicateTaskForRepo(repoPath, sourceSlug);
       } catch (e) {
-        toast(`TASK DUPLICATION FAILED: ${e}`);
+        toast.error(`TASK DUPLICATION FAILED: ${e}`);
         return;
       }
 
       const { task } = created;
       if (!task) {
-        toast(created.errors.map((error) => `${error.stage}: ${error.message}`).join("\n") || "Duplication did not create a task", "error");
+        toast.error(created.errors.map((error) => `${error.stage}: ${error.message}`).join("\n") || "Duplication did not create a task");
         return;
       }
       try {
@@ -802,14 +810,16 @@ export default function App() {
         }
         setScope("active");
         refreshBoards();
-        toast(`Task duplicated: ${created.creation}; start ${created.start}${created.errors.length ? ` — ${created.errors.map((error) => error.message).join("; ")}` : ""}`);
+        const outcome = `Task duplicated: ${created.creation}; start ${created.start}${created.errors.length ? ` — ${created.errors.map((error) => error.message).join("; ")}` : ""}`;
+        if (created.creation === "ready" && created.start !== "failed" && created.errors.length === 0) toast.success(outcome);
+        else toast.error(outcome);
         setView({ kind: "task", slug: task.slug, repoPath, from: invocationView });
       } catch (e) {
-        toast(`TASK DUPLICATED BUT NOT OPENED: ${repoPath}/${task.slug}: ${e}`);
+        toast.error(`TASK DUPLICATED BUT NOT OPENED: ${repoPath}/${task.slug}: ${e}`);
       }
     } finally {
-      duplicatingRef.current = false;
-      setDuplicating(false);
+      taskMutationGuard.release();
+      setBusy(null);
     }
   };
 
@@ -1026,7 +1036,7 @@ export default function App() {
         {isDev && <LaunchSourceBar sourceRoot={DEV_LAUNCH_ROOT} />}
       </div>
       <GlobalSearch open={searchOpen && hasRepo} items={searchItems} loading={searchLoading} error={searchError} onClose={() => setSearchOpen(false)} />
-      <Toast />
+      <Toast busy={busy} />
       <ConfirmHost />
     </>
   );
@@ -1123,7 +1133,12 @@ export default function App() {
                 initialDraft={view.kind === "create" ? view.draft : undefined}
                 activeRepo={appConfig.active_repo}
                 knownRepos={appConfig.known_repos}
-                onCancel={goBack}
+                onBusy={setBusy}
+                onOpened={() => setBusy((current) => (current === "open-create" ? null : current))}
+                onCancel={() => {
+                  setBusy(null);
+                  goBack();
+                }}
                 onCreated={async ({ repoPath, task, sessions, selectedSessionId }) => {
                   if (!task) return;
                   try {
@@ -1250,7 +1265,7 @@ export default function App() {
                   }
                   onOpenRelatedTask={openRelatedTask}
                   onDuplicate={(task) => duplicateTask({ repoPath: appConfig.active_repo, sourceSlug: task.slug })}
-                  duplicating={duplicating}
+                  duplicating={busy === "duplicate"}
                   registerNav={registerNav}
                   appearance={appearance}
                   onAppearanceChange={onAppearanceChange}

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { DEFAULT_APPEARANCE } from "./appearance";
@@ -415,7 +415,16 @@ vi.mock("./views/CreateSessionPage", () => ({
   ),
 }));
 vi.mock("./views/CreateTaskPage", () => ({
-  CreateTaskPage: ({ initialDraft, onCreated }: { initialDraft?: BoardTask; onCreated: (result: CreateTaskResult & { repoPath: string; selectedSessionId?: string }) => void }) => {
+  CreateTaskPage: ({
+    initialDraft,
+    onCreated,
+    onOpened,
+  }: {
+    initialDraft?: BoardTask;
+    onCreated: (result: CreateTaskResult & { repoPath: string; selectedSessionId?: string }) => void;
+    onOpened: () => void;
+  }) => {
+    useEffect(() => onOpened(), [onOpened]);
     const result: CreateTaskResult & { repoPath: string } = {
       repoPath: task.repo_path,
       task,
@@ -793,6 +802,43 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(await screen.findByRole("button", { name: "confirm review handoff" }));
     await screen.findByText("session:review-target");
     expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "review-task", "review-target");
+  });
+
+  it("lists the remapped top-level actions in the command palette", async () => {
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    expect((await screen.findByText("Go to Tasks")).closest(".pitem")?.textContent).toContain("⌘1");
+    expect(screen.getByText("Go to Kanban+").closest(".pitem")?.textContent).toContain("⌘2");
+    expect(screen.getByText("Go to Kanban").closest(".pitem")?.textContent).toContain("⌘3");
+    expect(screen.getByText("Go to Sessions").closest(".pitem")?.textContent).toContain("⌘7");
+    expect(screen.getByText("Go to Notifications").closest(".pitem")?.textContent).toContain("⌘8");
+    expect(screen.queryByText("Go to Wiki")).toBeNull();
+    expect(screen.getByText("Open Settings").closest(".pitem")?.textContent).toContain("⌘9");
+  });
+
+  it("exposes both boards by default and opens classic Kanban", async () => {
+    await renderApp();
+
+    expect(screen.getByRole("button", { name: /Kanban\+/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Kanban3" }));
+    expect(await screen.findByRole("button", { name: "open active card session" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("Go to Kanban+")).toBeTruthy();
+    expect(screen.getByText("Go to Kanban")).toBeTruthy();
+  });
+
+  it("omits classic Kanban from navigation and the palette when disabled", async () => {
+    ipcMocks.readAppConfig.mockResolvedValue({
+      ...appConfig,
+      global: { ...appConfig.global, experiments: { show_original_kanban: false } },
+    });
+    await renderApp();
+
+    expect(screen.queryByRole("button", { name: "Kanban3" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("Go to Kanban+")).toBeTruthy();
+    expect(screen.queryByText("Go to Kanban")).toBeNull();
   });
 
   it("keeps a visited Grid mounted while navigating away and back", async () => {
