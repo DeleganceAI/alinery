@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockIpc } from "../test/mockIpc";
 import type { BoardTask, Config, CreateTaskResult, PlaybookCatalog, PlaybookRef, ScopedPlaybook, Task } from "../types";
@@ -313,6 +314,47 @@ describe("v2 task creation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByRole("button", { name: "Open task" });
     expect(ipc.createTaskForRepo).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ max_live_sessions: 3 }) }));
+  });
+
+  it.each(["started", "queued", "not_requested"] as const)("opens task detail automatically after successful creation (%s)", async (start) => {
+    vi.mocked(ipc.createTaskForRepo).mockResolvedValue({
+      ...readyReply,
+      start,
+      sessions: [{ id: "root-a" }, { id: "root-b" }] as CreateTaskResult["sessions"],
+    });
+    function CreationFlow() {
+      const [destination, setDestination] = useState("");
+      return destination ? (
+        <h1>{destination}</h1>
+      ) : (
+        <CreateTaskPage
+          activeRepo="/repo"
+          knownRepos={["/repo"]}
+          onCancel={() => {}}
+          onCreated={(result) => setDestination(result.selectedSessionId ? `Session: ${result.selectedSessionId}` : `Task detail: ${result.task?.slug}`)}
+        />
+      );
+    }
+    render(<CreationFlow />);
+    await screen.findByRole("checkbox", { name: "Build" });
+    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
+    if (start === "not_requested") fireEvent.click(screen.getByRole("checkbox", { name: "Start eligible sessions after creation" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await screen.findByRole("heading", { name: "Task detail: new-task" });
+    expect(screen.queryByRole("button", { name: "Open task" })).toBeNull();
+  });
+
+  it("keeps attachment warnings visible before opening a ready task", async () => {
+    vi.mocked(ipc.createTaskForRepo).mockResolvedValue({ ...readyReply, attachment_errors: ["Could not copy evidence.pdf"] });
+    const onCreated = vi.fn();
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={onCreated} />);
+    await screen.findByRole("checkbox", { name: "Build" });
+    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await screen.findByText("Could not copy evidence.pdf");
+    expect(onCreated).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Open task" }));
+    expect(onCreated).toHaveBeenCalledOnce();
   });
 
   it("keeps partial multi-root results inspectable without repeating creation or spawning", async () => {

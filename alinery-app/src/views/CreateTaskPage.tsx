@@ -308,6 +308,9 @@ export function CreateTaskPage({
               // Deletion is draft-only; a promoted task is never removed.
             });
           }
+          if (result.start !== "failed" && result.errors.length === 0 && !result.attachment_errors?.length) {
+            onCreated({ ...result, repoPath: target });
+          }
         }
       })
       .catch((e) => {
