@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { archiveBoardTask } from "../archiveTask";
+import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { PullRequestIndicator } from "../PullRequestIndicator";
@@ -120,18 +120,17 @@ export function Kanban({
     void import("../views/TaskDetail");
   }, []);
 
-  const confirmArchive = (removeWt: boolean) => {
+  const confirmArchive = async (removeWt: boolean, onPhase: (phase: ArchiveTaskPhase) => void) => {
     const pending = pendingArchive;
     if (!pending) return;
-    void archiveBoardTask(pending, removeWt).then((failure) => {
-      setPendingArchive(null);
-      if (failure) {
-        // Errors must outlive a toast; the inline status above the board is persistent.
-        setErr(failure);
-        return;
-      }
-      void load();
-    });
+    const failure = await archiveBoardTask(pending, removeWt, onPhase);
+    setPendingArchive(null);
+    if (failure) {
+      // Errors must outlive a toast; the inline status above the board is persistent.
+      setErr(failure);
+      return;
+    }
+    void load();
   };
 
   const cardsIn = (columnIndex: number) => (byColumn[columns[columnIndex]?.key] ?? []).filter((task) => showChildren || !task.parent_task);

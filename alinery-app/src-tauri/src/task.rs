@@ -972,41 +972,49 @@ pub(crate) fn restore_task_in(repo: &Path, slug: &str) -> Result<(), String> {
     alinery_core::restore_task(repo, slug)
 }
 
-// Archive flips a flag; the worktree and branch are untouched (removal is M5).
-#[tauri::command]
-pub(crate) fn archive_task(app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<(), String> {
-    let repo = require_owned_active_repo(&state)?;
-    alinery_core::ensure_task_can_archive(&repo, &slug)?;
+async fn archive_task_off_thread(app: &AppHandle, repo: PathBuf, slug: String) -> Result<(), String> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        alinery_core::ensure_task_can_archive(&repo, &slug)?;
+        Ok::<_, String>((repo, slug))
+    })
+    .await;
+    let (repo, slug) = result.map_err(|e| format!("archive eligibility task: {e}"))??;
     // Publish before the flag flips so a crash mid-archive still has a shot at the
     // pre-archive state. Best-effort: backup failure never blocks archival.
-    publish_auto_backup(&app, &repo, alinery_core::BackupTrigger::PreArchive);
-    archive_task_in(&repo, &slug)?;
-    emit_with(&app, || alinery_core::TelemetryEvent::TaskArchive {
+    publish_auto_backup(app, &repo, alinery_core::BackupTrigger::PreArchive);
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        archive_task_in(&repo, &slug)?;
+        Ok::<_, String>((repo, slug))
+    })
+    .await;
+    let (repo, slug) = result.map_err(|e| format!("archive task: {e}"))??;
+    emit_with(app, || alinery_core::TelemetryEvent::TaskArchive {
         source: alinery_core::TelemetrySource::App,
         task_id: alinery_core::telemetry_id_for_task(&repo, &slug),
     });
     Ok(())
 }
 
+// Archive flips a flag; the worktree and branch are untouched (removal is M5).
 #[tauri::command]
-pub(crate) fn archive_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    alinery_core::ensure_task_can_archive(&repo, &slug)?;
-    publish_auto_backup(&app, &repo, alinery_core::BackupTrigger::PreArchive);
-    archive_task_in(&repo, &slug)?;
-    emit_with(&app, || alinery_core::TelemetryEvent::TaskArchive {
-        source: alinery_core::TelemetrySource::App,
-        task_id: alinery_core::telemetry_id_for_task(&repo, &slug),
-    });
-    Ok(())
+pub(crate) async fn archive_task(app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<(), String> {
+    let repo = require_owned_active_repo(&state)?;
+    archive_task_off_thread(&app, repo, slug).await
 }
 
 #[tauri::command]
-pub(crate) fn restore_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
+pub(crate) async fn archive_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
-    restore_task_in(&repo, &slug)
+    archive_task_off_thread(&app, repo, slug).await
+}
+
+#[tauri::command]
+pub(crate) async fn restore_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
+    let repo = target_repo_for_app(&app, &repo_path)?;
+    require_repo_owned(&state, &repo)?;
+    let result = tauri::async_runtime::spawn_blocking(move || restore_task_in(&repo, &slug)).await;
+    result.map_err(|e| format!("restore task: {e}"))?
 }
 
 pub(crate) fn set_related_tasks_in(repo: &Path, slug: String, related: Vec<alinery_core::RelatedTaskRef>) -> Result<Task, String> {

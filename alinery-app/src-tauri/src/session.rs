@@ -413,16 +413,27 @@ pub(crate) fn archive_session_in(app: &AppHandle, state: &AppState, repo: &Path,
 }
 
 #[tauri::command]
-pub(crate) fn archive_session(app: AppHandle, state: State<'_, AppState>, task_slug: String, id: String) -> Result<(), String> {
+pub(crate) async fn archive_session(app: AppHandle, state: State<'_, AppState>, task_slug: String, id: String) -> Result<(), String> {
     let repo = require_owned_active_repo(&state)?;
-    archive_session_in(&app, &state, &repo, task_slug, id)
+    // Resolve managed routing state inside the worker; no borrowed command State crosses threads.
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        archive_session_in(&app, &state, &repo, task_slug, id)
+    })
+    .await;
+    result.map_err(|e| format!("archive session task: {e}"))?
 }
 
 #[tauri::command]
-pub(crate) fn archive_session_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, task_slug: String, id: String) -> Result<(), String> {
+pub(crate) async fn archive_session_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, task_slug: String, id: String) -> Result<(), String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
-    archive_session_in(&app, &state, &repo, task_slug, id)
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        archive_session_in(&app, &state, &repo, task_slug, id)
+    })
+    .await;
+    result.map_err(|e| format!("archive session task: {e}"))?
 }
 
 // Default derived via #[derive(Default)] on struct (Mutex<Option<T>> defaults to None)

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { archiveBoardTask } from "../archiveTask";
+import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import {
@@ -145,17 +145,16 @@ export function TaskList({
     return () => registerNav(null);
   });
 
-  const confirmArchive = (removeWt: boolean) => {
+  const confirmArchive = async (removeWt: boolean, onPhase: (phase: ArchiveTaskPhase) => void) => {
     const pending = pendingArchive;
     if (!pending) return;
-    void archiveBoardTask(pending, removeWt).then((failure) => {
-      setPendingArchive(null);
-      if (failure) {
-        setErr(failure);
-        return;
-      }
-      void load();
-    });
+    const failure = await archiveBoardTask(pending, removeWt, onPhase);
+    setPendingArchive(null);
+    if (failure) {
+      setErr(failure);
+      return;
+    }
+    void load();
   };
 
   return (

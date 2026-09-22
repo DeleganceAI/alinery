@@ -19,6 +19,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { type OrbState, ThinkingOrb } from "thinking-orbs";
 import { AccountMenu } from "./AccountMenu";
+import type { ArchiveTaskPhase } from "./archiveTask";
 import { pickEmptyStateArt } from "./emptyStateArt";
 import { gridViewShortcut, gridViewShortcutDigit } from "./gridViews";
 import { IdleDot, ORB_SPEED, ORB_STATE, RunningIndicator, StateIcon } from "./Indicators";
@@ -1635,16 +1636,33 @@ export function ArchiveTaskModal({
 }: {
   task: { slug: string; name: string; has_worktree: boolean } | null;
   onCancel: () => void;
-  onConfirm: (removeWorktree: boolean) => void;
+  onConfirm: (removeWorktree: boolean, onPhase: (phase: ArchiveTaskPhase) => void) => Promise<void>;
 }) {
   const [removeWt, setRemoveWt] = useState(false);
+  const [phase, setPhase] = useState<ArchiveTaskPhase | null>(null);
+  const pending = useRef(false);
+  const cancel = () => {
+    if (!pending.current) onCancel();
+  };
+  const confirmArchive = async () => {
+    if (pending.current) return;
+    pending.current = true;
+    setPhase("archiving");
+    try {
+      await onConfirm(removeWt, setPhase);
+    } finally {
+      pending.current = false;
+      setPhase(null);
+    }
+  };
   useEffect(() => setRemoveWt(false), [task?.slug]);
+  const progressLabel = phase === "archiving" ? "Archiving…" : phase === "removing-worktree" ? "Removing worktree…" : "";
   if (!task) return null;
   return (
-    <Dialog onClose={onCancel} role="alertdialog" ariaLabel="Archive task">
+    <Dialog onClose={cancel} role="alertdialog" ariaLabel="Archive task">
       <div className="mh">
         <span className="mt">Archive task</span>
-        <button type="button" className="x" aria-label="Close" title="Close" onClick={onCancel}>
+        <button type="button" className="x" aria-label="Close" title="Close" disabled={phase !== null} onClick={cancel}>
           <X size={14} strokeWidth={1.5} aria-hidden="true" />
         </button>
       </div>
@@ -1652,7 +1670,7 @@ export function ArchiveTaskModal({
         <p>Archive "{task.name}"? It becomes read-only — no new sessions, no commits, no push.</p>
         {task.has_worktree && (
           <div>
-            <Checkbox checked={removeWt} onChange={setRemoveWt} label="Also permanently remove the worktree (uncommitted changes are lost)" />
+            <Checkbox checked={removeWt} onChange={setRemoveWt} disabled={phase !== null} label="Also permanently remove the worktree (uncommitted changes are lost)" />
             {removeWt && (
               <p className="dim">
                 Restoring later keeps this task available for history and related-task links, but it does not recreate the worktree. New sessions, commits, and pushes remain
@@ -1662,12 +1680,15 @@ export function ArchiveTaskModal({
           </div>
         )}
       </div>
+      <div className="sr-only" role="status">
+        {progressLabel}
+      </div>
       <div className="mfoot">
-        <button type="button" className="btn danger small" onClick={() => onConfirm(removeWt)}>
-          Archive task
+        <button type="button" className="btn danger small" disabled={phase !== null} onClick={() => void confirmArchive()}>
+          {progressLabel || "Archive task"}
         </button>
         {/* Safe default focus: Enter must never archive (same contract as confirm-focus.ts). */}
-        <button type="button" className="btn ghost small" data-autofocus="" onClick={onCancel}>
+        <button type="button" className="btn ghost small" data-autofocus="" disabled={phase !== null} onClick={cancel}>
           Cancel
         </button>
       </div>

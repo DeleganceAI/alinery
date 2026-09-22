@@ -5,7 +5,7 @@ import { flushSync } from "react-dom";
 import type { ArtifactComment, ArtifactCommentAnchor } from "../ArtifactMarkdown";
 import { ArtifactMarkdown, formatArtifactCommentTarget } from "../ArtifactMarkdown";
 import { ArtifactTree, isDirectOwnedArtifactNode } from "../ArtifactTree";
-import { archiveBoardTask } from "../archiveTask";
+import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import type { ArtifactPaneTab } from "../artifactClassification";
 import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassification";
 import { CopyArtifactButton, CopyTextButton, copyTextToClipboard } from "../chat/CopyMessage";
@@ -188,6 +188,7 @@ export function TaskDetail({
   const [artifactsError, setArtifactsError] = useState("");
   const loadWarning = combineLoadWarnings(sessionsError, artifactsError);
   const [busy, setBusy] = useState("");
+  const sessionArchivePending = useRef(false);
   const [boardTasks, setBoardTasks] = useState<BoardTask[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [sessionSort, setSessionSort] = useSessionSort(
@@ -669,15 +670,30 @@ export function TaskDetail({
     }
   };
 
-  const confirmArchive = (removeWt: boolean) => {
-    void archiveBoardTask({ repo_path: repoPath, slug }, removeWt).then((failure) => {
-      setPendingArchive(null);
-      if (failure) {
-        setErr(failure);
-        return;
-      }
-      onBack();
-    });
+  const confirmArchive = async (removeWt: boolean, onPhase: (phase: ArchiveTaskPhase) => void) => {
+    const failure = await archiveBoardTask({ repo_path: repoPath, slug }, removeWt, onPhase);
+    setPendingArchive(null);
+    if (failure) {
+      setErr(failure);
+      return;
+    }
+    onBack();
+  };
+
+  const archiveSession = async (id: string) => {
+    if (busy || sessionArchivePending.current) return;
+    sessionArchivePending.current = true;
+    setBusy(`archive-session:${id}`);
+    setErr(null);
+    try {
+      await ipc.archiveSessionForRepo(repoPath, slug, id);
+      await load();
+    } catch (error) {
+      setErr({ msg: "Couldn't archive the session.", detail: String(error) });
+    } finally {
+      sessionArchivePending.current = false;
+      setBusy("");
+    }
   };
 
   const openManagerSession = (ownerTaskSlug: string, manager: SessionMeta) => {
@@ -1255,8 +1271,8 @@ export function TaskDetail({
                       </td>
                       <td className="session-actions">
                         <KillButton id={s.id} slug={slug} repoPath={repoPath} live={isLive} onKilled={load} />
-                        <button type="button" className="btn ghost small" disabled={s.archived} onClick={() => ipc.archiveSessionForRepo(repoPath, slug, s.id).then(load)}>
-                          Archive
+                        <button type="button" className="btn ghost small" disabled={s.archived || !!busy} onClick={() => void archiveSession(s.id)}>
+                          {busy === `archive-session:${s.id}` ? "Archiving session…" : "Archive"}
                         </button>
                         {s.archived && (
                           <button
