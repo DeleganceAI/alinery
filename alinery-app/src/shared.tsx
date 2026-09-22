@@ -1598,6 +1598,7 @@ export function ArchiveTaskModal({
     }
   };
   useEffect(() => setRemoveWt(false), [task?.slug]);
+  const progressLabel = phase === "archiving" ? "Archiving…" : phase === "removing-worktree" ? "Removing worktree…" : "";
   if (!task) return null;
   return (
     <Dialog onClose={cancel} role="alertdialog" ariaLabel="Archive task">
@@ -1621,9 +1622,12 @@ export function ArchiveTaskModal({
           </div>
         )}
       </div>
+      <div className="sr-only" role="status">
+        {progressLabel}
+      </div>
       <div className="mfoot">
-        <button type="button" className="btn danger small" disabled={phase !== null} onClick={() => void confirmArchive()} aria-live="polite">
-          {phase === "archiving" ? "Archiving…" : phase === "removing-worktree" ? "Removing worktree…" : "Archive task"}
+        <button type="button" className="btn danger small" disabled={phase !== null} onClick={() => void confirmArchive()}>
+          {progressLabel || "Archive task"}
         </button>
         {/* Safe default focus: Enter must never archive (same contract as confirm-focus.ts). */}
         <button type="button" className="btn ghost small" data-autofocus="" disabled={phase !== null} onClick={cancel}>

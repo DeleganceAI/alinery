@@ -50,6 +50,7 @@ describe("archive pending feedback", () => {
     commands.archiveTaskForRepo.mockReturnValue(archive.promise);
     commands.removeWorktreeForRepo.mockReturnValue(removal.promise);
     render(<ArchiveSurface />);
+    expect(screen.getByRole("status").textContent).toBe("");
     fireEvent.click(screen.getByRole("checkbox"));
     const confirm = screen.getByRole("button", { name: "Archive task" });
     act(() => {
@@ -60,6 +61,7 @@ describe("archive pending feedback", () => {
     expect(commands.archiveTaskForRepo).toHaveBeenCalledWith("/repo", "task");
     expect(commands.removeWorktreeForRepo).not.toHaveBeenCalled();
     expect((screen.getByRole("button", { name: "Archiving…" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("status").textContent).toBe("Archiving…");
     expect((screen.getByRole("checkbox") as HTMLInputElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
@@ -71,6 +73,7 @@ describe("archive pending feedback", () => {
     expect(commands.removeWorktreeForRepo).toHaveBeenCalledTimes(1);
     expect(commands.removeWorktreeForRepo).toHaveBeenCalledWith("/repo", "task");
     expect((screen.getByRole("button", { name: "Removing worktree…" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("status").textContent).toBe("Removing worktree…");
     fireEvent.click(screen.getByRole("button", { name: "Removing worktree…" }));
     fireEvent(screen.getByRole("alertdialog"), new Event("cancel", { bubbles: true, cancelable: true }));
     expect(screen.getByRole("alertdialog")).toBeDefined();
@@ -110,12 +113,14 @@ describe("archive pending feedback", () => {
     expect((screen.getByRole("button", { name: "Archive task" }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole("checkbox") as HTMLInputElement).disabled).toBe(false);
+    expect(screen.getByRole("status").textContent).toBe("");
     const retry = deferred();
     commands.archiveTaskForRepo.mockReturnValue(retry.promise);
     commands.removeWorktreeForRepo.mockResolvedValue(undefined);
     fireEvent.click(screen.getByRole("button", { name: "Archive task" }));
     expect(commands.archiveTaskForRepo).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("button", { name: "Archiving…" })).toBeDefined();
+    expect(screen.getByRole("status").textContent).toBe("Archiving…");
     await act(async () => retry.resolve());
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
