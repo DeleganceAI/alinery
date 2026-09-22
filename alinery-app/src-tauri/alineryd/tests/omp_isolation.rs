@@ -61,6 +61,8 @@ fn start_daemon(root: &Path, runner: &Path, capture: &Path, extra_env: &[(&str, 
         .arg("--app-config")
         .arg(root.join(".alinery/unused-app-config.toml"))
         .env_remove("ALINERY_HOST_EXECUTABLE")
+        .env_remove("PI_CODING_AGENT_DIR")
+        .env_remove("PI_CONFIG_DIR")
         .env("ALINERY_RUNNER_PATH", runner)
         .env("ALINERY_RUNNER_CAPTURE", capture)
         .stdout(Stdio::null())
