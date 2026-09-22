@@ -2,7 +2,18 @@ import { type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPoint
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import * as ipc from "../ipc";
 import { PullRequestIndicator } from "../PullRequestIndicator";
-import { ArchiveTaskModal, Checkbox, EMPTY_TASK_ACTIVITY, repoName, sameBoardTasks, sameKanbanColumns, TaskActivityIndicators, taskKey, useBoardTaskActivity } from "../shared";
+import {
+  ArchiveTaskModal,
+  Checkbox,
+  EMPTY_TASK_ACTIVITY,
+  InlineStatus,
+  repoName,
+  sameBoardTasks,
+  sameKanbanColumns,
+  TaskActivityIndicators,
+  taskKey,
+  useBoardTaskActivity,
+} from "../shared";
 import type { BoardNav, BoardTask, KanbanColumn, NormalizedStep, TaskActivityStatus, TaskExecutionReply } from "../types";
 import { usePointerDrag } from "../usePointerDrag";
 import { useTaskPullRequests } from "../useTaskPullRequests";
@@ -536,7 +547,8 @@ function stagePath(fact: TaskFacts, executions: Record<string, TaskExecutionRepl
   });
   const current = fact.task.current_phase || "";
   if (!path.some((step) => step.key === current)) {
-    path.push({ key: current, label: fact.stage, summary: execution ? undefined : "Execution unavailable" });
+    const summary = fact.task.draft ? "Draft" : (fact.task.engine_version ?? 0) < 2 ? "Legacy task" : execution ? undefined : "Execution unavailable";
+    path.push({ key: current, label: fact.stage, summary });
   }
   return path.sort((left, right) => left.label.localeCompare(right.label) || left.key.localeCompare(right.key));
 }
@@ -726,7 +738,7 @@ export function Grid({
   const [executions, setExecutions] = useState<Record<string, TaskExecutionReply>>({});
   const [loaded, setLoaded] = useState(false);
   const [err, setErr] = useState("");
-  const [executionErr, setExecutionErr] = useState("");
+  const [executionErrors, setExecutionErrors] = useState<{ ref: ExecutionRef; error: string }[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(initialWorkspace.settingsOpen);
   const [preset, setPreset] = useState<PresetSelection>(initialWorkspace.preset);
   const [config, setConfig] = useState<GridConfig>(initialWorkspace.config);
@@ -785,7 +797,7 @@ export function Grid({
   const executionRefs = useMemo(() => {
     const refs = new Map<string, ExecutionRef>();
     for (const task of tasks) {
-      if (!showArchived && task.archived) continue;
+      if (task.draft || (task.engine_version ?? 0) < 2 || (!showArchived && task.archived)) continue;
       const key = taskKey(task);
       refs.set(key, { key, repoPath: task.repo_path, slug: task.slug });
     }
@@ -811,8 +823,7 @@ export function Grid({
       loading = false;
       if (!alive) return;
       setExecutions(Object.fromEntries(entries.flatMap(({ ref, execution }) => (execution ? [[ref.key, execution]] : []))));
-      const failures = entries.filter((entry) => entry.execution === null);
-      setExecutionErr(failures.length ? `Couldn't load task executions. ${failures.map(({ ref, error }) => `${ref.repoPath}:${ref.slug}: ${error}`).join("; ")}` : "");
+      setExecutionErrors(entries.filter((entry) => entry.execution === null));
     };
     void loadExecutions();
     const timer = window.setInterval(loadExecutions, 3000);
@@ -1431,10 +1442,24 @@ export function Grid({
           {err}
         </div>
       )}
-      {executionErr && (
-        <div className="errbar" role="alert">
-          {executionErr}
-        </div>
+      {executionErrors.length > 0 && (
+        <InlineStatus tone="error">
+          <details className="task-grid-execution-errors">
+            <summary>
+              Execution status unavailable for {executionErrors.length} {executionErrors.length === 1 ? "task" : "tasks"}. Show details
+            </summary>
+            <ul>
+              {executionErrors.map(({ ref, error }) => (
+                <li key={ref.key}>
+                  <strong>
+                    {ref.repoPath}:{ref.slug}
+                  </strong>
+                  <div>{error}</div>
+                </li>
+              ))}
+            </ul>
+          </details>
+        </InlineStatus>
       )}
       <div className="task-grid-board-wrap">
         {!loaded && <div className="task-grid-empty">Loading grid…</div>}
