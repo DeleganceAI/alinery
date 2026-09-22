@@ -425,6 +425,8 @@ export function SessionView({
   const leftover = !isAllowedLaunchHarness(harness);
   const explicitIntent = intent === "spawn" || intent === "resume";
   const [lifecycle, setLifecycle] = useState<LifecycleState | null>(null);
+  const effectiveLifecycle = observation?.lifecycle ?? lifecycle;
+  const effectiveLifecycleState = effectiveLifecycle?.state;
   const [artifactReady, setArtifactReady] = useState(false);
   const [reclassifyTick, setReclassifyTick] = useState(0);
   // View history: mount a read-only replay of the session's activity sidecar instead of a
@@ -437,38 +439,41 @@ export function SessionView({
     // session->session switch (same component instance) never briefly renders the previous
     // session's lifecycle/resume/artifact state during the await gap.
     setLifecycle(null);
-    setArtifactReady(false);
     if ((explicitIntent && !leftover) || intent === "history") return;
     let alive = true;
     ipc
       .sessionStatus(id, taskSlug || null)
       .then((obs) => {
         if (!alive) return;
-        const ls = obs.lifecycle;
-        setLifecycle(ls);
-        // Fix 6: one-shot artifact existence for softer Interrupted/Orphaned copy. Only the
-        // states that actually branch on it (P5/P6) need the fetch; "exited" never reads it.
-        if (ls.state === "orphaned" || ls.state === "interrupted") {
-          ipc
-            .sessionArtifactReady(id, taskSlug || "")
-            .then((ready) => {
-              if (alive) setArtifactReady(!!ready);
-            })
-            .catch(() => {
-              if (alive) setArtifactReady(false);
-            });
-        }
+        setLifecycle(obs.lifecycle);
       })
       .catch(() => {
         if (alive) {
           setLifecycle({ state: "orphaned" });
-          setArtifactReady(false);
         }
       });
     return () => {
       alive = false;
     };
   }, [explicitIntent, leftover, id, taskSlug, reclassifyTick, intent]);
+
+  useEffect(() => {
+    setArtifactReady(false);
+    if (effectiveLifecycleState !== "orphaned" && effectiveLifecycleState !== "interrupted") return;
+    let alive = true;
+    // Refresh preserved-work copy when polling enters recovery, not just on navigation.
+    ipc
+      .sessionArtifactReady(id, taskSlug || "")
+      .then((ready) => {
+        if (alive) setArtifactReady(!!ready);
+      })
+      .catch(() => {
+        if (alive) setArtifactReady(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [effectiveLifecycleState, id, taskSlug, reclassifyTick]);
 
   useEffect(() => {
     setObservation(null);
@@ -564,7 +569,7 @@ export function SessionView({
   const handleArchive = async () => {
     // archive_session kills+reaps a live pty before archiving, so a live session
     // must state that consequence first (DESIGN.md: consequences before confirmation).
-    const live = lifecycle?.state === "live";
+    const live = effectiveLifecycle?.state === "live";
     const label = harnessDisplayName(harness) + (model ? ` · ${model}` : "");
     const ok = await confirmDanger(
       "Archive session",
@@ -1177,7 +1182,6 @@ export function SessionView({
   // Pick the terminal intent from the classification (or the explicit navigation intent); a
   // null intent + non-null lifecycle means an orphaned/interrupted/exited row -> action panel.
   // explicitIntent is true only for spawn|resume (see above), so no non-null assert needed.
-  const effectiveLifecycle = observation?.lifecycle ?? lifecycle;
   const termIntent: "attach" | "spawn" | "resume" | null =
     leftover || intent === "history"
       ? null
@@ -1528,7 +1532,7 @@ export function SessionView({
   const observedState = observation?.state;
   const messageReadiness = {
     connection: terminalConnection,
-    lifecycle: observation?.lifecycle ?? lifecycle ?? { state: "orphaned" as const },
+    lifecycle: effectiveLifecycle ?? { state: "orphaned" as const },
     process: observedState?.process ?? null,
     agent: observedState?.agent ?? null,
     messageAdapter: observedState?.message_adapter ?? ("unsupported" as const),
@@ -1965,14 +1969,14 @@ export function SessionView({
               {contextActions.length > 0 && <ContextActionBar actions={contextActions} />}
             </>
           )}
-          {!navHistory && showPanel && lifecycle && (
+          {!navHistory && showPanel && effectiveLifecycle && (
             <>
               <SessionActionPanel
                 id={id}
                 phase={phase}
                 harness={harness}
                 model={model}
-                state={lifecycle}
+                state={effectiveLifecycle}
                 artifactReady={artifactReady}
                 repoPath={repoPath}
                 taskSlug={taskSlug}

@@ -21,6 +21,7 @@ const scenario = vi.hoisted(() => ({
 }));
 
 const sessionStatus = vi.hoisted(() => vi.fn(async (): Promise<SessionObservation> => ({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} })));
+const sessionArtifactReady = vi.hoisted(() => vi.fn(async () => false));
 const startSession = vi.hoisted(() => vi.fn(async () => undefined));
 const restateSession = vi.hoisted(() => vi.fn(async () => undefined));
 const rpcAttachSession = vi.hoisted(() => vi.fn(async (_args: unknown) => undefined));
@@ -102,6 +103,7 @@ vi.mock("../ipc", () =>
     listArtifactCommentDraftsForRepo: async () => [],
     listArtifactComments: async () => [],
     sessionStatus,
+    sessionArtifactReady,
     startSession,
     restateSession,
     rpcAttachSession,
@@ -315,6 +317,70 @@ function liveObservation(transport: "rpc" | "pty", agent: AgentState = { state: 
     checkpoint: {},
   };
 }
+
+describe("session lifecycle polling", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    scenario.tasks = [task];
+    scenario.tasksPromise = null;
+    scenario.tasksError = null;
+    sessionStatus.mockResolvedValue(liveObservation("pty"));
+    sessionArtifactReady.mockReset().mockResolvedValue(false);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    sessionStatus.mockReset().mockResolvedValue({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} });
+    sessionArtifactReady.mockReset().mockResolvedValue(false);
+  });
+
+  it("replaces a live terminal with the polled interruption and preserved-work explanation", async () => {
+    renderSession({ intent: undefined });
+    await flushPromises();
+    expect(screen.getByTestId("terminal")).toBeDefined();
+
+    sessionArtifactReady.mockResolvedValue(true);
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "interrupted" }, state: null, checkpoint: {} });
+    await act(async () => vi.advanceTimersByTimeAsync(1500));
+
+    expect(screen.queryByTestId("terminal")).toBeNull();
+    expect(screen.getByText("Interrupted")).toBeDefined();
+    expect(screen.getByText(/daemon was killed mid-run.*expected artifact exists and work is preserved/)).toBeDefined();
+  });
+
+  it("explains an orphaned session without claiming an artifact was preserved", async () => {
+    renderSession({ intent: undefined });
+    await flushPromises();
+    expect(screen.getByTestId("terminal")).toBeDefined();
+
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "orphaned" }, state: null, checkpoint: {} });
+    await act(async () => vi.advanceTimersByTimeAsync(1500));
+
+    expect(screen.queryByTestId("terminal")).toBeNull();
+    expect(screen.getByText("Orphaned")).toBeDefined();
+    expect(screen.getByText(/daemon died.*live output is gone/)).toBeDefined();
+    expect(screen.queryByText(/work is preserved/)).toBeNull();
+  });
+
+  it("keeps daemon-owned exits attachable, then shows the detached exit code", async () => {
+    renderSession({ intent: undefined });
+    await flushPromises();
+    expect(screen.getByTestId("terminal")).toBeDefined();
+
+    sessionStatus.mockResolvedValue({ ...liveObservation("pty"), lifecycle: { state: "live_exited" } });
+    await act(async () => vi.advanceTimersByTimeAsync(1500));
+    expect(screen.getByTestId("terminal")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Start fresh" })).toBeNull();
+
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "exited", code: 23 }, state: null, checkpoint: {} });
+    await act(async () => vi.advanceTimersByTimeAsync(1500));
+    expect(screen.queryByTestId("terminal")).toBeNull();
+    expect(screen.getByText("Exited (code 23)")).toBeDefined();
+    expect(screen.getByText("The harness process finished.")).toBeDefined();
+  });
+});
 
 function captureRpcOnLine(slot: { current?: (line: string) => void }) {
   rpcAttachSession.mockImplementation(async (args: unknown) => {
