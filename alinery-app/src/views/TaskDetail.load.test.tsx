@@ -2,7 +2,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
-import type { ArtifactListItem, PlaybookStepSummary, PlaybookSummary, SessionMeta, Task } from "../types";
+import type { ArtifactListItem, SessionMeta, Task } from "../types";
+import { executionRecord, executionReply } from "./executionTestFixture";
 import { TaskDetail } from "./TaskDetail";
 
 // Coverage for PR #169 review item 2 (BLOCKING): a failing secondary read in load() or
@@ -43,29 +44,6 @@ const session = (over: Partial<SessionMeta> = {}): SessionMeta =>
     ...over,
   }) as SessionMeta;
 
-const playbookSummary = (over: Partial<PlaybookSummary> = {}): PlaybookSummary =>
-  ({
-    key: "superdevelop",
-    title: "SuperDevelop",
-    description: "",
-    kind: "linear",
-    default_harness: "claude",
-    steps: [],
-    auto_advance: [],
-    ...over,
-  }) as PlaybookSummary;
-
-const step = (over: Partial<PlaybookStepSummary> = {}): PlaybookStepSummary =>
-  ({
-    key: "research",
-    title: "Research",
-    short: "",
-    artifact: "",
-    column: "",
-    harness: "",
-    ...over,
-  }) as PlaybookStepSummary;
-
 const artifactItem = (over: Partial<ArtifactListItem> = {}): ArtifactListItem =>
   ({
     name: "00-ticket.md",
@@ -77,22 +55,11 @@ const artifactItem = (over: Partial<ArtifactListItem> = {}): ArtifactListItem =>
     ...over,
   }) as ArtifactListItem;
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
 // `vi.mock` factories are hoisted above imports, so the mocks it references must be created
 // through `vi.hoisted` rather than plain module-scope `const`.
 const mocks = vi.hoisted(() => ({
   getTask: vi.fn(),
-  listPlaybooks: vi.fn(),
-  listPlaybookSteps: vi.fn(),
+  getTaskExecution: vi.fn(),
   listSessions: vi.fn(),
   listArtifactsWithMetadata: vi.fn(),
   sessionStatuses: vi.fn(),
@@ -101,8 +68,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../ipc", () =>
   mockIpc({
     getTask: mocks.getTask,
-    listPlaybooks: mocks.listPlaybooks,
-    listPlaybookSteps: mocks.listPlaybookSteps,
+    getTaskExecution: mocks.getTaskExecution,
     listSessions: mocks.listSessions,
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
     sessionStatuses: mocks.sessionStatuses,
@@ -111,8 +77,7 @@ vi.mock("../ipc", () =>
 
 beforeEach(() => {
   mocks.getTask.mockReset().mockResolvedValue(null);
-  mocks.listPlaybooks.mockReset().mockResolvedValue([]);
-  mocks.listPlaybookSteps.mockReset().mockResolvedValue([]);
+  mocks.getTaskExecution.mockReset().mockResolvedValue(executionReply([]));
   mocks.listSessions.mockReset().mockResolvedValue([]);
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
   mocks.sessionStatuses.mockReset().mockResolvedValue({});
@@ -145,12 +110,11 @@ function renderDetail(props: Partial<Parameters<typeof TaskDetail>[0]> = {}) {
   );
 }
 
-describe("an unknown task playbook", () => {
+describe("an unavailable execution state", () => {
   it("keeps the header, sessions and artifacts visible instead of blanking the page", async () => {
-    const fixture = task({ playbook: "removed-playbook" });
+    const fixture = task();
     mocks.getTask.mockResolvedValue(fixture);
-    mocks.listPlaybooks.mockResolvedValue([]); // the playbook is no longer registered
-    mocks.listPlaybookSteps.mockRejectedValue(new Error("unknown playbook 'removed-playbook'"));
+    mocks.getTaskExecution.mockRejectedValue(new Error("execution query unavailable"));
     mocks.listSessions.mockResolvedValue([session({ id: "s1" })]);
     mocks.listArtifactsWithMetadata.mockResolvedValue([artifactItem({ name: "00-ticket.md" })]);
 
@@ -160,8 +124,8 @@ describe("an unknown task playbook", () => {
     expect(screen.getByText(fixture.name)).toBeDefined();
     expect(screen.getByText(fixture.branch)).toBeDefined();
 
-    // Sessions still render even though the task's own playbook is unknown.
-    await waitFor(() => expect(screen.getByText("s1")).toBeDefined());
+    // Sessions still render with historical metadata when execution state is unavailable.
+    await waitFor(() => expect(screen.getByRole("row", { name: "Open session superdevelop · research" })).toBeDefined());
 
     // Artifacts still render — switch to the Artifacts tab to observe them.
     fireEvent.click(screen.getByRole("button", { name: "Artifacts", pressed: false }));
@@ -172,29 +136,16 @@ describe("an unknown task playbook", () => {
   });
 });
 
-describe("an unknown historical-session playbook", () => {
-  it("keeps other sessions and their labels rendering when a tail playbook key is unknown", async () => {
-    const fixture = task({ playbook: "superdevelop" });
+describe("a removed library definition", () => {
+  it("keeps retained labels and historical sessions without foreign library lookup", async () => {
+    const fixture = task();
     mocks.getTask.mockResolvedValue(fixture);
-    mocks.listPlaybooks.mockResolvedValue([playbookSummary({ key: "superdevelop", title: "SuperDevelop" })]);
-    mocks.listSessions.mockResolvedValue([
-      session({ id: "current", playbook: "superdevelop", phase: "research" }),
-      session({ id: "historical", playbook: "removed-playbook", phase: "old-phase" }),
-    ]);
-    mocks.listPlaybookSteps.mockImplementation(async (key: string) => {
-      if (key === "removed-playbook") throw new Error("unknown playbook 'removed-playbook'");
-      return [step({ key: "research", title: "Research" })];
-    });
-
+    mocks.getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "current" })]));
+    mocks.listSessions.mockResolvedValue([session({ id: "current", phase: "worker" }), session({ id: "historical", playbook: "removed-playbook", phase: "old-phase" })]);
     renderDetail({ initialTask: fixture });
 
-    // The current session's label resolves normally from its real playbook's steps.
-    await waitFor(() => expect(screen.getByText("SuperDevelop \u00b7 Research")).toBeDefined());
-    // The historical session with the unknown playbook still renders — degraded label
-    // (falls back to the raw key and phase) rather than a blank/crashed row.
-    expect(screen.getByText("current")).toBeDefined();
-    expect(screen.getByText("historical")).toBeDefined();
-    expect(screen.getByText("removed-playbook \u00b7 old-phase")).toBeDefined();
+    expect(await screen.findByRole("row", { name: "Open session Retained playbook · Retained worker" })).toBeDefined();
+    expect(screen.getByRole("row", { name: "Open session removed-playbook · old-phase" })).toBeDefined();
   });
 });
 
@@ -202,8 +153,6 @@ describe("a failing artifact scan on an unseeded related-task route", () => {
   it("still renders name/branch/worktree and sessions when getTask succeeds without a seed", async () => {
     const fixture = task({ slug: "related-task", name: "Related Task", branch: "related-branch", worktree: "/w/related-task" });
     mocks.getTask.mockResolvedValue(fixture);
-    mocks.listPlaybooks.mockResolvedValue([playbookSummary({ key: "superdevelop", title: "SuperDevelop" })]);
-    mocks.listPlaybookSteps.mockResolvedValue([step()]);
     mocks.listSessions.mockResolvedValue([session({ id: "s1" })]);
     mocks.listArtifactsWithMetadata.mockRejectedValue(new Error("artifact scan failed"));
 
@@ -214,7 +163,7 @@ describe("a failing artifact scan on an unseeded related-task route", () => {
     await waitFor(() => expect(screen.getByText("Related Task")).toBeDefined());
     expect(screen.getByText("related-branch")).toBeDefined();
     expect(screen.getByText("/w/related-task")).toBeDefined();
-    expect(screen.getByText("s1")).toBeDefined();
+    expect(screen.getByRole("row", { name: "Open session superdevelop · research" })).toBeDefined();
 
     // The failure is surfaced, not swallowed and not blanking.
     await waitFor(() => expect(screen.getByText("Couldn't load artifacts.")).toBeDefined());
@@ -225,8 +174,6 @@ describe("a failing listSessions", () => {
   it("never shows the empty-sessions state", async () => {
     const fixture = task();
     mocks.getTask.mockResolvedValue(fixture);
-    mocks.listPlaybooks.mockResolvedValue([]);
-    mocks.listPlaybookSteps.mockResolvedValue([]);
     mocks.listSessions.mockRejectedValue(new Error("sessions read failed"));
     mocks.listArtifactsWithMetadata.mockResolvedValue([]);
 
@@ -241,55 +188,12 @@ describe("a successful listSessions returning an empty array", () => {
   it("shows the empty-sessions state", async () => {
     const fixture = task();
     mocks.getTask.mockResolvedValue(fixture);
-    mocks.listPlaybooks.mockResolvedValue([]);
-    mocks.listPlaybookSteps.mockResolvedValue([]);
     mocks.listSessions.mockResolvedValue([]);
     mocks.listArtifactsWithMetadata.mockResolvedValue([]);
 
     renderDetail({ initialTask: fixture });
 
     await waitFor(() => expect(screen.getByText("No sessions yet.")).toBeDefined());
-  });
-});
-
-describe("round-trip shape", () => {
-  it("still issues the happy path's wave-1 reads concurrently, not as a serial waterfall", async () => {
-    const fixture = task({ playbook: "superdevelop" });
-    const d = {
-      getTask: deferred<Task | null>(),
-      listPlaybooks: deferred<PlaybookSummary[]>(),
-      listPlaybookSteps: deferred<PlaybookStepSummary[]>(),
-      listSessions: deferred<SessionMeta[]>(),
-      listArtifactsWithMetadata: deferred<ArtifactListItem[]>(),
-    };
-    mocks.getTask.mockReturnValue(d.getTask.promise);
-    mocks.listPlaybooks.mockReturnValue(d.listPlaybooks.promise);
-    mocks.listPlaybookSteps.mockReturnValue(d.listPlaybookSteps.promise);
-    mocks.listSessions.mockReturnValue(d.listSessions.promise);
-    mocks.listArtifactsWithMetadata.mockReturnValue(d.listArtifactsWithMetadata.promise);
-
-    renderDetail({ initialTask: fixture });
-
-    // All five wave-1 reads fire before any of them has resolved — this is one concurrent
-    // wave, not a waterfall where a later call waits on an earlier one's result.
-    await waitFor(() => {
-      expect(mocks.getTask).toHaveBeenCalledTimes(1);
-      expect(mocks.listPlaybooks).toHaveBeenCalledTimes(1);
-      expect(mocks.listPlaybookSteps).toHaveBeenCalledTimes(1);
-      expect(mocks.listSessions).toHaveBeenCalledTimes(1);
-      expect(mocks.listArtifactsWithMetadata).toHaveBeenCalledTimes(1);
-    });
-
-    d.getTask.resolve(fixture);
-    d.listPlaybooks.resolve([playbookSummary({ key: "superdevelop", title: "SuperDevelop" })]);
-    d.listPlaybookSteps.resolve([step({ key: "research", title: "Research" })]);
-    d.listSessions.resolve([]);
-    d.listArtifactsWithMetadata.resolve([]);
-
-    await waitFor(() => expect(screen.getByText("No sessions yet.")).toBeDefined());
-    // The task's real playbook matches the seed, so no dependent-tail refetch of
-    // listPlaybookSteps was needed — still exactly the one wave-1 call.
-    expect(mocks.listPlaybookSteps).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -1,72 +1,7 @@
 //! session: extracted from lib.rs. See AGENTS.md for the module map.
 use crate::*;
 
-// Session metadata for listing, archiving, seeding, and launching.
-#[derive(Serialize, Deserialize, Clone, Default)]
-pub(crate) struct SessionMeta {
-    pub(crate) id: String,
-    pub(crate) worktree: String,
-    pub(crate) created: u64,
-    #[serde(default)]
-    pub(crate) archived: bool,
-    #[serde(default)]
-    pub(crate) phase: String,
-    #[serde(default)]
-    pub(crate) harness: String,
-    #[serde(default)]
-    pub(crate) model: String,
-    #[serde(default)]
-    pub(crate) playbook: String,
-    #[serde(default)]
-    pub(crate) generic: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub(crate) subtask_manager: bool,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub(crate) subtask_slug: String,
-    // Per-session artifact assignment. Empty means fall back to the playbook step artifact.
-    #[serde(default)]
-    pub(crate) artifact: String,
-    #[serde(default)]
-    pub(crate) handoff_artifact: String,
-    #[serde(default)]
-    pub(crate) prompt_extra: String,
-    #[serde(default)]
-    pub(crate) prompt: Option<String>,
-    // ---- session durability & resume (issue #24); daemon co-writes started/ended/exit ----
-    #[serde(default)]
-    pub(crate) started_at: Option<u64>,
-    #[serde(default)]
-    pub(crate) status_changed_at: Option<u64>,
-    #[serde(default)]
-    pub(crate) status_revision: u64,
-    #[serde(default)]
-    pub(crate) ended_at: Option<u64>,
-    #[serde(default)]
-    pub(crate) exit_code: Option<i32>,
-    #[serde(default)]
-    pub(crate) harness_resume_token: String,
-    #[serde(default)]
-    pub(crate) resume_of: Option<String>,
-    #[serde(default)]
-    pub(crate) daemon_namespace: String,
-    // App-owned acknowledgment for accepted semantic completion.
-    #[serde(default)]
-    pub(crate) notification_read_at: Option<u64>,
-    // App-owned acknowledgment for a nonzero process exit.
-    #[serde(default)]
-    pub(crate) exit_notification_read_at: Option<u64>,
-    // App-owned suppression of one exact live notification occurrence.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) notification_suppression: Option<alinery_core::NotificationSuppression>,
-    // ---- daemon-owned semantic checkpoint (Step 3) ----
-    // App reads this field; only the daemon writes it (via atomic RMW).
-    // Serde-defaulted so pre-semantic metas still parse.
-    #[serde(default)]
-    pub(crate) semantic: alinery_core::SemanticCheckpoint,
-    // Anonymous telemetry correlation id; rationale at new_telemetry_id() in alinery-core/src/types.rs.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub(crate) telemetry_id: String,
-}
+pub(crate) use alinery_core::SessionMeta;
 
 pub(crate) fn load_session_meta_for(repo: &Path, slug: &str, id: &str) -> Result<SessionMeta, String> {
     let path = session_meta_path(repo, slug, id);
@@ -196,18 +131,6 @@ pub(crate) fn session_list_status_key(repo_path: &str, task_slug: &str, id: &str
     format!("{repo_path}:{task_slug}:{id}")
 }
 
-pub(crate) fn default_playbook_key() -> String {
-    alinery_core::DEFAULT_PLAYBOOK_KEY.to_string()
-}
-
-fn is_false(value: &bool) -> bool {
-    !*value
-}
-
-pub(crate) fn default_has_worktree() -> bool {
-    true
-}
-
 // Only the tests build the meta path now (the daemon resolves its own); keep it as the
 // canonical helper so a test and the daemon can't drift.
 pub(crate) fn session_meta_path(repo: &Path, slug: &str, id: &str) -> PathBuf {
@@ -221,14 +144,15 @@ pub(crate) fn session_list_items_for_repo(repo: &Path, repo_path: &str, include_
         if task.archived {
             continue;
         }
-        let sessions = list_sessions_for_repo(repo, &task.slug).unwrap_or_default();
+        let definition = retained_task_definition(repo, &task)?;
+        let sessions = list_sessions_for_repo(repo, &task.slug)?;
         out.extend(sessions.into_iter().filter(|session| include_archived_sessions || !session.archived).map(|session| {
-            let playbook = session.playbook.clone();
-            let is_playbook_step = !session.generic && playbook_step_exists(repo, &playbook, &session.phase);
+            let step = definition.as_ref().and_then(|definition| definition.step.iter().find(|step| step.key == session.phase));
+            let is_playbook_step = !session.generic && !session.execution_id.is_empty() && step.is_some();
             let title = if session.generic {
                 "Generic".into()
             } else {
-                step_title(repo, &playbook, &session.phase)
+                step.map(|step| step.title.clone()).unwrap_or_else(|| session.phase.clone())
             };
             SessionListItem {
                 session,
@@ -236,7 +160,7 @@ pub(crate) fn session_list_items_for_repo(repo: &Path, repo_path: &str, include_
                 task_name: task.name.clone(),
                 task_worktree: task.worktree.clone(),
                 repo_path: repo_path.to_string(),
-                playbook_title: playbook_title(repo, &playbook),
+                playbook_title: definition.as_ref().map(|definition| definition.title.clone()).unwrap_or_else(|| task.playbook.clone()),
                 step_title: title,
                 is_playbook_step,
             }
@@ -253,90 +177,13 @@ pub(crate) fn session_list_items_for_repo(repo: &Path, repo_path: &str, include_
 }
 
 #[tauri::command]
-pub(crate) fn preview_session_prompt(
-    app: AppHandle,
-    repo_path: String,
-    task_slug: String,
-    playbook: String,
-    phase: String,
-    generic: bool,
-    harness: String,
-    model: String,
-) -> Result<String, String> {
-    let (playbook, phase) = if generic { (String::new(), String::new()) } else { (playbook, phase) };
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    alinery_core::preview_session_prompt_for(
-        &app_config_path(&app)?,
-        &repo,
-        alinery_core::CreateSessionInput {
-            task_slug,
-            playbook,
-            phase,
-            generic,
-            harness,
-            model,
-            ..Default::default()
-        },
-    )
-}
-
-// New unique id, write the meta, hand back { id, worktree } so the frontend can
-// `open_session` with that id in the task's worktree cwd.
-pub(crate) fn create_session_in(
-    app_config: &Path,
-    repo: &Path,
-    task_slug: String,
-    playbook: String,
-    phase: String,
-    generic: bool,
-    harness: String,
-    model: String,
-    prompt: Option<String>,
-) -> Result<SessionMeta, String> {
-    let (playbook, phase) = if generic { (String::new(), String::new()) } else { (playbook, phase) };
-    let meta = alinery_core::create_session_meta_for(
-        app_config,
-        repo,
-        alinery_core::CreateSessionInput {
-            task_slug: task_slug.clone(),
-            playbook,
-            generic,
-            phase,
-            harness,
-            model,
-            prompt,
-            daemon_namespace: alineryd_socket_namespace().unwrap_or_default(),
-            ..Default::default()
-        },
-    )?;
-    let meta: SessionMeta = serde_json::from_value(serde_json::to_value(meta).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-    emit_at_with(app_config, || alinery_core::TelemetryEvent::SessionCreate {
-        source: alinery_core::TelemetrySource::App,
-        harness: meta.harness.clone(),
-        phase: meta.phase.clone(),
-        generic: meta.generic,
-        drawer: false,
-        is_resume: false,
-        session_id: meta.telemetry_id.clone(),
-        task_id: alinery_core::telemetry_id_for_task(repo, &task_slug),
-    });
-    Ok(meta)
-}
-
-#[tauri::command]
 pub(crate) fn create_session(
     app: AppHandle,
     state: State<'_, AppState>,
-    task_slug: String,
-    playbook: String,
-    phase: String,
-    generic: bool,
-    harness: String,
-    model: String,
-    prompt: Option<String>,
-) -> Result<SessionMeta, String> {
+    request: alinery_core::task_creation::CreateExecutionSessionRequest,
+) -> Result<alinery_core::task_creation::CreateExecutionSessionReply, String> {
     let repo = require_owned_active_repo(&state)?;
-    create_session_in(&app_config_path(&app)?, &repo, task_slug, playbook, phase, generic, harness, model, prompt)
+    task_daemon_for(&repo, &request.task_slug, &app_config_path(&app)?)?.create_execution_session(&request)
 }
 
 #[tauri::command]
@@ -344,17 +191,11 @@ pub(crate) fn create_session_for_repo(
     app: AppHandle,
     state: State<'_, AppState>,
     repo_path: String,
-    task_slug: String,
-    playbook: String,
-    phase: String,
-    generic: bool,
-    harness: String,
-    model: String,
-    prompt: Option<String>,
-) -> Result<SessionMeta, String> {
+    request: alinery_core::task_creation::CreateExecutionSessionRequest,
+) -> Result<alinery_core::task_creation::CreateExecutionSessionReply, String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
-    create_session_in(&app_config_path(&app)?, &repo, task_slug, playbook, phase, generic, harness, model, prompt)
+    task_daemon_for(&repo, &request.task_slug, &app_config_path(&app)?)?.create_execution_session(&request)
 }
 
 fn completion_notification_checkpoint(value: &serde_json::Value) -> Option<u64> {
@@ -496,10 +337,7 @@ pub(crate) async fn list_session_items(app: AppHandle, all_repos: bool, include_
     let mut out = vec![];
     for repo_path in dedupe_known_repos(repos) {
         let repo = PathBuf::from(&repo_path);
-        match session_list_items_for_repo(&repo, &repo_path, include_archived) {
-            Ok(mut items) => out.append(&mut items),
-            Err(e) => eprintln!("skip repo {repo_path}: {e}"),
-        }
+        out.extend(session_list_items_for_repo(&repo, &repo_path, include_archived)?);
     }
     out.sort_by(|a, b| {
         b.session
@@ -526,18 +364,15 @@ pub(crate) fn list_sessions_in_dir(dir: PathBuf) -> Result<Vec<SessionMeta>, Str
         return Ok(vec![]);
     }
     let mut out = vec![];
-    let entries = fs::read_dir(&dir).map_err(|e| e.to_string())?;
+    let entries = fs::read_dir(&dir).map_err(|error| format!("read {}: {error}", dir.display()))?;
     for entry in entries {
-        let entry = entry.map_err(|e| e.to_string())?;
+        let entry = entry.map_err(|error| format!("read {}: {error}", dir.display()))?;
         let path = entry.path();
         if !path.to_string_lossy().ends_with(".meta.json") {
             continue;
         }
-        let s = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        match serde_json::from_str::<SessionMeta>(&s) {
-            Ok(m) => out.push(m),
-            Err(e) => eprintln!("skip session {}: {e}", path.display()),
-        }
+        let s = fs::read_to_string(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
+        out.push(serde_json::from_str::<SessionMeta>(&s).map_err(|error| format!("parse {}: {error}", path.display()))?);
     }
     // created is seconds-granularity, so two same-second sessions would tie and fall
     // to arbitrary read_dir order. Break ties on id (= "s{nanos}", lexicographically
@@ -675,47 +510,38 @@ pub(crate) fn allow_root_session_open(meta_harness: Option<&str>) -> bool {
     }
 }
 
-// Dedicated ensure for the global terminal drawer (root no-harness bookkeeping).
-// Always mints a fresh id and writes meta under `.alinery/sessions/` — does not spawn a pty.
-pub(crate) fn ensure_drawer_terminal_in(repo: &Path, app_config: Option<&Path>) -> Result<SessionMeta, String> {
-    let id = format!("s{}", SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
-    let meta = SessionMeta {
-        id: id.clone(),
-        worktree: repo.to_string_lossy().to_string(),
-        created: now_secs(),
-        archived: false,
-        phase: String::new(),
-        harness: alinery_core::NO_HARNESS_KEY.to_string(),
-        model: String::new(),
-        playbook: default_playbook_key(),
-        daemon_namespace: alineryd_socket_namespace().unwrap_or_default(),
-        harness_resume_token: String::new(),
-        telemetry_id: alinery_core::new_telemetry_id(),
-        ..Default::default()
-    };
-    write_meta_atomic(&session_meta_path(repo, "", &id), &serde_json::to_value(&meta).map_err(|e| e.to_string())?)?;
-    if let Some(path) = app_config {
-        emit_at(
-            path,
-            alinery_core::TelemetryEvent::SessionCreate {
-                source: alinery_core::TelemetrySource::App,
-                harness: alinery_core::NO_HARNESS_KEY.to_string(),
-                phase: String::new(),
-                generic: meta.generic,
-                drawer: true,
-                is_resume: false,
-                session_id: meta.telemetry_id.clone(),
-                task_id: String::new(),
-            },
-        );
+pub(crate) fn hosted_refresh_needed(intent: &str, harness: &str, model: &str) -> bool {
+    harness == alinery_core::DEFAULT_HARNESS_KEY && matches!(intent, daemon_client::ops::SPAWN | daemon_client::ops::RESUME) && (model.trim().is_empty() || is_hosted_model(model))
+}
+
+async fn refresh_hosted_inference_before_open(app: AppHandle, intent: &str, harness: &str, model: &str) -> Result<(), String> {
+    if !hosted_refresh_needed(intent, harness, model) {
+        return Ok(());
     }
-    Ok(meta)
+    tauri::async_runtime::spawn_blocking(move || refresh_hosted_inference_for_spawn(&app))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn ensure_drawer_terminal(app: AppHandle, state: State<'_, AppState>) -> Result<SessionMeta, String> {
+pub(crate) fn ensure_drawer_terminal(state: State<'_, AppState>) -> Result<SessionMeta, String> {
     let repo = require_owned_active_repo(&state)?;
-    ensure_drawer_terminal_in(&repo, Some(&app_config_path(&app)?))
+    let reply = state
+        .daemon_for(&repo)
+        .ok_or("daemon not connected")?
+        .create_execution_session(&alinery_core::task_creation::CreateExecutionSessionRequest {
+            task_slug: String::new(),
+            target: alinery_core::task_creation::ExecutionSessionTarget::Auxiliary {
+                harness: alinery_core::NO_HARNESS_KEY.into(),
+                model: None,
+                prompt: None,
+            },
+            launch_override: None,
+            prompt_extra: None,
+            handoff_artifact: None,
+            start: false,
+        })?;
+    Ok(reply.session)
 }
 
 // Open a session: REATTACH if its pty is still running (replay scrollback, then go
@@ -727,7 +553,7 @@ pub(crate) fn ensure_drawer_terminal(app: AppHandle, state: State<'_, AppState>)
 // prompt is delivered come from the session's harness (read from its meta), not hardcoded.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
-pub(crate) fn open_session(
+pub(crate) async fn open_session(
     state: State<'_, AppState>,
     app: AppHandle,
     id: String,
@@ -759,13 +585,28 @@ pub(crate) fn open_session(
         return Err(format!("unknown session intent '{intent}'"));
     }
     let repo = require_owned_active_repo(&state)?;
+    let mut harness = String::new();
+    let mut session_model = model.clone().filter(|m| !m.is_empty()).unwrap_or_default();
     if !slug_trim.is_empty() {
+        let task = read_task(&repo, slug_trim)?;
+        if task.engine_version < 2 {
+            return Err("pre-v2 task data is read-only; create a new v2 task to launch sessions".into());
+        }
+        if task.draft || task.archived {
+            return Err("draft or archived tasks cannot launch sessions".into());
+        }
+        task_daemon_for(&repo, &task.slug, &app_config_path(&app)?)?.get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug: task.slug.clone() })?;
         if let Some(launch) = alinery_core::read_meta_launch_fields(&repo, slug_trim, &id) {
             if !alinery_core::is_allowed_launch_harness(&launch.harness) {
                 return Err(format!("unknown harness '{}'", launch.harness));
             }
+            harness = launch.harness;
+            if session_model.is_empty() {
+                session_model = launch.model;
+            }
         }
     }
+    refresh_hosted_inference_before_open(app.clone(), intent, &harness, &session_model).await?;
     let daemon = if intent == daemon_client::ops::ATTACH {
         client_for_session(&state, &repo, slug_trim, &id)?
     } else {
@@ -1139,18 +980,19 @@ pub(crate) fn rpc_attach_session(state: State<'_, AppState>, app: AppHandle, id:
 }
 
 #[tauri::command]
-pub(crate) async fn spawn_session_detached(state: State<'_, AppState>, task_slug: String, id: String) -> Result<(), String> {
-    let _repo = require_owned_active_repo(&state)?;
-    let daemon = state.daemon().ok_or("daemon not connected")?;
-    daemon.spawn_session(&id, &task_slug)
-}
-
-#[tauri::command]
-pub(crate) fn spawn_session_detached_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, task_slug: String, id: String) -> Result<(), String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
+pub(crate) fn start_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_path: Option<String>,
+    task_slug: String,
+    session_id: String,
+) -> Result<alinery_core::task_creation::CreateExecutionSessionReply, String> {
+    let repo = match repo_path {
+        Some(path) => target_repo_for_app(&app, &path)?,
+        None => require_owned_active_repo(&state)?,
+    };
     require_repo_owned(&state, &repo)?;
-    let daemon = state.daemon_for(&repo).ok_or("daemon not connected")?;
-    daemon.spawn_session(&id, &task_slug)
+    task_daemon_for(&repo, &task_slug, &app_config_path(&app)?)?.start_session(&alinery_core::task_creation::StartSessionRequest { task_slug, session_id })
 }
 
 // Terminate a live daemon-owned session's harness process group and reap it (issue #24 P6).
@@ -1193,7 +1035,7 @@ pub(crate) fn session_artifact_ready(id: String, task_slug: String) -> bool {
     let Ok(meta) = serde_json::from_str::<SessionMeta>(&contents) else {
         return false;
     };
-    alinery_core::resolved_session_artifact_file(&repo, &task_slug, &meta.playbook, &meta.phase, &meta.artifact)
+    artifact_file_path(&repo, &task_slug, &meta.artifact)
         .ok()
         .and_then(|path| fs::metadata(path).ok())
         .is_some_and(|metadata| metadata.is_file() && metadata.len() > 0)

@@ -12,10 +12,32 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use alinery_core::{SemanticCheckpoint, SessionMeta, Task};
+use alinery_core::SessionMeta;
 use serde_json::{json, Value};
 
 static ROOT_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+const PLAYBOOK: &str = r#"+++
+version = 2
+key = "isolation"
+title = "Isolation fixture"
+description = ""
+default_model = ""
+default_harness = "omp"
+[[step]]
+key = "run"
+title = "Run"
+short = ""
+is_coding_step = false
+auto_advance_default = false
+inputs = [{path = "ticket.md", mode = "single"}]
+outputs = [{path = "result.md"}]
+model = ""
+harness = "omp"
++++
+<!-- alinery:step run -->
+Read {{TICKET_FILE}} and produce the assigned result.
+"#;
 
 fn unique_root() -> PathBuf {
     let counter = ROOT_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -39,6 +61,8 @@ fn start_daemon(root: &Path, runner: &Path, capture: &Path, extra_env: &[(&str, 
         .arg("--app-config")
         .arg(root.join(".alinery/unused-app-config.toml"))
         .env_remove("ALINERY_HOST_EXECUTABLE")
+        .env_remove("PI_CODING_AGENT_DIR")
+        .env_remove("PI_CONFIG_DIR")
         .env("ALINERY_RUNNER_PATH", runner)
         .env("ALINERY_RUNNER_CAPTURE", capture)
         .stdout(Stdio::null())
@@ -88,6 +112,22 @@ impl Fixture {
     fn with_env(extra_env: &[(&str, String)]) -> Self {
         let root = unique_root();
         fs::create_dir_all(root.join(".alinery")).unwrap();
+        for args in [
+            vec!["init", "--quiet"],
+            vec![
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                "fixture",
+            ],
+        ] {
+            assert!(alinery_core::git_cmd(&root).args(args).status().unwrap().success());
+        }
         fs::write(root.join("host-executable"), b"host fixture").unwrap();
         let mut host_permissions = fs::metadata(root.join("host-executable")).unwrap().permissions();
         host_permissions.set_mode(0o755);
@@ -127,7 +167,15 @@ adapter = "omp"
         Self { root, socket, child }
     }
 
-    fn rpc(&self, request: Value) -> Value {
+    fn rpc(&self, mut request: Value) -> Value {
+        if request["op"] == "create_task" {
+            let client = alinery_core::DaemonClient { socket_path: self.socket.clone() };
+            let request = serde_json::from_value(request.get_mut("request").unwrap().take()).unwrap();
+            return match client.create_task(&request) {
+                Ok(reply) => serde_json::to_value(reply).unwrap(),
+                Err(error) => json!({"error": error}),
+            };
+        }
         let mut stream = UnixStream::connect(&self.socket).unwrap();
         stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
         writeln!(stream, "{request}").unwrap();
@@ -136,29 +184,27 @@ adapter = "omp"
         serde_json::from_str(line.trim()).unwrap()
     }
 
-    fn spawn_response(&self, id: &str, harness: &str, phase: &str) -> String {
-        let mut stream = UnixStream::connect(&self.socket).unwrap();
-        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        writeln!(
-            stream,
-            "{}",
-            json!({
-                "op": "spawn",
-                "id": id,
-                "cwd": self.root,
-                "task_slug": "task",
-                "harness": harness,
-                "model": "",
-                "phase": phase,
-                "attach_id": 1,
-                "cols": 80,
-                "rows": 24
-            })
-        )
-        .unwrap();
-        let mut line = String::new();
-        BufReader::new(stream).read_line(&mut line).unwrap();
-        line
+    fn create_session(&self, harness: &str) -> String {
+        let created = self.rpc(json!({"op": "create_task", "request": {
+            "name": "task", "requested_slug": "task",
+            "playbook": {"reference": {"scope": "repo", "key": "isolation"}, "source": PLAYBOOK},
+            "start": false
+        }}));
+        assert_eq!(created["creation"], "ready", "{created}");
+        assert_eq!(created["errors"], json!([]), "{created}");
+        if harness == "omp" {
+            created["sessions"][0]["id"].as_str().expect("reserved owner").into()
+        } else {
+            let auxiliary = self.rpc(json!({"op": "create_execution_session", "request": {
+                "task_slug": "task", "target": {"kind": "auxiliary", "harness": harness}, "start": false
+            }}));
+            assert_eq!(auxiliary["errors"], json!([]), "{auxiliary}");
+            auxiliary["session"]["id"].as_str().expect("auxiliary session").into()
+        }
+    }
+
+    fn spawn_response(&self, id: &str) -> Value {
+        self.rpc(json!({"op": "start_session", "request": {"task_slug": "task", "session_id": id}}))
     }
 
     fn request_shutdown(&self) {
@@ -181,38 +227,6 @@ impl Drop for Fixture {
 
 fn overlay_omp(root: &Path, contents: &str) {
     fs::write(root.join(".alinery/harnesses.toml"), contents).unwrap();
-}
-
-fn write_task_and_source(root: &Path, id: &str, harness: &str) -> PathBuf {
-    let task_dir = root.join(".alinery/tasks/task");
-    let sessions = task_dir.join("sessions");
-    fs::create_dir_all(task_dir.join("artifacts")).unwrap();
-    fs::create_dir_all(&sessions).unwrap();
-    let task = Task {
-        name: "task".into(),
-        slug: "task".into(),
-        branch: "task".into(),
-        worktree: root.to_string_lossy().into_owned(),
-        has_worktree: true,
-        created: 1,
-        playbook: "superdevelop".into(),
-        ..Default::default()
-    };
-    fs::write(task_dir.join("task.md"), toml::to_string(&task).unwrap()).unwrap();
-    let source = SessionMeta {
-        id: id.into(),
-        worktree: root.to_string_lossy().into_owned(),
-        created: 1,
-        phase: if harness == "omp" { "research-questions".into() } else { String::new() },
-        harness: harness.into(),
-        playbook: "superdevelop".into(),
-        artifact: "01-research-questions.md".into(),
-        semantic: SemanticCheckpoint::default(),
-        ..Default::default()
-    };
-    let path = sessions.join(format!("{id}.meta.json"));
-    fs::write(&path, serde_json::to_vec(&source).unwrap()).unwrap();
-    path
 }
 
 fn wait_file(path: &Path, timeout: Duration) -> String {
@@ -260,22 +274,32 @@ prompt_injection = "arg"
 adapter = "omp"
 "#,
     );
-    write_task_and_source(&fixture.root, "missing-omp", "omp");
-    let rejected = fixture.spawn_response("missing-omp", "omp", "research-questions");
-    assert!(rejected.contains("bundled OMP not found"), "spawn response: {rejected}");
+    let id = fixture.create_session("omp");
+    let rejected = fixture.spawn_response(&id);
+    assert_eq!(rejected["start"], "failed", "{rejected}");
+    assert!(
+        rejected["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|error| error["message"].as_str().is_some_and(|message| message.contains("bundled OMP not found"))),
+        "{rejected}"
+    );
     assert!(!sentinel.exists(), "PATH decoy named omp must not run");
-    let meta: SessionMeta = serde_json::from_slice(&fs::read(fixture.root.join(".alinery/tasks/task/sessions/missing-omp.meta.json")).unwrap()).unwrap();
+    let meta: SessionMeta = serde_json::from_slice(&fs::read(fixture.root.join(format!(".alinery/tasks/task/sessions/{id}.meta.json"))).unwrap()).unwrap();
     assert!(meta.started_at.is_none());
+    let query = fixture.rpc(json!({"op": "get_task_execution", "request": {"task_slug": "task"}}));
+    assert_eq!(query["state"]["executions"][&meta.execution_id]["lifecycle"], "launch_failed", "{query}");
 }
 
 #[test]
 fn no_harness_still_starts_when_omp_missing() {
     let missing = format!("/no/such/alinery-omp-{}", std::process::id());
     let fixture = Fixture::with_env(&[("ALINERY_OMP_PATH", missing)]);
-    write_task_and_source(&fixture.root, "term", "no-harness");
-    let line = fixture.spawn_response("term", "no-harness", "");
-    assert!(line.contains("\"ok\":true"), "no-harness spawn: {line}");
-    let status = fixture.rpc(json!({"op": "status", "id": "term"}));
+    let id = fixture.create_session("no-harness");
+    let reply = fixture.spawn_response(&id);
+    assert_eq!(reply["start"], "started", "{reply}");
+    let status = fixture.rpc(json!({"op": "status", "id": id}));
     assert_eq!(status["process"]["state"], "alive");
 }
 
@@ -283,10 +307,10 @@ fn no_harness_still_starts_when_omp_missing() {
 fn overlay_binary_sh_still_honored() {
     let missing = format!("/no/such/alinery-omp-{}", std::process::id());
     let fixture = Fixture::with_env(&[("ALINERY_OMP_PATH", missing)]);
-    write_task_and_source(&fixture.root, "overlay-sh", "omp");
-    let line = fixture.spawn_response("overlay-sh", "omp", "research-questions");
-    assert!(line.contains("\"ok\":true"), "overlay sh spawn: {line}");
-    let status = fixture.rpc(json!({"op": "status", "id": "overlay-sh"}));
+    let id = fixture.create_session("omp");
+    let reply = fixture.spawn_response(&id);
+    assert_eq!(reply["start"], "started", "{reply}");
+    let status = fixture.rpc(json!({"op": "status", "id": id}));
     assert_eq!(status["process"]["state"], "alive");
 }
 
@@ -323,9 +347,9 @@ adapter = "omp"
             home_omp = home_omp_dump.display(),
         ),
     );
-    write_task_and_source(&fixture.root, "iso", "omp");
-    let line = fixture.spawn_response("iso", "omp", "research-questions");
-    assert!(line.contains("\"ok\":true"), "isolation spawn: {line}");
+    let id = fixture.create_session("omp");
+    let reply = fixture.spawn_response(&id);
+    assert_eq!(reply["start"], "started", "{reply}");
 
     let agent = wait_file(&agent_dump, Duration::from_secs(5));
     let config = wait_file(&config_dump, Duration::from_secs(5));
@@ -377,9 +401,9 @@ fn no_harness_does_not_set_pi_env() {
         ),
     );
     let fixture = Fixture::with_env(&[("SHELL", shell.to_string_lossy().into_owned())]);
-    write_task_and_source(&fixture.root, "nh", "no-harness");
-    let line = fixture.spawn_response("nh", "no-harness", "");
-    assert!(line.contains("\"ok\":true"), "no-harness spawn: {line}");
+    let id = fixture.create_session("no-harness");
+    let reply = fixture.spawn_response(&id);
+    assert_eq!(reply["start"], "started", "{reply}");
     let agent = wait_file(&agent_dump, Duration::from_secs(5));
     let config = wait_file(&config_dump, Duration::from_secs(5));
     assert!(agent.is_empty(), "PI_CODING_AGENT_DIR={agent}");

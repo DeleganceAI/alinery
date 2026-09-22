@@ -17,7 +17,9 @@ import {
   X,
 } from "lucide-react";
 import { type CSSProperties, lazy, type ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { ThinkingOrb } from "thinking-orbs";
+import { afterPaint } from "./afterPaint";
 import { applyAppearance, DEFAULT_APPEARANCE } from "./appearance";
 import alineryIcon from "./assets/alinery-icon-white-plain.png";
 import { GlobalSearch, type SearchItem } from "./CommandPalette";
@@ -35,8 +37,9 @@ import { EMPTY_SESSION_MESSAGE_DRAFT, type SessionMessageDraft, sessionMessageDr
 import { ALL_REPOS, isDevelopmentProductName, LoadingState, RepoPicker, repoName, TopBar } from "./shared";
 import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, TerminalDrawer } from "./TerminalDrawer";
 import { gridViewIdOf, isPrimaryTab, primaryTabOf, viewFadeClass } from "./tabMotion";
+import * as taskMutationGuard from "./taskMutationGuard";
 import { shouldAskTelemetryConsent, TELEMETRY_CONSENT_CHOICES, telemetryConsentWrite } from "./telemetry-consent";
-import { Toast, toast } from "./toast";
+import { Toast, type ToastBusy, toast } from "./toast";
 import type {
   AppConfig,
   AppearanceMode,
@@ -66,6 +69,7 @@ import { CreateTaskPage } from "./views/CreateTaskPage";
 import { Grid } from "./views/Grid";
 import { Kanban } from "./views/Kanban";
 import { NotificationsList } from "./views/NotificationsList";
+import { Playbooks } from "./views/Playbooks";
 import { ProviderSetupDialog } from "./views/ProviderSetupDialog";
 import { SessionsList } from "./views/SessionsList";
 import { SECTIONS as SETTINGS_SECTIONS, Settings } from "./views/Settings";
@@ -107,6 +111,8 @@ function initialView(): View {
 export default function App() {
   const [view, setView] = useState<View>(initialView);
   const [navInstant, setNavInstant] = useState(true);
+  const playbooksReturnView = useRef<View | null>(null);
+  const [playbooksVisited, setPlaybooksVisited] = useState(false);
   const [scope, setScope] = useState<RepoScope>("active");
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   // Repo open is the first moment we can ask whether this install can actually run an agent:
@@ -135,8 +141,7 @@ export default function App() {
   const [sessionQueuedFollowUps, setSessionQueuedFollowUps] = useState<Map<string, QueuedFollowUp[]>>(() => new Map());
   const [productName, setProductName] = useState("");
   const [appVersion, setAppVersion] = useState("");
-  const duplicatingRef = useRef(false);
-  const [duplicating, setDuplicating] = useState(false);
+  const [busy, setBusy] = useState<ToastBusy | null>(null);
   const [updating, setUpdating] = useState(false);
   // Presentation preferences live for this app process only. Each surface keeps its own
   // choice while navigation unmounts and remounts the list.
@@ -154,7 +159,7 @@ export default function App() {
   const appConfigRef = useRef(appConfig);
   appConfigRef.current = appConfig;
   const gridViews = useMemo(() => normalizeGridViews(appConfig?.global?.grid_views), [appConfig?.global?.grid_views]);
-  const showOriginalKanban = appConfig?.global?.experiments?.show_original_kanban ?? false;
+  const showOriginalKanban = appConfig?.global?.experiments?.show_original_kanban ?? true;
   const repoKey = appConfig?.active_repo ? `${scope}:${appConfig.active_repo}:${appConfig.known_repos.join("|")}:${reloadNonce}` : "";
   const activeGridViewId = view.kind === "grid" && gridViews.some((gridView) => gridView.id === view.gridViewId) ? view.gridViewId : undefined;
   const [mountedGridViews, setMountedGridViews] = useState<{ repoKey: string; ids: string[] }>({ repoKey: "", ids: [] });
@@ -377,6 +382,8 @@ export default function App() {
 
   const switchTop = (kind: Tab, opts?: { instant?: boolean; gridViewId?: string }) => {
     setNavInstant(Boolean(opts?.instant));
+    if (kind === "playbooks" && view.kind !== "playbooks") playbooksReturnView.current = view;
+    if (kind === "playbooks") setPlaybooksVisited(true);
     if (kind === "grid") {
       const gridViewId = opts?.gridViewId ?? gridViews[0].id;
       if (!gridViews.some((gridView) => gridView.id === gridViewId)) return;
@@ -500,25 +507,30 @@ export default function App() {
     if (task.repo_path !== appConfig.active_repo) {
       setAppConfig(await switchActiveRepo(task.repo_path));
     }
-    const playbook = choice.kind === "playbook-step" ? choice.playbook : "";
-    const phase = choice.kind === "playbook-step" ? choice.phase : "";
-    const generic = choice.kind === "generic";
-    const m = await ipc.createSession({
-      taskSlug: task.slug,
-      playbook,
-      phase,
-      generic,
-      harness,
-      model: harness === "no-harness" ? "" : model,
-      ...(harness !== "no-harness" && prompt !== undefined ? { prompt } : {}),
-    });
+    const reply =
+      choice.kind === "existing"
+        ? await ipc.startSession(task.slug, choice.session_id, task.repo_path)
+        : await ipc.createSessionForRepo({
+            repoPath: task.repo_path,
+            request: {
+              task_slug: task.slug,
+              target: choice.kind === "primary" ? choice : { kind: "auxiliary", harness, model, prompt },
+              ...(choice.kind === "primary" ? { launch_override: { harness, model }, prompt_extra: prompt } : {}),
+              start: true,
+            },
+          });
+    if (reply.start !== "started") toast(`Session ${reply.start}`);
     const targetTaskView: View = view.kind === "createSession" ? { kind: "task", slug: task.slug, repoPath: task.repo_path, from: view.from } : view;
+    if (reply.start !== "started") {
+      setView(targetTaskView);
+      return;
+    }
     await openTaskSession({
       repoPath: task.repo_path,
       taskSlug: task.slug,
-      session: m,
+      session: reply.session,
       from: targetTaskView,
-      intent: "spawn",
+      intent: "attach",
     });
   };
 
@@ -740,9 +752,9 @@ export default function App() {
       setSearchOpen(false);
       return;
     }
-    if (!("from" in view)) return;
+    const dest = view.kind === "playbooks" ? playbooksReturnView.current : "from" in view ? view.from : null;
+    if (!dest) return;
     setNavInstant(true);
-    const dest = view.from;
     const destRepo = dest.kind === "task" ? dest.repoPath : undefined;
     if (destRepo && appConfig && destRepo !== appConfig.active_repo) {
       void (async () => {
@@ -761,24 +773,34 @@ export default function App() {
 
   const openCreate = () => {
     setSearchOpen(false);
-    setView({ kind: "create", from: view });
+    if (taskMutationGuard.refuseIfBusy()) return;
+    // Top bar / task list / ⌘N all land here. Paint the opening toast before the
+    // form mounts — its settings IPC is what freezes the window.
+    const from = view;
+    flushSync(() => setBusy("open-create"));
+    void afterPaint().then(() => setView({ kind: "create", from }));
   };
 
   const duplicateTask = async ({ repoPath, sourceSlug }: { repoPath: string; sourceSlug: string }) => {
-    if (!appConfigRef.current || duplicatingRef.current) return;
+    if (!appConfigRef.current) return;
+    if (!taskMutationGuard.claim("duplicate")) return;
     const invocationView = view;
-    duplicatingRef.current = true;
-    setDuplicating(true);
+    flushSync(() => setBusy("duplicate"));
+    await afterPaint();
     try {
       let created: CreateTaskResult;
       try {
         created = await ipc.duplicateTaskForRepo(repoPath, sourceSlug);
       } catch (e) {
-        toast(`TASK DUPLICATION FAILED: ${e}`);
+        toast.error(`TASK DUPLICATION FAILED: ${e}`);
         return;
       }
 
-      const { task, session } = created;
+      const { task } = created;
+      if (!task) {
+        toast.error(created.errors.map((error) => `${error.stage}: ${error.message}`).join("\n") || "Duplication did not create a task");
+        return;
+      }
       try {
         if (repoPath !== appConfigRef.current?.active_repo) {
           const config = await switchActiveRepo(repoPath);
@@ -788,17 +810,16 @@ export default function App() {
         }
         setScope("active");
         refreshBoards();
-        toast("TASK DUPLICATED");
-        if (session.harness !== "no-harness") {
-          ipc.spawnSessionDetachedForRepo(repoPath, task.slug, session.id).catch((e) => toast(`SESSION NOT STARTED: ${e}`));
-        }
-        setView({ kind: "task", slug: task.slug, from: invocationView });
+        const outcome = `Task duplicated: ${created.creation}; start ${created.start}${created.errors.length ? ` — ${created.errors.map((error) => error.message).join("; ")}` : ""}`;
+        if (created.creation === "ready" && created.start !== "failed" && created.errors.length === 0) toast.success(outcome);
+        else toast.error(outcome);
+        setView({ kind: "task", slug: task.slug, repoPath, from: invocationView });
       } catch (e) {
-        toast(`TASK DUPLICATED BUT NOT OPENED: ${repoPath}/${task.slug}: ${e}`);
+        toast.error(`TASK DUPLICATED BUT NOT OPENED: ${repoPath}/${task.slug}: ${e}`);
       }
     } finally {
-      duplicatingRef.current = false;
-      setDuplicating(false);
+      taskMutationGuard.release();
+      setBusy(null);
     }
   };
 
@@ -909,6 +930,7 @@ export default function App() {
           action("kill-terminal", pi(X), "Kill terminal drawer", "⌘⇧`", () => void killDrawer()),
         ]
       : []),
+    action("playbooks", pi(List), "Go to Playbooks", "", () => switchTop("playbooks", { instant: true })),
     action("appearance", pi(SunMoon), "Appearance: cycle system / light / dark", "⌘G", cycleAppearance),
     action("add-repo", pi(FolderPlus), "Add repo", "", addRepo),
   ];
@@ -988,7 +1010,14 @@ export default function App() {
             {header}
             {/* Backend ownership gate is the source of truth; blank main so the busy
               banner is the only actionable surface (defense-in-depth). */}
-            <main>{daemon.repo_busy ? null : content}</main>
+            <main>
+              {daemon.repo_busy ? null : content}
+              {playbooksVisited && (
+                <div className="view playbooks-view" hidden={view.kind !== "playbooks" || daemon.repo_busy}>
+                  <Playbooks repoPath={appConfig?.active_repo || undefined} />
+                </div>
+              )}
+            </main>
             <HotkeyBar
               view={view.kind}
               daemon={daemon}
@@ -1007,7 +1036,7 @@ export default function App() {
         {isDev && <LaunchSourceBar sourceRoot={DEV_LAUNCH_ROOT} />}
       </div>
       <GlobalSearch open={searchOpen && hasRepo} items={searchItems} loading={searchLoading} error={searchError} onClose={() => setSearchOpen(false)} />
-      <Toast />
+      <Toast busy={busy} />
       <ConfirmHost />
     </>
   );
@@ -1040,12 +1069,15 @@ export default function App() {
     );
   if (!appConfig.active_repo)
     return chrome(
-      <div className="view scroll first-run-view">
+      <div className="view scroll first-run-view" hidden={view.kind === "playbooks"}>
         <img className="first-run-logo" src={alineryIcon} alt="Alinery" />
         <p className="first-run-tagline">
           Increase your <span>token:attention</span> ratio.
         </p>
         <RepoPicker appConfig={appConfig} error={repoErr} onSelect={setRepo} onRemove={removeRepo} onAdd={addRepo} />
+        <button className="btn ghost" type="button" onClick={() => switchTop("playbooks")}>
+          Playbooks
+        </button>
       </div>,
       minimalHeader,
     );
@@ -1101,19 +1133,24 @@ export default function App() {
                 initialDraft={view.kind === "create" ? view.draft : undefined}
                 activeRepo={appConfig.active_repo}
                 knownRepos={appConfig.known_repos}
-                onCancel={goBack}
-                onCreated={async ({ repoPath, task, session }) => {
+                onBusy={setBusy}
+                onOpened={() => setBusy((current) => (current === "open-create" ? null : current))}
+                onCancel={() => {
+                  setBusy(null);
+                  goBack();
+                }}
+                onCreated={async ({ repoPath, task, sessions, selectedSessionId }) => {
+                  if (!task) return;
                   try {
                     if (repoPath !== appConfig.active_repo) {
                       setAppConfig(await switchActiveRepo(repoPath));
                       setScope("active");
                     }
                     refreshBoards();
-                    toast("Task created", "success");
-                    if (session.harness !== "no-harness") {
-                      ipc.spawnSessionDetached(task.slug, session.id).catch((e) => toast(`Session not started: ${e}`, "error"));
-                    }
-                    setView({ kind: "task", slug: task.slug, repoPath, from: view.from, initialTask: task });
+                    const taskView: View = { kind: "task", slug: task.slug, repoPath, from: view.from, initialTask: task };
+                    const selected = sessions.find((session) => session.id === selectedSessionId);
+                    if (selected) await openTaskSession({ repoPath, taskSlug: task.slug, session: selected, intent: "attach", from: taskView });
+                    else setView(taskView);
                   } catch (e) {
                     setRepoErr(String(e));
                   }
@@ -1228,7 +1265,7 @@ export default function App() {
                   }
                   onOpenRelatedTask={openRelatedTask}
                   onDuplicate={(task) => duplicateTask({ repoPath: appConfig.active_repo, sourceSlug: task.slug })}
-                  duplicating={duplicating}
+                  duplicating={busy === "duplicate"}
                   registerNav={registerNav}
                   appearance={appearance}
                   onAppearanceChange={onAppearanceChange}
@@ -1248,17 +1285,17 @@ export default function App() {
               >
                 <ReviewHandoffPage
                   source={view.source}
-                  allRepos={false}
+                  allRepos={true}
                   activeRepo={appConfig.active_repo}
                   onCancel={goBack}
                   onConfirmed={async (result) => {
                     refreshBoards();
                     toast("Handoff sent", "success");
                     await openTaskSession({
-                      repoPath: appConfig.active_repo,
+                      repoPath: result.target_repo_path,
                       taskSlug: result.target_record.target_task,
                       session: result.target_session,
-                      intent: "spawn",
+                      intent: "attach",
                       from: view.from,
                     });
                   }}
@@ -1305,32 +1342,14 @@ export default function App() {
                       return next;
                     });
                   }}
-                  onStartReviewHandoff={(source) => setView({ kind: "reviewHandoff", from: view, source })}
+                  onStartReviewHandoff={(source) => setView({ kind: "reviewHandoff", from: view, source: { ...source, source_repo_path: appConfig.active_repo } })}
                   onOpenRelatedTask={openRelatedTask}
                   appearance={appearance}
                   onAppearanceChange={onAppearanceChange}
                   onDiagramZoomOpenChange={setDiagramZoomOpen}
                   onBack={goBack}
-                  onStartFresh={async () => {
-                    try {
-                      const m = await ipc.createSession({
-                        taskSlug: view.taskSlug,
-                        playbook: view.playbook ?? "",
-                        phase: view.phase,
-                        generic: view.generic,
-                        harness: view.harness,
-                        model: view.model,
-                      });
-                      await openTaskSession({
-                        repoPath: appConfig.active_repo,
-                        taskSlug: view.taskSlug,
-                        session: m,
-                        intent: "spawn",
-                        from: view,
-                      });
-                    } catch (e) {
-                      setRepoErr(String(e));
-                    }
+                  onStartFresh={() => {
+                    setView({ kind: "createSession", from: view, initialTask: { repo_path: appConfig.active_repo, slug: view.taskSlug } });
                   }}
                 />
               </Suspense>

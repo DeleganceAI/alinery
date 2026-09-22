@@ -95,6 +95,23 @@ fn accounts_url_defaults_to_production_and_honors_the_local_override() {
     std::env::remove_var("ALINERY_ACCOUNTS_URL");
 }
 
+#[test]
+fn unsigned_spawn_refresh_is_ok_and_does_not_wipe() {
+    let dir = unique_attachment_temp("spawn-refresh-unsigned");
+    let app_config = dir.join("app.toml");
+    fs::write(&app_config, b"").unwrap();
+    let inf = inference_path(&dir);
+    let yml = models_yml_path(&app_config);
+    fs::create_dir_all(yml.parent().unwrap()).unwrap();
+    fs::write(&inf, br#"{"token":"inf_keep"}"#).unwrap();
+    fs::write(&yml, b"providers:\n").unwrap();
+    let before_inf = fs::read(&inf).unwrap();
+    let before_yml = fs::read(&yml).unwrap();
+    refresh_hosted_inference_for_spawn_at(&dir.join("auth.json"), &app_config, "http://127.0.0.1:1", "http://127.0.0.1:1", "http://127.0.0.1:1").unwrap();
+    assert_eq!(fs::read(&inf).unwrap(), before_inf);
+    assert_eq!(fs::read(&yml).unwrap(), before_yml);
+}
+
 // Dev and prod share one Supabase project and one entitlements table, so dropping the livemode
 // filter would leave a user holding both a test and a live entitlement with an arbitrary row —
 // the query has no ordering and `parse_entitlement_plan` takes the first.
@@ -1036,7 +1053,6 @@ const CREDITS_FREE: &str = r#"{"ok":true,"plan":"free","included_cents":0,"purch
 
 #[test]
 fn desktop_credits_200_shows_paid_balance() {
-    let _serial = crate::CREDITS_SNAPSHOT_TEST.lock().unwrap_or_else(|e| e.into_inner());
     store_credits_snapshot(None);
     let dir = unique_attachment_temp("credits-200");
     let path = dir.join("auth.json");
@@ -1052,7 +1068,6 @@ fn desktop_credits_200_shows_paid_balance() {
 
 #[test]
 fn desktop_credits_free_plan_upsells_subscribe() {
-    let _serial = crate::CREDITS_SNAPSHOT_TEST.lock().unwrap_or_else(|e| e.into_inner());
     store_credits_snapshot(None);
     let dir = unique_attachment_temp("credits-free");
     let path = dir.join("auth.json");
@@ -1067,7 +1082,6 @@ fn desktop_credits_free_plan_upsells_subscribe() {
 
 #[test]
 fn desktop_credits_404_hides_the_balance() {
-    let _serial = crate::CREDITS_SNAPSHOT_TEST.lock().unwrap_or_else(|e| e.into_inner());
     store_credits_snapshot(None);
     let dir = unique_attachment_temp("credits-404");
     let path = dir.join("auth.json");
@@ -1082,7 +1096,6 @@ fn desktop_credits_404_hides_the_balance() {
 
 #[test]
 fn desktop_credits_503_keeps_the_last_snapshot() {
-    let _serial = crate::CREDITS_SNAPSHOT_TEST.lock().unwrap_or_else(|e| e.into_inner());
     store_credits_snapshot(None);
     let dir = unique_attachment_temp("credits-503");
     let path = dir.join("auth.json");
@@ -1100,7 +1113,6 @@ fn desktop_credits_503_keeps_the_last_snapshot() {
 
 #[test]
 fn desktop_credits_401_refreshes_jwt_and_retries() {
-    let _serial = crate::CREDITS_SNAPSHOT_TEST.lock().unwrap_or_else(|e| e.into_inner());
     store_credits_snapshot(None);
     let dir = unique_attachment_temp("credits-401");
     let path = dir.join("auth.json");
@@ -1119,7 +1131,6 @@ fn desktop_credits_401_refreshes_jwt_and_retries() {
 
 #[test]
 fn desktop_credits_401_after_refresh_signs_out() {
-    let _serial = crate::CREDITS_SNAPSHOT_TEST.lock().unwrap_or_else(|e| e.into_inner());
     store_credits_snapshot(None);
     let dir = unique_attachment_temp("credits-401-out");
     let path = dir.join("auth.json");

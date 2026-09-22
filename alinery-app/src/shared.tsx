@@ -32,11 +32,16 @@ import { toast } from "./toast";
 import type {
   AppConfig,
   ArtifactListItem,
+  ArtifactTreeNode,
   BoardTask,
   GridViewDefinition,
   KanbanColumn,
   LifecycleState,
   OmpUpdateStatus,
+  PickerPreference,
+  PickerPreferences,
+  PlaybookCandidate,
+  PlaybookRef,
   RepoScope,
   ReviewHandoffRecord,
   SessionMeta,
@@ -61,6 +66,44 @@ export function repoName(path: string) {
 }
 export function taskKey(t: BoardTask) {
   return `${t.repo_path}:${t.slug}`;
+}
+
+export const playbookRefKey = (reference: PlaybookRef) => `${reference.scope}/${reference.key}`;
+export const samePlaybookRef = (left: PlaybookRef | null | undefined, right: PlaybookRef | null | undefined) =>
+  left === right || (!!left && !!right && left.scope === right.scope && left.key === right.key);
+
+export function orderPlaybookCandidates(candidates: PlaybookCandidate[], preferences: PickerPreferences): PlaybookCandidate[] {
+  const ranks = new Map(preferences.order.map((reference, index) => [playbookRefKey(reference), index]));
+  return [...candidates].sort((left, right) => {
+    const a = playbookRefKey(left.source.reference);
+    const b = playbookRefKey(right.source.reference);
+    return (ranks.get(a) ?? Number.MAX_SAFE_INTEGER) - (ranks.get(b) ?? Number.MAX_SAFE_INTEGER) || a.localeCompare(b);
+  });
+}
+
+export function playbookPickerAppearance(reference: PlaybookRef, preference?: PickerPreference) {
+  const identity = playbookRefKey(reference);
+  let hash = 0;
+  for (let i = 0; i < identity.length; i++) hash = (Math.imul(hash, 31) + identity.charCodeAt(i)) | 0;
+  const colors = ["#38459d", "#10b981", "#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#e94242"];
+  return {
+    badge: preference?.badge || `${reference.scope[0].toUpperCase()}·${reference.key.slice(0, 2).toUpperCase()}`,
+    color: preference?.color || colors[(hash >>> 0) % colors.length],
+  };
+}
+
+export function findOwnedArtifactNode(nodes: ArtifactTreeNode[], relativePath: string): ArtifactTreeNode | undefined {
+  const visit = (items: ArtifactTreeNode[], parent: string): ArtifactTreeNode | undefined => {
+    for (const node of items) {
+      if (node.source !== "owned" || node.kind === "attachment" || node.kind === "referenced") continue;
+      const path = parent ? `${parent}/${node.label}` : node.label;
+      if (node.kind === "owned" && path === relativePath && node.children.length === 0) return node;
+      const match = visit(node.children, path);
+      if (match) return match;
+    }
+    return undefined;
+  };
+  return visit(nodes, "");
 }
 
 export function isAllowedLaunchHarness(key: string): boolean {
@@ -101,6 +144,8 @@ export function sameSessionMetas(left: SessionMeta[], right: SessionMeta[]) {
         session.harness === other.harness &&
         session.model === other.model &&
         session.playbook === other.playbook &&
+        session.execution_id === other.execution_id &&
+        session.execution_revision === other.execution_revision &&
         session.generic === other.generic &&
         session.subtask_manager === other.subtask_manager &&
         session.subtask_slug === other.subtask_slug &&
@@ -187,6 +232,11 @@ export function sameTask(left: Task, right: Task): boolean {
     left.linear_id === right.linear_id &&
     left.github_issue === right.github_issue &&
     left.playbook === right.playbook &&
+    samePlaybookRef(left.playbook_ref, right.playbook_ref) &&
+    left.max_live_sessions === right.max_live_sessions &&
+    left.engine_version === right.engine_version &&
+    left.launch_defaults?.harness === right.launch_defaults?.harness &&
+    left.launch_defaults?.model === right.launch_defaults?.model &&
     left.draft === right.draft &&
     left.auto_advance.length === right.auto_advance.length &&
     left.auto_advance.every((edge, index) => edge === right.auto_advance[index]) &&
@@ -221,6 +271,11 @@ export function sameBoardTasks(left: BoardTask[], right: BoardTask[]) {
         task.linear_id === other.linear_id &&
         task.github_issue === other.github_issue &&
         task.playbook === other.playbook &&
+        samePlaybookRef(task.playbook_ref, other.playbook_ref) &&
+        task.max_live_sessions === other.max_live_sessions &&
+        task.engine_version === other.engine_version &&
+        task.launch_defaults?.harness === other.launch_defaults?.harness &&
+        task.launch_defaults?.model === other.launch_defaults?.model &&
         task.draft === other.draft &&
         task.auto_advance.length === other.auto_advance.length &&
         task.auto_advance.every((value, i) => value === other.auto_advance[i]) &&
@@ -605,6 +660,7 @@ export function TopBar({
         {extraGridViews.map((gridView, index) => gridTab(gridView, index + 1))}
         {tab("sessions", "Sessions", "7")}
         {tab("notifications", "Notifications", "8")}
+        {tab("playbooks", "Playbooks")}
       </nav>
       <div className="spacer" />
       <button type="button" className="iconbtn new-task" title="New task (⌘N)" aria-label="New task" onClick={onCreate}>
@@ -1306,6 +1362,7 @@ export function ModelInput({
   repoPath,
   prefillRemembered = true,
   onOpenPicker,
+  ariaLabel = "Model",
 }: {
   harness: string;
   value: string;
@@ -1314,6 +1371,7 @@ export function ModelInput({
   style?: CSSProperties;
   repoPath?: string;
   prefillRemembered?: boolean;
+  ariaLabel?: string;
   /**
    * Host the providers/models dialog instead of this component's own picker.
    *
@@ -1477,7 +1535,7 @@ export function ModelInput({
     <div className="model-input" style={style}>
       <input
         className="field-input"
-        aria-label="Model"
+        aria-label={ariaLabel}
         value={value}
         placeholder="Model (empty = harness default)"
         onChange={(e) => onChange(e.target.value)}

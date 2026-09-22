@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockIpc } from "../test/mockIpc";
 import { navReady, requireNav } from "../test/nav";
-import type { BoardNav, BoardTask, KanbanColumn, TaskActivityMap, TaskActivitySummary } from "../types";
+import type { BoardNav, BoardTask, KanbanColumn, PullRequestSnapshot, TaskActivityMap, TaskActivitySummary } from "../types";
 import { Kanban } from "./Kanban";
 
 // Template for a component test in this codebase. Three things make it work:
@@ -70,6 +70,8 @@ const ipcMocks = vi.hoisted(() => ({
   listBoardTasks: vi.fn(),
   listKanbanColumns: vi.fn(),
   listTaskActivity: vi.fn(),
+  listTaskPullRequests: vi.fn(),
+  openUrl: vi.fn(),
   removeWorktreeForRepo: vi.fn(),
 }));
 
@@ -79,6 +81,8 @@ beforeEach(() => {
   ipcMocks.listKanbanColumns.mockImplementation(async () => columns);
   ipcMocks.listBoardTasks.mockImplementation(async () => boardTasks);
   ipcMocks.listTaskActivity.mockImplementation(async () => taskActivity);
+  ipcMocks.listTaskPullRequests.mockResolvedValue({});
+  ipcMocks.openUrl.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -265,6 +269,34 @@ describe("Kanban task attention", () => {
     fireEvent.click(activeButton);
     expect(onOpenActiveSession).toHaveBeenCalledWith(row, activeSession);
     expect(onOpen).not.toHaveBeenCalled();
+  });
+});
+
+describe("Kanban pull requests", () => {
+  it("keeps cards usable while fetching and opens the discovered PR without opening its card", async () => {
+    const row = task({ name: "Awaiting review", slug: "pr-review", repo_path: "/pr-board" });
+    boardTasks = [row];
+    let resolve!: (value: Record<string, PullRequestSnapshot>) => void;
+    ipcMocks.listTaskPullRequests.mockImplementation(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    const onOpen = vi.fn();
+    render(<Kanban allRepos={false} onOpen={onOpen} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
+
+    fireEvent.click(await screen.findByText("Awaiting review"));
+    expect(onOpen).toHaveBeenCalledWith(row);
+    onOpen.mockClear();
+    const url = "https://github.com/example/project/pull/42";
+    await act(async () => resolve({ "/pr-board:pr-review": { pr: { number: 42, url, state: "open" }, error: null } }));
+    const link = screen.getByRole("link", { name: /PR #42.*Open/i });
+    fireEvent.keyDown(link, { key: "Enter" });
+    fireEvent.click(link);
+    await waitFor(() => expect(ipcMocks.openUrl).toHaveBeenCalledWith(url));
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(cardsUnder("Research & Design")).toEqual(["Awaiting review"]);
   });
 });
 

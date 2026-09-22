@@ -3,12 +3,13 @@ import type { KeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ArtifactComment, ArtifactCommentAnchor } from "../ArtifactMarkdown";
-import { ArtifactMarkdown, CopyArtifactButton, CopyTextButton, formatArtifactCommentTarget } from "../ArtifactMarkdown";
+import { ArtifactMarkdown, formatArtifactCommentTarget } from "../ArtifactMarkdown";
 import { ArtifactTree, isDirectOwnedArtifactNode } from "../ArtifactTree";
 import type { ArtifactPaneTab } from "../artifactClassification";
 import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassification";
 import { ChatComposer } from "../ChatComposer";
 import { buildPromptMessage, canStage, classifyAttachment, type DraftAttachment, draftToRowAttachments, isHttpUrl, revokeDraftPreviewUrls } from "../chat/attachments";
+import { CopyArtifactButton, CopyTextButton } from "../chat/CopyMessage";
 import { formatContextUsage } from "../chat/format";
 import type { ModelRolesMap } from "../chat/modelRoles";
 import { decodeOmpPage } from "../chat/ompFile";
@@ -65,6 +66,7 @@ import {
   ArtifactProvenanceBadges,
   ContextActionBar,
   finalizedSubtaskNotice,
+  findOwnedArtifactNode,
   harnessDisplayName,
   InlineStatus,
   isAllowedLaunchHarness,
@@ -83,6 +85,7 @@ import type {
   SessionMessageActionProvenance,
   SessionObservation,
   Task,
+  TaskExecutionReply,
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
@@ -251,6 +254,11 @@ export function SessionView({
   const recoverableArtifactDraftAnchorIds = recoverableArtifactDrafts.map((draft) => draft.anchor_id);
   const [task, setTask] = useState<Task | null>(null);
   const [parentTask, setParentTask] = useState<Task | null>(null);
+  const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
+  const [executionError, setExecutionError] = useState("");
+  const [completionBusy, setCompletionBusy] = useState(false);
+  const execution = Object.values(executionView?.state.executions ?? {}).find((record) => record.owner_session_id === id || record.previous_session_ids.includes(id));
+  const executionStep = executionView?.definition.step.find((step) => step.key === execution?.candidate.step_key);
   const [reviewFindingsComments, setReviewFindingsComments] = useState<ArtifactComment[]>([]);
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [approvalStatus, setApprovalStatus] = useState("");
@@ -420,6 +428,8 @@ export function SessionView({
   const leftover = !isAllowedLaunchHarness(harness);
   const explicitIntent = intent === "spawn" || intent === "resume";
   const [lifecycle, setLifecycle] = useState<LifecycleState | null>(null);
+  const effectiveLifecycle = observation?.lifecycle ?? lifecycle;
+  const effectiveLifecycleState = effectiveLifecycle?.state;
   const [artifactReady, setArtifactReady] = useState(false);
   const [reclassifyTick, setReclassifyTick] = useState(0);
   // View history: mount a read-only replay of the session's activity sidecar instead of a
@@ -432,38 +442,41 @@ export function SessionView({
     // session->session switch (same component instance) never briefly renders the previous
     // session's lifecycle/resume/artifact state during the await gap.
     setLifecycle(null);
-    setArtifactReady(false);
     if ((explicitIntent && !leftover) || intent === "history") return;
     let alive = true;
     ipc
       .sessionStatus(id, taskSlug || null)
       .then((obs) => {
         if (!alive) return;
-        const ls = obs.lifecycle;
-        setLifecycle(ls);
-        // Fix 6: one-shot artifact existence for softer Interrupted/Orphaned copy. Only the
-        // states that actually branch on it (P5/P6) need the fetch; "exited" never reads it.
-        if (ls.state === "orphaned" || ls.state === "interrupted") {
-          ipc
-            .sessionArtifactReady(id, taskSlug || "")
-            .then((ready) => {
-              if (alive) setArtifactReady(!!ready);
-            })
-            .catch(() => {
-              if (alive) setArtifactReady(false);
-            });
-        }
+        setLifecycle(obs.lifecycle);
       })
       .catch(() => {
         if (alive) {
           setLifecycle({ state: "orphaned" });
-          setArtifactReady(false);
         }
       });
     return () => {
       alive = false;
     };
   }, [explicitIntent, leftover, id, taskSlug, reclassifyTick, intent]);
+
+  useEffect(() => {
+    setArtifactReady(false);
+    if (effectiveLifecycleState !== "orphaned" && effectiveLifecycleState !== "interrupted") return;
+    let alive = true;
+    // Refresh preserved-work copy when polling enters recovery, not just on navigation.
+    ipc
+      .sessionArtifactReady(id, taskSlug || "")
+      .then((ready) => {
+        if (alive) setArtifactReady(!!ready);
+      })
+      .catch(() => {
+        if (alive) setArtifactReady(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [effectiveLifecycleState, id, taskSlug, reclassifyTick]);
 
   useEffect(() => {
     setObservation(null);
@@ -518,13 +531,51 @@ export function SessionView({
     };
   }, [id, taskSlug, repoPath, intent]);
 
+  useEffect(() => {
+    let alive = true;
+    setExecutionView(null);
+    setExecutionError("");
+    if (!taskSlug) return;
+    const refresh = async () => {
+      try {
+        const next = await ipc.getTaskExecution(taskSlug, repoPath);
+        if (alive) {
+          setExecutionView(next);
+          setExecutionError("");
+        }
+      } catch (error) {
+        if (alive) setExecutionError(String(error));
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 1500);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [taskSlug, repoPath, id]);
+
+  const allowCompletion = async () => {
+    if (!execution || execution.owner_session_id !== id) return;
+    setCompletionBusy(true);
+    try {
+      await ipc.allowExecutionCompletion(taskSlug, execution.id, id, repoPath);
+      setExecutionView(await ipc.getTaskExecution(taskSlug, repoPath));
+      setExecutionError("");
+    } catch (error) {
+      setExecutionError(String(error));
+    } finally {
+      setCompletionBusy(false);
+    }
+  };
+
   const handleArchive = async () => {
     if (archivePending.current) return;
     archivePending.current = true;
     try {
       // archive_session kills+reaps a live pty before archiving, so a live session
       // must state that consequence first (DESIGN.md: consequences before confirmation).
-      const live = lifecycle?.state === "live";
+      const live = effectiveLifecycle?.state === "live";
       const label = harnessDisplayName(harness) + (model ? ` · ${model}` : "");
       const ok = await confirmDanger(
         "Archive session",
@@ -720,7 +771,7 @@ export function SessionView({
   );
   const commentableArtifactNames = artifactItems.map((item) => item.name).filter((name) => !name.endsWith(".comments.md"));
   const commentableArtifactSignature = commentableArtifactNames.join("|");
-  const effectivePlaybook = playbook || task?.playbook || "";
+  const effectivePlaybook = executionView?.definition.key ?? playbook ?? task?.playbook ?? "";
   const commentsNewerThanFindings = Boolean(
     latestReviewFindings?.modified_at_ms && reviewFindingsComments.some((comment) => comment.created_at_ms > (latestReviewFindings.modified_at_ms ?? 0)),
   );
@@ -1127,6 +1178,7 @@ export function SessionView({
             tone: "normal" as const,
             onClick: () =>
               onStartReviewHandoff({
+                source_repo_path: repoPath,
                 source_slug: taskSlug,
                 source_session: id,
                 source_artifact: latestReviewFindings.name,
@@ -1146,15 +1198,15 @@ export function SessionView({
         ? intent === "spawn" || intent === "resume"
           ? intent
           : null
-        : lifecycle === null
+        : effectiveLifecycle === null
           ? null
-          : lifecycle.state === "live" || lifecycle.state === "live_exited"
+          : effectiveLifecycle.state === "live" || effectiveLifecycle.state === "live_exited"
             ? "attach"
-            : lifecycle.state === "never_started"
+            : effectiveLifecycle.state === "never_started" && !hasTask
               ? "spawn"
               : null;
   const navHistory = intent === "history";
-  const showPanel = leftover ? !navHistory && lifecycle !== null : !explicitIntent && lifecycle !== null && termIntent === null;
+  const showPanel = leftover ? !navHistory && effectiveLifecycle !== null : !explicitIntent && effectiveLifecycle !== null && termIntent === null;
   const composerEligible = shouldShowChatComposer({
     hasWritableTerminal: Boolean(termIntent),
     history: navHistory,
@@ -1174,14 +1226,14 @@ export function SessionView({
     if (ompStartRef.current === id) return;
     ompStartRef.current = id;
     void ipc
-      .spawnSessionDetached(taskSlug, id)
+      .startSession(taskSlug, id, repoPath)
       .then(() => ipc.sessionStatus(id, taskSlug || null))
       .then((next) => setObservation(next))
       .catch((error) => {
         setTerminalConnection("failed");
         toast(String(error), "error");
       });
-  }, [showChat, termIntent, observation?.transport, id, taskSlug, cwd, resumeToken]);
+  }, [showChat, termIntent, observation?.transport, id, taskSlug, repoPath, cwd, resumeToken]);
 
   // Fresh OMP starts as RPC. If Settings prefers Terminal, restate once after the session is live.
   useEffect(() => {
@@ -1489,7 +1541,7 @@ export function SessionView({
   const observedState = observation?.state;
   const messageReadiness = {
     connection: terminalConnection,
-    lifecycle: observation?.lifecycle ?? lifecycle ?? { state: "orphaned" as const },
+    lifecycle: effectiveLifecycle ?? { state: "orphaned" as const },
     process: observedState?.process ?? null,
     agent: observedState?.agent ?? null,
     messageAdapter: observedState?.message_adapter ?? ("unsupported" as const),
@@ -1683,7 +1735,7 @@ export function SessionView({
             {task?.name || taskSlug}
           </span>
         )}
-        {phase && <span className="pill">{phase}</span>}
+        {(executionStep || phase) && <span className="pill">{executionStep?.title ?? phase}</span>}
         <span className="pill">{harnessDisplayName(harness) + (model ? ` · ${model}` : "")}</span>
         <StatusDot id={id} slug={taskSlug} repoPath={repoPath} observation={observation} />
         <span className="session-path dim mono">
@@ -1702,6 +1754,94 @@ export function SessionView({
         <CopyTextButton text={cwd} label="worktree path" />
       </div>
       {finalizedNotice && <InlineStatus tone="warning">{finalizedNotice}</InlineStatus>}
+      {hasTask && !navHistory && effectiveLifecycle?.state === "never_started" && (
+        <div className="session-execution">
+          <p>{execution?.start_requested ? "Start requested; waiting for the daemon to acquire capacity." : "This session is queued. Opening it does not start it."}</p>
+          <button
+            type="button"
+            className="btn small"
+            disabled={completionBusy || !!execution?.start_requested}
+            onClick={async () => {
+              setCompletionBusy(true);
+              try {
+                await ipc.startSession(taskSlug, id, repoPath);
+                setObservation(await ipc.sessionStatus(id, taskSlug));
+                setReclassifyTick((tick) => tick + 1);
+                setExecutionView(await ipc.getTaskExecution(taskSlug, repoPath));
+                setExecutionError("");
+              } catch (error) {
+                setExecutionError(String(error));
+              } finally {
+                setCompletionBusy(false);
+              }
+            }}
+          >
+            Start this queued session
+          </button>
+        </div>
+      )}
+      {executionError && (
+        <InlineStatus tone="warning" detail={executionError}>
+          Execution state unavailable; completion grants are disabled.
+        </InlineStatus>
+      )}
+      {execution && executionView && (
+        <div className="session-execution-bar">
+          <details className="session-execution" aria-label="Session execution">
+            <summary>
+              {executionStep?.title ?? execution.candidate.step_key} · {execution.lifecycle} · Owner {execution.owner_session_id}
+            </summary>
+            <p className="mono">Execution {execution.id}</p>
+            {execution.owner_session_id !== id && <p>This is a previous owner. Current owner: {execution.owner_session_id}.</p>}
+            {execution.lifecycle === "finishing" && <p>Outputs accepted; waiting for confirmed shutdown. The session remains interactive until it exits.</p>}
+            {execution.lifecycle === "interrupted" && <p>Ownership is uncertain; no replacement can start until shutdown is confirmed.</p>}
+            {execution.error && <InlineStatus tone="error">{execution.error}</InlineStatus>}
+            <ul aria-label="Execution inputs">
+              {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) =>
+                ids.map((occurrenceId) => {
+                  const occurrence = executionView.state.occurrences[occurrenceId];
+                  return (
+                    <li key={`${selector}:${occurrenceId}`}>
+                      <code>{selector}</code> ← <code>{occurrence?.relative_path ?? occurrenceId}</code> · occurrence {occurrenceId} · producer{" "}
+                      {occurrence?.producer_execution_id ?? "seed"}
+                    </li>
+                  );
+                }),
+              )}
+            </ul>
+            <ul aria-label="Execution outputs">
+              {execution.outputs.map((output) => (
+                <li key={output.relative_path}>
+                  <code>{output.selector}</code> → <code>{output.relative_path}</code> · {execution.receipt_id ? "accepted" : "pending"}
+                </li>
+              ))}
+              {Object.values(executionView.state.occurrences)
+                .filter((occurrence) => occurrence.producer_execution_id === execution.id && occurrence.selector.includes("*"))
+                .map((occurrence) => (
+                  <li key={occurrence.id}>
+                    Accepted member <code>{occurrence.relative_path}</code> · occurrence {occurrence.id}
+                  </li>
+                ))}
+            </ul>
+            <p>
+              Completion permission: {execution.permission.kind}
+              {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
+            </p>
+          </details>
+          {execution.owner_session_id === id && execution.permission.kind === "locked" && execution.lifecycle === "running" && (
+            <button
+              type="button"
+              className="btn small"
+              aria-label={`Allow this session to complete · ${id}`}
+              title={`Allow session ${id} to request completion`}
+              disabled={completionBusy || !!executionError}
+              onClick={() => void allowCompletion()}
+            >
+              Allow this session to complete
+            </button>
+          )}
+        </div>
+      )}
       <div className={`sessionbody${hasTask ? "" : " no-artifacts"}`} style={{ ["--artifact-width" as string]: `${artifactWidth}px` }}>
         <div className="termhost" ref={termhostRef}>
           {(viewBusy || (ompCoding && Boolean(termIntent) && !liveRpc && !livePty)) && (
@@ -1838,14 +1978,14 @@ export function SessionView({
               {contextActions.length > 0 && <ContextActionBar actions={contextActions} />}
             </>
           )}
-          {!navHistory && showPanel && lifecycle && (
+          {!navHistory && showPanel && effectiveLifecycle && (
             <>
               <SessionActionPanel
                 id={id}
                 phase={phase}
                 harness={harness}
                 model={model}
-                state={lifecycle}
+                state={effectiveLifecycle}
                 artifactReady={artifactReady}
                 repoPath={repoPath}
                 taskSlug={taskSlug}
@@ -2095,13 +2235,16 @@ export function SessionView({
                     )}
                     {displayedArtifactItems.map((item) => {
                       const commentCount = artifactCommentCountByArtifact[item.name] ?? 0;
+                      const node = findOwnedArtifactNode(artifactTree, item.name);
+                      const available = Boolean(item.attachment || node);
                       return (
                         <div
                           key={item.name}
                           className={`artifactitem${item.attachment ? " attachment" : ""}`}
                           title={item.name}
                           role="button"
-                          tabIndex={0}
+                          tabIndex={available ? 0 : -1}
+                          aria-disabled={!available}
                           onKeyDown={(e) => {
                             if ((e.key !== "Enter" && e.key !== " ") || e.target !== e.currentTarget) return;
                             e.preventDefault();
@@ -2115,13 +2258,20 @@ export function SessionView({
                                 .catch((error) => setArtifactErr(String(error)));
                               return;
                             }
-                            setSelectedArtifactNode(artifactTree.find((node) => node.source === "owned" && node.kind === "owned" && node.label === item.name) ?? null);
+                            if (!node) return;
+                            setSelectedArtifactNode(node);
                             setSelectedArtifact(item.name);
                             setArtifactMode("preview");
                             setArtifactErr("");
                           }}
                         >
                           <span className="artifactitem-name">{item.name}</span>
+                          {item.execution_id && (
+                            <span className="dim">
+                              Execution {item.execution_id} · {item.step_key} · {item.accepted ? "accepted" : "pending"}
+                            </span>
+                          )}
+                          {!available && <span className="pill">Not yet readable</span>}
                           {commentCount > 0 && (
                             <span
                               className="artifact-comment-count"
