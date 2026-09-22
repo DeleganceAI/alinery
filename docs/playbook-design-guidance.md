@@ -87,6 +87,7 @@ The approved v2 file is one `playbook.md`: TOML `+++` frontmatter, required meta
 - `single` uses an exact path. `each`/`complete` use one wildcard in the final filename segment.
 - At most one `each` or one `complete` per step; never both. Do not invent cross-product joins.
 - Paths are safe relative Markdown paths. Preserve supported safe subdirectories; reject traversal, absolute paths, wildcard directories, recursive globs and multiple wildcards.
+- Top-level output directories `attachments` and `subtasks` are reserved regardless of ASCII capitalization on every platform. They hold user evidence, not generated outputs, and remain outside ordinary artifact scanning. Other logical paths retain case-sensitive identity.
 - Required fields remain required. Explicit empty model/harness strings mean inheritance; omission is not another spelling of inheritance.
 - Unknown fields and unescaped unknown prompt tokens are errors. Do not invent a token in prompt code without updating the shared parser/runtime contract.
 - No YAML/v1 runtime fallback, step-kind enum, `human_approval`, retry/attempts or `on_failure` policy fields.

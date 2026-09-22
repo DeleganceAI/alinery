@@ -530,7 +530,13 @@ pub fn parse_playbook_md(source: &str) -> Result<NormalizedPlaybook, Vec<Playboo
         for (index, output) in step.outputs.iter().enumerate() {
             match ArtifactSelector::parse(&output.path) {
                 Ok(selector) => {
-                    if output.path.split('/').next().is_some_and(|part| matches!(part, "attachments" | "subtasks")) {
+                    // Evidence directories must stay unreachable on case-insensitive filesystems.
+                    if output
+                        .path
+                        .split('/')
+                        .next()
+                        .is_some_and(|part| part.eq_ignore_ascii_case("attachments") || part.eq_ignore_ascii_case("subtasks"))
+                    {
                         errors.push(PlaybookValidationError::new(
                             "reserved_output_namespace",
                             "attachments and subtasks are reserved output namespaces",
@@ -839,8 +845,9 @@ mod tests {
         let mixed = each.replace("mode = \"each\"}", "mode = \"each\"}, {path = \"other-*.md\", mode = \"complete\"}");
         rejects(&mixed, "multiple_collections");
         rejects(&fixture().replace("outputs = [{path = \"result.md\"}]", "outputs = []"), "missing_outputs");
-        for namespace in ["attachments", "subtasks"] {
+        for namespace in ["attachments", "Attachments", "ATTACHMENTS", "aTtAcHmEnTs", "subtasks", "Subtasks", "SUBTASKS", "sUbTaSkS"] {
             rejects(&fixture().replace("result.md", &format!("{namespace}/result.md")), "reserved_output_namespace");
+            rejects(&fixture().replace("result.md", &format!("{namespace}/nested/result-*.md")), "reserved_output_namespace");
         }
         assert!(parse_playbook_md(
             &fixture()

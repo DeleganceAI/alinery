@@ -111,6 +111,49 @@ fn reservations_keep_case_distinct_roles_physically_disjoint() {
 }
 
 #[test]
+fn reserved_output_namespaces_reject_retained_definitions_without_overwriting_evidence() {
+    let mut f = Fixture::new("{path=\"reports/result.md\"}", false, true, 10);
+    let root = crate::artifacts_dir(&f.repo, "task");
+    let original = b"user evidence\0must remain unchanged\n";
+    for namespace in ["attachments", "subtasks"] {
+        fs::create_dir_all(root.join(namespace)).unwrap();
+        fs::write(root.join(namespace).join("1-result-1.md"), original).unwrap();
+    }
+    for namespace in ["Attachments", "Subtasks"] {
+        let source = f.source.replace("reports/result.md", &format!("{namespace}/result.md"));
+        // Model a task retained before the reserved-name validation was fixed.
+        fs::write(task_playbook_path(&f.repo, "task").unwrap(), &source).unwrap();
+        f.state.definition_identity = definition_identity(source.as_bytes());
+        let loaded = read_task_playbook(&f.repo, "task", &f.state);
+        if let Ok(definition) = &loaded {
+            f.definition = definition.clone();
+            let id = f.reserve(true);
+            f.write_output(&id, 0, None);
+        }
+        for reserved in ["attachments", "subtasks"] {
+            assert_eq!(fs::read(root.join(reserved).join("1-result-1.md")).unwrap(), original, "{namespace} overwrote {reserved}");
+        }
+        assert!(loaded.unwrap_err().contains("reserved_output_namespace"));
+    }
+
+    // Normal outputs still run without treating user evidence as generated artifacts.
+    fs::write(task_playbook_path(&f.repo, "task").unwrap(), &f.source).unwrap();
+    f.state.definition_identity = definition_identity(f.source.as_bytes());
+    f.definition = read_task_playbook(&f.repo, "task", &f.state).unwrap();
+    let id = f.reserve(false);
+    let owner = f.run(&id);
+    f.write_output(&id, 0, None);
+    assert!(matches!(
+        accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap(),
+        CompletionOutcome::Accepted { .. }
+    ));
+    assert_eq!(f.state.occurrences.values().map(|o| o.logical_path.as_str()).collect::<Vec<_>>(), ["reports/result.md"]);
+    for namespace in ["attachments", "subtasks"] {
+        assert_eq!(fs::read(root.join(namespace).join("1-result-1.md")).unwrap(), original);
+    }
+}
+
+#[test]
 fn allocation_has_no_999_collision_limit() {
     let mut f = Fixture::new("{path=\"result.md\"}", false, true, 10);
     for i in 1..=1001 {
