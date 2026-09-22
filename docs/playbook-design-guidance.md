@@ -124,6 +124,39 @@ A static graph can contain cycles while actual execution history grows forward t
 
 Binding and progression follow actual execution records. A naming rule is not a loop algorithm. A human-steered loop may intentionally pause for direction rather than prove that it can reach a fully automatic terminal branch.
 
+### Authoring loops: include the whole repeated unit
+
+**If work must be fresh each iteration, include it in the dependency chain that leads back to the loop's start. Keep only genuinely reusable inputs outside the loop.**
+
+Avoid a short loop with iteration-dependent work hanging off it as a side branch:
+
+```text
+A: Draft -> B: Request another pass -> A
+   |
+   +-> C: Analyze -> D: Decide
+
+D consumes both A's draft and C's analysis.
+```
+
+Here A and B form the loop, but C and D are outside it. The current scheduler blocks inherited results from producers inside the loop's strongly connected component; it can still inherit results from producers outside it. After A2 finishes, D can therefore bind draft A2 with analysis C1 while C2 is still queued or running. When C2 finishes, another D binding can become eligible. A later correct execution does not undo the earlier decision based on stale evidence.
+
+Instead, put the repeat decision after the work that must finish for this pass:
+
+```text
+A: Draft -> C: Analyze -> D: Decide -> B: Request another pass
+   ^                                       |
+   +---------------------------------------+
+
+D still consumes both A's draft and C's analysis.
+B consumes D's decision before producing the next trigger artifact.
+```
+
+All four steps now belong to the same loop component. On the second pass, D needs A2 and C2; C1 cannot substitute for C2 under the loop inheritance rule. Express these dependencies through declared artifact inputs/outputs, not step order or prompt wording. The existing coding-input and exclusivity rules still apply.
+
+A fixed requirements artifact may remain outside the loop when it genuinely applies unchanged to every pass. An analysis of a changing draft is not such an invariant merely because its producer is drawn outside the cycle.
+
+This is an authoring constraint, not a new validator guarantee: the current validator accepts the problematic side-branch shape. Prefer the complete-loop pattern when designing playbooks; do not rely on the scheduler to infer freshness obligations for arbitrary downstream side branches. This does not move occurrence selection into prompts or filenames—the engine still owns concrete input bindings.
+
 ### Artifact-triggered loop entry
 
 This is the agreed loop design: a new accepted artifact occurrence requests another execution. Rewrites and filename numbering do not.
