@@ -51,6 +51,8 @@ curl -fsSL https://cdn.alinery.ai/install.sh | bash
 
 **Sessions survive app quit.** A per-repo daemon (`alineryd`) owns the PTYs. Quit the UI and agents keep running; relaunch reattaches and replays the reconstructed screen. History is also written to an on-disk `.scrollback` sidecar so it can survive daemon restarts. Explicit teardown only: **Quit & stop all sessions** / `stop_daemon`.
 
+Board and session discovery read saved task metadata and the task's retained playbook, even when its owning daemon is offline or incompatible. Saved session output remains readable without reviving the owner. Live execution queries and mutations still require the compatible owning daemon; an unavailable owner is not proof that a session stopped or completed. Missing or corrupt retained data is reported as a storage error, not replaced by the current library definition or an empty execution state.
+
 ### Sub-tasks
 
 A task can own one active direct child. Click **Start sub-task** on the parent to open one

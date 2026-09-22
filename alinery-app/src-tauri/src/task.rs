@@ -66,7 +66,7 @@ pub(crate) fn branch_ref_conflicts(repo: &Path, candidate: &str) -> bool {
     };
     String::from_utf8_lossy(&out.stdout)
         .lines()
-        .any(|existing| existing == candidate || existing.starts_with(&format!("{candidate}/")) || candidate.starts_with(&format!("{existing}/")))
+        .any(|existing| alinery_core::branch_names_conflict(existing, candidate))
 }
 
 // Dedupe so dir, branch, and worktree path are all unique (-2, -3, …). `git
@@ -826,16 +826,13 @@ pub(crate) fn list_tasks_for_repo(repo: &Path) -> Result<Vec<Task>, String> {
         return Ok(vec![]);
     }
     let mut tasks = vec![];
-    for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
-        let Ok(entry) = entry else { continue };
+    for entry in fs::read_dir(&dir).map_err(|error| format!("read {}: {error}", dir.display()))? {
+        let entry = entry.map_err(|error| format!("read {}: {error}", dir.display()))?;
         if !entry.path().join("task.md").exists() {
             continue;
         }
         if let Some(slug) = entry.file_name().to_str() {
-            match read_task(repo, slug) {
-                Ok(t) => tasks.push(t),
-                Err(e) => eprintln!("skip task {slug}: {e}"),
-            }
+            tasks.push(read_task(repo, slug).map_err(|error| format!("task {}: {error}", entry.path().display()))?);
         }
     }
     tasks.sort_by_key(|t| t.created);
@@ -849,15 +846,17 @@ pub(crate) async fn list_tasks() -> Result<Vec<Task>, String> {
     list_tasks_for_repo(&repo)
 }
 
-pub(crate) fn retained_task_definition(repo: &Path, task: &Task, app_config: Option<&Path>) -> Result<Option<alinery_core::playbook::NormalizedPlaybook>, String> {
+pub(crate) fn retained_task_definition(repo: &Path, task: &Task) -> Result<Option<alinery_core::playbook::NormalizedPlaybook>, String> {
     if task.draft || task.engine_version < 2 {
         return Ok(None);
     }
-    let app_config = app_config.ok_or("app config identity unavailable")?;
-    let daemon = task_daemon_for(repo, &task.slug, app_config)?;
-    daemon
-        .get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug: task.slug.clone() })
-        .map(|reply| Some(reply.definition))
+    // Display uses the task-owned snapshot, never a live owner or the mutable library.
+    // The shared reader checks both the stored state and the retained source's integrity.
+    let read = || {
+        let execution = alinery_core::execution::read_execution_state(repo, &task.slug)?;
+        alinery_core::execution::read_task_playbook(repo, &task.slug, &execution)
+    };
+    read().map(Some).map_err(|error| format!("task {}: {error}", task_dir(repo, &task.slug).display()))
 }
 
 pub(crate) fn is_primary_playbook_session(_repo: &Path, task: &Task, session: &SessionMeta) -> bool {
@@ -886,8 +885,8 @@ pub(crate) fn task_updated_at(repo: &Path, task: &Task, sessions: &[SessionMeta]
     updated
 }
 
-pub(crate) fn board_task(repo: &Path, repo_path: &str, task: Task, app_config: Option<&Path>) -> Result<BoardTask, String> {
-    let definition = retained_task_definition(repo, &task, app_config)?;
+pub(crate) fn board_task(repo: &Path, repo_path: &str, task: Task) -> Result<BoardTask, String> {
+    let definition = retained_task_definition(repo, &task)?;
     let sessions = list_sessions_for_repo(repo, &task.slug)?;
     let live: Vec<&SessionMeta> = sessions.iter().filter(|session| !session.archived).collect();
     let current_phase = live
@@ -928,23 +927,22 @@ pub(crate) fn board_task(repo: &Path, repo_path: &str, task: Task, app_config: O
     })
 }
 
-fn board_tasks_from_loaded(repo: &Path, repo_path: &str, tasks: Vec<Task>, app_config: Option<&Path>) -> Result<Vec<BoardTask>, String> {
+fn board_tasks_from_loaded(repo: &Path, repo_path: &str, tasks: Vec<Task>) -> Result<Vec<BoardTask>, String> {
     alinery_core::validate_task_relationship_fields(
         tasks
             .iter()
             .map(|task| (task.slug.as_str(), task.parent_task.as_str(), task.active_subtask.as_str(), task.archived)),
     )?;
-    tasks.into_iter().map(|task| board_task(repo, repo_path, task, app_config)).collect()
+    tasks.into_iter().map(|task| board_task(repo, repo_path, task)).collect()
 }
 
 #[cfg(test)]
 pub(crate) fn board_tasks_for_repo(repo: &Path, repo_path: &str) -> Result<Vec<BoardTask>, String> {
-    board_tasks_from_loaded(repo, repo_path, list_tasks_for_repo(repo)?, None)
+    board_tasks_from_loaded(repo, repo_path, list_tasks_for_repo(repo)?)
 }
 
 #[tauri::command]
 pub(crate) async fn list_board_tasks(app: AppHandle, all_repos: bool) -> Result<Vec<BoardTask>, String> {
-    let app_config = app_config_path(&app)?;
     let repos = if all_repos {
         load_app_config(&app).known_repos
     } else {
@@ -953,10 +951,7 @@ pub(crate) async fn list_board_tasks(app: AppHandle, all_repos: bool) -> Result<
     let mut out = vec![];
     for repo_path in dedupe_known_repos(repos) {
         let repo = PathBuf::from(&repo_path);
-        match list_tasks_for_repo(&repo) {
-            Ok(tasks) => out.extend(board_tasks_from_loaded(&repo, &repo_path, tasks, Some(&app_config))?),
-            Err(error) => eprintln!("skip repo {repo_path}: {error}"),
-        }
+        out.extend(board_tasks_from_loaded(&repo, &repo_path, list_tasks_for_repo(&repo)?)?);
     }
     out.sort_by_key(|task| task.task.created);
     Ok(out)
@@ -966,7 +961,7 @@ pub(crate) async fn list_board_tasks(app: AppHandle, all_repos: bool) -> Result<
 pub(crate) async fn list_task_activity(app: AppHandle, refs: Vec<TaskActivityRef>) -> HashMap<String, TaskActivitySummary> {
     let app_config = app_config_path(&app).ok();
     let app_config_identity = app_config.as_ref().map(|path| alinery_core::app_config_identity(path));
-    list_task_activity_for_refs(&refs, app_config_identity.as_deref(), app_config.as_deref())
+    list_task_activity_for_refs(&refs, app_config_identity.as_deref())
 }
 
 pub(crate) fn archive_task_in(repo: &Path, slug: &str) -> Result<(), String> {

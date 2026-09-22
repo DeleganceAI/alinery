@@ -4,6 +4,53 @@
 use super::*;
 
 #[test]
+fn durable_session_discovery_preserves_offline_history_without_live_state() {
+    let repo = activity_repo("durable-sessions");
+    let task = write_retained_discovery_task(&repo, "offline", "foreign", false);
+    let meta = SessionMeta {
+        id: "saved-session".into(),
+        phase: "implementation".into(),
+        execution_id: "execution-1".into(),
+        daemon_namespace: "foreign".into(),
+        started_at: Some(10),
+        ..Default::default()
+    };
+    let meta_path = session_meta_path(&repo, &task.slug, &meta.id);
+    let meta_bytes = serde_json::to_vec(&meta).unwrap();
+    fs::write(&meta_path, &meta_bytes).unwrap();
+    let history = b"saved output while the owner was running\r\n";
+    fs::write(alinery_core::session_scrollback_path(&repo, &task.slug, &meta.id), history).unwrap();
+    let state_path = alinery_core::execution::execution_state_path(&repo, &task.slug).unwrap();
+    let state_before = fs::read(&state_path).unwrap();
+
+    let items = session_list_items_for_repo(&repo, &repo.display().to_string(), false).unwrap();
+    assert_eq!(items.iter().map(|item| item.session.id.as_str()).collect::<Vec<_>>(), ["saved-session"]);
+    assert_eq!(items[0].playbook_title, "One-shot");
+    assert_eq!(items[0].step_title, "Implement and Verify");
+    assert!(items[0].is_playbook_step);
+    assert_eq!(alinery_core::read_session_history(&repo, &task.slug, &meta.id, Some(0), Some(1024)).unwrap().data, history);
+
+    let reference = crate::SessionStatusRef {
+        repo_path: repo.display().to_string(),
+        task_slug: task.slug.clone(),
+        id: meta.id.clone(),
+    };
+    let observations = crate::session_list_statuses_with_repo_resolver(std::slice::from_ref(&reference), |_| Ok(repo.clone()));
+    let key = crate::session_list_status_key(&reference.repo_path, &reference.task_slug, &reference.id);
+    let observation = observations.get(&key).unwrap();
+    assert_eq!(observation.lifecycle, crate::LifecycleState::Orphaned);
+    assert!(observation.state.is_none());
+    assert!(observation.transport.is_none());
+    assert_eq!(items[0].session.ended_at, None);
+    assert_eq!(items[0].session.exit_code, None);
+    assert!(crate::task_daemon_for(&repo, &task.slug, &repo.join("app.toml")).is_err());
+    assert_eq!(fs::read(&meta_path).unwrap(), meta_bytes);
+    assert_eq!(fs::read(&state_path).unwrap(), state_before);
+    assert!(!alinery_core::alineryd_socket_path(&repo, Some("foreign")).exists());
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
 fn session_stream_coalesces_consecutive_reads() {
     use std::net::Shutdown;
     use std::os::unix::net::UnixStream;
@@ -175,9 +222,9 @@ fn session_list_items_skip_archived_and_sort_newest_first() {
     };
     fs::write(root_sessions_dir(&repo).join("root-session.meta.json"), serde_json::to_string(&root_meta).unwrap()).unwrap();
 
-    let items = session_list_items_for_repo(&repo, "/repo/a", false, None).unwrap();
+    let items = session_list_items_for_repo(&repo, "/repo/a", false).unwrap();
     assert_eq!(items.iter().map(|i| i.session.id.as_str()).collect::<Vec<_>>(), ["alpha-new", "alpha-old"]);
-    let archived_items = session_list_items_for_repo(&repo, "/repo/a", true, None).unwrap();
+    let archived_items = session_list_items_for_repo(&repo, "/repo/a", true).unwrap();
     assert_eq!(
         archived_items.iter().map(|i| i.session.id.as_str()).collect::<Vec<_>>(),
         ["alpha-archived", "alpha-new", "alpha-old"]

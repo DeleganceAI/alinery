@@ -138,13 +138,13 @@ pub(crate) fn session_meta_path(repo: &Path, slug: &str, id: &str) -> PathBuf {
     dir.join(format!("{id}.meta.json"))
 }
 
-pub(crate) fn session_list_items_for_repo(repo: &Path, repo_path: &str, include_archived_sessions: bool, app_config: Option<&Path>) -> Result<Vec<SessionListItem>, String> {
+pub(crate) fn session_list_items_for_repo(repo: &Path, repo_path: &str, include_archived_sessions: bool) -> Result<Vec<SessionListItem>, String> {
     let mut out = vec![];
     for task in list_tasks_for_repo(repo)? {
         if task.archived {
             continue;
         }
-        let definition = retained_task_definition(repo, &task, app_config)?;
+        let definition = retained_task_definition(repo, &task)?;
         let sessions = list_sessions_for_repo(repo, &task.slug)?;
         out.extend(sessions.into_iter().filter(|session| include_archived_sessions || !session.archived).map(|session| {
             let step = definition.as_ref().and_then(|definition| definition.step.iter().find(|step| step.key == session.phase));
@@ -329,7 +329,6 @@ pub(crate) async fn list_sessions(task_slug: String) -> Result<Vec<SessionMeta>,
 
 #[tauri::command]
 pub(crate) async fn list_session_items(app: AppHandle, all_repos: bool, include_archived: bool) -> Result<Vec<SessionListItem>, String> {
-    let app_config = app_config_path(&app)?;
     let repos = if all_repos {
         load_app_config(&app).known_repos
     } else {
@@ -338,7 +337,7 @@ pub(crate) async fn list_session_items(app: AppHandle, all_repos: bool, include_
     let mut out = vec![];
     for repo_path in dedupe_known_repos(repos) {
         let repo = PathBuf::from(&repo_path);
-        out.extend(session_list_items_for_repo(&repo, &repo_path, include_archived, Some(&app_config))?);
+        out.extend(session_list_items_for_repo(&repo, &repo_path, include_archived)?);
     }
     out.sort_by(|a, b| {
         b.session
@@ -365,18 +364,15 @@ pub(crate) fn list_sessions_in_dir(dir: PathBuf) -> Result<Vec<SessionMeta>, Str
         return Ok(vec![]);
     }
     let mut out = vec![];
-    let entries = fs::read_dir(&dir).map_err(|e| e.to_string())?;
+    let entries = fs::read_dir(&dir).map_err(|error| format!("read {}: {error}", dir.display()))?;
     for entry in entries {
-        let entry = entry.map_err(|e| e.to_string())?;
+        let entry = entry.map_err(|error| format!("read {}: {error}", dir.display()))?;
         let path = entry.path();
         if !path.to_string_lossy().ends_with(".meta.json") {
             continue;
         }
-        let s = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        match serde_json::from_str::<SessionMeta>(&s) {
-            Ok(m) => out.push(m),
-            Err(e) => eprintln!("skip session {}: {e}", path.display()),
-        }
+        let s = fs::read_to_string(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
+        out.push(serde_json::from_str::<SessionMeta>(&s).map_err(|error| format!("parse {}: {error}", path.display()))?);
     }
     // created is seconds-granularity, so two same-second sessions would tie and fall
     // to arbitrary read_dir order. Break ties on id (= "s{nanos}", lexicographically
@@ -573,7 +569,7 @@ pub(crate) fn open_session(
         if task.draft || task.archived {
             return Err("draft or archived tasks cannot launch sessions".into());
         }
-        retained_task_definition(&repo, &task, Some(&app_config_path(&app)?))?;
+        task_daemon_for(&repo, &task.slug, &app_config_path(&app)?)?.get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug: task.slug.clone() })?;
         if let Some(launch) = alinery_core::read_meta_launch_fields(&repo, slug_trim, &id) {
             if !alinery_core::is_allowed_launch_harness(&launch.harness) {
                 return Err(format!("unknown harness '{}'", launch.harness));

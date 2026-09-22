@@ -3,6 +3,130 @@
 //! `use super::*` reaches the shared imports and fixtures in tests/mod.rs.
 use super::*;
 use crate::{artifacts_dir, chat_file_stat, copy_chat_attachments_in, read_chat_image_in, write_chat_attachment_bytes_in, MAX_CHAT_IMAGE_BYTES};
+use std::collections::BTreeSet;
+
+#[test]
+fn durable_board_discovery_keeps_offline_and_archived_owners_and_retained_titles() {
+    let repo = activity_repo("durable-board");
+    for (slug, lane, archived) in [
+        ("healthy", "healthy", false),
+        ("offline", "offline", false),
+        ("archived", "offline", true),
+        ("incompatible", "incompatible", false),
+        ("foreign-config", "foreign-config", false),
+    ] {
+        write_retained_discovery_task(&repo, slug, lane, archived);
+        let meta = SessionMeta {
+            id: format!("{slug}-session"),
+            phase: "implementation".into(),
+            execution_id: "execution-1".into(),
+            daemon_namespace: lane.into(),
+            ..Default::default()
+        };
+        fs::write(session_meta_path(&repo, slug, &meta.id), serde_json::to_vec(&meta).unwrap()).unwrap();
+    }
+    let app_config = repo.join("app.toml");
+    let version = |protocol, identity: String| format!("{}\n", serde_json::json!({"protocol": protocol, "build_id": "fixture", "app_config_identity": identity}));
+    let identity = alinery_core::app_config_identity(&app_config);
+    let healthy = status_list_socket(
+        alinery_core::alineryd_socket_path(&repo, Some("healthy")),
+        Some(&version(PROTOCOL_VERSION, identity.clone())),
+    );
+    let incompatible = status_list_socket(
+        alinery_core::alineryd_socket_path(&repo, Some("incompatible")),
+        Some(&version(PROTOCOL_VERSION + 1, identity)),
+    );
+    let foreign_config = status_list_socket(
+        alinery_core::alineryd_socket_path(&repo, Some("foreign-config")),
+        Some(&version(PROTOCOL_VERSION, "different-config".into())),
+    );
+    assert!(crate::task_daemon_for(&repo, "healthy", &app_config).is_ok());
+    assert!(crate::task_daemon_for(&repo, "offline", &app_config).err().unwrap().contains("unreachable"));
+    assert!(crate::task_daemon_for(&repo, "incompatible", &app_config).err().unwrap().contains("repo-protocol-mismatch"));
+    assert!(crate::task_daemon_for(&repo, "foreign-config", &app_config)
+        .err()
+        .unwrap()
+        .contains("repo-app-config-mismatch"));
+    let library = repo.join(".alinery/playbooks/one-shot");
+    fs::create_dir_all(&library).unwrap();
+    let library_file = library.join("playbook.md");
+    let source = include_str!("../../playbooks/one-shot/playbook.md");
+    fs::write(&library_file, source.replace("One-shot", "Replacement").replace("Implement and Verify", "Changed step")).unwrap();
+    for deleted in [false, true] {
+        if deleted {
+            fs::remove_file(&library_file).unwrap();
+        }
+        let rows = board_tasks_for_repo(&repo, &repo.display().to_string()).unwrap();
+        let slugs: BTreeSet<_> = rows.iter().map(|row| row.task.slug.as_str()).collect();
+        assert_eq!(slugs, BTreeSet::from(["healthy", "offline", "archived", "incompatible", "foreign-config"]));
+        for row in rows {
+            assert_eq!(row.playbook_title, "One-shot");
+            assert_eq!(row.current_step_title, "Implement and Verify");
+            assert_eq!(row.session_count, 1);
+            assert_eq!(row.task.archived, row.task.slug == "archived");
+        }
+        let sessions = session_list_items_for_repo(&repo, &repo.display().to_string(), false).unwrap();
+        assert_eq!(
+            sessions.iter().map(|item| item.task_slug.as_str()).collect::<BTreeSet<_>>(),
+            BTreeSet::from(["healthy", "offline", "incompatible", "foreign-config"])
+        );
+        for item in sessions {
+            assert_eq!(item.playbook_title, "One-shot");
+            assert_eq!(item.step_title, "Implement and Verify");
+        }
+    }
+    // Only the explicit compatibility probes above connect (liveness + version).
+    // Discovery must not query, launch, or take over any owner.
+    assert_eq!(healthy.join().unwrap(), 2);
+    assert_eq!(incompatible.join().unwrap(), 2);
+    assert_eq!(foreign_config.join().unwrap(), 2);
+    assert!(!alinery_core::alineryd_socket_path(&repo, Some("offline")).exists());
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn durable_discovery_reports_task_scoped_storage_errors() {
+    let repo = activity_repo("durable-errors");
+    let task = write_retained_discovery_task(&repo, "broken", "offline", false);
+    let state_path = alinery_core::execution::execution_state_path(&repo, &task.slug).unwrap();
+    let definition_path = alinery_core::execution::task_playbook_path(&repo, &task.slug).unwrap();
+    let state = fs::read(&state_path).unwrap();
+    let definition = fs::read(&definition_path).unwrap();
+    for (path, corrupt) in [(&state_path, false), (&state_path, true), (&definition_path, false), (&definition_path, true)] {
+        if corrupt {
+            fs::write(path, "not valid retained data").unwrap();
+        } else {
+            fs::remove_file(path).unwrap();
+        }
+        let board_error = board_tasks_for_repo(&repo, &repo.display().to_string())
+            .err()
+            .expect("board must report unreadable durable data");
+        let session_error = session_list_items_for_repo(&repo, &repo.display().to_string(), false)
+            .err()
+            .expect("session discovery must report unreadable durable data");
+        for error in [board_error, session_error] {
+            assert!(error.contains(&repo.display().to_string()), "{error}");
+            assert!(error.contains("broken"), "{error}");
+            assert!(!error.contains("daemon"), "{error}");
+        }
+        fs::write(&state_path, &state).unwrap();
+        fs::write(&definition_path, &definition).unwrap();
+    }
+    for path in [session_meta_path(&repo, &task.slug, "corrupt"), task_dir(&repo, &task.slug).join("task.md")] {
+        fs::write(&path, "invalid saved metadata").unwrap();
+        let board_error = board_tasks_for_repo(&repo, &repo.display().to_string())
+            .err()
+            .expect("corrupt metadata must not silently remove a row");
+        let session_error = session_list_items_for_repo(&repo, &repo.display().to_string(), false)
+            .err()
+            .expect("corrupt metadata must not silently remove a session");
+        for error in [board_error, session_error] {
+            assert!(error.contains(&path.display().to_string()), "{error}");
+        }
+        fs::remove_file(&path).unwrap();
+    }
+    let _ = fs::remove_dir_all(repo);
+}
 
 #[test]
 fn task_without_draft_field_defaults_false() {
@@ -937,7 +1061,6 @@ fn task_activity_parent_follows_active_descendants_recursively() {
         &repo,
         &["parent".into()],
         &[parent_manager.clone(), child_manager.clone(), activity_status_busy("grandchild-session")],
-        None,
     );
     assert_eq!(running.get(&key).unwrap().status, Some(crate::TaskActivityStatus::Running));
     assert_eq!(
@@ -949,7 +1072,7 @@ fn task_activity_parent_follows_active_descendants_recursively() {
     grandchild_waiting.state.agent = alinery_core::AgentState::WaitingForInput {
         correlation_id: "nested-ask".into(),
     };
-    let waiting = crate::resolve_task_activity_for_repo(&repo, &["parent".into()], &[parent_manager.clone(), child_manager, grandchild_waiting], None);
+    let waiting = crate::resolve_task_activity_for_repo(&repo, &["parent".into()], &[parent_manager.clone(), child_manager, grandchild_waiting]);
     assert_eq!(waiting.get(&key).unwrap().status, Some(crate::TaskActivityStatus::WaitingForInput));
     assert_eq!(
         waiting.get(&key).unwrap().active_session.as_ref().map(|session| session.id.as_str()),
@@ -964,7 +1087,6 @@ fn task_activity_parent_follows_active_descendants_recursively() {
             activity_status_busy("child-manager-session"),
             activity_status_idle("grandchild-session"),
         ],
-        None,
     );
     assert_eq!(manager_running.get(&key).unwrap().status, Some(crate::TaskActivityStatus::Running));
     assert_eq!(
@@ -976,12 +1098,7 @@ fn task_activity_parent_follows_active_descendants_recursively() {
     manager_waiting.state.agent = alinery_core::AgentState::WaitingForApproval {
         correlation_id: "nested-approval".into(),
     };
-    let manager_attention = crate::resolve_task_activity_for_repo(
-        &repo,
-        &["parent".into()],
-        &[parent_manager, manager_waiting, activity_status_idle("grandchild-session")],
-        None,
-    );
+    let manager_attention = crate::resolve_task_activity_for_repo(&repo, &["parent".into()], &[parent_manager, manager_waiting, activity_status_idle("grandchild-session")]);
     assert_eq!(manager_attention.get(&key).unwrap().status, Some(crate::TaskActivityStatus::WaitingForApproval));
     assert_eq!(
         manager_attention.get(&key).unwrap().active_session.as_ref().map(|session| session.id.as_str()),
@@ -1001,12 +1118,7 @@ fn task_activity_parent_follows_descendant_past_unknown_omp_managers() {
     let mut child_manager = activity_status_idle("child-manager-session");
     child_manager.state.agent = alinery_core::AgentState::Unknown;
 
-    let activity = crate::resolve_task_activity_for_repo(
-        &repo,
-        &["parent".into()],
-        &[parent_manager, child_manager, activity_status_busy("grandchild-session")],
-        None,
-    );
+    let activity = crate::resolve_task_activity_for_repo(&repo, &["parent".into()], &[parent_manager, child_manager, activity_status_busy("grandchild-session")]);
 
     let summary = activity.get(&key).unwrap();
     assert_eq!(summary.status, Some(crate::TaskActivityStatus::Running));
@@ -1026,7 +1138,6 @@ fn task_activity_parent_follows_descendant_past_stale_busy_session() {
         &repo,
         &["parent".into()],
         &[stale_parent, activity_status_idle("manager-session"), activity_status_busy("child-session")],
-        None,
     );
 
     let summary = activity.get(&key).unwrap();
@@ -1048,7 +1159,6 @@ fn task_activity_parent_follows_descendant_past_unsupported_busy_session() {
         &repo,
         &["parent".into()],
         &[unsupported_parent, activity_status_idle("manager-session"), activity_status_busy("child-session")],
-        None,
     );
 
     let summary = activity.get(&key).unwrap();
@@ -1064,7 +1174,7 @@ fn task_activity_failed_busy_session_is_not_active() {
     let mut failed = activity_status_busy("task-session");
     failed.state.playbook = alinery_core::PlaybookState::Failed { reason: "rejected".into() };
 
-    let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[failed], None);
+    let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[failed]);
 
     let summary = activity_summary(&activity, &repo, "task");
     assert_eq!(summary.status, Some(crate::TaskActivityStatus::Failed));
@@ -1078,12 +1188,7 @@ fn task_activity_parent_runs_when_bound_manager_runs() {
     write_activity_parent_child(&repo);
     let key = format!("{}:parent", repo.display());
 
-    let activity = crate::resolve_task_activity_for_repo(
-        &repo,
-        &["parent".into()],
-        &[activity_status_busy("manager-session"), activity_status_idle("child-session")],
-        None,
-    );
+    let activity = crate::resolve_task_activity_for_repo(&repo, &["parent".into()], &[activity_status_busy("manager-session"), activity_status_idle("child-session")]);
 
     assert_eq!(activity.get(&key).unwrap().status, Some(crate::TaskActivityStatus::Running));
     let _ = fs::remove_dir_all(repo);
@@ -1099,13 +1204,13 @@ fn task_activity_bound_manager_attention_precedes_child_activity() {
         correlation_id: "proposal".into(),
     };
 
-    let input = crate::resolve_task_activity_for_repo(&repo, &["parent".into()], &[manager.clone(), child.clone()], None);
+    let input = crate::resolve_task_activity_for_repo(&repo, &["parent".into()], &[manager.clone(), child.clone()]);
     assert_eq!(input.get(&key).unwrap().status, Some(crate::TaskActivityStatus::WaitingForInput));
 
     manager.state.agent = alinery_core::AgentState::WaitingForApproval {
         correlation_id: "approval".into(),
     };
-    let approval = crate::resolve_task_activity_for_repo(&repo, &["parent".into()], &[manager, child], None);
+    let approval = crate::resolve_task_activity_for_repo(&repo, &["parent".into()], &[manager, child]);
     assert_eq!(approval.get(&key).unwrap().status, Some(crate::TaskActivityStatus::WaitingForApproval));
 
     let _ = fs::remove_dir_all(repo);
@@ -1118,14 +1223,14 @@ fn task_activity_parent_uses_child_when_bound_manager_is_not_running() {
     let key = format!("{}:parent", repo.display());
     let manager = activity_status_idle("manager-session");
 
-    let running = crate::resolve_task_activity_for_repo(&repo, &["parent".into()], &[manager.clone(), activity_status_busy("child-session")], None);
+    let running = crate::resolve_task_activity_for_repo(&repo, &["parent".into()], &[manager.clone(), activity_status_busy("child-session")]);
     assert_eq!(running.get(&key).unwrap().status, Some(crate::TaskActivityStatus::Running));
 
     let mut child_waiting = activity_status_busy("child-session");
     child_waiting.state.agent = alinery_core::AgentState::WaitingForInput {
         correlation_id: "child-ask".into(),
     };
-    let waiting = crate::resolve_task_activity_for_repo(&repo, &["parent".into()], &[manager, child_waiting], None);
+    let waiting = crate::resolve_task_activity_for_repo(&repo, &["parent".into()], &[manager, child_waiting]);
     assert_eq!(waiting.get(&key).unwrap().status, Some(crate::TaskActivityStatus::WaitingForInput));
 
     let _ = fs::remove_dir_all(repo);
@@ -1144,7 +1249,6 @@ fn task_activity_parent_session_precedes_failed_active_child() {
         &repo,
         &["parent".into()],
         &[activity_status_idle("manager-session"), activity_status_busy("parent-session")],
-        None,
     );
 
     let summary = activity.get(&key).unwrap();
@@ -1174,7 +1278,6 @@ fn task_activity_unbound_manager_drives_parent_after_child_deletion() {
         &repo,
         &["parent".into()],
         &[activity_status_idle("parent-session"), activity_status_busy("manager-session")],
-        None,
     );
     assert_eq!(running.get(&key).unwrap().status, Some(crate::TaskActivityStatus::Running));
 
@@ -1182,7 +1285,7 @@ fn task_activity_unbound_manager_drives_parent_after_child_deletion() {
     manager_waiting.state.agent = alinery_core::AgentState::WaitingForInput {
         correlation_id: "proposal".into(),
     };
-    let waiting = crate::resolve_task_activity_for_repo(&repo, &["parent".into()], &[activity_status_busy("parent-session"), manager_waiting], None);
+    let waiting = crate::resolve_task_activity_for_repo(&repo, &["parent".into()], &[activity_status_busy("parent-session"), manager_waiting]);
     assert_eq!(waiting.get(&key).unwrap().status, Some(crate::TaskActivityStatus::WaitingForInput));
 
     let _ = fs::remove_dir_all(repo);
@@ -1198,14 +1301,14 @@ fn activity_summary<'a>(activity: &'a std::collections::HashMap<String, crate::T
 fn task_activity_running_requires_live_process() {
     let repo = activity_repo("running");
     write_activity_task(&repo, "task", "tdd", false);
-    let live = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[activity_status_busy("task-session")], None);
+    let live = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[activity_status_busy("task-session")]);
     let summary = activity_summary(&live, &repo, "task");
     assert_eq!(summary.status, Some(crate::TaskActivityStatus::Running));
     assert_eq!(summary.active_session.as_ref().map(|session| session.id.as_str()), Some("task-session"));
 
     let mut exited_busy = activity_status_busy("task-session");
     exited_busy.state.process = alinery_core::ProcessState::Exited { code: Some(1) };
-    let exited = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[exited_busy], None);
+    let exited = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[exited_busy]);
     assert_eq!(activity_summary(&exited, &repo, "task"), &crate::TaskActivitySummary::default());
     let _ = fs::remove_dir_all(repo);
 }
@@ -1246,7 +1349,7 @@ fn task_activity_selects_one_top_status_and_prefers_busy_active_session() {
     };
     approval.state.playbook = alinery_core::PlaybookState::Failed { reason: "boom".into() };
 
-    let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[approval, activity_status_busy("task-session"), input], None);
+    let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[approval, activity_status_busy("task-session"), input]);
     let summary = activity_summary(&activity, &repo, "task");
     assert_eq!(summary.status, Some(crate::TaskActivityStatus::WaitingForInput));
     assert_eq!(serde_json::to_value(summary).unwrap()["status"], "waiting_for_input");
@@ -1263,13 +1366,13 @@ fn task_activity_unseen_completion_is_primary_and_strictly_newer_than_read() {
     primary.semantic.phase_completed_at = Some(100);
     write_activity_session(&repo, "task", primary.clone());
 
-    let busy = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[activity_status_busy("task-session")], None);
+    let busy = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[activity_status_busy("task-session")]);
     assert_eq!(activity_summary(&busy, &repo, "task").status, Some(crate::TaskActivityStatus::Running));
-    let unread = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[], None);
+    let unread = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[]);
     assert_eq!(activity_summary(&unread, &repo, "task").status, Some(crate::TaskActivityStatus::Completed));
     primary.notification_read_at = Some(99);
     write_activity_session(&repo, "task", primary.clone());
-    let still_unread = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[], None);
+    let still_unread = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[]);
     assert_eq!(activity_summary(&still_unread, &repo, "task").status, Some(crate::TaskActivityStatus::Completed));
     primary.notification_read_at = Some(100);
     write_activity_session(&repo, "task", primary);
@@ -1289,7 +1392,7 @@ fn task_activity_unseen_completion_is_primary_and_strictly_newer_than_read() {
             ..Default::default()
         },
     );
-    let acknowledged_primary = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[], None);
+    let acknowledged_primary = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[]);
     assert_eq!(activity_summary(&acknowledged_primary, &repo, "task").status, None);
     let _ = fs::remove_dir_all(repo);
 }
@@ -1306,7 +1409,7 @@ fn task_activity_missing_observation_keeps_only_durable_facts() {
     meta.semantic.phase_completed_at = Some(20);
     write_activity_session(&repo, "task", meta);
 
-    let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[], None);
+    let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[]);
     let summary = activity_summary(&activity, &repo, "task");
     assert_eq!(summary.status, Some(crate::TaskActivityStatus::Failed));
     assert!(summary.active_session.is_none());
@@ -1314,14 +1417,14 @@ fn task_activity_missing_observation_keeps_only_durable_facts() {
     acknowledged_exit.notification_read_at = Some(20);
     acknowledged_exit.exit_notification_read_at = Some(30);
     write_activity_session(&repo, "task", acknowledged_exit);
-    let acknowledged = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[], None);
+    let acknowledged = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[]);
     assert_eq!(activity_summary(&acknowledged, &repo, "task"), &crate::TaskActivitySummary::default());
     let path = session_meta_path(&repo, "task", "task-session");
     let mut clean_exit: SessionMeta = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     clean_exit.exit_code = Some(0);
     clean_exit.semantic.phase_completed_at = None;
     write_activity_session(&repo, "task", clean_exit);
-    let clean = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[], None);
+    let clean = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[]);
     assert_eq!(activity_summary(&clean, &repo, "task"), &crate::TaskActivitySummary::default());
     let _ = fs::remove_dir_all(repo);
 }
@@ -1332,7 +1435,7 @@ fn task_activity_starting_process_is_running_without_agent_semantics() {
     write_activity_task(&repo, "task", "tdd", false);
     let mut starting = activity_status_unknown("task-session");
     starting.state.process = alinery_core::ProcessState::Starting;
-    let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[starting], None);
+    let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[starting]);
     let summary = activity_summary(&activity, &repo, "task");
     assert_eq!(summary.status, Some(crate::TaskActivityStatus::Running));
     assert_eq!(summary.active_session.as_ref().map(|session| session.id.as_str()), Some("task-session"));
@@ -1358,12 +1461,12 @@ fn task_activity_active_ties_use_created_then_descending_id() {
         );
     }
     let statuses = [activity_status_busy("s-b"), activity_status_busy("s-newer"), activity_status_busy("s-a")];
-    let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &statuses, None);
+    let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &statuses);
     assert_eq!(
         activity_summary(&activity, &repo, "task").active_session.as_ref().map(|session| session.id.as_str()),
         Some("s-newer")
     );
-    let without_newer = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &statuses[..1].iter().chain(&statuses[2..]).cloned().collect::<Vec<_>>(), None);
+    let without_newer = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &statuses[..1].iter().chain(&statuses[2..]).cloned().collect::<Vec<_>>());
     assert_eq!(
         activity_summary(&without_newer, &repo, "task").active_session.as_ref().map(|session| session.id.as_str()),
         Some("s-b")
@@ -1376,7 +1479,7 @@ fn task_activity_artifact_alone_does_not_complete() {
     let repo = activity_repo("artifact-no-checkpoint");
     write_activity_task(&repo, "task", "tdd", false);
     fs::write(crate::artifacts_dir(&repo, "task").join("05-tdd.md"), "# TDD\n").unwrap();
-    let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[activity_status_idle("task-session")], None);
+    let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[activity_status_idle("task-session")]);
     assert_eq!(activity_summary(&activity, &repo, "task").status, None);
     let _ = fs::remove_dir_all(repo);
 }
@@ -1427,7 +1530,6 @@ fn task_activity_archived_sessions_do_not_contribute() {
         &repo,
         &["task".into()],
         &[activity_status_busy("task-session"), input, approval, failure, activity_status_idle("inactive")],
-        None,
     );
     assert_eq!(activity_summary(&activity, &repo, "task"), &crate::TaskActivitySummary::default());
     let _ = fs::remove_dir_all(repo);
@@ -1464,7 +1566,6 @@ fn task_activity_keys_are_repository_qualified_and_refs_deduplicated() {
             },
         ],
         Some("config"),
-        None,
     );
 
     assert_eq!(activity.len(), 2);
@@ -1492,7 +1593,6 @@ fn task_activity_refuses_a_different_app_config_identity() {
             task_slug: "task".into(),
         }],
         Some("config"),
-        None,
     );
 
     assert_eq!(activity_summary(&activity, &repo, "task"), &crate::TaskActivitySummary::default());
@@ -1532,7 +1632,6 @@ fn task_activity_repository_failure_isolated() {
                 },
             ],
             Some("config"),
-            None,
         );
 
         assert_eq!(activity_summary(&activity, &repo_a, "task").status, Some(crate::TaskActivityStatus::Running), "{failure}");
@@ -1586,7 +1685,7 @@ fn task_activity_older_busy_survives_newer_settled() {
     };
     fs::write(session_meta_path(&repo, "task", &older.id), serde_json::to_string(&older).unwrap()).unwrap();
 
-    let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[activity_status_busy("older-design")], None);
+    let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[activity_status_busy("older-design")]);
     let summary = activity.get(&format!("{}:task", repo.display())).unwrap();
     assert_eq!(summary.status, Some(crate::TaskActivityStatus::Running));
     assert_eq!(summary.active_session.as_ref().map(|session| session.id.as_str()), Some("older-design"));
@@ -1661,7 +1760,7 @@ fn task_activity_stale_source_failure_is_ignored() {
     write_activity_task(&repo, "task", "tdd", false);
     let mut stale = activity_status_idle("task-session");
     stale.state.playbook = alinery_core::PlaybookState::Failed { reason: "StaleSource".into() };
-    let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[stale], None);
+    let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[stale]);
     assert_eq!(activity_summary(&activity, &repo, "task"), &crate::TaskActivitySummary::default());
     let _ = fs::remove_dir_all(repo);
 }
@@ -1691,8 +1790,8 @@ fn task_activity_status_matches_by_id_and_uses_session_list_precedence() {
         correlation_id: "permission".into(),
     };
     let statuses = [activity_status_idle("other-task"), input, activity_status_busy("busy"), approval];
-    let forward = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &statuses, None);
-    let reversed = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &statuses.iter().cloned().rev().collect::<Vec<_>>(), None);
+    let forward = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &statuses);
+    let reversed = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &statuses.iter().cloned().rev().collect::<Vec<_>>());
     assert_eq!(forward, reversed);
     let summary = activity_summary(&forward, &repo, "task");
     assert_eq!(summary.status, Some(crate::TaskActivityStatus::WaitingForApproval));

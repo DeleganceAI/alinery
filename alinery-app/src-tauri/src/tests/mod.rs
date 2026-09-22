@@ -103,6 +103,31 @@ fn create_task_for_test(repo: &Path, name: &str, use_worktree: bool, branch_name
     task
 }
 
+fn write_retained_discovery_task(repo: &Path, slug: &str, lane: &str, archived: bool) -> Task {
+    let source = include_str!("../../playbooks/one-shot/playbook.md");
+    let reference = alinery_core::playbook::PlaybookRef {
+        scope: alinery_core::playbook::PlaybookScope::Repo,
+        key: "one-shot".into(),
+    };
+    let task = Task {
+        name: slug.into(),
+        slug: slug.into(),
+        archived,
+        engine_version: 2,
+        playbook: reference.key.clone(),
+        playbook_ref: Some(reference.clone()),
+        ..Default::default()
+    };
+    fs::create_dir_all(sessions_dir(repo, slug)).unwrap();
+    fs::write(alinery_core::execution::task_playbook_path(repo, slug).unwrap(), source).unwrap();
+    let mut execution = alinery_core::execution::new_execution_state(reference, source, lane.into(), 10, Default::default(), Default::default()).unwrap();
+    execution.creation = "ready".into();
+    execution.owning_app_config_identity = "foreign-config".into();
+    alinery_core::execution::write_execution_state_unlocked(repo, slug, &mut execution).unwrap();
+    write_task(repo, &task).unwrap();
+    task
+}
+
 // --- Task attachments & evidence (Phases 3-4) ---------------------------------------
 
 // A plain temp dir with no git HEAD: the copier and attachment_path_in never shell out.
