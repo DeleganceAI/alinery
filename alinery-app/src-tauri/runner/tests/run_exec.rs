@@ -154,8 +154,8 @@ fn emit_result_preserves_typed_completion_outcomes_and_protocol_errors() {
     use serde_json::json;
     for (reply, expected, expected_code) in [
         (
-            json!({"ok": true, "completion": {"status": "accepted", "receipt_id": "receipt-".repeat(100)}}),
-            json!({"status": "accepted", "receipt_id": "receipt-".repeat(100)}),
+            json!({"ok": true, "completion": {"status": "accepted", "receipt_id": "receipt-".repeat(1000)}}),
+            json!({"status": "accepted", "receipt_id": "receipt-".repeat(1000)}),
             0,
         ),
         (

@@ -18,11 +18,12 @@ mod ui_control;
 use alinery_core::daemon_client::{MAX_CONTROL_BODY_BYTES, MAX_CONTROL_HEADER_BYTES};
 use alinery_core::execution::{CompletionOutcome, ExecutionLifecycle};
 use alinery_core::{
-    alinery_dir, alineryd_lock_path, alineryd_reconciler_lock_path, alineryd_socket_path, all_session_meta_paths, login_shell_path, normalized_session_status, process_exited,
-    process_started, read_meta_launch_fields, read_session_meta_full, read_task, reduce_runner_event, resolve_launch_prompt, safe_component, session_meta_path, session_omp_dir,
-    session_scrollback_path, sessions_dir, stamp_meta, strip_terminal_queries, subst, sweep_ends_session, validate_message_body, write_message, write_meta_atomic, Harness,
-    HarnessAdapter, LaunchFields, MessageAdapter, PlaybookState, ProcessState, RpcChunkAssembler, RunnerEvent, RunnerEventEnvelope, SessionMeta, SessionState, SessionTransport,
-    DAEMON_CONTROL_TIMEOUT, NO_HARNESS_KEY, PROTOCOL_VERSION, RUNNER_EVENT_PROTOCOL_VERSION,
+    alinery_dir, alineryd_lock_path, alineryd_reconciler_lock_path, alineryd_socket_path, all_session_meta_paths, ensure_hosted_inference_for_spawn, is_hosted_model,
+    login_shell_path, normalized_session_status, process_exited, process_started, read_meta_launch_fields, read_session_meta_full, read_task, reduce_runner_event,
+    resolve_launch_prompt, safe_component, session_meta_path, session_omp_dir, session_scrollback_path, sessions_dir, stamp_meta, strip_terminal_queries, subst,
+    sweep_ends_session, validate_message_body, write_message, write_meta_atomic, Harness, HarnessAdapter, LaunchFields, MessageAdapter, PlaybookState, ProcessState,
+    RpcChunkAssembler, RunnerEvent, RunnerEventEnvelope, SessionMeta, SessionState, SessionTransport, DAEMON_CONTROL_TIMEOUT, NO_HARNESS_KEY, PROTOCOL_VERSION,
+    RUNNER_EVENT_PROTOCOL_VERSION,
 };
 
 use alinery_core::lockfile::{try_lock_exclusive, LockFile};
@@ -1785,6 +1786,9 @@ fn spawn_session(
     }
     if harness.adapter == HarnessAdapter::Omp && protected_host.as_ref().is_none() {
         return Err(OMP_HOST_PROTECTION_ERROR.into());
+    }
+    if harness.adapter == HarnessAdapter::Omp && (model.trim().is_empty() || is_hosted_model(&model)) {
+        ensure_hosted_inference_for_spawn(app_config)?;
     }
     // Fresh OMP (spawn / resume / auto-advance) is RPC. Restate honors the requested transport.
     let transport = if restate {
@@ -3850,21 +3854,17 @@ endpoint = "{endpoint}"
                 Ok(pair) => pair,
                 Err(_) => return Vec::new(),
             };
-            let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
             let mut buf = Vec::new();
             let mut chunk = [0u8; 8192];
-            loop {
-                match stream.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        buf.extend_from_slice(&chunk[..n]);
-                        if buf.windows(4).any(|w| w == b"\r\n\r\n") {
-                            break;
-                        }
-                    }
-                    Err(_) if std::time::Instant::now() < deadline => continue,
-                    Err(_) => break,
+            while buf.len() < 64 * 1024 {
+                let n = match stream.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                buf.extend_from_slice(&chunk[..n]);
+                if alinery_core::complete_http_request_len(&buf).is_some_and(|len| buf.len() >= len) {
+                    break;
                 }
             }
             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}");

@@ -498,7 +498,7 @@ describe("Task Detail sub-task manager projection", () => {
         `Finalized into Parent as ${outcome.toUpperCase()}. Any open session may be stale. Changes after finalization are not included in the parent snapshot or integrated result.`,
       ),
     ).toBeDefined();
-    const sessionRow = screen.getByText("still-live").closest("tr") as HTMLTableRowElement;
+    const sessionRow = screen.getByRole("row", { name: "Open session superdevelop · research" });
     expect(within(sessionRow).queryByRole("button", { name: "Open" })).toBeNull();
     fireEvent.click(sessionRow);
     expect(onOpenSession).toHaveBeenCalledWith("child", "still-live", "/worktrees/child", "research", "claude", "", "superdevelop", false);
@@ -525,15 +525,18 @@ describe("Task Detail sub-task manager projection", () => {
       ...manager,
       id,
       created,
+      generic: false,
+      phase: created === 30 ? "build" : "research",
+      playbook: "superdevelop",
       subtask_manager: false,
       subtask_slug: "",
     });
     scenario.sessions = [ordinarySession("older-session", 10), { ...manager, id: "child-manager", created: 20, subtask_slug: "child" }, ordinarySession("newer-session", 30)];
 
     await renderDetail();
-    const newerRow = screen.getByText("newer-session").closest("tr") as HTMLTableRowElement;
+    const newerRow = screen.getByRole("row", { name: "Open session superdevelop · build" });
     const childRow = screen.getByText("Child", { selector: "span" }).closest("tr") as HTMLTableRowElement;
-    const olderRow = screen.getByText("older-session").closest("tr") as HTMLTableRowElement;
+    const olderRow = screen.getByRole("row", { name: "Open session superdevelop · research" });
     expect([...(newerRow.parentElement?.children ?? [])]).toEqual([newerRow, childRow, olderRow]);
   });
 
@@ -1074,6 +1077,57 @@ describe("Task Detail duplicate action", () => {
       />,
     );
     await waitFor(() => expect((screen.getByTitle("Duplicate task (⌘D)") as HTMLButtonElement).disabled).toBe(true));
+    expect(screen.getByTitle("Duplicate task (⌘D)").textContent).toContain("Duplicating…");
+  });
+});
+
+const renderedSessionSteps = (container: HTMLElement) =>
+  [...container.querySelectorAll(".task-session-table tbody .session-step-cell > .pill:first-child")].map((node) => node.textContent);
+
+describe("session list without identifiers", () => {
+  it("keeps same-step sessions independently openable and preserves archived history and resumed state", async () => {
+    const fixture = task();
+    const archived = session({ id: "opaque-archived", archived: true, created: 10 });
+    const resumed = session({ id: "opaque-resumed", resume_of: archived.id, created: 20 });
+    const newest = session({ id: "opaque-newest", created: 30 });
+    mocks.getTask.mockResolvedValue(fixture);
+    mocks.listSessions.mockResolvedValue([archived, resumed, newest]);
+    mocks.sessionStatuses.mockResolvedValue({});
+    const onOpenSession = vi.fn();
+    const { container } = renderSeededDetail({ initialTask: fixture, onOpenSession });
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Show archived" }));
+    const history = await screen.findByRole("button", { name: "View history" });
+    const table = container.querySelector(".task-session-table") as HTMLTableElement;
+    expect(within(table).queryByRole("columnheader", { name: "Session" })).toBeNull();
+    for (const row of [archived, resumed, newest]) {
+      expect(table.textContent).not.toContain(row.id);
+      expect(table.querySelector(`[title*="${row.id}"], [aria-label*="${row.id}"]`)).toBeNull();
+    }
+    const archivedRow = history.closest("tr") as HTMLTableRowElement;
+    expect(within(archivedRow).getByText("Archived")).toBeDefined();
+    expect(within(archivedRow).getByText("Resumed")).toBeDefined();
+    expect(archivedRow.hasAttribute("tabindex")).toBe(false);
+
+    const openable = within(table).getAllByRole("row", { name: "Open session superdevelop · research" });
+    fireEvent.click(openable[0]);
+    expect(onOpenSession.mock.lastCall?.[1]).toBe(newest.id);
+    fireEvent.keyDown(openable[1], { key: "Enter" });
+    expect(onOpenSession.mock.lastCall?.[1]).toBe(resumed.id);
+    fireEvent.keyDown(openable[0], { key: " " });
+    expect(onOpenSession.mock.lastCall?.[1]).toBe(newest.id);
+    fireEvent.click(history);
+    expect(onOpenSession).toHaveBeenLastCalledWith(
+      "a-task",
+      archived.id,
+      archived.worktree,
+      archived.phase,
+      archived.harness,
+      archived.model,
+      archived.playbook,
+      archived.generic,
+      "history",
+    );
   });
 });
 
@@ -1100,8 +1154,7 @@ describe("attention-first session order", () => {
     const { container } = renderSeededDetail({ initialTask: fixture });
 
     await waitFor(() => {
-      const ids = [...container.querySelectorAll(".task-session-table tbody .session-id-cell .mono")].map((node) => node.textContent);
-      expect(ids).toEqual(["older-design", "newer-tdd"]);
+      expect(renderedSessionSteps(container)).toEqual([...backendRows].reverse().map((row) => `${row.playbook} · ${row.phase}`));
     });
     expect(mocks.sessionStatuses).toHaveBeenCalledTimes(1);
     expect(mocks.sessionStatuses).toHaveBeenCalledWith(["newer-tdd", "older-design"], "a-task");
@@ -1135,8 +1188,8 @@ describe("attention-first session order", () => {
 
     renderSeededDetail({ initialTask: fixture });
 
-    const unreadRow = (await screen.findByText("unread-design")).closest("tr") as HTMLTableRowElement;
-    const acknowledgedRow = screen.getByText("read-tdd").closest("tr") as HTMLTableRowElement;
+    const unreadRow = await screen.findByRole("row", { name: new RegExp(`${unread.phase}$`) });
+    const acknowledgedRow = screen.getByRole("row", { name: new RegExp(`${acknowledged.phase}$`) });
     expect(within(unreadRow).getByRole("img", { name: "Unread completion" })).toBeDefined();
     expect(within(acknowledgedRow).queryByRole("img", { name: "Unread completion" })).toBeNull();
   });
@@ -1159,14 +1212,17 @@ describe("attention-first session order", () => {
       "current-structure": observation("idle"),
     });
 
-    const { container } = renderSeededDetail({ initialTask: fixture });
+    const onOpenSession = vi.fn();
+    const { container } = renderSeededDetail({ initialTask: fixture, onOpenSession });
 
-    await waitFor(() => {
-      const ids = [...container.querySelectorAll(".task-session-table tbody .session-id-cell .mono")].map((node) => node.textContent);
-      expect(ids).toEqual(["stopped-generic", "current-structure"]);
-    });
+    await screen.findByRole("img", { name: "Failed: process exited with code 143" });
+    const rows = container.querySelectorAll(".task-session-table tbody tr");
+    fireEvent.click(rows[0]);
+    expect(onOpenSession.mock.lastCall?.[1]).toBe(stopped.id);
+    fireEvent.click(rows[1]);
+    expect(onOpenSession.mock.lastCall?.[1]).toBe(idle.id);
     const acknowledge = screen.getByRole("button", { name: "Acknowledge exited sessions" });
-    const stoppedRow = screen.getByText("stopped-generic").closest("tr") as HTMLTableRowElement;
+    const stoppedRow = screen.getByRole("img", { name: "Failed: process exited with code 143" }).closest("tr") as HTMLTableRowElement;
     expect(within(stoppedRow).getByRole("img", { name: "Failed: process exited with code 143" })).toBeDefined();
 
     fireEvent.click(acknowledge);
@@ -1179,36 +1235,34 @@ describe("attention-first session order", () => {
 });
 
 describe("session time columns and sorting", () => {
-  const renderedSessionIds = (container: HTMLElement) => [...container.querySelectorAll(".task-session-table tbody .session-id-cell .mono")].map((node) => node.textContent);
-
   it("sorts Started newest-first then oldest-first, keeps missing last, and restores Priority", async () => {
     const fixture = task();
     const backendRows = Object.freeze([
-      session({ id: "missing", created: 30, started_at: null }),
-      session({ id: "older", created: 20, started_at: 100 }),
-      session({ id: "newer", created: 10, started_at: 200 }),
+      session({ id: "missing", phase: "clarify", created: 30, started_at: null }),
+      session({ id: "older", phase: "design", created: 20, started_at: 100 }),
+      session({ id: "newer", phase: "build", created: 10, started_at: 200 }),
     ]);
     mocks.getTask.mockResolvedValue(fixture);
     mocks.listSessions.mockResolvedValue(backendRows);
     mocks.sessionStatuses.mockResolvedValue({});
     const { container } = renderSeededDetail({ initialTask: fixture });
-    await waitFor(() => expect(renderedSessionIds(container)).toEqual(["missing", "older", "newer"]));
+    await waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · clarify", "superdevelop · design", "superdevelop · build"]));
 
     const started = screen.getByText("Started", { selector: ".session-sort-header" });
     fireEvent.click(started);
-    await waitFor(() => expect(renderedSessionIds(container)).toEqual(["newer", "older", "missing"]));
+    await waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design", "superdevelop · clarify"]));
     expect(started.closest("th")?.getAttribute("aria-sort")).toBe("descending");
     expect(started.textContent?.trim()).toBe("Started ↓");
     expect(container.querySelectorAll(".task-session-table tbody tr")[0].querySelector('[title^="Started "]')).not.toBeNull();
 
     fireEvent.click(started);
-    await waitFor(() => expect(renderedSessionIds(container)).toEqual(["older", "newer", "missing"]));
+    await waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · design", "superdevelop · build", "superdevelop · clarify"]));
     expect(started.closest("th")?.getAttribute("aria-sort")).toBe("ascending");
     expect(started.textContent?.trim()).toBe("Started ↑");
 
     const priority = screen.getByRole("button", { name: "Priority" });
     fireEvent.click(priority);
-    await waitFor(() => expect(renderedSessionIds(container)).toEqual(["missing", "older", "newer"]));
+    await waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · clarify", "superdevelop · design", "superdevelop · build"]));
     expect(priority.getAttribute("aria-pressed")).toBe("true");
     expect(started.closest("th")?.getAttribute("aria-sort")).toBeNull();
     expect(started.textContent?.trim()).toBe("Started");
@@ -1217,29 +1271,27 @@ describe("session time columns and sorting", () => {
   it("keeps Updated active while a metadata poll moves a row", async () => {
     vi.useFakeTimers();
     const fixture = task();
-    let rows = [session({ id: "a", created: 20, status_changed_at: 100 }), session({ id: "b", created: 10, status_changed_at: 200 })];
+    let rows = [session({ id: "a", phase: "design", created: 20, status_changed_at: 100 }), session({ id: "b", phase: "build", created: 10, status_changed_at: 200 })];
     mocks.getTask.mockResolvedValue(fixture);
     mocks.listSessions.mockImplementation(async () => rows);
     mocks.sessionStatuses.mockResolvedValue({});
     const { container } = renderSeededDetail({ initialTask: fixture });
-    await vi.waitFor(() => expect(renderedSessionIds(container)).toHaveLength(2));
+    await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · design", "superdevelop · build"]));
     const updated = screen.getByText("Updated", { selector: ".session-sort-header" });
     fireEvent.click(updated);
-    expect(renderedSessionIds(container)).toEqual(["b", "a"]);
+    expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]);
 
     rows = [{ ...rows[0], status_changed_at: 300 }, rows[1]];
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
-    await vi.waitFor(() => expect(renderedSessionIds(container)).toEqual(["a", "b"]));
+    await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · design", "superdevelop · build"]));
     expect(updated.closest("th")?.getAttribute("aria-sort")).toBe("descending");
     expect(updated.textContent?.trim()).toBe("Updated ↓");
     expect(screen.getByRole("button", { name: "Priority" }).getAttribute("aria-pressed")).toBe("false");
-    const firstRow = container.querySelector(".task-session-table tbody tr") as HTMLTableRowElement;
-    expect(firstRow.textContent).toContain("a");
 
     fireEvent.click(updated);
-    expect(renderedSessionIds(container)).toEqual(["b", "a"]);
+    expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]);
     expect(updated.closest("th")?.getAttribute("aria-sort")).toBe("ascending");
     expect(updated.textContent?.trim()).toBe("Updated ↑");
   });
@@ -1247,7 +1299,7 @@ describe("session time columns and sorting", () => {
   it("accepts StaleSource failure-class transitions without leaving Updated sort", async () => {
     vi.useFakeTimers();
     const fixture = task();
-    const rows = [session({ id: "target", created: 10, status_changed_at: 100 }), session({ id: "other", created: 20, status_changed_at: 200 })];
+    const rows = [session({ id: "target", phase: "design", created: 10, status_changed_at: 100 }), session({ id: "other", phase: "build", created: 20, status_changed_at: 200 })];
     const failedObservation = (reason: string): SessionObservation => ({
       lifecycle: { state: "live" },
       state: {
@@ -1267,19 +1319,19 @@ describe("session time columns and sorting", () => {
     }));
 
     const { container } = renderSeededDetail({ initialTask: fixture });
-    await vi.waitFor(() => expect(renderedSessionIds(container)).toEqual(["other", "target"]));
+    await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]));
     expect(screen.getByLabelText("Stale")).toBeDefined();
 
     targetObservation = failedObservation("boom");
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
-    await vi.waitFor(() => expect(renderedSessionIds(container)).toEqual(["target", "other"]));
+    await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · design", "superdevelop · build"]));
     expect(screen.getByText("Failed")).toBeDefined();
 
     const updated = screen.getByText("Updated", { selector: ".session-sort-header" });
     fireEvent.click(updated);
-    expect(renderedSessionIds(container)).toEqual(["other", "target"]);
+    expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]);
 
     targetObservation = failedObservation("StaleSource");
     await act(async () => {
@@ -1287,12 +1339,12 @@ describe("session time columns and sorting", () => {
     });
     await vi.waitFor(() => expect(screen.getByLabelText("Stale")).toBeDefined());
     expect(screen.queryByText("Failed")).toBeNull();
-    expect(renderedSessionIds(container)).toEqual(["other", "target"]);
+    expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]);
     expect(updated.closest("th")?.getAttribute("aria-sort")).toBe("descending");
     expect(screen.getByRole("button", { name: "Priority" }).getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("sorts session-backed managers and renders managerless rows as timeless seven-cell rows", async () => {
+  it("sorts session-backed managers and aligns managerless rows with the remaining columns", async () => {
     scenario.relatedTasks = [
       {
         ...parentTask,
@@ -1312,11 +1364,11 @@ describe("session time columns and sorting", () => {
     await waitFor(() => expect(document.querySelectorAll(".task-session-table tbody tr")).toHaveLength(3));
     const rows = [...document.querySelectorAll(".task-session-table tbody tr")];
     expect(rows[0].textContent).toContain("Sub-task setup");
-    expect(rows[1].textContent).toContain("ordinary");
+    expect(rows[1].textContent).toContain("superdevelop · research");
     expect(rows[2].textContent).toContain("History child");
-    expect(rows[2].children).toHaveLength(7);
+    expect(rows[2].children).toHaveLength(screen.getAllByRole("columnheader").length);
+    expect(rows[2].children[3].textContent).toBe("—");
     expect(rows[2].children[4].textContent).toBe("—");
-    expect(rows[2].children[5].textContent).toBe("—");
   });
 });
 

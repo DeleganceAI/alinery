@@ -124,8 +124,8 @@ describe("an unavailable execution state", () => {
     expect(screen.getByText(fixture.name)).toBeDefined();
     expect(screen.getByText(fixture.branch)).toBeDefined();
 
-    // Sessions still render even though the task's own playbook is unknown.
-    await waitFor(() => expect(screen.getByText("s1")).toBeDefined());
+    // Sessions still render with historical metadata when execution state is unavailable.
+    await waitFor(() => expect(screen.getByRole("row", { name: "Open session superdevelop · research" })).toBeDefined());
 
     // Artifacts still render — switch to the Artifacts tab to observe them.
     fireEvent.click(screen.getByRole("button", { name: "Artifacts", pressed: false }));
@@ -141,12 +141,11 @@ describe("a removed library definition", () => {
     const fixture = task();
     mocks.getTask.mockResolvedValue(fixture);
     mocks.getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "current" })]));
-    mocks.listSessions.mockResolvedValue([session({ id: "current", phase: "worker" }), session({ id: "historical", phase: "old-phase" })]);
+    mocks.listSessions.mockResolvedValue([session({ id: "current", phase: "worker" }), session({ id: "historical", playbook: "removed-playbook", phase: "old-phase" })]);
     renderDetail({ initialTask: fixture });
-    expect(await screen.findByText("Retained playbook · Retained worker")).toBeDefined();
-    expect(screen.getByText("current")).toBeDefined();
-    expect(screen.getByText("historical")).toBeDefined();
-    expect(screen.getByText("old-phase")).toBeDefined();
+
+    expect(await screen.findByRole("row", { name: "Open session Retained playbook · Retained worker" })).toBeDefined();
+    expect(screen.getByRole("row", { name: "Open session removed-playbook · old-phase" })).toBeDefined();
   });
 });
 
@@ -164,7 +163,7 @@ describe("a failing artifact scan on an unseeded related-task route", () => {
     await waitFor(() => expect(screen.getByText("Related Task")).toBeDefined());
     expect(screen.getByText("related-branch")).toBeDefined();
     expect(screen.getByText("/w/related-task")).toBeDefined();
-    expect(screen.getByText("s1")).toBeDefined();
+    expect(screen.getByRole("row", { name: "Open session superdevelop · research" })).toBeDefined();
 
     // The failure is surfaced, not swallowed and not blanking.
     await waitFor(() => expect(screen.getByText("Couldn't load artifacts.")).toBeDefined());

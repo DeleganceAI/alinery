@@ -279,7 +279,7 @@ export function SessionsList({
                 : item.generic
                   ? "Generic"
                   : item.step_title || item.phase || "No step";
-            const sessionDetail = `${item.id} · ${item.task_slug}${item.archived ? " · archived" : !item.task_worktree ? " · worktree removed" : ""}`;
+            const sessionDetail = `${item.task_slug}${item.archived ? " · archived" : !item.task_worktree ? " · worktree removed" : ""}`;
             return (
               <div
                 key={key}
@@ -331,11 +331,7 @@ export function SessionsList({
                       />
                     )}
                     {!item.archived && <KillButton id={item.id} slug={item.task_slug} repoPath={item.repo_path} live={item.repo_path === activeRepo && isLive} onKilled={load} />}
-                    {resumedBy && (
-                      <span className="pill dim" title={`Resumed by ${resumedBy.id}`}>
-                        Resumed by {resumedBy.id}
-                      </span>
-                    )}
+                    {resumedBy && <span className="pill dim">Resumed</span>}
                   </div>
                   <div className="rts" title={sessionDetail}>
                     {sessionDetail}

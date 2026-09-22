@@ -28,6 +28,7 @@ use libc::execvp;
 use serde_json::Value;
 use std::ffi::CString;
 use std::io::{self, Read, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -547,13 +548,36 @@ fn send_event_to_daemon(socket_path: &str, request: &[u8], completion: bool) -> 
     let deadline = Instant::now() + timeout;
     stream.set_write_timeout(Some(timeout)).map_err(|_| ())?;
     stream.write_all(request).map_err(|_| ())?;
+    // On macOS, re-arming SO_RCVTIMEO after peer closure can fail even when
+    // acknowledgement bytes remain buffered. Poll without changing socket timeouts.
+    stream.set_nonblocking(true).map_err(|_| ())?;
 
     let mut ack_buf = Vec::with_capacity(256);
     let mut chunk = [0u8; 4096];
     loop {
         let remaining = deadline.checked_duration_since(Instant::now()).ok_or(())?;
-        stream.set_read_timeout(Some(remaining)).map_err(|_| ())?;
-        let count = stream.read(&mut chunk).map_err(|_| ())?;
+        let mut ready = libc::pollfd {
+            fd: stream.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let wait_ms = remaining.as_millis().saturating_add(1).min(i32::MAX as u128) as i32;
+        // Safety: ready points to one valid pollfd for the live stream.
+        let polled = unsafe { libc::poll(&mut ready, 1, wait_ms) };
+        if polled < 0 {
+            if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(());
+        }
+        if polled == 0 {
+            return Err(());
+        }
+        let count = match stream.read(&mut chunk) {
+            Ok(count) => count,
+            Err(error) if matches!(error.kind(), io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock) => continue,
+            Err(_) => return Err(()),
+        };
         if count == 0 {
             return Err(());
         }

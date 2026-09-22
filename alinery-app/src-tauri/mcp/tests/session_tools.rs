@@ -282,6 +282,28 @@ fn marker_count(text: &str, marker: &str) -> usize {
 }
 
 #[test]
+fn explicit_playbook_overrides_configured_default_and_creates_eligible_sessions() {
+    let fixture = Fixture::with_ready_daemon();
+    let reply = fixture.call(
+        "alinery_create_task",
+        json!({"name":"Review task","playbook":{"scope":"bundled","key":"review"},"start":false}),
+    );
+    let created: CreateTaskReply = serde_json::from_str(&reply).unwrap_or_else(|error| panic!("{error}: {reply}"));
+    assert_eq!(created.creation, "ready", "{created:?}");
+    let task = created.task.unwrap();
+    let retained: TaskExecutionReply = serde_json::from_str(&fixture.call("alinery_get_task_execution", json!({"task_slug":task.slug}))).unwrap();
+    assert_eq!(retained.state.reference.scope, alinery_core::playbook::PlaybookScope::Bundled);
+    assert_eq!(retained.definition.key, "review");
+    assert_eq!(
+        retained.state.executions.values().map(|record| record.candidate.step_key.as_str()).collect::<Vec<_>>(),
+        ["review-context"]
+    );
+    let sessions: Vec<SessionMeta> = serde_json::from_str(&fixture.call("alinery_list_sessions", json!({"slug":task.slug}))).unwrap();
+    assert_eq!(sessions.iter().map(|session| session.phase.as_str()).collect::<Vec<_>>(), ["review-context"]);
+    assert!(sessions.iter().all(|session| session.started_at.is_none()));
+}
+
+#[test]
 fn real_mcp_create_start_disconnect_observe_history_and_exit() {
     let fixture = Fixture::with_ready_daemon();
     let playbook_extra = "PLAYBOOK-EXTRA-ONCE";

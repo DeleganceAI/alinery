@@ -1,8 +1,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as taskMutationGuard from "../taskMutationGuard";
 import { mockIpc } from "../test/mockIpc";
-import type { BoardTask, Config, CreateTaskResult, PlaybookCatalog, PlaybookRef, ScopedPlaybook, Task } from "../types";
+import type { BoardTask, Config, CreateTaskResult, PlaybookCatalog, PlaybookRef, ScopedPlaybook, TargetedCreateResult, Task } from "../types";
 import { CreateTaskPage } from "./CreateTaskPage";
 
 const sources: ScopedPlaybook[] = [
@@ -91,6 +92,20 @@ vi.mock("../ipc", () =>
 
 import * as ipc from "../ipc";
 
+// The loading toast is how the form proves work started, and the guard refuses a
+// concurrent mutation through this same module, so both are asserted from these spies.
+const toastSpies = vi.hoisted(() => {
+  return { toast: vi.fn(), loading: vi.fn(), success: vi.fn(), error: vi.fn() };
+});
+vi.mock("../toast", () => ({
+  Toast: () => null,
+  toast: Object.assign(toastSpies.toast, {
+    loading: toastSpies.loading,
+    success: toastSpies.success,
+    error: toastSpies.error,
+  }),
+}));
+
 beforeEach(() => {
   vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => {} });
   readConfigForRepo.mockResolvedValue({
@@ -108,6 +123,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+  taskMutationGuard.release();
 });
 
 describe("provider imports", () => {
@@ -278,7 +294,7 @@ describe("scoped playbook selection", () => {
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
     expect(screen.getAllByRole("radio").every((radio) => !(radio as HTMLInputElement).checked)).toBe(true);
-    fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
     expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false));
@@ -307,7 +323,7 @@ describe("v2 task creation", () => {
     for (const value of ["0", "-1", "1.5", "4294967296"]) {
       fireEvent.change(cap, { target: { value } });
       expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
-      fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter" });
+      fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
     }
     expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
     fireEvent.change(cap, { target: { value: "3" } });
@@ -381,6 +397,9 @@ describe("v2 task creation", () => {
     expect(screen.getByText(/review: launch_failed/)).toBeDefined();
     expect(screen.getByText(/launch: Runner unavailable/)).toBeDefined();
     expect(onCreated).not.toHaveBeenCalled();
+    expect(toastSpies.error).toHaveBeenCalledWith(expect.stringContaining("Runner unavailable"));
+    expect(toastSpies.success).not.toHaveBeenCalled();
+    await waitFor(() => expect(taskMutationGuard.currentKind()).toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "Open session root-b" }));
     expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ repoPath: "/repo", task: reply.task, selectedSessionId: "root-b" }));
     expect(ipc.createTaskForRepo).toHaveBeenCalledTimes(1);
@@ -452,7 +471,7 @@ describe("v2 task creation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByText(/provisioning: Inspect durable state/);
     expect(screen.getByRole("button", { name: "Open task" })).toHaveProperty("disabled", true);
-    fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
     expect(ipc.createTaskForRepo).toHaveBeenCalledTimes(1);
   });
 
@@ -464,11 +483,92 @@ describe("v2 task creation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByText(/Creation outcome is unknown/);
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Another name" } });
-    fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
     await act(async () => {
       await new Promise<void>((resolve) => setTimeout(resolve, 450));
     });
     expect(ipc.createTaskForRepo).toHaveBeenCalledTimes(1);
     expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+  });
+});
+
+describe("task creation feedback", () => {
+  it("signals opened only after repository settings settle", async () => {
+    let finishConfig!: (config: Config) => void;
+    readConfigForRepo.mockReturnValue(
+      new Promise<Config>((resolve) => {
+        finishConfig = resolve;
+      }),
+    );
+    const onOpened = vi.fn();
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} onOpened={onOpened} />);
+    expect(onOpened).not.toHaveBeenCalled();
+
+    finishConfig({ defaults: { harness: "claude", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true } } as Config);
+    await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(1));
+  });
+
+  const startCreate = async (onCreated: (result: TargetedCreateResult) => void) => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={onCreated} />);
+    await screen.findByRole("checkbox", { name: "Build" });
+    fireEvent.change(await screen.findByPlaceholderText("New task name…"), { target: { value: "Slow task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+  };
+
+  it("shows the loader the instant Create is clicked and resolves it when the task lands", async () => {
+    const result: CreateTaskResult = {
+      ...readyReply,
+      task: { name: "Slow task", slug: "slow-task", branch: "slow-task", worktree: "/repo/.alinery/worktrees/slow-task" } as Task,
+      sessions: [{ id: "s-slow-task", harness: "omp" }] as CreateTaskResult["sessions"],
+      attachment_errors: [],
+    };
+    let finishCreate!: (result: CreateTaskResult) => void;
+    vi.mocked(ipc.createTaskForRepo).mockReturnValue(
+      new Promise<CreateTaskResult>((resolve) => {
+        finishCreate = resolve;
+      }),
+    );
+    const onCreated = vi.fn();
+    const onBusy = vi.fn();
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={onCreated} onBusy={onBusy} />);
+    await screen.findByRole("checkbox", { name: "Build" });
+    fireEvent.change(await screen.findByPlaceholderText("New task name…"), { target: { value: "Slow task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    expect(onBusy).toHaveBeenCalledWith("create");
+    expect(screen.getByRole("button", { name: "Creating…" })).toBeDefined();
+    expect(screen.getByText(/Creating New Task… You can keep using Alinery/)).toBeDefined();
+    expect(toastSpies.success).not.toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+
+    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+    finishCreate(result);
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith({ ...result, repoPath: "/repo" }));
+    await waitFor(() => expect(onBusy).toHaveBeenCalledWith(null));
+    expect(toastSpies.success).toHaveBeenCalledWith("Task created");
+    expect(toastSpies.error).not.toHaveBeenCalled();
+  });
+
+  it("resolves the loader to an error and keeps the typed name when the creation reply is lost", async () => {
+    vi.mocked(ipc.createTaskForRepo).mockRejectedValue(new Error("worktree add failed"));
+    const onCreated = vi.fn();
+    await startCreate(onCreated);
+
+    await waitFor(() => expect(toastSpies.error).toHaveBeenCalledWith(expect.stringContaining("worktree add failed")));
+    expect(await screen.findByText(/Creation outcome is unknown/)).toBeDefined();
+    expect(toastSpies.success).not.toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Slow task");
+    expect(taskMutationGuard.currentKind()).toBeNull();
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
+  });
+
+  it("refuses to start while a duplicate from another surface is running", async () => {
+    const onCreated = vi.fn();
+    taskMutationGuard.claim("duplicate");
+    await startCreate(onCreated);
+
+    await waitFor(() => expect(toastSpies.toast).toHaveBeenCalledWith("A task is already being duplicated — wait for it to finish.", "error"));
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    expect(toastSpies.loading).not.toHaveBeenCalled();
   });
 });
