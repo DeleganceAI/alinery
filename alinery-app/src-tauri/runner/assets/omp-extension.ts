@@ -524,8 +524,8 @@ export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompl
     async execute(toolCallId: string, input: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, context: OmpExtensionContext) {
       const title = typeof input.title === "string" && input.title !== "" ? input.title : "Approval required";
       const message = typeof input.message === "string" && input.message !== "" ? input.message : "Approval needed.";
-      const confirm = context.ui?.confirm;
-      if (typeof confirm !== "function") {
+      const ui = context.ui;
+      if (typeof ui?.confirm !== "function") {
         return {
           content: [{ type: "text" as const, text: "Approval UI is unavailable. Do not proceed with the gated action." }],
           details: { approved: false, status: "unavailable" },
@@ -534,7 +534,7 @@ export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompl
 
       await safeEmit(emit, { type: "waiting_for_approval", correlation_id: toolCallId });
       try {
-        const ok = await confirm(title, message);
+        const ok = await ui.confirm(title, message);
         if (ok) {
           return {
             content: [{ type: "text" as const, text: "User approved. You may proceed with the gated action." }],
