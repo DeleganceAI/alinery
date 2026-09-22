@@ -3,18 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
 import { navReady, requireNav } from "../test/nav";
-import type {
-  BoardNav,
-  BoardTask,
-  PlaybookStepSummary,
-  PlaybookSummary,
-  SessionMeta,
-  SessionObservation,
-  SubtaskManagerState,
-  Task,
-  TaskActivityRef,
-  TaskActivitySummary,
-} from "../types";
+import type { BoardNav, BoardTask, SessionMeta, SessionObservation, SubtaskManagerState, Task, TaskActivityRef, TaskActivitySummary } from "../types";
+import { executionRecord, executionReply } from "./executionTestFixture";
 import { TaskDetail } from "./TaskDetail";
 
 const scenario = vi.hoisted(() => ({
@@ -44,8 +34,8 @@ const mocks = vi.hoisted(() => ({
   subtaskState: vi.fn(),
   listTaskActivity: vi.fn(),
   listBoardTasks: vi.fn(),
-  listPlaybooks: vi.fn(),
-  listPlaybookSteps: vi.fn(),
+  getTaskExecution: vi.fn(),
+  allowExecutionCompletion: vi.fn(),
   listSessions: vi.fn(),
   listArtifactsWithMetadata: vi.fn(),
   listTaskArtifactTree: vi.fn(),
@@ -73,8 +63,8 @@ vi.mock("../ipc", () =>
     subtaskState: mocks.subtaskState,
     listTaskActivity: mocks.listTaskActivity,
     listBoardTasks: mocks.listBoardTasks,
-    listPlaybooks: mocks.listPlaybooks,
-    listPlaybookSteps: mocks.listPlaybookSteps,
+    getTaskExecution: mocks.getTaskExecution,
+    allowExecutionCompletion: mocks.allowExecutionCompletion,
     listSessions: mocks.listSessions,
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
     listTaskArtifactTree: mocks.listTaskArtifactTree,
@@ -219,29 +209,6 @@ const observation = (agent: "busy" | "idle"): SessionObservation => ({
   checkpoint: {},
 });
 
-const playbookSummary = (over: Partial<PlaybookSummary> = {}): PlaybookSummary =>
-  ({
-    key: "superdevelop",
-    title: "SuperDevelop",
-    description: "",
-    kind: "linear",
-    default_harness: "claude",
-    steps: [],
-    auto_advance: [],
-    ...over,
-  }) as PlaybookSummary;
-
-const step = (over: Partial<PlaybookStepSummary> = {}): PlaybookStepSummary =>
-  ({
-    key: "research",
-    title: "Research",
-    short: "",
-    artifact: "",
-    column: "",
-    harness: "",
-    ...over,
-  }) as PlaybookStepSummary;
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -253,6 +220,13 @@ function deferred<T>() {
 }
 
 beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   scenario.task = { ...parentTask };
   scenario.relatedTasks = [];
   scenario.state = state();
@@ -267,8 +241,8 @@ beforeEach(() => {
     getItem: vi.fn(() => null),
     setItem: vi.fn(),
   });
-  ipcSpies.startSubtaskManager.mockResolvedValue({ ...manager });
-  ipcSpies.recoverSubtaskManager.mockResolvedValue({ ...manager, subtask_slug: "child" });
+  ipcSpies.startSubtaskManager.mockResolvedValue({ session: { ...manager }, execution: null, start: "started" });
+  ipcSpies.recoverSubtaskManager.mockResolvedValue({ session: { ...manager, subtask_slug: "child" }, execution: null, start: "started" });
   ipcSpies.restoreTaskForRepo.mockReset().mockResolvedValue(undefined);
   ipcSpies.discardSubtask.mockImplementation(async () => {
     const child = scenario.state.active_subtask;
@@ -297,8 +271,8 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation(async (refs: TaskActivityRef[]) => Object.fromEntries(refs.map((ref) => [`${ref.repoPath}:${ref.taskSlug}`, scenario.childActivity])));
   mocks.listBoardTasks.mockReset().mockImplementation(async () => [scenario.childBoardTask]);
-  mocks.listPlaybooks.mockReset().mockResolvedValue([]);
-  mocks.listPlaybookSteps.mockReset().mockResolvedValue([]);
+  mocks.getTaskExecution.mockReset().mockResolvedValue(executionReply([]));
+  mocks.allowExecutionCompletion.mockReset().mockResolvedValue(undefined);
   mocks.listSessions.mockReset().mockImplementation(async () => scenario.sessions);
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
   mocks.listTaskArtifactTree.mockReset().mockResolvedValue([]);
@@ -350,9 +324,37 @@ async function renderDetail(slug = "parent") {
   return { onOpenSession, onOpenRelatedTask, onNewSession };
 }
 
+it("switches the retained task playbook between its live list and graph-only canvas", async () => {
+  const retained = executionReply();
+  retained.state.enabled_steps = ["worker"];
+  mocks.getTaskExecution.mockResolvedValue(retained);
+  await renderDetail();
+  const modes = within(screen.getByRole("group", { name: "Task playbook view" }));
+  expect(modes.getByRole("button", { name: "List" }).getAttribute("aria-pressed")).toBe("true");
+  expect(await screen.findByLabelText("Retained worker: 1 active sessions")).toBeTruthy();
+  expect(screen.getByText("Automatic")).toBeTruthy();
+
+  fireEvent.click(modes.getByRole("button", { name: "Graph" }));
+  fireEvent.click(screen.getByRole("button", { name: "Highlight Retained worker" }));
+  expect(screen.getByRole("button", { name: "Highlight Retained worker" }).getAttribute("aria-pressed")).toBe("true");
+  expect(screen.getByRole("region", { name: "Dependency graph canvas" })).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Retained worker definition" })).toBeNull();
+  expect(screen.queryByRole("separator", { name: "Resize graph and description" })).toBeNull();
+  expect(screen.queryByLabelText("Retained worker: 1 active sessions")).toBeNull();
+
+  const sideTabs = within(screen.getByRole("group", { name: "Task side panel" }));
+  fireEvent.click(sideTabs.getByRole("button", { name: "Artifacts" }));
+  fireEvent.click(sideTabs.getByRole("button", { name: "Playbook" }));
+  expect(screen.getByRole("button", { name: "Graph" }).getAttribute("aria-pressed")).toBe("true");
+
+  fireEvent.click(screen.getByRole("button", { name: "List" }));
+  expect(screen.getByLabelText("Retained worker: 1 active sessions")).toBeTruthy();
+  expect(screen.getByText("Automatic")).toBeTruthy();
+});
+
 describe("removed distill surfaces", () => {
   it("keeps a historical session visible without offering Distill or a Wiki tab", async () => {
-    scenario.sessions = [session({ id: "historical", playbook: "superdevelop", phase: "distill-to-wiki" })];
+    scenario.sessions = [session({ id: "historical", phase: "distill-to-wiki" })];
     await renderDetail();
     const artifacts = screen.getByRole("button", { name: "Artifacts" });
     expect(artifacts.getAttribute("aria-pressed")).toBe("false");
@@ -385,13 +387,13 @@ describe("Task Detail sub-task manager projection", () => {
     expect(onNewSession).toHaveBeenCalledOnce();
   });
 
-  it("starts exactly one parent-owned manager and opens it with spawn intent", async () => {
+  it("starts exactly one parent-owned manager and attaches without spawning it again", async () => {
     const { onOpenSession } = await renderDetail();
     fireEvent.click(screen.getByRole("button", { name: "Start sub-task" }));
 
     await waitFor(() => expect(ipcSpies.startSubtaskManager).toHaveBeenCalledOnce());
     expect(ipcSpies.startSubtaskManager).toHaveBeenCalledWith("parent");
-    expect(onOpenSession).toHaveBeenCalledWith("parent", "manager-1", "/worktrees/parent", "", "claude", "sonnet", "", true, "spawn");
+    expect(onOpenSession).toHaveBeenCalledWith("parent", "manager-1", "/worktrees/parent", "", "claude", "sonnet", "", true, "attach");
   });
 
   it("projects an unbound manager once as Sub-task setup instead of a Generic session", async () => {
@@ -525,6 +527,7 @@ describe("Task Detail sub-task manager projection", () => {
       created,
       generic: false,
       phase: created === 30 ? "build" : "research",
+      playbook: "superdevelop",
       subtask_manager: false,
       subtask_slug: "",
     });
@@ -679,7 +682,7 @@ describe("Task Detail sub-task manager projection", () => {
     expect(screen.getAllByRole("button", { name: "Replace manager session" })).toHaveLength(1);
     fireEvent.click(replace);
     await waitFor(() => expect(ipcSpies.recoverSubtaskManager).toHaveBeenCalledWith("parent"));
-    expect(onOpenSession).toHaveBeenCalledWith("parent", "manager-1", "/worktrees/parent", "", "claude", "sonnet", "", true, "spawn");
+    expect(onOpenSession).toHaveBeenCalledWith("parent", "manager-1", "/worktrees/parent", "", "claude", "sonnet", "", true, "attach");
   });
 
   it("kills an active child without a manager and keeps a task-backed history row", async () => {
@@ -953,74 +956,73 @@ describe("keying by slug", () => {
   });
 });
 
-describe("load() wave + dependent tail", () => {
-  it("fires exactly one listPlaybookSteps call for the common case", async () => {
-    const fixture = task({ playbook: "superdevelop" });
+describe("authoritative task execution", () => {
+  it("shows concurrent primary work without newer auxiliary sessions changing progress", async () => {
+    const fixture = task();
     mocks.getTask.mockResolvedValue(fixture);
-    mocks.listPlaybooks.mockResolvedValue([playbookSummary({ key: "superdevelop", title: "SuperDevelop" })]);
-    mocks.listSessions.mockResolvedValue([session({ id: "s1", playbook: "superdevelop", phase: "research" })]);
-
-    renderSeededDetail({ initialTask: fixture });
-
-    await waitFor(() => expect(mocks.listPlaybookSteps).toHaveBeenCalled());
-    expect(mocks.listPlaybookSteps).toHaveBeenCalledTimes(1);
-    expect(mocks.listPlaybookSteps).toHaveBeenCalledWith("superdevelop");
-  });
-
-  it("fetches steps a second time only for a genuinely foreign session playbook", async () => {
-    const fixture = task({ playbook: "superdevelop" });
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listPlaybooks.mockResolvedValue([playbookSummary({ key: "superdevelop", title: "SuperDevelop" })]);
-    mocks.listSessions.mockResolvedValue([
-      session({ id: "s1", playbook: "superdevelop", phase: "research" }),
-      session({ id: "s2", playbook: "custom-flow", phase: "custom-step" }),
-    ]);
-    mocks.listPlaybookSteps.mockImplementation(async (key: string) => {
-      if (key === "custom-flow") return [step({ key: "custom-step", title: "Custom Step" })];
-      return [step({ key: "research", title: "Research" })];
-    });
-
-    renderSeededDetail({ initialTask: fixture });
-
-    await waitFor(() => expect(mocks.listPlaybookSteps).toHaveBeenCalledTimes(2));
-    const calledKeys = mocks.listPlaybookSteps.mock.calls.map((c: unknown[]) => c[0]);
-    expect(calledKeys.sort()).toEqual(["custom-flow", "superdevelop"]);
-    // The merge into playbookDetails actually landed before render, not just that the call fired.
-    await waitFor(() => expect(screen.getByText(/Custom Step/)).toBeDefined());
-  });
-
-  it("de-duplicates two sessions sharing the same foreign playbook into one tail fetch", async () => {
-    const fixture = task({ playbook: "superdevelop" });
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listPlaybooks.mockResolvedValue([playbookSummary({ key: "superdevelop", title: "SuperDevelop" })]);
-    mocks.listSessions.mockResolvedValue([
-      session({ id: "s1", playbook: "custom-flow", phase: "custom-step" }),
-      session({ id: "s2", playbook: "custom-flow", phase: "custom-step" }),
-    ]);
-
-    renderSeededDetail({ initialTask: fixture });
-
-    await waitFor(() => expect(mocks.listPlaybookSteps).toHaveBeenCalledTimes(2));
-    const customCalls = mocks.listPlaybookSteps.mock.calls.filter((c: unknown[]) => c[0] === "custom-flow");
-    expect(customCalls.length).toBe(1);
-  });
-
-  it("falls back to the fetched task's real playbook when the seed is stale", async () => {
-    // initialTask (the seed) guesses "one-shot"; the fetched task's real playbook is "superdevelop".
-    const seed = task({ playbook: "one-shot" });
-    const fetched = task({ playbook: "superdevelop" });
-    mocks.getTask.mockResolvedValue(fetched);
-    mocks.listPlaybooks.mockResolvedValue([playbookSummary({ key: "superdevelop", title: "SuperDevelop" }), playbookSummary({ key: "one-shot", title: "One Shot" })]);
-    mocks.listPlaybookSteps.mockImplementation(async (key: string) =>
-      key === "superdevelop" ? [step({ key: "impl", title: "Implement" })] : [step({ key: "guess", title: "Guessed Step" })],
+    mocks.getTaskExecution.mockResolvedValue(
+      executionReply([
+        executionRecord(),
+        executionRecord({ id: "execution-b", owner_session_id: "owner-b", lifecycle: "finishing", receipt_id: "accepted-b" }),
+        executionRecord({ id: "execution-old", owner_session_id: "owner-old", lifecycle: "completed", receipt_id: "accepted-old", shutdown_confirmed: true }),
+      ]),
     );
+    mocks.listSessions.mockResolvedValue([
+      session({ id: "auxiliary-newest", created: 100, generic: true, phase: "" }),
+      session({ id: "owner-b", created: 3 }),
+      session({ id: "owner-a", created: 2 }),
+    ]);
+    renderSeededDetail({ initialTask: fixture });
+    expect(screen.queryByRole("region", { name: "Task executions" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    expect(await screen.findByText(/2 active executions \/ 3 slots/)).toBeDefined();
+    expect(within(screen.getByRole("article", { name: "Execution execution-b" })).getByText("finishing")).toBeDefined();
+    expect(within(screen.getByRole("article", { name: "Execution execution-old" })).getByText("completed")).toBeDefined();
+    expect(screen.getByText("Auxiliary")).toBeDefined();
+    expect(screen.queryByText("superdevelop")).toBeNull();
+    fireEvent.click(within(screen.getByRole("group", { name: "Task side panel" })).getByRole("button", { name: "Playbook" }));
+    expect(screen.queryByRole("region", { name: "Task executions" })).toBeNull();
+    expect(screen.getByText("Auxiliary")).toBeDefined();
+  });
 
-    renderSeededDetail({ initialTask: seed });
+  it("grants the displayed execution owner without granting a replacement after stale ownership", async () => {
+    const fixture = task();
+    mocks.getTask.mockResolvedValue(fixture);
+    mocks.getTaskExecution.mockResolvedValue(executionReply());
+    mocks.allowExecutionCompletion.mockRejectedValue(new Error("owner changed"));
+    renderSeededDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Allow this session to complete · owner-a" }));
+    await waitFor(() => expect(mocks.allowExecutionCompletion).toHaveBeenCalledWith("a-task", "execution-a", "owner-a", "/r"));
+    expect(await screen.findByText(/Execution state unavailable/)).toBeDefined();
+    expect((screen.getByRole("button", { name: "Allow this session to complete · owner-a" }) as HTMLButtonElement).disabled).toBe(true);
+  });
 
-    await waitFor(() => expect(mocks.listPlaybookSteps).toHaveBeenCalledWith("superdevelop"));
-    // The rendered pipeline comes from the fetched playbook's steps, not the stale seed's guess.
-    await waitFor(() => expect(screen.getAllByText("Implement").length).toBeGreaterThan(0));
-    expect(screen.queryByText("Guessed Step")).toBeNull();
+  it("shows queued interrupted and accepted-but-live state with exact assignments and creation failure", async () => {
+    const fixture = task();
+    const retained = executionReply([
+      executionRecord({ lifecycle: "queued", start_requested: false }),
+      executionRecord({ id: "queued-a", owner_session_id: "queued-owner-a", lifecycle: "queued", start_requested: true }),
+      executionRecord({ id: "queued-b", owner_session_id: "queued-owner-b", lifecycle: "queued", start_requested: true }),
+      executionRecord({ id: "uncertain", lifecycle: "interrupted", owner_session_id: "owner-uncertain", error: "Process disposition unknown" }),
+      executionRecord({ id: "finishing", lifecycle: "finishing", receipt_id: "accepted", owner_session_id: "owner-finishing" }),
+    ]);
+    retained.state.creation = "partial";
+    retained.state.creation_error = "One root could not launch";
+    mocks.getTask.mockResolvedValue(fixture);
+    mocks.getTaskExecution.mockResolvedValue(retained);
+    renderSeededDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    expect(await screen.findByText("One root could not launch")).toBeDefined();
+    expect(screen.getByRole("status", { name: "Queued sessions" }).textContent).toBe("2 queued");
+    const queued = within(screen.getByRole("article", { name: "Execution execution-a" }));
+    expect(queued.getByText("Held until explicitly started")).toBeDefined();
+    fireEvent.click(queued.getByText("Inputs and outputs"));
+    expect(queued.getByText("research/1-request-2.md")).toBeDefined();
+    expect(queued.getByText("research/2-result-10.md")).toBeDefined();
+    expect(screen.getByText("Process disposition unknown")).toBeDefined();
+    expect(screen.getByText("Outputs accepted; waiting for confirmed session shutdown.")).toBeDefined();
+    expect(screen.queryByRole("button", { name: /Allow this session/ })).toBeNull();
   });
 });
 
@@ -1143,8 +1145,6 @@ describe("attention-first session order", () => {
       session({ id: "older-design", created: 10, phase: "design" }),
     ]);
     mocks.getTask.mockResolvedValue(fixture);
-    mocks.listPlaybooks.mockResolvedValue([playbookSummary()]);
-    mocks.listPlaybookSteps.mockResolvedValue([step({ key: "design", title: "Design" }), step({ key: "tdd", title: "TDD" })]);
     mocks.listSessions.mockResolvedValue(backendRows);
     mocks.sessionStatuses.mockResolvedValue({
       "older-design": observation("busy"),
@@ -1154,7 +1154,7 @@ describe("attention-first session order", () => {
     const { container } = renderSeededDetail({ initialTask: fixture });
 
     await waitFor(() => {
-      expect(renderedSessionSteps(container)).toEqual(["SuperDevelop · Design", "SuperDevelop · TDD"]);
+      expect(renderedSessionSteps(container)).toEqual([...backendRows].reverse().map((row) => `${row.playbook} · ${row.phase}`));
     });
     expect(mocks.sessionStatuses).toHaveBeenCalledTimes(1);
     expect(mocks.sessionStatuses).toHaveBeenCalledWith(["newer-tdd", "older-design"], "a-task");
@@ -1172,8 +1172,6 @@ describe("attention-first session order", () => {
       notification_read_at: 90,
     });
     mocks.getTask.mockResolvedValue(fixture);
-    mocks.listPlaybooks.mockResolvedValue([playbookSummary()]);
-    mocks.listPlaybookSteps.mockResolvedValue([step({ key: "design", title: "Design" }), step({ key: "tdd", title: "TDD" })]);
     mocks.listSessions.mockResolvedValue([unread, acknowledged]);
     mocks.sessionStatuses.mockResolvedValue({
       "unread-design": {
@@ -1190,8 +1188,8 @@ describe("attention-first session order", () => {
 
     renderSeededDetail({ initialTask: fixture });
 
-    const unreadRow = await screen.findByRole("row", { name: "Open session SuperDevelop · Design" });
-    const acknowledgedRow = screen.getByRole("row", { name: "Open session SuperDevelop · TDD" });
+    const unreadRow = await screen.findByRole("row", { name: new RegExp(`${unread.phase}$`) });
+    const acknowledgedRow = screen.getByRole("row", { name: new RegExp(`${acknowledged.phase}$`) });
     expect(within(unreadRow).getByRole("img", { name: "Unread completion" })).toBeDefined();
     expect(within(acknowledgedRow).queryByRole("img", { name: "Unread completion" })).toBeNull();
   });
@@ -1201,8 +1199,6 @@ describe("attention-first session order", () => {
     let stopped = session({ id: "stopped-generic", created: 20, generic: true, phase: "", ended_at: 100, exit_code: 143 });
     const idle = session({ id: "current-structure", created: 30, phase: "structure" });
     mocks.getTask.mockResolvedValue(fixture);
-    mocks.listPlaybooks.mockResolvedValue([playbookSummary()]);
-    mocks.listPlaybookSteps.mockResolvedValue([step({ key: "structure", title: "Structure" })]);
     mocks.listSessions.mockImplementation(async () => [idle, stopped]);
     mocks.markSessionNotificationRead.mockImplementation(async (_repoPath: string, _taskSlug: string, id: string) => {
       if (id === stopped.id) stopped = { ...stopped, exit_notification_read_at: 100 };
@@ -1216,13 +1212,17 @@ describe("attention-first session order", () => {
       "current-structure": observation("idle"),
     });
 
-    const { container } = renderSeededDetail({ initialTask: fixture });
+    const onOpenSession = vi.fn();
+    const { container } = renderSeededDetail({ initialTask: fixture, onOpenSession });
 
-    await waitFor(() => {
-      expect(renderedSessionSteps(container)).toEqual(["Generic", "SuperDevelop · Structure"]);
-    });
+    await screen.findByRole("img", { name: "Failed: process exited with code 143" });
+    const rows = container.querySelectorAll(".task-session-table tbody tr");
+    fireEvent.click(rows[0]);
+    expect(onOpenSession.mock.lastCall?.[1]).toBe(stopped.id);
+    fireEvent.click(rows[1]);
+    expect(onOpenSession.mock.lastCall?.[1]).toBe(idle.id);
     const acknowledge = screen.getByRole("button", { name: "Acknowledge exited sessions" });
-    const stoppedRow = screen.getByRole("row", { name: "Open session Generic" });
+    const stoppedRow = screen.getByRole("img", { name: "Failed: process exited with code 143" }).closest("tr") as HTMLTableRowElement;
     expect(within(stoppedRow).getByRole("img", { name: "Failed: process exited with code 143" })).toBeDefined();
 
     fireEvent.click(acknowledge);
@@ -1379,8 +1379,6 @@ describe("the empty-sessions row", () => {
     const listSessionsDeferred = deferred<SessionMeta[]>();
     mocks.getTask.mockReturnValue(getTaskDeferred.promise);
     mocks.listSessions.mockReturnValue(listSessionsDeferred.promise);
-    mocks.listPlaybooks.mockResolvedValue([]);
-    mocks.listPlaybookSteps.mockResolvedValue([]);
     mocks.listArtifactsWithMetadata.mockResolvedValue([]);
     mocks.sessionStatuses.mockResolvedValue({});
 

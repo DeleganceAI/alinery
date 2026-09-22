@@ -148,6 +148,34 @@ pub fn load_global_settings(app_config: &Path) -> GlobalSettings {
     normalize_global_settings(global)
 }
 
+/// Missing settings inherit product defaults; present invalid/legacy values fail closed.
+pub fn load_global_settings_strict(app_config: &Path) -> Result<GlobalSettings, String> {
+    match fs::read_to_string(app_config) {
+        Ok(text) => parse_global_settings(&text).map(normalize_global_settings).map_err(|error| {
+            format!(
+                "invalid global settings {} (playbook defaults require a scope-qualified v2 reference): {error}",
+                app_config.display()
+            )
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(default_global_settings()),
+        Err(error) => Err(format!("read settings {}: {error}", app_config.display())),
+    }
+}
+
+pub fn load_repo_overrides_strict(repo: &Path) -> Result<RepoOverrides, String> {
+    let path = config_toml_path(repo);
+    match fs::read_to_string(&path) {
+        Ok(text) => toml::from_str(&text).map_err(|error| {
+            format!(
+                "invalid repository settings {} (playbook defaults require a scope-qualified v2 reference): {error}",
+                path.display()
+            )
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(RepoOverrides::default()),
+        Err(error) => Err(format!("read settings {}: {error}", path.display())),
+    }
+}
+
 pub fn prepare_telemetry_prefs(mut t: TelemetryPrefs) -> TelemetryPrefs {
     if t.prompted && t.enabled && t.install_id.is_empty() {
         t.install_id = uuid::Uuid::new_v4().to_string();
@@ -379,7 +407,9 @@ fn log_global_diff(app_config: &Path, prev: &GlobalSettings, next: &GlobalSettin
     }
     push_changed_quoted(&mut fields, "defaults.harness", &prev.defaults.harness, &next.defaults.harness);
     push_changed_quoted(&mut fields, "defaults.model", &prev.defaults.model, &next.defaults.model);
-    push_changed_quoted(&mut fields, "defaults.playbook", &prev.defaults.playbook, &next.defaults.playbook);
+    if prev.defaults.playbook != next.defaults.playbook {
+        fields.push("defaults.playbook=changed".into());
+    }
     push_changed_bool(&mut fields, "defaults.draft_autosave", prev.defaults.draft_autosave, next.defaults.draft_autosave);
     push_changed_quoted(&mut fields, "backup.destination", &prev.backup.destination, &next.backup.destination);
     push_changed_bool(&mut fields, "backup.enabled", prev.backup.enabled, next.backup.enabled);
@@ -461,7 +491,9 @@ fn log_repo_field_diff(app_config: &Path, repo: &Path, prev: &RepoOverrides, nex
     push_opt_secret(&mut fields, "github.token", &prev.github.token, &next.github.token);
     push_opt_quoted(&mut fields, "defaults.harness", &prev.defaults.harness, &next.defaults.harness);
     push_opt_quoted(&mut fields, "defaults.model", &prev.defaults.model, &next.defaults.model);
-    push_opt_quoted(&mut fields, "defaults.playbook", &prev.defaults.playbook, &next.defaults.playbook);
+    if prev.defaults.playbook != next.defaults.playbook {
+        fields.push("defaults.playbook=changed".into());
+    }
     push_opt_bool(&mut fields, "defaults.draft_autosave", prev.defaults.draft_autosave, next.defaults.draft_autosave);
     push_opt_quoted(&mut fields, "backup.destination", &prev.backup.destination, &next.backup.destination);
     push_opt_bool(&mut fields, "backup.enabled", prev.backup.enabled, next.backup.enabled);
@@ -521,6 +553,24 @@ mod tests {
         let repo = dir.join("repo");
         fs::create_dir_all(alinery_dir(&repo)).unwrap();
         (dir, app_config, repo)
+    }
+
+    #[test]
+    fn strict_defaults_reject_legacy_references_without_discarding_scope() {
+        let (dir, app_config, repo) = temp_pair("strict-playbook-defaults");
+        fs::write(&app_config, "[global.defaults]\nplaybook = 'superdevelop'\n").unwrap();
+        assert!(load_global_settings_strict(&app_config).is_err());
+        fs::write(&app_config, "[global.defaults.playbook]\nscope = 'global'\nkey = 'custom'\n").unwrap();
+        let global = load_global_settings_strict(&app_config).unwrap();
+        assert_eq!(global.defaults.playbook.scope, crate::playbook::PlaybookScope::Global);
+        assert_eq!(global.defaults.playbook.key, "custom");
+        fs::write(config_toml_path(&repo), "[defaults]\nplaybook = 'custom'\n").unwrap();
+        assert!(crate::read_scoped_settings_strict(&app_config, &repo).is_err());
+        fs::write(config_toml_path(&repo), "[defaults.playbook]\nscope = 'repo'\nkey = 'custom'\n").unwrap();
+        let effective = crate::read_scoped_settings_strict(&app_config, &repo).unwrap().effective;
+        assert_eq!(effective.defaults.playbook.scope, crate::playbook::PlaybookScope::Repo);
+        assert_eq!(effective.defaults.playbook.key, "custom");
+        fs::remove_dir_all(dir).unwrap();
     }
 
     fn log_text(app_config: &Path) -> String {

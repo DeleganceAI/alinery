@@ -94,25 +94,25 @@ pub(crate) fn load_config_with_app_path(app_config: &Path, repo: &Path) -> Confi
 }
 
 pub(crate) fn scoped_settings_for(app: &AppHandle, repo: &Path) -> Result<alinery_core::ScopedSettings, String> {
-    let _ = ensure_config_toml(repo);
-    Ok(alinery_core::read_scoped_settings(&app_config_path(app)?, repo))
+    ensure_config_toml(repo)?;
+    alinery_core::read_scoped_settings_strict(&app_config_path(app)?, repo)
 }
 
 #[tauri::command]
 pub(crate) fn read_config(app: AppHandle) -> Result<Config, String> {
     let repo = active_repo()?;
-    Ok(load_config_with_app_path(&app_config_path(&app)?, &repo))
+    Ok(scoped_settings_for(&app, &repo)?.effective)
 }
 
 #[tauri::command]
 pub(crate) fn read_config_for_repo(app: AppHandle, repo_path: String) -> Result<Config, String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
-    Ok(load_config_with_app_path(&app_config_path(&app)?, &repo))
+    Ok(scoped_settings_for(&app, &repo)?.effective)
 }
 
 #[tauri::command]
 pub(crate) fn read_global_settings(app: AppHandle) -> Result<alinery_core::GlobalSettings, String> {
-    Ok(alinery_core::load_global_settings(&app_config_path(&app)?))
+    alinery_core::load_global_settings_strict(&app_config_path(&app)?)
 }
 
 pub(crate) fn read_model_favorites_in(app_config: &Path, harness: &str) -> Vec<String> {
@@ -201,7 +201,7 @@ pub(crate) fn read_scoped_settings_for_repo(app: AppHandle, repo_path: String) -
 
 #[tauri::command]
 pub(crate) fn read_repo_overrides_for_repo(app: AppHandle, repo_path: String) -> Result<alinery_core::RepoOverrides, String> {
-    Ok(alinery_core::load_repo_overrides(&target_repo_for_app(&app, &repo_path)?))
+    alinery_core::load_repo_overrides_strict(&target_repo_for_app(&app, &repo_path)?)
 }
 
 #[tauri::command]
@@ -228,7 +228,7 @@ pub(crate) fn write_repo_overrides_for_repo(
 pub(crate) fn clear_repo_override_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, field: String) -> Result<alinery_core::ScopedSettings, String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
-    let mut overrides = alinery_core::load_repo_overrides(&repo);
+    let mut overrides = alinery_core::load_repo_overrides_strict(&repo)?;
     alinery_core::clear_repo_override(&mut overrides, &field)?;
     alinery_core::write_repo_overrides(Some(&app_config_path(&app)?), &repo, &overrides)?;
     emit(

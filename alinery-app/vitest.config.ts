@@ -13,7 +13,7 @@ export default defineConfig({
     // tests do not care, and a pragma is one more thing to remember (and to forget) when
     // writing a component test.
     environment: "jsdom",
-    setupFiles: ["src/test/setupCanvas.ts"],
+    setupFiles: ["src/test/setupStorage.ts", "src/test/setupCanvas.ts"],
     // jsdom's unimplemented canvas logs "Not implemented: HTMLCanvasElement"
     // on every ThinkingOrb mount. setupCanvas.ts swallows getContext; this
     // drops any remaining copy so it cannot fail the run.

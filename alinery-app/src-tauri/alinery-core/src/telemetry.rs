@@ -560,34 +560,7 @@ pub fn send(prefs: &TelemetryPrefs, event: &TelemetryEvent) -> Result<(), String
 }
 
 fn basic_auth_value() -> String {
-    use std::io::Write;
-    // Manual base64 so we do not pull another crate just for the header.
-    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let raw = format!("{INGEST_USER}:{INGEST_PASSWORD}");
-    let bytes = raw.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len().div_ceil(3) * 4);
-    let mut i = 0;
-    while i < bytes.len() {
-        let b0 = bytes[i];
-        let b1 = if i + 1 < bytes.len() { bytes[i + 1] } else { 0 };
-        let b2 = if i + 2 < bytes.len() { bytes[i + 2] } else { 0 };
-        let n = ((b0 as u32) << 16) | ((b1 as u32) << 8) | (b2 as u32);
-        out.push(TABLE[((n >> 18) & 0x3F) as usize]);
-        out.push(TABLE[((n >> 12) & 0x3F) as usize]);
-        if i + 1 < bytes.len() {
-            out.push(TABLE[((n >> 6) & 0x3F) as usize]);
-        } else {
-            out.push(b'=');
-        }
-        if i + 2 < bytes.len() {
-            out.push(TABLE[(n & 0x3F) as usize]);
-        } else {
-            out.push(b'=');
-        }
-        i += 3;
-    }
-    let _ = Write::write(&mut std::io::sink(), &out);
-    String::from_utf8(out).unwrap_or_default()
+    crate::rpc_chunk::encode_base64(format!("{INGEST_USER}:{INGEST_PASSWORD}").as_bytes())
 }
 
 /// The consent rule, in one place: nothing leaves the machine unless the user was asked, said

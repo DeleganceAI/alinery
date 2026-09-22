@@ -19,7 +19,7 @@ const baseGlobal: GlobalSettings = {
   },
 
   github: { token: "" },
-  defaults: { harness: "omp", model: "", playbook: "", draft_autosave: false },
+  defaults: { harness: "omp", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
   backup: {
     destination: "",
     enabled: false,
@@ -107,7 +107,7 @@ describe("Harness settings model default", () => {
   it("does not offer a leftover claude model as the OMP default", async () => {
     mocks.readGlobalSettings.mockResolvedValue({
       ...baseGlobal,
-      defaults: { harness: "claude", model: "sonnet", playbook: "", draft_autosave: false },
+      defaults: { harness: "claude", model: "sonnet", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
     });
     renderHarnessSection();
     await waitFor(() => expect((screen.getByLabelText("Model") as HTMLInputElement).value).toBe(""));

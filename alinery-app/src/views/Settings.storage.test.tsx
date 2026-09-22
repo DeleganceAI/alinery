@@ -20,7 +20,7 @@ const globalSettings: GlobalSettings = {
     dock_badge_completions: true,
   },
   github: { token: "" },
-  defaults: { harness: "omp", model: "", playbook: "", draft_autosave: false },
+  defaults: { harness: "omp", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
   backup: {
     destination: "",
     enabled: false,

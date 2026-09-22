@@ -1,6 +1,4 @@
-//! Phase 6: app-crate telemetry instrumentation (04-structure.md §Phase 6).
-//! Drives `create_task_in_with_draft_slug` and `write_draft_in_with_slug` with a real
-//! `app_config` path so the `emit_at` gate and payload shape are observable end to end.
+//! Draft telemetry remains app-owned; executable provisioning telemetry is daemon-owned.
 use super::*;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -12,11 +10,6 @@ fn unique_temp(name: &str) -> std::path::PathBuf {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
-}
-
-fn looks_like_uuid(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    bytes.len() == 36 && bytes[8] == b'-' && bytes[13] == b'-' && bytes[18] == b'-' && bytes[23] == b'-'
 }
 
 fn write_app_toml_with_telemetry(dir: &Path, enabled: bool, prompted: bool, endpoint: &str) -> std::path::PathBuf {
@@ -100,100 +93,8 @@ fn capture_events(dir: &Path, expected: usize, emit: impl Fn(&Path)) -> Vec<serd
 }
 
 #[test]
-fn create_task_emits_nothing_when_unprompted() {
-    let repo = init_git_test_repo("telemetry-unprompted");
-    alinery_core::ensure_playbooks(&repo).unwrap();
-    let dir = unique_temp("telemetry_unprompted");
-    // Default telemetry (prompted = false) at an address nothing listens on: the gate
-    // must return before any connect is attempted.
-    let app_config = write_app_toml_with_telemetry(&dir, true, false, "http://127.0.0.1:1");
-    let result = create_task_in_with_draft_slug(
-        &repo,
-        Some(&app_config),
-        "",
-        "",
-        "Unprompted Task".into(),
-        "".into(),
-        "".into(),
-        vec![],
-        "".into(),
-        "".into(),
-        default_playbook_key(),
-        "claude".into(),
-        String::new(),
-        None,
-        false,
-        "".into(),
-        "".into(),
-    );
-    assert!(result.is_ok());
-    std::thread::sleep(Duration::from_millis(50));
-    assert!(
-        std::net::TcpStream::connect_timeout(&"127.0.0.1:1".parse().unwrap(), Duration::from_millis(50)).is_err(),
-        "gate must not attempt a TCP connect when unprompted"
-    );
-    let _ = fs::remove_dir_all(&repo);
-    let _ = fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn create_task_attempts_send_when_prompted() {
-    let repo = init_git_test_repo("telemetry-prompted");
-    alinery_core::ensure_playbooks(&repo).unwrap();
-    let dir = unique_temp("telemetry_prompted");
-    let events = capture_events(&dir, 2, |app_config| {
-        let result = create_task_in_with_draft_slug(
-            &repo,
-            Some(app_config),
-            "",
-            "",
-            "Prompted Task".into(),
-            "".into(),
-            "".into(),
-            vec![],
-            "".into(),
-            "".into(),
-            default_playbook_key(),
-            "claude".into(),
-            String::new(),
-            None,
-            false,
-            "".into(),
-            "".into(),
-        );
-        result.unwrap();
-    });
-    let names: Vec<&str> = events.iter().map(|r| r["event"].as_str().unwrap_or_default()).collect();
-    assert!(names.contains(&"task.create"), "{names:?}");
-    assert!(names.contains(&"session.create"), "{names:?}");
-    let task = events.iter().find(|r| r["event"] == "task.create").unwrap();
-    let session = events.iter().find(|r| r["event"] == "session.create").unwrap();
-    let task_id = task["props"]["task_id"].as_str().unwrap_or_default();
-    let session_id = session["props"]["session_id"].as_str().unwrap_or_default();
-    assert!(looks_like_uuid(task_id), "task_id must be a UUID, got {task_id}");
-    assert!(looks_like_uuid(session_id), "session_id must be a UUID, got {session_id}");
-    assert_ne!(task_id, "prompted-task");
-    assert_eq!(session["props"]["task_id"], task_id);
-    let raw = serde_json::to_string(&events).unwrap();
-    assert!(!raw.contains("Prompted Task"), "leaked task name: {raw}");
-    assert!(!raw.contains("prompted-task"), "leaked task slug: {raw}");
-    assert!(!raw.contains(repo.to_string_lossy().as_ref()), "leaked repo/worktree path: {raw}");
-    for rec in &events {
-        let obj = rec.as_object().expect("record object");
-        let props = obj["props"].as_object().expect("props object");
-        for leaked_key in ["slug", "name", "prompt", "prompt_extra"] {
-            assert!(!obj.contains_key(leaked_key), "payload leaked key {leaked_key}: {raw}");
-            assert!(!props.contains_key(leaked_key), "payload leaked key {leaked_key}: {raw}");
-        }
-    }
-    let _ = fs::remove_dir_all(&repo);
-    let _ = fs::remove_dir_all(&dir);
-}
-
-#[test]
 fn write_draft_in_emits_task_draft_create_only_on_first_write() {
     let repo = init_git_test_repo("telemetry-draft");
-    alinery_core::ensure_playbooks(&repo).unwrap();
     let dir = unique_temp("telemetry_draft");
     let events = capture_events(&dir, 1, |app_config| {
         let draft = write_draft_in_with_slug(
@@ -206,11 +107,14 @@ fn write_draft_in_emits_task_draft_create_only_on_first_write() {
             "".into(),
             "".into(),
             "".into(),
-            default_playbook_key(),
+            alinery_core::playbook::PlaybookRef {
+                scope: alinery_core::playbook::PlaybookScope::Bundled,
+                key: "one-shot".into(),
+            },
             "claude".into(),
             String::new(),
             None,
-            false,
+            10,
             "".into(),
             "".into(),
         );
@@ -228,11 +132,14 @@ fn write_draft_in_emits_task_draft_create_only_on_first_write() {
             "".into(),
             "".into(),
             "".into(),
-            default_playbook_key(),
+            alinery_core::playbook::PlaybookRef {
+                scope: alinery_core::playbook::PlaybookScope::Bundled,
+                key: "one-shot".into(),
+            },
             "claude".into(),
             String::new(),
             None,
-            false,
+            10,
             "".into(),
             "".into(),
         )

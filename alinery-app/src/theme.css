@@ -816,6 +816,10 @@ main {
   padding: 16px 16px 8px;
   overflow: hidden;
 }
+/* Retained views must stay hidden even when their layout sets display. */
+.view[hidden] {
+  display: none;
+}
 .view.nopad,
 .view.grid-view-shell {
   padding: 0;
@@ -3392,6 +3396,9 @@ dialog.modal::backdrop {
 }
 .task-info-panel {
   flex: 0 0 auto;
+  max-height: 50%;
+  min-height: 0;
+  overflow: auto;
 }
 .task-sessions-panel {
   display: flex;
@@ -3508,6 +3515,11 @@ dialog.modal::backdrop {
   gap: 10px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+.task-session-queue {
+  font-size: calc(12px * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .task-session-controls .field-input {
   max-width: 220px;
@@ -3899,6 +3911,32 @@ dialog.modal::backdrop {
   gap: 10px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
+}
+.session-execution-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.session-execution-bar > details {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: calc(13px * var(--ui-scale));
+  line-height: 1.5;
+}
+.session-execution-bar > details > summary {
+  padding: 3px 0;
+  cursor: pointer;
+}
+.session-execution-bar > details > summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.session-execution-bar > .btn {
+  flex-shrink: 0;
 }
 .session-view-hatch {
   flex: 0 0 auto;
@@ -5166,6 +5204,349 @@ dialog.modal::backdrop {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+}
+.task-history-pane {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: 12px;
+}
+.task-history-title {
+  margin: 4px 0 8px;
+  color: var(--text-strong);
+  font-size: calc(16px * var(--ui-scale));
+  font-weight: 600;
+}
+.task-history-summary {
+  margin: 0 0 16px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.5;
+}
+.task-history-entry {
+  border-top: 1px solid var(--border);
+  padding: 16px 0;
+}
+.task-history-entry-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+.task-history-entry-heading h4 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: calc(14px * var(--ui-scale));
+  font-weight: 600;
+  line-height: 1.5;
+}
+.task-history-metadata {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 10px 0;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.5;
+}
+.task-history-metadata dd {
+  min-width: 0;
+  margin: 0;
+  user-select: text;
+}
+.task-history-entry > p,
+.task-history-entry > details {
+  margin: 10px 0;
+  font-size: calc(13px * var(--ui-scale));
+  line-height: 1.5;
+}
+.task-history-entry > .task-history-permission {
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.task-history-entry > details > summary {
+  cursor: pointer;
+}
+.task-history-entry > details > summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.task-history-entry > :last-child {
+  margin-bottom: 0;
+}
+.task-history-entry > .btn {
+  max-width: 100%;
+  height: auto;
+  min-height: 26px;
+  padding: 4px 10px;
+  white-space: normal;
+  text-align: left;
+  line-height: 1.5;
+}
+.task-playbook-toolbar {
+  padding: 12px 12px 0;
+  flex-shrink: 0;
+}
+.task-playbook-toolbar p {
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.5;
+  margin: 8px 0 0;
+}
+.playbook-side-graph {
+  display: flex;
+  flex-direction: column;
+}
+.playbook-side-graph > .playbook-definition-graph {
+  flex: 1;
+  min-height: 320px;
+}
+.playbooks-view {
+  display: flex;
+  flex-direction: column;
+}
+.playbooks-page {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  flex: 1;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  width: 100%;
+  text-align: left;
+}
+.playbooks-library {
+  padding: 16px;
+  border-right: 1px solid var(--border);
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.playbooks-page h1,
+.playbooks-page h2 {
+  margin: 0 0 12px;
+  color: var(--text-strong);
+  font-size: calc(20px * var(--ui-scale));
+}
+.playbooks-page .actions,
+.playbooks-toolbar,
+.playbooks-savebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.playbooks-search,
+.playbooks-destination label,
+.playbooks-import label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 16px 0;
+  font-size: calc(12px * var(--ui-scale));
+}
+.playbooks-page input,
+.playbooks-page select {
+  min-width: 0;
+  width: 100%;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  font: inherit;
+}
+.playbooks-page ul[aria-label="Playbook library"] {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+}
+.playbooks-library-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.playbooks-library-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.playbooks-library-row small,
+.playbooks-context,
+.playbooks-library-note,
+.playbooks-provenance,
+.playbooks-savebar > span {
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.playbooks-library-row:hover:not(:disabled),
+.playbooks-library-row[aria-current="true"] {
+  background: var(--surface-subtle);
+  border-color: var(--border-strong);
+}
+.playbooks-library-row[aria-current="true"] {
+  box-shadow: inset 2px 0 var(--text-muted);
+}
+.playbooks-library-row:disabled {
+  cursor: default;
+}
+.playbooks-page :focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.playbooks-detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  min-width: 0;
+  padding: 24px;
+}
+.playbooks-workspace {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  outline: none;
+}
+.playbooks-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.playbooks-body > * {
+  flex-shrink: 0;
+}
+.playbooks-body > .playbook-definition-graph {
+  flex: 1 0 240px;
+  min-height: 240px;
+}
+.playbooks-body > .playbooks-editor-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 240px;
+  min-height: 240px;
+}
+.playbooks-editor-panel > .playbooks-context {
+  flex-shrink: 0;
+}
+.playbooks-detail-header {
+  height: auto;
+  padding: 0;
+  border: 0;
+  position: static;
+  z-index: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.playbooks-detail-header > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.playbooks-detail-header p {
+  margin: 0 0 16px;
+  max-width: 75ch;
+  line-height: 1.5;
+}
+.playbooks-detail-header h2 {
+  margin-top: 6px;
+}
+.playbooks-toolbar {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+.playbooks-provenance {
+  margin-bottom: 16px;
+}
+.playbooks-provenance summary {
+  cursor: pointer;
+  min-height: 28px;
+  padding: 4px 0;
+}
+.playbooks-provenance dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 16px;
+}
+.playbooks-provenance dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.playbooks-destination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0 0 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.playbooks-destination label {
+  margin: 8px 0;
+  flex: 1 1 160px;
+}
+.playbooks-destination p {
+  flex-basis: 100%;
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+.playbooks-empty {
+  padding: 24px 0;
+  color: var(--text-muted);
+}
+.playbooks-savebar {
+  height: auto;
+  flex-shrink: 0;
+  padding: 12px 0;
+  margin-top: 12px;
+  background: var(--canvas);
+  border-top: 1px solid var(--border);
+}
+.playbooks-savebar .playbooks-delete {
+  margin-left: auto;
+}
+@media (max-width: 1000px) {
+  .playbooks-page {
+    grid-template-columns: 210px minmax(0, 1fr);
+  }
+  .playbooks-library,
+  .playbooks-detail {
+    padding: 12px;
+  }
+  .playbooks-library-row {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+}
+.playbook-graph-view ul[aria-label="Artifact dependencies"] {
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
+.playbook-graph-view ul[aria-label="Artifact dependencies"] li {
+  margin-top: 8px;
+}
+.playbook-graph-view ul[aria-label="Artifact dependencies"] code {
+  display: block;
+  font-size: 0.85em;
 }
 .playbook-graph-view {
   padding: 12px;

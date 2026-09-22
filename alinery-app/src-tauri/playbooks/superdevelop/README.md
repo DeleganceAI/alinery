@@ -15,10 +15,9 @@ The SuperDevelop playbook prompts are licensed adaptations of Superpowers materi
   - `skills/requesting-code-review/SKILL.md`
   - `skills/finishing-a-development-branch/SKILL.md`
 
-`common-session.md` is the single authored source for instructions shared by every step.
-Each numbered file contains only one step's stage instructions. `alinery-core` composes the
-common instructions and selected stage into the per-repository prompt file written under
-`.alinery/playbooks/superdevelop/` during playbook initialization.
+`playbook.md` is the canonical v2 definition. It contains the required TOML metadata,
+artifact dependencies, common execution contract and all seven inline stage prompts.
+The bundled library embeds this file; it does not seed or compose per-repository prompts.
 
 These are modified, licensed adaptations with Alinery-specific task, artifact, session, and
 completion-boundary instructions. They are not a clean-room rewrite and do not include or
@@ -27,6 +26,6 @@ require Superpowers runtime tools.
 ## Current format
 
 The seven stages are Clarify, Investigate, Decide, Plan, Define Tests, Build, and Prepare Review.
-Fresh repositories receive the current configuration and composed prompts. Existing configuration
-and prompt files are not migrated or rewritten. Custom templates use `PLAYBOOK_KEY`,
-`CHILD_PLAYBOOK`, and `ARTIFACT_FILE`; old template aliases are not supported.
+New tasks retain their exact selected definition. Library changes do not rewrite existing
+tasks or legacy prompt files. Step prompts use engine-assigned input and output paths;
+the daemon supplies completion permission and shutdown instructions.

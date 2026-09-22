@@ -12,6 +12,38 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+pub use crate::task_creation::{
+    AllowExecutionCompletionRequest, CreateExecutionSessionReply, CreateExecutionSessionRequest, CreateTaskReply, CreateTaskRequest, ExecutionSessionTarget,
+    GetTaskExecutionRequest, StartSessionRequest, TaskAttachment, TaskExecutionReply, TaskPlaybookPackage,
+};
+
+fn typed_reply<T: serde::de::DeserializeOwned>(response: Value) -> Result<T, String> {
+    if let Some(error) = reply_error(&response) {
+        return Err(error.to_string());
+    }
+    serde_json::from_value(response).map_err(|e| format!("invalid daemon reply: {e}"))
+}
+
+/// A retained, peer-authenticated UI connection. Its authority is connection-bound:
+/// neither a capability string nor a `caller` field can authorize another socket.
+pub struct UiControlConnection {
+    stream: UnixStream,
+}
+impl UiControlConnection {
+    pub fn connect(client: &DaemonClient) -> Result<Self, String> {
+        let mut stream = client.send(&json!({"op":"ui_control"}))?;
+        let value: Value = serde_json::from_str(&read_reply_line(&mut stream, DAEMON_CONTROL_TIMEOUT)?).map_err(|e| e.to_string())?;
+        expect_ok(value)?;
+        Ok(Self { stream })
+    }
+    pub fn allow_execution_completion(&mut self, request: &AllowExecutionCompletionRequest) -> Result<(), String> {
+        writeln!(self.stream, "{}", json!({"op":"allow_execution_completion","request":request})).map_err(|e| e.to_string())?;
+        self.stream.flush().map_err(|e| e.to_string())?;
+        let value = serde_json::from_str(&read_reply_line(&mut self.stream, DAEMON_CONTROL_TIMEOUT)?).map_err(|e| e.to_string())?;
+        expect_ok(value)
+    }
+}
+
 pub const DAEMON_OBSERVATION_TIMEOUT: Duration = Duration::from_millis(250);
 
 // 250ms = passive observation that must never stall a poll (status/list/version).
@@ -19,6 +51,39 @@ pub const DAEMON_OBSERVATION_TIMEOUT: Duration = Duration::from_millis(250);
 //         detach/shutdown + the open handshake). A wedge detector, not a latency
 //         budget: a healthy ack is milliseconds.
 pub const DAEMON_CONTROL_TIMEOUT: Duration = Duration::from_secs(100);
+
+pub const MAX_CONTROL_HEADER_BYTES: usize = 128 * 1024;
+pub const MAX_CONTROL_BODY_BYTES: usize = 512 * 1024 * 1024;
+
+fn serialize_control_body(request: &CreateTaskRequest, limit: usize) -> Result<Vec<u8>, String> {
+    struct BoundedBody {
+        bytes: Vec<u8>,
+        limit: usize,
+    }
+    impl Write for BoundedBody {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > self.limit - self.bytes.len() {
+                return Err(std::io::Error::other("create-task-body-too-large"));
+            }
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    // Reject attachment payloads that cannot fit before allocating their encoded strings.
+    let encoded_bytes = request
+        .attachments
+        .iter()
+        .try_fold(0usize, |total, attachment| attachment.bytes.len().div_ceil(3).checked_mul(4)?.checked_add(total));
+    if encoded_bytes.is_none_or(|length| length > limit) {
+        return Err("create-task-body-too-large".into());
+    }
+    let mut body = BoundedBody { bytes: Vec::new(), limit };
+    serde_json::to_writer(&mut body, request).map_err(|error| format!("serialize create task: {error}"))?;
+    Ok(body.bytes)
+}
 
 // Formats a timeout for the "daemon not responding after ..." message: subsecond
 // durations as milliseconds (`250ms`), everything else as whole seconds (`100s`, truncating
@@ -284,6 +349,27 @@ pub struct DaemonClient {
 }
 
 impl DaemonClient {
+    pub fn create_subtask(&self, request: &crate::CreateSubtaskInput) -> Result<crate::CreateSubtaskResult, String> {
+        typed_reply(self.call(&json!({"op":"create_subtask","request":request}))?)
+    }
+    pub fn create_task(&self, request: &CreateTaskRequest) -> Result<CreateTaskReply, String> {
+        let body = serialize_control_body(request, MAX_CONTROL_BODY_BYTES)?;
+        let mut stream = self.send(&json!({"op":"create_task","body_bytes":body.len()}))?;
+        stream.write_all(&body).map_err(format_socket_write_error)?;
+        stream.flush().map_err(format_socket_write_error)?;
+        drop(body);
+        let line = read_reply_line(&mut stream, DAEMON_CONTROL_TIMEOUT)?;
+        typed_reply(serde_json::from_str(&line).map_err(|error| error.to_string())?)
+    }
+    pub fn create_execution_session(&self, request: &CreateExecutionSessionRequest) -> Result<CreateExecutionSessionReply, String> {
+        typed_reply(self.call(&json!({"op":"create_execution_session","request":request}))?)
+    }
+    pub fn start_session(&self, request: &StartSessionRequest) -> Result<CreateExecutionSessionReply, String> {
+        typed_reply(self.call(&json!({"op":"start_session","request":request}))?)
+    }
+    pub fn get_task_execution(&self, request: &GetTaskExecutionRequest) -> Result<TaskExecutionReply, String> {
+        typed_reply(self.call(&json!({"op":"get_task_execution","request":request}))?)
+    }
     pub fn connect_local(repo: &Path) -> Result<Self, String> {
         Self::connect_path_checked(alineryd_socket_path(repo, None))
     }
@@ -299,10 +385,14 @@ impl DaemonClient {
 
     // Timeouts are set before write_all so a wedged daemon can't hang the write side either.
     pub fn send(&self, request: &Value) -> Result<UnixStream, String> {
+        let header = request.to_string();
+        if header.len() > MAX_CONTROL_HEADER_BYTES {
+            return Err("control-header-too-large".into());
+        }
         let mut stream = UnixStream::connect(&self.socket_path).map_err(|error| error.to_string())?;
         stream.set_read_timeout(Some(DAEMON_CONTROL_TIMEOUT)).map_err(|error| error.to_string())?;
         stream.set_write_timeout(Some(DAEMON_CONTROL_TIMEOUT)).map_err(|error| error.to_string())?;
-        stream.write_all(request.to_string().as_bytes()).map_err(format_socket_write_error)?;
+        stream.write_all(header.as_bytes()).map_err(format_socket_write_error)?;
         stream.write_all(b"\n").map_err(format_socket_write_error)?;
         stream.flush().map_err(format_socket_write_error)?;
         Ok(stream)
@@ -315,10 +405,14 @@ impl DaemonClient {
     }
 
     pub fn call_with_timeout(&self, request: &Value, timeout: Duration) -> Result<Value, String> {
+        let header = request.to_string();
+        if header.len() > MAX_CONTROL_HEADER_BYTES {
+            return Err("control-header-too-large".into());
+        }
         let mut stream = UnixStream::connect(&self.socket_path).map_err(|error| error.to_string())?;
         stream.set_read_timeout(Some(timeout)).map_err(|error| error.to_string())?;
         stream.set_write_timeout(Some(timeout)).map_err(|error| error.to_string())?;
-        stream.write_all(request.to_string().as_bytes()).map_err(format_socket_write_error)?;
+        stream.write_all(header.as_bytes()).map_err(format_socket_write_error)?;
         stream.write_all(b"\n").map_err(format_socket_write_error)?;
         stream.flush().map_err(format_socket_write_error)?;
         let line = read_reply_line(&mut stream, timeout)?;
@@ -622,6 +716,67 @@ mod tests {
     fn socket_path(_name: &str) -> PathBuf {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() % 1_000_000_000;
         PathBuf::from(format!("/tmp/ac{}_{}.sock", std::process::id(), nanos))
+    }
+
+    fn binary_create_request() -> CreateTaskRequest {
+        let mut request: CreateTaskRequest =
+            serde_json::from_str(r#"{"name":"Binary é\npackage","playbook":{"reference":{"scope":"repo","key":"binary"},"source":"retained definition"},"start":false}"#).unwrap();
+        request.attachments.push(TaskAttachment {
+            name: "binary.bin".into(),
+            bytes: (0..=255).cycle().take(200 * 1024).collect(),
+        });
+        request
+    }
+
+    #[test]
+    fn create_task_framing_preserves_binary_bytes_and_typed_errors() {
+        let path = socket_path("create_task_binary");
+        let listener = UnixListener::bind(&path).unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            assert!(line.len() <= MAX_CONTROL_HEADER_BYTES);
+            let header: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(header["op"], "create_task");
+            assert!(header.get("request").is_none());
+            let length = header["body_bytes"].as_u64().unwrap() as usize;
+            assert!(length > MAX_CONTROL_HEADER_BYTES);
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).unwrap();
+            let request: CreateTaskRequest = serde_json::from_slice(&body).unwrap();
+            assert_eq!(request.name, "Binary é\npackage");
+            assert_eq!(request.attachments[0].bytes, (0..=255).cycle().take(200 * 1024).collect::<Vec<u8>>());
+            stream.write_all(b"{\"task\":null,\"sessions\":[],\"executions\":[],\"creation\":\"failed\",\"start\":\"not_requested\",\"errors\":[{\"stage\":\"provision\",\"code\":\"fixture-rejection\",\"message\":\"retained\"}]}\n").unwrap();
+        });
+        let client = DaemonClient::connect_path(path.clone()).unwrap();
+        let reply = client.create_task(&binary_create_request()).unwrap();
+        assert_eq!(reply.creation, "failed");
+        assert_eq!(reply.errors[0].code, "fixture-rejection");
+        server.join().unwrap();
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn create_body_and_inline_headers_reject_excess_before_delivery() {
+        let request = binary_create_request();
+        let body = serialize_control_body(&request, MAX_CONTROL_BODY_BYTES).unwrap();
+        assert_eq!(serialize_control_body(&request, body.len()).unwrap(), body);
+        assert!(serialize_control_body(&request, body.len() - 1).unwrap_err().contains("create-task-body-too-large"));
+        assert!(serialize_control_body(&request, request.attachments[0].bytes.len())
+            .unwrap_err()
+            .contains("create-task-body-too-large"));
+        let client = DaemonClient {
+            socket_path: socket_path("absent"),
+        };
+        let oversized_header = json!({"op":"write","data":"x".repeat(MAX_CONTROL_HEADER_BYTES)});
+        assert_eq!(client.send(&oversized_header).unwrap_err(), "control-header-too-large");
+        assert_eq!(
+            client.call_with_timeout(&oversized_header, DAEMON_OBSERVATION_TIMEOUT).unwrap_err(),
+            "control-header-too-large"
+        );
     }
 
     fn serve_version(name: &str, reply: Value) -> (PathBuf, thread::JoinHandle<Value>) {
