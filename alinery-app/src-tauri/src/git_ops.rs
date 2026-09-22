@@ -401,28 +401,55 @@ pub(crate) fn task_pull_request_in(repo: &Path, slug: &str) -> Result<Option<Pul
     )
 }
 
+pub(crate) fn task_pull_request_snapshots_with(
+    tasks: Vec<TaskActivityRef>,
+    lookup: impl Fn(&TaskActivityRef) -> Result<Option<PullRequest>, String> + Sync,
+) -> HashMap<String, PullRequestSnapshot> {
+    let tasks: HashMap<_, _> = tasks
+        .into_iter()
+        .map(|reference| (task_activity_key(&reference.repo_path, &reference.task_slug), reference))
+        .collect();
+    let worker_count = tasks.len().min(4);
+    let (job_tx, job_rx) = std::sync::mpsc::channel();
+    let job_rx = Mutex::new(job_rx);
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    for task in tasks {
+        let _ = job_tx.send(task);
+    }
+    drop(job_tx);
+
+    // As with activity polling, bound subprocess fan-out without serializing the whole board.
+    std::thread::scope(|scope| {
+        for _ in 0..worker_count {
+            let job_rx = &job_rx;
+            let lookup = &lookup;
+            let result_tx = result_tx.clone();
+            scope.spawn(move || loop {
+                let job = job_rx.lock().unwrap_or_else(|e| e.into_inner()).recv();
+                let Ok((key, reference)) = job else {
+                    break;
+                };
+                let snapshot = match lookup(&reference) {
+                    Ok(pr) => PullRequestSnapshot { pr, error: None },
+                    Err(error) => PullRequestSnapshot { pr: None, error: Some(error) },
+                };
+                let _ = result_tx.send((key, snapshot));
+            });
+        }
+        drop(result_tx);
+    });
+    result_rx.into_iter().collect()
+}
+
 #[tauri::command]
 pub(crate) async fn list_task_pull_requests(app: AppHandle, tasks: Vec<TaskActivityRef>) -> Result<HashMap<String, PullRequestSnapshot>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let mut snapshots = HashMap::new();
-        for reference in tasks {
-            let key = format!("{}:{}", reference.repo_path, reference.task_slug);
-            if snapshots.contains_key(&key) {
-                continue;
-            }
-            let result = (|| {
-                let repo = target_repo_for_app(&app, &reference.repo_path)?;
-                require_repo_owned(&state, &repo)?;
-                task_pull_request_in(&repo, &reference.task_slug)
-            })();
-            let snapshot = match result {
-                Ok(pr) => PullRequestSnapshot { pr, error: None },
-                Err(error) => PullRequestSnapshot { pr: None, error: Some(error) },
-            };
-            snapshots.insert(key, snapshot);
-        }
-        snapshots
+        task_pull_request_snapshots_with(tasks, |reference| {
+            let repo = target_repo_for_app(&app, &reference.repo_path)?;
+            require_repo_owned(&state, &repo)?;
+            task_pull_request_in(&repo, &reference.task_slug)
+        })
     })
     .await
     .map_err(|error| format!("GitHub PR lookup worker: {error}"))

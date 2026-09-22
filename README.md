@@ -28,9 +28,10 @@ curl -fsSL https://cdn.alinery.ai/install.sh | bash
 **GitHub pull requests.** Kanban cards and task detail show a clickable indicator for the
 task branch's PR: green for open, purple for merged, gray for closed without merging.
 Clicking opens the actual PR in your browser; it does not move or archive the task.
-Discovery uses the existing GitHub CLI connection (`gh`) in the background. Results
-are shared between views and cached for 60 seconds, with refreshes while the relevant
-view is open and visible. Discovered PR links survive branch/worktree removal.
+Discovery uses the existing GitHub CLI connection (`gh`) in the background, with at most
+four task lookups running concurrently per batch. Results are shared between views
+and cached for 60 seconds after completion, with refreshes while the relevant view
+is open and visible. Discovered PR links survive branch/worktree removal.
 Lookup failures show an unavailable indicator, or mark the last known status stale.
 Compare links are not treated as existing PRs; automatic discovery is GitHub-only.
 In Grid, enable **pull request** under **Card properties** to show the same icon in

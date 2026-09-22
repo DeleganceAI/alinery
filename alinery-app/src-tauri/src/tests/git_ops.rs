@@ -179,6 +179,82 @@ fn default_base_branch_reads_origin_head_when_it_is_set() {
     assert_eq!(crate::default_base_branch(&repo), "trunk");
 }
 
+#[test]
+fn pull_request_batch_bounds_concurrency_deduplicates_and_isolates_errors() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{mpsc, Condvar};
+
+    let mut refs: Vec<_> = (0..12)
+        .map(|index| crate::TaskActivityRef {
+            repo_path: format!("/repo-{}", index % 2),
+            task_slug: format!("task-{}", index / 2),
+        })
+        .collect();
+    refs.push(crate::TaskActivityRef {
+        repo_path: "/repo-0".into(),
+        task_slug: "task-0".into(),
+    });
+    let active = AtomicUsize::new(0);
+    let peak = AtomicUsize::new(0);
+    let seen = Mutex::new(Vec::new());
+    let release = (Mutex::new(false), Condvar::new());
+    let (started_tx, started_rx) = mpsc::channel();
+    let (started, snapshots) = std::thread::scope(|scope| {
+        let worker = scope.spawn(|| {
+            crate::task_pull_request_snapshots_with(refs, |reference| {
+                let count = active.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(count, Ordering::SeqCst);
+                seen.lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(crate::task_activity_key(&reference.repo_path, &reference.task_slug));
+                started_tx.send(()).unwrap();
+                let _released = release
+                    .1
+                    .wait_while(release.0.lock().unwrap_or_else(|e| e.into_inner()), |released| !*released)
+                    .unwrap_or_else(|e| e.into_inner());
+                active.fetch_sub(1, Ordering::SeqCst);
+                if reference.task_slug == "task-0" {
+                    if reference.repo_path == "/repo-0" {
+                        return Err("lookup failed".into());
+                    }
+                    return Ok(Some(crate::PullRequest {
+                        number: 42,
+                        url: "https://github.com/team/project/pull/42".into(),
+                        state: crate::PullRequestState::Open,
+                    }));
+                }
+                Ok(None)
+            })
+        });
+        // Hold lookups open until four start; release even on failure so a serial
+        // regression fails an assertion instead of leaving the test deadlocked.
+        let started = (0..4).all(|_| started_rx.recv_timeout(Duration::from_secs(10)).is_ok());
+        *release.0.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        release.1.notify_all();
+        (started, worker.join().unwrap())
+    });
+    assert!(started, "four independent lookups must start before any completes");
+    assert_eq!(peak.load(Ordering::SeqCst), 4, "the batch must not exceed four concurrent lookups");
+    let mut seen = seen.into_inner().unwrap();
+    assert_eq!(seen.len(), 12, "duplicate references must not trigger another lookup");
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen.len(), 12);
+    assert_eq!(snapshots.len(), 12);
+    assert_eq!(snapshots["/repo-0:task-0"].error.as_deref(), Some("lookup failed"));
+    assert!(snapshots["/repo-0:task-0"].pr.is_none());
+    assert_eq!(snapshots["/repo-1:task-0"].pr.as_ref().unwrap().number, 42);
+    for (key, snapshot) in &snapshots {
+        if key != "/repo-0:task-0" {
+            assert!(snapshot.error.is_none(), "one failure must not discard unrelated results");
+        }
+        if !key.ends_with(":task-0") {
+            assert!(snapshot.pr.is_none());
+        }
+    }
+    assert!(crate::task_pull_request_snapshots_with(vec![], |_| panic!("empty batch must not look up a task")).is_empty());
+}
+
 fn github_pull_fixture(number: u64, owner: &str, branch: &str, state: &str, merged: bool) -> serde_json::Value {
     serde_json::json!({
         "number": number,
