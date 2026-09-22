@@ -77,8 +77,14 @@ describe("ChatPane", () => {
     expect(html).toContain("redacted");
     expect(html).toContain("git push origin chat-pane");
     expect(html).toContain("Allow");
-    expect(html).toContain("subagents · 1 running");
+    expect(html).toContain("subagents · 1");
+    // `toContain("subagents · 1")` is a substring of the old "subagents · 1 running", so the
+    // blanket claim needs its own negative assertion to be discriminating.
+    expect(html).not.toContain("subagents · 1 running");
     expect(html).toContain("Drafting composer grow rules");
+    // The card no longer prints the subagent's origin (`agentSource`, stored as `role`) in the
+    // status position; the journal rail renders `plan running`, never the role.
+    expect(html).not.toContain("architect");
     expect(html).not.toContain("/compact");
   });
 

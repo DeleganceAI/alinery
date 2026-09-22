@@ -7,17 +7,16 @@ export function SubagentDrawer({ agents }: { agents: LiveSubagent[] }) {
   if (agents.length === 0) return null;
   return (
     <div className="chat-sub-drawer">
-      <p className="chat-sub-label">subagents · {agents.length} running</p>
+      <p className="chat-sub-label">subagents · {agents.length}</p>
       <div className="chat-sub-row">
         {agents.map((agent) => (
           <article key={agent.id} className="chat-sub-card">
             <header className="chat-sub-head">
               <Bot className="chat-rail-icon" strokeWidth={1.5} aria-hidden />
               <span className="chat-sub-name">{agent.name}</span>
-              {agent.role ? <span className="chat-work-meta">{agent.role}</span> : null}
               <span className="chat-sub-status">
                 <RunningIndicator />
-                {agent.status}
+                {agent.activity ?? "working"}
               </span>
             </header>
             <p className="chat-sub-preview">{agent.preview}</p>
