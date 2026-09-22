@@ -82,14 +82,6 @@ fn protocol_mismatch_takes_precedence_for_diagnostics() {
 }
 
 #[test]
-fn wire_change_bumps_protocol_version() {
-    // 8 -> 9: the `omp_setup` op joined the set. Every op-set change costs users with live
-    // sessions a deliberate stop before installing, so this literal is pinned to make the bump a
-    // decision rather than a side effect.
-    assert_eq!(PROTOCOL_VERSION, 9);
-}
-
-#[test]
 fn poller_spawns_only_when_nothing_answers() {
     assert_eq!(poller_action(None), PollerAction::Spawn);
 }

@@ -136,6 +136,16 @@ export function ChatComposer({
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (!readOnly && e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      const start = e.currentTarget.selectionStart;
+      const end = e.currentTarget.selectionEnd;
+      const lineBreak = body.indexOf("\n", start);
+      const killEnd = start === end ? (lineBreak === -1 ? body.length : lineBreak) : end;
+      onBodyChange(`${body.slice(0, start)}${body.slice(killEnd)}`);
+      requestAnimationFrame(() => ta.current?.setSelectionRange(start, start));
+      return;
+    }
     if (palette) {
       if (e.key === "ArrowDown") {
         e.preventDefault();

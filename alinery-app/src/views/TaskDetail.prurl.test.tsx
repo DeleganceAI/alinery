@@ -28,8 +28,6 @@ const task = (over: Partial<Task> = {}): Task =>
 // through `vi.hoisted` rather than plain module-scope `const`.
 const mocks = vi.hoisted(() => ({
   getTask: vi.fn(),
-  listPlaybooks: vi.fn(),
-  listPlaybookSteps: vi.fn(),
   listSessions: vi.fn(),
   listArtifactsWithMetadata: vi.fn(),
   sessionStatuses: vi.fn(),
@@ -40,8 +38,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../ipc", () =>
   mockIpc({
     getTask: mocks.getTask,
-    listPlaybooks: mocks.listPlaybooks,
-    listPlaybookSteps: mocks.listPlaybookSteps,
     listSessions: mocks.listSessions,
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
     sessionStatuses: mocks.sessionStatuses,
@@ -52,8 +48,6 @@ vi.mock("../ipc", () =>
 
 beforeEach(() => {
   mocks.getTask.mockReset().mockResolvedValue(null);
-  mocks.listPlaybooks.mockReset().mockResolvedValue([]);
-  mocks.listPlaybookSteps.mockReset().mockResolvedValue([]);
   mocks.listSessions.mockReset().mockResolvedValue([]);
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
   mocks.sessionStatuses.mockReset().mockResolvedValue({});

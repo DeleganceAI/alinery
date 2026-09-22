@@ -19,7 +19,7 @@ const globalSettings: GlobalSettings = {
   },
 
   github: { token: "" },
-  defaults: { harness: "claude", model: "", playbook: "", draft_autosave: false },
+  defaults: { harness: "claude", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
   backup: {
     destination: "",
     enabled: false,
@@ -32,7 +32,6 @@ const globalSettings: GlobalSettings = {
   telemetry: { enabled: true, prompted: false, install_id: "", endpoint: "https://telemetry.alinery.ai" },
   updates: { check_enabled: true },
   model_favorites: {},
-  experiments: { show_original_kanban: false },
 };
 
 vi.mock("../ipc", () =>
@@ -64,7 +63,7 @@ afterEach(() => {
 });
 
 describe("Settings experimental features", () => {
-  it("keeps Original Kanban off by default and persists an opt-in", async () => {
+  it("shows Original Kanban for older settings and persists an opt-out", async () => {
     const onGlobalSettingsChange = vi.fn();
     render(
       <Settings
@@ -80,13 +79,13 @@ describe("Settings experimental features", () => {
     );
 
     const checkbox = await screen.findByRole("checkbox", { name: /Original Kanban/ });
-    expect((checkbox as HTMLInputElement).checked).toBe(false);
+    expect((checkbox as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole("button", { name: "Grid views" })).toBeTruthy();
     fireEvent.click(checkbox);
 
     await waitFor(() => expect(ipc.writeGlobalSettings).toHaveBeenCalled());
     const saved = vi.mocked(ipc.writeGlobalSettings).mock.calls[0][0] as GlobalSettings;
-    expect(saved.experiments?.show_original_kanban).toBe(true);
+    expect(saved.experiments?.show_original_kanban).toBe(false);
     await waitFor(() => expect(onGlobalSettingsChange).toHaveBeenCalledWith(saved));
   });
 });

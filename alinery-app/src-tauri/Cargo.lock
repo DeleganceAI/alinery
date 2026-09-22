@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "alinery-app"
-version = "0.15.0"
+version = "0.17.0"
 dependencies = [
  "alinery-core",
  "portable-pty",
@@ -36,7 +36,7 @@ dependencies = [
 
 [[package]]
 name = "alinery-core"
-version = "0.15.0"
+version = "0.17.0"
 dependencies = [
  "dirs 5.0.1",
  "libc",
@@ -52,7 +52,7 @@ dependencies = [
 
 [[package]]
 name = "alinery-mcp"
-version = "0.15.0"
+version = "0.17.0"
 dependencies = [
  "alinery-core",
  "clap",
@@ -64,7 +64,7 @@ dependencies = [
 
 [[package]]
 name = "alinery-runner"
-version = "0.15.0"
+version = "0.17.0"
 dependencies = [
  "alinery-core",
  "libc",
@@ -75,7 +75,7 @@ dependencies = [
 
 [[package]]
 name = "alineryd"
-version = "0.15.0"
+version = "0.17.0"
 dependencies = [
  "alinery-core",
  "libc",

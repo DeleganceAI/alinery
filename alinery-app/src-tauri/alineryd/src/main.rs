@@ -1,7 +1,8 @@
 // alineryd — the persistent daemon that owns every session child (survives app restart).
 // Listens on <repo>/.alinery/alineryd.sock by default; debug/dev builds use a namespaced socket.
 //
-// Protocol: one JSON request line per connection.
+// Protocol: one bounded JSON request header per connection; create_task and send_message
+// carry exactly body_bytes raw bytes after the header newline.
 //   open/attach → reply {"ok":true}\n, then the connection becomes a raw PTY byte pipe:
 //                 a reconstructed screen frame (not a raw tail — see #96) followed by live pty bytes.
 //   rpc_attach → reply {"ok":true}\n, then the connection becomes a JSON-line pipe:
@@ -12,13 +13,17 @@
 // live in lib.rs open_session, moved here so it keeps running after the app quits.
 
 // Use alinery-core for all pure FS/path/harness/phase/status logic (pty bits stay local to alineryd).
+mod execution;
+mod ui_control;
+use alinery_core::daemon_client::{MAX_CONTROL_BODY_BYTES, MAX_CONTROL_HEADER_BYTES};
+use alinery_core::execution::{CompletionOutcome, ExecutionLifecycle};
 use alinery_core::{
-    alinery_dir, alineryd_lock_path, alineryd_reconciler_lock_path, alineryd_socket_path, all_session_meta_paths, completion_decision, create_session_meta_for, get_playbook,
-    list_tasks_for_repo, login_shell_path, normalized_session_status, process_exited, process_started, read_meta_launch_fields, read_session_meta_full, read_task,
-    reduce_runner_event, resolve_launch_prompt, resolved_session_artifact_file, safe_component, session_meta_path, session_omp_dir, session_scrollback_path, sessions_dir,
-    stamp_meta, strip_terminal_queries, subst, sweep_ends_session, validate_message_body, validate_task_session_start, write_message, AutoAdvanceCreate, CompletionDecision,
-    CreateSessionInput, Harness, HarnessAdapter, LaunchFields, MessageAdapter, PlaybookState, ProcessState, RpcChunkAssembler, RunnerEvent, RunnerEventEnvelope, SessionMeta,
-    SessionState, SessionTransport, Task, DAEMON_CONTROL_TIMEOUT, DEFAULT_PLAYBOOK_KEY, NO_HARNESS_KEY, PROTOCOL_VERSION, RUNNER_EVENT_PROTOCOL_VERSION,
+    alinery_dir, alineryd_lock_path, alineryd_reconciler_lock_path, alineryd_socket_path, all_session_meta_paths, ensure_hosted_inference_for_spawn, is_hosted_model,
+    login_shell_path, normalized_session_status, process_exited, process_started, read_meta_launch_fields, read_session_meta_full, read_task, reduce_runner_event,
+    resolve_launch_prompt, safe_component, session_meta_path, session_omp_dir, session_scrollback_path, sessions_dir, stamp_meta, strip_terminal_queries, subst,
+    sweep_ends_session, validate_message_body, write_message, write_meta_atomic, Harness, HarnessAdapter, LaunchFields, MessageAdapter, PlaybookState, ProcessState,
+    RpcChunkAssembler, RunnerEvent, RunnerEventEnvelope, SessionMeta, SessionState, SessionTransport, DAEMON_CONTROL_TIMEOUT, NO_HARNESS_KEY, PROTOCOL_VERSION,
+    RUNNER_EVENT_PROTOCOL_VERSION,
 };
 
 use alinery_core::lockfile::{try_lock_exclusive, LockFile};
@@ -41,14 +46,17 @@ use std::time::{Duration, Instant};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde_json::{json, Value};
 
-const MAX_CONTROL_REQUEST_BYTES: usize = 1024 * 1024;
-const MAX_EVENT_REQUEST_BYTES: usize = 128 * 1024;
 const MAX_MESSAGE_BODY_BYTES: usize = 4 * 1024 * 1024;
 const MAX_IN_FLIGHT_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_IN_FLIGHT_CONTROL_BODY_BYTES: usize = MAX_CONTROL_BODY_BYTES;
 const INITIAL_PROMPT_TIMEOUT: Duration = Duration::from_secs(2);
 const OMP_HOST_PROTECTION_ERROR: &str = "OMP host protection is unavailable; restart the daemon from Alinery before starting this OMP session";
 const SPAWN_ROLLBACK_REAP_TIMEOUT: Duration = Duration::from_secs(2);
 const RPC_PENDING_MAX_BYTES: usize = 1024 * 1024;
+static EXECUTION_CONFIG_IDENTITY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+fn execution_config_identity() -> &'static str {
+    EXECUTION_CONFIG_IDENTITY.get().map(String::as_str).unwrap_or("")
+}
 const WRONG_TRANSPORT: &str = "wrong-transport";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -87,6 +95,7 @@ struct Inner {
     rpc_ready: Option<Vec<u8>>,
     completion_in_flight: bool,
     state: SessionState,
+    reaped_and_drained: bool,
 }
 
 struct Sess {
@@ -102,6 +111,7 @@ struct Sess {
     task_slug: String,
     // Restate in-flight: reader EOF must not stamp ended_at / exit_code.
     replacing: Arc<AtomicBool>,
+    pending_pty_seed: bool,
 }
 
 impl Sess {
@@ -142,6 +152,15 @@ fn reserve_message_bytes(budget: &MessageBudget, bytes: usize) -> Result<Message
             current.checked_add(bytes).filter(|next| *next <= MAX_IN_FLIGHT_MESSAGE_BYTES)
         })
         .map_err(|_| "message-in-flight-budget-exceeded".to_string())?;
+    Ok(MessageBudgetReservation { budget: budget.clone(), bytes })
+}
+
+fn reserve_control_body_bytes(budget: &MessageBudget, bytes: usize) -> Result<MessageBudgetReservation, String> {
+    budget
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            current.checked_add(bytes).filter(|next| *next <= MAX_IN_FLIGHT_CONTROL_BODY_BYTES)
+        })
+        .map_err(|_| "control-body-in-flight-budget-exceeded".to_string())?;
     Ok(MessageBudgetReservation { budget: budget.clone(), bytes })
 }
 
@@ -329,6 +348,7 @@ fn main() {
             .unwrap_or_else(|| repo.join(".alinery").join("app.toml")),
     );
     let app_config_identity: Arc<str> = Arc::from(alinery_core::app_config_identity(app_config.as_ref()));
+    let _ = EXECUTION_CONFIG_IDENTITY.set(app_config_identity.to_string());
     let alinery = alinery_dir(&repo);
     let namespace = (!daemon_namespace.is_empty()).then_some(daemon_namespace.as_ref());
     let socket_path = alineryd_socket_path(&repo, namespace);
@@ -383,6 +403,7 @@ fn main() {
     // classified Interrupted) so it can't masquerade as still-running. Per-file tolerant.
     // Must finish before we accept connections (T9).
     let swept = boot_sweep(&repo, &daemon_namespace);
+    execution::boot(&repo, &daemon_namespace);
     if swept > 0 {
         eprintln!("boot sweep: marked {swept} interrupted session(s)");
         alinery_core::append_info(app_config.as_ref(), &format!("daemon.boot-sweep interrupted={swept}"));
@@ -390,6 +411,7 @@ fn main() {
 
     let reg: Registry = Arc::new(Mutex::new(HashMap::new()));
     let message_budget: MessageBudget = Arc::new(AtomicUsize::new(0));
+    let control_body_budget: MessageBudget = Arc::new(AtomicUsize::new(0));
     start_auto_advance_reconciler(repo.clone(), reg.clone(), daemon_namespace.to_string(), app_config.as_ref().clone(), protected_host.clone());
 
     // Signal self-pipe: handler writes one byte; main loop reads and graceful_exits.
@@ -411,6 +433,7 @@ fn main() {
             Ok((stream, _)) => {
                 let reg = reg.clone();
                 let message_budget = message_budget.clone();
+                let control_body_budget = control_body_budget.clone();
                 let repo = repo.clone();
                 let lock_path = lock_path.clone();
                 let socket_path = socket_path.clone();
@@ -424,6 +447,7 @@ fn main() {
                         stream,
                         &reg,
                         &message_budget,
+                        &control_body_budget,
                         &repo,
                         &lock_path,
                         &socket_path,
@@ -666,26 +690,69 @@ fn boot_sweep(repo: &Path, daemon_namespace: &str) -> usize {
 
 // Read exactly one bounded \n-terminated request line without over-reading into
 // the byte stream that follows (BufReader would greedily buffer past the newline).
-fn read_line(stream: &mut UnixStream, max_bytes: usize) -> Option<String> {
-    let mut line = Vec::with_capacity(1024);
-    let mut b = [0u8; 1];
+fn read_request_header(stream: &mut UnixStream, max_bytes: usize) -> Result<String, String> {
+    use std::os::fd::AsRawFd;
+    let mut line = Vec::with_capacity(1024.min(max_bytes));
+    let mut chunk = [0_u8; 8192];
     loop {
-        match stream.read(&mut b) {
-            Ok(0) => return None,
-            Ok(_) => {
-                if b[0] == b'\n' {
-                    break;
-                }
-                if line.len() == max_bytes {
-                    return None;
-                }
-                line.push(b[0]);
+        // Peek only to find the delimiter; consume exactly this frame so attach and
+        // length-delimited bodies retain every byte after the newline.
+        let count = unsafe { libc::recv(stream.as_raw_fd(), chunk.as_mut_ptr().cast(), chunk.len(), libc::MSG_PEEK) };
+        if count == 0 {
+            return Err("incomplete-request-header".to_string());
+        }
+        if count < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
             }
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => return None,
+            return Err(format!("read-request-header: {error}"));
+        }
+        let bytes = &chunk[..count as usize];
+        let newline = bytes.iter().position(|b| *b == b'\n');
+        let payload = newline.unwrap_or(bytes.len());
+        if line.len().checked_add(payload).is_none_or(|length| length > max_bytes) {
+            return Err("request-too-large".to_string());
+        }
+        let consume = payload + usize::from(newline.is_some());
+        stream.read_exact(&mut chunk[..consume]).map_err(|error| format!("read-request-header: {error}"))?;
+        line.extend_from_slice(&chunk[..payload]);
+        if newline.is_some() {
+            return String::from_utf8(line).map_err(|_| "request-header-invalid-utf8".to_string());
         }
     }
-    String::from_utf8(line).ok()
+}
+
+fn read_line(stream: &mut UnixStream, max_bytes: usize) -> Option<String> {
+    read_request_header(stream, max_bytes).ok()
+}
+
+fn read_create_task_body(
+    stream: &mut UnixStream,
+    header: &Value,
+    budget: &MessageBudget,
+) -> Result<(alinery_core::task_creation::CreateTaskRequest, MessageBudgetReservation), String> {
+    if header.get("op").and_then(Value::as_str) != Some("create_task") {
+        return Err("invalid-control-body-operation".to_string());
+    }
+    let body_bytes = header
+        .get("body_bytes")
+        .and_then(Value::as_u64)
+        .and_then(|bytes| usize::try_from(bytes).ok())
+        .ok_or_else(|| "invalid-control-body-length".to_string())?;
+    if body_bytes == 0 {
+        return Err("control-body-empty".to_string());
+    }
+    if body_bytes > MAX_CONTROL_BODY_BYTES {
+        return Err("control-body-too-large".to_string());
+    }
+    let reservation = reserve_control_body_bytes(budget, body_bytes)?;
+    let mut body = Vec::new();
+    body.try_reserve_exact(body_bytes).map_err(|_| "control-body-allocation-failed".to_string())?;
+    body.resize(body_bytes, 0);
+    stream.read_exact(&mut body).map_err(|error| format!("read-control-body: {error}"))?;
+    let request = serde_json::from_slice::<alinery_core::task_creation::CreateTaskRequest>(&body).map_err(|error| format!("invalid-create-task-body: {error}"))?;
+    Ok((request, reservation))
 }
 
 fn read_message_body(stream: &mut UnixStream, request: &Value, budget: &MessageBudget) -> Result<MessageBody, String> {
@@ -764,46 +831,60 @@ fn accept_phase_completion(
     omp_session_id: &str,
     omp_turn_id: Option<u64>,
     meta_path: &Path,
-    app_config: &Path,
-) -> Result<(), String> {
-    let mut source = read_session_meta_full(meta_path).ok_or_else(|| "missing-session-meta".to_string())?;
-    let task = read_task(repo, task_slug).ok_or_else(|| "missing-task".to_string())?;
-    let playbook_key = source.playbook.clone();
-    let playbook = get_playbook(repo, &playbook_key).ok_or_else(|| "missing-playbook".to_string())?;
-    let sessions = read_task_session_metas(repo, task_slug)
-        .into_iter()
-        .filter(|session| session.playbook == playbook_key)
-        .collect::<Vec<_>>();
-    source.semantic.phase_completed_at = Some(now_secs());
-    source.semantic.omp_session_id = Some(omp_session_id.to_string());
-    source.semantic.omp_turn_id = omp_turn_id;
-
-    if let CompletionDecision::Reject(reason) = completion_decision(repo, task_slug, &task, &playbook_key, &playbook, &source, &sessions) {
-        set_live_playbook(reg, session_id, PlaybookState::Failed { reason: format!("{reason:?}") })?;
-        return Err(format!("completion-rejected:{reason:?}"));
+    _app_config: &Path,
+) -> Result<CompletionOutcome, String> {
+    let source = read_session_meta_full(meta_path).ok_or("missing-session-meta")?;
+    if source.execution_id.is_empty() {
+        return Err("session has no v2 execution".into());
     }
-
-    let completed_at = source.semantic.phase_completed_at;
-    let omp_session_id = source.semantic.omp_session_id.clone();
-    stamp_meta(meta_path, |value| {
-        value["semantic"] = json!({
-            "phase_completed_at": completed_at,
-            "omp_session_id": omp_session_id,
-            "omp_turn_id": omp_turn_id,
-        });
-    })?;
-    alinery_core::record_event_with(app_config, || {
-        let ids = alinery_core::telemetry_ids_for_session(repo, task_slug, session_id);
-        alinery_core::TelemetryEvent::SessionPhaseComplete {
-            phase: source.phase.clone(),
-            playbook: playbook_key.clone(),
-            session_id: ids.session,
-            task_id: ids.task,
+    let outcome = alinery_core::execution::mutate_execution_state(
+        repo,
+        task_slug,
+        &source.daemon_namespace,
+        execution_config_identity(),
+        "accept execution completion",
+        |_, state| alinery_core::execution::accept_execution_completion(repo, task_slug, state, &source.execution_id, session_id),
+    )?;
+    if matches!(outcome, CompletionOutcome::Accepted { .. }) {
+        // Projection failures cannot revoke a receipt already durably committed.
+        if let Err(error) = stamp_meta(meta_path, |value| {
+            value["semantic"] = json!({"phase_completed_at":now_secs(),"omp_session_id":omp_session_id,"omp_turn_id":omp_turn_id});
+        }) {
+            eprintln!("completion projection: {error}");
         }
-    });
-    set_live_playbook(reg, session_id, PlaybookState::ReadyToAdvance)?;
-
-    Ok(())
+        let completed = alinery_core::execution::read_execution_state(repo, task_slug).is_ok_and(|state| {
+            state
+                .executions
+                .get(&source.execution_id)
+                .is_some_and(|record| record.lifecycle == ExecutionLifecycle::Completed)
+        });
+        let _ = set_live_playbook(reg, session_id, if completed { PlaybookState::Completed } else { PlaybookState::ReadyToAdvance });
+    } else {
+        let agent = match &outcome {
+            CompletionOutcome::HumanAuthorizationRequired => alinery_core::AgentState::WaitingForApproval {
+                correlation_id: format!("completion-permission:{}", source.execution_id),
+            },
+            CompletionOutcome::InvalidOutputs { diagnostics } => {
+                use std::hash::{Hash, Hasher};
+                let mut hash = std::collections::hash_map::DefaultHasher::new();
+                diagnostics.hash(&mut hash);
+                alinery_core::AgentState::WaitingForInput {
+                    correlation_id: format!("completion-outputs:{}:{:016x}", source.execution_id, hash.finish()),
+                }
+            }
+            CompletionOutcome::Accepted { .. } => unreachable!(),
+        };
+        let session = reg.lock().unwrap_or_else(|error| error.into_inner()).get(session_id).map(|session| session.inner.clone());
+        if let Some(inner) = session {
+            let mut inner = inner.lock().unwrap_or_else(|error| error.into_inner());
+            let mut candidate = inner.state.clone();
+            candidate.agent = agent;
+            if let Err(error) = publish_live_transition(&mut inner, meta_path, candidate) {
+                eprintln!("completion attention projection: {error}");
+            }
+        }
+    }
+    Ok(outcome)
 }
 
 fn emit_session_started(app_config: &Path, is_resume: bool, harness: &str, phase: &str, session_id: &str, task_id: &str) {
@@ -855,7 +936,61 @@ fn publish_live_transition(inner: &mut Inner, meta_path: &Path, candidate: Sessi
     Ok(())
 }
 
-fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Path) -> Result<bool, String> {
+struct PendingPtySeed {
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    inner: Arc<Mutex<Inner>>,
+    replacing: Arc<AtomicBool>,
+    session_id: String,
+    task_slug: String,
+}
+
+fn dispatch_pty_seed(pending: PendingPtySeed, reg: Registry, repo: PathBuf, lane: String) {
+    std::thread::spawn(move || {
+        let result = {
+            let mut writer = pending.writer.lock().unwrap_or_else(|error| error.into_inner());
+            writer
+                .write_all(alinery_core::MESSAGE_SUBMIT)
+                .and_then(|()| writer.flush())
+                .map_err(|error| error.to_string())
+        };
+        if let Err(error) = result {
+            let current = reg
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&pending.session_id)
+                .is_some_and(|session| Arc::ptr_eq(&session.inner, &pending.inner));
+            if !current || pending.replacing.load(Ordering::SeqCst) {
+                return;
+            }
+            let reason = format!("initial prompt delivery failed: {error}");
+            let _ = set_live_playbook(&reg, &pending.session_id, PlaybookState::Failed { reason: reason.clone() });
+            if let Some(meta) = read_session_meta_full(&session_meta_path(&repo, &pending.task_slug, &pending.session_id)) {
+                if !meta.execution_id.is_empty() {
+                    let _ = alinery_core::mutate_execution_state(
+                        &repo,
+                        &pending.task_slug,
+                        &lane,
+                        execution_config_identity(),
+                        "record initial prompt failure",
+                        |_, state| {
+                            if pending.replacing.load(Ordering::SeqCst) {
+                                return Ok(());
+                            }
+                            let record = state.executions.get_mut(&meta.execution_id).ok_or("missing execution")?;
+                            if record.owner_session_id == pending.session_id && record.receipt_id.is_none() && !record.shutdown_confirmed {
+                                record.error = Some(reason.clone());
+                            }
+                            Ok(())
+                        },
+                    );
+                }
+            }
+            eprintln!("{reason}");
+        }
+    });
+}
+
+fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Path) -> Result<(Option<CompletionOutcome>, Option<PendingPtySeed>), String> {
     let envelope: RunnerEventEnvelope = serde_json::from_value(req.clone()).map_err(|_| "invalid-event".to_string())?;
     if envelope.version != RUNNER_EVENT_PROTOCOL_VERSION {
         return Err("unsupported-event-version".into());
@@ -866,12 +1001,15 @@ fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Pa
         if session.event_token != envelope.token {
             return Err("invalid-event-token".into());
         }
+        if session.replacing.load(Ordering::SeqCst) {
+            return Err("session transport replacement in progress".into());
+        }
         (session.inner.clone(), session.meta_path.clone(), session.task_slug.clone())
     };
 
     let completion_action = {
         let mut state = inner.lock().unwrap_or_else(|e| e.into_inner());
-        if !process_accepts_runner_events(&state.state.process) {
+        if !process_accepts_runner_events(&state.state.process) && !matches!(envelope.event, RunnerEvent::PhaseCompleted { .. }) {
             return Err("session-exited".into());
         }
         if state.state.adapter != HarnessAdapter::Omp {
@@ -880,28 +1018,52 @@ fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Pa
         let reduced = reduce_runner_event(&state.state, &envelope.event);
         publish_live_transition(&mut state, &meta_path, reduced.state)?;
         if matches!(envelope.event, RunnerEvent::PhaseCompleted { .. }) {
-            completion_event_action(reduced.completion_attempt_required, &mut state.completion_in_flight)
+            completion_event_action(true, &mut state.completion_in_flight)
         } else {
             CompletionEventAction::NotNeeded
         }
     };
 
-    match (&envelope.event, completion_action) {
-        (_, CompletionEventAction::InFlight) => Err("completion-in-progress".into()),
+    let completion = match (&envelope.event, completion_action) {
+        (_, CompletionEventAction::InFlight) => Err("completion-in-progress".to_string()),
         (RunnerEvent::PhaseCompleted { omp_session_id, omp_turn_id }, CompletionEventAction::Attempt) => {
             let result = accept_phase_completion(reg, repo, &envelope.session_id, &task_slug, omp_session_id, *omp_turn_id, &meta_path, app_config);
             inner.lock().unwrap_or_else(|error| error.into_inner()).completion_in_flight = false;
-            result?;
-            Ok(true)
+            Ok(Some(result?))
         }
-        _ => Ok(false),
-    }
+        _ => Ok(None),
+    }?;
+    let pending_seed = if matches!(envelope.event, RunnerEvent::Idle { .. }) {
+        let mut map = reg.lock().unwrap_or_else(|e| e.into_inner());
+        map.get_mut(&envelope.session_id).and_then(|session| {
+            if session.event_token != envelope.token || session.replacing.load(Ordering::SeqCst) || !Arc::ptr_eq(&session.inner, &inner) {
+                return None;
+            }
+            let SessionIo::Pty { writer, .. } = &session.io else {
+                return None;
+            };
+            if !std::mem::take(&mut session.pending_pty_seed) {
+                return None;
+            }
+            Some(PendingPtySeed {
+                writer: writer.clone(),
+                inner: session.inner.clone(),
+                replacing: session.replacing.clone(),
+                session_id: envelope.session_id.clone(),
+                task_slug: session.task_slug.clone(),
+            })
+        })
+    } else {
+        None
+    };
+    Ok((completion, pending_seed))
 }
 
 fn handle_conn(
     mut stream: UnixStream,
     reg: &Registry,
     message_budget: &MessageBudget,
+    control_body_budget: &MessageBudget,
     repo: &Path,
     lock_path: &Path,
     socket_path: &Path,
@@ -917,22 +1079,79 @@ fn handle_conn(
     // ~8 KiB unix-socket buffer (the oversized-event case) flakes with EPIPE.
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(DAEMON_CONTROL_TIMEOUT));
-    let Some(line) = read_line(&mut stream, MAX_CONTROL_REQUEST_BYTES) else {
-        return;
+    let line = match read_request_header(&mut stream, MAX_CONTROL_HEADER_BYTES) {
+        Ok(line) => line,
+        Err(error) => {
+            reply(&mut stream, json!({"error": error}));
+            return;
+        }
     };
-    let line_len = line.len();
     let Ok(req) = serde_json::from_str::<Value>(&line) else {
         reply(&mut stream, json!({"error": "bad json"}));
         return;
     };
     let op = req.get("op").and_then(|v| v.as_str()).unwrap_or("");
-    if op == "event" && line_len > MAX_EVENT_REQUEST_BYTES {
-        reply(&mut stream, json!({"error": "request-too-large"}));
-        return;
-    }
     let id = || req.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
     match op {
+        "ui_control" => ui_control::serve(&mut stream, repo, daemon_namespace, protected_host),
+        "allow_execution_completion" => reply(&mut stream, json!({"error":"completion permission requires an authenticated UI control connection"})),
+        "create_task" => {
+            let result: Result<Value, String> = (|| {
+                // Keep the reservation through typed decoding and provisioning, including errors.
+                let (input, _reservation) = read_create_task_body(&mut stream, &req, control_body_budget)?;
+                if !input.parent_task.is_empty() {
+                    return Err("child creation requires an authorized subtask manager".into());
+                }
+                serde_json::to_value(execution::create_task(repo, reg, daemon_namespace, app_config, protected_host, input)?).map_err(|e| e.to_string())
+            })();
+            match result {
+                Ok(value) => reply(&mut stream, value),
+                Err(error) => reply(&mut stream, json!({"error": error})),
+            }
+        }
+        "create_execution_session" | "start_session" | "get_task_execution" | "create_subtask" => {
+            let result: Result<Value, String> = (|| {
+                let input = req.get("request").cloned().ok_or("missing request")?;
+                match op {
+                    "create_execution_session" => serde_json::to_value(execution::create_session(
+                        repo,
+                        reg,
+                        daemon_namespace,
+                        app_config,
+                        protected_host,
+                        serde_json::from_value(input).map_err(|e| e.to_string())?,
+                    )?)
+                    .map_err(|e| e.to_string()),
+                    "start_session" => serde_json::to_value(execution::start(
+                        repo,
+                        reg,
+                        daemon_namespace,
+                        app_config,
+                        protected_host,
+                        serde_json::from_value(input).map_err(|e| e.to_string())?,
+                    )?)
+                    .map_err(|e| e.to_string()),
+                    "get_task_execution" => {
+                        let input: alinery_core::task_creation::GetTaskExecutionRequest = serde_json::from_value(input).map_err(|e| e.to_string())?;
+                        serde_json::to_value(execution::query(repo, &input.task_slug, daemon_namespace)?).map_err(|e| e.to_string())
+                    }
+                    "create_subtask" => {
+                        let input: alinery_core::CreateSubtaskInput = serde_json::from_value(input).map_err(|e| e.to_string())?;
+                        execution::product(repo, app_config)?;
+                        let start = input.start;
+                        let mut result = alinery_core::create_subtask(repo, daemon_namespace, execution_config_identity(), input)?;
+                        execution::initialize_created_task(repo, reg, daemon_namespace, app_config, protected_host, start, &mut result.provisioning)?;
+                        serde_json::to_value(result).map_err(|e| e.to_string())
+                    }
+                    _ => unreachable!(),
+                }
+            })();
+            match result {
+                Ok(value) => reply(&mut stream, value),
+                Err(error) => reply(&mut stream, json!({"error":error})),
+            }
+        }
         // attach NEVER spawns: reconnect to a daemon-owned pty, or fail. This is the #24
         // guarantee — opening an orphaned (not-owned) session can't silently re-run it.
         "attach" => {
@@ -961,19 +1180,17 @@ fn handle_conn(
             }
         }
         "event" => match handle_runner_event(&req, reg, repo, app_config) {
-            Ok(reconcile) => {
-                reply(&mut stream, json!({"ok": true}));
-                if reconcile {
-                    start_auto_advance_once(
-                        repo.to_path_buf(),
-                        reg.clone(),
-                        daemon_namespace.to_string(),
-                        app_config.to_path_buf(),
-                        protected_host.clone(),
-                    );
+            Ok((completion, pending_seed)) => {
+                match completion {
+                    Some(completion) => reply(&mut stream, json!({"ok":true,"completion":completion})),
+                    None => reply(&mut stream, json!({"ok":true})),
+                }
+                // Let the startup callback return before feeding its TUI input coordinator.
+                if let Some(pending) = pending_seed {
+                    dispatch_pty_seed(pending, reg.clone(), repo.to_path_buf(), daemon_namespace.into());
                 }
             }
-            Err(error) => reply(&mut stream, json!({"error": error})),
+            Err(error) => reply(&mut stream, json!({"error":error})),
         },
         "write" => {
             let data = req.get("data").and_then(|v| v.as_str()).unwrap_or("");
@@ -1358,59 +1575,34 @@ fn spawn_or_attach(
     if safe_component(&id).is_none() || (!task_slug.is_empty() && safe_component(&task_slug).is_none()) {
         return Err("invalid task or session id".into());
     }
-    let empty_slug = task_slug.is_empty();
-    let requested_model = req.get("model").and_then(|value| value.as_str()).unwrap_or("");
-    let requested_phase = req.get("phase").and_then(|value| value.as_str()).unwrap_or("");
-    let cwd = req.get("cwd").and_then(|value| value.as_str()).unwrap_or("");
-
-    let launch = if empty_slug {
-        let launch = read_meta_launch_fields(repo, &task_slug, &id).unwrap_or_else(|| LaunchFields {
-            id: id.clone(),
-            task_slug: task_slug.clone(),
-            worktree: cwd.to_string(),
-            playbook: DEFAULT_PLAYBOOK_KEY.to_string(),
-            generic: false,
-            subtask_manager: false,
-            subtask_slug: String::new(),
-            phase: requested_phase.to_string(),
-            harness: NO_HARNESS_KEY.to_string(),
-            model: requested_model.to_string(),
-            created: 0,
-            artifact: String::new(),
-            handoff_artifact: String::new(),
-            prompt_extra: String::new(),
-            prompt: None,
-            resume_token: String::new(),
-        });
-        if !allow_empty_slug_spawn(&launch.harness) {
-            return Err("sessions must be attached to a task".into());
-        }
-        launch
-    } else {
-        validate_task_session_start(app_config, repo, &task_slug, &id)?
-    };
-    if !alinery_core::is_allowed_launch_harness(&launch.harness) {
-        return Err(format!("unknown harness '{}'", launch.harness));
-    }
-    spawn_session(
-        reg,
+    let outcome = execution::start(
         repo,
-        launch,
-        initial_client(stream, attach_id)?,
-        false,
-        SessionTransport::Pty,
-        false,
-        None,
+        reg,
         daemon_namespace,
         app_config,
         protected_host,
+        alinery_core::task_creation::StartSessionRequest {
+            task_slug,
+            session_id: id.clone(),
+        },
     )?;
-    ack_detached_open(stream, attach_id);
+    if outcome.start == "failed" {
+        return Err(outcome.errors.first().map(|e| e.message.clone()).unwrap_or_else(|| "launch failed".into()));
+    }
+    if outcome.start == "queued" {
+        return Err("session is queued behind execution capacity or coding ownership".into());
+    }
+    if attach_id == 0 {
+        ack_detached_open(stream, attach_id);
+    } else {
+        let mut map = reg.lock().unwrap_or_else(|e| e.into_inner());
+        let sess = map.get_mut(&id).ok_or("session exited before attachment")?;
+        match sess.transport() {
+            SessionTransport::Pty => attach_client(sess, stream, attach_id, client_size(req))?,
+            SessionTransport::Rpc => attach_rpc_client(sess, stream, attach_id)?,
+        }
+    }
     Ok(())
-}
-
-fn allow_empty_slug_spawn(harness: &str) -> bool {
-    harness == NO_HARNESS_KEY
 }
 
 // Resume: reconnect a resume-capable harness to its prior conversation via resume_args, on a
@@ -1443,7 +1635,14 @@ fn resume_or_attach(
     if task_slug.trim().is_empty() {
         return Err("sessions must be attached to a task".into());
     }
+    execution::task_for_owner(repo, &task_slug, daemon_namespace)?;
     if let Some(meta) = read_session_meta_full(&session_meta_path(repo, &task_slug, &id)) {
+        if !meta.execution_id.is_empty() || (!meta.generic && meta.harness != NO_HARNESS_KEY) {
+            return Err("graph owners cannot be resumed; recover proven-stopped unfinished execution explicitly".into());
+        }
+        if meta.daemon_namespace != daemon_namespace {
+            return Err("session belongs to another daemon lane".into());
+        }
         if meta.started_at.is_some() {
             return Err("already-started; use resume or start-fresh".into());
         }
@@ -1500,30 +1699,6 @@ fn build_seeded_prompt(repo: &Path, launch: &LaunchFields) -> Result<Option<Stri
     resolve_launch_prompt(repo, launch)
 }
 
-fn augment_omp_seed(repo: &Path, launch: &LaunchFields, seeded: &mut Option<String>) -> Result<(), String> {
-    if launch.phase.trim().is_empty() {
-        return Ok(());
-    }
-    let explicit_empty = launch.prompt.as_deref() == Some("");
-    if seeded.is_none() && !explicit_empty {
-        return Ok(());
-    }
-    let artifact = resolved_session_artifact_file(repo, &launch.task_slug, &launch.playbook, &launch.phase, &launch.artifact)?;
-    let contract = format!(
-        "Alinery completion contract: after the requested artifact at `{}` is complete and non-empty, call `alinery_phase_complete`. The phase is complete only when the tool reports that Alinery accepted it. If Alinery rejects the request, fix the reported artifact or session-ownership problem and retry; if delivery fails, retry after the daemon is available. Ending a turn is not phase completion. Do not call the tool before the artifact is finished.",
-        artifact.display()
-    );
-    if let Some(prompt) = seeded.as_mut() {
-        if !prompt.is_empty() {
-            prompt.push_str("\n\n");
-        }
-        prompt.push_str(&contract);
-    } else {
-        *seeded = Some(contract);
-    }
-    Ok(())
-}
-
 fn resolve_runner_path() -> Result<PathBuf, String> {
     let path = match env::var_os("ALINERY_RUNNER_PATH").filter(|value| !value.is_empty()) {
         Some(path) => PathBuf::from(path),
@@ -1563,6 +1738,22 @@ fn append_prompt_args(child_args: &mut Vec<String>, harness: &Harness, prompt: &
     Ok(())
 }
 
+fn executable_path(binary: &str, cwd: &str) -> Result<PathBuf, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let executable = |path: &Path| fs::metadata(path).is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0);
+    let path = Path::new(binary);
+    let candidate = if path.is_absolute() {
+        Some(path.to_path_buf())
+    } else if binary.contains('/') {
+        Some(Path::new(cwd).join(path))
+    } else {
+        env::split_paths(&login_shell_path()).map(|directory| directory.join(path)).find(|path| executable(path))
+    };
+    candidate
+        .filter(|path| executable(path))
+        .ok_or_else(|| format!("harness executable is missing or not executable: {binary}"))
+}
+
 fn spawn_session(
     reg: &Registry,
     repo: &Path,
@@ -1577,6 +1768,8 @@ fn spawn_session(
     app_config: &Path,
     protected_host: &ProtectedHost,
 ) -> Result<(), String> {
+    execution::task_for_owner(repo, &launch.task_slug, daemon_namespace)?;
+    let session_meta = execution::session_for_launch(repo, &launch.task_slug, &launch.id)?;
     if launch.harness == NO_HARNESS_KEY {
         launch.phase.clear();
         launch.model.clear();
@@ -1588,8 +1781,14 @@ fn spawn_session(
         return Err(format!("worktree is not an existing directory: {cwd}"));
     }
     let harness = alinery_core::resolve_harness_strict_for(app_config, repo, &hkey)?;
+    if !session_meta.execution_id.is_empty() && harness.adapter != HarnessAdapter::Omp {
+        return Err("graph sessions require the OMP semantic adapter".into());
+    }
     if harness.adapter == HarnessAdapter::Omp && protected_host.as_ref().is_none() {
         return Err(OMP_HOST_PROTECTION_ERROR.into());
+    }
+    if harness.adapter == HarnessAdapter::Omp && (model.trim().is_empty() || is_hosted_model(&model)) {
+        ensure_hosted_inference_for_spawn(app_config)?;
     }
     // Fresh OMP (spawn / resume / auto-advance) is RPC. Restate honors the requested transport.
     let transport = if restate {
@@ -1607,11 +1806,16 @@ fn spawn_session(
         None
     };
 
-    let resolved_binary = if harness.adapter == HarnessAdapter::Omp && harness.binary == "omp" {
+    let resolved_binary = if hkey == NO_HARNESS_KEY {
+        env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into())
+    } else if harness.adapter == HarnessAdapter::Omp && harness.binary == "omp" {
         alinery_core::resolve_packaged_omp_path()?.to_string_lossy().into_owned()
     } else {
         harness.binary.clone()
     };
+    // The runner is a separate executable: validate its target before recording
+    // a successful spawn of the wrapper as a successful harness launch.
+    let resolved_binary = executable_path(&resolved_binary, &cwd)?.to_string_lossy().into_owned();
 
     let token = launch.resume_token.as_str();
     let mut child_args = Vec::new();
@@ -1654,10 +1858,10 @@ fn spawn_session(
     } else {
         build_seeded_prompt(repo, &launch)?
     };
-    if restate_jsonl.is_none() && harness.adapter == HarnessAdapter::Omp {
-        augment_omp_seed(repo, &launch, &mut seeded)?;
-    }
-    let inject_arg = hkey != NO_HARNESS_KEY && harness.prompt_injection != "stdin";
+    // OMP 18's CLI seed bypasses its normal TUI shutdown check. Feed PTY seeds
+    // through the ordinary input coordinator after the authenticated startup idle.
+    let deferred_pty_seed = harness.adapter == HarnessAdapter::Omp && transport == SessionTransport::Pty && seeded.is_some();
+    let inject_arg = hkey != NO_HARNESS_KEY && harness.prompt_injection != "stdin" && !deferred_pty_seed;
     // RPC ignores CLI `--` / prompt_arg; the first turn is `{ type: "prompt", message }` after ready.
     if inject_arg && transport != SessionTransport::Rpc {
         if let Some(prompt) = &seeded {
@@ -1671,9 +1875,7 @@ fn spawn_session(
         String::new()
     };
     let runner_path = if harness.adapter == HarnessAdapter::Omp { Some(resolve_runner_path()?) } else { None };
-    let program = if hkey == NO_HARNESS_KEY {
-        env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into())
-    } else if let Some(path) = &runner_path {
+    let program = if let Some(path) = &runner_path {
         path.to_string_lossy().to_string()
     } else {
         resolved_binary.clone()
@@ -1717,6 +1919,10 @@ fn spawn_session(
         cmd.env("PI_CODING_AGENT_DIR", &agent_dir);
         cmd.env("PI_CONFIG_DIR", &config_root);
         cmd.env("OMP_SKIP_SETUP", "1");
+        cmd.env(
+            "ALINERY_PTY_INITIAL_PROMPT",
+            if deferred_pty_seed { seeded.take().unwrap_or_default() } else { String::new() },
+        );
     }
     cmd.cwd(&cwd);
     cmd.env("TERM", "xterm-256color");
@@ -1758,6 +1964,14 @@ fn spawn_session(
     let writer = Arc::new(Mutex::new(pair.master.take_writer().map_err(|e| e.to_string())?));
     let meta_path = session_meta_path(repo, &launch.task_slug, &launch.id);
     let meta_path_reader = meta_path.clone();
+    let execution_reader = (
+        repo.to_path_buf(),
+        launch.task_slug.clone(),
+        launch.id.clone(),
+        daemon_namespace.to_string(),
+        reg.clone(),
+        protected_host.clone(),
+    );
     let app_config_reader = app_config.to_path_buf();
     let harness_reader = launch.harness.clone();
     // Eager, unlike the other id lookups: the reader thread still needs these at exit time,
@@ -1776,6 +1990,7 @@ fn spawn_session(
         rpc_pending_bytes: 0,
         rpc_ready: None,
         completion_in_flight: false,
+        reaped_and_drained: false,
         state: SessionState {
             process: ProcessState::Starting,
             adapter: harness.adapter,
@@ -1806,6 +2021,7 @@ fn spawn_session(
                 event_token,
                 task_slug: launch.task_slug.clone(),
                 replacing,
+                pending_pty_seed: deferred_pty_seed,
             },
         );
     }
@@ -1829,6 +2045,12 @@ fn spawn_session(
     }
 
     let mut child_killer = child.clone_killer();
+    if let Err(error) = execution::spawned(repo, &launch.task_slug, &launch.id, daemon_namespace) {
+        let _ = child.kill();
+        let _ = child.wait();
+        reg.lock().unwrap_or_else(|e| e.into_inner()).remove(&launch.id);
+        return Err(error);
+    }
     let lifecycle = Arc::new((Mutex::new(SpawnLifecycle::Pending), Condvar::new()));
     let lifecycle_reader = Arc::clone(&lifecycle);
     let (reaped_sender, reaped_receiver) = mpsc::sync_channel(1);
@@ -1839,9 +2061,13 @@ fn spawn_session(
         let mut log: Option<std::fs::File> = None;
         let mut log_failed = false;
         loop {
-            match reader.read(&mut buf) {
+            let read_result = reader.read(&mut buf);
+            match read_result {
                 Ok(0) | Err(_) => {
-                    let code = child.wait().ok().map(|status| status.exit_code() as i32);
+                    let drained = read_result.as_ref().is_ok_and(|n| *n == 0) || read_result.as_ref().err().is_some_and(|e| e.raw_os_error() == Some(libc::EIO));
+                    let waited = child.wait();
+                    let reaped = waited.is_ok();
+                    let code = waited.ok().map(|status| status.exit_code() as i32);
                     let committed = {
                         let (lock, ready) = &*lifecycle_reader;
                         let mut lifecycle = lock.lock().unwrap_or_else(|error| error.into_inner());
@@ -1868,6 +2094,18 @@ fn spawn_session(
                         emit_session_exit(&app_config_reader, &harness_reader, &session_id_reader, &task_id_reader, code);
                     }
                     inner.state = candidate;
+                    inner.reaped_and_drained = reaped && drained;
+                    drop(inner);
+                    if committed && reaped && drained && !replacing_reader.load(Ordering::SeqCst) {
+                        execution::exited(&execution_reader.0, &execution_reader.1, &execution_reader.2, &execution_reader.3, code);
+                        start_auto_advance_once(
+                            execution_reader.0.clone(),
+                            execution_reader.4.clone(),
+                            execution_reader.3.clone(),
+                            app_config_reader.clone(),
+                            execution_reader.5.clone(),
+                        );
+                    }
                     let _ = reaped_sender.send(());
                     break;
                 }
@@ -1916,8 +2154,10 @@ fn spawn_session(
     macro_rules! rollback_spawn {
         () => {{
             set_spawn_lifecycle!(SpawnLifecycle::Aborted);
-            reg.lock().unwrap_or_else(|error| error.into_inner()).remove(&launch.id);
             terminate_child!();
+            if inner.lock().unwrap_or_else(|e| e.into_inner()).reaped_and_drained {
+                reg.lock().unwrap_or_else(|error| error.into_inner()).remove(&launch.id);
+            }
         }};
     }
 
@@ -1976,8 +2216,7 @@ fn spawn_session(
     if let Some((attach_id, stream)) = initial_client {
         let sink = ClientSink::new(stream);
         if !sink.try_enqueue(ack_line()) {
-            reg.lock().unwrap_or_else(|error| error.into_inner()).remove(&launch.id);
-            terminate_child!();
+            rollback_spawn!();
             return Err("failed to initialize client stream".into());
         }
         inner.lock().unwrap_or_else(|error| error.into_inner()).clients.push((attach_id, sink));
@@ -2081,6 +2320,7 @@ mod rpc_ring_tests {
             rpc_pending_bytes: 0,
             rpc_ready: None,
             completion_in_flight: false,
+            reaped_and_drained: false,
             state: SessionState::default(),
         }
     }
@@ -2195,6 +2435,7 @@ fn apply_rpc_command_env(
         cmd.env("PI_CODING_AGENT_DIR", &agent_dir);
         cmd.env("PI_CONFIG_DIR", &config_root);
         cmd.env("OMP_SKIP_SETUP", "1");
+        cmd.env_remove("ALINERY_PTY_INITIAL_PROMPT");
     }
     cmd.env("TERM", "xterm-256color");
     cmd.env("PATH", login_shell_path());
@@ -2296,6 +2537,7 @@ fn spawn_omp_setup_session(reg: &Registry, repo: &Path, app_config: &Path, daemo
         rpc_pending_bytes: 0,
         rpc_ready: None,
         completion_in_flight: false,
+        reaped_and_drained: false,
         state: SessionState {
             process: ProcessState::Starting,
             adapter: harness.adapter,
@@ -2343,6 +2585,7 @@ fn spawn_omp_setup_session(reg: &Registry, repo: &Path, app_config: &Path, daemo
                 event_token,
                 task_slug: String::new(),
                 replacing: Arc::new(AtomicBool::new(false)),
+                pending_pty_seed: false,
             },
         );
     }
@@ -2501,6 +2744,14 @@ fn spawn_rpc_session(
     cmd.stderr(Stdio::from(stderr));
     let meta_path = session_meta_path(repo, &launch.task_slug, &launch.id);
     let meta_path_reader = meta_path.clone();
+    let execution_reader = (
+        repo.to_path_buf(),
+        launch.task_slug.clone(),
+        launch.id.clone(),
+        daemon_namespace.to_string(),
+        reg.clone(),
+        protected_host.clone(),
+    );
     let app_config_reader = app_config.to_path_buf();
     let harness_reader = launch.harness.clone();
     let ids = alinery_core::telemetry_ids_for_session(repo, &launch.task_slug, &launch.id);
@@ -2515,6 +2766,7 @@ fn spawn_rpc_session(
         rpc_pending_bytes: 0,
         rpc_ready: None,
         completion_in_flight: false,
+        reaped_and_drained: false,
         state: SessionState {
             process: ProcessState::Starting,
             adapter: harness.adapter,
@@ -2561,10 +2813,17 @@ fn spawn_rpc_session(
                 event_token: event_token.to_string(),
                 task_slug: launch.task_slug.clone(),
                 replacing,
+                pending_pty_seed: false,
             },
         );
     }
 
+    if let Err(error) = execution::spawned(repo, &launch.task_slug, &launch.id, daemon_namespace) {
+        let _ = child.kill();
+        let _ = child.wait();
+        reg.lock().unwrap_or_else(|e| e.into_inner()).remove(&launch.id);
+        return Err(error);
+    }
     let lifecycle = Arc::new((Mutex::new(SpawnLifecycle::Pending), Condvar::new()));
     let lifecycle_reader = Arc::clone(&lifecycle);
     let (reaped_sender, reaped_receiver) = mpsc::sync_channel(1);
@@ -2575,7 +2834,8 @@ fn spawn_rpc_session(
         let mut assembler = RpcChunkAssembler::new();
         let mut seed = seeded;
         loop {
-            match reader.read(&mut tmp) {
+            let read_result = reader.read(&mut tmp);
+            match read_result {
                 Ok(0) | Err(_) => {
                     if !buf.is_empty() {
                         buf.push(b'\n');
@@ -2590,7 +2850,10 @@ fn spawn_rpc_session(
                         }
                         buf.clear();
                     }
-                    let code = child.wait().ok().and_then(|status| status.code());
+                    let drained = read_result.as_ref().is_ok_and(|n| *n == 0);
+                    let waited = child.wait();
+                    let reaped = waited.is_ok();
+                    let code = waited.ok().and_then(|status| status.code());
                     let committed = {
                         let (lock, ready) = &*lifecycle_reader;
                         let mut lifecycle = lock.lock().unwrap_or_else(|error| error.into_inner());
@@ -2614,6 +2877,18 @@ fn spawn_rpc_session(
                         emit_session_exit(&app_config_reader, &harness_reader, &session_id_reader, &task_id_reader, code);
                     }
                     inner.state = candidate;
+                    inner.reaped_and_drained = reaped && drained;
+                    drop(inner);
+                    if committed && reaped && drained && !replacing_reader.load(Ordering::SeqCst) {
+                        execution::exited(&execution_reader.0, &execution_reader.1, &execution_reader.2, &execution_reader.3, code);
+                        start_auto_advance_once(
+                            execution_reader.0.clone(),
+                            execution_reader.4.clone(),
+                            execution_reader.3.clone(),
+                            app_config_reader.clone(),
+                            execution_reader.5.clone(),
+                        );
+                    }
                     let _ = reaped_sender.send(());
                     break;
                 }
@@ -2627,6 +2902,21 @@ fn spawn_rpc_session(
                                 {
                                     let mut inner = inner_t.lock().unwrap_or_else(|error| error.into_inner());
                                     push_rpc_line(&mut inner, complete, kind);
+                                }
+                                if kind == RpcLineKind::TurnEnd
+                                    && alinery_core::execution::read_execution_state(&execution_reader.0, &execution_reader.1).is_ok_and(|state| {
+                                        state
+                                            .executions
+                                            .values()
+                                            .any(|r| r.owner_session_id == execution_reader.2 && r.receipt_id.is_some() && !r.shutdown_confirmed)
+                                    })
+                                {
+                                    // OMP RPC shutdown is observed while processing the next command.
+                                    // A harmless get_state wakes that loop after the accepted turn settles.
+                                    let mut writer = stdin_reader.lock().unwrap_or_else(|e| e.into_inner());
+                                    if let Err(error) = writeln!(writer, "{}", json!({"id":"completion-shutdown-wake","type":"get_state"})).and_then(|_| writer.flush()) {
+                                        eprintln!("completion shutdown wake: {error}");
+                                    }
                                 }
                                 if kind == RpcLineKind::Ready {
                                     {
@@ -2676,8 +2966,10 @@ fn spawn_rpc_session(
     macro_rules! rollback_spawn {
         () => {{
             set_spawn_lifecycle!(SpawnLifecycle::Aborted);
-            reg.lock().unwrap_or_else(|error| error.into_inner()).remove(&launch.id);
             terminate_child!();
+            if inner.lock().unwrap_or_else(|e| e.into_inner()).reaped_and_drained {
+                reg.lock().unwrap_or_else(|error| error.into_inner()).remove(&launch.id);
+            }
         }};
     }
 
@@ -2697,10 +2989,6 @@ fn spawn_rpc_session(
         state.state = process_started(&state.state);
     }
     set_spawn_lifecycle!(SpawnLifecycle::Committed);
-    if reaped_receiver.recv_timeout(Duration::from_millis(300)).is_ok() {
-        reg.lock().unwrap_or_else(|error| error.into_inner()).remove(&launch.id);
-        return Err("rpc child exited".into());
-    }
 
     if let Some((attach_id, stream)) = initial_client {
         let sink = ClientSink::new(stream);
@@ -2748,16 +3036,76 @@ fn restate_session(
     if id.is_empty() {
         return Err("missing id".into());
     }
-    let (pid, inner, meta_path, task_slug) = {
+    let (pid, inner, meta_path, task_slug, replacing) = {
         let map = reg.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(sess) = map.get(id) else {
-            return Err("unknown-session".into());
-        };
-        sess.replacing.store(true, Ordering::SeqCst);
-        (sess.pid, sess.inner.clone(), sess.meta_path.clone(), sess.task_slug.clone())
+        let sess = map.get(id).ok_or("unknown-session")?;
+        (sess.pid, sess.inner.clone(), sess.meta_path.clone(), sess.task_slug.clone(), sess.replacing.clone())
     };
-    wait_session_reaped(&inner, pid);
-    let launch = read_meta_launch_fields(repo, &task_slug, id).ok_or_else(|| format!("missing session meta for {id}"))?;
+    execution::task_for_owner(repo, &task_slug, daemon_namespace)?;
+    if replacing.swap(true, Ordering::SeqCst) {
+        return Err("session replacement already in progress".into());
+    }
+    let prepared = (|| {
+        let meta = read_session_meta_full(&meta_path).ok_or("missing session")?;
+        if !meta.execution_id.is_empty() {
+            let result =
+                alinery_core::execution::mutate_execution_state(repo, &task_slug, daemon_namespace, execution_config_identity(), "reserve execution restate", |_, state| {
+                    let record = state.executions.get_mut(&meta.execution_id).ok_or("missing execution")?;
+                    if record.owner_session_id != id || record.receipt_id.is_some() || record.lifecycle != ExecutionLifecycle::Running {
+                        return Err("only the current unaccepted running execution can change transport".into());
+                    }
+                    // Retain live/coding ownership; block acceptance while replacing the process.
+                    record.lifecycle = ExecutionLifecycle::Interrupted;
+                    if !matches!(record.permission, alinery_core::execution::CompletionPermission::Automatic) {
+                        record.permission = alinery_core::execution::CompletionPermission::Locked;
+                    }
+                    Ok(())
+                });
+            result?;
+        }
+        wait_session_reaped(&inner, pid);
+        if !inner.lock().unwrap_or_else(|e| e.into_inner()).reaped_and_drained {
+            return Err("previous process exit and output drain are not proven; ownership retained".into());
+        }
+        if !meta.execution_id.is_empty() {
+            alinery_core::execution::mutate_execution_state(
+                repo,
+                &task_slug,
+                daemon_namespace,
+                execution_config_identity(),
+                "replace stopped execution process",
+                |_, state| {
+                    let record = state.executions.get_mut(&meta.execution_id).ok_or("missing execution")?;
+                    if record.receipt_id.is_some() || record.owner_session_id != id {
+                        return Err("execution owner changed".into());
+                    }
+                    record.lifecycle = ExecutionLifecycle::Starting;
+                    Ok(())
+                },
+            )?;
+        }
+        read_meta_launch_fields(repo, &task_slug, id).ok_or_else(|| format!("missing session meta for {id}"))
+    })();
+    let launch = match prepared {
+        Ok(launch) => launch,
+        Err(error) => {
+            // Re-enable the reader before observing its proof, so an exit that
+            // arrives after this failed replacement still releases ownership.
+            replacing.store(false, Ordering::SeqCst);
+            let inner = inner.lock().unwrap_or_else(|e| e.into_inner());
+            if inner.reaped_and_drained {
+                if let ProcessState::Exited { code } = inner.state.process {
+                    let _ = stamp_meta(&meta_path, |value| {
+                        value["ended_at"] = json!(now_secs());
+                        value["exit_code"] = json!(code);
+                    });
+                    drop(inner);
+                    execution::exited(repo, &task_slug, id, daemon_namespace, code);
+                }
+            }
+            return Err(error);
+        }
+    };
     let omp_dir = session_omp_dir(repo, &task_slug, id);
     let jsonl = newest_jsonl_in(&omp_dir);
     reg.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
@@ -2771,6 +3119,7 @@ fn restate_session(
             Ok(())
         }
         Err(error) => {
+            execution::failed_spawn(repo, &task_slug, id, daemon_namespace, reg, &error)?;
             let now = now_secs();
             let _ = stamp_meta(&meta_path, |value| {
                 if value.get("ended_at").and_then(|ended| ended.as_u64()).is_none() {
@@ -2812,10 +3161,6 @@ fn read_task_session_metas(repo: &Path, slug: &str) -> Vec<SessionMeta> {
 
 fn start_auto_advance_reconciler(repo: PathBuf, reg: Registry, daemon_namespace: String, app_config: PathBuf, protected_host: ProtectedHost) {
     std::thread::spawn(move || loop {
-        if !daemon_namespace.is_empty() && UnixStream::connect(alineryd_socket_path(&repo, None)).is_ok() {
-            std::thread::sleep(Duration::from_secs(10));
-            continue;
-        }
         if let Ok(Some(_lease)) = try_lock_exclusive(&alineryd_reconciler_lock_path(&repo)) {
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 reconcile_auto_advance_repo(&repo, &reg, &daemon_namespace, &app_config, &protected_host);
@@ -2829,50 +3174,8 @@ fn start_auto_advance_reconciler(repo: PathBuf, reg: Registry, daemon_namespace:
     });
 }
 
-fn auto_advance_source_owned_by_lane(source: &SessionMeta, daemon_namespace: &str) -> bool {
-    source.daemon_namespace == daemon_namespace
-}
-
 fn reconcile_auto_advance_repo(repo: &Path, reg: &Registry, daemon_namespace: &str, app_config: &Path, protected_host: &ProtectedHost) {
-    for task in list_tasks_for_repo(repo) {
-        if task.archived || task.draft {
-            continue;
-        }
-        let mut sessions = read_task_session_metas(repo, &task.slug);
-        // A completed source advances on its owning daemon lane. Letting any repository
-        // reconciler claim it can strand the next session behind another app-config identity.
-        let sources: Vec<SessionMeta> = sessions
-            .iter()
-            .filter(|source| source.semantic.phase_completed_at.is_some() && auto_advance_source_owned_by_lane(source, daemon_namespace))
-            .cloned()
-            .collect();
-        for source in &sources {
-            let playbook_key = source.playbook.clone();
-            let Some(playbook) = get_playbook(repo, &playbook_key) else {
-                continue;
-            };
-            let same_playbook = sessions.iter().filter(|session| session.playbook == playbook_key).cloned().collect::<Vec<_>>();
-            match reconcile_auto_advance_source(
-                repo,
-                reg,
-                daemon_namespace,
-                app_config,
-                protected_host,
-                &task,
-                &playbook_key,
-                &playbook,
-                source,
-                &same_playbook,
-            ) {
-                Ok(Some(meta)) => {
-                    sessions.push(meta);
-                    sessions.sort_by(|left, right| left.created.cmp(&right.created).then_with(|| left.id.cmp(&right.id)));
-                }
-                Ok(None) => {}
-                Err(error) => eprintln!("auto-advance reconcile: {error}"),
-            }
-        }
-    }
+    execution::reconcile_repo(repo, reg, daemon_namespace, app_config, protected_host);
 }
 
 fn set_live_playbook(reg: &Registry, id: &str, playbook: PlaybookState) -> Result<(), String> {
@@ -2887,230 +3190,6 @@ fn set_live_playbook(reg: &Registry, id: &str, playbook: PlaybookState) -> Resul
         publish_live_transition(&mut inner, &meta_path, candidate)?;
     }
     Ok(())
-}
-
-fn reconcile_auto_advance_source(
-    repo: &Path,
-    reg: &Registry,
-    daemon_namespace: &str,
-    app_config: &Path,
-    protected_host: &ProtectedHost,
-    task: &Task,
-    playbook_key: &str,
-    playbook: &alinery_core::Playbook,
-    source: &SessionMeta,
-    sessions: &[SessionMeta],
-) -> Result<Option<SessionMeta>, String> {
-    match completion_decision(repo, &task.slug, task, playbook_key, playbook, source, sessions) {
-        CompletionDecision::Reject(reason) => {
-            set_live_playbook(reg, &source.id, PlaybookState::Failed { reason: format!("{reason:?}") })?;
-            Ok(None)
-        }
-        CompletionDecision::Complete => {
-            set_live_playbook(reg, &source.id, PlaybookState::Completed)?;
-            Ok(None)
-        }
-        CompletionDecision::CreateNext(create) => {
-            set_live_playbook(reg, &source.id, PlaybookState::ReadyToAdvance)?;
-            match create_and_spawn_auto_advance(reg, repo, task, playbook_key, source, create, daemon_namespace, app_config, protected_host) {
-                Ok(meta) => {
-                    set_live_playbook(reg, &source.id, PlaybookState::Completed)?;
-                    Ok(Some(meta))
-                }
-                Err(error) => {
-                    eprintln!("auto-advance reconcile: {error}");
-                    alinery_core::append_exception(
-                        app_config,
-                        &format!(
-                            "daemon.reconcile-failed task={} err={}",
-                            alinery_core::quote_log_value(&task.slug),
-                            alinery_core::quote_log_value(&error)
-                        ),
-                    );
-                    Ok(None)
-                }
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-fn new_auto_advance_session_id() -> String {
-    format!("s{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0))
-}
-
-#[cfg(test)]
-fn build_auto_advance_meta(
-    app_config: &Path,
-    repo: &Path,
-    task: &Task,
-    playbook_key: &str,
-    source: &SessionMeta,
-    create: &AutoAdvanceCreate,
-    daemon_namespace: &str,
-) -> SessionMeta {
-    let harness_resume_token = match alinery_core::resolve_harness_for(app_config, repo, &create.harness).and_then(|h| h.resume) {
-        Some(r) if r.enabled && r.id_source == "launch" => uuid::Uuid::new_v4().to_string(),
-        _ => String::new(),
-    };
-    SessionMeta {
-        id: new_auto_advance_session_id(),
-        worktree: if source.worktree.is_empty() { task.worktree.clone() } else { source.worktree.clone() },
-        created: now_secs().max(source.created.saturating_add(1)),
-        archived: false,
-        phase: create.to_phase.clone(),
-        harness: create.harness.clone(),
-        model: create.model.clone(),
-        playbook: playbook_key.to_string(),
-        daemon_namespace: daemon_namespace.to_string(),
-        harness_resume_token,
-        ..Default::default()
-    }
-}
-
-#[cfg(test)]
-fn write_auto_advance_meta(repo: &Path, task_slug: &str, meta: &SessionMeta) -> Result<(), String> {
-    alinery_core::write_meta_atomic(
-        &sessions_dir(repo, task_slug).join(format!("{}.meta.json", meta.id)),
-        &serde_json::to_value(meta).map_err(|e| e.to_string())?,
-    )
-}
-
-// Keep a deterministic auto-advance id filename-safe (slug/phase are already kebab, but a custom
-// playbook step could carry anything). ponytail: alnum + `-`/`_` only, capped length.
-fn sanitize_id_component(s: &str) -> String {
-    let cleaned: String = s
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
-        .take(64)
-        .collect();
-    if cleaned.is_empty() {
-        "x".to_string()
-    } else {
-        cleaned
-    }
-}
-
-fn recoverable_auto_advance_target(meta: &SessionMeta, daemon_namespace: &str) -> bool {
-    !meta.archived && meta.started_at.is_none() && meta.ended_at.is_none() && meta.daemon_namespace == daemon_namespace
-}
-
-fn create_and_spawn_auto_advance(
-    reg: &Registry,
-    repo: &Path,
-    task: &Task,
-    playbook_key: &str,
-    _source: &SessionMeta,
-    create: AutoAdvanceCreate,
-    daemon_namespace: &str,
-    app_config: &Path,
-    protected_host: &ProtectedHost,
-) -> Result<SessionMeta, String> {
-    // One deterministic id per (task, playbook, to_phase) edge: two daemons that both decide to
-    // advance this edge compute the SAME id, so the exclusive (O_EXCL) meta write lets exactly one
-    // win — the loser gets "duplicate target session already exists". The reg-lock + on-disk
-    // next_step_session_exists check is only a per-process fast path; it can't stop a cross-daemon
-    // race (each daemon has its own reg lock), which is how two `design` sessions got spawned 12ms
-    // apart by two dev daemons. The exclusive create is the real cross-process guard.
-    let advance_id = format!(
-        "sadv-{}-{}-{}",
-        sanitize_id_component(&task.slug),
-        sanitize_id_component(playbook_key),
-        sanitize_id_component(&create.to_phase)
-    );
-    let (meta, new_claim) = {
-        let _guard = reg.lock().unwrap_or_else(|e| e.into_inner());
-        let existing = read_task_session_metas(repo, &task.slug)
-            .into_iter()
-            .filter(|meta| meta.playbook == playbook_key && meta.phase == create.to_phase)
-            .max_by(|left, right| (left.created, left.id.as_str()).cmp(&(right.created, right.id.as_str())));
-        match existing {
-            Some(meta) if recoverable_auto_advance_target(&meta, daemon_namespace) => (meta, false),
-            Some(_) => return Err("duplicate target session already exists".into()),
-            None => {
-                let created = create_session_meta_for(
-                    app_config,
-                    repo,
-                    CreateSessionInput {
-                        task_slug: task.slug.clone(),
-                        playbook: playbook_key.to_string(),
-                        phase: create.to_phase.clone(),
-                        harness: create.harness.clone(),
-                        model: create.model.clone(),
-                        daemon_namespace: daemon_namespace.to_string(),
-                        id_override: Some(advance_id),
-                        exclusive_create: true,
-                        ..Default::default()
-                    },
-                )?;
-                alinery_core::record_event(
-                    app_config,
-                    alinery_core::TelemetryEvent::SessionAutoAdvance {
-                        from_phase: create.from_phase.clone(),
-                        to_phase: create.to_phase.clone(),
-                        playbook: playbook_key.to_string(),
-                        session_id: created.telemetry_id.clone(),
-                        task_id: task.telemetry_id.clone(),
-                    },
-                );
-                (created, true)
-            }
-        }
-    };
-
-    if reg.lock().unwrap_or_else(|error| error.into_inner()).contains_key(&meta.id) {
-        return Ok(meta);
-    }
-
-    let launch = LaunchFields {
-        id: meta.id.clone(),
-        task_slug: task.slug.clone(),
-        worktree: meta.worktree.clone(),
-        playbook: meta.playbook.clone(),
-        generic: meta.generic,
-        subtask_manager: meta.subtask_manager,
-        subtask_slug: meta.subtask_slug.clone(),
-        phase: meta.phase.clone(),
-        harness: meta.harness.clone(),
-        model: meta.model.clone(),
-        created: meta.created,
-        artifact: meta.artifact.clone(),
-        handoff_artifact: meta.handoff_artifact.clone(),
-        prompt_extra: meta.prompt_extra.clone(),
-        prompt: meta.prompt.clone(),
-        resume_token: meta.harness_resume_token.clone(),
-    };
-    if let Err(error) = spawn_session(
-        reg,
-        repo,
-        launch,
-        None,
-        false,
-        SessionTransport::Pty,
-        false,
-        None,
-        daemon_namespace,
-        app_config,
-        protected_host,
-    ) {
-        if new_claim {
-            let _ = fs::remove_file(session_meta_path(repo, &task.slug, &meta.id));
-        }
-        return Err(error);
-    }
-    Ok(meta)
-}
-
-#[cfg(test)]
-mod empty_slug_spawn {
-    use super::*;
-
-    #[test]
-    fn allow_empty_slug_spawn_only_no_harness() {
-        assert!(allow_empty_slug_spawn(NO_HARNESS_KEY));
-        assert!(!allow_empty_slug_spawn("claude"));
-        assert!(!allow_empty_slug_spawn(""));
-    }
 }
 
 #[cfg(test)]
@@ -3182,6 +3261,115 @@ mod request_limits {
         assert_eq!(socket_line(b"1234\n".to_vec(), 4).as_deref(), Some("1234"));
         assert_eq!(socket_line(b"12345\n".to_vec(), 4), None);
         assert_eq!(socket_line(b"1234".to_vec(), 4), None);
+    }
+
+    #[test]
+    fn unterminated_ordinary_header_is_rejected_promptly_on_socket() {
+        use std::io::BufRead;
+        let (server, mut client) = UnixStream::pair().unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        client.set_write_timeout(Some(Duration::from_secs(2))).unwrap();
+        let handler = thread::spawn(move || {
+            handle_conn(
+                server,
+                &Arc::new(Mutex::new(HashMap::new())),
+                &Arc::new(AtomicUsize::new(0)),
+                &Arc::new(AtomicUsize::new(0)),
+                Path::new(""),
+                Path::new(""),
+                Path::new(""),
+                "",
+                "",
+                "",
+                Path::new(""),
+                &Arc::new(None),
+            );
+        });
+        // No newline or EOF: the header cap, not JSON parsing or the 100s timeout,
+        // must stop the request while the peer is still connected.
+        let mut header = br#"{"op":"event","padding":""#.to_vec();
+        header.resize(MAX_CONTROL_HEADER_BYTES + 1, b'x');
+        client.write_all(&header).unwrap();
+        let mut response = String::new();
+        std::io::BufReader::new(&mut client).read_line(&mut response).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&response).unwrap()["error"], "request-too-large");
+        handler.join().unwrap();
+    }
+
+    #[test]
+    fn large_typed_control_body_preserves_next_frame_and_holds_budget() {
+        let budget: MessageBudget = Arc::new(AtomicUsize::new(0));
+        let body = serde_json::to_vec(&json!({
+            "name": "attachment",
+            "playbook": {"reference": {"scope": "repo", "key": "fixture"}, "source": ""},
+            "attachments": [{"name": "fixture.bin", "bytes": "YWJj".repeat(50_000)}],
+            "start": false
+        }))
+        .unwrap();
+        assert!(body.len() > MAX_CONTROL_HEADER_BYTES);
+        let body_bytes = body.len();
+        let (mut server, mut client) = UnixStream::pair().unwrap();
+        server.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let writer = thread::spawn(move || {
+            writeln!(client, "{}", json!({"op":"create_task", "body_bytes":body_bytes})).unwrap();
+            client.write_all(&body).unwrap();
+            client.write_all(b"next-frame\n").unwrap();
+        });
+        let header = read_request_header(&mut server, MAX_CONTROL_HEADER_BYTES).unwrap();
+        let header: Value = serde_json::from_str(&header).unwrap();
+        let (request, reservation) = read_create_task_body(&mut server, &header, &budget).unwrap();
+        assert_eq!(request.attachments[0].bytes, b"abc".repeat(50_000));
+        assert_eq!(read_request_header(&mut server, MAX_CONTROL_HEADER_BYTES).unwrap(), "next-frame");
+        assert_eq!(budget.load(Ordering::Acquire), body_bytes);
+        drop(request);
+        drop(reservation);
+        assert_eq!(budget.load(Ordering::Acquire), 0);
+        writer.join().unwrap();
+    }
+
+    #[test]
+    fn control_body_rejects_invalid_headers_and_exhausted_budget_before_reading() {
+        let budget: MessageBudget = Arc::new(AtomicUsize::new(0));
+        let (mut server, _client) = UnixStream::pair().unwrap();
+        server.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        for (header, expected) in [
+            (json!({"op":"event", "body_bytes":MAX_CONTROL_BODY_BYTES}), "invalid-control-body-operation"),
+            (json!({"op":"create_task", "request":{}}), "invalid-control-body-length"),
+            (json!({"op":"create_task", "body_bytes":-1}), "invalid-control-body-length"),
+            (json!({"op":"create_task", "body_bytes":0}), "control-body-empty"),
+            (json!({"op":"create_task", "body_bytes":MAX_CONTROL_BODY_BYTES + 1}), "control-body-too-large"),
+        ] {
+            assert_eq!(read_create_task_body(&mut server, &header, &budget).unwrap_err(), expected);
+            assert_eq!(budget.load(Ordering::Acquire), 0);
+        }
+        let reservation = reserve_control_body_bytes(&budget, MAX_IN_FLIGHT_CONTROL_BODY_BYTES).unwrap();
+        assert_eq!(
+            read_create_task_body(&mut server, &json!({"op":"create_task", "body_bytes":1}), &budget).unwrap_err(),
+            "control-body-in-flight-budget-exceeded"
+        );
+        drop(reservation);
+        let replacement = reserve_control_body_bytes(&budget, MAX_IN_FLIGHT_CONTROL_BODY_BYTES).unwrap();
+        drop(replacement);
+        assert_eq!(budget.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn control_body_read_and_typed_decode_errors_release_budget() {
+        let budget: MessageBudget = Arc::new(AtomicUsize::new(0));
+        let (mut server, mut client) = UnixStream::pair().unwrap();
+        client.write_all(b"{").unwrap();
+        drop(client);
+        assert!(read_create_task_body(&mut server, &json!({"op":"create_task", "body_bytes":2}), &budget)
+            .unwrap_err()
+            .starts_with("read-control-body:"));
+        assert_eq!(budget.load(Ordering::Acquire), 0);
+
+        let (mut server, mut client) = UnixStream::pair().unwrap();
+        client.write_all(b"{}").unwrap();
+        assert!(read_create_task_body(&mut server, &json!({"op":"create_task", "body_bytes":2}), &budget)
+            .unwrap_err()
+            .starts_with("invalid-create-task-body:"));
+        assert_eq!(budget.load(Ordering::Acquire), 0);
     }
 
     #[test]
@@ -3465,274 +3653,6 @@ mod client_sink {
     }
 }
 
-#[cfg(test)]
-mod auto_advance {
-    use super::*;
-    use std::fs;
-    use std::time::UNIX_EPOCH;
-
-    fn temp_repo(name: &str) -> PathBuf {
-        let nanos = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let repo = std::env::temp_dir().join(format!("{name}_{}_{}", std::process::id(), nanos));
-        let _ = fs::remove_dir_all(&repo);
-        repo
-    }
-
-    fn task() -> Task {
-        Task {
-            slug: "task".into(),
-            worktree: "/tmp/task-worktree".into(),
-            playbook: "review".into(),
-            ..Default::default()
-        }
-    }
-
-    fn source() -> SessionMeta {
-        SessionMeta {
-            id: "s1".into(),
-            worktree: String::new(),
-            created: 10,
-            phase: "review-context".into(),
-            harness: "claude".into(),
-            model: "opus".into(),
-            playbook: "review".into(),
-            ..Default::default()
-        }
-    }
-
-    fn create(harness: &str) -> AutoAdvanceCreate {
-        AutoAdvanceCreate {
-            edge_key: "context_to_checks".into(),
-            from_phase: "review-context".into(),
-            to_phase: "review-checks".into(),
-            artifact: "01-review-context.md".into(),
-            harness: harness.into(),
-            model: if harness == NO_HARNESS_KEY { String::new() } else { "opus".into() },
-        }
-    }
-
-    #[test]
-    fn auto_advance_launch_prompt_meta_uses_atomic_shape_and_resume_token() {
-        let repo = temp_repo("alineryd-auto-meta");
-        let task = task();
-        let source = source();
-        let app_config = repo.join("app.toml");
-        let meta = build_auto_advance_meta(&app_config, &repo, &task, "review", &source, &create("omp"), "test-ns");
-
-        assert!(meta.id.starts_with('s'));
-        assert!(meta.created > source.created);
-        assert_eq!(meta.worktree, task.worktree);
-        assert!(!meta.archived);
-        assert_eq!(meta.phase, "review-checks");
-        assert_eq!(meta.harness, "omp");
-        assert_eq!(meta.model, "opus");
-        assert_eq!(meta.playbook, "review");
-        assert_eq!(meta.daemon_namespace, "test-ns");
-        assert!(!meta.subtask_manager);
-        assert!(meta.subtask_slug.is_empty());
-        assert!(meta.harness_resume_token.is_empty(), "product omp is manual, not launch-bind");
-        assert_eq!(meta.started_at, None);
-        assert_eq!(meta.ended_at, None);
-        assert_eq!(meta.exit_code, None);
-        assert_eq!(meta.resume_of, None);
-
-        write_auto_advance_meta(&repo, &task.slug, &meta).unwrap();
-        let path = sessions_dir(&repo, &task.slug).join(format!("{}.meta.json", meta.id));
-        let on_disk = read_session_meta_full(&path).unwrap();
-        assert_eq!(on_disk.id, meta.id);
-        assert_eq!(on_disk.daemon_namespace, "test-ns");
-        assert!(!on_disk.subtask_manager);
-        assert!(on_disk.subtask_slug.is_empty());
-
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn auto_advance_meta_skips_resume_token_for_non_launch_harnesses() {
-        let repo = temp_repo("alineryd-auto-token");
-        let task = task();
-        let source = source();
-
-        let app_config = repo.join("app.toml");
-        let codex = build_auto_advance_meta(&app_config, &repo, &task, "review", &source, &create("codex"), "test-ns");
-        assert_eq!(codex.harness_resume_token, "");
-
-        let omp = build_auto_advance_meta(&app_config, &repo, &task, "review", &source, &create("omp"), "test-ns");
-        assert_eq!(omp.harness_resume_token, "");
-
-        let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn unstarted_auto_advance_target_is_recoverable_only_by_its_daemon_lane() {
-        let mut meta = source();
-        meta.daemon_namespace = "owner".into();
-
-        assert!(recoverable_auto_advance_target(&meta, "owner"));
-        assert!(!recoverable_auto_advance_target(&meta, "foreign"));
-
-        meta.started_at = Some(1);
-        assert!(!recoverable_auto_advance_target(&meta, "owner"));
-    }
-
-    #[test]
-    fn completed_source_is_advanced_only_by_its_daemon_lane() {
-        let mut meta = source();
-        meta.daemon_namespace = "owner".into();
-
-        assert!(auto_advance_source_owned_by_lane(&meta, "owner"));
-        assert!(!auto_advance_source_owned_by_lane(&meta, "foreign"));
-    }
-}
-
-#[cfg(test)]
-mod seeded_prompt {
-    use super::*;
-    use std::fs;
-    use std::time::UNIX_EPOCH;
-
-    fn temp_repo(name: &str) -> PathBuf {
-        let nanos = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let repo = std::env::temp_dir().join(format!("{name}_{}_{}", std::process::id(), nanos));
-        let _ = fs::remove_dir_all(&repo);
-        repo
-    }
-
-    #[test]
-    fn build_seeded_prompt_uses_launch_playbook() {
-        let repo = temp_repo("alineryd-external-playbook-seed");
-        alinery_core::ensure_playbooks(&repo).unwrap();
-        let slug = "task";
-        let worktree = repo.join(".alinery/worktrees/task");
-        let task = Task {
-            name: "Task".into(),
-            slug: slug.into(),
-            worktree: worktree.display().to_string(),
-            playbook: "superdevelop".into(),
-            ..Default::default()
-        };
-        let task_dir = alinery_dir(&repo).join("tasks").join(slug);
-        fs::create_dir_all(task_dir.join("artifacts")).unwrap();
-        fs::create_dir_all(task_dir.join("sessions")).unwrap();
-        fs::write(task_dir.join("task.md"), toml::to_string(&task).unwrap()).unwrap();
-        fs::write(
-            alinery_dir(&repo).join("playbooks/superdevelop/06-build.md"),
-            "SuperDevelop_MARKER {{ARTIFACT_FILE}} {{PLAYBOOK_KEY}}",
-        )
-        .unwrap();
-        fs::write(
-            alinery_dir(&repo).join("playbooks/one-shot/01-implementation.md"),
-            "ONE_SHOT_MARKER {{ARTIFACT_FILE}} {{PLAYBOOK_KEY}}",
-        )
-        .unwrap();
-        let launch = LaunchFields {
-            id: "s1".into(),
-            task_slug: slug.into(),
-            worktree: task.worktree.clone(),
-            playbook: "one-shot".into(),
-            generic: false,
-            subtask_manager: false,
-            subtask_slug: String::new(),
-            phase: "implementation".into(),
-            harness: "claude".into(),
-            model: String::new(),
-            created: 1,
-            artifact: "external-implementation.md".into(),
-            handoff_artifact: String::new(),
-            prompt_extra: String::new(),
-            prompt: None,
-            resume_token: String::new(),
-        };
-
-        let prompt = build_seeded_prompt(&repo, &launch).unwrap().unwrap();
-        assert!(prompt.contains("ONE_SHOT_MARKER"));
-        assert!(prompt.contains("external-implementation.md"));
-        assert!(prompt.contains("one-shot"));
-        assert!(!prompt.contains("SuperDevelop_MARKER"));
-        assert!(!prompt.contains("06-implementation.md"));
-
-        let phase_less = LaunchFields {
-            phase: String::new(),
-            ..launch.clone()
-        };
-        assert!(build_seeded_prompt(&repo, &phase_less).unwrap().is_none());
-        let generic = LaunchFields {
-            generic: true,
-            ..phase_less.clone()
-        };
-        let generic_prompt = build_seeded_prompt(&repo, &generic).unwrap().unwrap();
-        assert!(generic_prompt.contains("Generic Alinery session"));
-        assert!(generic_prompt.contains(&task.worktree));
-        assert!(generic_prompt.contains("Task playbook: one-shot"));
-
-        let edited = LaunchFields {
-            prompt: Some("edited exactly".into()),
-            ..generic.clone()
-        };
-        assert_eq!(build_seeded_prompt(&repo, &edited).unwrap().as_deref(), Some("edited exactly"));
-
-        let mut generic_seed = Some(generic_prompt.clone());
-        augment_omp_seed(&repo, &generic, &mut generic_seed).unwrap();
-        assert_eq!(generic_seed.as_deref(), Some(generic_prompt.as_str()));
-
-        let explicit = LaunchFields {
-            generic: false,
-            prompt: Some("special prompt".into()),
-            ..phase_less
-        };
-        let mut explicit_seed = build_seeded_prompt(&repo, &explicit).unwrap();
-        augment_omp_seed(&repo, &explicit, &mut explicit_seed).unwrap();
-        assert_eq!(explicit_seed.as_deref(), Some("special prompt"));
-
-        let mut playbook_seed = build_seeded_prompt(&repo, &launch).unwrap();
-        augment_omp_seed(&repo, &launch, &mut playbook_seed).unwrap();
-        let playbook_prompt = playbook_seed.unwrap();
-        assert!(playbook_prompt.contains("Alinery completion contract"));
-        assert!(playbook_prompt.contains("external-implementation.md"));
-
-        let explicit_empty = LaunchFields {
-            harness: "omp".into(),
-            prompt: Some(String::new()),
-            ..launch.clone()
-        };
-        let mut contract_only_seed = build_seeded_prompt(&repo, &explicit_empty).unwrap();
-        assert!(contract_only_seed.is_none());
-        augment_omp_seed(&repo, &explicit_empty, &mut contract_only_seed).unwrap();
-        let contract_only_prompt = contract_only_seed.unwrap();
-        assert!(contract_only_prompt.starts_with("Alinery completion contract"));
-        assert!(contract_only_prompt.contains("external-implementation.md"));
-        assert!(!contract_only_prompt.contains("ONE_SHOT_MARKER"));
-
-        let phase_less_empty = LaunchFields {
-            phase: String::new(),
-            ..explicit_empty
-        };
-        let mut phase_less_empty_seed = build_seeded_prompt(&repo, &phase_less_empty).unwrap();
-        augment_omp_seed(&repo, &phase_less_empty, &mut phase_less_empty_seed).unwrap();
-        assert!(phase_less_empty_seed.is_none());
-
-        let malformed = LaunchFields {
-            phase: "missing-phase".into(),
-            artifact: String::new(),
-            prompt: Some("owned prompt".into()),
-            ..launch
-        };
-        let mut malformed_seed = build_seeded_prompt(&repo, &malformed).unwrap();
-        assert_eq!(
-            augment_omp_seed(&repo, &malformed, &mut malformed_seed).unwrap_err(),
-            "playbook 'one-shot' step 'missing-phase' has no artifact"
-        );
-
-        let terminal = LaunchFields {
-            harness: NO_HARNESS_KEY.into(),
-            ..generic
-        };
-        assert!(build_seeded_prompt(&repo, &terminal).unwrap().is_none());
-
-        let _ = fs::remove_dir_all(repo);
-    }
-}
-
 // The bytes that make a freshly-attached xterm show this session's CURRENT SCREEN.
 //
 // Why a frame and not a byte tail (#96): claude enters the alt screen and emits a full base
@@ -3934,21 +3854,17 @@ endpoint = "{endpoint}"
                 Ok(pair) => pair,
                 Err(_) => return Vec::new(),
             };
-            let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
             let mut buf = Vec::new();
             let mut chunk = [0u8; 8192];
-            loop {
-                match stream.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        buf.extend_from_slice(&chunk[..n]);
-                        if buf.windows(4).any(|w| w == b"\r\n\r\n") {
-                            break;
-                        }
-                    }
-                    Err(_) if std::time::Instant::now() < deadline => continue,
-                    Err(_) => break,
+            while buf.len() < 64 * 1024 {
+                let n = match stream.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                buf.extend_from_slice(&chunk[..n]);
+                if alinery_core::complete_http_request_len(&buf).is_some_and(|len| buf.len() >= len) {
+                    break;
                 }
             }
             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}");

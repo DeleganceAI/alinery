@@ -57,6 +57,8 @@ export type AppearancePrefs = {
   chat_show_actor_labels?: boolean;
   /** Filled bubble around agent text replies only. Absent → true. */
   chat_show_agent_bubbles?: boolean;
+  /** Per-message copy icon inside chat bubbles. Absent → true. */
+  chat_show_copy_buttons?: boolean;
   /** Preferred OMP session hatch (Chat vs Terminal) for new starts. Absent → "chat". */
   session_default_view?: SessionDefaultView;
   /** Absent in pre-reskin configs; normalizers default it to "system". */
@@ -81,6 +83,10 @@ export type Task = {
   linear_id: string;
   github_issue: string;
   playbook: string;
+  engine_version?: number;
+  playbook_ref?: PlaybookRef | null;
+  max_live_sessions?: number;
+  launch_defaults?: LaunchChoices;
   auto_advance: string[];
   /** M6: true while still being drafted on CreateTaskPage. */
   draft: boolean;
@@ -118,7 +124,7 @@ export type TaskActivitySummary = {
 };
 export type TaskActivityMap = Record<string, TaskActivitySummary>;
 export type DraftOrigin = { repoPath: string; slug: string };
-export type TargetedCreateResult = { repoPath: string; task: Task; session: SessionMeta; attachment_errors?: string[] };
+export type TargetedCreateResult = CreateTaskResult & { repoPath: string; selectedSessionId?: string };
 export type NotificationPrefs = {
   enabled: boolean;
   sound: boolean;
@@ -141,11 +147,11 @@ export type SessionNotificationClearRef = {
   id: string;
   notification_suppression?: NotificationSuppression | null;
 };
-export type HarnessChoice = { harness: string; model: string; playbook: string; draft_autosave: boolean };
+export type HarnessChoice = { harness: string; model: string; playbook: PlaybookRef; draft_autosave: boolean };
 export type RepoHarnessChoiceOverrides = {
   harness?: string | null;
   model?: string | null;
-  playbook?: string | null;
+  playbook?: PlaybookRef | null;
   draft_autosave?: boolean | null;
 };
 export type BackupDefaults = {
@@ -185,7 +191,7 @@ export type BackupListItem = {
 export type TelemetryPrefs = { enabled: boolean; prompted: boolean; install_id: string; endpoint: string };
 export type UpdatePrefs = { check_enabled: boolean };
 export type ExperimentalFeatures = {
-  /** Opt-in classic Kanban tab (⌘3). Absent/false = Grid-only. */
+  /** Classic Kanban tab (⌘3). Absent = enabled; false hides the tab. */
   show_original_kanban?: boolean;
 };
 export type GridViewDefinition = { id: string; name: string; slot: number };
@@ -315,7 +321,7 @@ export type AppConfig = {
 };
 export type StorageInfo = {
   app_config_path: string;
-  active_repo: string;
+  repo_path: string;
   alinery_dir: string;
   repo_config_path: string;
   harnesses_path: string;
@@ -346,6 +352,8 @@ export type SessionMeta = {
   harness: string;
   model: string;
   playbook: string;
+  execution_id?: string;
+  execution_revision?: number;
   generic: boolean;
   subtask_manager?: boolean;
   subtask_slug?: string;
@@ -531,19 +539,151 @@ export type LifecycleState =
   | { state: "interrupted" }
   | { state: "exited"; code: number };
 export type Phase = { key: string; title: string };
-export type PlaybookKind = "linear" | "freeform";
-export type AutoAdvanceSummary = { key: string; title: string; from: string; to: string; default_enabled: boolean };
-export type PlaybookSummary = {
+export type PlaybookRef = { scope: "bundled" | "global" | "repo"; key: string };
+export type InputSelector = { path: string; mode: "single" | "each" | "complete" };
+export type NormalizedStep = {
+  key: string;
+  title: string;
+  short: string;
+  is_coding_step: boolean;
+  auto_advance_default: boolean;
+  inputs: InputSelector[];
+  outputs: { path: string }[];
+  model: string;
+  harness: string;
+  prompt: string;
+};
+export type NormalizedPlaybook = {
+  version: number;
   key: string;
   title: string;
   description: string;
-  kind: PlaybookKind;
+  default_model: string;
   default_harness: string;
-  steps: string[];
-  auto_advance: AutoAdvanceSummary[];
+  step: NormalizedStep[];
+  preamble: string;
+  section_order: string[];
 };
-export type PlaybookStepSummary = { key: string; title: string; short: string; artifact: string; column: string; harness: string };
-export type SessionTypeChoice = { kind: "playbook-step"; playbook: string; phase: string } | { kind: "generic" };
+export type PlaybookValidationError = { code: string; message: string; line: number | null; field: string | null; severity: string };
+export type PlaybookSource = { reference: PlaybookRef; path: string | null };
+export type ScopedPlaybook = { source: PlaybookSource; definition: NormalizedPlaybook; source_text: string; modified_at_ms: number | null };
+export type PlaybookCandidate = { source: PlaybookSource; title: string | null; description: string | null; modified_at_ms: number | null; diagnostics: PlaybookValidationError[] };
+export type PickerPreference = { reference: PlaybookRef; hidden: boolean; collapsed: boolean; badge: string | null; color: string | null; last_imported_at_ms: number | null };
+export type PickerPreferences = { order: PlaybookRef[]; entries: PickerPreference[] };
+export type PlaybookCatalog = { candidates: PlaybookCandidate[]; picker_preferences: PickerPreferences; diagnostics: PlaybookValidationError[] };
+export type PlaybookValidation = { definition: NormalizedPlaybook | null; diagnostics: PlaybookValidationError[] };
+export type SessionTypeChoice =
+  | { kind: "primary"; step_key: string; execution_id?: string; input_occurrence_ids?: string[] }
+  | { kind: "auxiliary" }
+  | { kind: "existing"; session_id: string };
+export type SavePlaybookRequest = { target: PlaybookRef; source: string; overwrite: boolean };
+export type LaunchChoices = { harness: string; model: string };
+export type ExecutionLifecycle = "queued" | "starting" | "running" | "finishing" | "completed" | "launch_failed" | "failed" | "interrupted";
+export type CompletionPermission = { kind: "automatic" | "locked" | "consumed" } | { kind: "human_granted"; execution_id: string; session_id: string };
+export type OutputAssignment = { selector: string; relative_path: string; discriminator: number };
+export type ExecutionCandidate = {
+  step_key: string;
+  context_id: string;
+  inputs: Record<string, string[]>;
+  complete_collection_id: string | null;
+  each_collection_id: string | null;
+  each_member_id: string | null;
+  manual: boolean;
+};
+export type ExecutionRecord = {
+  id: string;
+  binding_key: string;
+  candidate: ExecutionCandidate;
+  outputs: OutputAssignment[];
+  parent_execution_ids: string[];
+  depth: number;
+  owner_session_id: string;
+  previous_session_ids: string[];
+  launch: LaunchChoices;
+  is_coding_step: boolean;
+  start_requested: boolean;
+  lifecycle: ExecutionLifecycle;
+  permission: CompletionPermission;
+  receipt_id: string | null;
+  exit_code: number | null;
+  shutdown_confirmed: boolean;
+  error: string | null;
+};
+export type ArtifactOccurrence = {
+  id: string;
+  producer_execution_id: string | null;
+  selector: string;
+  logical_path: string;
+  relative_path: string;
+  depth: number;
+  discriminator: number;
+  context_id: string;
+  collection_ids: string[];
+};
+export type TaskExecutionState = {
+  version: number;
+  revision: number;
+  creation: string;
+  creation_error: string | null;
+  owning_lane: string;
+  definition_identity: string;
+  reference: PlaybookRef;
+  max_live_sessions: number;
+  enabled_steps: string[];
+  launch_defaults: LaunchChoices;
+  executions: Record<string, ExecutionRecord>;
+  occurrences: Record<string, ArtifactOccurrence>;
+  contexts: Record<string, { id: string; parent_id: string | null; cause: { kind: string }; bindings: Record<string, string[]> }>;
+  collections: Record<
+    string,
+    {
+      id: string;
+      context_id: string;
+      selector: string;
+      producer_step: string;
+      source_collection_id: string | null;
+      expected_execution_ids: string[];
+      member_occurrence_ids: string[];
+      membership_closed: boolean;
+    }
+  >;
+};
+export type TaskExecutionReply = { state: TaskExecutionState; definition: NormalizedPlaybook };
+export type TaskAttachment = { name: string; bytes: string };
+export type PreparedTaskAttachments = { attachments: TaskAttachment[]; attachment_urls: string[]; attachment_errors: string[] };
+export type CreateTaskRequest = {
+  name: string;
+  draft_slug?: string | null;
+  requested_slug?: string | null;
+  description?: string;
+  evidence?: string;
+  attachments?: TaskAttachment[];
+  attachment_urls?: string[];
+  attachment_errors?: string[];
+  linear_id?: string;
+  github_issue?: string;
+  related_tasks?: RelatedTaskRef[];
+  parent_task?: string;
+  playbook: { reference: PlaybookRef; source: string };
+  branch_name?: string | null;
+  worktree_name?: string | null;
+  base_ref?: string | null;
+  launch_defaults?: LaunchChoices;
+  auto_advance_steps?: string[] | null;
+  max_live_sessions?: number | null;
+  start: boolean;
+};
+export type CreateExecutionSessionRequest = {
+  task_slug: string;
+  target:
+    | { kind: "primary"; step_key: string; execution_id?: string | null; input_occurrence_ids?: string[] | null }
+    | { kind: "auxiliary"; harness: string; model?: string | null; prompt?: string | null };
+  launch_override?: LaunchChoices | null;
+  prompt_extra?: string | null;
+  handoff_artifact?: string | null;
+  start: boolean;
+};
+export type CreateExecutionSessionReply = { session: SessionMeta; execution: ExecutionRecord | null; start: string };
 export type KanbanColumn = { key: string; title: string };
 export type RepoScope = "active" | "all";
 
@@ -561,6 +701,9 @@ export type ReviewHandoffRecord = {
 };
 
 export type ReviewHandoffResult = {
+  target_repo_path: string;
+  start: string;
+  errors: { stage: string; code: string; message: string }[];
   target_artifact: string;
   target_session: SessionMeta;
   source_record: ReviewHandoffRecord;
@@ -574,6 +717,12 @@ export type ArtifactListItem = {
   session_id: string;
   handoffs: ReviewHandoffRecord[];
   attachment?: boolean;
+  execution_id?: string | null;
+  step_key?: string | null;
+  logical_path?: string | null;
+  depth?: number | null;
+  discriminator?: number | null;
+  accepted?: boolean | null;
 };
 
 export type ArtifactTreeNodeKind = "owned" | "attachment" | "subtask_folder" | "referenced";
@@ -604,6 +753,7 @@ export type PreparedSessionMessageAction = {
 };
 
 export type ReviewHandoffSource = {
+  source_repo_path: string;
   source_slug: string;
   source_session: string;
   source_artifact: string;
@@ -617,7 +767,19 @@ export type ReviewHandoffDraft = ReviewHandoffSource & {
   prompt_extra: string;
 };
 
-export type SettingsSectionKey = "connections" | "notifications" | "telemetry" | "updates" | "storage" | "appearance" | "chat" | "gridViews" | "experimental" | "mcp" | "backup";
+export type SettingsSectionKey =
+  | "playbooks"
+  | "connections"
+  | "notifications"
+  | "telemetry"
+  | "updates"
+  | "storage"
+  | "appearance"
+  | "chat"
+  | "gridViews"
+  | "experimental"
+  | "mcp"
+  | "backup";
 
 export type View =
   | { kind: "list" }
@@ -625,6 +787,7 @@ export type View =
   | { kind: "kanban" }
   | { kind: "sessions" }
   | { kind: "notifications" }
+  | { kind: "playbooks" }
   | { kind: "settings"; section?: SettingsSectionKey }
   | { kind: "create"; from: View; draft?: BoardTask }
   | { kind: "createSession"; from: View; initialTask?: { repo_path: string; slug: string } }
@@ -645,7 +808,7 @@ export type View =
     }
   | { kind: "reviewHandoff"; from: View; source: ReviewHandoffSource };
 
-export type Tab = "list" | "kanban" | "grid" | "sessions" | "notifications" | "settings";
+export type Tab = "list" | "kanban" | "grid" | "sessions" | "notifications" | "playbooks" | "settings";
 
 export type BoardNav = {
   moveRow: (d: number) => void;
@@ -751,11 +914,15 @@ export type McpStatus = {
   error: string;
 };
 
-/** Mirrors Rust `CreateTaskResult` (src/task.rs). */
+export type CreationError = { stage: string; code: string; message: string };
 export type CreateTaskResult = {
-  task: Task;
-  session: SessionMeta;
-  attachment_errors: string[];
+  task: Task | null;
+  sessions: SessionMeta[];
+  executions: ExecutionRecord[];
+  creation: "ready" | "partial";
+  start: "not_requested" | "started" | "queued" | "failed";
+  errors: CreationError[];
+  attachment_errors?: string[];
 };
 
 /** Mirrors Rust `LinearTicket` (src/imports.rs). Was an inline literal at the call site. */
