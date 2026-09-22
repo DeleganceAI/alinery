@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -550,39 +549,15 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
-it("replaces the intro with Playbooks while retaining the global draft on return", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
-  const style = document.createElement("style");
-  style.textContent = readFileSync("src/theme.css", "utf8");
-  document.head.append(style);
-  try {
-    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "" });
-    render(<App />);
-    const introButton = await screen.findByRole("button", { name: "Playbooks" });
-    const intro = introButton.closest(".view") as HTMLElement;
-    expect(getComputedStyle(intro).display).toBe("flex");
-    fireEvent.click(introButton);
-    fireEvent.click(await screen.findByRole("button", { name: "Import" }));
-    expect(getComputedStyle(intro).display).toBe("none");
-    fireEvent.click(screen.getByRole("button", { name: "Paste source" }));
-    const editor = await screen.findByRole("textbox", { name: "Playbook source" });
-    fireEvent.change(editor, { target: { value: "Keep this global draft" } });
-    expect(screen.queryByRole("button", { name: "Back to previous view" })).toBeNull();
-    fireEvent.keyDown(document.body, { key: "Escape" });
-    expect(getComputedStyle(intro).display).toBe("flex");
-    expect(getComputedStyle(editor.closest(".view") as HTMLElement).display).toBe("none");
-    fireEvent.click(await screen.findByRole("button", { name: "Playbooks" }));
-    expect(getComputedStyle(intro).display).toBe("none");
-    expect(await screen.findByRole("textbox", { name: "Playbook source" })).toHaveProperty("value", "Keep this global draft");
-  } finally {
-    style.remove();
-  }
+it("opens Playbooks from the top tab after selecting a repository, without an intro shortcut", async () => {
+  ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "" });
+  render(<App />);
+  await screen.findByRole("button", { name: "Add a repository" });
+  expect(screen.queryByRole("button", { name: "Playbooks" })).toBeNull();
+
+  fireEvent.click(screen.getByTitle(task.repo_path));
+  fireEvent.click(await screen.findByRole("button", { name: "Playbooks" }));
+  await screen.findByRole("list", { name: "Playbook library" });
 });
 
 async function renderApp() {

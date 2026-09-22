@@ -1075,9 +1075,6 @@ export default function App() {
           Increase your <span>token:attention</span> ratio.
         </p>
         <RepoPicker appConfig={appConfig} error={repoErr} onSelect={setRepo} onRemove={removeRepo} onAdd={addRepo} />
-        <button className="btn ghost" type="button" onClick={() => switchTop("playbooks")}>
-          Playbooks
-        </button>
       </div>,
       minimalHeader,
     );
