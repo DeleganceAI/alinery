@@ -77,8 +77,7 @@ pub(crate) fn worktree_exists(slug: String) -> Result<bool, String> {
 }
 
 // ---- M5 PR compare URL -------------------------------------------------------
-// Pure remote-URL -> compare-URL parsing (the whole PR feature minus the git shell-outs), so
-// it's unit-testable with no network/remote. Handles ssh (git@host:owner/repo(.git) and
+// Pure remote-URL -> compare-URL parsing. Handles ssh (git@host:owner/repo(.git) and
 // ssh://[user@]host/owner/repo(.git)) and http(s). GitHub adds ?expand=1 to prefill the PR
 // form; other forges (Gitea) use the bare compare path.
 pub(crate) fn compare_url(remote: &str, base: &str, branch: &str) -> Option<String> {
@@ -138,7 +137,11 @@ pub(crate) fn record_pushed_url_in(repo: &Path, slug: &str, pushed_branch: &str,
         if task.branch != pushed_branch {
             return Err("task branch changed during push".into());
         }
-        task.pr_url = url.to_string();
+        // Once discovery (or the user) supplies a real PR, pushing must not replace it
+        // with the creation form: the durable link is how we find a merged PR later.
+        if github_pull_request_ref(&task.pr_url).is_none() {
+            task.pr_url = url.to_string();
+        }
         Ok(())
     })
 }
@@ -210,6 +213,244 @@ pub(crate) fn set_pr_url_for_repo(app: AppHandle, state: State<'_, AppState>, re
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
     set_pr_url_in(&repo, slug, url)
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum PullRequestState {
+    Open,
+    Merged,
+    Closed,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub(crate) struct PullRequest {
+    pub(crate) number: u64,
+    pub(crate) url: String,
+    pub(crate) state: PullRequestState,
+}
+
+#[derive(Serialize)]
+pub(crate) struct PullRequestSnapshot {
+    pub(crate) pr: Option<PullRequest>,
+    pub(crate) error: Option<String>,
+}
+
+pub(crate) fn github_pull_request_ref(url: &str) -> Option<GitHubIssueRef> {
+    let path = url.trim().strip_prefix("https://github.com/")?;
+    let path = path.split(['?', '#']).next()?.trim_end_matches('/');
+    let parts: Vec<_> = path.split('/').collect();
+    let valid_component = |part: &str| !part.is_empty() && part != "." && part != ".." && part.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.'));
+    if parts.len() != 4 || parts[2] != "pull" || !valid_component(parts[0]) || !valid_component(parts[1]) {
+        return None;
+    }
+    Some(GitHubIssueRef {
+        owner: parts[0].into(),
+        repo: parts[1].into(),
+        number: issue_number(parts[3])?,
+    })
+}
+
+fn pull_request_from_json(value: &Value) -> Result<PullRequest, String> {
+    let invalid = || "invalid GitHub pull request response".to_string();
+    let url = value["html_url"].as_str().ok_or_else(invalid)?;
+    let reference = github_pull_request_ref(url).ok_or_else(invalid)?;
+    let number = value["number"].as_u64().ok_or_else(invalid)?;
+    if number != reference.number {
+        return Err(invalid());
+    }
+    let state = match (value["state"].as_str(), value.get("merged_at")) {
+        (Some("open"), Some(Value::Null)) => PullRequestState::Open,
+        (Some("closed"), Some(Value::String(_))) => PullRequestState::Merged,
+        (Some("closed"), Some(Value::Null)) => PullRequestState::Closed,
+        _ => return Err(invalid()),
+    };
+    Ok(PullRequest { number, url: url.into(), state })
+}
+
+pub(crate) fn select_branch_pull_request(value: &Value, owner: &str, repo: &str, branch: &str) -> Result<Option<PullRequest>, String> {
+    let pulls = value.as_array().ok_or("invalid GitHub pull request list")?;
+    let head_repository = format!("{owner}/{repo}");
+    let mut selected: Option<PullRequest> = None;
+    for value in pulls {
+        // The server's head filter is not enough: forks may reuse the same branch name.
+        if value["head"]["ref"].as_str() != Some(branch)
+            || !value["head"]["repo"]["full_name"].as_str().is_some_and(|name| name.eq_ignore_ascii_case(&head_repository))
+            || !value["head"]["user"]["login"].as_str().is_some_and(|login| login.eq_ignore_ascii_case(owner))
+        {
+            continue;
+        }
+        let pull = pull_request_from_json(value)?;
+        // PR numbers increase within one repository, so the largest is the latest.
+        if selected
+            .as_ref()
+            .is_none_or(|previous| (pull.state == PullRequestState::Open, pull.number) > (previous.state == PullRequestState::Open, previous.number))
+        {
+            selected = Some(pull);
+        }
+    }
+    Ok(selected)
+}
+
+fn github_pull_request_json(repo: &Path, endpoint: &str, fields: &[(&str, &str)]) -> Result<Value, String> {
+    let mut command = Command::new("gh");
+    command
+        .current_dir(repo)
+        .args(["api", "--hostname", "github.com", "--method", "GET", endpoint])
+        .env("PATH", login_shell_path())
+        .env("GH_PROMPT_DISABLED", "1")
+        .env("GH_PAGER", "cat")
+        .env_remove("GH_DEBUG")
+        .stdin(std::process::Stdio::null());
+    for (key, value) in fields {
+        command.arg("-f").arg(format!("{key}={value}"));
+    }
+    let output = output_with_timeout(command, Duration::from_secs(15)).map_err(|error| format!("GitHub PR lookup: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("GitHub PR lookup failed: {}", String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    serde_json::from_slice(&output.stdout).map_err(|error| format!("invalid GitHub PR response: {error}"))
+}
+
+pub(crate) fn record_discovered_pull_request_in(repo: &Path, slug: &str, branch: &str, previous_url: &str, url: &str) -> Result<(), String> {
+    if github_pull_request_ref(url).is_none() {
+        return Err("invalid GitHub pull request URL".into());
+    }
+    let check_snapshot = |current_branch: &str, current_url: &str| {
+        if current_branch != branch || current_url != previous_url {
+            Err("task branch or PR link changed during lookup".to_string())
+        } else {
+            Ok(())
+        }
+    };
+    // Polling an already stored PR must not rewrite task.md every minute.
+    if previous_url == url {
+        let task = read_task(repo, slug)?;
+        return check_snapshot(&task.branch, &task.pr_url);
+    }
+    alinery_core::mutate_task(repo, slug, "discover pull request URL", |task| {
+        check_snapshot(&task.branch, &task.pr_url)?;
+        task.pr_url = url.into();
+        Ok(())
+    })
+}
+
+pub(crate) fn task_pull_request_with(
+    repo: &Path,
+    slug: &str,
+    mut origin: impl FnMut() -> Result<Option<(String, String)>, String>,
+    mut request: impl FnMut(&str, &[(&str, &str)]) -> Result<Value, String>,
+) -> Result<Option<PullRequest>, String> {
+    if alinery_core::safe_component(slug).is_none() {
+        return Err("invalid task slug".into());
+    }
+    let task = read_task(repo, slug)?;
+    let pull = if let Some(reference) = github_pull_request_ref(&task.pr_url) {
+        // The durable URL remains authoritative even after merge or branch removal.
+        let endpoint = format!("repos/{}/{}/pulls/{}", reference.owner, reference.repo, reference.number);
+        let pull = pull_request_from_json(&request(&endpoint, &[])?)?;
+        if pull.number != reference.number {
+            return Err("GitHub returned a different pull request".into());
+        }
+        Some(pull)
+    } else {
+        if task.branch.is_empty() {
+            return Ok(None);
+        }
+        let Some((owner, repo_name)) = origin()? else {
+            return Ok(None);
+        };
+        let endpoint = format!("repos/{owner}/{repo_name}/pulls");
+        let head = format!("{owner}:{}", task.branch);
+        let mut found = None;
+        // Query open separately so many historical PRs cannot hide an existing open PR.
+        for state in ["open", "all"] {
+            let response = request(
+                &endpoint,
+                &[("head", &head), ("state", state), ("sort", "created"), ("direction", "desc"), ("per_page", "100")],
+            )?;
+            found = select_branch_pull_request(&response, &owner, &repo_name, &task.branch)?;
+            if found.is_some() {
+                break;
+            }
+        }
+        found
+    };
+    if let Some(pull) = &pull {
+        record_discovered_pull_request_in(repo, slug, &task.branch, &task.pr_url, &pull.url)?;
+    }
+    Ok(pull)
+}
+
+pub(crate) fn task_pull_request_in(repo: &Path, slug: &str) -> Result<Option<PullRequest>, String> {
+    task_pull_request_with(
+        repo,
+        slug,
+        || {
+            let mut command = git_cmd(repo);
+            command.args(["remote", "get-url", "origin"]).stdin(std::process::Stdio::null());
+            let output = output_with_timeout(command, Duration::from_secs(5)).map_err(|error| format!("read GitHub origin: {error}"))?;
+            if !output.status.success() {
+                return Err(format!("read GitHub origin: {}", String::from_utf8_lossy(&output.stderr).trim()));
+            }
+            Ok(github_repo_from_remote(String::from_utf8_lossy(&output.stdout).trim()))
+        },
+        |endpoint, fields| github_pull_request_json(repo, endpoint, fields),
+    )
+}
+
+pub(crate) fn task_pull_request_snapshots_with(
+    tasks: Vec<TaskActivityRef>,
+    lookup: impl Fn(&TaskActivityRef) -> Result<Option<PullRequest>, String> + Sync,
+) -> HashMap<String, PullRequestSnapshot> {
+    let tasks: HashMap<_, _> = tasks
+        .into_iter()
+        .map(|reference| (task_activity_key(&reference.repo_path, &reference.task_slug), reference))
+        .collect();
+    let worker_count = tasks.len().min(4);
+    let (job_tx, job_rx) = std::sync::mpsc::channel();
+    let job_rx = Mutex::new(job_rx);
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    for task in tasks {
+        let _ = job_tx.send(task);
+    }
+    drop(job_tx);
+
+    // As with activity polling, bound subprocess fan-out without serializing the whole board.
+    std::thread::scope(|scope| {
+        for _ in 0..worker_count {
+            let job_rx = &job_rx;
+            let lookup = &lookup;
+            let result_tx = result_tx.clone();
+            scope.spawn(move || loop {
+                let job = job_rx.lock().unwrap_or_else(|e| e.into_inner()).recv();
+                let Ok((key, reference)) = job else {
+                    break;
+                };
+                let snapshot = match lookup(&reference) {
+                    Ok(pr) => PullRequestSnapshot { pr, error: None },
+                    Err(error) => PullRequestSnapshot { pr: None, error: Some(error) },
+                };
+                let _ = result_tx.send((key, snapshot));
+            });
+        }
+        drop(result_tx);
+    });
+    result_rx.into_iter().collect()
+}
+
+#[tauri::command]
+pub(crate) async fn list_task_pull_requests(app: AppHandle, tasks: Vec<TaskActivityRef>) -> Result<HashMap<String, PullRequestSnapshot>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        task_pull_request_snapshots_with(tasks, |reference| {
+            let repo = target_repo_for_app(&app, &reference.repo_path)?;
+            require_repo_owned(&state, &repo)?;
+            task_pull_request_in(&repo, &reference.task_slug)
+        })
+    })
+    .await
+    .map_err(|error| format!("GitHub PR lookup worker: {error}"))
 }
 
 // ---- commit-to-branch ---------------------------------------------------------

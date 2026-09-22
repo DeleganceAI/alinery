@@ -19,12 +19,11 @@
 //     Sound is a bundled tron_notification.wav (include_bytes!) played via `afplay`, decoupled
 //     from the banner so sound/banner/bounce toggle independently (no new dep). (2) REMOVE-WORKTREE:
 //     end the task's live sessions, `git worktree remove --force`, clear task.worktree.
-//     (3) PR LINK: push + build the forge COMPARE URL by
-//     STRING-PARSING `origin` (ssh + https, GitHub + Gitea) — no forge API — stored as an
-//     editable `pr_url`. (4) TICKET IMPORT: one-way Linear/GitHub imports via curl (zero
+//     (3) PR LINK: compare URL generation and background GitHub PR discovery live in
+//     git_ops.rs. (4) TICKET IMPORT: one-way Linear/GitHub imports via curl (zero
 //     new deps, mirrors the git shell-out pattern). config.toml mirrors harnesses.toml
 //     (bundled default via include_str!, degrades to defaults on a bad edit).
-// Deferred (do NOT add here): Linear status write-back / PR auto-detect / forge API polling,
+// Deferred (do NOT add here): Linear status write-back,
 //     PRD track, SQLite, session resurrection, stream-json/rich adapters, auto-advance,
 //     per-repo windows.
 
@@ -158,6 +157,7 @@ pub fn run() {
             list_tasks,
             list_board_tasks,
             list_task_activity,
+            list_task_pull_requests,
             archive_task,
             archive_task_for_repo,
             restore_task_for_repo,

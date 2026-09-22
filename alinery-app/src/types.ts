@@ -105,6 +105,8 @@ export type BoardTask = Task & {
   current_column_title: string;
 };
 export type TaskActivityRef = { repoPath: string; taskSlug: string };
+export type PullRequest = { number: number; url: string; state: "open" | "merged" | "closed" };
+export type PullRequestSnapshot = { pr: PullRequest | null; error: string | null };
 export type TaskActivitySession = {
   id: string;
   worktree: string;

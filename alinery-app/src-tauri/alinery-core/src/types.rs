@@ -218,6 +218,8 @@ pub struct Task {
     pub created: u64,
     #[serde(default)]
     pub archived: bool,
+    // Compare URL until discovery or a user supplies the real PR link. Retained after
+    // worktree removal; defaulted so older task.md files still parse.
     #[serde(default)]
     pub pr_url: String,
     #[serde(default)]
