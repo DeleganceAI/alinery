@@ -25,6 +25,7 @@ const sourceTask = {
   repo_path: "/a",
   session_count: 0,
   playbook_title: "SuperDevelop",
+  playbook_steps: [],
   updated: 1,
   current_phase: "research",
   current_step_title: "Research",

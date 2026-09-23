@@ -7221,6 +7221,15 @@ dialog.modal::backdrop {
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--surface) 86%, transparent);
 }
+.task-grid-group.dragging {
+  opacity: 0.5;
+}
+.task-grid-groups [data-drop-side="before"] {
+  box-shadow: -3px 0 0 var(--accent);
+}
+.task-grid-groups [data-drop-side="after"] {
+  box-shadow: 3px 0 0 var(--accent);
+}
 .task-grid-group-head {
   min-height: 27px;
   margin-bottom: 8px;

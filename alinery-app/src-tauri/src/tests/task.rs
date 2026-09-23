@@ -85,6 +85,37 @@ fn durable_board_discovery_keeps_offline_and_archived_owners_and_retained_titles
 }
 
 #[test]
+fn offline_board_lists_all_retained_steps_in_declaration_order_and_keeps_legacy_tasks() {
+    let repo = activity_repo("offline-board-steps");
+    let task = write_retained_discovery_task(&repo, "offline", "offline", false);
+    let source = include_str!("../../playbooks/one-shot/playbook.md")
+        .replace("implementation", "z-implementation")
+        .replace("Implement and Verify", "Zebra implementation");
+    fs::write(alinery_core::execution::task_playbook_path(&repo, &task.slug).unwrap(), &source).unwrap();
+    let mut execution =
+        alinery_core::execution::new_execution_state(task.playbook_ref.clone().unwrap(), &source, "offline".into(), 10, Default::default(), Default::default()).unwrap();
+    execution.creation = "ready".into();
+    alinery_core::execution::write_execution_state_unlocked(&repo, &task.slug, &mut execution).unwrap();
+    write_activity_task(&repo, "legacy", "design", false);
+
+    let rows = board_tasks_for_repo(&repo, &repo.display().to_string()).unwrap();
+    let offline = rows.iter().find(|row| row.task.slug == "offline").unwrap();
+    assert_eq!(offline.session_count, 0);
+    assert_eq!(
+        serde_json::to_value(offline).unwrap()["playbook_steps"],
+        serde_json::json!([
+            {"key": "z-implementation", "title": "Zebra implementation"},
+            {"key": "pr", "title": "Prepare PR Note"}
+        ])
+    );
+    let legacy = rows.iter().find(|row| row.task.slug == "legacy").unwrap();
+    assert!(legacy.playbook_steps.is_empty());
+    assert_eq!(legacy.current_phase, "design");
+    assert!(!alinery_core::alineryd_socket_path(&repo, Some("offline")).exists());
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
 fn durable_discovery_reports_task_scoped_storage_errors() {
     let repo = activity_repo("durable-errors");
     let task = write_retained_discovery_task(&repo, "broken", "offline", false);

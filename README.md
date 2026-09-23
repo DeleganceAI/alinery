@@ -131,6 +131,15 @@ Use **Show empty columns** in column layouts to include unoccupied columns, then
 collapse individual columns as needed. Classic Kanban also has **Show empty columns**
 and uses equal-height cards, with scrolling for overflowing content.
 
+Step columns default to the declared order in each task's retained playbook, including
+when its daemon is offline. Legacy tasks without a retained definition use the current
+matching library playbook for display; this does not recover their execution state.
+Multiple playbooks share matching column titles and preserve compatible step sequences;
+conflicting orders use a deterministic playbook/task tie-break.
+Drag a column's grip (or focus it and press Left/Right) to change the order.
+Custom column order is remembered per grouping in each Grid view and included in saved
+presets. **Reset column order** restores the default without changing task execution.
+
 ### Sub-tasks
 
 Sub-tasks give rabbit holes a place of their own, so you can investigate a side question and return to the main task knowing exactly where you left off.

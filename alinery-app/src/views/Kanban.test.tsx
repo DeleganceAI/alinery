@@ -42,6 +42,7 @@ const task = (over: Partial<BoardTask>): BoardTask =>
     repo_path: "/r",
     session_count: 0,
     playbook_title: "SuperDevelop",
+    playbook_steps: [],
     updated: 1,
     current_phase: "design",
     current_step_title: "Design",

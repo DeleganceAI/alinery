@@ -6,12 +6,19 @@ pub(crate) use alinery_core::Task;
 use std::io::Read;
 
 #[derive(Serialize, Clone)]
+pub(crate) struct BoardPlaybookStep {
+    pub(crate) key: String,
+    pub(crate) title: String,
+}
+
+#[derive(Serialize, Clone)]
 pub(crate) struct BoardTask {
     #[serde(flatten)]
     pub(crate) task: Task,
     pub(crate) repo_path: String,
     pub(crate) session_count: usize,
     pub(crate) playbook_title: String,
+    pub(crate) playbook_steps: Vec<BoardPlaybookStep>,
     pub(crate) updated: u64,
     pub(crate) current_phase: String,
     pub(crate) current_step_title: String,
@@ -912,11 +919,17 @@ pub(crate) fn board_task(repo: &Path, repo_path: &str, task: Task) -> Result<Boa
     };
     let updated = task_updated_at(repo, &task, &sessions);
     let playbook_title = definition.as_ref().map(|definition| definition.title.clone()).unwrap_or_else(|| task.playbook.clone());
+    let playbook_steps = definition
+        .into_iter()
+        .flat_map(|definition| definition.step)
+        .map(|step| BoardPlaybookStep { key: step.key, title: step.title })
+        .collect();
     Ok(BoardTask {
         task,
         repo_path: repo_path.into(),
         session_count: live.len(),
         playbook_title,
+        playbook_steps,
         updated,
         current_phase,
         current_step_title,

@@ -8,7 +8,9 @@ import type {
   ExecutionRecord,
   KanbanColumn,
   NormalizedStep,
+  PlaybookRef,
   PullRequestSnapshot,
+  ScopedPlaybook,
   TaskActivityMap,
   TaskActivityRef,
   TaskExecutionReply,
@@ -29,6 +31,12 @@ const makeTask = (over: Partial<BoardTask>): BoardTask => ({
   linear_id: "",
   github_issue: "",
   playbook: "superdevelop",
+  engine_version: 2,
+  playbook_steps: [
+    { key: "research", title: "Research" },
+    { key: "design", title: "Design" },
+    { key: "implementation", title: "Implementation" },
+  ],
   auto_advance: [],
   draft: false,
   repo_path: "/repo-a",
@@ -52,6 +60,10 @@ const tasks = [
     repo_path: "/repo-b",
     playbook: "review",
     playbook_title: "Review",
+    playbook_steps: [
+      { key: "context", title: "Context" },
+      { key: "findings", title: "Findings" },
+    ],
     current_phase: "findings",
     current_step_title: "Findings",
     latest_session_title: "Findings",
@@ -63,6 +75,11 @@ const tasks = [
     slug: "release-app",
     playbook: "one-shot",
     playbook_title: "One-shot",
+    playbook_steps: [
+      { key: "queued", title: "Queued" },
+      { key: "implementation", title: "Implementation" },
+      { key: "pr", title: "PR" },
+    ],
     current_phase: "pr",
     current_step_title: "PR",
     latest_session_title: "PR",
@@ -166,6 +183,7 @@ const ipcMock = vi.hoisted(() => ({
   listBoardTasks: vi.fn(async (_allRepos: boolean): Promise<BoardTask[]> => []),
   listKanbanColumns: vi.fn(async (_allRepos: boolean): Promise<KanbanColumn[]> => []),
   getTaskExecution: vi.fn<(slug: string, repoPath?: string) => Promise<TaskExecutionReply>>(),
+  readPlaybook: vi.fn<(reference: PlaybookRef, repoPath?: string) => Promise<ScopedPlaybook>>(),
   listTaskActivity: vi.fn(async (_refs: TaskActivityRef[]): Promise<TaskActivityMap> => ({})),
   listTaskPullRequests: vi.fn(async (_tasks: TaskActivityRef[]): Promise<Record<string, PullRequestSnapshot>> => ({})),
   openUrl: vi.fn(async (_url: string): Promise<void> => {}),
@@ -194,6 +212,12 @@ beforeEach(() => {
   ipcMock.listKanbanColumns.mockResolvedValue(columns);
   ipcMock.listTaskPullRequests.mockImplementation(async (refs) => Object.fromEntries(refs.map((ref) => [`${ref.repoPath}:${ref.taskSlug}`, { pr: null, error: null }])));
   ipcMock.getTaskExecution.mockImplementation(async (slug, repoPath) => taskExecutions[`${repoPath}:${slug}`] ?? retainedExecution([step("implementation", "Implementation")]));
+  ipcMock.readPlaybook.mockImplementation(async (reference) => ({
+    source: { reference, path: null },
+    definition: retainedExecution([step("research", "Research"), step("design", "Design"), step("implementation", "Implementation")]).definition,
+    source_text: "",
+    modified_at_ms: null,
+  }));
   ipcMock.listTaskActivity.mockResolvedValue({
     "/repo-a:build-api": { status: "running", active_session: null },
     "/repo-b:review-queue": { status: "waiting_for_approval", active_session: null },
@@ -207,6 +231,9 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
+
+const columnNames = () =>
+  screen.getAllByRole("button", { name: /^(Hide|Expand) .+ column$/ }).map((button) => button.getAttribute("aria-label")?.replace(/^(Hide|Expand) | column$/g, ""));
 
 describe("configurable task grid", () => {
   it("saves named settings across repositories without changing the original preset", async () => {
@@ -280,12 +307,163 @@ describe("configurable task grid", () => {
     expect(screen.queryByRole("button", { name: "Hide Research column" })).toBeNull();
   });
 
+  it("keeps declared empty columns in playbook order when the execution daemon is unavailable", async () => {
+    ipcMock.listBoardTasks.mockResolvedValue([tasks[0]]);
+    ipcMock.getTaskExecution.mockRejectedValue(new Error("execution daemon unavailable"));
+    ipcMock.readPlaybook.mockResolvedValue({
+      source: { reference: { scope: "bundled", key: "superdevelop" }, path: null },
+      definition: retainedExecution([step("replacement", "Library replacement")]).definition,
+      source_text: "",
+      modified_at_ms: null,
+    });
+    render(<Grid allRepos={false} onOpen={() => {}} registerNav={() => {}} initialPreset="steps" />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    expect((await screen.findByRole("alert")).textContent).toContain("execution daemon unavailable");
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    expect(columnNames()).toEqual(["Research", "Design", "Implementation"]);
+    fireEvent.click(screen.getByRole("button", { name: "Hide Design column" }));
+    expect(screen.getByRole("button", { name: "Expand Design column" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Expand Design column" }));
+    expect(columnNames()).toEqual(["Research", "Design", "Implementation"]);
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    expect(columnNames()).toEqual(["Implementation"]);
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    expect(columnNames()).toEqual(["Research", "Design", "Implementation"]);
+  });
+
+  it.each([
+    { label: "bundled fallback", reference: undefined, scope: "bundled" },
+    { label: "repository reference", reference: { scope: "repo", key: "legacy-workflow" } as PlaybookRef, scope: "repo" },
+  ])("resolves legacy $label steps without execution.json or duplicate raw phase columns", async ({ reference, scope }) => {
+    const task = makeTask({
+      name: "Legacy task",
+      engine_version: 1,
+      playbook: "legacy-workflow",
+      playbook_ref: reference,
+      playbook_steps: [],
+      current_phase: "implementation",
+      current_step_title: "implementation",
+    });
+    ipcMock.listBoardTasks.mockResolvedValue([task]);
+    ipcMock.getTaskExecution.mockRejectedValue(new Error("execution.json not found"));
+    ipcMock.readPlaybook.mockImplementation(async (requested, repoPath) => ({
+      source: { reference: requested, path: null },
+      definition: retainedExecution(
+        requested.scope === scope && requested.key === "legacy-workflow" && repoPath === task.repo_path
+          ? [step("research", "Research"), step("design", "Design"), step("implementation", "Implementation")]
+          : [step("wrong", "Wrong library")],
+      ).definition,
+      source_text: "",
+      modified_at_ms: null,
+    }));
+    const { container } = render(<Grid allRepos={false} onOpen={() => {}} registerNav={() => {}} initialPreset="steps" />);
+    await screen.findByRole("button", { name: /Legacy task, repo-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    await waitFor(() => expect(columnNames()).toEqual(["Research", "Design", "Implementation"]));
+    const implementation = screen.getByRole("button", { name: "Hide Implementation column" }).closest("section") as HTMLElement;
+    expect(within(implementation).getByRole("button", { name: /Legacy task, repo-a/ })).toBeDefined();
+    expect(container.querySelectorAll(".task-grid-card")).toHaveLength(1);
+  });
+
+  it("merges compatible playbooks without reversing either declared step sequence", async () => {
+    ipcMock.listBoardTasks.mockResolvedValue([tasks[2], tasks[0]]);
+    render(<Grid allRepos={false} onOpen={() => {}} registerNav={() => {}} initialPreset="steps" />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    const names = columnNames();
+    expect(names.filter((name) => ["Research", "Design", "Implementation"].includes(name ?? ""))).toEqual(["Research", "Design", "Implementation"]);
+    expect(names.filter((name) => ["Queued", "Implementation", "PR"].includes(name ?? ""))).toEqual(["Queued", "Implementation", "PR"]);
+    expect(names.filter((name) => name === "Implementation")).toHaveLength(1);
+  });
+
+  it("persists keyboard column orders per grouping and in presets, with reset restoring declaration order", async () => {
+    ipcMock.listBoardTasks.mockResolvedValue([tasks[0]]);
+    const props = { allRepos: false, onOpen: () => {}, registerNav: () => {}, storageKey: "keyboard-column-order", initialPreset: "steps" as const };
+    const first = render(<Grid {...props} />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Reorder Research column; use left and right arrow keys" }), { key: "ArrowRight" });
+    expect(columnNames()).toEqual(["Design", "Research", "Implementation"]);
+    fireEvent.change(screen.getByLabelText("Group by"), { target: { value: "column" } });
+    expect(columnNames()).toEqual(["Research & Design", "Implementation", "Review"]);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Reorder Review column; use left and right arrow keys" }), { key: "ArrowLeft" });
+    expect(columnNames()).toEqual(["Research & Design", "Review", "Implementation"]);
+    fireEvent.change(screen.getByLabelText("Group by"), { target: { value: "stage" } });
+    expect(columnNames()).toEqual(["Design", "Research", "Implementation"]);
+    fireEvent.change(screen.getByLabelText("New preset name"), { target: { value: "Ordered columns" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save as new preset" }));
+    const presetId = (screen.getByLabelText("Preset") as HTMLSelectElement).value;
+    first.unmount();
+
+    const second = render(<Grid {...props} />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    expect(columnNames()).toEqual(["Design", "Research", "Implementation"]);
+    fireEvent.click(screen.getByRole("button", { name: "Reset column order" }));
+    expect(columnNames()).toEqual(["Research", "Design", "Implementation"]);
+    fireEvent.change(screen.getByLabelText("Group by"), { target: { value: "column" } });
+    expect(columnNames()).toEqual(["Research & Design", "Review", "Implementation"]);
+    second.unmount();
+
+    render(<Grid {...props} storageKey="another-column-order" />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.change(screen.getByLabelText("Preset"), { target: { value: presetId } });
+    expect(columnNames()).toEqual(["Design", "Research", "Implementation"]);
+    fireEvent.change(screen.getByLabelText("Group by"), { target: { value: "column" } });
+    expect(columnNames()).toEqual(["Research & Design", "Review", "Implementation"]);
+  });
+
+  it("reorders columns by pointer, ignores cancelled drags, and restores the saved order", async () => {
+    ipcMock.listBoardTasks.mockResolvedValue([tasks[0]]);
+    const props = { allRepos: false, onOpen: () => {}, registerNav: () => {}, storageKey: "pointer-column-order", initialPreset: "steps" as const };
+    const first = render(<Grid {...props} />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    const target = screen.getByRole("button", { name: "Hide Implementation column" }).closest("[data-column-key]") as HTMLElement;
+    vi.spyOn(target, "getBoundingClientRect").mockReturnValue({
+      x: 200,
+      y: 0,
+      width: 100,
+      height: 300,
+      top: 0,
+      right: 300,
+      bottom: 300,
+      left: 200,
+      toJSON: () => ({}),
+    });
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: vi.fn(() => target) });
+    try {
+      const handle = screen.getByRole("button", { name: "Reorder Research column; use left and right arrow keys" });
+      fireEvent.pointerDown(handle, { button: 0, pointerId: 8, clientX: 20, clientY: 20 });
+      fireEvent.pointerMove(window, { pointerId: 8, clientX: 290, clientY: 20 });
+      fireEvent.pointerCancel(window, { pointerId: 8, clientX: 290, clientY: 20 });
+      expect(columnNames()).toEqual(["Research", "Design", "Implementation"]);
+      fireEvent.pointerDown(handle, { button: 0, pointerId: 9, clientX: 20, clientY: 20 });
+      fireEvent.pointerMove(window, { pointerId: 9, clientX: 290, clientY: 20 });
+      fireEvent.pointerUp(window, { pointerId: 9, clientX: 290, clientY: 20 });
+      expect(columnNames()).toEqual(["Design", "Implementation", "Research"]);
+      first.unmount();
+
+      render(<Grid {...props} />);
+      await screen.findByRole("button", { name: /Build API, repo-a/ });
+      expect(columnNames()).toEqual(["Design", "Implementation", "Research"]);
+    } finally {
+      Reflect.deleteProperty(document, "elementFromPoint");
+    }
+  });
+
   it("surfaces newly saved drafts without treating their absent execution as an error", async () => {
     vi.useFakeTimers();
     const draft = makeTask({
       name: "Draft proposal",
       slug: "draft-proposal",
       draft: true,
+      playbook_steps: [],
       session_count: 0,
       current_phase: "",
       current_step_title: "",

@@ -81,6 +81,7 @@ type LaneDragPreview = {
   height: number;
   pointerOffsetY: number;
 };
+type ColumnOrder = Partial<Record<DataField, string[]>>;
 type GridWorkspaceState = {
   settingsOpen: boolean;
   preset: PresetSelection;
@@ -88,10 +89,11 @@ type GridWorkspaceState = {
   showArchived: boolean;
   selectedTaskKey: string;
   manualOrder: string[];
+  columnOrder: ColumnOrder;
   hiddenTaskIds: string[];
   hiddenGroupKeys: string[];
 };
-type SavedPreset = Pick<GridWorkspaceState, "config" | "showArchived" | "hiddenGroupKeys"> & {
+type SavedPreset = Pick<GridWorkspaceState, "config" | "showArchived" | "hiddenGroupKeys" | "columnOrder"> & {
   id: `saved:${string}`;
   name: string;
 };
@@ -391,6 +393,7 @@ function defaultGridWorkspace(initialPreset: PresetKey): GridWorkspaceState {
     showArchived: false,
     selectedTaskKey: "",
     manualOrder: [],
+    columnOrder: {},
     hiddenTaskIds: [],
     hiddenGroupKeys: [],
   };
@@ -419,6 +422,7 @@ function loadGridWorkspace(storageKey?: string, initialPreset: PresetKey = "kanb
       showArchived: Boolean(saved.showArchived),
       selectedTaskKey: saved.selectedTaskKey ?? "",
       manualOrder: Array.isArray(saved.manualOrder) ? saved.manualOrder : [],
+      columnOrder: saved.columnOrder ?? {},
       hiddenTaskIds: Array.isArray(saved.hiddenTaskIds) ? saved.hiddenTaskIds : [],
       hiddenGroupKeys: Array.isArray(saved.hiddenGroupKeys) ? saved.hiddenGroupKeys : [],
     };
@@ -590,10 +594,51 @@ function progressPath(fact: TaskFacts, field: ProgressField, columns: KanbanColu
   return path.length ? path : [{ key: current, label: fact.column }];
 }
 
-function orderedFieldValues(field: DataField, facts: TaskFacts[], columns: KanbanColumn[]) {
+function libraryDefinitionKey(task: BoardTask) {
+  return JSON.stringify([task.repo_path, task.playbook_ref?.scope ?? "bundled", task.playbook_ref?.key ?? task.playbook]);
+}
+
+function declaredStageOrder(tasks: BoardTask[], steps: Record<string, BoardTask["playbook_steps"]>) {
+  const predecessors = new Map<string, Set<string>>();
+  // Shared columns honor compatible playbook sequences. Conflicts break ties by
+  // stable playbook/task identity, never by the current task sort.
+  const orderedTasks = [...tasks].sort((a, b) => libraryDefinitionKey(a).localeCompare(libraryDefinitionKey(b)) || taskKey(a).localeCompare(taskKey(b)));
+  for (const task of orderedTasks) {
+    let previous: string | undefined;
+    for (const step of steps[taskKey(task)] ?? []) {
+      const label = step.title || step.key;
+      let before = predecessors.get(label);
+      if (!before) {
+        before = new Set();
+        predecessors.set(label, before);
+      }
+      if (previous && previous !== label) before.add(previous);
+      previous = label;
+    }
+  }
+  const remaining = new Set(predecessors.keys());
+  const ordered: string[] = [];
+  while (remaining.size) {
+    const first = remaining.values().next();
+    if (first.done) break;
+    let next = first.value;
+    for (const label of remaining) {
+      if (![...(predecessors.get(label) ?? [])].some((before) => remaining.has(before))) {
+        next = label;
+        break;
+      }
+    }
+    ordered.push(next);
+    remaining.delete(next);
+  }
+  return ordered;
+}
+
+function orderedFieldValues(field: DataField, facts: TaskFacts[], columns: KanbanColumn[], stageOrder: string[] = []) {
   const found = [...new Set(facts.map((fact) => factValue(fact, field)))];
   let requested: string[] = [];
   if (field === "column") requested = columns.map((column) => column.title || column.key);
+  if (field === "stage") requested = stageOrder;
   if (field === "createdWindow") requested = AGE_WINDOWS;
   if (field === "status") requested = STATUS_ORDER.map((status) => STATUS_LABELS[status]);
   if (field === "attention") requested = ATTENTION_ORDER;
@@ -750,6 +795,8 @@ export function Grid({
   const [tasks, setTasks] = useState<BoardTask[]>([]);
   const [columns, setColumns] = useState<KanbanColumn[]>([]);
   const [executions, setExecutions] = useState<Record<string, TaskExecutionReply>>({});
+  const [librarySteps, setLibrarySteps] = useState<Record<string, BoardTask["playbook_steps"]>>({});
+  const [definitionErr, setDefinitionErr] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [err, setErr] = useState("");
   const [executionErr, setExecutionErr] = useState("");
@@ -762,6 +809,9 @@ export function Grid({
   const [showArchived, setShowArchived] = useState(initialWorkspace.showArchived);
   const [selectedTaskKey, setSelectedTaskKey] = useState(initialWorkspace.selectedTaskKey);
   const [manualOrder, setManualOrder] = useState<string[]>(initialWorkspace.manualOrder);
+  const [columnOrder, setColumnOrder] = useState<ColumnOrder>(initialWorkspace.columnOrder);
+  const [draggedColumn, setDraggedColumn] = useState("");
+  const [columnDropTarget, setColumnDropTarget] = useState<{ key: string; after: boolean } | null>(null);
   const [hiddenTaskIds, setHiddenTaskIds] = useState<Set<string>>(() => new Set(initialWorkspace.hiddenTaskIds));
   const [hiddenGroupKeys, setHiddenGroupKeys] = useState<Set<string>>(() => new Set(initialWorkspace.hiddenGroupKeys));
   const [dropTarget, setDropTarget] = useState("");
@@ -793,6 +843,7 @@ export function Grid({
       showArchived,
       selectedTaskKey,
       manualOrder,
+      columnOrder,
       hiddenTaskIds: [...hiddenTaskIds],
       hiddenGroupKeys: [...hiddenGroupKeys],
     };
@@ -801,7 +852,7 @@ export function Grid({
     } catch {
       // A storage failure should never make the Grid unusable.
     }
-  }, [storageKey, settingsOpen, preset, config, showArchived, selectedTaskKey, manualOrder, hiddenTaskIds, hiddenGroupKeys]);
+  }, [storageKey, settingsOpen, preset, config, showArchived, selectedTaskKey, manualOrder, columnOrder, hiddenTaskIds, hiddenGroupKeys]);
 
   const load = useCallback(async () => {
     try {
@@ -822,6 +873,49 @@ export function Grid({
     const timer = window.setInterval(load, 3000);
     return () => window.clearInterval(timer);
   }, [active, load]);
+
+  const libraryRefs = useMemo(() => {
+    const refs = new Map<string, BoardTask>();
+    for (const task of tasks) {
+      if ((!task.draft && (task.engine_version ?? 0) >= 2) || (!showArchived && task.archived) || !task.playbook) continue;
+      refs.set(libraryDefinitionKey(task), task);
+    }
+    return [...refs.entries()];
+  }, [tasks, showArchived]);
+
+  useEffect(() => {
+    if (!active) return;
+    let alive = true;
+    void Promise.all(
+      libraryRefs.map(async ([key, task]) => {
+        try {
+          const playbook = await ipc.readPlaybook(task.playbook_ref ?? { scope: "bundled", key: task.playbook }, task.repo_path);
+          return { key, steps: playbook.definition.step, error: "" };
+        } catch (error) {
+          return { key, steps: [], error: `${task.repo_path}:${task.playbook}: ${String(error)}` };
+        }
+      }),
+    ).then((entries) => {
+      if (!alive) return;
+      setLibrarySteps(Object.fromEntries(entries.map(({ key, steps }) => [key, steps])));
+      const errors = entries.filter(({ error }) => error).map(({ error }) => error);
+      setDefinitionErr(errors.length ? `Couldn't load playbook columns. ${errors.join("; ")}` : "");
+    });
+    return () => {
+      alive = false;
+    };
+  }, [active, libraryRefs]);
+
+  const taskSteps = useMemo(
+    () =>
+      Object.fromEntries(
+        tasks.map((task) => [
+          taskKey(task),
+          task.playbook_steps.length ? task.playbook_steps : task.draft || (task.engine_version ?? 0) < 2 ? (librarySteps[libraryDefinitionKey(task)] ?? []) : [],
+        ]),
+      ),
+    [tasks, librarySteps],
+  );
 
   const executionRefs = useMemo(() => {
     const refs = new Map<string, ExecutionRef>();
@@ -876,7 +970,7 @@ export function Grid({
           name: task.name,
           repo: repoName(task.repo_path),
           playbook: task.playbook_title || task.playbook,
-          stage: task.draft ? "Draft" : task.current_step_title || "Not started",
+          stage: task.draft ? "Draft" : taskSteps[id]?.find((step) => step.key === task.current_phase)?.title || task.current_step_title || "Not started",
           column: task.current_column_title || task.current_column_key || "Other",
           statusKey,
           status: STATUS_LABELS[statusKey],
@@ -887,7 +981,7 @@ export function Grid({
           createdWindow: ageWindow(createdDays),
         };
       });
-  }, [tasks, activity, showArchived]);
+  }, [tasks, activity, showArchived, taskSteps]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -941,18 +1035,25 @@ export function Grid({
     return facts;
   }, [facts, config.filter]);
 
-  const stageOrder = useMemo(() => orderedFieldValues("stage", facts, columns), [facts, columns]);
+  const stageOrder = useMemo(
+    () =>
+      declaredStageOrder(
+        facts.map((fact) => fact.task),
+        taskSteps,
+      ),
+    [facts, taskSteps],
+  );
   const groups = useMemo(() => {
     if (config.group === "none") {
       return [{ key: "all", label: "All tasks", tasks: sortFacts(visibleFacts, config.sort, manualOrder, stageOrder) }];
     }
-    const values = orderedFieldValues(config.group, visibleFacts, columns);
+    const values = orderedFieldValues(config.group, visibleFacts, columns, stageOrder);
     if (config.showEmptyColumns && config.position === "packed" && config.placement === "columns") {
       const emptyValues =
         config.group === "column"
           ? columns.map((column) => column.title || column.key)
           : config.group === "stage"
-            ? [...new Set(Object.values(executions).flatMap((execution) => execution.definition.step.map((step) => step.title || step.key)))].sort()
+            ? stageOrder
             : config.group === "status"
               ? STATUS_ORDER.map((status) => STATUS_LABELS[status])
               : config.group === "createdWindow"
@@ -961,6 +1062,11 @@ export function Grid({
                   ? ATTENTION_ORDER
                   : orderedFieldValues(config.group, facts, columns);
       values.splice(0, values.length, ...emptyValues, ...values.filter((value) => !emptyValues.includes(value)));
+    }
+    if (config.position === "packed" && config.placement === "columns") {
+      const custom = columnOrder[config.group] ?? [];
+      const ranks = new Map(custom.map((value, index) => [value, index]));
+      values.sort((a, b) => (ranks.get(a) ?? custom.length) - (ranks.get(b) ?? custom.length));
     }
     return values.map((value) => ({
       key: value,
@@ -972,7 +1078,7 @@ export function Grid({
         stageOrder,
       ),
     }));
-  }, [config.group, config.sort, config.showEmptyColumns, config.position, config.placement, visibleFacts, facts, columns, executions, manualOrder, stageOrder]);
+  }, [config.group, config.sort, config.showEmptyColumns, config.position, config.placement, visibleFacts, facts, columns, columnOrder, manualOrder, stageOrder]);
   const collapsibleGroups = config.position === "packed" && config.placement === "columns";
   const displayFacts = useMemo(
     () => groups.filter((group) => !collapsibleGroups || !hiddenGroupKeys.has(`${config.group}:${group.key}`)).flatMap((group) => group.tasks),
@@ -1031,9 +1137,11 @@ export function Grid({
       setConfig({ ...PRESETS.kanban, ...saved.config, properties: [...saved.config.properties] });
       setShowArchived(saved.showArchived);
       setHiddenGroupKeys(new Set(saved.hiddenGroupKeys));
+      setColumnOrder(saved.columnOrder ?? {});
     } else if (key in PRESETS) {
       const config = PRESETS[key as PresetKey];
       setConfig({ ...config, properties: [...config.properties] });
+      setColumnOrder({});
     } else {
       return;
     }
@@ -1063,7 +1171,7 @@ export function Grid({
       return;
     }
     const id = `saved:${crypto.randomUUID()}` as const;
-    if (persistPresets([...current, { id, name, config, showArchived, hiddenGroupKeys: [...hiddenGroupKeys] }])) {
+    if (persistPresets([...current, { id, name, config, showArchived, hiddenGroupKeys: [...hiddenGroupKeys], columnOrder }])) {
       setPreset(id);
       setPresetName("");
     }
@@ -1157,6 +1265,49 @@ export function Grid({
         setDragPreview(null);
       },
     });
+  };
+
+  const moveColumn = (source: string, target: string, after: boolean) => {
+    const field = config.group;
+    if (field === "none") return;
+    const participating = new Set(groups.map((group) => group.key));
+    setColumnOrder((current) => {
+      const saved = current[field] ?? [];
+      const order = [...saved, ...groups.map((group) => group.key).filter((key) => !saved.includes(key))];
+      return { ...current, [field]: reorderGridTasks(order, participating, source, target, after) };
+    });
+    setPreset("custom");
+  };
+  const startColumnDrag = (event: ReactPointerEvent<HTMLButtonElement>, key: string) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    setDraggedColumn(key);
+    const dropTarget = (x: number, y: number) => {
+      const target = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-column-key]");
+      const targetKey = target?.dataset.columnKey;
+      if (!target || targetKey === undefined || targetKey === key) return null;
+      const bounds = target.getBoundingClientRect();
+      return { key: targetKey, after: x > bounds.left + bounds.width / 2 };
+    };
+    pointerDrag.start(event, {
+      onMove: (moveEvent) => setColumnDropTarget(dropTarget(moveEvent.clientX, moveEvent.clientY)),
+      onComplete: (completeEvent) => {
+        const target = completeEvent.type === "pointercancel" ? null : dropTarget(completeEvent.clientX, completeEvent.clientY);
+        if (target) moveColumn(key, target.key, target.after);
+        setDraggedColumn("");
+        setColumnDropTarget(null);
+      },
+    });
+  };
+  const resetColumnOrder = () => {
+    const field = config.group;
+    if (field === "none") return;
+    setColumnOrder((current) => {
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+    setPreset("custom");
   };
 
   const selected = facts.find((fact) => fact.id === selectedTaskKey);
@@ -1516,6 +1667,11 @@ export function Grid({
                     />
                     <SelectField label="Column flow" value={config.columnFlow} options={COLUMN_FLOW_OPTIONS} onChange={(value) => setField("columnFlow", value as ColumnFlow)} />
                     <Checkbox checked={config.showEmptyColumns} onChange={(value) => setField("showEmptyColumns", value)} label="Show empty columns" />
+                    {config.group !== "none" && (
+                      <button type="button" className="btn ghost small" onClick={resetColumnOrder} disabled={!columnOrder[config.group]?.length}>
+                        Reset column order
+                      </button>
+                    )}
                   </>
                 )}
               </>
@@ -1580,6 +1736,11 @@ export function Grid({
           {executionErr}
         </div>
       )}
+      {definitionErr && (
+        <div className="errbar" role="alert">
+          {definitionErr}
+        </div>
+      )}
       <div className="task-grid-board-wrap">
         {!loaded && <div className="task-grid-empty">Loading grid…</div>}
         {loaded && !err && visibleFacts.length === 0 && <div className="task-grid-empty">No tasks match this grid configuration.</div>}
@@ -1592,6 +1753,8 @@ export function Grid({
                   key={group.key}
                   type="button"
                   className="task-grid-group-collapsed"
+                  data-column-key={group.key}
+                  data-drop-side={columnDropTarget?.key === group.key ? (columnDropTarget.after ? "after" : "before") : undefined}
                   aria-label={`Expand ${group.label} column`}
                   title={`Expand ${group.label} column`}
                   onClick={() => toggleGroup(visibilityKey)}
@@ -1601,8 +1764,32 @@ export function Grid({
               );
             }
             return (
-              <section key={group.key} className="task-grid-group">
+              <section
+                key={group.key}
+                className={`task-grid-group${draggedColumn === group.key ? " dragging" : ""}`}
+                data-column-key={collapsibleGroups ? group.key : undefined}
+                data-drop-side={columnDropTarget?.key === group.key ? (columnDropTarget.after ? "after" : "before") : undefined}
+              >
                 <div className="task-grid-group-head">
+                  {collapsibleGroups && config.group !== "none" && (
+                    <button
+                      type="button"
+                      className="task-grid-drag"
+                      aria-label={`Reorder ${group.label} column; use left and right arrow keys`}
+                      title="Drag or use left and right arrow keys to reorder columns"
+                      onPointerDown={(event) => startColumnDrag(event, group.key)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const index = groups.findIndex((candidate) => candidate.key === group.key);
+                        const target = groups[index + (event.key === "ArrowLeft" ? -1 : 1)];
+                        if (target) moveColumn(group.key, target.key, event.key === "ArrowRight");
+                      }}
+                    >
+                      ⋮⋮
+                    </button>
+                  )}
                   <span>{group.label}</span>
                   <span className="task-grid-group-count">{group.tasks.length}</span>
                   {collapsibleGroups && (

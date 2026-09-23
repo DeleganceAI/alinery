@@ -5,16 +5,33 @@ import type { BoardTask, TaskExecutionReply } from "../types";
 import { CreateSessionPage } from "./CreateSessionPage";
 import { executionRecord, executionReply } from "./executionTestFixture";
 
-const task = {
+const task: BoardTask = {
   name: "A task",
   slug: "a-task",
+  branch: "a-task",
   repo_path: "/r",
   worktree: "/w/a-task",
+  has_worktree: true,
+  created: 1,
+  updated: 1,
   archived: false,
   draft: false,
+  pr_url: "",
+  linear_id: "",
+  github_issue: "",
+  auto_advance: [],
   playbook: "deleted-from-library",
   playbook_ref: { scope: "repo", key: "deleted-from-library" },
-} as BoardTask;
+  playbook_title: "Retained workflow",
+  playbook_steps: [],
+  session_count: 0,
+  current_phase: "",
+  current_step_title: "",
+  latest_session_title: "",
+  latest_session_column_key: "",
+  current_column_key: "",
+  current_column_title: "",
+};
 const mocks = vi.hoisted(() => ({ getTaskExecution: vi.fn(), listBoardTasks: vi.fn(), askConfirm: vi.fn() }));
 vi.mock("../confirm", () => ({ askConfirm: mocks.askConfirm }));
 vi.mock("../ipc", () => mockIpc({ getTaskExecution: mocks.getTaskExecution, listBoardTasks: mocks.listBoardTasks, listHarnessModelsForRepo: async () => [] }));

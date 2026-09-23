@@ -432,6 +432,7 @@ describe("v2 task creation", () => {
       github_issue: "",
       session_count: 0,
       playbook_title: "SuperDevelop",
+      playbook_steps: [],
       updated: 1,
       current_phase: "",
       current_step_title: "",
