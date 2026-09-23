@@ -479,7 +479,7 @@ pub(super) fn start(repo: &Path, reg: &Registry, lane: &str, config: &Path, host
         Ok(reply)
     }
 }
-pub(super) fn exited(repo: &Path, slug: &str, session_id: &str, lane: &str, code: Option<i32>) {
+pub(super) fn exited(repo: &Path, slug: &str, session_id: &str, lane: &str, code: Option<i32>, replacing: &AtomicBool) {
     if slug.is_empty() {
         return;
     }
@@ -489,10 +489,28 @@ pub(super) fn exited(repo: &Path, slug: &str, session_id: &str, lane: &str, code
     if meta.execution_id.is_empty() {
         return;
     }
-    if let Err(error) = mutate_execution_state(repo, slug, lane, "confirm reaped execution", |_, state| {
-        confirm_execution_exit(state, &meta.execution_id, session_id, code)
-    }) {
-        eprintln!("execution exit {slug}/{session_id}: {error}");
+    loop {
+        let result = mutate_execution_state(repo, slug, lane, "confirm reaped execution", |_, state| {
+            // Restate reuses the session ID; its old reader must not release the replacement's ownership.
+            if replacing.load(Ordering::SeqCst) {
+                return Ok(());
+            }
+            confirm_execution_exit(state, &meta.execution_id, session_id, code)
+        });
+        match result {
+            Ok(()) => return,
+            Err(error) if error.starts_with("task mutation busy during ") => {
+                // Reap is a one-shot event; retain its proof until the durable transaction can acquire the lock.
+                if replacing.load(Ordering::SeqCst) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => {
+                eprintln!("execution exit {slug}/{session_id}: {error}");
+                return;
+            }
+        }
     }
 }
 pub(super) fn boot(repo: &Path, lane: &str) {
@@ -558,4 +576,89 @@ pub(super) fn failed_spawn(repo: &Path, slug: &str, session_id: &str, lane: &str
         record.error = Some(error.into());
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alinery_core::playbook::{parse_playbook_md, PlaybookRef, PlaybookScope};
+
+    fn replaced_execution() -> (PathBuf, String, String, AtomicBool) {
+        let repo = std::env::temp_dir().join(format!("alinery-stale-exit-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(alinery_core::artifacts_dir(&repo, "task")).unwrap();
+        let source = "+++\nversion=2\nkey='fixture'\ntitle='Fixture'\ndescription=''\ndefault_model=''\ndefault_harness='omp'\n[[step]]\nkey='work'\ntitle='Work'\nshort=''\ninputs=[]\noutputs=[{path='result.md'}]\nmodel=''\nharness=''\nis_coding_step=true\nauto_advance_default=true\n+++\n<!-- alinery:step work -->\nWrite the output.\n";
+        let definition = parse_playbook_md(source).unwrap();
+        let mut state = new_execution_state(
+            PlaybookRef {
+                scope: PlaybookScope::Repo,
+                key: "fixture".into(),
+            },
+            source,
+            "lane".into(),
+            1,
+            BTreeSet::from(["work".into()]),
+            LaunchChoices::default(),
+        )
+        .unwrap();
+        state.creation = "ready".into();
+        state.owning_app_config_identity = execution_config_identity().into();
+        let candidate = reconcile_graph(&definition, &mut state).unwrap().pop().unwrap();
+        let id = reserve_execution(&repo, "task", &definition, &mut state, candidate, &LaunchChoices::default(), None, true).unwrap();
+        let owner = state.executions[&id].owner_session_id.clone();
+        assert!(claim_execution_launch(&mut state, &id).unwrap());
+        record_execution_spawn(&mut state, &id, &owner, Ok(())).unwrap();
+
+        // Pause the old reader after its flag check, then finish replacing its process.
+        let old_replacing = AtomicBool::new(false);
+        assert!(!old_replacing.load(Ordering::SeqCst));
+        old_replacing.store(true, Ordering::SeqCst);
+        state.executions.get_mut(&id).unwrap().lifecycle = ExecutionLifecycle::Interrupted;
+        state.executions.get_mut(&id).unwrap().lifecycle = ExecutionLifecycle::Starting;
+        record_execution_spawn(&mut state, &id, &owner, Ok(())).unwrap();
+        fs::write(task_playbook_path(&repo, "task").unwrap(), source).unwrap();
+        write_execution_state_unlocked(&repo, "task", &mut state).unwrap();
+        let meta_path = session_meta_path(&repo, "task", &owner);
+        fs::create_dir_all(meta_path.parent().unwrap()).unwrap();
+        let meta = SessionMeta {
+            id: owner.clone(),
+            execution_id: id.clone(),
+            daemon_namespace: "lane".into(),
+            ..SessionMeta::default()
+        };
+        write_meta_atomic(&meta_path, &serde_json::to_value(meta).unwrap()).unwrap();
+        (repo, id, owner, old_replacing)
+    }
+
+    #[test]
+    fn stale_reader_exit_does_not_release_replacement_ownership() {
+        let (repo, id, owner, old_replacing) = replaced_execution();
+        exited(&repo, "task", &owner, "lane", Some(0), &old_replacing);
+        let replacement = read_execution_state(&repo, "task").unwrap().executions.remove(&id).unwrap();
+        assert_eq!(replacement.lifecycle, ExecutionLifecycle::Running);
+        assert!(!replacement.shutdown_confirmed);
+
+        exited(&repo, "task", &owner, "lane", Some(0), &AtomicBool::new(false));
+        let stopped = read_execution_state(&repo, "task").unwrap().executions.remove(&id).unwrap();
+        assert_eq!(stopped.lifecycle, ExecutionLifecycle::Failed);
+        assert!(stopped.shutdown_confirmed);
+        fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[test]
+    fn stale_completion_does_not_accept_replacement_outputs() {
+        let (repo, id, owner, old_replacing) = replaced_execution();
+        let state = read_execution_state(&repo, "task").unwrap();
+        fs::write(alinery_core::artifacts_dir(&repo, "task").join(&state.executions[&id].outputs[0].relative_path), "output").unwrap();
+        let reg = Arc::new(Mutex::new(HashMap::new()));
+        let meta_path = session_meta_path(&repo, "task", &owner);
+        let old_completion = accept_phase_completion(&reg, &repo, &owner, "task", "omp", None, &meta_path, Path::new(""), &old_replacing);
+        assert_eq!(old_completion.unwrap_err(), "session transport replacement in progress");
+        let replacement = read_execution_state(&repo, "task").unwrap().executions.remove(&id).unwrap();
+        assert_eq!(replacement.lifecycle, ExecutionLifecycle::Running);
+        assert!(replacement.receipt_id.is_none());
+
+        let current_completion = accept_phase_completion(&reg, &repo, &owner, "task", "omp", None, &meta_path, Path::new(""), &AtomicBool::new(false));
+        assert!(matches!(current_completion.unwrap(), CompletionOutcome::Accepted { .. }));
+        fs::remove_dir_all(repo).unwrap();
+    }
 }
