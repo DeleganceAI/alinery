@@ -349,9 +349,9 @@ fn crash_after_acceptance_never_turns_an_unproven_owner_into_a_handoff() {
 }
 
 #[test]
-fn malformed_product_defaults_fail_before_task_or_git_provisioning() {
+fn malformed_defaults_reject_provisioning_but_legacy_defaults_allow_it() {
     let fixture = Fixture::new();
-    fs::write(fixture.root.join("app.toml"), "[global.defaults]\nplaybook = 'legacy-key'\n").unwrap();
+    fs::write(fixture.root.join("app.toml"), "[global.defaults]\nplaybook = 17\n").unwrap();
     let request: CreateTaskRequest = serde_json::from_value(json!({
         "name": "Invalid configuration", "requested_slug": "invalid-config",
         "playbook": { "reference": { "scope": "repo", "key": "fixture" }, "source": definition() },
@@ -367,6 +367,20 @@ fn malformed_product_defaults_fail_before_task_or_git_provisioning() {
         .status()
         .unwrap()
         .success());
+
+    let legacy = "[global.defaults]\nplaybook = 'superdevelop'\n";
+    fs::write(fixture.root.join("app.toml"), legacy).unwrap();
+    let created = fixture.client.create_task(&request).unwrap();
+    assert_eq!(created.creation, "ready");
+    assert_eq!(
+        created.task.unwrap().playbook_ref.unwrap(),
+        alinery_core::playbook::PlaybookRef {
+            scope: alinery_core::playbook::PlaybookScope::Repo,
+            key: "fixture".into(),
+        }
+    );
+    assert!(fixture.root.join(".alinery/tasks/invalid-config/task.md").is_file());
+    assert_eq!(fs::read_to_string(fixture.root.join("app.toml")).unwrap(), legacy);
 }
 
 #[test]

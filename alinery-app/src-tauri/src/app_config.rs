@@ -285,7 +285,7 @@ pub(crate) fn load_app_config(app: &AppHandle) -> AppConfig {
 }
 
 pub(crate) fn write_app_config_at(path: &Path, cfg: &AppConfig) -> Result<(), String> {
-    // An unrelated appearance/repository edit must not erase a pre-v2 or corrupt file.
+    // An unrelated appearance/repository edit must not erase a corrupt file.
     let prior = read_existing_app_config(path)?;
     if let Some(parent) = path.parent() {
         // 0700: this is the same app config dir that later holds `auth.json`, and it is created

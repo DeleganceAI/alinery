@@ -55,6 +55,14 @@ shadow each other. Legacy `playbooks.toml` and split prompt files remain untouch
 repositories but are not v2 runtime inputs. Historical pre-v2 tasks remain readable; launching
 them requires explicit recreation rather than automatic migration or a fallback definition.
 
+Legacy string-valued defaults in `app.toml` and repository `.alinery/config.toml`
+are upgraded automatically when read: bundled playbook names become bundled
+references, and custom names retain their key in repository scope. Existing scoped
+references are unchanged. Reading does not rewrite files; the next settings save
+persists the scoped form. Repository lists and appearance preferences are retained.
+This upgrades the saved selection, not custom v1 definitions: those still need to
+be recreated in the v2 library before use.
+
 ## Install
 
 For **macOS on Apple Silicon** and **Linux on x86_64**:
