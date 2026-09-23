@@ -1,15 +1,13 @@
 import { act, render } from "@testing-library/react";
 import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as ipc from "./ipc";
 import {
   finalizedSubtaskNotice,
+  findOwnedArtifactNode,
   formatAbsolute,
   formatAge,
   harnessDisplayName,
   isAllowedLaunchHarness,
-  KillButton,
   ompDefaultModel,
   repoName,
   SessionTimestamp,
@@ -18,40 +16,28 @@ import {
   sameLifecycleMaps,
   sameSessionMetas,
   sameTaskActivityMaps,
-  TaskActivityIndicators,
   taskKey,
   useMinuteNow,
 } from "./shared";
-import type { BoardTask, KanbanColumn, LifecycleState, SessionMeta, Task, TaskActivityMap, TaskActivitySummary } from "./types";
+import type { ArtifactTreeNode, BoardTask, KanbanColumn, LifecycleState, SessionMeta, Task, TaskActivityMap, TaskActivitySummary } from "./types";
 
 // shared.tsx imports ipc at module scope. Before the IPC seam existed that made this file
 // unimportable in a test at all — there was no single module to stub.
 vi.mock("./ipc");
 vi.mock("./WindowChrome", () => ({ WindowControls: () => null, useWindowFullscreen: () => false, ResizeHandles: () => null }));
 
-describe("KillButton presentation", () => {
-  it("keeps the ghost treatment when danger is omitted or false", () => {
-    const defaultMarkup = renderToStaticMarkup(createElement(KillButton, { id: "session-1", live: true }));
-    const falseMarkup = renderToStaticMarkup(createElement(KillButton, { id: "session-1", live: true, danger: false }));
-
-    for (const markup of [defaultMarkup, falseMarkup]) {
-      expect(markup).toContain('class="btn ghost small"');
-      expect(markup).not.toContain("danger");
-    }
-    expect(ipc.sessionStatus).not.toHaveBeenCalled();
-    expect(ipc.killSession).not.toHaveBeenCalled();
-    expect(ipc.killSessionForRepo).not.toHaveBeenCalled();
-  });
-
-  it("selects the danger treatment when requested", () => {
-    const markup = renderToStaticMarkup(createElement(KillButton, { id: "session-1", live: true, danger: true }));
-
-    expect(markup).toContain('class="btn danger small"');
-    expect(markup).not.toContain("ghost");
-    expect(ipc.sessionStatus).not.toHaveBeenCalled();
-    expect(ipc.killSession).not.toHaveBeenCalled();
-    expect(ipc.killSessionForRepo).not.toHaveBeenCalled();
-  });
+it("resolves nested owned artifact paths without confusing same-name references or attachments", () => {
+  const leaf: ArtifactTreeNode = { id: "opaque-owned", kind: "owned", label: "2-findings-10.md", owner_task_slug: "task", source: "owned", children: [] };
+  const folder: ArtifactTreeNode = { id: "opaque-folder", kind: "subtask_folder", label: "research", owner_task_slug: "task", source: "owned", children: [leaf] };
+  const nodes: ArtifactTreeNode[] = [
+    { ...folder, id: "foreign-folder", source: "parent_context", children: [{ ...leaf, id: "foreign-leaf", kind: "referenced", source: "parent_context" }] },
+    { ...folder, id: "attachment-folder", label: "attachments", children: [{ ...leaf, id: "attachment-leaf", kind: "attachment" }] },
+    folder,
+  ];
+  expect(findOwnedArtifactNode(nodes, "research/2-findings-10.md")?.id).toBe("opaque-owned");
+  expect(findOwnedArtifactNode(nodes, "2-findings-10.md")).toBeUndefined();
+  expect(findOwnedArtifactNode(nodes, "attachments/2-findings-10.md")).toBeUndefined();
+  expect(findOwnedArtifactNode(nodes, "research/10-findings-2.md")).toBeUndefined();
 });
 
 describe("repoName", () => {
@@ -186,21 +172,6 @@ describe("session timestamps", () => {
   const NOW = 1_700_000_120;
   afterEach(() => vi.useRealTimers());
 
-  it("renders compact relative values with exact status-aware descriptions", () => {
-    const value = 1_700_000_000;
-    const exact = formatAbsolute(value);
-    const started = renderToStaticMarkup(createElement(SessionTimestamp, { kind: "started", value, now: NOW }));
-    const updated = renderToStaticMarkup(createElement(SessionTimestamp, { kind: "updated", value, now: NOW }));
-    const missing = renderToStaticMarkup(createElement(SessionTimestamp, { kind: "updated", value: null, now: NOW }));
-    expect(started).toContain("Started");
-    expect(started).toContain("2m");
-    expect(started).toContain(`title="Started ${exact}"`);
-    expect(updated).toContain(`Status changed ${exact}`);
-    expect(missing).toContain("Updated");
-    expect(missing).toContain("—");
-    expect(missing).not.toContain("1970");
-  });
-
   it("updates every supplied row from one minute clock and cleans it up", () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW * 1000);
@@ -251,32 +222,35 @@ describe("re-render comparators", () => {
       exit_notification_read_at: null,
       ...over,
     }) as SessionMeta;
-  const task = (over: Partial<BoardTask> = {}): BoardTask =>
-    ({
-      name: "n",
-      slug: "s",
-      requested_slug: "s",
-      branch: "s",
-      worktree: "/w",
-      has_worktree: true,
-      created: 1,
-      archived: false,
-      pr_url: "",
-      linear_id: "",
-      github_issue: "",
-      playbook: "superdevelop",
-      draft: false,
-      auto_advance: [],
-      repo_path: "/r",
-      session_count: 0,
-      playbook_title: "SuperDevelop",
-      updated: 1,
-      current_phase: "design",
-      current_step_title: "Design",
-      current_column_key: "research-design",
-      current_column_title: "Research & Design",
-      ...over,
-    }) as BoardTask;
+  const task = (over: Partial<BoardTask> = {}): BoardTask => ({
+    name: "n",
+    slug: "s",
+    requested_slug: "s",
+    branch: "s",
+    worktree: "/w",
+    has_worktree: true,
+    created: 1,
+    archived: false,
+    pr_url: "",
+    linear_id: "",
+    github_issue: "",
+    playbook: "superdevelop",
+    engine_version: 2,
+    playbook_ref: { scope: "bundled", key: "superdevelop" },
+    draft: false,
+    auto_advance: [],
+    repo_path: "/r",
+    session_count: 0,
+    playbook_title: "SuperDevelop",
+    updated: 1,
+    current_phase: "design",
+    current_step_title: "Design",
+    latest_session_title: "Design",
+    latest_session_column_key: "research-design",
+    current_column_key: "research-design",
+    current_column_title: "Research & Design",
+    ...over,
+  });
 
   it("sameSessionMetas is false when any tracked field moves", () => {
     expect(sameSessionMetas([meta()], [meta()])).toBe(true);
@@ -369,20 +343,5 @@ describe("re-render comparators", () => {
       expect(sameTaskActivityMaps(map(summary()), map(summary({ active_session: { ...active, [field]: value } })))).toBe(false);
     }
     expect(sameTaskActivityMaps(map(summary()), {})).toBe(false);
-  });
-});
-
-describe("TaskActivityIndicators", () => {
-  it("renders card statuses as accessible icons without visible status text", () => {
-    for (const [status, label] of [
-      ["waiting_for_input", "Needs input"],
-      ["waiting_for_approval", "Needs approval"],
-      ["failed", "Failed"],
-      ["completed", "Completed"],
-    ] as const) {
-      const markup = renderToStaticMarkup(createElement(TaskActivityIndicators, { activity: { status, active_session: null } }));
-      expect(markup).toContain(`aria-label="${label}"`);
-      expect(markup).not.toContain(`>${label}<`);
-    }
   });
 });

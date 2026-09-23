@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::paths::{artifacts_dir, safe_component};
+use crate::paths::safe_component;
+use crate::shared::{compare_artifact_paths, resolve_artifact_directory, resolve_artifact_path};
 use crate::subtask::read_task_relationships;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -65,18 +66,15 @@ fn safe_name(path: &Path) -> Result<String, String> {
 }
 
 fn checked_entries(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    resolve_artifact_directory(dir, "")?;
     if !dir.exists() {
         return Ok(Vec::new());
-    }
-    let metadata = fs::symlink_metadata(dir).map_err(|error| artifact_error(format!("inspect {}: {error}", dir.display())))?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(artifact_error(format!("{} is not a regular directory", dir.display())));
     }
     let mut entries = fs::read_dir(dir)
         .map_err(|error| artifact_error(format!("read {}: {error}", dir.display())))?
         .map(|entry| entry.map(|entry| entry.path()).map_err(|error| artifact_error(error.to_string())))
         .collect::<Result<Vec<_>, _>>()?;
-    entries.sort_by(|left, right| left.file_name().cmp(&right.file_name()));
+    entries.sort_by(|left, right| compare_artifact_paths(&left.to_string_lossy(), &right.to_string_lossy()));
     Ok(entries)
 }
 
@@ -90,6 +88,8 @@ fn record_file(
     key: &str,
 ) -> Result<ResolvedNode, String> {
     let label = safe_name(&path)?;
+    let relative = path.strip_prefix(root).map_err(|error| artifact_error(error.to_string()))?;
+    resolve_artifact_path(root, relative.to_str().ok_or_else(|| artifact_error("non-UTF-8 artifact path"))?)?;
     let metadata = fs::symlink_metadata(&path).map_err(|error| artifact_error(format!("inspect {}: {error}", path.display())))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(artifact_error(format!("{} is not a regular file", path.display())));
@@ -154,7 +154,7 @@ impl ResolvedNode {
 
 fn snapshot_folder(viewing_slug: &str, path: &Path, key: &str) -> Result<ResolvedNode, String> {
     let child_slug = safe_name(path)?;
-    let children = owned_nodes(viewing_slug, &child_slug, path, ArtifactTreeSource::Snapshot, true, key)?;
+    let children = owned_nodes(viewing_slug, &child_slug, path, ArtifactTreeSource::Snapshot, true, key, true)?;
     Ok(ResolvedNode {
         node: ArtifactTreeNode {
             id: node_id(viewing_slug, &child_slug, ArtifactTreeNodeKind::SubtaskFolder, ArtifactTreeSource::Snapshot, key),
@@ -170,7 +170,15 @@ fn snapshot_folder(viewing_slug: &str, path: &Path, key: &str) -> Result<Resolve
     })
 }
 
-fn owned_nodes(viewing_slug: &str, owner_slug: &str, root: &Path, source: ArtifactTreeSource, referenced: bool, key_prefix: &str) -> Result<Vec<ResolvedNode>, String> {
+fn owned_nodes(
+    viewing_slug: &str,
+    owner_slug: &str,
+    root: &Path,
+    source: ArtifactTreeSource,
+    referenced: bool,
+    key_prefix: &str,
+    namespace_root: bool,
+) -> Result<Vec<ResolvedNode>, String> {
     let mut nodes = Vec::new();
     for path in checked_entries(root)? {
         let label = safe_name(&path)?;
@@ -192,20 +200,38 @@ fn owned_nodes(viewing_slug: &str, owner_slug: &str, root: &Path, source: Artifa
                 if referenced { ArtifactTreeNodeKind::Referenced } else { ArtifactTreeNodeKind::Owned },
                 &key,
             )?);
-        } else if metadata.is_dir() && label == "attachments" {
+        } else if metadata.is_dir() && namespace_root && label == "attachments" {
             if let Some(folder) = attachment_folder(viewing_slug, owner_slug, &path, root, source, &key)? {
                 nodes.push(folder);
             }
-        } else if metadata.is_dir() && label == "subtasks" {
+        } else if metadata.is_dir() && namespace_root && label == "subtasks" {
             for snapshot in checked_entries(&path)? {
                 let snapshot_label = safe_name(&snapshot)?;
                 nodes.push(snapshot_folder(viewing_slug, &snapshot, &format!("{key}/{snapshot_label}"))?);
             }
+        } else if metadata.is_dir() {
+            let children = owned_nodes(viewing_slug, owner_slug, &path, source, referenced, &key, false)?;
+            nodes.push(
+                ResolvedNode {
+                    node: ArtifactTreeNode {
+                        id: node_id(viewing_slug, owner_slug, ArtifactTreeNodeKind::SubtaskFolder, source, &key),
+                        kind: ArtifactTreeNodeKind::SubtaskFolder,
+                        label,
+                        owner_task_slug: owner_slug.to_string(),
+                        source,
+                        children: Vec::new(),
+                    },
+                    path: None,
+                    containment_root: None,
+                    children: Vec::new(),
+                }
+                .with_children(children),
+            );
         } else {
-            return Err(artifact_error(format!("unexpected directory {}", path.display())));
+            return Err(artifact_error(format!("not a regular file or directory: {}", path.display())));
         }
     }
-    nodes.sort_by(|left, right| left.node.label.cmp(&right.node.label).then_with(|| left.node.id.cmp(&right.node.id)));
+    nodes.sort_by(|left, right| compare_artifact_paths(&left.node.label, &right.node.label).then_with(|| left.node.id.cmp(&right.node.id)));
     Ok(nodes)
 }
 
@@ -230,13 +256,13 @@ fn build_tree(repo: &Path, viewing_slug: &str) -> Result<Vec<ResolvedNode>, Stri
     if safe_component(viewing_slug) != Some(viewing_slug) {
         return Err(artifact_error("invalid viewing task slug"));
     }
+    let own_root = resolve_artifact_directory(repo, &format!(".alinery/tasks/{viewing_slug}/artifacts"))?;
     let relationships = read_task_relationships(repo, viewing_slug)?;
-    let own_root = artifacts_dir(repo, viewing_slug);
-    let mut nodes = owned_nodes(viewing_slug, viewing_slug, &own_root, ArtifactTreeSource::Owned, false, "owned")?;
+    let mut nodes = owned_nodes(viewing_slug, viewing_slug, &own_root, ArtifactTreeSource::Owned, false, "owned", true)?;
 
     if let Some(parent) = relationships.parent_task {
-        let parent_root = artifacts_dir(repo, &parent.slug);
-        let children = owned_nodes(viewing_slug, &parent.slug, &parent_root, ArtifactTreeSource::ParentContext, true, "parent-context")?;
+        let parent_root = resolve_artifact_directory(repo, &format!(".alinery/tasks/{}/artifacts", parent.slug))?;
+        let children = owned_nodes(viewing_slug, &parent.slug, &parent_root, ArtifactTreeSource::ParentContext, true, "parent-context", true)?;
         nodes.push(relationship_folder(
             viewing_slug,
             &parent.slug,
@@ -246,11 +272,11 @@ fn build_tree(repo: &Path, viewing_slug: &str) -> Result<Vec<ResolvedNode>, Stri
         ));
     }
     for child in relationships.active_subtasks {
-        let child_root = artifacts_dir(repo, &child.slug);
-        let children = owned_nodes(viewing_slug, &child.slug, &child_root, ArtifactTreeSource::ActiveChild, true, "active-child")?;
+        let child_root = resolve_artifact_directory(repo, &format!(".alinery/tasks/{}/artifacts", child.slug))?;
+        let children = owned_nodes(viewing_slug, &child.slug, &child_root, ArtifactTreeSource::ActiveChild, true, "active-child", true)?;
         nodes.push(relationship_folder(viewing_slug, &child.slug, &child.slug, ArtifactTreeSource::ActiveChild, children));
     }
-    nodes.sort_by(|left, right| left.node.label.cmp(&right.node.label).then_with(|| left.node.id.cmp(&right.node.id)));
+    nodes.sort_by(|left, right| compare_artifact_paths(&left.node.label, &right.node.label).then_with(|| left.node.id.cmp(&right.node.id)));
     let mut ids = HashSet::new();
     fn collect(node: &ArtifactTreeNode, ids: &mut HashSet<String>) -> Result<(), String> {
         if !ids.insert(node.id.clone()) {
@@ -291,8 +317,10 @@ fn resolve_file(repo: &Path, viewing_slug: &str, node_id: &str) -> Result<(Artif
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(artifact_error("node is no longer a regular file"));
     }
+    let relative = path.strip_prefix(repo).map_err(|error| artifact_error(error.to_string()))?;
+    let checked = resolve_artifact_path(repo, relative.to_str().ok_or_else(|| artifact_error("non-UTF-8 artifact path"))?)?;
     let canonical_root = root.canonicalize().map_err(|error| artifact_error(format!("resolve {}: {error}", root.display())))?;
-    let canonical_path = path.canonicalize().map_err(|error| artifact_error(format!("resolve {}: {error}", path.display())))?;
+    let canonical_path = checked.canonicalize().map_err(|error| artifact_error(format!("resolve {}: {error}", checked.display())))?;
     if !canonical_path.starts_with(&canonical_root) {
         return Err(artifact_error("node escapes its artifact root"));
     }
@@ -322,6 +350,7 @@ pub fn artifact_node_path(repo: &Path, viewing_slug: &str, node_id: &str) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::paths::artifacts_dir;
     use crate::task::write_task;
     use crate::types::Task;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -363,6 +392,31 @@ mod tests {
             None
         }
         find_optional(nodes, label).unwrap_or_else(|| panic!("missing node {label}"))
+    }
+
+    #[test]
+    fn artifact_tree_sorts_unpadded_numbers_numerically() {
+        let repo = repo("numeric-order");
+        task(&repo, "task", "", "");
+        for name in ["10-square-1.md", "2-square-10.md", "2-square-2.md", "00-ticket.md"] {
+            fs::write(artifacts_dir(&repo, "task").join(name), name).unwrap();
+        }
+        let tree = list_task_artifact_tree(&repo, "task");
+        fs::remove_dir_all(&repo).unwrap();
+        let labels: Vec<_> = tree.unwrap().into_iter().map(|node| node.label).collect();
+        assert_eq!(labels, ["00-ticket.md", "2-square-2.md", "2-square-10.md", "10-square-1.md"]);
+    }
+
+    #[test]
+    fn artifact_tree_reads_safe_nested_artifacts() {
+        let repo = repo("nested-artifact");
+        task(&repo, "task", "", "");
+        let directory = artifacts_dir(&repo, "task").join("research");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("2-findings-1.md"), "nested findings").unwrap();
+        let content = list_task_artifact_tree(&repo, "task").and_then(|tree| read_task_artifact_node(&repo, "task", &find(&tree, "2-findings-1.md").id));
+        fs::remove_dir_all(&repo).unwrap();
+        assert_eq!(content.unwrap(), "nested findings");
     }
 
     #[test]
@@ -453,5 +507,65 @@ mod tests {
         assert!(list_task_artifact_tree(&repo, "task").unwrap_err().contains("symlink rejected"));
         assert!(read_task_artifact_node(&repo, "task", &id).is_err());
         let _ = fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn nested_artifact_ids_distinguish_same_basename_and_sort_large_numbers() {
+        let repo = repo("nested-identities");
+        task(&repo, "task", "", "");
+        let root = artifacts_dir(&repo, "task");
+        for (directory, text) in [("research", "first"), ("analysis", "second")] {
+            fs::create_dir_all(root.join(directory)).unwrap();
+            fs::write(root.join(directory).join("2-findings.md"), text).unwrap();
+        }
+        fs::write(root.join("research/999999999999999999999999999999999999999-findings.md"), "large").unwrap();
+        fs::write(root.join("research/1000000000000000000000000000000000000000-findings.md"), "larger").unwrap();
+        let tree = list_task_artifact_tree(&repo, "task").unwrap();
+        let research = find(&tree, "research");
+        let analysis = find(&tree, "analysis");
+        let first = find(&research.children, "2-findings.md");
+        let second = find(&analysis.children, "2-findings.md");
+        assert_ne!(first.id, second.id);
+        assert_eq!(read_task_artifact_node(&repo, "task", &first.id).unwrap(), "first");
+        assert_eq!(read_task_artifact_node(&repo, "task", &second.id).unwrap(), "second");
+        assert_eq!(
+            research.children.iter().map(|node| node.label.as_str()).collect::<Vec<_>>(),
+            [
+                "2-findings.md",
+                "999999999999999999999999999999999999999-findings.md",
+                "1000000000000000000000000000000000000000-findings.md",
+            ]
+        );
+        fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn artifact_tree_reopen_rejects_replaced_parent_directory() {
+        use std::os::unix::fs::symlink;
+
+        let repo = repo("symlink-parent");
+        task(&repo, "task", "", "");
+        let root = artifacts_dir(&repo, "task");
+        let directory = root.join("research");
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("findings.md"), "owned").unwrap();
+        let id = find(&list_task_artifact_tree(&repo, "task").unwrap(), "findings.md").id.clone();
+        let moved = root.join("original");
+        fs::rename(&directory, &moved).unwrap();
+        symlink(&moved, &directory).unwrap();
+        assert!(read_task_artifact_node(&repo, "task", &id).is_err());
+        assert!(crate::shared::artifact_file_path(&repo, "task", "research/findings.md").is_err());
+        assert!(crate::shared::visible_artifact_names(&repo, "task").is_err());
+        fs::remove_file(&directory).unwrap();
+        fs::rename(&moved, &directory).unwrap();
+        let task_directory = root.parent().unwrap();
+        let moved_task = repo.join("moved-task");
+        fs::rename(task_directory, &moved_task).unwrap();
+        symlink(&moved_task, task_directory).unwrap();
+        assert!(read_task_artifact_node(&repo, "task", &id).is_err());
+        assert!(crate::shared::artifact_file_path(&repo, "task", "research/findings.md").is_err());
+        assert!(crate::shared::visible_artifact_names(&repo, "task").is_err());
+        fs::remove_dir_all(repo).unwrap();
     }
 }

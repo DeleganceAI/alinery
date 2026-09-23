@@ -155,13 +155,15 @@ describe("applyAppearance", () => {
     expect(normalizeAppearance({ ...prefs(), chat_rail_density: "compact" as AppearancePrefs["chat_rail_density"] }).chat_rail_density).toBe("normal");
     expect(normalizeAppearance({ ...prefs(), chat_rail_density: "loud" as AppearancePrefs["chat_rail_density"] }).chat_rail_density).toBe("normal");
     expect(normalizeAppearance(prefs({ chat_rail_font_size: 9 })).chat_rail_font_size).toBe(10);
-    expect(normalizeAppearance({ ...prefs(), chat_show_actor_labels: true, chat_show_agent_bubbles: true })).toMatchObject({
+    expect(normalizeAppearance({ ...prefs(), chat_show_actor_labels: true, chat_show_agent_bubbles: true, chat_show_copy_buttons: true })).toMatchObject({
       chat_show_actor_labels: true,
       chat_show_agent_bubbles: true,
+      chat_show_copy_buttons: true,
     });
-    expect(normalizeAppearance({ ...prefs(), chat_show_actor_labels: undefined, chat_show_agent_bubbles: undefined })).toMatchObject({
+    expect(normalizeAppearance({ ...prefs(), chat_show_actor_labels: undefined, chat_show_agent_bubbles: undefined, chat_show_copy_buttons: undefined })).toMatchObject({
       chat_show_actor_labels: true,
       chat_show_agent_bubbles: true,
+      chat_show_copy_buttons: true,
     });
   });
 

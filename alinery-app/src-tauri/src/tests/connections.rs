@@ -4,6 +4,25 @@ use std::net::TcpListener;
 use std::sync::mpsc;
 
 #[test]
+fn command_timeout_drains_output_larger_than_a_pipe() {
+    let mut command = Command::new("sh");
+    command.args(["-c", "dd if=/dev/zero bs=1024 count=256 2>/dev/null; dd if=/dev/zero bs=1024 count=256 1>&2 2>/dev/null"]);
+    let output = crate::output_with_timeout(command, Duration::from_secs(5)).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout.len(), 256 * 1024);
+    assert_eq!(output.stderr.len(), 256 * 1024);
+}
+#[test]
+fn command_timeout_kills_an_unresponsive_child() {
+    let mut command = Command::new("sleep");
+    command.arg("5");
+    let started = Instant::now();
+    let error = crate::output_with_timeout(command, Duration::from_millis(50)).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    assert!(started.elapsed() < Duration::from_secs(2));
+}
+
+#[test]
 fn curl_request_times_out_after_server_accepts_without_responding() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();

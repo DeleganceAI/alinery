@@ -1,7 +1,14 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACTOR, type ChatEntry, TYPE_LABEL } from "../chat/types";
 import { ChatEntryRow } from "./ChatEntryRow";
+
+vi.mock("../WindowChrome", () => ({ WindowControls: () => null }));
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("ChatEntryRow", () => {
   it("approves with the extension request id, not the journal row id", () => {
@@ -79,5 +86,63 @@ describe("ChatEntryRow", () => {
     expect(followNode.querySelector(".chat-entry-thumbs img")?.getAttribute("alt")).toBe("shot.png");
     expect(followNode.querySelector(".chat-entry-chips")?.textContent).toContain("notes.pdf");
     expect(followNode.textContent).toContain("queued · after this turn");
+  });
+
+  it("copies prompt and assistant message bodies from the bubble action", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+
+    const attachments = [
+      { kind: "image" as const, name: "shot.png", mimeType: "image/png", src: "data:image/png;base64,aa" },
+      { kind: "file" as const, name: "notes.pdf" },
+    ];
+    render(<ChatEntryRow entry={{ id: "p1", at: Date.now(), actor: ACTOR.you, type: "prompt", text: "Look\nhere", attachments }} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy message" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("Look\nhere\nAttached image: shot.png\nAttached file: notes.pdf"));
+    expect(screen.getByRole("button", { name: "Copied message" })).toBeTruthy();
+
+    cleanup();
+    writeText.mockClear();
+    render(<ChatEntryRow entry={{ id: "a1", at: Date.now(), actor: ACTOR.agent, type: "text", text: "Done." }} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy message" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("Done."));
+    const copyButton = screen.getByRole("button", { name: "Copied message" });
+    const body = copyButton.closest(".chat-msg-body");
+    expect(body).toBeTruthy();
+    expect(copyButton.closest(".chat-msg-copy-row")).toBeTruthy();
+    expect(body?.textContent).toBe("Done.");
+  });
+});
+
+describe("ChatEntryRow markdown + copy", () => {
+  it("renders finished agent text as markdown", () => {
+    const html = render(<ChatEntryRow entry={{ id: "t1", at: Date.now(), actor: ACTOR.agent, type: "text", text: "## Heading\n\n- item **bold**" }} />).container.innerHTML;
+    expect(html).toContain("<h2>Heading</h2>");
+    expect(html).toContain("<li>");
+    expect(html).toContain("<strong>bold</strong>");
+  });
+
+  it("streaming agent text stays plain and has no copy button", () => {
+    const { container } = render(<ChatEntryRow entry={{ id: "t2", at: Date.now(), actor: ACTOR.agent, type: "text", text: "partial **chunk", streaming: true }} />);
+    expect(container.querySelector(".chat-text-body")).toBeTruthy();
+    expect(container.querySelector("button[title='Copy message']")).toBeNull();
+  });
+
+  it("copies the raw message text from the copy button", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const { container } = render(<ChatEntryRow entry={{ id: "t3", at: Date.now(), actor: ACTOR.agent, type: "text", text: "## Heading" }} />);
+    const copyButton = container.querySelector("button[title='Copy message']");
+    expect(copyButton).toBeTruthy();
+    fireEvent.click(copyButton as HTMLButtonElement);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("## Heading"));
+  });
+
+  it("hides copy buttons when disabled", () => {
+    const { container } = render(<ChatEntryRow entry={{ id: "t4", at: Date.now(), actor: ACTOR.agent, type: "text", text: "Copy me" }} showCopyButton={false} />);
+    expect(container.querySelector("button[title='Copy message']")).toBeNull();
+    expect(container.querySelector(".chat-msg-body")?.textContent).toBe("Copy me");
   });
 });

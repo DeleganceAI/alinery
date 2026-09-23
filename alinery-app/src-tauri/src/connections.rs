@@ -217,6 +217,9 @@ mod macos_keychain {
 /// the row. A Keychain read, a refresh, or a network failure may work on the next try — the label
 /// must survive those, or a dropped connection quietly demotes a healthy row.
 pub(crate) enum LinearTokenError {
+    /// Built only when a Keychain blob is parsed (macOS, and tests). Linux status
+    /// never reads a blob, so clippy would otherwise flag this as dead.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Corrupt(String),
     Transient(String),
 }
@@ -242,6 +245,7 @@ impl LinearTokenError {
     }
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn parse_linear_oauth_tokens(value: &[u8]) -> Result<LinearOAuthTokens, LinearTokenError> {
     serde_json::from_slice(value).map_err(|e| LinearTokenError::Corrupt(format!("invalid Linear credential in Keychain: {e}")))
 }
@@ -318,21 +322,41 @@ fn save_linear_account(app: &AppHandle, account: &str) -> Result<(), String> {
 }
 
 fn save_linear_oauth_tokens(tokens: &LinearOAuthTokens) -> Result<(), String> {
-    let value = serde_json::to_string(tokens).map_err(|e| e.to_string())?;
     #[cfg(target_os = "macos")]
-    return macos_keychain::write(LINEAR_KEYCHAIN_SERVICE, "linear", value.as_bytes());
+    {
+        let value = serde_json::to_string(tokens).map_err(|e| e.to_string())?;
+        macos_keychain::write(LINEAR_KEYCHAIN_SERVICE, "linear", value.as_bytes())
+    }
     #[cfg(not(target_os = "macos"))]
-    Err("Linear connections require macOS Keychain".into())
+    {
+        let _ = tokens;
+        Err("Linear connections require macOS Keychain".into())
+    }
 }
 
-fn output_with_timeout(mut cmd: Command, timeout: Duration) -> std::io::Result<std::process::Output> {
+pub(crate) fn output_with_timeout(mut cmd: Command, timeout: Duration) -> std::io::Result<std::process::Output> {
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
+    // Drain both pipes while the child runs: API responses can exceed a pipe's capacity.
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let mut stderr = child.stderr.take().expect("piped stderr");
+    let stdout_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).map(|_| bytes)
+    });
     let deadline = Instant::now() + timeout;
     loop {
-        if child.try_wait()?.is_some() {
-            return child.wait_with_output();
+        if let Some(status) = child.try_wait()? {
+            return Ok(std::process::Output {
+                status,
+                stdout: stdout_reader.join().map_err(|_| std::io::Error::other("stdout reader panicked"))??,
+                stderr: stderr_reader.join().map_err(|_| std::io::Error::other("stderr reader panicked"))??,
+            });
         }
         if Instant::now() >= deadline {
             let _ = child.kill();

@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { archiveBoardTask } from "../archiveTask";
+import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
+import { PullRequestIndicator } from "../PullRequestIndicator";
 import {
   ArchiveTaskModal,
   Checkbox,
@@ -18,6 +19,7 @@ import {
   useBoardTaskActivity,
 } from "../shared";
 import type { BoardNav, BoardTask, KanbanColumn, TaskActivitySession } from "../types";
+import { useTaskPullRequests } from "../useTaskPullRequests";
 
 type ErrState = { msg: string; detail: string } | null;
 
@@ -118,23 +120,23 @@ export function Kanban({
     void import("../views/TaskDetail");
   }, []);
 
-  const confirmArchive = (removeWt: boolean) => {
+  const confirmArchive = async (removeWt: boolean, onPhase: (phase: ArchiveTaskPhase) => void) => {
     const pending = pendingArchive;
     if (!pending) return;
-    void archiveBoardTask(pending, removeWt).then((failure) => {
-      setPendingArchive(null);
-      if (failure) {
-        // Errors must outlive a toast; the inline status above the board is persistent.
-        setErr(failure);
-        return;
-      }
-      void load();
-    });
+    const failure = await archiveBoardTask(pending, removeWt, onPhase);
+    setPendingArchive(null);
+    if (failure) {
+      // Errors must outlive a toast; the inline status above the board is persistent.
+      setErr(failure);
+      return;
+    }
+    void load();
   };
 
   const cardsIn = (columnIndex: number) => (byColumn[columns[columnIndex]?.key] ?? []).filter((task) => showChildren || !task.parent_task);
   const visibleTasks = columns.flatMap((_, columnIndex) => cardsIn(columnIndex));
   const activity = useBoardTaskActivity(visibleTasks);
+  const pullRequests = useTaskPullRequests(visibleTasks.filter((task) => !task.draft).map((task) => ({ repoPath: task.repo_path, taskSlug: task.slug })));
   // Gated on `loaded` so the gate cannot flash over a board that is still fetching.
   const locked = loaded && taskTotal === 0;
 
@@ -254,6 +256,7 @@ export function Kanban({
                       <div className="card-hd">
                         <div className="t">{t.name}</div>
                         <div className="card-status">
+                          <PullRequestIndicator snapshot={pullRequests[taskKey(t)]} compact />
                           <TaskActivityIndicators activity={state} />
                           <span className="age" title={formatAbsolute(updated)} style={{ marginLeft: 0 }}>
                             {formatAge(updated)}

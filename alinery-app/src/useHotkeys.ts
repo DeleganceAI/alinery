@@ -38,10 +38,10 @@ export function useHotkeys(handlers: Handlers) {
     const onKey = (e: KeyboardEvent) => {
       const H = ref.current;
       const k = e.key;
-      const cmd = e.metaKey || e.ctrlKey;
+      const appCommand = e.metaKey;
 
       // 1. ⌘K always toggles search.
-      if (cmd && k.toLowerCase() === "k") {
+      if (appCommand && k.toLowerCase() === "k") {
         e.preventDefault();
         H.toggleSearch();
         return;
@@ -59,7 +59,7 @@ export function useHotkeys(handlers: Handlers) {
         return;
       }
       // 5. ⌘+key commands.
-      if (cmd) {
+      if (appCommand) {
         // Prefer e.code: Shift+` yields e.key === "~" on some layouts.
         if (e.code === "Backquote") {
           if (e.shiftKey) return end(e, H.killTerminalDrawer);
@@ -84,7 +84,7 @@ export function useHotkeys(handlers: Handlers) {
         return;
       }
       // 6. Bare nav on board views.
-      if (!NAV_REQUIRES_CMD && H.board) navKey(e, k, H);
+      if (!NAV_REQUIRES_CMD && H.board && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) navKey(e, k, H);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
