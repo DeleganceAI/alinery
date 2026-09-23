@@ -1,6 +1,6 @@
 [package]
 name = "alinery-app"
-version = "0.17.1"
+version = "0.18.0"
 license = "Apache-2.0"
 description = "Local-first desktop app for task-centric AI coding playbooks: kanban boards, git worktrees, and multi-session terminal harnesses."
 authors = ["delegance.ai"]
