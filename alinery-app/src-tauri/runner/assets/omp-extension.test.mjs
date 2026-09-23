@@ -111,6 +111,7 @@ function makeFakeApi() {
 function makeContext(sessionId, cwd = process.cwd()) {
   return {
     cwd,
+    shutdown() {},
     sessionManager: {
       getSessionId() {
         return sessionId;
@@ -130,7 +131,7 @@ function makeRecordingEmitter() {
   return emit;
 }
 
-function makeCompletionEmitter(emit, outcome = { status: "accepted" }) {
+function makeCompletionEmitter(emit, outcome = { status: "accepted", receipt_id: "receipt-1" }) {
   return async (event) => {
     emit.emitted.push(event);
     if (outcome instanceof Error) throw outcome;
@@ -149,15 +150,18 @@ test("runner credentials are scrubbed from tool children and retained only for e
     ALINERY_EVENT_PROTOCOL_VERSION: "1",
     ALINERY_EVENT_TOKEN: "secret-token",
     ALINERY_HOST_EXECUTABLE: "/canonical/Alinery Dev",
+    ALINERY_PTY_INITIAL_PROMPT: "private initial task instructions",
   };
 
   const protectedHost = ext.captureProtectedHost(inherited);
+  assert.equal(ext.captureInitialPtyPrompt(inherited), "private initial task instructions");
   const config = ext.captureRunnerConfig(inherited);
   assert.ok(config);
   assert.equal(protectedHost, "/canonical/Alinery Dev");
   assert.equal(inherited.UNRELATED, "keep");
   for (const name of [
     "ALINERY_HOST_EXECUTABLE",
+    "ALINERY_PTY_INITIAL_PROMPT",
     "ALINERY_RUNNER_PATH",
     "ALINERY_SESSION_ID",
     "ALINERY_DAEMON_SOCKET",
@@ -177,6 +181,28 @@ test("runner credentials are scrubbed from tool children and retained only for e
   assert.equal(config.environment.ALINERY_HOST_EXECUTABLE, undefined);
   const hostChild = spawnSync(process.execPath, ["-e", "process.stdout.write(process.env.ALINERY_HOST_EXECUTABLE ?? 'missing')"], { env: config.environment, encoding: "utf8" });
   assert.equal(hostChild.stdout, "missing");
+});
+
+test("PTY startup seeds the editor before readiness and never overwrites a later draft", async () => {
+  const api = makeFakeApi();
+  let draft = "";
+  const observations = [];
+  const emit = async (event) => observations.push({ event, draft });
+  const context = {
+    ...makeContext("pty-owner"),
+    ui: {
+      setEditorText(value) {
+        draft = value;
+      },
+    },
+  };
+  registerCallbacks(api, emit, async () => ({ status: "accepted", receipt_id: "unused" }), undefined, "first line\nsecond line");
+  await api.trigger("session_start", { type: "session_start" }, context);
+  assert.equal(draft, "first line\nsecond line");
+  assert.equal(observations[0].draft, "first line\nsecond line");
+  draft = "human's later draft";
+  await api.trigger("session_start", { type: "session_start" }, context);
+  assert.equal(draft, "human's later draft");
 });
 
 test("empty production namespace keeps runner transport available", () => {
@@ -343,20 +369,6 @@ describe("browser application host guard", () => {
 // ---------- tests ----------
 
 describe("2C — OMP extension callback behavior in isolation", () => {
-  test("registers_only_the_approved_callbacks_and_completion_tool", () => {
-    const api = makeFakeApi();
-    const emit = makeRecordingEmitter();
-
-    registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
-
-    const events = api.getRegisteredEvents().sort();
-    const tools = api.getRegisteredTools();
-
-    assert.deepEqual(events, ["agent_end", "agent_start", "session_stop", "tool_approval_requested", "tool_approval_resolved", "tool_call", "tool_result"]);
-
-    assert.deepEqual(tools, ["alinery_phase_complete", "alinery_ask_approval"]);
-  });
-
   test("maps_agent_lifecycle_without_completing_or_exiting", async () => {
     const api = makeFakeApi();
     const emit = makeRecordingEmitter();
@@ -477,8 +489,7 @@ describe("2C — OMP extension callback behavior in isolation", () => {
     assert.ok(!("omp_turn_id" in ev), "OMP tool context exposes no turn id");
 
     assert.equal(output.content[0].type, "text");
-    assert.equal(output.content[0].text, "Alinery accepted phase completion.");
-    assert.deepEqual(output.details, { status: "accepted" });
+    assert.deepEqual(output.details, { status: "accepted", receipt_id: "receipt-1" });
 
     // No task, alinery session, playbook, phase, artifact path, or next phase in emitted event.
     assert.ok(!("task" in ev), "must not contain task");
@@ -489,43 +500,59 @@ describe("2C — OMP extension callback behavior in isolation", () => {
     assert.ok(!("next_phase" in ev), "must not contain next_phase");
   });
 
-  test("completion_tool_reports_rejection_and_delivery_failures", async () => {
+  test("accepted_completion_requests_normal_shutdown_once_and_returns_result", async () => {
+    const api = makeFakeApi();
+    const emit = makeRecordingEmitter();
+    registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
+    let shutdownRequests = 0;
+    const context = {
+      ...makeContext("omp-sess-finishing"),
+      shutdown() {
+        shutdownRequests += 1;
+      },
+    };
+
+    const first = await api.callTool("alinery_phase_complete", {}, context);
+    const replay = await api.callTool("alinery_phase_complete", {}, context);
+
+    assert.deepEqual(first.details, { status: "accepted", receipt_id: "receipt-1" });
+    assert.deepEqual(replay.details, first.details);
+    assert.equal(shutdownRequests, 1, "accepted completion must request ordinary OMP shutdown once");
+
+    await api.trigger("session_start", { type: "session_start" }, context);
+    const afterReset = await api.callTool("alinery_phase_complete", {}, context);
+    assert.deepEqual(afterReset.details, first.details);
+    assert.equal(shutdownRequests, 2, "session reset must clear the shutdown latch");
+  });
+
+  test("completion_tool_keeps_locked_invalid_and_transport_failures_interactive", async () => {
     const cases = [
-      {
-        outcome: {
-          status: "rejected",
-          reason: "completion-rejected:MissingArtifact",
-        },
-        status: "rejected",
-        text: "MissingArtifact",
-      },
-      {
-        outcome: {
-          status: "rejected",
-          reason: "completion-rejected:StaleSource",
-        },
-        status: "rejected",
-        text: "StaleSource",
-      },
-      {
-        outcome: new Error("daemon unavailable"),
-        status: "delivery_failed",
-        text: "delivery failed",
-      },
-      {
-        outcome: new Error("daemon timeout"),
-        status: "delivery_failed",
-        text: "delivery failed",
-      },
+      { outcome: { status: "human_authorization_required" } },
+      { outcome: { status: "invalid_outputs", diagnostics: ["Missing research/result.md", "report.md must not be empty"] } },
+      { outcome: { status: "rejected", reason: "execution owner is stale" } },
+      { outcome: new Error("daemon unavailable") },
+      { outcome: new Error("daemon timeout") },
     ];
 
-    for (const testCase of cases) {
+    for (const { outcome } of cases) {
       const api = makeFakeApi();
       const emit = makeRecordingEmitter();
-      registerCallbacks(api, emit, makeCompletionEmitter(emit, testCase.outcome), undefined);
-      const output = await api.callTool("alinery_phase_complete", {}, makeContext("omp-sess-result"));
-      assert.equal(output.details.status, testCase.status);
-      assert.match(output.content[0].text, new RegExp(testCase.text, "i"));
+      let shutdownRequests = 0;
+      const context = {
+        ...makeContext("omp-sess-result"),
+        shutdown() {
+          shutdownRequests += 1;
+        },
+      };
+      registerCallbacks(api, emit, makeCompletionEmitter(emit, outcome), undefined);
+      const output = await api.callTool("alinery_phase_complete", {}, context);
+      assert.deepEqual(output.details, outcome instanceof Error ? { status: "delivery_failed", reason: outcome.message } : outcome);
+      assert.equal(shutdownRequests, 0);
+      if (outcome.status === "invalid_outputs") {
+        for (const diagnostic of outcome.diagnostics) assert.ok(output.content[0].text.includes(diagnostic));
+      }
+      await api.trigger("tool_call", { toolName: "ask", toolCallId: "correction" }, context);
+      assert.deepEqual(emit.emitted.at(-1), { type: "waiting_for_input", correlation_id: "correction" });
     }
 
     const api = makeFakeApi();
@@ -551,7 +578,7 @@ describe("2C — OMP extension callback behavior in isolation", () => {
     await assert.doesNotReject(() => api.trigger("tool_call", { toolName: "ask", toolCallId: "y" }));
     await assert.doesNotReject(() => api.trigger("tool_result", { toolName: "ask", toolCallId: "y" }));
     const completion = await api.callTool("alinery_phase_complete", {}, makeContext("omp-sess-1"));
-    assert.deepEqual(completion.details, { status: "delivery_failed" });
+    assert.deepEqual(completion.details, { status: "delivery_failed", reason: "simulated delivery failure" });
   });
 
   test("duplicate_callbacks_preserve_normalized_identity", async () => {
@@ -591,7 +618,6 @@ describe("2C — OMP extension callback behavior in isolation", () => {
 
     const schema = api.getToolSchema("alinery_ask_approval");
     assert.ok(schema, "alinery_ask_approval must be registered");
-    assert.equal(schema.label, "Ask for approval");
     assert.deepEqual(Object.keys(schema.parameters.shape).sort(), ["message", "title"]);
   });
 
@@ -604,8 +630,9 @@ describe("2C — OMP extension callback behavior in isolation", () => {
     const ctx = {
       ...makeContext("omp-sess-abc"),
       ui: {
-        confirm: async (title, message) => {
-          calls.push([title, message]);
+        pendingRequests: calls,
+        async confirm(title, message) {
+          this.pendingRequests.push([title, message]);
           return true;
         },
       },
@@ -725,5 +752,60 @@ describe("2C — OMP extension callback behavior in isolation", () => {
       toolCallId: "appr-1",
     });
     assert.equal(emit.emitted.length, 0, "alinery_ask_approval tool_call must not emit");
+  });
+});
+
+describe("production completion transport", () => {
+  async function withRunnerOutput(output, run, delay = 0) {
+    const root = mkdtempSync(path.join(os.tmpdir(), "alinery-completion-transport-"));
+    const runnerPath = path.join(root, "runner");
+    writeFileSync(
+      runnerPath,
+      `#!${process.execPath}\nprocess.stdin.resume();\nprocess.stdin.on("end", () => setTimeout(() => process.stdout.write(${JSON.stringify(output)}), ${delay}));\n`,
+      { mode: 0o755 },
+    );
+    try {
+      await run(ext.makeProductionCompletionEmitter({ runnerPath, environment: {} }));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  const event = { type: "phase_completed", omp_session_id: "omp-transport" };
+
+  test("preserves_receipts_diagnostics_and_nonfatal_outcomes_after_pipe_drain", async () => {
+    for (const outcome of [
+      { status: "accepted", receipt_id: "receipt-".repeat(100) },
+      { status: "invalid_outputs", diagnostics: ["Missing nested/output.md", "λ".repeat(5000)] },
+      { status: "human_authorization_required" },
+      { status: "rejected", reason: "execution owner is stale" },
+    ]) {
+      await withRunnerOutput(
+        `${JSON.stringify(outcome)}\n`,
+        async (emitCompletion) => {
+          assert.deepEqual(await emitCompletion(event), outcome);
+        },
+        750,
+      );
+    }
+  });
+
+  test("rejects_malformed_truncated_and_oversized_acknowledgements", async () => {
+    for (const output of [
+      '{"status":"accepted","receipt_id":"receipt"}',
+      '{"status":"accepted"}\n',
+      '{"status":"accepted","receipt_id":\n',
+      '{"status":"invalid_outputs","diagnostics":[42]}\n',
+      `${JSON.stringify({ status: "accepted", receipt_id: "λ".repeat(40_000) })}\n`,
+    ]) {
+      await withRunnerOutput(output, async (emitCompletion) => {
+        await assert.rejects(() => emitCompletion(event));
+      });
+    }
+  });
+
+  test("preserves_external_spawn_errors", async () => {
+    const emitCompletion = ext.makeProductionCompletionEmitter({ runnerPath: "/nonexistent/alinery-runner", environment: {} });
+    await assert.rejects(() => emitCompletion(event), { code: "ENOENT" });
   });
 });

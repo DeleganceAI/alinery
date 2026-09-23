@@ -1,12 +1,9 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
-import type { Task } from "../types";
+import type { PullRequestSnapshot, Task } from "../types";
 import { TaskDetail } from "./TaskDetail";
-
-// Companion to TaskDetail.test.tsx (read-only for this file — see AGENTS.md's split-file
-// convention). PR URL is a display row: "not available" or the git-populated URL, with Copy.
 
 const task = (over: Partial<Task> = {}): Task =>
   ({
@@ -31,31 +28,31 @@ const task = (over: Partial<Task> = {}): Task =>
 // through `vi.hoisted` rather than plain module-scope `const`.
 const mocks = vi.hoisted(() => ({
   getTask: vi.fn(),
-  listPlaybooks: vi.fn(),
-  listPlaybookSteps: vi.fn(),
   listSessions: vi.fn(),
   listArtifactsWithMetadata: vi.fn(),
   sessionStatuses: vi.fn(),
+  listTaskPullRequests: vi.fn(),
+  openUrl: vi.fn(),
 }));
 
 vi.mock("../ipc", () =>
   mockIpc({
     getTask: mocks.getTask,
-    listPlaybooks: mocks.listPlaybooks,
-    listPlaybookSteps: mocks.listPlaybookSteps,
     listSessions: mocks.listSessions,
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
     sessionStatuses: mocks.sessionStatuses,
+    listTaskPullRequests: mocks.listTaskPullRequests,
+    openUrl: mocks.openUrl,
   }),
 );
 
 beforeEach(() => {
   mocks.getTask.mockReset().mockResolvedValue(null);
-  mocks.listPlaybooks.mockReset().mockResolvedValue([]);
-  mocks.listPlaybookSteps.mockReset().mockResolvedValue([]);
   mocks.listSessions.mockReset().mockResolvedValue([]);
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
   mocks.sessionStatuses.mockReset().mockResolvedValue({});
+  mocks.listTaskPullRequests.mockReset().mockResolvedValue({});
+  mocks.openUrl.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -84,18 +81,25 @@ function renderDetail(props: Partial<Parameters<typeof TaskDetail>[0]> = {}) {
   );
 }
 
-describe("PR URL is a read-only display row", () => {
-  it("shows not available when git has not populated a URL", () => {
-    renderDetail({ initialTask: task({ pr_url: "" }) });
-    expect(screen.getByText("PR URL")).toBeDefined();
-    expect(screen.getByText("not available")).toBeDefined();
-    expect(screen.queryByPlaceholderText(/PR \/ compare URL/i)).toBeNull();
-  });
-
-  it("shows the git-populated URL with a copy button", () => {
-    renderDetail({ initialTask: task({ pr_url: "https://example.com/pr/12" }) });
-    expect(screen.getByText("https://example.com/pr/12")).toBeDefined();
-    expect(screen.getByRole("button", { name: /copy pr url/i })).toBeDefined();
+describe("Task pull requests", () => {
+  it("does not treat a compare URL as a PR and opens the discovered merged PR", async () => {
+    const compareUrl = "https://github.com/example/project/compare/main...a-task";
+    const url = "https://github.com/example/project/pull/17";
+    mocks.getTask.mockResolvedValue(task({ pr_url: compareUrl }));
+    let resolve!: (value: Record<string, PullRequestSnapshot>) => void;
+    const pending = new Promise<Record<string, PullRequestSnapshot>>((done) => {
+      resolve = done;
+    });
+    mocks.listTaskPullRequests.mockReturnValue(pending);
+    const onBack = vi.fn();
+    renderDetail({ repoPath: "/pr-detail", initialTask: task({ pr_url: compareUrl }), onBack });
+    expect(screen.queryByRole("link", { name: /PR #/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Back/ }));
+    expect(onBack).toHaveBeenCalledOnce();
+    await act(async () => resolve({ "/pr-detail:a-task": { pr: { number: 17, url, state: "merged" }, error: null } }));
+    fireEvent.click(screen.getByRole("link", { name: /PR #17.*Merged/i }));
+    await waitFor(() => expect(mocks.openUrl).toHaveBeenCalledWith(url));
+    expect(screen.queryByText(compareUrl)).toBeNull();
   });
 
   it("a resolved getTask with a different pr_url updates the displayed value", async () => {

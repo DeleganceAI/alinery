@@ -40,11 +40,27 @@ fn mcp_enabled_unchanged_is_silent() {
 }
 
 #[test]
-fn unparseable_prior_skips_mcp_line() {
+fn unparseable_prior_is_not_overwritten() {
     let (dir, path) = temp_app("mcp-garbage");
-    fs::write(&path, "this is not toml").unwrap();
-    crate::write_app_config_at(&path, &AppConfig::default()).unwrap();
+    let original = "this is not toml";
+    fs::write(&path, original).unwrap();
+    let result = crate::write_app_config_at(&path, &AppConfig::default());
+    let retained = fs::read_to_string(&path).unwrap();
     let text = log_text(&path);
-    assert!(!text.contains("settings.app"), "{text}");
     let _ = fs::remove_dir_all(dir);
+    assert!(result.is_err());
+    assert_eq!(retained, original);
+    assert!(!text.contains("settings.app"));
+}
+
+#[test]
+fn scoped_defaults_do_not_erase_legacy_app_configuration() {
+    let (dir, path) = temp_app("legacy-default-integrity");
+    let original = "active_repo='/keep'\nknown_repos=['/keep','/another']\n[global.defaults]\nplaybook='custom-v1'\n";
+    fs::write(&path, original).unwrap();
+    let result = crate::write_app_config_at(&path, &AppConfig::default());
+    let retained = fs::read_to_string(&path).unwrap();
+    fs::remove_dir_all(dir).unwrap();
+    assert!(result.is_err(), "a settings edit must not replace an unsupported prior schema");
+    assert_eq!(retained, original);
 }

@@ -5,13 +5,14 @@ import { flushSync } from "react-dom";
 import type { ArtifactComment, ArtifactCommentAnchor } from "../ArtifactMarkdown";
 import { ArtifactMarkdown, formatArtifactCommentTarget } from "../ArtifactMarkdown";
 import { ArtifactTree, isDirectOwnedArtifactNode } from "../ArtifactTree";
-import { archiveBoardTask } from "../archiveTask";
+import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import type { ArtifactPaneTab } from "../artifactClassification";
 import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassification";
 import { CopyArtifactButton, CopyTextButton, copyTextToClipboard } from "../chat/CopyMessage";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import { PlaybookGraph } from "../PlaybookGraph";
+import { PullRequestIndicator } from "../PullRequestIndicator";
 import {
   classifySessionNotice,
   hasAcknowledgedExit,
@@ -32,6 +33,7 @@ import {
   EMPTY_TASK_ACTIVITY,
   EmptyState,
   finalizedSubtaskNotice,
+  findOwnedArtifactNode,
   harnessDisplayName,
   InlineStatus,
   KillButton,
@@ -50,21 +52,21 @@ import type {
   AppearancePrefs,
   ArtifactListItem,
   ArtifactTreeNode,
-  AutoAdvanceSummary,
   BoardNav,
   BoardTask,
-  PlaybookStepSummary,
   RelatedTaskRef,
   SessionMeta,
   SessionObservation,
   SubtaskManagerState,
   Task,
   TaskActivitySummary,
+  TaskExecutionReply,
   TaskPanelRow,
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
 import { useSessionSort } from "../useSessionSort";
+import { useTaskPullRequests } from "../useTaskPullRequests";
 
 function taskActivityLabel(activity: TaskActivitySummary): string {
   switch (activity.status) {
@@ -162,23 +164,31 @@ export function TaskDetail({
   onSessionSortChange?: (sort: SessionSort) => void;
 }) {
   const [task, setTask] = useState<Task | null>(initialTask ?? null);
+  const pullRequests = useTaskPullRequests(task && task.slug === slug && !task.draft ? [{ repoPath, taskSlug: slug }] : []);
+  const pullRequest = pullRequests[`${repoPath}:${slug}`];
   const taskMutationEpoch = useRef(0);
   const [repoTasks, setRepoTasks] = useState<Task[]>([]);
-  const primaryPlaybook = task?.playbook || "superdevelop";
+  const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
+  const [executionError, setExecutionError] = useState("");
+  const executionRequest = useRef(0);
+  const steps = executionView?.definition.step ?? [];
+  const executions = Object.values(executionView?.state.executions ?? {});
+  const executionForSession = (session: SessionMeta) =>
+    executions.find((execution) => execution.owner_session_id === session.id || execution.previous_session_ids.includes(session.id));
+  const activeExecutions = executions.filter((execution) => ["starting", "running", "finishing", "interrupted"].includes(execution.lifecycle));
+  const queuedExecutionCount = executions.filter((execution) => execution.lifecycle === "queued" && execution.start_requested).length;
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [sessionStatuses, setSessionStatuses] = useState<Record<string, SessionObservation>>({});
   const [subtaskState, setSubtaskState] = useState<SubtaskManagerState | null>(null);
   const [childActivity, setChildActivity] = useState<TaskActivitySummary>(EMPTY_TASK_ACTIVITY);
   const [childPlaybookStep, setChildPlaybookStep] = useState("");
-  const [steps, setSteps] = useState<PlaybookStepSummary[]>([]);
-  const [playbookDetails, setPlaybookDetails] = useState<Record<string, { title: string; steps: PlaybookStepSummary[] }>>({});
-  const [autoAdvanceEdges, setAutoAdvanceEdges] = useState<AutoAdvanceSummary[]>([]);
   const [err, setErr] = useState<ErrState>(null);
   const [sessionsError, setSessionsError] = useState("");
   const [artifactsError, setArtifactsError] = useState("");
   const loadWarning = combineLoadWarnings(sessionsError, artifactsError);
   const [busy, setBusy] = useState("");
+  const sessionArchivePending = useRef(false);
   const [boardTasks, setBoardTasks] = useState<BoardTask[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [sessionSort, setSessionSort] = useSessionSort(
@@ -188,25 +198,8 @@ export function TaskDetail({
   const [artifactItems, setArtifactItems] = useState<ArtifactListItem[]>([]);
   const [artifactTree, setArtifactTree] = useState<ArtifactTreeNode[]>([]);
   const artifactNames = artifactItems.map((a) => a.name);
-  // Attachments are excluded so one named e.g. 03-design.md can never tick a phase badge or
-  // flip the session sort. artifactNames stays unfiltered — it backs the shown/total pills.
-  const artifactNameSet = new Set(artifactItems.filter((artifact) => !artifact.attachment).map((artifact) => artifact.name));
-  const isPrimarySession = (session: SessionMeta) => {
-    if (!task || session.generic) return false;
-    const playbook = session.playbook || primaryPlaybook;
-    return playbook === primaryPlaybook && steps.some((step) => step.key === session.phase);
-  };
-  const expectedArtifactForSession = (session: SessionMeta, fallback = "") => {
-    if (session.artifact) return session.artifact;
-    if (fallback) return fallback;
-    const playbook = session.playbook || primaryPlaybook;
-    return playbookDetails[playbook]?.steps.find((step) => step.key === session.phase)?.artifact || "";
-  };
   const filteredSessions = showArchived ? sessions : sessions.filter((session) => !session.archived);
-  const hasExpectedArtifact = (session: SessionMeta) => {
-    const expected = expectedArtifactForSession(session);
-    return !!expected && artifactNameSet.has(expected);
-  };
+  const hasExpectedArtifact = (session: SessionMeta) => Boolean(executionForSession(session)?.receipt_id);
   const unacknowledgedExitedSessions = sessions.filter((session) => !session.archived && hasUnacknowledgedExit(session));
   const prioritySessions = orderTaskPanelRows(
     filteredSessions.map<TaskPanelRow>((session) => ({ kind: "session", session })),
@@ -256,22 +249,6 @@ export function TaskDetail({
   }
   projectedRows.push(...managerlessFinishedRows);
   const taskPanelRows = orderTaskPanelRows(projectedRows, sessionStatuses, hasExpectedArtifact, sessionSort);
-  const latestSessionByPlaybookPhase = sessions
-    .filter((s) => !s.archived && s.phase)
-    .reduce<Record<string, SessionMeta>>((latest, s) => {
-      const scope = `${s.playbook}\u0000${s.phase}`;
-      const current = latest[scope];
-      if (!current || s.created > current.created || (s.created === current.created && s.id > current.id)) {
-        latest[scope] = s;
-      }
-      return latest;
-    }, {});
-  const sessionCountsByPhase = sessions
-    .filter((session) => !session.archived && isPrimarySession(session))
-    .reduce<Record<string, number>>((counts, session) => {
-      counts[session.phase] = (counts[session.phase] ?? 0) + 1;
-      return counts;
-    }, {});
   const [selectedArtifact, setSelectedArtifact] = useState("");
   const [selectedArtifactNode, setSelectedArtifactNode] = useState<ArtifactTreeNode | null>(null);
   const selectedArtifactIsDirect = selectedArtifactNode ? isDirectOwnedArtifactNode(selectedArtifactNode) : false;
@@ -279,7 +256,8 @@ export function TaskDetail({
   const [artifactText, setArtifactText] = useState("");
   const [artifactMode, setArtifactMode] = useState<"preview" | "raw">("preview");
   const [artifactErr, setArtifactErr] = useState<ErrState>(null);
-  const [sideTab, setSideTab] = useState<"playbook" | "artifacts">("playbook");
+  const [sideTab, setSideTab] = useState<"playbook" | "artifacts" | "history">("playbook");
+  const [playbookView, setPlaybookView] = useState<"list" | "graph">("list");
   const [artifactTab, setArtifactTab] = useState<ArtifactPaneTab>("playbook");
   const selectedArtifactTreeId = selectedArtifactNode?.id;
   const [artifactComments, setArtifactComments] = useState<ArtifactComment[]>([]);
@@ -335,17 +313,34 @@ export function TaskDetail({
     await refreshChildActivity(fetched, epoch);
   };
 
-  // Pipeline progress: current = highest primary-playbook phase reached by a live session.
-  const curIdx = sessions
-    .filter((session) => !session.archived && isPrimarySession(session))
-    .reduce((max, session) => {
-      const index = steps.findIndex((step) => step.key === session.phase);
-      return index > max ? index : max;
-    }, -1);
-
   const commitFetchedTask = (fetched: Task | null, epoch: number) => {
     if (epoch !== taskMutationEpoch.current) return;
     setTask((current) => (current && fetched && sameTask(current, fetched) ? current : fetched));
+  };
+
+  const refreshExecution = async () => {
+    const request = ++executionRequest.current;
+    try {
+      const value = await ipc.getTaskExecution(slug, repoPath);
+      if (request !== executionRequest.current) return;
+      setExecutionView(value);
+      setExecutionError("");
+    } catch (error) {
+      if (request !== executionRequest.current) return;
+      setExecutionError(String(error));
+    }
+  };
+
+  const allowCompletion = async (executionId: string, sessionId: string) => {
+    setBusy(`allow:${executionId}`);
+    try {
+      await ipc.allowExecutionCompletion(slug, executionId, sessionId, repoPath);
+      await refreshExecution();
+    } catch (error) {
+      setExecutionError(String(error));
+    } finally {
+      setBusy("");
+    }
   };
 
   const load = async () => {
@@ -353,7 +348,7 @@ export function TaskDetail({
     // Every optional read is pre-wrapped so one rejection can never fail the shared
     // Promise.all — a removed custom playbook or a transient artifact-scan error must not
     // discard whatever else in this wave succeeded.
-    const [taskResult, managerResult, tasksResult, playbooks, primarySteps, sessionsResult, artifactsResult, artifactTreeResult] = await Promise.all([
+    const [taskResult, managerResult, tasksResult, , sessionsResult, artifactsResult, artifactTreeResult] = await Promise.all([
       ipc.getTask(slug).then(
         (value) => ({ ok: true, value }) as const,
         (error) => ({ ok: false, error }) as const,
@@ -366,8 +361,7 @@ export function TaskDetail({
         (value) => ({ ok: true, value }) as const,
         () => ({ ok: false }) as const,
       ),
-      ipc.listPlaybooks().catch(() => []),
-      ipc.listPlaybookSteps(primaryPlaybook).catch(() => [] as PlaybookStepSummary[]),
+      refreshExecution(),
       ipc.listSessions(slug).then(
         (value) => ({ ok: true, value }) as const,
         (error) => ({ ok: false, error }) as const,
@@ -425,49 +419,12 @@ export function TaskDetail({
       setArtifactsError(String(artifactsResult.error));
     }
 
-    // Wave 1's listPlaybookSteps guess is for `primaryPlaybook` (the seed). Trust it only
-    // when the freshly fetched task actually agrees; a stale/absent seed's guess is
-    // discarded rather than mislabeled as the real task's steps.
-    const taskPlaybook = t?.playbook || primaryPlaybook;
-    const details: Record<string, { title: string; steps: PlaybookStepSummary[] }> = {};
-    if (taskPlaybook === primaryPlaybook) {
-      details[primaryPlaybook] = { title: playbooks.find((w) => w.key === primaryPlaybook)?.title || primaryPlaybook, steps: primarySteps };
-    }
-    // Dependent tail: the task's real playbook (if the wave-1 guess missed) plus every
-    // distinct session playbook not already covered, de-duplicated.
-    const tailKeys = new Set<string>();
-    if (!details[taskPlaybook]) tailKeys.add(taskPlaybook);
-    for (const session of ss) {
-      const key = session.playbook || taskPlaybook;
-      if (!details[key]) tailKeys.add(key);
-    }
-    const [statuses, tailEntries] = await Promise.all([
-      ipc
-        .sessionStatuses(
-          ss.map((session) => session.id),
-          slug,
-        )
-        .catch(() => ({}) as Record<string, SessionObservation>),
-      Promise.all(
-        [...tailKeys].map(
-          async (key) =>
-            [
-              key,
-              {
-                // An unregistered playbook (removed custom playbook, historical session)
-                // degrades to a label with no steps instead of rejecting the whole batch.
-                title: playbooks.find((w) => w.key === key)?.title || key,
-                steps: await ipc.listPlaybookSteps(key).catch(() => [] as PlaybookStepSummary[]),
-              },
-            ] as const,
-        ),
-      ),
-    ]);
-    for (const [key, value] of tailEntries) details[key] = value;
-
-    setPlaybookDetails(details);
-    setSteps(details[taskPlaybook]?.steps ?? []);
-    setAutoAdvanceEdges(playbooks.find((playbook) => playbook.key === taskPlaybook)?.auto_advance ?? []);
+    const statuses = await ipc
+      .sessionStatuses(
+        ss.map((session) => session.id),
+        slug,
+      )
+      .catch(() => ({}) as Record<string, SessionObservation>);
     setSessionStatuses((current) => (sameSessionObservationMaps(current, statuses) ? current : statuses));
   };
 
@@ -496,6 +453,7 @@ export function TaskDetail({
         (value) => ({ ok: true, value }) as const,
         () => ({ ok: false }) as const,
       ),
+      refreshExecution(),
     ]);
     if (tasksResult.ok) {
       const refreshedTask = tasksResult.value.find((candidate) => candidate.slug === slug) ?? null;
@@ -528,6 +486,8 @@ export function TaskDetail({
   useEffect(() => {
     let alive = true;
     let timer = 0;
+    setExecutionView(null);
+    setExecutionError("");
     // Every read inside load() is individually wrapped, so this only fires on an unexpected
     // throw — but without it that throw would be a silent unhandled rejection, which is what
     // the old whole-body try/catch prevented.
@@ -543,6 +503,7 @@ export function TaskDetail({
     timer = window.setTimeout(poll, 3000);
     return () => {
       alive = false;
+      executionRequest.current += 1;
       window.clearTimeout(timer);
     };
   }, [repoPath, slug]);
@@ -709,19 +670,34 @@ export function TaskDetail({
     }
   };
 
-  const confirmArchive = (removeWt: boolean) => {
-    void archiveBoardTask({ repo_path: repoPath, slug }, removeWt).then((failure) => {
-      setPendingArchive(null);
-      if (failure) {
-        setErr(failure);
-        return;
-      }
-      onBack();
-    });
+  const confirmArchive = async (removeWt: boolean, onPhase: (phase: ArchiveTaskPhase) => void) => {
+    const failure = await archiveBoardTask({ repo_path: repoPath, slug }, removeWt, onPhase);
+    setPendingArchive(null);
+    if (failure) {
+      setErr(failure);
+      return;
+    }
+    onBack();
   };
 
-  const openManagerSession = (ownerTaskSlug: string, manager: SessionMeta, intent: "attach" | "spawn" = "attach") => {
-    onOpenSession(ownerTaskSlug, manager.id, manager.worktree, manager.phase, manager.harness, manager.model, manager.playbook, manager.generic, intent);
+  const archiveSession = async (id: string) => {
+    if (busy || sessionArchivePending.current) return;
+    sessionArchivePending.current = true;
+    setBusy(`archive-session:${id}`);
+    setErr(null);
+    try {
+      await ipc.archiveSessionForRepo(repoPath, slug, id);
+      await load();
+    } catch (error) {
+      setErr({ msg: "Couldn't archive the session.", detail: String(error) });
+    } finally {
+      sessionArchivePending.current = false;
+      setBusy("");
+    }
+  };
+
+  const openManagerSession = (ownerTaskSlug: string, manager: SessionMeta) => {
+    onOpenSession(ownerTaskSlug, manager.id, manager.worktree, manager.phase, manager.harness, manager.model, manager.playbook, manager.generic, "attach");
   };
 
   const startManager = () => {
@@ -729,7 +705,7 @@ export function TaskDetail({
     setErr(null);
     ipc
       .startSubtaskManager(slug)
-      .then((manager) => openManagerSession(slug, manager, "spawn"))
+      .then((reply) => openManagerSession(slug, reply.session))
       .catch((error) => setErr({ msg: "Couldn't start the sub-task manager.", detail: String(error) }))
       .finally(() => setBusy(""));
   };
@@ -739,7 +715,7 @@ export function TaskDetail({
     setErr(null);
     ipc
       .recoverSubtaskManager(slug)
-      .then((manager) => openManagerSession(slug, manager, "spawn"))
+      .then((reply) => openManagerSession(slug, reply.session))
       .catch((error) => setErr({ msg: "Couldn't recover the sub-task manager.", detail: String(error) }))
       .finally(() => setBusy(""));
   };
@@ -803,7 +779,7 @@ export function TaskDetail({
   return (
     <div className="detail taskdetail" style={{ ["--artifact-width" as string]: `${artifactWidth}px` }}>
       <main className="detailmain">
-        <section className="task-panel task-info-panel">
+        <section className="task-panel task-info-panel" aria-label="Task information">
           <div className="task-panel-head task-info-head">
             <div>
               <div className="task-panel-label">Task</div>
@@ -822,14 +798,10 @@ export function TaskDetail({
 
           {finalizedNotice && <InlineStatus tone="warning">{finalizedNotice}</InlineStatus>}
 
-          {steps.length > 0 && (
-            <div className="pipe">
-              {steps.map((p, i) => (
-                <div key={p.key} className={`phase${i < curIdx ? " done" : i === curIdx ? " cur" : ""}`} aria-current={i === curIdx ? "step" : undefined}>
-                  {p.title}
-                </div>
-              ))}
-            </div>
+          {executionError && (
+            <InlineStatus tone="error" detail={executionError}>
+              Execution state unavailable. Last known state is shown; completion grants are disabled.
+            </InlineStatus>
           )}
 
           <div className="task-info-grid">
@@ -868,8 +840,11 @@ export function TaskDetail({
             </div>
             <div className="kv">
               <span className="k">PR URL</span>
-              <span className="v mono">{task?.pr_url ? task.pr_url : <span className="dim">not available</span>}</span>
-              <CopyTextButton text={task?.pr_url ?? ""} label="PR URL" />
+              <span className="v mono">
+                <PullRequestIndicator snapshot={pullRequest} />
+                {!pullRequest?.pr && (task?.pr_url ? task.pr_url : <span className="dim">not available</span>)}
+              </span>
+              <CopyTextButton text={pullRequest?.pr?.url ?? task?.pr_url ?? ""} label="PR URL" />
               <button
                 type="button"
                 className="btn ghost small"
@@ -960,7 +935,7 @@ export function TaskDetail({
           </div>
           <div className="crow task-actions-row">
             <button type="button" className="btn ghost small" disabled={!task || duplicating} title="Duplicate task (⌘D)" onClick={() => task && onDuplicate(task)}>
-              Duplicate Task · ⌘D
+              {duplicating ? "Duplicating…" : "Duplicate Task · ⌘D"}
             </button>
             {task?.archived ? (
               task.parent_task ? (
@@ -987,6 +962,16 @@ export function TaskDetail({
           <div className="task-panel-head">
             <h3 className="task-panel-title">Sessions</h3>
             <div className="task-session-controls">
+              {executionView && (
+                <span
+                  className="dim task-session-queue"
+                  role="status"
+                  aria-label="Queued sessions"
+                  title="Start requested; waiting for capacity or coding ownership. Held sessions are not counted."
+                >
+                  {queuedExecutionCount} queued
+                </span>
+              )}
               <button
                 type="button"
                 className={`btn ghost small session-sort-control${sessionSort.field === "priority" ? " active" : ""}`}
@@ -1045,7 +1030,6 @@ export function TaskDetail({
               <thead>
                 <tr>
                   <th className="status-col">Status</th>
-                  <th>Session</th>
                   <th>Step</th>
                   <th>Harness</th>
                   <th className="session-time-col" aria-sort={sessionSort.field === "started" ? (sessionSort.direction === "desc" ? "descending" : "ascending") : undefined}>
@@ -1082,7 +1066,7 @@ export function TaskDetail({
               <tbody>
                 {sessionsLoaded && taskPanelRows.length === 0 && !subtaskState?.can_recover && (
                   <tr className="empty-row">
-                    <td colSpan={7}>
+                    <td colSpan={6}>
                       <EmptyState title="No sessions yet." hint="Start a session to run a harness in this task's worktree." />
                     </td>
                   </tr>
@@ -1103,8 +1087,6 @@ export function TaskDetail({
                             </span>
                             {outcome && <span className={`pill ${subtaskOutcomeClass(row.child)}`}>{outcome}</span>}
                           </button>
-                        </td>
-                        <td>
                           <span className="badge todo" title="Sub-task history">
                             Sub-task history
                           </span>
@@ -1173,8 +1155,6 @@ export function TaskDetail({
                               </span>
                             )}
                           </button>
-                        </td>
-                        <td>
                           <span className="badge todo" title={canReplaceThisManager ? "Manager unavailable" : "Sub-task manager"}>
                             {canReplaceThisManager ? "Manager unavailable" : "Sub-task manager"}
                           </span>
@@ -1226,12 +1206,16 @@ export function TaskDetail({
                   }
 
                   const resumedBy = sessions.find((other) => other.resume_of === s.id);
-                  const scope = `${s.playbook}\u0000${s.phase}`;
-                  const superseded = !s.archived && !!s.phase && latestSessionByPlaybookPhase[scope]?.id !== s.id;
-                  const playbookKey = s.playbook || primaryPlaybook;
-                  const playbook = playbookDetails[playbookKey];
-                  const stepTitle = playbook?.steps.find((step) => step.key === s.phase)?.title || s.phase;
-                  const sessionType = s.subtask_manager ? "Sub-task manager" : s.generic ? "Generic" : s.phase ? `${playbook?.title || playbookKey} · ${stepTitle}` : "—";
+                  const execution = executionForSession(s);
+                  const superseded = Boolean(execution && execution.owner_session_id !== s.id);
+                  const stepTitle = steps.find((step) => step.key === execution?.candidate.step_key)?.title ?? execution?.candidate.step_key;
+                  const sessionType = s.subtask_manager
+                    ? "Sub-task manager"
+                    : execution
+                      ? `${executionView?.definition.title} · ${stepTitle}`
+                      : s.generic
+                        ? "Auxiliary"
+                        : [s.playbook, s.phase].filter(Boolean).join(" · ") || "Historical session";
                   const harnessLabel = `${harnessDisplayName(s.harness)}${s.model ? ` · ${s.model}` : ""}`;
                   const unreadCompletion = classifySessionNotice(s, obs ?? undefined) === "unread_completion";
                   const openable = Boolean(task?.worktree) && !s.archived;
@@ -1240,7 +1224,7 @@ export function TaskDetail({
                       key={s.id}
                       className={s.archived ? "row-archived" : openable ? "session-row-openable" : undefined}
                       tabIndex={openable ? 0 : undefined}
-                      aria-label={openable ? `Open session ${s.id}` : undefined}
+                      aria-label={openable ? `Open session ${sessionType}` : undefined}
                       onClick={(event) => {
                         if (!openable || (event.target as HTMLElement).closest("button")) return;
                         onOpenSession(slug, s.id, s.worktree, s.phase, s.harness, s.model, s.playbook, s.generic);
@@ -1265,22 +1249,14 @@ export function TaskDetail({
                         />
                       </td>
                       <td>
-                        <div className="session-id-cell">
-                          <span className="mono" title={s.id}>
-                            {s.id}
+                        <div className="session-step-cell">
+                          <span className="pill" title={sessionType}>
+                            {sessionType}
                           </span>
+                          {execution && <span className="pill">{execution.lifecycle}</span>}
                           {s.archived && <span className="pill session-archived">Archived</span>}
-                          {resumedBy && (
-                            <span className="pill dim" title={`Resumed by ${resumedBy.id}`}>
-                              Resumed by {resumedBy.id}
-                            </span>
-                          )}
+                          {resumedBy && <span className="pill dim">Resumed</span>}
                         </div>
-                      </td>
-                      <td>
-                        <span className="pill" title={sessionType}>
-                          {sessionType}
-                        </span>
                       </td>
                       <td>
                         <span className="pill" title={harnessLabel}>
@@ -1295,8 +1271,8 @@ export function TaskDetail({
                       </td>
                       <td className="session-actions">
                         <KillButton id={s.id} slug={slug} repoPath={repoPath} live={isLive} onKilled={load} />
-                        <button type="button" className="btn ghost small" disabled={s.archived} onClick={() => ipc.archiveSessionForRepo(repoPath, slug, s.id).then(load)}>
-                          Archive
+                        <button type="button" className="btn ghost small" disabled={s.archived || !!busy} onClick={() => void archiveSession(s.id)}>
+                          {busy === `archive-session:${s.id}` ? "Archiving session…" : "Archive"}
                         </button>
                         {s.archived && (
                           <button
@@ -1324,8 +1300,6 @@ export function TaskDetail({
                           {subtaskState.active_subtask.slug}
                         </span>
                       </button>
-                    </td>
-                    <td>
                       <span className="badge todo" title="Manager unavailable">
                         Manager unavailable
                       </span>
@@ -1481,18 +1455,121 @@ export function TaskDetail({
                 >
                   Artifacts
                 </button>
+                <button type="button" aria-pressed={sideTab === "history"} className={`artifacttab${sideTab === "history" ? " on" : ""}`} onClick={() => setSideTab("history")}>
+                  History
+                </button>
               </div>
               {sideTab === "artifacts" && <span className="pill">{artifactNames.length}</span>}
             </div>
             {sideTab === "playbook" ? (
-              <div className="playbook-side-scroll">
+              <div className={`playbook-side-scroll${playbookView === "graph" ? " playbook-side-graph" : ""}`}>
+                <div className="task-playbook-toolbar">
+                  <div className="artifacttabs" role="group" aria-label="Task playbook view">
+                    <button
+                      type="button"
+                      className={`artifacttab${playbookView === "list" ? " on" : ""}`}
+                      aria-pressed={playbookView === "list"}
+                      onClick={() => setPlaybookView("list")}
+                    >
+                      List
+                    </button>
+                    <button
+                      type="button"
+                      className={`artifacttab${playbookView === "graph" ? " on" : ""}`}
+                      aria-pressed={playbookView === "graph"}
+                      onClick={() => setPlaybookView("graph")}
+                    >
+                      Graph
+                    </button>
+                  </div>
+                  {playbookView === "graph" && <p>Retained task definition · See List for active counts and automatic completion.</p>}
+                </div>
                 <PlaybookGraph
-                  title={playbookDetails[primaryPlaybook]?.title || primaryPlaybook}
+                  variant={playbookView === "graph" ? "definition" : "execution"}
+                  showInspector={false}
+                  title={executionView?.definition.title ?? "Retained task playbook"}
                   steps={steps}
-                  countsByStep={sessionCountsByPhase}
-                  autoAdvanceEdges={autoAdvanceEdges}
-                  selectedAutoAdvance={task?.auto_advance}
+                  countsByStep={Object.fromEntries(steps.map((step) => [step.key, activeExecutions.filter((execution) => execution.candidate.step_key === step.key).length]))}
+                  selectedAutoAdvance={executionView?.state.enabled_steps}
                 />
+              </div>
+            ) : sideTab === "history" ? (
+              <div className="task-history-pane">
+                {executionView && (
+                  <section aria-label="Task executions">
+                    <h3 className="task-history-title">{executionView.definition.title}</h3>
+                    <p className="task-history-summary">
+                      {activeExecutions.length} active executions / {executionView.state.max_live_sessions} slots · Creation: {executionView.state.creation}
+                    </p>
+                    {executionView.state.creation_error && <InlineStatus tone="error">{executionView.state.creation_error}</InlineStatus>}
+                    {executions.map((execution) => (
+                      <article className="task-history-entry" key={execution.id} aria-label={`Execution ${execution.id}`}>
+                        <div className="task-history-entry-heading">
+                          <h4>{steps.find((step) => step.key === execution.candidate.step_key)?.title ?? execution.candidate.step_key}</h4>
+                          <span className="pill">{execution.lifecycle}</span>
+                        </div>
+                        <dl className="task-history-metadata">
+                          <dt>Execution</dt>
+                          <dd>
+                            <code>{execution.id}</code>
+                          </dd>
+                          <dt>Owner</dt>
+                          <dd>
+                            <code>{execution.owner_session_id}</code>
+                          </dd>
+                        </dl>
+                        {execution.lifecycle === "queued" && <p>{execution.start_requested ? "Waiting for capacity or coding ownership" : "Held until explicitly started"}</p>}
+                        {execution.lifecycle === "finishing" && <p>Outputs accepted; waiting for confirmed session shutdown.</p>}
+                        {execution.lifecycle === "interrupted" && <p>Process ownership is uncertain; capacity remains reserved.</p>}
+                        {execution.error && <InlineStatus tone="error">{execution.error}</InlineStatus>}
+                        <details>
+                          <summary>Inputs and outputs</summary>
+                          <ul aria-label="Execution inputs">
+                            {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) =>
+                              ids.map((occurrenceId) => {
+                                const occurrence = executionView.state.occurrences[occurrenceId];
+                                return (
+                                  <li key={`${selector}:${occurrenceId}`}>
+                                    <code>{selector}</code> ← <code>{occurrence?.relative_path ?? occurrenceId}</code> · occurrence {occurrenceId} · producer{" "}
+                                    {occurrence?.producer_execution_id ?? "seed"}
+                                  </li>
+                                );
+                              }),
+                            )}
+                          </ul>
+                          <ul aria-label="Execution outputs">
+                            {execution.outputs.map((output) => (
+                              <li key={output.relative_path}>
+                                <code>{output.selector}</code> → <code>{output.relative_path}</code> · {execution.receipt_id ? "accepted" : "pending"}
+                              </li>
+                            ))}
+                            {Object.values(executionView.state.occurrences)
+                              .filter((occurrence) => occurrence.producer_execution_id === execution.id && occurrence.selector.includes("*"))
+                              .map((occurrence) => (
+                                <li key={occurrence.id}>
+                                  Accepted member <code>{occurrence.relative_path}</code> · occurrence {occurrence.id}
+                                </li>
+                              ))}
+                          </ul>
+                        </details>
+                        <p className="task-history-permission">
+                          Completion permission: {execution.permission.kind}
+                          {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
+                        </p>
+                        {execution.permission.kind === "locked" && execution.lifecycle === "running" && (
+                          <button
+                            type="button"
+                            className="btn small"
+                            disabled={!!busy || !!executionError}
+                            onClick={() => void allowCompletion(execution.id, execution.owner_session_id)}
+                          >
+                            Allow this session to complete · {execution.owner_session_id}
+                          </button>
+                        )}
+                      </article>
+                    ))}
+                  </section>
+                )}
               </div>
             ) : (
               <>
@@ -1528,38 +1605,50 @@ export function TaskDetail({
                   {!artifactErr && displayedArtifactItems.length === 0 && contextualArtifactTree.length === 0 && (
                     <div className="dim">{artifactTab === "attachments" ? "No attachments." : "No playbook artifacts yet."}</div>
                   )}
-                  {displayedArtifactItems.map((item) => (
-                    // div, not <button>: the provenance badges inside are buttons themselves,
-                    // and button-in-button is invalid HTML (same pattern as SessionView).
-                    <div
-                      key={item.name}
-                      className={`artifactitem${item.attachment ? " attachment" : ""}`}
-                      title={item.name}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if ((e.key !== "Enter" && e.key !== " ") || e.target !== e.currentTarget) return;
-                        e.preventDefault();
-                        e.currentTarget.click();
-                      }}
-                      onClick={() => {
-                        if (item.attachment) {
-                          ipc
-                            .attachmentPath(slug, item.name)
-                            .then(ipc.revealItemInDir)
-                            .catch((e) => setArtifactErr({ msg: "Couldn't reveal the attachment.", detail: String(e) }));
-                          return;
-                        }
-                        setSelectedArtifactNode(artifactTree.find((node) => node.source === "owned" && node.kind === "owned" && node.label === item.name) ?? null);
-                        setSelectedArtifact(item.name);
-                        setArtifactMode("preview");
-                        setArtifactErr(null);
-                      }}
-                    >
-                      <span className="artifactitem-name">{item.name}</span>
-                      <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
-                    </div>
-                  ))}
+                  {displayedArtifactItems.map((item) => {
+                    const node = findOwnedArtifactNode(artifactTree, item.name);
+                    const available = Boolean(item.attachment || node);
+                    return (
+                      // div, not <button>: the provenance badges inside are buttons themselves,
+                      // and button-in-button is invalid HTML (same pattern as SessionView).
+                      <div
+                        key={item.name}
+                        className={`artifactitem${item.attachment ? " attachment" : ""}`}
+                        title={item.name}
+                        role="button"
+                        tabIndex={available ? 0 : -1}
+                        aria-disabled={!available}
+                        onKeyDown={(e) => {
+                          if ((e.key !== "Enter" && e.key !== " ") || e.target !== e.currentTarget) return;
+                          e.preventDefault();
+                          e.currentTarget.click();
+                        }}
+                        onClick={() => {
+                          if (item.attachment) {
+                            ipc
+                              .attachmentPath(slug, item.name)
+                              .then(ipc.revealItemInDir)
+                              .catch((e) => setArtifactErr({ msg: "Couldn't reveal the attachment.", detail: String(e) }));
+                            return;
+                          }
+                          if (!node) return;
+                          setSelectedArtifactNode(node);
+                          setSelectedArtifact(item.name);
+                          setArtifactMode("preview");
+                          setArtifactErr(null);
+                        }}
+                      >
+                        <span className="artifactitem-name">{item.name}</span>
+                        {item.execution_id && (
+                          <span className="dim">
+                            Execution {item.execution_id} · {item.step_key} · {item.accepted ? "accepted" : "pending"}
+                          </span>
+                        )}
+                        {!available && <span className="pill">Not yet readable</span>}
+                        <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
+                      </div>
+                    );
+                  })}
                   {contextualArtifactTree.length > 0 && (
                     <ArtifactTree
                       taskSlug={slug}

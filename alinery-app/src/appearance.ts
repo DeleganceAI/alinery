@@ -40,6 +40,7 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   chat_show_actor_labels: true,
   chat_show_agent_bubbles: true,
   chat_show_block_copy_buttons: true,
+  chat_show_copy_buttons: true,
   session_default_view: "chat",
   mode: "system",
 };
@@ -136,6 +137,7 @@ export function normalizeAppearance(input: AppearancePrefs): AppearancePrefs {
     chat_show_actor_labels: raw.chat_show_actor_labels !== false,
     chat_show_agent_bubbles: raw.chat_show_agent_bubbles !== false,
     chat_show_block_copy_buttons: raw.chat_show_block_copy_buttons !== false,
+    chat_show_copy_buttons: raw.chat_show_copy_buttons !== false,
     session_default_view: normalizeSessionDefaultView(raw.session_default_view),
     mode,
   };

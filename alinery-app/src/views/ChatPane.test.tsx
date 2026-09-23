@@ -28,6 +28,11 @@ describe("ChatPane", () => {
     view.rerender(<ChatPane entries={entries} visibility={chatVisibilityFromAppearance({ chat_show_block_copy_buttons: true })} />);
     expect(view.getByRole("button", { name: "Copy code block" })).toBeTruthy();
     expect(view.getByRole("button", { name: "Copy quote" })).toBeTruthy();
+
+    view.rerender(<ChatPane entries={entries} visibility={chatVisibilityFromAppearance({ chat_show_copy_buttons: false })} />);
+    expect(view.queryByRole("button", { name: "Copy message" })).toBeNull();
+    expect(view.getByRole("button", { name: "Copy code block" })).toBeTruthy();
+    expect(view.getByRole("button", { name: "Copy quote" })).toBeTruthy();
     view.unmount();
   });
 
@@ -144,6 +149,8 @@ describe("ChatPane", () => {
     expect(html).toContain('data-density="comfortable"');
     expect(html).toContain('data-actor-labels="on"');
     expect(html).toContain('data-agent-bubbles="on"');
+    expect(html).toContain("Copy message");
+    expect(pane([{ id: "1", at, actor: ACTOR.agent, type: "text", text: "hi" }], { ...DEFAULT_CHAT_VISIBILITY, showCopyButtons: false })).not.toContain("Copy message");
   });
 
   it("defaults agent replies to labelled bubbles and keeps user prompts bubbled", () => {

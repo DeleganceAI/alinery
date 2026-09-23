@@ -34,7 +34,10 @@ pub(crate) fn subtask_state_in(repo: &Path, task_slug: &str) -> Result<alinery_c
         (None, String::new())
     };
 
-    let disabled_reason = if task.draft {
+    let historical = task.engine_version < 2;
+    let disabled_reason = if historical {
+        "Pre-v2 task data is read-only".into()
+    } else if task.draft {
         "Draft tasks cannot start sub-tasks".into()
     } else if task.archived {
         "Archived tasks cannot start sub-tasks".into()
@@ -63,47 +66,29 @@ pub(crate) fn subtask_state_in(repo: &Path, task_slug: &str) -> Result<alinery_c
     })
 }
 
-fn create_manager_in(app_config: &Path, repo: &Path, task_slug: &str, subtask_slug: String) -> Result<SessionMeta, String> {
-    let harness =
-        alinery_core::resolve_harness_strict_for(app_config, repo, "omp").map_err(|_| "Sub-task managers require the OMP harness with Alinery integration".to_string())?;
-    if harness.adapter != alinery_core::HarnessAdapter::Omp {
-        return Err("Sub-task managers require the OMP harness with adapter = \"omp\"".into());
-    }
-    let core_meta = alinery_core::create_session_meta_for(
-        app_config,
-        repo,
-        alinery_core::CreateSessionInput {
-            task_slug: task_slug.to_string(),
-            generic: true,
-            harness: harness.key,
-            model: String::new(),
-            subtask_manager: true,
+pub(crate) fn subtask_manager_request_in(repo: &Path, task_slug: String, recover: bool) -> Result<alinery_core::task_creation::CreateExecutionSessionRequest, String> {
+    let subtask_slug = if recover {
+        Some(
+            alinery_core::read_task_relationships(repo, &task_slug)?
+                .active_subtask
+                .ok_or("task has no active sub-task to recover")?
+                .slug,
+        )
+    } else {
+        None
+    };
+    Ok(alinery_core::task_creation::CreateExecutionSessionRequest {
+        task_slug,
+        target: alinery_core::task_creation::ExecutionSessionTarget::SubtaskManager {
             subtask_slug,
-            daemon_namespace: alineryd_socket_namespace().unwrap_or_default(),
-            ..Default::default()
+            recover,
+            harness: "omp".into(),
+            model: None,
         },
-    )?;
-    serde_json::from_value(serde_json::to_value(core_meta).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
-}
-
-pub(crate) fn start_subtask_manager_in(app_config: &Path, repo: &Path, task_slug: &str) -> Result<SessionMeta, String> {
-    alinery_core::with_task_mutation_lock(repo, "start sub-task manager", || {
-        let state = subtask_state_in(repo, task_slug)?;
-        if !state.can_start {
-            return Err(state.disabled_reason);
-        }
-        create_manager_in(app_config, repo, task_slug, String::new())
-    })
-}
-
-pub(crate) fn recover_subtask_manager_in(app_config: &Path, repo: &Path, task_slug: &str) -> Result<SessionMeta, String> {
-    alinery_core::with_task_mutation_lock(repo, "recover sub-task manager", || {
-        let state = subtask_state_in(repo, task_slug)?;
-        if !state.can_recover {
-            return Err("The active sub-task already has a usable manager session".into());
-        }
-        let child = state.active_subtask.ok_or_else(|| "Task has no active sub-task to recover".to_string())?;
-        create_manager_in(app_config, repo, task_slug, child.slug)
+        launch_override: None,
+        prompt_extra: None,
+        handoff_artifact: None,
+        start: true,
     })
 }
 
@@ -144,15 +129,17 @@ pub(crate) fn subtask_state(state: State<'_, AppState>, task_slug: String) -> Re
 }
 
 #[tauri::command]
-pub(crate) fn start_subtask_manager(app: AppHandle, state: State<'_, AppState>, task_slug: String) -> Result<SessionMeta, String> {
+pub(crate) fn start_subtask_manager(app: AppHandle, state: State<'_, AppState>, task_slug: String) -> Result<alinery_core::task_creation::CreateExecutionSessionReply, String> {
     let repo = require_owned_active_repo(&state)?;
-    start_subtask_manager_in(&app_config_path(&app)?, &repo, &task_slug)
+    let request = subtask_manager_request_in(&repo, task_slug, false)?;
+    task_daemon_for(&repo, &request.task_slug, &app_config_path(&app)?)?.create_execution_session(&request)
 }
 
 #[tauri::command]
-pub(crate) fn recover_subtask_manager(app: AppHandle, state: State<'_, AppState>, task_slug: String) -> Result<SessionMeta, String> {
+pub(crate) fn recover_subtask_manager(app: AppHandle, state: State<'_, AppState>, task_slug: String) -> Result<alinery_core::task_creation::CreateExecutionSessionReply, String> {
     let repo = require_owned_active_repo(&state)?;
-    recover_subtask_manager_in(&app_config_path(&app)?, &repo, &task_slug)
+    let request = subtask_manager_request_in(&repo, task_slug, true)?;
+    task_daemon_for(&repo, &request.task_slug, &app_config_path(&app)?)?.create_execution_session(&request)
 }
 
 #[tauri::command]

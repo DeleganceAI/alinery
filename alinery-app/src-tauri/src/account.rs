@@ -1079,7 +1079,18 @@ fn sync_hosted_from_auth(app: &AppHandle, auth_path: &Path, status: &AccountStat
     let Some(tokens) = tokens else {
         return;
     };
-    sync_hosted_inference(config_dir, &app_config, &accounts_url(), &tokens.access_token, &tokens.session_id, true);
+    let _ = sync_hosted_inference(config_dir, &app_config, &accounts_url(), &tokens.access_token, &tokens.session_id, true);
+}
+
+pub(crate) fn refresh_hosted_inference_for_spawn(app: &AppHandle) -> Result<(), String> {
+    let app_config = app_config_path(app).map_err(|_| HOSTED_MODEL_UNAVAILABLE.to_string())?;
+    alinery_core::ensure_hosted_inference_for_spawn(&app_config)
+}
+
+#[cfg(test)]
+pub(crate) fn refresh_hosted_inference_for_spawn_at(auth_path: &Path, app_config: &Path, accounts_url: &str, supabase_url: &str, _entitlement_base: &str) -> Result<(), String> {
+    let _ = auth_path;
+    alinery_core::ensure_hosted_inference_for_spawn_at(app_config, accounts_url, supabase_url)
 }
 
 #[tauri::command]

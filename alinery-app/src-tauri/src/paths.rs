@@ -65,11 +65,7 @@ pub(crate) fn app_config_path_for(app_config_dir: &Path, identifier: &str, launc
 /// next to the config (linear-account) live in the identifier's config dir, which is app.toml's
 /// parent for every identifier except the development one, where app.toml sits an instance deep.
 pub(crate) fn app_config_dir_of(app_config: &Path) -> Option<&Path> {
-    let dir = app_config.parent()?;
-    match dir.parent() {
-        Some(instances) if instances.file_name() == Some(OsStr::new("instances")) => instances.parent(),
-        _ => Some(dir),
-    }
+    alinery_core::app_config_dir_of(app_config)
 }
 
 pub(crate) fn app_config_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -116,11 +112,7 @@ pub(crate) fn artifacts_dir(repo: &Path, slug: &str) -> PathBuf {
 }
 
 pub(crate) fn artifact_file_path(repo: &Path, slug: &str, name: &str) -> Result<PathBuf, String> {
-    let mut parts = Path::new(name).components();
-    match (parts.next(), parts.next()) {
-        (Some(Component::Normal(_)), None) if !name.contains('\\') => Ok(artifacts_dir(repo, slug).join(name)),
-        _ => Err(format!("invalid artifact filename: {name}")),
-    }
+    alinery_core::artifact_file_path(repo, slug, name)
 }
 
 pub(crate) fn remove_file_if_exists(path: &Path) -> Result<(), String> {
@@ -135,7 +127,6 @@ pub(crate) fn ensure_repo_ready(repo: &Path) -> Result<(), String> {
     fs::create_dir_all(alinery_dir(repo)).map_err(|e| e.to_string())?;
     ensure_gitignore(repo)?;
     ensure_harnesses_toml(repo)?;
-    alinery_core::ensure_playbooks(repo)?;
     ensure_config_toml(repo)
 }
 
@@ -169,17 +160,7 @@ pub(crate) fn slugify(name: &str) -> String {
 
 // Keep task data + worktrees out of the active repo's `git status` (like `.git`).
 pub(crate) fn ensure_gitignore(repo: &Path) -> Result<(), String> {
-    let p = repo.join(".gitignore");
-    let cur = fs::read_to_string(&p).unwrap_or_default();
-    if cur.lines().any(|l| l.trim() == "/.alinery/") {
-        return Ok(());
-    }
-    let mut next = cur;
-    if !next.is_empty() && !next.ends_with('\n') {
-        next.push('\n');
-    }
-    next.push_str("/.alinery/\n");
-    fs::write(&p, next).map_err(|e| format!("write .gitignore: {e}"))
+    alinery_core::task_creation::ensure_task_data_ignored(repo)
 }
 
 pub(crate) fn file_mtime_secs(path: impl AsRef<Path>) -> Option<u64> {

@@ -1,62 +1,9 @@
 //! task: extracted from lib.rs. See AGENTS.md for the module map.
 use crate::*;
 
-// task.md is pure TOML (frontmatter only, no body in M2 — kickoff blesses this).
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub(crate) struct Task {
-    pub(crate) name: String,
-    pub(crate) slug: String,
-    // Final user-visible slug requested on the create page while this row is still a draft.
-    // The draft's own `slug` remains its stable storage key until promotion.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub(crate) requested_slug: String,
-    pub(crate) branch: String,
-    // M5: cleared to "" by remove_worktree (the worktree is gone — the UI then hides the
-    // create-session controls). Every other field survives worktree removal.
-    pub(crate) worktree: String,
-    // false when the task opted out of a dedicated worktree at creation — `worktree` then
-    // holds the main repo path instead of "" so cwd-consuming code paths are unaffected.
-    // #[serde(default = ...)] so pre-existing task.md (all of which had a real worktree)
-    // still parses.
-    #[serde(default = "default_has_worktree")]
-    pub(crate) has_worktree: bool,
-    pub(crate) created: u64,
-    #[serde(default)]
-    pub(crate) archived: bool,
-    // M5: prefilled with the forge compare URL on push, hand-editable to the real PR URL
-    // once created; shown as a clickable/copyable link. #[serde(default)] so pre-M5 task.md
-    // (no pr_url) still parses.
-    #[serde(default)]
-    pub(crate) pr_url: String,
-    // M5: the Linear identifier (e.g. "ENG-123") when a task was imported from Linear; ""
-    // for inline tasks. Import-only in v1 (no status write-back).
-    #[serde(default)]
-    pub(crate) linear_id: String,
-    // GitHub issue reference ("owner/repo#123") when imported from GitHub; "" otherwise.
-    #[serde(default)]
-    pub(crate) github_issue: String,
-    #[serde(default)]
-    pub(crate) playbook: String,
-    #[serde(default)]
-    pub(crate) auto_advance: Vec<String>,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub(crate) parent_task: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub(crate) active_subtask: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub(crate) subtask_outcome: String,
-    // M6: true while CreateTaskPage is still drafting (no worktree/session yet).
-    // #[serde(default)] so pre-M6 task.md still parses as non-draft.
-    #[serde(default)]
-    pub(crate) draft: bool,
-    // Cross-repo (or same-repo) related-task tags. Empty omitted so pre-existing task.md
-    // still parses. Pair with artifacts/related/<link> directory symlinks.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) related_tasks: Vec<alinery_core::RelatedTaskRef>,
-    // Anonymous telemetry correlation id; rationale at new_telemetry_id() in alinery-core/src/types.rs.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub(crate) telemetry_id: String,
-}
+use alinery_core::task_creation::{CreateTaskReply, CreateTaskRequest, TaskAttachment, TaskPlaybookPackage};
+pub(crate) use alinery_core::Task;
+use std::io::Read;
 
 #[derive(Serialize, Clone)]
 pub(crate) struct BoardTask {
@@ -119,29 +66,7 @@ pub(crate) fn branch_ref_conflicts(repo: &Path, candidate: &str) -> bool {
     };
     String::from_utf8_lossy(&out.stdout)
         .lines()
-        .any(|existing| existing == candidate || existing.starts_with(&format!("{candidate}/")) || candidate.starts_with(&format!("{existing}/")))
-}
-
-// Never reuse/check out an existing branch, including Git's `fix` vs `fix/...` ref collision.
-pub(crate) fn dedupe_branch_name(repo: &Path, base: &str) -> String {
-    let mut name = base.to_string();
-    let mut n = 2;
-    while branch_ref_conflicts(repo, &name) {
-        name = format!("{base}-{n}");
-        n += 1;
-    }
-    name
-}
-
-// Same idea for the worktree directory leaf name.
-pub(crate) fn dedupe_worktree_name(repo: &Path, base: &str) -> String {
-    let mut name = base.to_string();
-    let mut n = 2;
-    while worktrees_dir(repo).join(&name).exists() {
-        name = format!("{base}-{n}");
-        n += 1;
-    }
-    name
+        .any(|existing| alinery_core::branch_names_conflict(existing, candidate))
 }
 
 // Dedupe so dir, branch, and worktree path are all unique (-2, -3, …). `git
@@ -185,9 +110,6 @@ pub(crate) fn read_task_opt(repo: &Path, slug: &str) -> Result<Option<Task>, Str
 pub(crate) async fn get_task(slug: String) -> Result<Option<Task>, String> {
     read_task_opt(&active_repo()?, &slug)
 }
-pub(crate) fn write_task(repo: &Path, task: &Task) -> Result<(), String> {
-    alinery_core::with_task_mutation_lock(repo, "write task", || write_task_unlocked(repo, task))
-}
 
 pub(crate) fn write_task_unlocked(repo: &Path, task: &Task) -> Result<(), String> {
     let p = task_dir(repo, &task.slug).join("task.md");
@@ -201,464 +123,195 @@ pub(crate) fn ping(name: &str) -> String {
     format!("pong: {name}")
 }
 
-#[derive(Serialize)]
-pub(crate) struct CreateTaskResult {
-    pub(crate) task: Task,
-    pub(crate) session: SessionMeta,
-    pub(crate) attachment_errors: Vec<String>,
-}
-
-#[derive(Serialize)]
-pub(crate) struct AutoAdvanceSummary {
-    pub(crate) key: String,
-    pub(crate) title: String,
-    pub(crate) from: String,
-    pub(crate) to: String,
-    pub(crate) default_enabled: bool,
-}
-
-// Create a task: slug+dedupe, mkdir task dir, always fork a branch (`-b`), and — when
-// `use_worktree` is true — a dedicated worktree checkout too; when false, the branch is
-// checked out directly in the main repo (switching its active branch immediately).
-// `description` is the human's feature ask — the "ticket". Stashed as artifacts/00-ticket.md
-// so EVERY phase session (research-questions included) can read the original impetus from
-// {{ARTIFACTS_DIR}}/00-ticket.md, matching ticket.md. Written only if non-empty.
 #[tauri::command]
-pub(crate) async fn create_task(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    name: String,
-    task_slug: String,
-    description: String,
-    evidence: String,
-    attachments: Vec<String>,
-    linear_id: String,
-    github_issue: String,
-    playbook: String,
-    harness: String,
-    model: String,
-    auto_advance: Option<Vec<String>>,
-    use_worktree: bool,
-    branch_name: String,
-    worktree_name: String,
-    draft_slug: String,
-) -> Result<CreateTaskResult, String> {
+pub(crate) async fn create_task(state: State<'_, AppState>, request: CreateTaskRequest) -> Result<CreateTaskReply, String> {
     let repo = require_owned_active_repo(&state)?;
-    let app_config = app_config_path(&app)?;
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        create_task_in_with_draft_slug(
-            &repo,
-            Some(&app_config),
-            &draft_slug,
-            &task_slug,
-            name,
-            description,
-            evidence,
-            attachments,
-            linear_id,
-            github_issue,
-            playbook,
-            harness,
-            model,
-            auto_advance,
-            use_worktree,
-            branch_name,
-            worktree_name,
-        )
-    })
-    .await;
-    result.map_err(|e| format!("create task: {e}"))?
-}
-
-#[cfg(test)]
-pub(crate) fn create_task_in(
-    repo: &Path,
-    name: String,
-    description: String,
-    evidence: String,
-    attachments: Vec<String>,
-    linear_id: String,
-    github_issue: String,
-    playbook: String,
-    harness: String,
-    model: String,
-    auto_advance: Option<Vec<String>>,
-    use_worktree: bool,
-    branch_name: String,
-    worktree_name: String,
-) -> Result<CreateTaskResult, String> {
-    create_task_in_with_draft_slug(
-        repo,
-        None,
-        "",
-        "",
-        name,
-        description,
-        evidence,
-        attachments,
-        linear_id,
-        github_issue,
-        playbook,
-        harness,
-        model,
-        auto_advance,
-        use_worktree,
-        branch_name,
-        worktree_name,
-    )
+    let daemon = state.daemon_for(&repo).ok_or("daemon not connected")?;
+    tauri::async_runtime::spawn_blocking(move || daemon.create_task(&request))
+        .await
+        .map_err(|error| format!("create task: {error}"))?
 }
 
 #[tauri::command]
-pub(crate) async fn create_task_for_repo(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    repo_path: String,
-    name: String,
-    task_slug: String,
-    description: String,
-    evidence: String,
-    attachments: Vec<String>,
-    linear_id: String,
-    github_issue: String,
-    playbook: String,
-    harness: String,
-    model: String,
-    auto_advance: Option<Vec<String>>,
-    use_worktree: bool,
-    branch_name: String,
-    worktree_name: String,
-    draft_slug: String,
-) -> Result<CreateTaskResult, String> {
+pub(crate) async fn create_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, request: CreateTaskRequest) -> Result<CreateTaskReply, String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
-    let app_config = app_config_path(&app)?;
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        create_task_in_with_draft_slug(
-            &repo,
-            Some(&app_config),
-            &draft_slug,
-            &task_slug,
-            name,
-            description,
-            evidence,
-            attachments,
-            linear_id,
-            github_issue,
-            playbook,
-            harness,
-            model,
-            auto_advance,
-            use_worktree,
-            branch_name,
-            worktree_name,
-        )
-    })
-    .await;
-    result.map_err(|e| format!("create task: {e}"))?
+    let daemon = state.daemon_for(&repo).ok_or("daemon not connected")?;
+    tauri::async_runtime::spawn_blocking(move || daemon.create_task(&request))
+        .await
+        .map_err(|error| format!("create task: {error}"))?
 }
 
 #[tauri::command]
-pub(crate) async fn duplicate_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, source_slug: String) -> Result<CreateTaskResult, String> {
+pub(crate) async fn duplicate_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, source_slug: String) -> Result<CreateTaskReply, String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
-    let result = tauri::async_runtime::spawn_blocking(move || duplicate_task_in(&repo, &source_slug)).await;
-    result.map_err(|e| format!("duplicate task: {e}"))?
+    let daemon = state.daemon_for(&repo).ok_or("daemon not connected")?;
+    tauri::async_runtime::spawn_blocking(move || daemon.create_task(&duplicate_task_package(&repo, &source_slug)?))
+        .await
+        .map_err(|error| format!("duplicate task: {error}"))?
 }
 
-#[cfg(test)]
-pub(crate) static FAIL_DUPLICATE_AFTER_WORKTREE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-#[cfg(test)]
-pub(crate) fn duplicate_fail_key(slug: &str) -> u64 {
-    slug.bytes().fold(14695981039346656037, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(1099511628211))
-}
-
-struct DuplicateFile {
-    path: PathBuf,
-    file: fs::File,
-}
-
-struct DuplicateAttachment {
-    name: String,
-    input: DuplicateFile,
-}
-
-struct DuplicateInputs {
-    ticket: Option<DuplicateFile>,
-    attachments: Vec<DuplicateAttachment>,
-}
-
-fn open_duplicate_file(path: PathBuf, kind: &str) -> Result<DuplicateFile, String> {
-    let metadata = fs::symlink_metadata(&path).map_err(|e| format!("inspect duplicate source {kind} {}: {e}", path.display()))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(format!("duplicate source {kind} is not a regular file: {}", path.display()));
-    }
-    let file = fs::File::open(&path).map_err(|e| format!("open duplicate source {kind} {}: {e}", path.display()))?;
-    if !file
-        .metadata()
-        .map_err(|e| format!("inspect opened duplicate source {kind} {}: {e}", path.display()))?
-        .is_file()
-    {
-        return Err(format!("duplicate source {kind} is not a regular file: {}", path.display()));
-    }
-    Ok(DuplicateFile { path, file })
-}
-
-fn copy_duplicate_file(input: &mut DuplicateFile, destination: &Path, kind: &str) -> Result<(), String> {
-    let mut output = fs::File::create(destination).map_err(|e| format!("create duplicate {kind} {} from {}: {e}", destination.display(), input.path.display()))?;
-    std::io::copy(&mut input.file, &mut output).map_err(|e| format!("copy duplicate {kind} {} to {}: {e}", input.path.display(), destination.display()))?;
-    output.flush().map_err(|e| format!("flush duplicate {kind} {}: {e}", destination.display()))
-}
-
-fn read_duplicate_inputs(repo: &Path, source_slug: &str) -> Result<DuplicateInputs, String> {
-    let artifacts = artifacts_dir(repo, source_slug);
-    let ticket_path = artifacts.join("00-ticket.md");
-    let ticket = match fs::symlink_metadata(&ticket_path) {
-        Ok(_) => Some(open_duplicate_file(ticket_path, "ticket")?),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(format!("inspect duplicate source ticket {}: {e}", ticket_path.display())),
-    };
-
-    let attachments_path = alinery_core::attachments_dir(repo, source_slug);
-    let attachments = match fs::symlink_metadata(&attachments_path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![],
-        Err(e) => return Err(format!("inspect duplicate source attachments {}: {e}", attachments_path.display())),
-        Ok(metadata) => {
-            if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                return Err(format!("duplicate source attachments path is not a directory: {}", attachments_path.display()));
-            }
-            let mut inputs = vec![];
-            for entry in fs::read_dir(&attachments_path).map_err(|e| format!("read duplicate source attachments {}: {e}", attachments_path.display()))? {
-                let entry = entry.map_err(|e| format!("read duplicate source attachment entry: {e}"))?;
-                let path = entry.path();
-                let name = entry
-                    .file_name()
-                    .into_string()
-                    .ok()
-                    .and_then(|name| alinery_core::safe_component(&name).map(str::to_string))
-                    .ok_or_else(|| format!("invalid duplicate source attachment name: {}", path.display()))?;
-                inputs.push(DuplicateAttachment {
-                    name,
-                    input: open_duplicate_file(path, "attachment")?,
-                });
-            }
-            inputs.sort_by(|a, b| a.name.cmp(&b.name));
-            inputs
-        }
-    };
-    Ok(DuplicateInputs { ticket, attachments })
-}
-
-fn cleanup_failed_duplicate(repo: &Path, task_path: &Path, worktree: &Path, branch: &str, git_created: bool) -> Vec<String> {
-    let mut errors = vec![];
-    if git_created {
-        match git_cmd(repo).args(["worktree", "remove", "--force"]).arg(worktree).output() {
-            Ok(out) if out.status.success() => {}
-            Ok(out) => errors.push(format!("git worktree cleanup failed: {}", String::from_utf8_lossy(&out.stderr).trim())),
-            Err(e) => errors.push(format!("git worktree cleanup: {e}")),
-        }
-        match git_cmd(repo).args(["branch", "-D", branch]).output() {
-            Ok(out) if out.status.success() => {}
-            Ok(out) => errors.push(format!("git branch cleanup failed: {}", String::from_utf8_lossy(&out.stderr).trim())),
-            Err(e) => errors.push(format!("git branch cleanup: {e}")),
-        }
-    }
-    if task_path.exists() {
-        if let Err(e) = fs::remove_dir_all(task_path) {
-            errors.push(format!("task directory cleanup failed: {e}"));
-        }
-    }
-    errors
-}
-
-fn duplicate_generation(source: &str) -> Option<usize> {
-    let (_, suffix) = source.trim_end().rsplit_once(" D+")?;
-    if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    suffix.parse().ok()
-}
-
-fn duplicate_identity_base(source: &str, generation: Option<usize>) -> String {
-    let Some(_) = generation.filter(|generation| *generation > 0) else {
-        return source.to_string();
-    };
-
-    match source.rsplit_once('-') {
-        Some((base, suffix)) if !base.is_empty() && !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit()) => base.to_string(),
-        _ => source.to_string(),
-    }
-}
-
-fn dedupe_numbered_name(base: &str, start: usize, mut conflicts: impl FnMut(&str) -> bool) -> String {
-    let mut n = start;
-    loop {
-        let candidate = format!("{base}-{n}");
-        if !conflicts(&candidate) {
-            return candidate;
-        }
-        let Some(next) = n.checked_add(1) else {
-            return candidate;
-        };
-        n = next;
-    }
-}
-
-pub(crate) fn duplicate_task_name(source: &str) -> String {
-    if let Some(generation) = duplicate_generation(source) {
-        if let Some(next) = generation.checked_add(1) {
-            let (base, _) = source.trim_end().rsplit_once(" D+").expect("duplicate generation requires suffix");
-            return format!("{base} D+{next}");
-        }
-    }
-    format!("{} D+1", source.trim_end())
-}
-
-pub(crate) fn duplicate_task_in(repo: &Path, source_slug: &str) -> Result<CreateTaskResult, String> {
-    let source_slug = alinery_core::safe_component(source_slug).ok_or_else(|| "invalid duplicate source slug".to_string())?;
+pub(crate) fn duplicate_task_package(repo: &Path, source_slug: &str) -> Result<CreateTaskRequest, String> {
+    let source_slug = alinery_core::safe_component(source_slug).ok_or("invalid source slug")?;
     let source = read_task(repo, source_slug)?;
     if source.draft {
         return Err("draft tasks cannot be duplicated".into());
     }
-    let source_session = list_sessions_for_repo(repo, source_slug)?
-        .into_iter()
-        .filter(|session| is_original_primary_playbook_session(&source, session))
-        .min_by(|a, b| a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id)))
-        .ok_or_else(|| "source task has no original primary playbook session".to_string())?;
-    let mut inputs = read_duplicate_inputs(repo, source_slug)?;
-
-    fs::create_dir_all(tasks_dir(repo)).map_err(|e| e.to_string())?;
-    fs::create_dir_all(worktrees_dir(repo)).map_err(|e| e.to_string())?;
-    ensure_gitignore(repo)?;
-    alinery_core::ensure_playbooks(repo)?;
-
-    let generation = duplicate_generation(&source.name);
-    let next_identity_number = generation.and_then(|generation| generation.checked_add(2));
-    let slug_base = duplicate_identity_base(source_slug, generation);
-    let slug = match next_identity_number {
-        Some(start) => dedupe_numbered_name(&slug_base, start, |candidate| {
-            task_dir(repo, candidate).exists() || worktrees_dir(repo).join(candidate).exists() || branch_ref_conflicts(repo, candidate)
-        }),
-        None => unique_slug(repo, &slug_base),
-    };
-    let branch = if source.branch.trim().is_empty() {
-        slug.clone()
-    } else {
-        let branch_base = duplicate_identity_base(source.branch.trim(), generation);
-        match next_identity_number {
-            Some(start) => dedupe_numbered_name(&branch_base, start, |candidate| branch_ref_conflicts(repo, candidate)),
-            None => dedupe_branch_name(repo, &branch_base),
-        }
-    };
-    let worktree_source = source.worktree.trim().strip_suffix(std::path::MAIN_SEPARATOR).unwrap_or(source.worktree.trim());
-    let worktree_source = Path::new(worktree_source)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .and_then(alinery_core::safe_component)
-        .unwrap_or(source_slug);
-    let worktree_base = duplicate_identity_base(worktree_source, generation);
-    let worktree_leaf = match next_identity_number {
-        Some(start) => dedupe_numbered_name(&worktree_base, start, |candidate| worktrees_dir(repo).join(candidate).exists()),
-        None => dedupe_worktree_name(repo, &worktree_base),
-    };
-    let worktree = worktrees_dir(repo).join(worktree_leaf);
-    let worktree_string = worktree.to_string_lossy().to_string();
-    let destination_task_dir = task_dir(repo, &slug);
-
-    fs::create_dir(&destination_task_dir).map_err(|e| format!("create duplicate task directory: {e}"))?;
-    let mut git_created = false;
-    let result = (|| -> Result<CreateTaskResult, String> {
-        let out = git_cmd(repo)
-            .args(["worktree", "add", &worktree_string, "-b", &branch])
-            .output()
-            .map_err(|e| format!("git worktree add: {e}"))?;
-        if !out.status.success() {
-            return Err(format!("git worktree add failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
-        }
-        git_created = true;
-        #[cfg(test)]
-        if FAIL_DUPLICATE_AFTER_WORKTREE
-            .compare_exchange(duplicate_fail_key(source_slug), 0, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst)
-            .is_ok()
-        {
-            return Err("injected duplicate failure after worktree creation".into());
-        }
-
-        fs::create_dir_all(artifacts_dir(repo, &slug)).map_err(|e| format!("create duplicate artifacts: {e}"))?;
-        fs::create_dir_all(sessions_dir(repo, &slug)).map_err(|e| format!("create duplicate sessions: {e}"))?;
-        if let Some(ticket) = inputs.ticket.as_mut() {
-            copy_duplicate_file(ticket, &artifacts_dir(repo, &slug).join("00-ticket.md"), "ticket")?;
-        }
-        if !inputs.attachments.is_empty() {
-            let destination_attachments = alinery_core::attachments_dir(repo, &slug);
-            fs::create_dir_all(&destination_attachments).map_err(|e| format!("create duplicate attachments: {e}"))?;
-            for attachment in &mut inputs.attachments {
-                copy_duplicate_file(
-                    &mut attachment.input,
-                    &destination_attachments.join(&attachment.name),
-                    &format!("attachment {}", attachment.name),
-                )?;
+    if source.engine_version < 2 {
+        return Err("pre-v2 task data cannot be duplicated into executable work".into());
+    }
+    let state = alinery_core::execution::read_execution_state(repo, source_slug)?;
+    let source_definition = fs::read_to_string(alinery_core::execution::task_playbook_path(repo, source_slug)?).map_err(|error| error.to_string())?;
+    if alinery_core::execution::definition_identity(source_definition.as_bytes()) != state.definition_identity {
+        return Err("retained task definition integrity mismatch".into());
+    }
+    let dir = alinery_core::attachments_dir(repo, source_slug);
+    let original_ticket = fs::read_to_string(artifact_file_path(repo, source_slug, "00-ticket.md")?).map_err(|error| error.to_string())?;
+    let mut attachments = Vec::new();
+    match fs::symlink_metadata(&dir) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err("source attachments are not a directory".into());
             }
-        }
-
-        let task = Task {
-            name: duplicate_task_name(&source.name),
-            slug: slug.clone(),
-            requested_slug: String::new(),
-            branch: branch.clone(),
-            worktree: worktree_string.clone(),
-            has_worktree: true,
-            created: now_secs(),
-            archived: false,
-            pr_url: String::new(),
-            linear_id: source.linear_id.clone(),
-            github_issue: source.github_issue.clone(),
-            playbook: source.playbook.clone(),
-            auto_advance: source.auto_advance.clone(),
-            related_tasks: source.related_tasks.clone(),
-            parent_task: String::new(),
-            active_subtask: String::new(),
-            subtask_outcome: String::new(),
-            draft: false,
-            telemetry_id: alinery_core::new_telemetry_id(),
-        };
-        write_task(repo, &task)?;
-        let session = write_initial_session(
-            repo,
-            &task,
-            if alinery_core::is_allowed_launch_harness(&source_session.harness) {
-                InitialSessionLaunch::Preserve {
-                    harness: source_session.harness.clone(),
-                    model: if source_session.harness == alinery_core::NO_HARNESS_KEY {
-                        String::new()
-                    } else {
-                        source_session.model.clone()
-                    },
+            for entry in fs::read_dir(dir).map_err(|error| error.to_string())? {
+                let entry = entry.map_err(|error| error.to_string())?;
+                let name = entry.file_name().into_string().map_err(|_| "invalid attachment name")?;
+                let name = alinery_core::safe_component(&name).ok_or("invalid attachment name")?.to_string();
+                let metadata = fs::symlink_metadata(entry.path()).map_err(|error| error.to_string())?;
+                if metadata.file_type().is_symlink() || !metadata.is_file() {
+                    return Err(format!("attachment '{name}' is not a regular file"));
                 }
-            } else {
-                InitialSessionLaunch::Preserve {
-                    harness: alinery_core::DEFAULT_HARNESS_KEY.to_string(),
-                    model: String::new(),
-                }
-            },
-        )?;
-        Ok(CreateTaskResult {
-            task,
-            session,
-            attachment_errors: vec![],
-        })
-    })();
-
-    match result {
-        Ok(result) => Ok(result),
-        Err(primary) => {
-            let cleanup = cleanup_failed_duplicate(repo, &destination_task_dir, &worktree, &branch, git_created);
-            if cleanup.is_empty() {
-                Err(primary)
-            } else {
-                Err(format!("{primary}; cleanup failed: {}", cleanup.join("; ")))
+                attachments.push(TaskAttachment {
+                    name,
+                    bytes: fs::read(entry.path()).map_err(|error| error.to_string())?,
+                });
             }
         }
     }
+    attachments.sort_by(|left, right| left.name.cmp(&right.name));
+    let generation = source
+        .name
+        .trim_end()
+        .rsplit_once(" D+")
+        .and_then(|(base, number)| number.parse::<u64>().ok().filter(|number| *number > 0).map(|number| (base, number)));
+    let name = match generation.and_then(|(base, number)| number.checked_add(1).map(|next| (base, next))) {
+        Some((base, next)) => format!("{base} D+{next}"),
+        None => format!("{} D+1", source.name.trim_end()),
+    };
+    let identity_base = |value: &str| -> String {
+        if generation.is_some() {
+            if let Some((base, number)) = value.rsplit_once('-') {
+                if number.parse::<u64>().is_ok() {
+                    return base.to_string();
+                }
+            }
+        }
+        value.to_string()
+    };
+    let requested_slug = identity_base(&source.slug);
+    let branch_name = identity_base(&source.branch);
+    let worktree_name = Path::new(&source.worktree).file_name().and_then(|name| name.to_str()).map(identity_base);
+    Ok(CreateTaskRequest {
+        name,
+        draft_slug: None,
+        requested_slug: Some(requested_slug),
+        description: String::new(),
+        evidence: String::new(),
+        original_ticket: Some(original_ticket),
+        attachments,
+        attachment_urls: Vec::new(),
+        attachment_errors: Vec::new(),
+        linear_id: source.linear_id,
+        github_issue: source.github_issue,
+        related_tasks: source.related_tasks,
+        parent_task: String::new(),
+        playbook: TaskPlaybookPackage {
+            reference: state.reference,
+            source: source_definition,
+        },
+        branch_name: Some(branch_name),
+        worktree_name,
+        base_ref: None,
+        launch_defaults: source.launch_defaults,
+        auto_advance_steps: Some(source.auto_advance),
+        max_live_sessions: Some(source.max_live_sessions),
+        start: true,
+    })
+}
+
+#[derive(Serialize, Default)]
+pub(crate) struct PreparedTaskAttachments {
+    attachments: Vec<TaskAttachment>,
+    attachment_urls: Vec<String>,
+    attachment_errors: Vec<String>,
+}
+
+#[tauri::command]
+pub(crate) fn prepare_task_attachments(entries: Vec<String>) -> PreparedTaskAttachments {
+    let mut result = PreparedTaskAttachments::default();
+    let mut bytes = 0u64;
+    for entry in entries {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        if entry.starts_with("https://") || entry.starts_with("http://") {
+            result.attachment_urls.push(entry.to_string());
+            continue;
+        }
+        let loaded = (|| -> Result<TaskAttachment, String> {
+            let path = Path::new(entry);
+            let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
+            if !metadata.is_file() {
+                return Err("not a regular file".into());
+            }
+            if metadata.len() > MAX_ATTACHMENT_BYTES {
+                return Err("larger than 25 MB".into());
+            }
+            if metadata.len() > MAX_ATTACHMENT_SET_BYTES - bytes {
+                return Err("attachment set would exceed 100 MB".into());
+            }
+            let base = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(alinery_core::safe_component)
+                .ok_or("unusable file name")?;
+            let mut name = base.to_string();
+            let mut suffix = 2u64;
+            while result.attachments.iter().any(|attachment| attachment.name == name) {
+                let stem = Path::new(base).file_stem().and_then(|stem| stem.to_str()).ok_or("unusable file name")?;
+                name = match Path::new(base).extension().and_then(|extension| extension.to_str()) {
+                    Some(extension) => format!("{stem}-{suffix}.{extension}"),
+                    None => format!("{stem}-{suffix}"),
+                };
+                suffix = suffix.checked_add(1).ok_or("too many name collisions")?;
+            }
+            let mut content = Vec::new();
+            fs::File::open(path)
+                .map_err(|error| error.to_string())?
+                .take(MAX_ATTACHMENT_BYTES + 1)
+                .read_to_end(&mut content)
+                .map_err(|error| error.to_string())?;
+            if content.len() as u64 > MAX_ATTACHMENT_BYTES {
+                return Err("larger than 25 MB".into());
+            }
+            if content.len() as u64 > MAX_ATTACHMENT_SET_BYTES - bytes {
+                return Err("attachment set would exceed 100 MB".into());
+            }
+            Ok(TaskAttachment { name, bytes: content })
+        })();
+        match loaded {
+            Ok(attachment) => {
+                bytes += attachment.bytes.len() as u64;
+                result.attachments.push(attachment);
+            }
+            Err(error) => result.attachment_errors.push(format!("{entry} — {error}")),
+        }
+    }
+    result
 }
 
 pub(crate) const MAX_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
@@ -775,32 +428,6 @@ pub(crate) struct ChatImage {
     pub(crate) data: String,
 }
 
-fn encode_standard_base64(bytes: &[u8]) -> String {
-    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    let mut i = 0;
-    while i < bytes.len() {
-        let b0 = bytes[i];
-        let b1 = if i + 1 < bytes.len() { bytes[i + 1] } else { 0 };
-        let b2 = if i + 2 < bytes.len() { bytes[i + 2] } else { 0 };
-        let n = ((b0 as u32) << 16) | ((b1 as u32) << 8) | (b2 as u32);
-        out.push(TABLE[((n >> 18) & 0x3F) as usize] as char);
-        out.push(TABLE[((n >> 12) & 0x3F) as usize] as char);
-        if i + 1 < bytes.len() {
-            out.push(TABLE[((n >> 6) & 0x3F) as usize] as char);
-        } else {
-            out.push('=');
-        }
-        if i + 2 < bytes.len() {
-            out.push(TABLE[(n & 0x3F) as usize] as char);
-        } else {
-            out.push('=');
-        }
-        i += 3;
-    }
-    out
-}
-
 fn chat_image_mime(name: &str) -> Result<String, String> {
     let ext = Path::new(name).extension().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase());
     match ext.as_deref() {
@@ -873,290 +500,13 @@ pub(crate) fn read_chat_image_in(repo: &Path, task_slug: &str, name: &str) -> Re
     let bytes = fs::read(&path).map_err(|e| format!("{name} — {e}"))?;
     Ok(ChatImage {
         mime_type,
-        data: encode_standard_base64(&bytes),
+        data: alinery_core::rpc_chunk::encode_base64(&bytes),
     })
 }
 
 #[tauri::command]
 pub(crate) fn read_chat_image(task_slug: String, name: String) -> Result<ChatImage, String> {
     read_chat_image_in(&active_repo()?, &task_slug, &name)
-}
-
-pub(crate) fn create_task_in_with_draft_slug(
-    repo: &Path,
-    app_config: Option<&Path>,
-    draft_slug: &str,
-    task_slug: &str,
-    name: String,
-    description: String,
-    evidence: String,
-    attachments: Vec<String>,
-    linear_id: String,
-    github_issue: String,
-    playbook: String,
-    harness: String,
-    model: String,
-    auto_advance: Option<Vec<String>>,
-    use_worktree: bool,
-    branch_name: String,
-    worktree_name: String,
-) -> Result<CreateTaskResult, String> {
-    alinery_core::with_task_mutation_lock(repo, "create task", || {
-        create_task_in_with_draft_slug_unlocked(
-            repo,
-            app_config,
-            draft_slug,
-            task_slug,
-            name,
-            description,
-            evidence,
-            attachments,
-            linear_id,
-            github_issue,
-            playbook,
-            harness,
-            model,
-            auto_advance,
-            use_worktree,
-            branch_name,
-            worktree_name,
-        )
-    })
-}
-
-fn create_task_in_with_draft_slug_unlocked(
-    repo: &Path,
-    app_config: Option<&Path>,
-    draft_slug: &str,
-    task_slug: &str,
-    name: String,
-    description: String,
-    evidence: String,
-    attachments: Vec<String>,
-    linear_id: String,
-    github_issue: String,
-    playbook: String,
-    harness: String,
-    model: String,
-    auto_advance: Option<Vec<String>>,
-    use_worktree: bool,
-    branch_name: String,
-    worktree_name: String,
-) -> Result<CreateTaskResult, String> {
-    let repo = repo.to_path_buf();
-    alinery_core::ensure_playbooks(&repo)?;
-    let name = name.trim().to_string();
-    if name.is_empty() {
-        return Err("task name is empty".into());
-    }
-    fs::create_dir_all(tasks_dir(&repo)).map_err(|e| e.to_string())?;
-    fs::create_dir_all(worktrees_dir(&repo)).map_err(|e| e.to_string())?;
-    ensure_gitignore(&repo)?;
-
-    let playbook = resolve_playbook_selection(&repo, &playbook);
-
-    // The draft slug is a stable autosave key. The final task slug is separately visible/editable
-    // on the create page, so an early "Fix" autosave cannot dictate the final Git names.
-    let base_slug = slugify(&name);
-    let requested_draft = draft_slug.trim();
-    let draft_storage_slug = if requested_draft.is_empty() {
-        draft_slug_for_name(&repo, &base_slug, &name)
-    } else {
-        let requested_draft = alinery_core::safe_component(requested_draft).ok_or_else(|| "invalid draft slug".to_string())?;
-        match read_task(&repo, requested_draft) {
-            Ok(t) if is_reusable_draft(&t) => requested_draft.to_string(),
-            Ok(t) if t.draft => draft_slug_for_name(&repo, &base_slug, &name),
-            Ok(_) => return Err("draft was already created".into()),
-            Err(_) => draft_slug_for_name(&repo, &base_slug, &name),
-        }
-    };
-    let existing_draft = read_task(&repo, &draft_storage_slug).ok().filter(is_reusable_draft);
-    let requested_final_slug = if task_slug.trim().is_empty() {
-        existing_draft
-            .as_ref()
-            .map(|task| task.requested_slug.trim())
-            .filter(|slug| !slug.is_empty())
-            .unwrap_or(&base_slug)
-    } else {
-        task_slug.trim()
-    };
-    let normalized_slug = slugify(requested_final_slug);
-    if normalized_slug != requested_final_slug {
-        return Err("task slug must use lowercase letters, numbers, and single dashes".into());
-    }
-    let except = existing_draft.as_ref().map(|task| task.slug.as_str()).unwrap_or("");
-    let slug = unique_slug_except(&repo, &normalized_slug, except);
-    let moved_draft = existing_draft.as_ref().filter(|task| task.slug != slug).map(|task| task.slug.clone());
-    if let Some(old_slug) = &moved_draft {
-        fs::rename(task_dir(&repo, old_slug), task_dir(&repo, &slug)).map_err(|e| format!("rename draft {old_slug} to {slug}: {e}"))?;
-    }
-    fs::create_dir_all(sessions_dir(&repo, &slug)).map_err(|e| e.to_string())?;
-    fs::create_dir_all(artifacts_dir(&repo, &slug)).map_err(|e| e.to_string())?;
-    let rollback_task_dir = || {
-        if let Some(old_slug) = &moved_draft {
-            let _ = fs::rename(task_dir(&repo, &slug), task_dir(&repo, old_slug));
-        } else if existing_draft.is_none() {
-            let _ = fs::remove_dir_all(task_dir(&repo, &slug));
-        }
-    };
-
-    let branch_base = {
-        let b = branch_name.trim();
-        if b.is_empty() {
-            slug.clone()
-        } else {
-            b.to_string()
-        }
-    };
-    let branch = dedupe_branch_name(&repo, &branch_base);
-
-    let worktree_str = if use_worktree {
-        let worktree_base = {
-            let w = worktree_name.trim();
-            if w.is_empty() {
-                slug.clone()
-            } else {
-                w.to_string()
-            }
-        };
-        let worktree_leaf = alinery_core::safe_component(&worktree_base).ok_or_else(|| "invalid worktree name".to_string())?.to_string();
-        let worktree_leaf = dedupe_worktree_name(&repo, &worktree_leaf);
-        let worktree = worktrees_dir(&repo).join(&worktree_leaf);
-        let worktree_str = worktree.to_string_lossy().to_string();
-
-        let out = git_cmd(&repo)
-            .args(["worktree", "add", &worktree_str, "-b", &branch])
-            .output()
-            .map_err(|e| format!("git worktree add: {e}"))?;
-        if !out.status.success() {
-            rollback_task_dir();
-            return Err(format!("git worktree add failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
-        }
-        worktree_str
-    } else {
-        // No dedicated worktree: fork the branch directly in the main repo, switching its
-        // active branch immediately. `-b` never touches the working tree, so any uncommitted
-        // state in the main repo rides along safely regardless of dirtiness.
-        let out = git_cmd(&repo).args(["checkout", "-b", &branch]).output().map_err(|e| format!("git checkout: {e}"))?;
-        if !out.status.success() {
-            rollback_task_dir();
-            return Err(format!("git checkout failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
-        }
-        repo.to_string_lossy().to_string()
-    };
-
-    let (urls, copied, attachment_errors) = copy_task_attachments(&repo, &slug, &attachments);
-    let ticket = alinery_core::compose_ticket(&name, &description, &evidence, &urls, &copied, &attachment_errors);
-    if !ticket.is_empty() {
-        fs::write(artifacts_dir(&repo, &slug).join("00-ticket.md"), ticket).map_err(|e| e.to_string())?;
-    }
-
-    let task = Task {
-        name,
-        slug: slug.clone(),
-        requested_slug: String::new(),
-        branch,
-        worktree: worktree_str.clone(),
-        has_worktree: use_worktree,
-        created: existing_draft.as_ref().map(|task| task.created).unwrap_or_else(now_secs),
-        archived: false,
-        pr_url: String::new(),
-        linear_id: linear_id.trim().to_string(),
-        github_issue: github_issue.trim().to_string(),
-        playbook: playbook.clone(),
-        auto_advance: auto_advance.unwrap_or_else(|| default_auto_advance_for_playbook(&repo, &playbook)),
-        related_tasks: Vec::new(),
-        parent_task: String::new(),
-        active_subtask: String::new(),
-        subtask_outcome: String::new(),
-        draft: false,
-        telemetry_id: existing_draft
-            .as_ref()
-            .map(|task| task.telemetry_id.clone())
-            .filter(|id| !id.is_empty())
-            .unwrap_or_else(alinery_core::new_telemetry_id),
-    };
-    write_task_unlocked(&repo, &task)?;
-
-    let session = write_initial_session(&repo, &task, InitialSessionLaunch::Resolve { harness, model })?;
-    if let Some(path) = app_config {
-        emit_at(
-            path,
-            alinery_core::TelemetryEvent::TaskCreate {
-                source: alinery_core::TelemetrySource::App,
-                has_attachments: !copied.is_empty(),
-                has_worktree: use_worktree,
-                from_draft: existing_draft.is_some(),
-                playbook: task.playbook.clone(),
-                has_linear: !task.linear_id.is_empty(),
-                has_github: !task.github_issue.is_empty(),
-                task_id: task.telemetry_id.clone(),
-            },
-        );
-        emit_at(
-            path,
-            alinery_core::TelemetryEvent::SessionCreate {
-                source: alinery_core::TelemetrySource::App,
-                harness: session.harness.clone(),
-                phase: session.phase.clone(),
-                generic: session.generic,
-                drawer: false,
-                is_resume: false,
-                session_id: session.telemetry_id.clone(),
-                task_id: task.telemetry_id.clone(),
-            },
-        );
-    }
-    Ok(CreateTaskResult { task, session, attachment_errors })
-}
-
-enum InitialSessionLaunch {
-    Resolve { harness: String, model: String },
-    Preserve { harness: String, model: String },
-}
-
-fn write_initial_session(repo: &Path, task: &Task, launch: InitialSessionLaunch) -> Result<SessionMeta, String> {
-    let playbook = task.playbook.clone();
-    let wf = alinery_core::get_playbook(repo, &playbook).unwrap_or_else(|| alinery_core::default_playbook(repo));
-    let phase = if wf.kind == "freeform" {
-        String::new()
-    } else {
-        first_step_for_playbook(repo, &playbook)
-    };
-    let (resolved_harness, resolved_model) = match launch {
-        InitialSessionLaunch::Preserve { harness, model } => (harness, model),
-        InitialSessionLaunch::Resolve { harness, model } => {
-            let mut resolved_harness = harness.trim().to_string();
-            if resolved_harness.is_empty() || !alinery_core::is_allowed_launch_harness(&resolved_harness) || resolved_harness == alinery_core::NO_HARNESS_KEY {
-                resolved_harness = alinery_core::DEFAULT_HARNESS_KEY.to_string();
-            }
-            (resolved_harness, model)
-        }
-    };
-    if !alinery_core::is_allowed_launch_harness(&resolved_harness) {
-        return Err(format!("unknown harness '{resolved_harness}'"));
-    }
-    if let Some(app_config) = alinery_core::app_config_toml_path() {
-        alinery_core::resolve_harness_strict_for(&app_config, repo, &resolved_harness)?;
-    }
-    let id = format!("s{}", SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
-    let session = SessionMeta {
-        id: id.clone(),
-        worktree: task.worktree.clone(),
-        created: now_secs(),
-        archived: false,
-        phase,
-        harness: resolved_harness,
-        model: resolved_model,
-        playbook,
-        telemetry_id: alinery_core::new_telemetry_id(),
-        ..Default::default()
-    };
-    write_meta_atomic(
-        &sessions_dir(repo, &task.slug).join(format!("{id}.meta.json")),
-        &serde_json::to_value(&session).map_err(|e| e.to_string())?,
-    )?;
-    Ok(session)
 }
 
 // Archived drafts require explicit restore. Autosave and create must treat their slugs as occupied.
@@ -1198,44 +548,6 @@ pub(crate) fn draft_slug_for_name(repo: &Path, base: &str, name: &str) -> String
     }
 }
 
-// M6: persist a draft task.md (no worktree, no sessions). Same name → same slug even
-// when the natural slug is already a real task; never creates git worktrees.
-#[cfg(test)]
-pub(crate) fn write_draft_in(
-    repo: &Path,
-    name: String,
-    description: String,
-    evidence: String,
-    linear_id: String,
-    github_issue: String,
-    playbook: String,
-    harness: String,
-    model: String,
-    auto_advance: Option<Vec<String>>,
-    use_worktree: bool,
-    branch_name: String,
-    worktree_name: String,
-) -> Result<Task, String> {
-    write_draft_in_with_slug(
-        repo,
-        None,
-        "",
-        "",
-        name,
-        description,
-        evidence,
-        linear_id,
-        github_issue,
-        playbook,
-        harness,
-        model,
-        auto_advance,
-        use_worktree,
-        branch_name,
-        worktree_name,
-    )
-}
-
 pub(crate) fn write_draft_in_with_slug(
     repo: &Path,
     app_config: Option<&Path>,
@@ -1246,11 +558,11 @@ pub(crate) fn write_draft_in_with_slug(
     evidence: String,
     linear_id: String,
     github_issue: String,
-    playbook: String,
+    playbook: alinery_core::playbook::PlaybookRef,
     harness: String,
     model: String,
     auto_advance: Option<Vec<String>>,
-    use_worktree: bool,
+    max_live_sessions: u32,
     branch_name: String,
     worktree_name: String,
 ) -> Result<Task, String> {
@@ -1269,7 +581,7 @@ pub(crate) fn write_draft_in_with_slug(
             harness,
             model,
             auto_advance,
-            use_worktree,
+            max_live_sessions,
             branch_name,
             worktree_name,
         )
@@ -1286,14 +598,17 @@ fn write_draft_in_with_slug_unlocked(
     evidence: String,
     linear_id: String,
     github_issue: String,
-    playbook: String,
-    _harness: String,
-    _model: String,
+    playbook: alinery_core::playbook::PlaybookRef,
+    harness: String,
+    model: String,
     auto_advance: Option<Vec<String>>,
-    use_worktree: bool,
+    max_live_sessions: u32,
     branch_name: String,
     worktree_name: String,
 ) -> Result<Task, String> {
+    if max_live_sessions == 0 {
+        return Err("maximum live sessions must be positive".into());
+    }
     let name = name.trim().to_string();
     if name.is_empty() {
         return Err("task name is empty".into());
@@ -1309,16 +624,14 @@ fn write_draft_in_with_slug_unlocked(
         let requested_draft = alinery_core::safe_component(requested_draft).ok_or_else(|| "invalid draft slug".to_string())?;
         match read_task(repo, requested_draft) {
             Ok(t) if is_reusable_draft(&t) => requested_draft.to_string(),
-            Ok(t) if t.draft => draft_slug_for_name(repo, &base, &name),
-            Ok(t) => return Ok(t),
-            Err(_) => draft_slug_for_name(repo, &base, &name),
+            Ok(_) => return Err("draft is archived or has already been promoted".into()),
+            Err(error) => return Err(error),
         }
     };
 
     fs::create_dir_all(tasks_dir(repo)).map_err(|e| e.to_string())?;
     fs::create_dir_all(task_dir(repo, &slug)).map_err(|e| e.to_string())?;
 
-    let playbook = resolve_playbook_selection(repo, &playbook);
     let previous = read_task(repo, &slug).ok();
     let requested_slug = if task_slug.trim().is_empty() {
         previous
@@ -1335,23 +648,25 @@ fn write_draft_in_with_slug_unlocked(
     };
     let created = previous.as_ref().map(|t| t.created).unwrap_or_else(now_secs);
     let branch = branch_name.trim().to_string();
-    // Drafts never materialize a worktree path; when use_worktree is on, stash the intended
-    // folder name so reopen can restore it. When off, leave empty (matches create-time empty).
-    let worktree = if use_worktree { worktree_name.trim().to_string() } else { String::new() };
+    let worktree = worktree_name.trim().to_string();
     let task = Task {
         name: name.clone(),
         slug: slug.clone(),
         requested_slug,
         branch,
         worktree,
-        has_worktree: use_worktree,
+        has_worktree: true,
         created,
         archived: false,
         pr_url: String::new(),
         linear_id: linear_id.trim().to_string(),
         github_issue: github_issue.trim().to_string(),
-        playbook: playbook.clone(),
-        auto_advance: auto_advance.unwrap_or_else(|| default_auto_advance_for_playbook(repo, &playbook)),
+        playbook: String::new(),
+        playbook_ref: Some(playbook.clone()),
+        engine_version: 0,
+        max_live_sessions,
+        launch_defaults: alinery_core::execution::LaunchChoices { harness, model },
+        auto_advance: auto_advance.unwrap_or_default(),
         draft: true,
         parent_task: String::new(),
         active_subtask: String::new(),
@@ -1370,8 +685,8 @@ fn write_draft_in_with_slug_unlocked(
                 path,
                 alinery_core::TelemetryEvent::TaskDraftCreate {
                     source: alinery_core::TelemetrySource::App,
-                    has_worktree: use_worktree,
-                    playbook: task.playbook.clone(),
+                    has_worktree: true,
+                    playbook: playbook.key,
                     task_id: task.telemetry_id.clone(),
                 },
             );
@@ -1396,11 +711,11 @@ pub(crate) fn write_draft(
     evidence: String,
     linear_id: String,
     github_issue: String,
-    playbook: String,
+    playbook: alinery_core::playbook::PlaybookRef,
     harness: String,
     model: String,
     auto_advance: Option<Vec<String>>,
-    use_worktree: bool,
+    max_live_sessions: u32,
     branch_name: String,
     worktree_name: String,
     draft_slug: String,
@@ -1420,7 +735,7 @@ pub(crate) fn write_draft(
         harness,
         model,
         auto_advance,
-        use_worktree,
+        max_live_sessions,
         branch_name,
         worktree_name,
     )
@@ -1437,11 +752,11 @@ pub(crate) fn write_draft_for_repo(
     evidence: String,
     linear_id: String,
     github_issue: String,
-    playbook: String,
+    playbook: alinery_core::playbook::PlaybookRef,
     harness: String,
     model: String,
     auto_advance: Option<Vec<String>>,
-    use_worktree: bool,
+    max_live_sessions: u32,
     branch_name: String,
     worktree_name: String,
     draft_slug: String,
@@ -1462,7 +777,7 @@ pub(crate) fn write_draft_for_repo(
         harness,
         model,
         auto_advance,
-        use_worktree,
+        max_live_sessions,
         branch_name,
         worktree_name,
     )
@@ -1511,16 +826,13 @@ pub(crate) fn list_tasks_for_repo(repo: &Path) -> Result<Vec<Task>, String> {
         return Ok(vec![]);
     }
     let mut tasks = vec![];
-    for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
-        let Ok(entry) = entry else { continue };
+    for entry in fs::read_dir(&dir).map_err(|error| format!("read {}: {error}", dir.display()))? {
+        let entry = entry.map_err(|error| format!("read {}: {error}", dir.display()))?;
         if !entry.path().join("task.md").exists() {
             continue;
         }
         if let Some(slug) = entry.file_name().to_str() {
-            match read_task(repo, slug) {
-                Ok(t) => tasks.push(t),
-                Err(e) => eprintln!("skip task {slug}: {e}"),
-            }
+            tasks.push(read_task(repo, slug).map_err(|error| format!("task {}: {error}", entry.path().display()))?);
         }
     }
     tasks.sort_by_key(|t| t.created);
@@ -1534,30 +846,26 @@ pub(crate) async fn list_tasks() -> Result<Vec<Task>, String> {
     list_tasks_for_repo(&repo)
 }
 
-fn is_original_primary_playbook_session(task: &Task, session: &SessionMeta) -> bool {
-    if session.generic {
-        return false;
+pub(crate) fn retained_task_definition(repo: &Path, task: &Task) -> Result<Option<alinery_core::playbook::NormalizedPlaybook>, String> {
+    if task.draft || task.engine_version < 2 {
+        return Ok(None);
     }
-    let task_playbook = playbook_key_for_task(task);
-    let session_playbook = if session.playbook.trim().is_empty() {
-        task_playbook.as_str()
-    } else {
-        session.playbook.trim()
+    // Display uses the task-owned snapshot, never a live owner or the mutable library.
+    // The shared reader checks both the stored state and the retained source's integrity.
+    let read = || {
+        let execution = alinery_core::execution::read_execution_state(repo, &task.slug)?;
+        alinery_core::execution::read_task_playbook(repo, &task.slug, &execution)
     };
-    session_playbook == task_playbook
+    read().map(Some).map_err(|error| format!("task {}: {error}", task_dir(repo, &task.slug).display()))
 }
 
-pub(crate) fn is_primary_playbook_session(repo: &Path, task: &Task, session: &SessionMeta) -> bool {
-    if session.generic {
-        return false;
-    }
-    let task_playbook = playbook_key_for_task(task);
-    let session_playbook = if session.playbook.trim().is_empty() {
-        task_playbook.as_str()
-    } else {
-        session.playbook.trim()
-    };
-    session_playbook == task_playbook && playbook_step_exists(repo, &task_playbook, &session.phase)
+pub(crate) fn is_primary_playbook_session(_repo: &Path, task: &Task, session: &SessionMeta) -> bool {
+    !session.generic
+        && if task.engine_version >= 2 {
+            !session.execution_id.is_empty()
+        } else {
+            session.playbook == task.playbook
+        }
 }
 
 pub(crate) fn task_updated_at(repo: &Path, task: &Task, sessions: &[SessionMeta]) -> u64 {
@@ -1577,67 +885,46 @@ pub(crate) fn task_updated_at(repo: &Path, task: &Task, sessions: &[SessionMeta]
     updated
 }
 
-pub(crate) fn board_task(repo: &Path, repo_path: &str, task: Task) -> BoardTask {
-    let sessions = list_sessions_for_repo(repo, &task.slug).unwrap_or_default();
-    let live: Vec<&SessionMeta> = sessions.iter().filter(|s| !s.archived).collect();
-    let playbook_live: Vec<&SessionMeta> = sessions.iter().filter(|s| !s.archived && is_primary_playbook_session(repo, &task, s)).collect();
-    let current_phase = playbook_live.last().map(|s| s.phase.clone()).unwrap_or_default();
-    let playbook = playbook_key_for_task(&task);
-    let playbook_label = playbook_title(repo, &playbook);
+pub(crate) fn board_task(repo: &Path, repo_path: &str, task: Task) -> Result<BoardTask, String> {
+    let definition = retained_task_definition(repo, &task)?;
+    let sessions = list_sessions_for_repo(repo, &task.slug)?;
+    let live: Vec<&SessionMeta> = sessions.iter().filter(|session| !session.archived).collect();
+    let current_phase = live
+        .iter()
+        .rev()
+        .find(|session| is_primary_playbook_session(repo, &task, session))
+        .map(|session| session.phase.clone())
+        .unwrap_or_default();
+    let title = |phase: &str| {
+        definition
+            .as_ref()
+            .and_then(|definition| definition.step.iter().find(|step| step.key == phase))
+            .map(|step| step.title.clone())
+            .unwrap_or_else(|| phase.to_string())
+    };
+    let current_step_title = title(&current_phase);
+    let latest_session_title = if task.draft {
+        "Draft".into()
+    } else {
+        live.last()
+            .map(|session| if session.generic { "Generic".into() } else { title(&session.phase) })
+            .unwrap_or_else(|| "No sessions".into())
+    };
     let updated = task_updated_at(repo, &task, &sessions);
-    let (latest_session_title, latest_session_column_key) = if task.draft {
-        ("Draft".into(), String::new())
-    } else if let Some(session) = live.last() {
-        if session.generic {
-            ("Generic".into(), String::new())
-        } else {
-            let session_playbook = if session.playbook.trim().is_empty() { &playbook } else { &session.playbook };
-            let session_step = if session.phase.trim().is_empty() {
-                "No step".into()
-            } else {
-                step_title(repo, session_playbook, &session.phase)
-            };
-            let column_key = if playbook_step_exists(repo, session_playbook, &session.phase) {
-                column_for_phase(repo, session_playbook, &session.phase).0
-            } else {
-                String::new()
-            };
-            (session_step, column_key)
-        }
-    } else {
-        ("No sessions".into(), String::new())
-    };
-    let (current_column_key, current_column_title) = if task.draft {
-        // Drafts always sit in Research & Design regardless of any sessions.
-        ("research-design".into(), "Research & Design".into())
-    } else if current_phase.is_empty() {
-        column_for_phase(repo, &playbook, "")
-    } else if playbook_step_exists(repo, &playbook, &current_phase) {
-        column_for_phase(repo, &playbook, &current_phase)
-    } else {
-        ("other".into(), "Other".into())
-    };
-    let current_step_title = if task.draft {
-        String::new()
-    } else if current_phase.is_empty() {
-        let first = first_step_for_playbook(repo, &playbook);
-        step_title(repo, &playbook, &first)
-    } else {
-        step_title(repo, &playbook, &current_phase)
-    };
-    BoardTask {
+    let playbook_title = definition.as_ref().map(|definition| definition.title.clone()).unwrap_or_else(|| task.playbook.clone());
+    Ok(BoardTask {
         task,
-        repo_path: repo_path.to_string(),
+        repo_path: repo_path.into(),
         session_count: live.len(),
-        playbook_title: playbook_label,
+        playbook_title,
         updated,
         current_phase,
         current_step_title,
         latest_session_title,
-        latest_session_column_key,
-        current_column_key,
-        current_column_title,
-    }
+        latest_session_column_key: String::new(),
+        current_column_key: String::new(),
+        current_column_title: String::new(),
+    })
 }
 
 fn board_tasks_from_loaded(repo: &Path, repo_path: &str, tasks: Vec<Task>) -> Result<Vec<BoardTask>, String> {
@@ -1646,7 +933,7 @@ fn board_tasks_from_loaded(repo: &Path, repo_path: &str, tasks: Vec<Task>) -> Re
             .iter()
             .map(|task| (task.slug.as_str(), task.parent_task.as_str(), task.active_subtask.as_str(), task.archived)),
     )?;
-    Ok(tasks.into_iter().map(|task| board_task(repo, repo_path, task)).collect())
+    tasks.into_iter().map(|task| board_task(repo, repo_path, task)).collect()
 }
 
 #[cfg(test)]
@@ -1664,10 +951,7 @@ pub(crate) async fn list_board_tasks(app: AppHandle, all_repos: bool) -> Result<
     let mut out = vec![];
     for repo_path in dedupe_known_repos(repos) {
         let repo = PathBuf::from(&repo_path);
-        match list_tasks_for_repo(&repo) {
-            Ok(tasks) => out.extend(board_tasks_from_loaded(&repo, &repo_path, tasks)?),
-            Err(error) => eprintln!("skip repo {repo_path}: {error}"),
-        }
+        out.extend(board_tasks_from_loaded(&repo, &repo_path, list_tasks_for_repo(&repo)?)?);
     }
     out.sort_by_key(|task| task.task.created);
     Ok(out)
@@ -1675,7 +959,8 @@ pub(crate) async fn list_board_tasks(app: AppHandle, all_repos: bool) -> Result<
 
 #[tauri::command]
 pub(crate) async fn list_task_activity(app: AppHandle, refs: Vec<TaskActivityRef>) -> HashMap<String, TaskActivitySummary> {
-    let app_config_identity = app_config_path(&app).ok().map(|path| alinery_core::app_config_identity(&path));
+    let app_config = app_config_path(&app).ok();
+    let app_config_identity = app_config.as_ref().map(|path| alinery_core::app_config_identity(path));
     list_task_activity_for_refs(&refs, app_config_identity.as_deref())
 }
 
@@ -1687,41 +972,49 @@ pub(crate) fn restore_task_in(repo: &Path, slug: &str) -> Result<(), String> {
     alinery_core::restore_task(repo, slug)
 }
 
-// Archive flips a flag; the worktree and branch are untouched (removal is M5).
-#[tauri::command]
-pub(crate) fn archive_task(app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<(), String> {
-    let repo = require_owned_active_repo(&state)?;
-    alinery_core::ensure_task_can_archive(&repo, &slug)?;
+async fn archive_task_off_thread(app: &AppHandle, repo: PathBuf, slug: String) -> Result<(), String> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        alinery_core::ensure_task_can_archive(&repo, &slug)?;
+        Ok::<_, String>((repo, slug))
+    })
+    .await;
+    let (repo, slug) = result.map_err(|e| format!("archive eligibility task: {e}"))??;
     // Publish before the flag flips so a crash mid-archive still has a shot at the
     // pre-archive state. Best-effort: backup failure never blocks archival.
-    publish_auto_backup(&app, &repo, alinery_core::BackupTrigger::PreArchive);
-    archive_task_in(&repo, &slug)?;
-    emit_with(&app, || alinery_core::TelemetryEvent::TaskArchive {
+    publish_auto_backup(app, &repo, alinery_core::BackupTrigger::PreArchive);
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        archive_task_in(&repo, &slug)?;
+        Ok::<_, String>((repo, slug))
+    })
+    .await;
+    let (repo, slug) = result.map_err(|e| format!("archive task: {e}"))??;
+    emit_with(app, || alinery_core::TelemetryEvent::TaskArchive {
         source: alinery_core::TelemetrySource::App,
         task_id: alinery_core::telemetry_id_for_task(&repo, &slug),
     });
     Ok(())
 }
 
+// Archive flips a flag; the worktree and branch are untouched (removal is M5).
 #[tauri::command]
-pub(crate) fn archive_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    alinery_core::ensure_task_can_archive(&repo, &slug)?;
-    publish_auto_backup(&app, &repo, alinery_core::BackupTrigger::PreArchive);
-    archive_task_in(&repo, &slug)?;
-    emit_with(&app, || alinery_core::TelemetryEvent::TaskArchive {
-        source: alinery_core::TelemetrySource::App,
-        task_id: alinery_core::telemetry_id_for_task(&repo, &slug),
-    });
-    Ok(())
+pub(crate) async fn archive_task(app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<(), String> {
+    let repo = require_owned_active_repo(&state)?;
+    archive_task_off_thread(&app, repo, slug).await
 }
 
 #[tauri::command]
-pub(crate) fn restore_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
+pub(crate) async fn archive_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
-    restore_task_in(&repo, &slug)
+    archive_task_off_thread(&app, repo, slug).await
+}
+
+#[tauri::command]
+pub(crate) async fn restore_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
+    let repo = target_repo_for_app(&app, &repo_path)?;
+    require_repo_owned(&state, &repo)?;
+    let result = tauri::async_runtime::spawn_blocking(move || restore_task_in(&repo, &slug)).await;
+    result.map_err(|e| format!("restore task: {e}"))?
 }
 
 pub(crate) fn set_related_tasks_in(repo: &Path, slug: String, related: Vec<alinery_core::RelatedTaskRef>) -> Result<Task, String> {

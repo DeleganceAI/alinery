@@ -143,7 +143,6 @@ message_adapter = "omp_bracketed_paste"
                 worktree: self.root.to_string_lossy().into_owned(),
                 has_worktree: true,
                 created: 1,
-                playbook: "superdevelop".into(),
                 ..Default::default()
             };
             fs::write(task_dir.join("task.md"), toml::to_string(&task).unwrap()).unwrap();
@@ -152,9 +151,10 @@ message_adapter = "omp_bracketed_paste"
             id: id.into(),
             worktree: self.root.to_string_lossy().into_owned(),
             created: 1,
-            phase: "".into(),
+            // Message framing exercises an auxiliary PTY, not a graph execution.
+            generic: true,
+            prompt: Some(String::new()),
             harness: harness.into(),
-            playbook: "superdevelop".into(),
             ..Default::default()
         };
         fs::write(task_dir.join("sessions").join(format!("{id}.meta.json")), serde_json::to_vec(&meta).unwrap()).unwrap();
@@ -208,7 +208,7 @@ message_adapter = "omp_bracketed_paste"
     fn event(&self, id: &str, event: Value) {
         let response = self.rpc(json!({
             "op": "event",
-            "version": 1,
+            "version": alinery_core::RUNNER_EVENT_PROTOCOL_VERSION,
             "session_id": id,
             "token": self.token_for(id),
             "event": event
