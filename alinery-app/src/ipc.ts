@@ -364,8 +364,8 @@ export const validatePlaybookSource = (source: string) => invoke<PlaybookValidat
 export const renderPlaybookSource = (definition: NormalizedPlaybook) => invoke<string>("render_playbook_source", { definition });
 export const savePlaybookSource = (request: SavePlaybookRequest, repoPath?: string) => invoke<ScopedPlaybook>("save_playbook_source", { request, repoPath });
 export const deletePlaybookSource = (reference: PlaybookRef, repoPath?: string) => invoke<void>("delete_playbook_source", { reference, repoPath });
-export const readPlaybookPickerPreferences = () => invoke<PickerPreferences>("read_playbook_picker_preferences");
-export const savePlaybookPickerPreferences = (preferences: PickerPreferences) => invoke<void>("save_playbook_picker_preferences", { preferences });
+export const readPlaybookPickerPreferences = (repoPath?: string) => invoke<PickerPreferences>("read_playbook_picker_preferences", { repoPath });
+export const savePlaybookPickerPreferences = (preferences: PickerPreferences, repoPath?: string) => invoke<void>("save_playbook_picker_preferences", { preferences, repoPath });
 
 // ── update.rs ─────────────────────────────────────────────────────────
 export const checkUpdate = () => invoke<UpdateStatus>("check_update");

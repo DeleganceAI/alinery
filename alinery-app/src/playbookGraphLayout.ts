@@ -7,6 +7,42 @@ interface Connection {
   label?: string;
 }
 
+/** Keep only essential DAG ordering pairs; cyclic graphs retain every original connection. */
+export function reduceFlowConnections<T extends { from: string; to: string }>(connections: T[]): T[] {
+  const unique = new Map<string, T>();
+  const outgoing = new Map<string, T[]>();
+  for (const connection of connections) {
+    const pair = JSON.stringify([connection.from, connection.to]);
+    if (unique.has(pair)) continue;
+    unique.set(pair, connection);
+    const links = outgoing.get(connection.from);
+    if (links) links.push(connection);
+    else outgoing.set(connection.from, [connection]);
+  }
+
+  const visiting = new Set<string>();
+  const descendants = new Map<string, Set<string>>();
+  const visit = (key: string): boolean => {
+    if (visiting.has(key)) return false;
+    if (descendants.has(key)) return true;
+    visiting.add(key);
+    const reachable = new Set<string>();
+    for (const link of outgoing.get(key) ?? []) {
+      if (!visit(link.to)) return false;
+      reachable.add(link.to);
+      for (const descendant of descendants.get(link.to) ?? []) reachable.add(descendant);
+    }
+    visiting.delete(key);
+    descendants.set(key, reachable);
+    return true;
+  };
+  for (const key of outgoing.keys()) {
+    if (!visit(key)) return connections;
+  }
+
+  return [...unique.values()].filter((connection) => !outgoing.get(connection.from)?.some((other) => descendants.get(other.to)?.has(connection.to)));
+}
+
 export interface DefinitionGraphLayout {
   nodes: { key: string; id: string; instance: number | null; x: number; y: number }[];
   edges: {

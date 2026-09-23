@@ -1,5 +1,6 @@
+import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
-import { type DefinitionGraphLayout, GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH, layoutDefinitionGraph } from "./playbookGraphLayout";
+import { type DefinitionGraphLayout, GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH, layoutDefinitionGraph, reduceFlowConnections } from "./playbookGraphLayout";
 
 type Rectangle = { x: number; y: number; width: number; height: number };
 
@@ -122,4 +123,123 @@ it("keeps numerous bypass labels, feedback, self-loops and disconnected nodes bo
     expect(byKey[stages[index]].y).toBeGreaterThan(byKey[stages[index - 1]].y);
   }
   expectBounded(layout);
+});
+
+it("reduces the bundled PRIMED artifact graph from fifteen links to five regardless of source order", () => {
+  // Read the bundled fixture's inline TOML fields, not a second hand-maintained definition.
+  const frontmatter = readFileSync("src-tauri/playbooks/primed-feature-development/playbook.md", "utf8").split("+++")[1];
+  const steps = frontmatter
+    .split("[[step]]")
+    .slice(1)
+    .map((block) => {
+      const paths = (field: string) => Array.from((block.match(new RegExp(`^${field} = (.+)$`, "m"))?.[1] ?? "").matchAll(/path = "([^"]+)"/g), (match) => match[1]);
+      const key = block.match(/^key = "([^"]+)"$/m)?.[1];
+      if (!key) throw new Error("Bundled PRIMED step is missing its key");
+      return { key, inputs: paths("inputs"), outputs: paths("outputs") };
+    });
+  const connectionsFor = (ordered: typeof steps) =>
+    ordered.flatMap((from) => ordered.flatMap((to) => from.outputs.filter((path) => to.inputs.includes(path)).map((label) => ({ from: from.key, to: to.key, label }))));
+  const connections = connectionsFor(steps);
+  const expected = [
+    ["probe-the-question", "research-the-problem"],
+    ["research-the-problem", "identify-the-direction"],
+    ["identify-the-direction", "map-the-plan"],
+    ["map-the-plan", "establish-the-test-contract"],
+    ["establish-the-test-contract", "develop-the-change"],
+  ];
+  expect(connections).toHaveLength(15);
+  expect(reduceFlowConnections(connections).map(({ from, to }) => [from, to])).toEqual(expected);
+  const shuffled = connectionsFor([steps[4], steps[1], steps[5], steps[0], steps[3], steps[2]]);
+  expect(
+    reduceFlowConnections(shuffled)
+      .map(({ from, to }) => [from, to])
+      .sort(),
+  ).toEqual([...expected].sort());
+});
+
+it("preserves both diamond branches and disconnected components while removing a transitive shortcut", () => {
+  const connections = [
+    { from: "root", to: "join" },
+    { from: "right", to: "join" },
+    { from: "root", to: "left" },
+    { from: "left", to: "join" },
+    { from: "root", to: "right" },
+    { from: "separate", to: "leaf" },
+  ];
+  const reduced = reduceFlowConnections(connections);
+  expect(reduced).toEqual(connections.slice(1));
+  const layout = layoutDefinitionGraph(["join", "right", "isolated", "leaf", "root", "left", "separate"], reduced);
+  const byKey = Object.fromEntries(layout.nodes.map((node) => [node.key, node]));
+  expect(byKey.left.y).toBe(byKey.right.y);
+  expect(byKey.root.y).toBeLessThan(byKey.left.y);
+  expect(byKey.join.y).toBeGreaterThan(byKey.left.y);
+  expect(byKey.separate.y).toBeLessThan(byKey.leaf.y);
+  expect(byKey.isolated.instance).toBeNull();
+  expectBounded(layout);
+});
+
+it("deduplicates ordering pairs without changing retained connection objects or artifact metadata", () => {
+  const connections = [
+    { from: "a", to: "b", label: "first.md", artifact: { required: true } },
+    { from: "a", to: "b", label: "second.md", artifact: { required: false } },
+    { from: "a", to: "c", label: "first.md", artifact: { required: true } },
+    { from: "b", to: "c", label: "first.md", artifact: { required: false } },
+  ];
+  const original = structuredClone(connections);
+  for (const connection of connections) {
+    Object.freeze(connection.artifact);
+    Object.freeze(connection);
+  }
+  Object.freeze(connections);
+  const reduced = reduceFlowConnections(connections);
+  expect(reduced).toEqual([connections[0], connections[3]]);
+  expect(reduced[0]).toBe(connections[0]);
+  expect(reduced[1]).toBe(connections[3]);
+  expect(connections).toEqual(original);
+});
+
+it.each([
+  { name: "return edge", cycle: [{ from: "c", to: "a", label: "return.md" }] },
+  { name: "two-node cycle", cycle: [{ from: "b", to: "a", label: "return.md" }] },
+  { name: "self-loop", cycle: [{ from: "b", to: "b", label: "revise.md" }] },
+  {
+    name: "disconnected cycle",
+    cycle: [
+      { from: "x", to: "y", label: "out.md" },
+      { from: "y", to: "x", label: "back.md" },
+    ],
+  },
+])("retains every original connection when there is a $name", ({ cycle }) => {
+  const connections = [
+    { from: "a", to: "b", label: "first.md" },
+    { from: "b", to: "c", label: "second.md" },
+    { from: "a", to: "c", label: "shortcut.md" },
+    { from: "a", to: "b", label: "duplicate.md" },
+    ...cycle,
+  ];
+  expect(reduceFlowConnections(connections)).toEqual(connections);
+});
+
+it("keeps wildcard fan-out and merge illustrations when reduced ordering links are unlabelled", () => {
+  const connections = [
+    { from: "seed", to: "square", label: "request-*.md" },
+    { from: "seed", to: "collect", label: "context.md" },
+    { from: "square", to: "collect", label: "result-square.md" },
+  ];
+  const layout = layoutDefinitionGraph(
+    ["collect", "square", "seed"],
+    reduceFlowConnections(connections).map(({ from, to }) => ({ from, to })),
+    new Set(["square"]),
+  );
+  expect(layout.nodes.filter((node) => node.key === "square").map((node) => node.instance)).toEqual([1, 2, 3]);
+  expect(layout.edges.map(({ from, to, label, paths }) => ({ from, to, label, paths: paths.length }))).toEqual([
+    { from: "seed", to: "square", label: "", paths: 3 },
+    { from: "square", to: "collect", label: "", paths: 3 },
+  ]);
+  expect(layout.ellipses).toHaveLength(1);
+  expectBounded(layout);
+});
+
+it("handles graphs without ordering connections", () => {
+  expect(reduceFlowConnections([])).toEqual([]);
 });

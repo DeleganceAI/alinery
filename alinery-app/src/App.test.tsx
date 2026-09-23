@@ -3,19 +3,23 @@ import { useEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { DEFAULT_APPEARANCE } from "./appearance";
+import * as ipc from "./ipc";
 import type { SessionNoticeRow, SessionSort } from "./sessionAttention";
 import type {
   AppConfig,
   BoardTask,
+  Config,
   CreateTaskResult,
   NotificationPrefs,
   PlaybookCatalog,
   ReviewHandoffResult,
+  ScopedPlaybook,
   SessionListItem,
   SessionMeta,
   SessionTypeChoice,
   TaskActivitySession,
 } from "./types";
+import type * as CreateTaskModule from "./views/CreateTaskPage";
 
 const task: BoardTask = {
   name: "Task",
@@ -147,6 +151,8 @@ const appConfig: AppConfig = {
     updates: { check_enabled: true },
   },
 };
+
+const actualCreation = vi.hoisted(() => ({ enabled: false }));
 
 const { ipcMocks, ipcModule } = vi.hoisted(() => {
   const ipcMocks = {
@@ -413,15 +419,16 @@ vi.mock("./views/CreateSessionPage", () => ({
     </div>
   ),
 }));
-vi.mock("./views/CreateTaskPage", () => ({
-  CreateTaskPage: ({
+vi.mock("./views/CreateTaskPage", async (importOriginal) => {
+  const actual = await importOriginal<typeof CreateTaskModule>();
+  const MockCreateTaskPage = ({
     initialDraft,
     onCreated,
-    onOpened,
+    onOpened = () => {},
   }: {
     initialDraft?: BoardTask;
     onCreated: (result: CreateTaskResult & { repoPath: string; selectedSessionId?: string }) => void;
-    onOpened: () => void;
+    onOpened?: () => void;
   }) => {
     useEffect(() => onOpened(), [onOpened]);
     const result: CreateTaskResult & { repoPath: string } = {
@@ -447,8 +454,11 @@ vi.mock("./views/CreateTaskPage", () => ({
         </button>
       </div>
     );
-  },
-}));
+  };
+  return {
+    CreateTaskPage: (props: Parameters<typeof actual.CreateTaskPage>[0]) => (actualCreation.enabled ? <actual.CreateTaskPage {...props} /> : <MockCreateTaskPage {...props} />),
+  };
+});
 vi.mock("./views/Settings", () => ({
   SECTIONS: [],
   Settings: ({ onNotificationsChange }: { onNotificationsChange: (next: NotificationPrefs) => void }) => (
@@ -530,6 +540,7 @@ vi.mock("./views/ReviewHandoffPage", () => ({
 }));
 
 beforeEach(() => {
+  actualCreation.enabled = false;
   ipcMocks.readAppConfig.mockResolvedValue(appConfig);
   ipcMocks.createSessionForRepo.mockResolvedValue({ session: session("created-implementation", "implementation"), execution: null, start: "started" });
   ipcMocks.startSession.mockResolvedValue({ session: session("queued-design"), execution: null, start: "started" });
@@ -557,7 +568,7 @@ it("opens Playbooks from the top tab after selecting a repository, without an in
 
   fireEvent.click(screen.getByTitle(task.repo_path));
   fireEvent.click(await screen.findByRole("button", { name: "Playbooks" }));
-  await screen.findByRole("list", { name: "Playbook library" });
+  await screen.findByRole("table", { name: "Playbook library" });
 });
 
 async function renderApp() {
@@ -615,13 +626,80 @@ describe("creation result navigation", () => {
 });
 
 describe("Playbooks navigation", () => {
+  it("opens the real creation form with the selected scoped playbook and returns without creating a task", async () => {
+    actualCreation.enabled = true;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const sources: ScopedPlaybook[] = (["bundled", "repo"] as const).map((scope) => ({
+      source: { reference: { scope, key: "review" }, path: null },
+      source_text: "saved definition",
+      modified_at_ms: null,
+      definition: {
+        version: 2,
+        key: "review",
+        title: `${scope} review`,
+        description: "",
+        default_model: "",
+        default_harness: "omp",
+        preamble: "",
+        section_order: ["inspect"],
+        step: [
+          {
+            key: "inspect",
+            title: "Inspect",
+            short: "",
+            inputs: [],
+            outputs: [{ path: "result.md" }],
+            model: "",
+            harness: "",
+            prompt: "Inspect the work.",
+            is_coding_step: false,
+            auto_advance_default: false,
+          },
+        ],
+      },
+    }));
+    ipcMocks.listPlaybookCatalog.mockResolvedValue({
+      candidates: sources.map((source) => ({ source: source.source, title: source.definition.title, description: "", modified_at_ms: null, diagnostics: [] })),
+      picker_preferences: { order: [], entries: [] },
+      diagnostics: [],
+    });
+    vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => {
+      const source = sources.find((source) => source.source.reference.scope === reference.scope);
+      if (!source) throw new Error("Unknown preview scope");
+      return source;
+    });
+    vi.mocked(ipc.readConfigForRepo).mockResolvedValue({ defaults: { playbook: sources[0].source.reference, draft_autosave: false } } as Config);
+    vi.mocked(ipc.listHarnessModelsForRepo).mockResolvedValue([]);
+    vi.mocked(ipc.getCurrentWebview, { partial: true }).mockReturnValue({ onDragDropEvent: async () => () => {} });
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: "Playbooks" }));
+    fireEvent.click(await screen.findByRole("button", { name: "repo review Repository" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create task from this playbook" }));
+    expect(await screen.findByRole("radio", { name: /repo review/ })).toHaveProperty("checked", true);
+    expect(screen.getByRole("radio", { name: /bundled review/ })).toHaveProperty("checked", false);
+    expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "");
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await screen.findByRole("button", { name: "Create task from this playbook" });
+    expect(screen.queryByRole("radio", { name: /repo review/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    expect(await screen.findByRole("radio", { name: /bundled review/ })).toHaveProperty("checked", true);
+  });
+
   it("opens the library from a task and returns with the keyboard", async () => {
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
     fireEvent.click(await screen.findByRole("button", { name: "open list task" }));
     await screen.findByText("task detail:task");
     fireEvent.click(screen.getByRole("button", { name: "Playbooks" }));
-    await screen.findByRole("list", { name: "Playbook library" });
+    await screen.findByRole("table", { name: "Playbook library" });
     fireEvent.keyDown(document.body, { key: "Escape" });
     await screen.findByText("task detail:task");
   });

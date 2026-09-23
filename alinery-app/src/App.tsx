@@ -48,6 +48,7 @@ import type {
   BoardTask,
   CreateTaskResult,
   NotificationPrefs,
+  PlaybookRef,
   RepoScope,
   SessionListItem,
   SessionMeta,
@@ -771,14 +772,14 @@ export default function App() {
     setView(dest);
   };
 
-  const openCreate = () => {
+  const openCreate = (initialPlaybook?: PlaybookRef) => {
     setSearchOpen(false);
     if (taskMutationGuard.refuseIfBusy()) return;
-    // Top bar / task list / ⌘N all land here. Paint the opening toast before the
+    // Every task-creation entrypoint lands here. Paint the opening toast before the
     // form mounts — its settings IPC is what freezes the window.
     const from = view;
     flushSync(() => setBusy("open-create"));
-    void afterPaint().then(() => setView({ kind: "create", from }));
+    void afterPaint().then(() => setView({ kind: "create", from, initialPlaybook }));
   };
 
   const duplicateTask = async ({ repoPath, sourceSlug }: { repoPath: string; sourceSlug: string }) => {
@@ -1014,7 +1015,7 @@ export default function App() {
               {daemon.repo_busy ? null : content}
               {playbooksVisited && (
                 <div className="view playbooks-view" hidden={view.kind !== "playbooks" || daemon.repo_busy}>
-                  <Playbooks repoPath={appConfig?.active_repo || undefined} />
+                  <Playbooks repoPath={appConfig?.active_repo || undefined} onCreateTask={(reference) => openCreate(reference)} />
                 </div>
               )}
             </main>
@@ -1098,7 +1099,7 @@ export default function App() {
       onRemoveRepo={removeRepo}
       onBrand={() => switchTop("grid", { gridViewId: gridViews[0].id })}
       onSearch={() => setSearchOpen(true)}
-      onCreate={openCreate}
+      onCreate={() => openCreate()}
       update={update.status}
       onUpgrade={onUpgrade}
       updating={updating}
@@ -1120,7 +1121,7 @@ export default function App() {
                 onDuplicate={(task) => duplicateTask({ repoPath: task.repo_path, sourceSlug: task.slug })}
                 onOpenActiveSession={openActiveTaskSession}
                 registerNav={registerNav}
-                onCreate={openCreate}
+                onCreate={() => openCreate()}
               />
             </div>
           )}
@@ -1128,6 +1129,7 @@ export default function App() {
             <div className="view scroll">
               <CreateTaskPage
                 initialDraft={view.kind === "create" ? view.draft : undefined}
+                initialPlaybook={view.initialPlaybook}
                 activeRepo={appConfig.active_repo}
                 knownRepos={appConfig.known_repos}
                 onBusy={setBusy}
@@ -1164,7 +1166,7 @@ export default function App() {
                 onDuplicate={(task) => duplicateTask({ repoPath: task.repo_path, sourceSlug: task.slug })}
                 onOpenActiveSession={openActiveTaskSession}
                 registerNav={registerNav}
-                onCreate={openCreate}
+                onCreate={() => openCreate()}
               />
             </div>
           )}
@@ -1177,7 +1179,7 @@ export default function App() {
                 onOpen={openSessionItem}
                 registerNav={registerNav}
                 onCreateSession={() => setView({ kind: "createSession", from: view })}
-                onCreateTask={openCreate}
+                onCreateTask={() => openCreate()}
                 sessionSort={globalSessionSort}
                 onSessionSortChange={setGlobalSessionSort}
               />

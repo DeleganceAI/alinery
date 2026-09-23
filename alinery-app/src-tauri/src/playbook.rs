@@ -83,13 +83,16 @@ pub(crate) fn delete_playbook_source(app: AppHandle, reference: PlaybookRef, rep
 }
 
 #[tauri::command]
-pub(crate) fn read_playbook_picker_preferences(app: AppHandle) -> Result<PickerPreferences, String> {
-    library::load_picker_preferences(&library_roots(&app, None)?)
+pub(crate) fn read_playbook_picker_preferences(app: AppHandle, repo_path: Option<String>) -> Result<PickerPreferences, String> {
+    library::load_picker_preferences(&library_roots(&app, repo_path.as_deref())?)
 }
 
 #[tauri::command]
-pub(crate) fn save_playbook_picker_preferences(app: AppHandle, preferences: PickerPreferences) -> Result<(), PlaybookSaveError> {
-    let roots = library_roots(&app, None).map_err(|message| PlaybookSaveError::Io { message })?;
+pub(crate) fn save_playbook_picker_preferences(app: AppHandle, preferences: PickerPreferences, repo_path: Option<String>) -> Result<(), PlaybookSaveError> {
+    let roots = library_roots(&app, repo_path.as_deref()).map_err(|message| PlaybookSaveError::Io { message })?;
+    if !roots.repo_dir.as_os_str().is_empty() {
+        require_repo_owned(&app.state::<AppState>(), &roots.repo_dir).map_err(|message| PlaybookSaveError::Io { message })?;
+    }
     library::save_picker_preferences(&roots, &preferences)
 }
 

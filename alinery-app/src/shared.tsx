@@ -38,7 +38,6 @@ import type {
   KanbanColumn,
   LifecycleState,
   OmpUpdateStatus,
-  PickerPreference,
   PickerPreferences,
   PlaybookCandidate,
   PlaybookRef,
@@ -79,17 +78,6 @@ export function orderPlaybookCandidates(candidates: PlaybookCandidate[], prefere
     const b = playbookRefKey(right.source.reference);
     return (ranks.get(a) ?? Number.MAX_SAFE_INTEGER) - (ranks.get(b) ?? Number.MAX_SAFE_INTEGER) || a.localeCompare(b);
   });
-}
-
-export function playbookPickerAppearance(reference: PlaybookRef, preference?: PickerPreference) {
-  const identity = playbookRefKey(reference);
-  let hash = 0;
-  for (let i = 0; i < identity.length; i++) hash = (Math.imul(hash, 31) + identity.charCodeAt(i)) | 0;
-  const colors = ["#38459d", "#10b981", "#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#e94242"];
-  return {
-    badge: preference?.badge || `${reference.scope[0].toUpperCase()}·${reference.key.slice(0, 2).toUpperCase()}`,
-    color: preference?.color || colors[(hash >>> 0) % colors.length],
-  };
 }
 
 export function findOwnedArtifactNode(nodes: ArtifactTreeNode[], relativePath: string): ArtifactTreeNode | undefined {

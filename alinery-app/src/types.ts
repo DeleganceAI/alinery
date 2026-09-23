@@ -568,7 +568,15 @@ export type PlaybookValidationError = { code: string; message: string; line: num
 export type PlaybookSource = { reference: PlaybookRef; path: string | null };
 export type ScopedPlaybook = { source: PlaybookSource; definition: NormalizedPlaybook; source_text: string; modified_at_ms: number | null };
 export type PlaybookCandidate = { source: PlaybookSource; title: string | null; description: string | null; modified_at_ms: number | null; diagnostics: PlaybookValidationError[] };
-export type PickerPreference = { reference: PlaybookRef; hidden: boolean; collapsed: boolean; badge: string | null; color: string | null; last_imported_at_ms: number | null };
+export type PickerPreference = {
+  reference: PlaybookRef;
+  preferred?: boolean;
+  hidden: boolean;
+  collapsed: boolean;
+  badge: string | null;
+  color: string | null;
+  last_imported_at_ms: number | null;
+};
 export type PickerPreferences = { order: PlaybookRef[]; entries: PickerPreference[] };
 export type PlaybookCatalog = { candidates: PlaybookCandidate[]; picker_preferences: PickerPreferences; diagnostics: PlaybookValidationError[] };
 export type PlaybookValidation = { definition: NormalizedPlaybook | null; diagnostics: PlaybookValidationError[] };
@@ -789,7 +797,7 @@ export type View =
   | { kind: "notifications" }
   | { kind: "playbooks" }
   | { kind: "settings"; section?: SettingsSectionKey }
-  | { kind: "create"; from: View; draft?: BoardTask }
+  | { kind: "create"; from: View; draft?: BoardTask; initialPlaybook?: PlaybookRef }
   | { kind: "createSession"; from: View; initialTask?: { repo_path: string; slug: string } }
   | { kind: "task"; slug: string; from: View; repoPath?: string; initialTask?: Task }
   | {

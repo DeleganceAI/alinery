@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as taskMutationGuard from "../taskMutationGuard";
@@ -69,6 +69,34 @@ const readyReply = {
   errors: [],
 } satisfies CreateTaskResult;
 
+const draftTask: BoardTask = {
+  name: "Draft task",
+  slug: "stable-draft",
+  requested_slug: "final-task",
+  repo_path: "/repo",
+  playbook: "",
+  playbook_ref: { scope: "bundled", key: "superdevelop" },
+  auto_advance: [],
+  draft: true,
+  branch: "",
+  worktree: "",
+  has_worktree: false,
+  created: 1,
+  archived: false,
+  pr_url: "",
+  linear_id: "",
+  github_issue: "",
+  session_count: 0,
+  playbook_title: "SuperDevelop",
+  updated: 1,
+  current_phase: "",
+  current_step_title: "",
+  latest_session_title: "",
+  latest_session_column_key: "",
+  current_column_key: "",
+  current_column_title: "",
+};
+
 const readConfigForRepo = vi.hoisted(() =>
   vi.fn(
     async () =>
@@ -108,9 +136,18 @@ vi.mock("../toast", () => ({
 
 beforeEach(() => {
   vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => {} });
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
   readConfigForRepo.mockResolvedValue({
     defaults: { harness: "claude", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
   } as Config);
+  vi.mocked(ipc.listPlaybookCatalog).mockImplementation(async () => structuredClone(catalog));
   vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => {
     const source = sources.find((item) => item.source.reference.scope === reference.scope && item.source.reference.key === reference.key);
     if (!source) throw new Error(`Unknown test playbook: ${reference.scope}/${reference.key}`);
@@ -233,21 +270,198 @@ describe("GitHub imports", () => {
 });
 
 describe("scoped playbook selection", () => {
-  it("retains an exact scoped choice across catalog refresh and blocks invalid entries", async () => {
+  it.each([false, true])("opens the exact scoped seed first without persisting or creating (preferred: %s)", async (seedPreferred) => {
+    const preferred = structuredClone(catalog);
+    preferred.picker_preferences = {
+      order: [sources[0].source.reference],
+      entries: [{ reference: sources[0].source.reference, preferred: true, hidden: false, collapsed: false, badge: null, color: null, last_imported_at_ms: null }],
+    };
+    if (seedPreferred) preferred.picker_preferences.entries.push({ ...preferred.picker_preferences.entries[0], reference: sources[2].source.reference });
+    vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
+    render(<CreateTaskPage initialPlaybook={sources[2].source.reference} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "Repository SuperDevelop graph" });
+    expect(screen.getByRole("radio", { name: "Repository SuperDevelop — repo/superdevelop" })).toHaveProperty("checked", true);
+    expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", false);
+    const displayedOrder = ["repo/superdevelop", "bundled/superdevelop"];
+    expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(displayedOrder);
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 450));
+    });
+    expect(ipc.savePlaybookPickerPreferences).not.toHaveBeenCalled();
+    expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    expect(ipc.createSessionForRepo).not.toHaveBeenCalled();
+    expect(ipc.startSession).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" }));
+    await screen.findByRole("region", { name: "SuperDevelop graph" });
+    expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(displayedOrder);
+    fireEvent.click(screen.getByRole("radio", { name: "Repository SuperDevelop — repo/superdevelop" }));
+    await screen.findByRole("region", { name: "Repository SuperDevelop graph" });
+
+    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Seeded task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await screen.findByRole("button", { name: "Open task" });
+    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({ playbook: { reference: sources[2].source.reference, source: sources[2].source_text } }),
+      }),
+    );
+  });
+
+  it.each([
+    { scope: "global", key: "missing" },
+    { scope: "repo", key: "broken" },
+  ] as const)("blocks unavailable or invalid seed $scope/$key instead of falling back to the default", async (initialPlaybook) => {
+    render(<CreateTaskPage initialPlaybook={initialPlaybook} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("radio", { name: /One-shot/ });
+    expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", false);
+    expect(screen.queryByRole("region", { name: /graph$/ })).toBeNull();
+    expect(ipc.readPlaybook).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Blocked task" } });
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
+    fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
+    await screen.findByRole("region", { name: "One-shot graph" });
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false);
+  });
+
+  it.each([null, undefined])("does not replace a draft's absent reference (%s) with an explicit seed or repository default", async (playbook_ref) => {
+    const initialDraft = { ...draftTask, playbook_ref };
+    render(
+      <CreateTaskPage
+        initialDraft={initialDraft}
+        initialPlaybook={sources[2].source.reference}
+        activeRepo="/repo"
+        knownRepos={["/repo"]}
+        onCancel={() => {}}
+        onCreated={() => {}}
+      />,
+    );
+    await screen.findByRole("radio", { name: /One-shot/ });
+    expect(screen.getAllByRole("radio").every((radio) => !(radio as HTMLInputElement).checked)).toBe(true);
+    expect(screen.queryByRole("region", { name: /graph$/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
+    fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+  });
+
+  it("keeps preferred order independent of the default and expands only the selected card", async () => {
+    const preferred = structuredClone(catalog);
+    preferred.picker_preferences = {
+      order: [sources[3].source.reference, sources[0].source.reference],
+      entries: [sources[3], sources[0]].map((source) => ({
+        reference: source.source.reference,
+        preferred: true,
+        hidden: false,
+        collapsed: false,
+        badge: null,
+        color: null,
+        last_imported_at_ms: null,
+      })),
+    };
+    vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    const global = await screen.findByRole("radio", { name: /Global SuperDevelop/ });
-    fireEvent.click(global);
+    await screen.findByRole("region", { name: "SuperDevelop graph" });
+    const choices = () => screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value);
+    expect(choices()).toEqual(["bundled/one-shot", "bundled/superdevelop"]);
+    expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
+    fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
+    const graph = await screen.findByRole("region", { name: "One-shot graph" });
+    expect(screen.queryByRole("region", { name: "SuperDevelop graph" })).toBeNull();
+    expect(choices()).toEqual(["bundled/one-shot", "bundled/superdevelop"]);
+    if (!graph.parentElement) throw new Error("Graph must be inside the selected card");
+    expect(within(graph.parentElement).getByRole("radio", { name: /One-shot/ })).toHaveProperty("checked", true);
+    expect(within(graph).getByRole("button", { name: "Highlight Build" })).toBeTruthy();
+  });
+
+  it("browses inline without losing form data or preferring a one-task selection", async () => {
+    const preferred = structuredClone(catalog);
+    preferred.picker_preferences = {
+      order: [sources[0].source.reference],
+      entries: [{ reference: sources[0].source.reference, preferred: true, hidden: false, collapsed: false, badge: null, color: null, last_imported_at_ms: null }],
+    };
+    vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "SuperDevelop graph" });
+    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Preserved draft" } });
+    const description = screen.getByPlaceholderText(/Describe the feature/);
+    fireEvent.change(description, { target: { value: "Keep this task description" } });
+    fireEvent.click(screen.getByRole("button", { name: "Browse all playbooks" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search playbooks" }), { target: { value: "global/superdevelop" } });
+    expect(screen.getAllByRole("radio")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("radio", { name: /Global SuperDevelop/ }));
+    await screen.findByRole("region", { name: "Global SuperDevelop graph" });
+    expect(screen.getByRole("searchbox", { name: "Search playbooks" })).toHaveProperty("value", "global/superdevelop");
+    expect(screen.getAllByRole("radio")).toHaveLength(1);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search playbooks" }), { target: { value: "" } });
+    expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual([
+      "bundled/superdevelop",
+      "bundled/one-shot",
+      "global/superdevelop",
+      "repo/broken",
+      "repo/superdevelop",
+    ]);
+    expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Preserved draft");
+    expect(description).toHaveProperty("value", "Keep this task description");
+    fireEvent.click(screen.getByRole("button", { name: "Back to preferred" }));
+    expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(["bundled/superdevelop", "global/superdevelop"]);
+    fireEvent.click(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" }));
+    await screen.findByRole("region", { name: "SuperDevelop graph" });
+    expect(screen.getByRole("radio", { name: /Global SuperDevelop/ })).toHaveProperty("checked", false);
+    expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(["bundled/superdevelop", "global/superdevelop"]);
+    fireEvent.click(screen.getByRole("button", { name: "Browse all playbooks" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search playbooks" }), { target: { value: "no matching workflow" } });
+    expect(screen.queryByRole("radio")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Back to preferred" }));
+    expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
+    expect(screen.queryByRole("radio", { name: /Global SuperDevelop/ })).toBeNull();
+  });
+
+  it("opens an unconfigured repository in the searchable library including legacy-hidden choices", async () => {
+    const unconfigured = structuredClone(catalog);
+    unconfigured.picker_preferences.entries = [{ reference: sources[1].source.reference, hidden: true, collapsed: false, badge: null, color: null, last_imported_at_ms: null }];
+    vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(unconfigured);
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("searchbox", { name: "Search playbooks" });
+    const choices = screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value);
+    fireEvent.click(screen.getByRole("radio", { name: /Global SuperDevelop/ }));
+    await screen.findByRole("region", { name: "Global SuperDevelop graph" });
+    expect(screen.getByRole("searchbox", { name: "Search playbooks" })).toHaveProperty("value", "");
+    expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(choices);
+    fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
+    await screen.findByRole("region", { name: "One-shot graph" });
+    expect(screen.queryByRole("region", { name: "Global SuperDevelop graph" })).toBeNull();
+    expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(choices);
+    expect(screen.getByRole("radio", { name: /Broken/ })).toHaveProperty("disabled", true);
+  });
+
+  it("retains the seed on refresh and a later user choice across catalog and repository changes", async () => {
+    render(<CreateTaskPage initialPlaybook={sources[2].source.reference} activeRepo="/repo" knownRepos={["/repo", "/other"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "Repository SuperDevelop graph" });
+    const displayedOrder = screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value);
+    expect(displayedOrder[0]).toBe("repo/superdevelop");
+    fireEvent.click(screen.getByRole("button", { name: "Refresh playbooks" }));
+    await screen.findByRole("region", { name: "Repository SuperDevelop graph" });
+    expect(screen.getByRole("radio", { name: /Repository SuperDevelop/ })).toHaveProperty("checked", true);
+    fireEvent.click(screen.getByRole("radio", { name: /Global SuperDevelop/ }));
     await screen.findByRole("checkbox", { name: "Build" });
     fireEvent.click(screen.getByRole("button", { name: "Refresh playbooks" }));
-    await waitFor(() => expect(ipc.listPlaybookCatalog).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(ipc.listPlaybookCatalog).toHaveBeenCalledTimes(3));
     await screen.findByRole("checkbox", { name: "Build" });
     expect(screen.getByRole("radio", { name: /Global SuperDevelop/ })).toHaveProperty("checked", true);
     expect(screen.getByRole("radio", { name: /Broken/ })).toHaveProperty("disabled", true);
+    fireEvent.change(screen.getByRole("combobox", { name: "Repository" }), { target: { value: "/other" } });
+    await screen.findByRole("region", { name: "Global SuperDevelop graph" });
+    expect(screen.getByRole("radio", { name: /Global SuperDevelop/ })).toHaveProperty("checked", true);
+    expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(displayedOrder);
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Scoped task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByRole("button", { name: "Open task" });
     expect(ipc.createTaskForRepo).toHaveBeenCalledWith(
       expect.objectContaining({
+        repoPath: "/other",
         request: expect.objectContaining({ playbook: { reference: { scope: "global", key: "superdevelop" }, source: sources[1].source_text } }),
       }),
     );
@@ -413,35 +627,12 @@ describe("v2 task creation", () => {
       resolveSave = resolve;
     });
     vi.mocked(ipc.writeDraftForRepo).mockReturnValueOnce(saved);
-    const initialDraft: BoardTask = {
-      name: "Draft task",
-      slug: "stable-draft",
-      requested_slug: "final-task",
-      repo_path: "/repo",
-      playbook: "",
-      playbook_ref: { scope: "bundled", key: "superdevelop" },
-      auto_advance: [],
-      draft: true,
-      branch: "",
-      worktree: "",
-      has_worktree: false,
-      created: 1,
-      archived: false,
-      pr_url: "",
-      linear_id: "",
-      github_issue: "",
-      session_count: 0,
-      playbook_title: "SuperDevelop",
-      updated: 1,
-      current_phase: "",
-      current_step_title: "",
-      latest_session_title: "",
-      latest_session_column_key: "",
-      current_column_key: "",
-      current_column_title: "",
-    };
-    render(<CreateTaskPage initialDraft={initialDraft} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    render(
+      <CreateTaskPage initialDraft={draftTask} initialPlaybook={sources[2].source.reference} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />,
+    );
     await screen.findByRole("checkbox", { name: "Build" });
+    expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
+    expect(screen.getByRole("radio", { name: /Repository SuperDevelop/ })).toHaveProperty("checked", false);
     await waitFor(() => expect(ipc.writeDraftForRepo).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Late edit" } });
