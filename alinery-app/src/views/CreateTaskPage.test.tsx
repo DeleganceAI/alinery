@@ -69,6 +69,34 @@ const readyReply = {
   errors: [],
 } satisfies CreateTaskResult;
 
+const draftTask: BoardTask = {
+  name: "Draft task",
+  slug: "stable-draft",
+  requested_slug: "final-task",
+  repo_path: "/repo",
+  playbook: "",
+  playbook_ref: { scope: "bundled", key: "superdevelop" },
+  auto_advance: [],
+  draft: true,
+  branch: "",
+  worktree: "",
+  has_worktree: false,
+  created: 1,
+  archived: false,
+  pr_url: "",
+  linear_id: "",
+  github_issue: "",
+  session_count: 0,
+  playbook_title: "SuperDevelop",
+  updated: 1,
+  current_phase: "",
+  current_step_title: "",
+  latest_session_title: "",
+  latest_session_column_key: "",
+  current_column_key: "",
+  current_column_title: "",
+};
+
 const readConfigForRepo = vi.hoisted(() =>
   vi.fn(
     async () =>
@@ -111,6 +139,7 @@ beforeEach(() => {
   readConfigForRepo.mockResolvedValue({
     defaults: { harness: "claude", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
   } as Config);
+  vi.mocked(ipc.accountStatus).mockResolvedValue({ signedIn: false, email: null, plan: null, paid: false, unavailable: false });
   vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => {
     const source = sources.find((item) => item.source.reference.scope === reference.scope && item.source.reference.key === reference.key);
     if (!source) throw new Error(`Unknown test playbook: ${reference.scope}/${reference.key}`);
@@ -310,6 +339,41 @@ describe("OMP model default", () => {
     await screen.findByRole("radiogroup", { name: "Choose playbook" });
     await waitFor(() => expect((screen.getByLabelText("Model") as HTMLInputElement).value).toBe(""));
   });
+
+  it("uses hosted Flash when signed in without a settings default, including after changing playbooks", async () => {
+    vi.mocked(ipc.accountStatus).mockResolvedValue({ signedIn: true, email: null, plan: null, paid: false, unavailable: false });
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("checkbox", { name: "Build" });
+    expect(screen.getByLabelText("Model")).toHaveProperty("value", "alinery/DeepSeek-V4.1-Flash");
+    fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
+    await screen.findByRole("checkbox", { name: "Build" });
+    expect(screen.getByLabelText("Model")).toHaveProperty("value", "alinery/DeepSeek-V4.1-Flash");
+  });
+
+  it("preserves a configured OMP default for signed-in accounts", async () => {
+    vi.mocked(ipc.accountStatus).mockResolvedValue({ signedIn: true, email: null, plan: null, paid: false, unavailable: false });
+    readConfigForRepo.mockResolvedValue({
+      defaults: { harness: "omp", model: "anthropic/claude-sonnet-4-6", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
+    } as Config);
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("checkbox", { name: "Build" });
+    expect(screen.getByLabelText("Model")).toHaveProperty("value", "anthropic/claude-sonnet-4-6");
+  });
+
+  it.each(["signed out", "account status unavailable"])("leaves the model unset when %s", async (status) => {
+    if (status === "account status unavailable") vi.mocked(ipc.accountStatus).mockRejectedValue(new Error("Account unavailable"));
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("checkbox", { name: "Build" });
+    expect(screen.getByLabelText("Model")).toHaveProperty("value", "");
+  });
+
+  it.each(["anthropic/claude-sonnet-4-6", ""])("preserves the saved draft model %j while signed in", async (model) => {
+    vi.mocked(ipc.accountStatus).mockResolvedValue({ signedIn: true, email: null, plan: null, paid: false, unavailable: false });
+    const initialDraft: BoardTask = { ...draftTask, launch_defaults: { harness: "omp", model } };
+    render(<CreateTaskPage initialDraft={initialDraft} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("checkbox", { name: "Build" });
+    expect(screen.getByLabelText("Model")).toHaveProperty("value", model);
+  });
 });
 
 describe("v2 task creation", () => {
@@ -413,34 +477,7 @@ describe("v2 task creation", () => {
       resolveSave = resolve;
     });
     vi.mocked(ipc.writeDraftForRepo).mockReturnValueOnce(saved);
-    const initialDraft: BoardTask = {
-      name: "Draft task",
-      slug: "stable-draft",
-      requested_slug: "final-task",
-      repo_path: "/repo",
-      playbook: "",
-      playbook_ref: { scope: "bundled", key: "superdevelop" },
-      auto_advance: [],
-      draft: true,
-      branch: "",
-      worktree: "",
-      has_worktree: false,
-      created: 1,
-      archived: false,
-      pr_url: "",
-      linear_id: "",
-      github_issue: "",
-      session_count: 0,
-      playbook_title: "SuperDevelop",
-      updated: 1,
-      current_phase: "",
-      current_step_title: "",
-      latest_session_title: "",
-      latest_session_column_key: "",
-      current_column_key: "",
-      current_column_title: "",
-    };
-    render(<CreateTaskPage initialDraft={initialDraft} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("checkbox", { name: "Build" });
     await waitFor(() => expect(ipc.writeDraftForRepo).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));

@@ -112,13 +112,14 @@ export function CreateTaskPage({
     setErr(null);
     setCatalogLoading(true);
     setSelectedSource(null);
-    Promise.all([ipc.readConfigForRepo(repoPath), ipc.listPlaybookCatalog(repoPath)])
-      .then(async ([c, catalog]) => {
+    Promise.all([ipc.readConfigForRepo(repoPath), ipc.listPlaybookCatalog(repoPath), ipc.accountStatus().catch(() => null)])
+      .then(async ([c, catalog, account]) => {
         if (!alive || request !== targetRequest.current) return;
         setDraftAutosave(c.defaults.draft_autosave !== false);
         setPlaybooks(orderPlaybookCandidates(catalog.candidates, catalog.picker_preferences));
         setPickerPreferences(catalog.picker_preferences);
-        setDefaultModel(ompDefaultModel(c.defaults));
+        const resolvedDefaultModel = ompDefaultModel(c.defaults) || (account?.signedIn ? "alinery/DeepSeek-V4.1-Flash" : "");
+        setDefaultModel(resolvedDefaultModel);
         if (catalog.diagnostics.length) {
           setErr({ msg: "Some playbook sources could not be loaded.", detail: catalog.diagnostics.map((diagnostic) => diagnostic.message).join("\n") });
         }
@@ -128,7 +129,7 @@ export function CreateTaskPage({
         setPlaybookNeedsReselection(!candidate || candidate.diagnostics.length > 0);
         if (!initialTargetLoaded.current) {
           initialTargetLoaded.current = true;
-          setModel(initialDraft?.launch_defaults?.model ?? ompDefaultModel(c.defaults));
+          setModel(initialDraft?.launch_defaults?.model ?? resolvedDefaultModel);
           setModelNeedsReselection(false);
         }
         setCatalogLoading(false);
