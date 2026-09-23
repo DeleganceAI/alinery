@@ -230,8 +230,8 @@ export const setDockBadgeCount = (count: number) => invoke<void>("set_dock_badge
 // ── subtask.rs ────────────────────────────────────────────────────────
 export const subtaskState = (taskSlug: string) => invoke<SubtaskManagerState>("subtask_state", { taskSlug });
 export const startSubtaskManager = (taskSlug: string) => invoke<SessionMeta>("start_subtask_manager", { taskSlug });
-export const recoverSubtaskManager = (taskSlug: string) => invoke<SessionMeta>("recover_subtask_manager", { taskSlug });
-export const discardSubtask = (taskSlug: string, managerSessionId: string) => invoke<void>("discard_subtask", { taskSlug, managerSessionId });
+export const recoverSubtaskManager = (taskSlug: string, childSlug: string) => invoke<SessionMeta>("recover_subtask_manager", { taskSlug, childSlug });
+export const discardSubtask = (taskSlug: string, managerSessionId: string, childSlug?: string) => invoke<void>("discard_subtask", { taskSlug, managerSessionId, childSlug });
 
 // ── session.rs ────────────────────────────────────────────────────────
 type CreateSessionArgs = {

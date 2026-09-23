@@ -264,7 +264,7 @@ export function Kanban({
                         {t.archived && <span className="pill task-archived">Archived</span>}
                         {t.draft && <span className="pill">Draft</span>}
                         {t.parent_task && <span className="pill task-child-badge">↳ Child</span>}
-                        {t.active_subtask && <span className="pill task-active-child-badge">Active child · {t.active_subtask}</span>}
+                        {(t.active_subtask_slugs?.length ?? 0) > 0 && <span className="pill task-active-child-badge">Active children · {t.active_subtask_slugs?.length ?? 0}</span>}
                         <span className="pill task-playbook playbook-chip">{t.playbook_title || t.playbook || "Playbook"}</span>
                         {activeSession && (
                           <button

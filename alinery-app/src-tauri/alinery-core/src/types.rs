@@ -402,7 +402,15 @@ impl From<&Task> for TaskSummary {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct TaskRelationships {
     pub parent_task: Option<TaskSummary>,
-    pub active_subtask: Option<TaskSummary>,
+    pub active_subtasks: Vec<TaskSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct SubtaskChildState {
+    pub child: TaskSummary,
+    pub manager_session: Option<SessionMeta>,
+    pub manager_owner_task_slug: String,
+    pub can_recover: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -411,11 +419,10 @@ pub struct SubtaskManagerState {
     pub parent_manager_owner_task_slug: String,
     pub task: TaskSummary,
     pub parent_task: Option<TaskSummary>,
-    pub active_subtask: Option<TaskSummary>,
-    pub manager_session: Option<SessionMeta>,
+    pub active_subtasks: Vec<SubtaskChildState>,
+    pub setup_manager_session: Option<SessionMeta>,
     pub manager_owner_task_slug: String,
     pub can_start: bool,
-    pub can_recover: bool,
     pub disabled_reason: String,
 }
 

@@ -168,8 +168,8 @@ export function TaskDetail({
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [sessionStatuses, setSessionStatuses] = useState<Record<string, SessionObservation>>({});
   const [subtaskState, setSubtaskState] = useState<SubtaskManagerState | null>(null);
-  const [childActivity, setChildActivity] = useState<TaskActivitySummary>(EMPTY_TASK_ACTIVITY);
-  const [childPlaybookStep, setChildPlaybookStep] = useState("");
+  const [childActivity, setChildActivity] = useState<Record<string, TaskActivitySummary>>({});
+  const [childPlaybookStep, setChildPlaybookStep] = useState<Record<string, string>>({});
   const [steps, setSteps] = useState<PlaybookStepSummary[]>([]);
   const [playbookDetails, setPlaybookDetails] = useState<Record<string, { title: string; steps: PlaybookStepSummary[] }>>({});
   const [autoAdvanceEdges, setAutoAdvanceEdges] = useState<AutoAdvanceSummary[]>([]);
@@ -235,23 +235,36 @@ export function TaskDetail({
       managerlessFinishedRows.push({ kind: "subtask_history", child });
     }
   }
-  const currentManagerRow: TaskPanelRow | null = subtaskState?.manager_session
-    ? {
-        kind: "subtask_manager",
-        session: subtaskState.manager_session,
-        owner_task_slug: subtaskState.manager_owner_task_slug,
-        child: subtaskState.active_subtask ?? undefined,
-        active_child: subtaskState.active_subtask !== null,
-      }
-    : null;
+  const currentManagerRows: Extract<TaskPanelRow, { kind: "subtask_manager" }>[] = [];
+  if (subtaskState?.setup_manager_session) {
+    currentManagerRows.push({
+      kind: "subtask_manager",
+      session: subtaskState.setup_manager_session,
+      owner_task_slug: subtaskState.manager_owner_task_slug,
+      active_child: false,
+    });
+  }
+  for (const childState of subtaskState?.active_subtasks ?? []) {
+    if (!childState.manager_session) continue;
+    currentManagerRows.push({
+      kind: "subtask_manager",
+      session: childState.manager_session,
+      owner_task_slug: childState.manager_owner_task_slug,
+      child: childState.child,
+      active_child: true,
+    });
+  }
   const projectedRows = filteredSessions.flatMap<TaskPanelRow>((session) => {
-    if (currentManagerRow?.session.id === session.id) return [currentManagerRow];
+    const currentRow = currentManagerRows.find((row) => row.session.id === session.id);
+    if (currentRow) return [currentRow];
     const finishedRow = finishedRowByManagerId.get(session.id);
     if (finishedRow) return [finishedRow];
     return session.subtask_manager ? [] : [{ kind: "session", session }];
   });
-  if (currentManagerRow && !projectedRows.some((row) => row.kind === "subtask_manager" && row.session.id === currentManagerRow.session.id)) {
-    projectedRows.push(currentManagerRow);
+  for (const currentRow of currentManagerRows) {
+    if (!projectedRows.some((row) => row.kind === "subtask_manager" && row.session.id === currentRow.session.id)) {
+      projectedRows.push(currentRow);
+    }
   }
   projectedRows.push(...managerlessFinishedRows);
   const taskPanelRows = orderTaskPanelRows(projectedRows, sessionStatuses, hasExpectedArtifact, sessionSort);
@@ -311,21 +324,25 @@ export function TaskDetail({
   );
 
   const refreshChildActivity = async (managerState: SubtaskManagerState, epoch: number) => {
-    const childSlug = managerState.active_subtask?.slug;
-    if (!childSlug) {
+    const childSlugs = managerState.active_subtasks.map((state) => state.child.slug);
+    if (childSlugs.length === 0) {
       if (epoch !== taskMutationEpoch.current) return;
-      setChildActivity(EMPTY_TASK_ACTIVITY);
-      setChildPlaybookStep("");
+      setChildActivity({});
+      setChildPlaybookStep({});
       return;
     }
     const [activity, boardTasks] = await Promise.all([
-      ipc.listTaskActivity([{ repoPath, taskSlug: childSlug }]).catch(() => ({}) as Record<string, TaskActivitySummary>),
+      ipc.listTaskActivity(childSlugs.map((childSlug) => ({ repoPath, taskSlug: childSlug }))).catch(() => ({}) as Record<string, TaskActivitySummary>),
       ipc.listBoardTasks(false).catch(() => []),
     ]);
     if (epoch !== taskMutationEpoch.current) return;
-    const child = boardTasks.find((candidate) => candidate.repo_path === repoPath && candidate.slug === childSlug);
-    setChildActivity(activity[`${repoPath}:${childSlug}`] ?? EMPTY_TASK_ACTIVITY);
-    setChildPlaybookStep(child ? [child.playbook_title, child.current_step_title].filter(Boolean).join(" · ") : (managerState.active_subtask?.playbook ?? ""));
+    const nextSteps: Record<string, string> = {};
+    for (const childState of managerState.active_subtasks) {
+      const child = boardTasks.find((candidate) => candidate.repo_path === repoPath && candidate.slug === childState.child.slug);
+      nextSteps[childState.child.slug] = child ? [child.playbook_title, child.current_step_title].filter(Boolean).join(" · ") : childState.child.playbook;
+    }
+    setChildActivity(activity);
+    setChildPlaybookStep(nextSteps);
   };
 
   const commitFetchedSubtaskState = async (fetched: SubtaskManagerState, epoch: number) => {
@@ -733,11 +750,11 @@ export function TaskDetail({
       .finally(() => setBusy(""));
   };
 
-  const recoverManager = () => {
-    setBusy("subtask-recovery");
+  const recoverManager = (childSlug: string) => {
+    setBusy(`subtask-recovery:${childSlug}`);
     setErr(null);
     ipc
-      .recoverSubtaskManager(slug)
+      .recoverSubtaskManager(slug, childSlug)
       .then((manager) => openManagerSession(slug, manager, "spawn"))
       .catch((error) => setErr({ msg: "Couldn't recover the sub-task manager.", detail: String(error) }))
       .finally(() => setBusy(""));
@@ -747,7 +764,7 @@ export function TaskDetail({
     const childSlug = child?.slug || manager?.subtask_slug || "";
     const childName = child?.name || childSlug;
     const setupOnly = !childSlug;
-    const busyKey = manager?.id || "active-child";
+    const busyKey = manager?.id || childSlug || "setup";
     const accepted = await confirmDanger(
       setupOnly ? "Discard sub-task setup?" : `Kill ${childName}?`,
       setupOnly
@@ -759,7 +776,7 @@ export function TaskDetail({
     setBusy(`discard-subtask:${busyKey}`);
     setErr(null);
     try {
-      await ipc.discardSubtask(slug, manager?.id || "");
+      await ipc.discardSubtask(slug, manager?.id || "", childSlug || undefined);
       await load();
     } catch (error) {
       setErr({ msg: setupOnly ? "Couldn't discard the sub-task setup." : "Couldn't kill the sub-task.", detail: String(error) });
@@ -1079,13 +1096,15 @@ export function TaskDetail({
                 </tr>
               </thead>
               <tbody>
-                {sessionsLoaded && taskPanelRows.length === 0 && !subtaskState?.can_recover && (
-                  <tr className="empty-row">
-                    <td colSpan={7}>
-                      <EmptyState title="No sessions yet." hint="Start a session to run a harness in this task's worktree." />
-                    </td>
-                  </tr>
-                )}
+                {sessionsLoaded &&
+                  taskPanelRows.length === 0 &&
+                  !(subtaskState?.active_subtasks ?? []).some((childState) => childState.can_recover && !childState.manager_session) && (
+                    <tr className="empty-row">
+                      <td colSpan={7}>
+                        <EmptyState title="No sessions yet." hint="Start a session to run a harness in this task's worktree." />
+                      </td>
+                    </tr>
+                  )}
                 {taskPanelRows.map((row) => {
                   if (row.kind === "subtask_history") {
                     const outcome = subtaskOutcomeLabel(row.child);
@@ -1132,7 +1151,10 @@ export function TaskDetail({
                     const label = row.child ? row.child.name : "Sub-task setup";
                     const detail = row.child?.slug;
                     const harnessLabel = `${harnessDisplayName(s.harness)}${s.model ? ` · ${s.model}` : ""}`;
-                    const canReplaceThisManager = row.active_child && subtaskState?.can_recover === true && subtaskState.manager_session?.id === s.id;
+                    const childState = row.child ? subtaskState?.active_subtasks.find((state) => state.child.slug === row.child?.slug) : undefined;
+                    const canReplaceThisManager = row.active_child && childState?.can_recover === true && childState.manager_session?.id === s.id;
+                    const rowChildActivity = row.child ? (childActivity[`${repoPath}:${row.child.slug}`] ?? EMPTY_TASK_ACTIVITY) : EMPTY_TASK_ACTIVITY;
+                    const rowChildPlaybookStep = row.child ? (childPlaybookStep[row.child.slug] ?? row.child.playbook) : "";
                     const activate = () => {
                       if (row.child) onOpenRelatedTask(row.child.slug);
                       else openManagerSession(row.owner_task_slug, s);
@@ -1160,14 +1182,11 @@ export function TaskDetail({
                             )}
                             {row.child?.archived && <span className={`pill ${subtaskOutcomeClass(row.child)}`}>{subtaskOutcomeLabel(row.child)}</span>}
                             {row.child && row.active_child && (
-                              <span
-                                className="subtask-child-progress"
-                                title={`Child playbook: ${childPlaybookStep || row.child.playbook}. Status: ${taskActivityLabel(childActivity)}`}
-                              >
-                                <span className="subtask-child-step">{childPlaybookStep || row.child.playbook}</span>
+                              <span className="subtask-child-progress" title={`Child playbook: ${rowChildPlaybookStep}. Status: ${taskActivityLabel(rowChildActivity)}`}>
+                                <span className="subtask-child-step">{rowChildPlaybookStep}</span>
                                 <span className="subtask-child-activity">
-                                  <TaskActivityIndicators activity={childActivity} />
-                                  <span>{taskActivityLabel(childActivity)}</span>
+                                  <TaskActivityIndicators activity={rowChildActivity} />
+                                  <span>{taskActivityLabel(rowChildActivity)}</span>
                                 </span>
                               </span>
                             )}
@@ -1204,8 +1223,8 @@ export function TaskDetail({
                             </button>
                           )}
                           {canReplaceThisManager && (
-                            <button type="button" className="btn ghost small" disabled={!!busy} onClick={recoverManager}>
-                              {busy === "subtask-recovery" ? "Recovering…" : "Replace manager session"}
+                            <button type="button" className="btn ghost small" disabled={!!busy} onClick={() => row.child && recoverManager(row.child.slug)}>
+                              {busy === `subtask-recovery:${row.child?.slug}` ? "Recovering…" : "Replace manager session"}
                             </button>
                           )}
                           <button
@@ -1311,41 +1330,43 @@ export function TaskDetail({
                     </tr>
                   );
                 })}
-                {subtaskState?.can_recover && subtaskState.active_subtask && !currentManagerRow && (
-                  <tr className="subtask-manager-row">
-                    <td className="status-col">
-                      <span className="statusdot unknown" />
-                    </td>
-                    <td>
-                      <button type="button" className="manager-row-primary" onClick={() => onOpenRelatedTask(subtaskState.active_subtask?.slug ?? "")}>
-                        <span title={subtaskState.active_subtask.name}>{subtaskState.active_subtask.name}</span>
-                        <span className="dim mono" title={subtaskState.active_subtask.slug}>
-                          {subtaskState.active_subtask.slug}
+                {(subtaskState?.active_subtasks ?? [])
+                  .filter((childState) => childState.can_recover && !childState.manager_session)
+                  .map((childState) => (
+                    <tr key={`recover:${childState.child.slug}`} className="subtask-manager-row">
+                      <td className="status-col">
+                        <span className="statusdot unknown" />
+                      </td>
+                      <td>
+                        <button type="button" className="manager-row-primary" onClick={() => onOpenRelatedTask(childState.child.slug)}>
+                          <span title={childState.child.name}>{childState.child.name}</span>
+                          <span className="dim mono" title={childState.child.slug}>
+                            {childState.child.slug}
+                          </span>
+                        </button>
+                      </td>
+                      <td>
+                        <span className="badge todo" title="Manager unavailable">
+                          Manager unavailable
                         </span>
-                      </button>
-                    </td>
-                    <td>
-                      <span className="badge todo" title="Manager unavailable">
-                        Manager unavailable
-                      </span>
-                    </td>
-                    <td />
-                    <td className="session-time-col">
-                      <span className="dim">—</span>
-                    </td>
-                    <td className="session-time-col">
-                      <span className="dim">—</span>
-                    </td>
-                    <td className="session-actions">
-                      <button type="button" className="btn danger small" disabled={!!busy} onClick={() => void discardSubtask(null, subtaskState.active_subtask ?? undefined)}>
-                        {busy === "discard-subtask:active-child" ? "Killing…" : "Kill sub-task"}
-                      </button>
-                      <button type="button" className="btn ghost small" disabled={!!busy} onClick={recoverManager}>
-                        {busy === "subtask-recovery" ? "Recovering…" : "Replace manager session"}
-                      </button>
-                    </td>
-                  </tr>
-                )}
+                      </td>
+                      <td />
+                      <td className="session-time-col">
+                        <span className="dim">—</span>
+                      </td>
+                      <td className="session-time-col">
+                        <span className="dim">—</span>
+                      </td>
+                      <td className="session-actions">
+                        <button type="button" className="btn danger small" disabled={!!busy} onClick={() => void discardSubtask(null, childState.child)}>
+                          {busy === `discard-subtask:${childState.child.slug}` ? "Killing…" : "Kill sub-task"}
+                        </button>
+                        <button type="button" className="btn ghost small" disabled={!!busy} onClick={() => recoverManager(childState.child.slug)}>
+                          {busy === `subtask-recovery:${childState.child.slug}` ? "Recovering…" : "Replace manager session"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>

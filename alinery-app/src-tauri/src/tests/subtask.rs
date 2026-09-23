@@ -9,7 +9,7 @@ fn subtask_start_is_unique_and_recovery_is_explicitly_bound() {
 
     let initial = subtask_state_in(&repo, &parent.slug).unwrap();
     assert!(initial.can_start, "{}", initial.disabled_reason);
-    assert!(initial.manager_session.is_none());
+    assert!(initial.setup_manager_session.is_none());
 
     let manager = start_subtask_manager_in(&app_config, &repo, &parent.slug).unwrap();
     assert!(manager.subtask_manager);
@@ -26,7 +26,7 @@ fn subtask_start_is_unique_and_recovery_is_explicitly_bound() {
 
     let setup = subtask_state_in(&repo, &parent.slug).unwrap();
     assert!(!setup.can_start);
-    assert_eq!(setup.manager_session.as_ref().map(|meta| meta.id.as_str()), Some(manager.id.as_str()));
+    assert_eq!(setup.setup_manager_session.as_ref().map(|meta| meta.id.as_str()), Some(manager.id.as_str()));
 
     let mut parent_record = read_task(&repo, &parent.slug).unwrap();
     let mut child = parent_record.clone();
@@ -48,13 +48,14 @@ fn subtask_start_is_unique_and_recovery_is_explicitly_bound() {
     alinery_core::write_meta_atomic(&manager_path, &serde_json::to_value(&ended_manager).unwrap()).unwrap();
 
     let recoverable = subtask_state_in(&repo, &parent.slug).unwrap();
-    assert!(recoverable.can_recover);
-    assert_eq!(recoverable.active_subtask.as_ref().map(|task| task.slug.as_str()), Some("child"));
-    let replacement = recover_subtask_manager_in(&app_config, &repo, &parent.slug).unwrap();
+    let recoverable_child = recoverable.active_subtasks.iter().find(|state| state.child.slug == "child").unwrap();
+    assert!(recoverable_child.can_recover);
+    assert_eq!(recoverable_child.child.slug, "child");
+    let replacement = recover_subtask_manager_in(&app_config, &repo, &parent.slug, "child").unwrap();
     assert!(replacement.subtask_manager);
     assert_eq!(replacement.subtask_slug, "child");
     assert!(replacement.started_at.is_none(), "recovery must not auto-spawn");
-    assert!(!subtask_state_in(&repo, &parent.slug).unwrap().can_recover);
+    assert!(!subtask_state_in(&repo, &parent.slug).unwrap().active_subtasks.iter().any(|state| state.can_recover));
 
     let child_state = subtask_state_in(&repo, "child").unwrap();
     assert_eq!(child_state.parent_task.as_ref().map(|task| task.slug.as_str()), Some(parent.slug.as_str()));
@@ -85,7 +86,7 @@ adapter = "unsupported"
         Err(error) => error,
     };
     assert_eq!(error, "Sub-task managers require the OMP harness with adapter = \"omp\"");
-    assert!(subtask_state_in(&repo, &parent.slug).unwrap().manager_session.is_none());
+    assert!(subtask_state_in(&repo, &parent.slug).unwrap().setup_manager_session.is_none());
     let _ = fs::remove_dir_all(repo);
 }
 
@@ -115,12 +116,12 @@ fn subtask_discard_stops_sessions_before_deleting_state() {
     let parent = create_task_for_test(&repo, "Parent", true, "", "");
     let manager = start_subtask_manager_in(&repo.join("app.toml"), &repo, &parent.slug).unwrap();
 
-    let error = discard_subtask_with(&repo, &parent.slug, &manager.id, |_, _| Err("daemon refused kill".into())).unwrap_err();
+    let error = discard_subtask_with(&repo, &parent.slug, &manager.id, None, |_, _| Err("daemon refused kill".into())).unwrap_err();
     assert_eq!(error, "daemon refused kill");
     assert!(session_meta_path(&repo, &parent.slug, &manager.id).exists(), "failed kill must preserve manager data");
 
     let mut stopped = Vec::new();
-    let removed = discard_subtask_with(&repo, &parent.slug, &manager.id, |owner_slug, session_id| {
+    let removed = discard_subtask_with(&repo, &parent.slug, &manager.id, None, |owner_slug, session_id| {
         stopped.push((owner_slug.to_string(), session_id.to_string()));
         Ok(())
     })

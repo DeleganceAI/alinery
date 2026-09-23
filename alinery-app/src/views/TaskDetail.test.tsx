@@ -157,19 +157,38 @@ const manager: SessionMeta = {
   harness_resume_token: "",
 };
 
-function state(overrides: Partial<SubtaskManagerState> = {}): SubtaskManagerState {
+type LegacySubtaskStateOverrides = Partial<SubtaskManagerState> & {
+  active_subtask?: SubtaskManagerState["active_subtasks"][number]["child"] | null;
+  manager_session?: SessionMeta | null;
+  can_recover?: boolean;
+};
+
+function state(overrides: LegacySubtaskStateOverrides = {}): SubtaskManagerState {
+  const legacyActiveChild = overrides.active_subtask ?? null;
+  const legacyManager = overrides.manager_session ?? null;
+  const active_subtasks =
+    overrides.active_subtasks ??
+    (legacyActiveChild
+      ? [
+          {
+            child: legacyActiveChild,
+            manager_session: legacyManager,
+            manager_owner_task_slug: overrides.manager_owner_task_slug ?? "parent",
+            can_recover: overrides.can_recover ?? false,
+          },
+        ]
+      : []);
   return {
     task: parentTask,
     parent_task: null,
-    active_subtask: null,
+    setup_manager_session: overrides.setup_manager_session ?? (legacyActiveChild ? null : legacyManager),
     parent_manager_session: null,
     parent_manager_owner_task_slug: "",
-    manager_session: null,
     manager_owner_task_slug: "parent",
     can_start: true,
-    can_recover: false,
     disabled_reason: "",
     ...overrides,
+    active_subtasks,
   };
 }
 
@@ -271,7 +290,7 @@ beforeEach(() => {
   ipcSpies.recoverSubtaskManager.mockResolvedValue({ ...manager, subtask_slug: "child" });
   ipcSpies.restoreTaskForRepo.mockReset().mockResolvedValue(undefined);
   ipcSpies.discardSubtask.mockImplementation(async () => {
-    const child = scenario.state.active_subtask;
+    const child = scenario.state.active_subtasks[0]?.child ?? null;
     scenario.task = { ...scenario.task, active_subtask: "" };
     scenario.state = state();
     if (child) {
@@ -424,7 +443,7 @@ describe("Task Detail sub-task manager projection", () => {
       if (id !== failedManager.id) return;
       failedManager = { ...failedManager, exit_notification_read_at: 20 };
       scenario.sessions = [failedManager];
-      scenario.state = { ...scenario.state, manager_session: failedManager };
+      scenario.state = { ...scenario.state, setup_manager_session: failedManager };
     });
 
     await renderDetail();
@@ -549,7 +568,7 @@ describe("Task Detail sub-task manager projection", () => {
         "Discard setup",
       ),
     );
-    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", "manager-1"));
+    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", "manager-1", undefined));
     await waitFor(() => expect(screen.queryByText("Sub-task setup")).toBeNull());
     expect((screen.getByRole("button", { name: "Start sub-task" }) as HTMLButtonElement).disabled).toBe(false);
   });
@@ -587,7 +606,7 @@ describe("Task Detail sub-task manager projection", () => {
         "Kill sub-task",
       ),
     );
-    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", "manager-1"));
+    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", "manager-1", "child"));
     const childLabel = await screen.findByText("Child", { selector: "span" });
     const childRow = childLabel.closest("tr") as HTMLTableRowElement;
     expect(within(childRow).getByText("KILLED")).toBeDefined();
@@ -676,7 +695,7 @@ describe("Task Detail sub-task manager projection", () => {
     const replace = within(childRow).getByRole("button", { name: "Replace manager session" });
     expect(screen.getAllByRole("button", { name: "Replace manager session" })).toHaveLength(1);
     fireEvent.click(replace);
-    await waitFor(() => expect(ipcSpies.recoverSubtaskManager).toHaveBeenCalledWith("parent"));
+    await waitFor(() => expect(ipcSpies.recoverSubtaskManager).toHaveBeenCalledWith("parent", "child"));
     expect(onOpenSession).toHaveBeenCalledWith("parent", "manager-1", "/worktrees/parent", "", "claude", "sonnet", "", true, "spawn");
   });
 
@@ -687,7 +706,7 @@ describe("Task Detail sub-task manager projection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Kill sub-task" }));
 
-    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", ""));
+    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", "", "child"));
     expect(ipcSpies.recoverSubtaskManager).not.toHaveBeenCalled();
     const childLabel = await screen.findByText("Child", { selector: "span" });
     const childRow = childLabel.closest("tr") as HTMLTableRowElement;
