@@ -833,6 +833,7 @@ fn accept_phase_completion(
     omp_turn_id: Option<u64>,
     meta_path: &Path,
     _app_config: &Path,
+    replacing: &AtomicBool,
 ) -> Result<CompletionOutcome, String> {
     let source = read_session_meta_full(meta_path).ok_or("missing-session-meta")?;
     if source.execution_id.is_empty() {
@@ -844,7 +845,12 @@ fn accept_phase_completion(
         &source.daemon_namespace,
         execution_config_identity(),
         "accept execution completion",
-        |_, state| alinery_core::execution::accept_execution_completion(repo, task_slug, state, &source.execution_id, session_id),
+        |_, state| {
+            if replacing.load(Ordering::SeqCst) {
+                return Err("session transport replacement in progress".into());
+            }
+            alinery_core::execution::accept_execution_completion(repo, task_slug, state, &source.execution_id, session_id)
+        },
     )?;
     if matches!(outcome, CompletionOutcome::Accepted { .. }) {
         // Projection failures cannot revoke a receipt already durably committed.
@@ -996,7 +1002,7 @@ fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Pa
     if envelope.version != RUNNER_EVENT_PROTOCOL_VERSION {
         return Err("unsupported-event-version".into());
     }
-    let (inner, meta_path, task_slug) = {
+    let (inner, meta_path, task_slug, replacing) = {
         let map = reg.lock().unwrap_or_else(|e| e.into_inner());
         let session = map.get(&envelope.session_id).ok_or_else(|| "unknown-session".to_string())?;
         if session.event_token != envelope.token {
@@ -1005,7 +1011,7 @@ fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Pa
         if session.replacing.load(Ordering::SeqCst) {
             return Err("session transport replacement in progress".into());
         }
-        (session.inner.clone(), session.meta_path.clone(), session.task_slug.clone())
+        (session.inner.clone(), session.meta_path.clone(), session.task_slug.clone(), session.replacing.clone())
     };
 
     let completion_action = {
@@ -1028,7 +1034,17 @@ fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Pa
     let completion = match (&envelope.event, completion_action) {
         (_, CompletionEventAction::InFlight) => Err("completion-in-progress".to_string()),
         (RunnerEvent::PhaseCompleted { omp_session_id, omp_turn_id }, CompletionEventAction::Attempt) => {
-            let result = accept_phase_completion(reg, repo, &envelope.session_id, &task_slug, omp_session_id, *omp_turn_id, &meta_path, app_config);
+            let result = accept_phase_completion(
+                reg,
+                repo,
+                &envelope.session_id,
+                &task_slug,
+                omp_session_id,
+                *omp_turn_id,
+                &meta_path,
+                app_config,
+                &replacing,
+            );
             inner.lock().unwrap_or_else(|error| error.into_inner()).completion_in_flight = false;
             Ok(Some(result?))
         }
@@ -2115,7 +2131,7 @@ fn spawn_session(
                     inner.reaped_and_drained = reaped && drained;
                     drop(inner);
                     if committed && reaped && drained && !replacing_reader.load(Ordering::SeqCst) {
-                        execution::exited(&execution_reader.0, &execution_reader.1, &execution_reader.2, &execution_reader.3, code);
+                        execution::exited(&execution_reader.0, &execution_reader.1, &execution_reader.2, &execution_reader.3, code, &replacing_reader);
                         start_auto_advance_once(
                             execution_reader.0.clone(),
                             execution_reader.4.clone(),
@@ -2898,7 +2914,7 @@ fn spawn_rpc_session(
                     inner.reaped_and_drained = reaped && drained;
                     drop(inner);
                     if committed && reaped && drained && !replacing_reader.load(Ordering::SeqCst) {
-                        execution::exited(&execution_reader.0, &execution_reader.1, &execution_reader.2, &execution_reader.3, code);
+                        execution::exited(&execution_reader.0, &execution_reader.1, &execution_reader.2, &execution_reader.3, code, &replacing_reader);
                         start_auto_advance_once(
                             execution_reader.0.clone(),
                             execution_reader.4.clone(),
@@ -3118,7 +3134,7 @@ fn restate_session(
                         value["exit_code"] = json!(code);
                     });
                     drop(inner);
-                    execution::exited(repo, &task_slug, id, daemon_namespace, code);
+                    execution::exited(repo, &task_slug, id, daemon_namespace, code, &replacing);
                 }
             }
             return Err(error);

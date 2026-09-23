@@ -633,3 +633,53 @@ fn task_creation_preserves_existing_unicode_slug_normalization() {
     assert_eq!(task.branch, "café--worker");
     assert!(PathBuf::from(task.worktree).join(".git").is_file());
 }
+
+#[test]
+fn completed_owner_exit_survives_task_mutation_contention() {
+    let fixture = Fixture::new();
+    let created = fixture.create(true, true);
+    let first = created.executions.iter().find(|record| record.lifecycle == ExecutionLifecycle::Running).unwrap();
+    wait(|| fixture.root.join(format!("token-{}", first.owner_session_id)).exists());
+    fixture.outputs(first);
+    assert_eq!(fixture.event(&first.owner_session_id)["completion"]["status"], "accepted");
+
+    // Hold the real cross-process repository transaction lock across child reap.
+    let mutation = alinery_core::lockfile::try_lock_exclusive(&alinery_core::task_mutation_lock_path(&fixture.root))
+        .unwrap()
+        .expect("fixture owns mutation lock");
+    fixture.release(&first.owner_session_id);
+    wait(|| {
+        fixture
+            .client
+            .session_status_observed(&first.owner_session_id)
+            .unwrap()
+            .is_some_and(|status| matches!(status.state.process, alinery_core::ProcessState::Exited { .. }))
+    });
+    // Exercise an attempted durable notification while the lock remains busy.
+    thread::sleep(Duration::from_millis(250));
+    assert!(!fixture.state().state.executions[&first.id].shutdown_confirmed);
+    drop(mutation);
+
+    let deadline = Instant::now() + Duration::from_secs(12);
+    loop {
+        let state = fixture.state().state;
+        let finished = &state.executions[&first.id];
+        if finished.shutdown_confirmed {
+            assert_eq!(finished.lifecycle, ExecutionLifecycle::Completed);
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "reaped owner lost durable shutdown confirmation after lock contention: {finished:?}"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+    wait(|| {
+        fixture
+            .state()
+            .state
+            .executions
+            .values()
+            .any(|record| record.id != first.id && record.lifecycle == ExecutionLifecycle::Running)
+    });
+}
