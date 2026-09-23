@@ -4245,6 +4245,32 @@ dialog.modal::backdrop {
 .chat-md code {
   word-break: break-word;
 }
+.chat-md .chat-copyable-block {
+  position: relative;
+}
+.chat-md div.chat-copyable-block {
+  margin: 1em 0 1.35em;
+}
+.chat-md div.chat-copyable-block:first-child {
+  margin-top: 0;
+}
+.chat-md div.chat-copyable-block:last-child {
+  margin-bottom: 0;
+}
+.chat-md .chat-copyable-block > pre {
+  margin: 0;
+  padding-right: 48px;
+}
+.chat-md blockquote.chat-copyable-block {
+  padding-right: 40px;
+}
+.chat-md .chat-copyable-block > .copy-value-button {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  border-color: transparent;
+  background: transparent;
+}
 
 .chat-entry-thumbs {
   display: flex;

@@ -312,6 +312,7 @@ function ChatEntryRowImpl({
   showDate = true,
   showTime = true,
   showActorLabels = false,
+  showBlockCopyButtons = true,
   showCopyButton = true,
 }: {
   entry: ChatEntry;
@@ -321,6 +322,7 @@ function ChatEntryRowImpl({
   showDate?: boolean;
   showTime?: boolean;
   showActorLabels?: boolean;
+  showBlockCopyButtons?: boolean;
   showCopyButton?: boolean;
 }) {
   const stamp: ChatStampParts = { date: showDate, time: showTime };
@@ -423,7 +425,7 @@ function ChatEntryRowImpl({
               <span className="chat-caret" aria-hidden />
             </p>
           ) : (
-            <ChatMarkdown text={entry.text} />
+            <ChatMarkdown text={entry.text} showBlockCopyButtons={showBlockCopyButtons} />
           )}
         </Msg>
       );

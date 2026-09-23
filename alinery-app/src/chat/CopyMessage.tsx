@@ -1,16 +1,43 @@
+import type { Element, ElementContent } from "hast";
 import { Check, Copy, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+// Read the Markdown tree, not the DOM: nested copy controls must never enter copied text.
+function markdownText(node: Element | ElementContent): string {
+  if (node.type === "text") return node.value;
+  if (node.type !== "element") return "";
+  if (node.tagName === "br") return "\n";
+  return node.children.map(markdownText).join("");
+}
+
 /** Chat bubble markdown: GFM formatting, no comment anchors/diff/mermaid machinery. */
-export function ChatMarkdown({ text }: { text: string }) {
+export function ChatMarkdown({ text, showBlockCopyButtons = true }: { text: string; showBlockCopyButtons?: boolean }) {
   const components = useMemo<Components>(
     () => ({
       a: ({ node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+      pre: ({ node, children, ...props }) =>
+        showBlockCopyButtons ? (
+          <div className="chat-copyable-block">
+            <pre {...props}>{children}</pre>
+            <CopyTextButton text={node ? markdownText(node).replace(/\n$/, "") : ""} label="code block" />
+          </div>
+        ) : (
+          <pre {...props}>{children}</pre>
+        ),
+      blockquote: ({ node, children, ...props }) =>
+        showBlockCopyButtons ? (
+          <blockquote {...props} className="chat-copyable-block">
+            {children}
+            <CopyTextButton text={node ? markdownText(node).replace(/^\n|\n$/g, "") : ""} label="quote" />
+          </blockquote>
+        ) : (
+          <blockquote {...props}>{children}</blockquote>
+        ),
     }),
-    [],
+    [showBlockCopyButtons],
   );
   return (
     <div className="md chat-md">

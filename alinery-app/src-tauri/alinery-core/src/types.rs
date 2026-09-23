@@ -727,13 +727,54 @@ impl Default for BackupDefaults {
     }
 }
 
+// Legacy defaults used repository registry keys, including the bundled keys copied
+// into that registry. Upgrade only settings fields: task/command PlaybookRef stays
+// strict. Reads leave files untouched; the next normal save writes scoped values.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SettingsPlaybookRef {
+    Scoped(crate::playbook::PlaybookRef),
+    Legacy(String),
+}
+
+impl SettingsPlaybookRef {
+    fn into_reference<E: serde::de::Error>(self) -> Result<crate::playbook::PlaybookRef, E> {
+        use crate::playbook::{valid_playbook_key, PlaybookRef, PlaybookScope};
+
+        match self {
+            Self::Scoped(reference) => Ok(reference),
+            Self::Legacy(key) => {
+                if !valid_playbook_key(&key) {
+                    return Err(E::custom("legacy playbook default must be a valid playbook key"));
+                }
+                let scope = if crate::playbook_library::BUNDLED_PLAYBOOKS.iter().any(|(bundled, _)| *bundled == key) {
+                    PlaybookScope::Bundled
+                } else {
+                    PlaybookScope::Repo
+                };
+                Ok(PlaybookRef { scope, key })
+            }
+        }
+    }
+}
+
+fn deserialize_playbook_default<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<crate::playbook::PlaybookRef, D::Error> {
+    SettingsPlaybookRef::deserialize(deserializer)?.into_reference()
+}
+
+fn deserialize_playbook_override<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<crate::playbook::PlaybookRef>, D::Error> {
+    Option::<SettingsPlaybookRef>::deserialize(deserializer)?
+        .map(SettingsPlaybookRef::into_reference)
+        .transpose()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HarnessChoice {
     #[serde(default)]
     pub harness: String,
     #[serde(default)]
     pub model: String,
-    #[serde(default = "default_playbook_ref")]
+    #[serde(default = "default_playbook_ref", deserialize_with = "deserialize_playbook_default")]
     pub playbook: crate::playbook::PlaybookRef,
     #[serde(default = "default_enabled")]
     pub draft_autosave: bool,
@@ -803,7 +844,7 @@ pub struct RepoHarnessChoiceOverrides {
     pub harness: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_playbook_override")]
     pub playbook: Option<crate::playbook::PlaybookRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draft_autosave: Option<bool>,
