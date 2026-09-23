@@ -253,6 +253,7 @@ export function TaskDetail({
     if (currentRow) return [currentRow];
     const finishedRow = finishedRowByManagerId.get(session.id);
     if (finishedRow) return [finishedRow];
+    if (session.subtask_manager && !session.subtask_slug) return [{ kind: "subtask_manager", session, owner_task_slug: slug, active_child: false }];
     return session.subtask_manager ? [] : [{ kind: "session", session }];
   });
   for (const currentRow of currentManagerRows) {

@@ -395,9 +395,6 @@ pub(super) fn create_session(
                     if !child.is_empty() {
                         return Err("new sub-task manager cannot bind an existing child".into());
                     }
-                    if metas.iter().any(|m| m.subtask_manager && !m.archived && m.ended_at.is_none() && m.subtask_slug.is_empty()) {
-                        return Err("task already has a live or unstarted setup manager".into());
-                    }
                     if !alinery_core::task_has_existing_worktree(task) {
                         return Err("sub-task parent has no dedicated worktree".into());
                     }

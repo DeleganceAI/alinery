@@ -57,8 +57,6 @@ pub(crate) fn subtask_state_in(repo: &Path, task_slug: &str) -> Result<alinery_c
         "Archived tasks cannot start sub-tasks".into()
     } else if !alinery_core::task_has_existing_worktree(&task) {
         "A dedicated task worktree is required".into()
-    } else if setup_manager_session.is_some() {
-        "A sub-task setup manager already exists".into()
     } else if active_child_missing_worktree {
         "All active sub-tasks need dedicated worktrees before starting another".into()
     } else {

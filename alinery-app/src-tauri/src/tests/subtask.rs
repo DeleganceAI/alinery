@@ -28,6 +28,27 @@ fn subtask_discard_stops_sessions_before_deleting_state() {
 }
 
 #[test]
+fn existing_setup_manager_does_not_block_starting_another() {
+    let repo = init_git_test_repo("subtask-multiple-setup");
+    let mut parent = create_task_for_test(&repo, "Parent", true, "", "");
+    parent.engine_version = 2;
+    write_task(&repo, &parent).unwrap();
+    let manager = SessionMeta {
+        id: "manager".into(),
+        worktree: parent.worktree.clone(),
+        harness: "omp".into(),
+        generic: true,
+        subtask_manager: true,
+        ..Default::default()
+    };
+    fs::write(session_meta_path(&repo, &parent.slug, &manager.id), serde_json::to_vec(&manager).unwrap()).unwrap();
+    let state = subtask_state_in(&repo, &parent.slug).unwrap();
+    assert!(state.can_start, "{}", state.disabled_reason);
+    assert_eq!(state.setup_manager_session.as_ref().map(|session| session.id.as_str()), Some("manager"));
+    fs::remove_dir_all(repo).unwrap();
+}
+
+#[test]
 fn historical_tasks_cannot_offer_executable_managers() {
     let repo = init_git_test_repo("historical-manager");
     let mut task = create_task_for_test(&repo, "Parent", true, "", "");
