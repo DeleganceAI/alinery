@@ -278,6 +278,7 @@ function ChatEntryRowImpl({
   showDate = true,
   showTime = true,
   showActorLabels = false,
+  showBlockCopyButtons = true,
 }: {
   entry: ChatEntry;
   onApprove?: (id: string, allow: boolean) => void;
@@ -286,6 +287,7 @@ function ChatEntryRowImpl({
   showDate?: boolean;
   showTime?: boolean;
   showActorLabels?: boolean;
+  showBlockCopyButtons?: boolean;
 }) {
   const stamp: ChatStampParts = { date: showDate, time: showTime };
   if (isWork(entry)) return <WorkRail entry={entry} defaultExpanded={defaultExpanded} autoCollapseThinking={autoCollapseThinking} stamp={stamp} />;
@@ -378,7 +380,7 @@ function ChatEntryRowImpl({
               <span className="chat-caret" aria-hidden />
             </p>
           ) : (
-            <ChatMarkdown text={entry.text} />
+            <ChatMarkdown text={entry.text} showBlockCopyButtons={showBlockCopyButtons} />
           )}
         </Msg>
       );

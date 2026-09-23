@@ -1860,6 +1860,18 @@ export function Settings({
                   </>
                 }
               />
+              <Checkbox
+                checked={appearance.chat_show_block_copy_buttons !== false}
+                disabled={!isGlobal}
+                onChange={(enabled) => {
+                  if (isGlobal) saveAppearance({ ...appearance, chat_show_block_copy_buttons: enabled });
+                }}
+                label={
+                  <>
+                    Show block copy buttons <span className="dsc">— copy individual code blocks and quotes; whole-message copying stays available</span>
+                  </>
+                }
+              />
             </div>
             <div className="settings-subsection">
               <h2>Density</h2>

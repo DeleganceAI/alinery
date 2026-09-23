@@ -57,6 +57,8 @@ export type AppearancePrefs = {
   chat_show_actor_labels?: boolean;
   /** Filled bubble around agent text replies only. Absent → true. */
   chat_show_agent_bubbles?: boolean;
+  /** Copy buttons on individual code blocks and blockquotes. Absent → true. */
+  chat_show_block_copy_buttons?: boolean;
   /** Preferred OMP session hatch (Chat vs Terminal) for new starts. Absent → "chat". */
   session_default_view?: SessionDefaultView;
   /** Absent in pre-reskin configs; normalizers default it to "system". */
