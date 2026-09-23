@@ -4268,6 +4268,8 @@ dialog.modal::backdrop {
   position: absolute;
   top: 6px;
   right: 6px;
+  border-color: transparent;
+  background: transparent;
 }
 
 .chat-entry-thumbs {
