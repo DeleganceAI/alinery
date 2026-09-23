@@ -8,7 +8,7 @@ import { usePointerDrag } from "../usePointerDrag";
 import { useTaskPullRequests } from "../useTaskPullRequests";
 
 type PresetKey = "kanban" | "steps" | "quadrants" | "atlas" | "age" | "progress";
-type PresetSelection = PresetKey | "custom";
+type PresetSelection = PresetKey | "custom" | `saved:${string}`;
 type PositionModel = "packed" | "lanes";
 type ProgressField = "stage" | "column" | "status" | "createdWindow";
 type Direction = "ltr" | "rtl";
@@ -36,6 +36,7 @@ type GridConfig = {
   placement: Placement;
   columnFlow: ColumnFlow;
   fill: FillField;
+  showEmptyColumns: boolean;
   border: BorderField;
   sort: SortField;
   mode: CardMode;
@@ -90,6 +91,24 @@ type GridWorkspaceState = {
   hiddenTaskIds: string[];
   hiddenGroupKeys: string[];
 };
+type SavedPreset = Pick<GridWorkspaceState, "config" | "showArchived" | "hiddenGroupKeys"> & {
+  id: `saved:${string}`;
+  name: string;
+};
+
+const SAVED_PRESETS_KEY = "alinery:grid:presets";
+const SAVED_PRESETS_EVENT = "alinery:grid:presets-changed";
+
+function loadSavedPresets(): SavedPreset[] {
+  try {
+    const saved: unknown = JSON.parse(window.localStorage.getItem(SAVED_PRESETS_KEY) ?? "[]");
+    return Array.isArray(saved)
+      ? saved.filter((entry): entry is SavedPreset => typeof entry?.id === "string" && entry.id.startsWith("saved:") && typeof entry.name === "string" && !!entry.config)
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 const STATUS_LABELS: Record<GridActivityState, string> = {
   running: "Running",
@@ -218,6 +237,7 @@ const PRESETS: Record<PresetKey, GridConfig> = {
     placement: "columns",
     columnFlow: "wrap",
     fill: "stage",
+    showEmptyColumns: false,
     border: "repo",
     sort: "updatedHours",
     mode: "detail",
@@ -242,6 +262,7 @@ const PRESETS: Record<PresetKey, GridConfig> = {
     placement: "columns",
     columnFlow: "wrap",
     fill: "playbook",
+    showEmptyColumns: false,
     border: "repo",
     sort: "updatedHours",
     mode: "compact",
@@ -266,6 +287,7 @@ const PRESETS: Record<PresetKey, GridConfig> = {
     placement: "quadrants",
     columnFlow: "wrap",
     fill: "playbook",
+    showEmptyColumns: false,
     border: "status",
     sort: "importance",
     mode: "compact",
@@ -290,6 +312,7 @@ const PRESETS: Record<PresetKey, GridConfig> = {
     placement: "rows",
     columnFlow: "wrap",
     fill: "repo",
+    showEmptyColumns: false,
     border: "status",
     sort: "stage",
     mode: "icon",
@@ -314,6 +337,7 @@ const PRESETS: Record<PresetKey, GridConfig> = {
     placement: "columns",
     columnFlow: "wrap",
     fill: "repo",
+    showEmptyColumns: false,
     border: "status",
     sort: "importance",
     mode: "detail",
@@ -338,6 +362,7 @@ const PRESETS: Record<PresetKey, GridConfig> = {
     placement: "rows",
     columnFlow: "wrap",
     fill: "repo",
+    showEmptyColumns: false,
     border: "attention",
     sort: "manual",
     mode: "compact",
@@ -431,11 +456,12 @@ function randomGridConfig(random: RandomSource): GridConfig {
     group: randomOption(GROUP_OPTIONS, random),
     placement: randomOption(PLACEMENT_OPTIONS, random),
     columnFlow: randomOption(COLUMN_FLOW_OPTIONS, random),
+    showEmptyColumns: random() >= 0.5,
     fill: randomOption(FILL_OPTIONS, random),
     border: randomOption(BORDER_OPTIONS, random),
     sort: randomOption(SORT_OPTIONS, random),
     mode: randomOption(MODE_OPTIONS, random),
-    width: randomStep(42, 240, 6, random),
+    width: randomStep(42, 960, 6, random),
     height: randomStep(42, 170, 2, random),
     label: randomStep(140, 420, 10, random),
     rowSpacing: randomStep(0, 24, 1, random),
@@ -536,7 +562,7 @@ function stagePath(fact: TaskFacts, executions: Record<string, TaskExecutionRepl
   });
   const current = fact.task.current_phase || "";
   if (!path.some((step) => step.key === current)) {
-    path.push({ key: current, label: fact.stage, summary: execution ? undefined : "Execution unavailable" });
+    path.push({ key: current, label: fact.stage, summary: execution || fact.task.draft ? undefined : "Execution unavailable" });
   }
   return path.sort((left, right) => left.label.localeCompare(right.label) || left.key.localeCompare(right.key));
 }
@@ -729,6 +755,9 @@ export function Grid({
   const [executionErr, setExecutionErr] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(initialWorkspace.settingsOpen);
   const [preset, setPreset] = useState<PresetSelection>(initialWorkspace.preset);
+  const [savedPresets, setSavedPresets] = useState(loadSavedPresets);
+  const [presetName, setPresetName] = useState("");
+  const [presetError, setPresetError] = useState("");
   const [config, setConfig] = useState<GridConfig>(initialWorkspace.config);
   const [showArchived, setShowArchived] = useState(initialWorkspace.showArchived);
   const [selectedTaskKey, setSelectedTaskKey] = useState(initialWorkspace.selectedTaskKey);
@@ -742,6 +771,18 @@ export function Grid({
   const movementHistory = useRef<MovementHistory>({});
   const pointerDrag = usePointerDrag();
   const activity = useBoardTaskActivity(tasks, active);
+
+  useEffect(() => {
+    const refresh = () => setSavedPresets(loadSavedPresets());
+    window.addEventListener(SAVED_PRESETS_EVENT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(SAVED_PRESETS_EVENT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+
+  const selectedPreset = preset.startsWith("saved:") && !savedPresets.some((saved) => saved.id === preset) ? "custom" : preset;
 
   useEffect(() => {
     if (!storageKey) return;
@@ -785,7 +826,7 @@ export function Grid({
   const executionRefs = useMemo(() => {
     const refs = new Map<string, ExecutionRef>();
     for (const task of tasks) {
-      if (!showArchived && task.archived) continue;
+      if (task.draft || (!showArchived && task.archived)) continue;
       const key = taskKey(task);
       refs.set(key, { key, repoPath: task.repo_path, slug: task.slug });
     }
@@ -835,7 +876,7 @@ export function Grid({
           name: task.name,
           repo: repoName(task.repo_path),
           playbook: task.playbook_title || task.playbook,
-          stage: task.current_step_title || "Not started",
+          stage: task.draft ? "Draft" : task.current_step_title || "Not started",
           column: task.current_column_title || task.current_column_key || "Other",
           statusKey,
           status: STATUS_LABELS[statusKey],
@@ -906,6 +947,21 @@ export function Grid({
       return [{ key: "all", label: "All tasks", tasks: sortFacts(visibleFacts, config.sort, manualOrder, stageOrder) }];
     }
     const values = orderedFieldValues(config.group, visibleFacts, columns);
+    if (config.showEmptyColumns && config.position === "packed" && config.placement === "columns") {
+      const emptyValues =
+        config.group === "column"
+          ? columns.map((column) => column.title || column.key)
+          : config.group === "stage"
+            ? [...new Set(Object.values(executions).flatMap((execution) => execution.definition.step.map((step) => step.title || step.key)))].sort()
+            : config.group === "status"
+              ? STATUS_ORDER.map((status) => STATUS_LABELS[status])
+              : config.group === "createdWindow"
+                ? AGE_WINDOWS
+                : config.group === "attention"
+                  ? ATTENTION_ORDER
+                  : orderedFieldValues(config.group, facts, columns);
+      values.splice(0, values.length, ...emptyValues, ...values.filter((value) => !emptyValues.includes(value)));
+    }
     return values.map((value) => ({
       key: value,
       label: value,
@@ -916,7 +972,7 @@ export function Grid({
         stageOrder,
       ),
     }));
-  }, [config.group, config.sort, visibleFacts, columns, manualOrder, stageOrder]);
+  }, [config.group, config.sort, config.showEmptyColumns, config.position, config.placement, visibleFacts, facts, columns, executions, manualOrder, stageOrder]);
   const collapsibleGroups = config.position === "packed" && config.placement === "columns";
   const displayFacts = useMemo(
     () => groups.filter((group) => !collapsibleGroups || !hiddenGroupKeys.has(`${config.group}:${group.key}`)).flatMap((group) => group.tasks),
@@ -969,9 +1025,51 @@ export function Grid({
     setPreset("custom");
     setConfig((current) => ({ ...current, [key]: value }));
   };
-  const applyPreset = (key: PresetKey) => {
+  const applyPreset = (key: PresetSelection) => {
+    const saved = savedPresets.find((candidate) => candidate.id === key);
+    if (saved) {
+      setConfig({ ...PRESETS.kanban, ...saved.config, properties: [...saved.config.properties] });
+      setShowArchived(saved.showArchived);
+      setHiddenGroupKeys(new Set(saved.hiddenGroupKeys));
+    } else if (key in PRESETS) {
+      const config = PRESETS[key as PresetKey];
+      setConfig({ ...config, properties: [...config.properties] });
+    } else {
+      return;
+    }
     setPreset(key);
-    setConfig({ ...PRESETS[key], properties: [...PRESETS[key].properties] });
+    setPresetError("");
+  };
+  const persistPresets = (next: SavedPreset[]) => {
+    try {
+      window.localStorage.setItem(SAVED_PRESETS_KEY, JSON.stringify(next));
+      window.dispatchEvent(new Event(SAVED_PRESETS_EVENT));
+      setPresetError("");
+      return true;
+    } catch {
+      setPresetError("Couldn't save presets. Local storage is unavailable.");
+      return false;
+    }
+  };
+  const savePreset = () => {
+    const name = presetName.trim();
+    const current = loadSavedPresets();
+    if (!name) {
+      setPresetError("Enter a preset name.");
+      return;
+    }
+    if ([...PRESET_OPTIONS.map((option) => option.label), "Custom", ...current.map((saved) => saved.name)].some((label) => label.toLowerCase() === name.toLowerCase())) {
+      setPresetError("A preset with that name already exists.");
+      return;
+    }
+    const id = `saved:${crypto.randomUUID()}` as const;
+    if (persistPresets([...current, { id, name, config, showArchived, hiddenGroupKeys: [...hiddenGroupKeys] }])) {
+      setPreset(id);
+      setPresetName("");
+    }
+  };
+  const deletePreset = () => {
+    if (persistPresets(loadSavedPresets().filter((saved) => saved.id !== selectedPreset))) setPreset("custom");
   };
   const randomizeSettings = () => {
     setPreset("custom");
@@ -985,6 +1083,7 @@ export function Grid({
     }));
   };
   const toggleGroup = (key: string) => {
+    setPreset("custom");
     setHiddenGroupKeys((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
@@ -993,6 +1092,7 @@ export function Grid({
     });
   };
   const toggleHidden = (id: string) => {
+    setPreset("custom");
     setHiddenTaskIds((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
@@ -1001,11 +1101,16 @@ export function Grid({
     });
   };
   const hideAll = () => {
+    setPreset("custom");
     setHiddenTaskIds((current) => new Set([...current, ...visibleFacts.map((fact) => fact.id)]));
   };
-  const unhideAll = () => setHiddenTaskIds(new Set());
+  const unhideAll = () => {
+    setPreset("custom");
+    setHiddenTaskIds(new Set());
+  };
   const movableIds = useMemo(() => new Set(visibleFacts.filter((fact) => !hiddenTaskIds.has(fact.id)).map((fact) => fact.id)), [visibleFacts, hiddenTaskIds]);
   const moveManualTask = (taskId: string, targetId: string, after: boolean) => {
+    setPreset("custom");
     setManualOrder((current) => reorderGridTasks(current, movableIds, taskId, targetId, after));
   };
   const laneAtPoint = (clientX: number, clientY: number) => document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>(".task-grid-lane-row") ?? null;
@@ -1111,6 +1216,7 @@ export function Grid({
         </span>
         {config.properties.includes("name") && <span className="task-grid-card-name">{fact.name}</span>}
         <span className="task-grid-card-meta">
+          {fact.task.draft && <span className="pill">Draft</span>}
           {config.properties
             .filter(
               (property): property is Exclude<CardProperty, "activity" | "pullRequest" | "name"> => property !== "activity" && property !== "pullRequest" && property !== "name",
@@ -1309,7 +1415,37 @@ export function Grid({
             </button>
           </div>
           <div className="task-grid-controls">
-            <SelectField label="Preset" value={preset} options={PRESET_SELECT_OPTIONS} onChange={(value) => value !== "custom" && applyPreset(value as PresetKey)} />
+            <SelectField
+              label="Preset"
+              value={selectedPreset}
+              options={[...PRESET_SELECT_OPTIONS, ...savedPresets.map((saved) => ({ value: saved.id, label: saved.name }))]}
+              onChange={(value) => applyPreset(value as PresetSelection)}
+            />
+            <label className="task-grid-field">
+              <span>New preset name</span>
+              <input
+                type="text"
+                value={presetName}
+                onChange={(event) => setPresetName(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    savePreset();
+                  }
+                }}
+              />
+            </label>
+            <div className="task-grid-settings-actions">
+              <button type="button" onClick={savePreset}>
+                Save as new preset
+              </button>
+              {selectedPreset.startsWith("saved:") && (
+                <button type="button" onClick={deletePreset}>
+                  Delete preset
+                </button>
+              )}
+            </div>
+            {presetError && <span role="alert">{presetError}</span>}
             <SelectField label="Position model" value={config.position} options={POSITION_OPTIONS} onChange={(value) => setField("position", value as PositionModel)} />
             {config.position === "lanes" && (
               <>
@@ -1352,7 +1488,7 @@ export function Grid({
               onChange={(value) => setField("sort", value as SortField)}
             />
             <SelectField label="Card mode" value={config.mode} options={MODE_OPTIONS} onChange={(value) => setField("mode", value as CardMode)} />
-            <RangeField label="Tile width" value={config.width} min={42} max={240} step={6} onChange={(value) => setField("width", value)} />
+            <RangeField label="Tile width" value={config.width} min={42} max={960} step={6} onChange={(value) => setField("width", value)} />
             <RangeField label="Tile height" value={config.height} min={42} max={170} step={2} onChange={(value) => setField("height", value)} />
             <RangeField label="Row spacing" value={config.rowSpacing} min={0} max={24} step={1} onChange={(value) => setField("rowSpacing", value)} />
             <RangeField label="Column spacing" value={config.columnSpacing} min={0} max={24} step={1} onChange={(value) => setField("columnSpacing", value)} />
@@ -1379,6 +1515,7 @@ export function Grid({
                       onChange={(value) => setField("columnCards", Number(value))}
                     />
                     <SelectField label="Column flow" value={config.columnFlow} options={COLUMN_FLOW_OPTIONS} onChange={(value) => setField("columnFlow", value as ColumnFlow)} />
+                    <Checkbox checked={config.showEmptyColumns} onChange={(value) => setField("showEmptyColumns", value)} label="Show empty columns" />
                   </>
                 )}
               </>
@@ -1387,7 +1524,14 @@ export function Grid({
             <SelectField label="Brightness" value={config.fade} options={BRIGHTNESS_OPTIONS} onChange={(value) => setField("fade", value as Brightness)} />
             <div className="task-grid-field">
               <span>Archived tasks</span>
-              <Checkbox checked={showArchived} onChange={setShowArchived} label="Show archived" />
+              <Checkbox
+                checked={showArchived}
+                onChange={(value) => {
+                  setPreset("custom");
+                  setShowArchived(value);
+                }}
+                label="Show archived"
+              />
             </div>
           </div>
           <fieldset className="task-grid-properties">

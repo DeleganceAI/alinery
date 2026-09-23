@@ -209,6 +209,110 @@ afterEach(() => {
 });
 
 describe("configurable task grid", () => {
+  it("saves named settings across repositories without changing the original preset", async () => {
+    const props = { allRepos: false, onOpen: () => {}, registerNav: () => {} };
+    const first = render(<Grid {...props} storageKey="repo-a:view:presets" />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.change(screen.getByLabelText(/Tile width/), { target: { value: "960" } });
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    fireEvent.change(screen.getByLabelText("New preset name"), { target: { value: "Wide board" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save as new preset" }));
+    const savedId = (screen.getByLabelText("Preset") as HTMLSelectElement).value;
+    fireEvent.change(screen.getByLabelText(/Tile width/), { target: { value: "480" } });
+    fireEvent.change(screen.getByLabelText("New preset name"), { target: { value: "wide BOARD" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save as new preset" }));
+    expect(screen.getByRole("alert").textContent).toContain("already exists");
+    first.unmount();
+
+    const other = render(<Grid {...props} storageKey="repo-b:view:presets" />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    expect((screen.getByLabelText(/Tile width/) as HTMLInputElement).value).toBe("150");
+    fireEvent.change(screen.getByLabelText("Preset"), { target: { value: savedId } });
+    expect((screen.getByLabelText(/Tile width/) as HTMLInputElement).value).toBe("960");
+    expect((screen.getByLabelText("Show empty columns") as HTMLInputElement).checked).toBe(true);
+    fireEvent.change(screen.getByLabelText("New preset name"), { target: { value: "Another board" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save as new preset" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete preset" }));
+    expect(screen.queryByRole("option", { name: "Another board" })).toBeNull();
+    expect(screen.getByRole("option", { name: "Wide board" })).toBeDefined();
+    other.unmount();
+
+    render(<Grid {...props} storageKey="repo-a:view:presets" />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    expect((screen.getByLabelText(/Tile width/) as HTMLInputElement).value).toBe("480");
+    expect((screen.getByLabelText("Preset") as HTMLSelectElement).value).toBe("custom");
+    fireEvent.change(screen.getByLabelText("Preset"), { target: { value: savedId } });
+    expect((screen.getByLabelText(/Tile width/) as HTMLInputElement).value).toBe("960");
+  });
+
+  it("keeps mounted views synchronized when a saved preset is deleted", async () => {
+    const props = { allRepos: false, onOpen: () => {}, registerNav: () => {} };
+    const first = render(<Grid {...props} storageKey="preset-first" />);
+    const second = render(<Grid {...props} storageKey="preset-second" />);
+    const a = within(first.container);
+    const b = within(second.container);
+    fireEvent.click(a.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.click(b.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.change(a.getByLabelText("New preset name"), { target: { value: "Shared" } });
+    fireEvent.click(a.getByRole("button", { name: "Save as new preset" }));
+    const id = (a.getByLabelText("Preset") as HTMLSelectElement).value;
+    fireEvent.change(b.getByLabelText("Preset"), { target: { value: id } });
+    fireEvent.click(a.getByRole("button", { name: "Delete preset" }));
+    expect((b.getByLabelText("Preset") as HTMLSelectElement).value).toBe("custom");
+    expect(b.queryByRole("option", { name: "Shared" })).toBeNull();
+    await act(async () => {});
+  });
+
+  it("shows empty kanban and retained-step columns on demand and still permits collapse", async () => {
+    render(<Grid allRepos={false} onOpen={() => {}} registerNav={() => {}} />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    expect(screen.queryByRole("button", { name: "Hide Research & Design column" })).toBeNull();
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    fireEvent.click(screen.getByRole("button", { name: "Hide Research & Design column" }));
+    expect(screen.getByRole("button", { name: "Expand Research & Design column" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Expand Research & Design column" }));
+    fireEvent.change(screen.getByLabelText("Group by"), { target: { value: "stage" } });
+    expect(await screen.findByRole("button", { name: "Hide Research column" })).toBeDefined();
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    expect(screen.queryByRole("button", { name: "Hide Research column" })).toBeNull();
+  });
+
+  it("surfaces newly saved drafts without treating their absent execution as an error", async () => {
+    vi.useFakeTimers();
+    const draft = makeTask({
+      name: "Draft proposal",
+      slug: "draft-proposal",
+      draft: true,
+      session_count: 0,
+      current_phase: "",
+      current_step_title: "",
+      current_column_key: "",
+      current_column_title: "",
+    });
+    ipcMock.getTaskExecution.mockImplementation(async (slug, repoPath) => {
+      if (slug === draft.slug) throw new Error("No execution state for draft");
+      return taskExecutions[`${repoPath}:${slug}`];
+    });
+    const onOpen = vi.fn();
+    render(<Grid allRepos={false} onOpen={onOpen} registerNav={() => {}} />);
+    await act(async () => {});
+    ipcMock.listBoardTasks.mockResolvedValue([...tasks, draft]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Draft proposal, repo-a.*Draft/ }));
+    expect(onOpen).toHaveBeenLastCalledWith(draft);
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.change(screen.getByLabelText("Preset"), { target: { value: "progress" } });
+    const lane = screen.getByLabelText("Draft proposal retained steps");
+    expect(within(lane).queryByText(/Execution unavailable/)).toBeNull();
+    expect(within(lane).getByRole("button", { name: /Draft proposal/ })).toBeDefined();
+  });
+
   it("renders every preset through the same real task projection", async () => {
     const onOpen = vi.fn();
     render(<Grid allRepos onOpen={onOpen} registerNav={() => {}} />);

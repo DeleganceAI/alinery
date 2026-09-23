@@ -1216,6 +1216,9 @@ main {
   gap: 8px;
 }
 .card {
+  height: 140px;
+  flex-shrink: 0;
+  overflow: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
@@ -6984,6 +6987,13 @@ dialog.modal::backdrop {
   gap: 10px 14px;
   padding: 12px 14px;
 }
+.task-grid-controls .task-grid-settings-actions {
+  grid-column: span 2;
+  align-self: end;
+  justify-content: flex-start;
+  padding: 0;
+  border: 0;
+}
 .task-grid-field {
   min-width: 0;
   display: grid;
@@ -6998,6 +7008,7 @@ dialog.modal::backdrop {
   font-weight: 400;
 }
 .task-grid-field select,
+.task-grid-field input[type="text"],
 .task-grid-field input[type="range"] {
   width: 100%;
   min-width: 0;
@@ -7007,7 +7018,8 @@ dialog.modal::backdrop {
   color: var(--text);
   accent-color: var(--accent);
 }
-.task-grid-field select {
+.task-grid-field select,
+.task-grid-field input[type="text"] {
   padding: 5px 8px;
 }
 .task-grid-properties {
@@ -7251,7 +7263,7 @@ dialog.modal::backdrop {
   min-width: 0;
   max-width: 100%;
   height: var(--task-grid-tile-h, 96px);
-  overflow: hidden;
+  overflow: auto;
   padding: 8px;
   border: 1px solid var(--task-grid-border, var(--border));
   border-radius: var(--radius-md);
@@ -7315,13 +7327,12 @@ dialog.modal::backdrop {
 .task-grid-card-meta span {
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
   padding: 1px 6px;
   border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--surface-raised) 72%, transparent);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .task-grid-icon {
   display: none;
@@ -7329,13 +7340,7 @@ dialog.modal::backdrop {
   color: var(--text);
   font-size: calc(22px * var(--ui-scale));
 }
-.task-grid-card-compact .task-grid-card-meta span:nth-child(n + 3) {
-  display: none;
-}
 .task-grid-card-icon {
-  aspect-ratio: 1;
-  height: auto;
-  min-height: var(--task-grid-tile-h, 48px);
   padding: 0;
   display: grid;
   place-items: center;
