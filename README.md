@@ -22,47 +22,6 @@
 
 **Put a team of agents to work with a Playbook.** Give them a process, steer the important decisions, and build on the results. Playbooks define a ready-to-execute team of agents: who does what, how their work fits together, and where you step in to review or decide. Choose a Playbook for your task and adapt it to the way you want to work. Each task keeps its sessions, decisions, and artifacts together, so you can go down rabbit holes without losing track of the main task or the progress you’ve made.
 
-## Playbook library
-
-The **Playbooks** tab opens a searchable library beside a saved-definition graph that fills the available pane height. Directed arrows are labelled with artifact paths and show forks, joins, and dashed return paths. Wildcard `each` workers appear as three illustrative instances with an ellipsis, converging on their consumers; actual instance counts are not fixed. Select any example to inspect the shared step's prompt, inputs, outputs, coding flag, automatic-completion default, and connection details. Connections come from artifact selectors; this is not a live execution view or a graph editor.
-
-Drag the divider between the graph and description to resize them. The focused divider also supports Left/Right arrows and Home/End. The chosen split is retained while browsing playbooks and switching between Graph and Editor.
-
-**Editor** fills the remaining vertical space and shows the complete `playbook.md` with soft-wrapped text, aligned source line numbers, and simple TOML/Markdown highlighting. Switching views retains unsaved changes; the graph updates only after a validated save succeeds. Bundled documents are read-only: choose **Make a copy to edit**, then a destination scope and key. **Import** accepts a local file or pasted source. Library edits and deletion affect future task selections, never existing tasks' retained definitions.
-
-In **Task detail → Playbook**, **List** remains the default, showing active counts and automatic-completion settings. **Graph** displays only the task's retained definition graph and artifact arrows, without a step inspector or divider. Select a step to highlight its connections. The full Playbooks library keeps its step inspector. The list's **Artifact dependencies** section describes output-to-input connections, not automatic-completion decisions.
-
-Task detail's right-side **History** tab shows execution states, assigned inputs/outputs, and completion permissions. History scrolls independently from the sessions table on the left. Long task metadata is also scrollable without pushing sessions out of view.
-
-The sessions toolbar shows **N queued** immediately before **Priority**. It counts executions whose start was requested and which are still queued; deliberately held sessions are excluded. The count updates with task state and includes zero once loaded.
-
-For a human-gated running session, **Allow this session to complete** is visible beside the execution disclosure even when it is collapsed. This grants permission only; the agent still needs to request completion after finishing its assigned outputs.
-
-Each v2 task retains one validated `playbook.md`, one dedicated worktree, and file-backed
-`execution.json` state. The daemon schedules concrete artifact bindings, including fan-out,
-complete-set merges, and fresh-artifact loops. Coding ownership and the task's live-session
-capacity remain held through human review and confirmed process shutdown.
-
-Task creation checks local Git branches and durable task branch reservations before recording
-new intent. Exact names and slash-prefix conflicts are deduplicated with numeric suffixes when
-possible (`feat/one` can make a requested `feat` become `feat-1`). If an existing or reserved
-parent branch blocks every suffix (`feat` blocks `feat/one`), choose a branch outside that
-namespace. Child-task identities are never silently renamed. Git errors fail preflight; later
-failures, including races with external Git writers, still retain partial-task recovery evidence.
-
-Reusable definitions live in bundled, global, and repository scopes; identical keys do not
-shadow each other. Legacy `playbooks.toml` and split prompt files remain untouched in user
-repositories but are not v2 runtime inputs. Historical pre-v2 tasks remain readable; launching
-them requires explicit recreation rather than automatic migration or a fallback definition.
-
-Legacy string-valued defaults in `app.toml` and repository `.alinery/config.toml`
-are upgraded automatically when read: bundled playbook names become bundled
-references, and custom names retain their key in repository scope. Existing scoped
-references are unchanged. Reading does not rewrite files; the next settings save
-persists the scoped form. Repository lists and appearance preferences are retained.
-This upgrades the saved selection, not custom v1 definitions: those still need to
-be recreated in the v2 library before use.
-
 ## Install
 
 For **macOS on Apple Silicon** and **Linux on x86_64**:
