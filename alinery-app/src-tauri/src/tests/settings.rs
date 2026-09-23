@@ -169,6 +169,7 @@ fn appearance_defaults_sanitize_and_round_trip() {
     assert!(empty.appearance.chat_show_time);
     assert!(empty.appearance.chat_show_actor_labels);
     assert!(empty.appearance.chat_show_agent_bubbles);
+    assert!(empty.appearance.chat_show_copy_buttons);
     assert_eq!(empty.appearance.session_default_view, "chat");
 
     let old_default = AppearancePrefs {
@@ -208,6 +209,8 @@ fn appearance_defaults_sanitize_and_round_trip() {
         chat_show_time: true,
         chat_show_actor_labels: true,
         chat_show_agent_bubbles: true,
+        chat_show_block_copy_buttons: false,
+        chat_show_copy_buttons: false,
         session_default_view: "terminal".into(),
         mode: "light".into(),
     };
@@ -223,6 +226,8 @@ fn appearance_defaults_sanitize_and_round_trip() {
     assert!(back.chat_show_time);
     assert!(back.chat_show_actor_labels);
     assert!(back.chat_show_agent_bubbles);
+    assert!(!sanitize_appearance(back.clone()).chat_show_block_copy_buttons);
+    assert!(!back.chat_show_copy_buttons);
     assert_eq!(back.chat_rail_font_size, 13);
     assert_eq!(back.session_default_view, "terminal");
 

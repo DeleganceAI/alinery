@@ -19,6 +19,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { type OrbState, ThinkingOrb } from "thinking-orbs";
 import { AccountMenu } from "./AccountMenu";
+import type { ArchiveTaskPhase } from "./archiveTask";
 import { pickEmptyStateArt } from "./emptyStateArt";
 import { gridViewShortcut, gridViewShortcutDigit } from "./gridViews";
 import { IdleDot, ORB_SPEED, ORB_STATE, RunningIndicator, StateIcon } from "./Indicators";
@@ -31,11 +32,16 @@ import { toast } from "./toast";
 import type {
   AppConfig,
   ArtifactListItem,
+  ArtifactTreeNode,
   BoardTask,
   GridViewDefinition,
   KanbanColumn,
   LifecycleState,
   OmpUpdateStatus,
+  PickerPreference,
+  PickerPreferences,
+  PlaybookCandidate,
+  PlaybookRef,
   RepoScope,
   ReviewHandoffRecord,
   SessionMeta,
@@ -60,6 +66,44 @@ export function repoName(path: string) {
 }
 export function taskKey(t: BoardTask) {
   return `${t.repo_path}:${t.slug}`;
+}
+
+export const playbookRefKey = (reference: PlaybookRef) => `${reference.scope}/${reference.key}`;
+export const samePlaybookRef = (left: PlaybookRef | null | undefined, right: PlaybookRef | null | undefined) =>
+  left === right || (!!left && !!right && left.scope === right.scope && left.key === right.key);
+
+export function orderPlaybookCandidates(candidates: PlaybookCandidate[], preferences: PickerPreferences): PlaybookCandidate[] {
+  const ranks = new Map(preferences.order.map((reference, index) => [playbookRefKey(reference), index]));
+  return [...candidates].sort((left, right) => {
+    const a = playbookRefKey(left.source.reference);
+    const b = playbookRefKey(right.source.reference);
+    return (ranks.get(a) ?? Number.MAX_SAFE_INTEGER) - (ranks.get(b) ?? Number.MAX_SAFE_INTEGER) || a.localeCompare(b);
+  });
+}
+
+export function playbookPickerAppearance(reference: PlaybookRef, preference?: PickerPreference) {
+  const identity = playbookRefKey(reference);
+  let hash = 0;
+  for (let i = 0; i < identity.length; i++) hash = (Math.imul(hash, 31) + identity.charCodeAt(i)) | 0;
+  const colors = ["#38459d", "#10b981", "#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#e94242"];
+  return {
+    badge: preference?.badge || `${reference.scope[0].toUpperCase()}·${reference.key.slice(0, 2).toUpperCase()}`,
+    color: preference?.color || colors[(hash >>> 0) % colors.length],
+  };
+}
+
+export function findOwnedArtifactNode(nodes: ArtifactTreeNode[], relativePath: string): ArtifactTreeNode | undefined {
+  const visit = (items: ArtifactTreeNode[], parent: string): ArtifactTreeNode | undefined => {
+    for (const node of items) {
+      if (node.source !== "owned" || node.kind === "attachment" || node.kind === "referenced") continue;
+      const path = parent ? `${parent}/${node.label}` : node.label;
+      if (node.kind === "owned" && path === relativePath && node.children.length === 0) return node;
+      const match = visit(node.children, path);
+      if (match) return match;
+    }
+    return undefined;
+  };
+  return visit(nodes, "");
 }
 
 export function isAllowedLaunchHarness(key: string): boolean {
@@ -100,6 +144,8 @@ export function sameSessionMetas(left: SessionMeta[], right: SessionMeta[]) {
         session.harness === other.harness &&
         session.model === other.model &&
         session.playbook === other.playbook &&
+        session.execution_id === other.execution_id &&
+        session.execution_revision === other.execution_revision &&
         session.generic === other.generic &&
         session.subtask_manager === other.subtask_manager &&
         session.subtask_slug === other.subtask_slug &&
@@ -186,6 +232,11 @@ export function sameTask(left: Task, right: Task): boolean {
     left.linear_id === right.linear_id &&
     left.github_issue === right.github_issue &&
     left.playbook === right.playbook &&
+    samePlaybookRef(left.playbook_ref, right.playbook_ref) &&
+    left.max_live_sessions === right.max_live_sessions &&
+    left.engine_version === right.engine_version &&
+    left.launch_defaults?.harness === right.launch_defaults?.harness &&
+    left.launch_defaults?.model === right.launch_defaults?.model &&
     left.draft === right.draft &&
     left.auto_advance.length === right.auto_advance.length &&
     left.auto_advance.every((edge, index) => edge === right.auto_advance[index]) &&
@@ -220,6 +271,11 @@ export function sameBoardTasks(left: BoardTask[], right: BoardTask[]) {
         task.linear_id === other.linear_id &&
         task.github_issue === other.github_issue &&
         task.playbook === other.playbook &&
+        samePlaybookRef(task.playbook_ref, other.playbook_ref) &&
+        task.max_live_sessions === other.max_live_sessions &&
+        task.engine_version === other.engine_version &&
+        task.launch_defaults?.harness === other.launch_defaults?.harness &&
+        task.launch_defaults?.model === other.launch_defaults?.model &&
         task.draft === other.draft &&
         task.auto_advance.length === other.auto_advance.length &&
         task.auto_advance.every((value, i) => value === other.auto_advance[i]) &&
@@ -604,6 +660,7 @@ export function TopBar({
         {extraGridViews.map((gridView, index) => gridTab(gridView, index + 1))}
         {tab("sessions", "Sessions", "7")}
         {tab("notifications", "Notifications", "8")}
+        {tab("playbooks", "Playbooks")}
       </nav>
       <div className="spacer" />
       <button type="button" className="iconbtn new-task" title="New task (⌘N)" aria-label="New task" onClick={onCreate}>
@@ -1305,6 +1362,7 @@ export function ModelInput({
   repoPath,
   prefillRemembered = true,
   onOpenPicker,
+  ariaLabel = "Model",
 }: {
   harness: string;
   value: string;
@@ -1313,6 +1371,7 @@ export function ModelInput({
   style?: CSSProperties;
   repoPath?: string;
   prefillRemembered?: boolean;
+  ariaLabel?: string;
   /**
    * Host the providers/models dialog instead of this component's own picker.
    *
@@ -1476,7 +1535,7 @@ export function ModelInput({
     <div className="model-input" style={style}>
       <input
         className="field-input"
-        aria-label="Model"
+        aria-label={ariaLabel}
         value={value}
         placeholder="Model (empty = harness default)"
         onChange={(e) => onChange(e.target.value)}
@@ -1577,16 +1636,33 @@ export function ArchiveTaskModal({
 }: {
   task: { slug: string; name: string; has_worktree: boolean } | null;
   onCancel: () => void;
-  onConfirm: (removeWorktree: boolean) => void;
+  onConfirm: (removeWorktree: boolean, onPhase: (phase: ArchiveTaskPhase) => void) => Promise<void>;
 }) {
   const [removeWt, setRemoveWt] = useState(false);
+  const [phase, setPhase] = useState<ArchiveTaskPhase | null>(null);
+  const pending = useRef(false);
+  const cancel = () => {
+    if (!pending.current) onCancel();
+  };
+  const confirmArchive = async () => {
+    if (pending.current) return;
+    pending.current = true;
+    setPhase("archiving");
+    try {
+      await onConfirm(removeWt, setPhase);
+    } finally {
+      pending.current = false;
+      setPhase(null);
+    }
+  };
   useEffect(() => setRemoveWt(false), [task?.slug]);
+  const progressLabel = phase === "archiving" ? "Archiving…" : phase === "removing-worktree" ? "Removing worktree…" : "";
   if (!task) return null;
   return (
-    <Dialog onClose={onCancel} role="alertdialog" ariaLabel="Archive task">
+    <Dialog onClose={cancel} role="alertdialog" ariaLabel="Archive task">
       <div className="mh">
         <span className="mt">Archive task</span>
-        <button type="button" className="x" aria-label="Close" title="Close" onClick={onCancel}>
+        <button type="button" className="x" aria-label="Close" title="Close" disabled={phase !== null} onClick={cancel}>
           <X size={14} strokeWidth={1.5} aria-hidden="true" />
         </button>
       </div>
@@ -1594,7 +1670,7 @@ export function ArchiveTaskModal({
         <p>Archive "{task.name}"? It becomes read-only — no new sessions, no commits, no push.</p>
         {task.has_worktree && (
           <div>
-            <Checkbox checked={removeWt} onChange={setRemoveWt} label="Also permanently remove the worktree (uncommitted changes are lost)" />
+            <Checkbox checked={removeWt} onChange={setRemoveWt} disabled={phase !== null} label="Also permanently remove the worktree (uncommitted changes are lost)" />
             {removeWt && (
               <p className="dim">
                 Restoring later keeps this task available for history and related-task links, but it does not recreate the worktree. New sessions, commits, and pushes remain
@@ -1604,12 +1680,15 @@ export function ArchiveTaskModal({
           </div>
         )}
       </div>
+      <div className="sr-only" role="status">
+        {progressLabel}
+      </div>
       <div className="mfoot">
-        <button type="button" className="btn danger small" onClick={() => onConfirm(removeWt)}>
-          Archive task
+        <button type="button" className="btn danger small" disabled={phase !== null} onClick={() => void confirmArchive()}>
+          {progressLabel || "Archive task"}
         </button>
         {/* Safe default focus: Enter must never archive (same contract as confirm-focus.ts). */}
-        <button type="button" className="btn ghost small" data-autofocus="" onClick={onCancel}>
+        <button type="button" className="btn ghost small" data-autofocus="" disabled={phase !== null} onClick={cancel}>
           Cancel
         </button>
       </div>

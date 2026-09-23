@@ -6,6 +6,7 @@
 .DS_Store
 /.alinery/
 .omp/mcp.json
+.mcp.json
 
 # Local release packaging scratch (scripts/release.sh) — never commit binaries
 /dist/

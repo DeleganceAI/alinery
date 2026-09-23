@@ -27,7 +27,19 @@ import { confirmDanger } from "../confirm";
 import { createGridViewId, gridViewShortcut, MAX_GRID_VIEWS, nextGridViewName, normalizeGridViews, withGridViewSlots } from "../gridViews";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
-import { Checkbox, EmptyState, InlineStatus, LoadingState, ModelInput, ompDefaultModel, repoName } from "../shared";
+import {
+  Checkbox,
+  EmptyState,
+  InlineStatus,
+  LoadingState,
+  ModelInput,
+  ompDefaultModel,
+  orderPlaybookCandidates,
+  playbookPickerAppearance,
+  playbookRefKey,
+  repoName,
+  samePlaybookRef,
+} from "../shared";
 import { type ToastLength, toast } from "../toast";
 import type {
   AppearancePrefs,
@@ -40,6 +52,10 @@ import type {
   GlobalSettings,
   GridViewDefinition,
   HarnessChoice,
+  PickerPreference,
+  PickerPreferences,
+  PlaybookCatalog,
+  PlaybookRef,
   PurgeFailure,
   RepoBackupOverrides,
   RepoOverrides,
@@ -142,6 +158,7 @@ function ConnectionMenu({ label, busy, onReconnect, onRemove }: { label: string;
 export const SECTIONS: { key: SettingsSectionKey; label: string }[] = [
   { key: "connections", label: "Connections" },
   { key: "notifications", label: "Notifications" },
+  { key: "playbooks", label: "Playbooks" },
   { key: "telemetry", label: "Telemetry" },
   { key: "updates", label: "Updates" },
   { key: "storage", label: "Storage" },
@@ -157,6 +174,7 @@ type SettingsScope = { kind: "global" } | { kind: "repo"; repoPath: string };
 type ChoiceKey = "defaults";
 type ChoiceBoolField = "draft_autosave";
 
+const SETTINGS_SCOPE_EMPTY_TITLE = "Select a settings scope to see these settings";
 const GLOBAL_SOURCE: SettingSource = "global";
 const REPO_SOURCE: SettingSource = "repository";
 
@@ -288,6 +306,10 @@ export function Settings({
   // Keyed by the choice row that opened it, so one hosted dialog serves every default-model field.
   const [pickModelFor, setPickModelFor] = useState<string | null>(null);
   const [ompError, setOmpError] = useState("");
+  const [playbookCatalog, setPlaybookCatalog] = useState<PlaybookCatalog | null>(null);
+  const [pickerPreferences, setPickerPreferences] = useState<PickerPreferences | null>(null);
+  const [playbookError, setPlaybookError] = useState("");
+  const [pickerSaving, setPickerSaving] = useState(false);
 
   const repoOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -301,6 +323,26 @@ export function Settings({
 
   const selectedRepo = scope.kind === "repo" ? scope.repoPath : activeRepo;
   const effective = cfg;
+
+  useEffect(() => {
+    if (activeSection !== "playbooks") return;
+    let alive = true;
+    setPlaybookCatalog(null);
+    setPickerPreferences(null);
+    setPlaybookError("");
+    Promise.all([ipc.listPlaybookCatalog(selectedRepo || undefined), ipc.readPlaybookPickerPreferences()])
+      .then(([catalog, preferences]) => {
+        if (!alive) return;
+        setPlaybookCatalog(catalog);
+        setPickerPreferences(preferences);
+      })
+      .catch((error) => {
+        if (alive) setPlaybookError(String(error));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [activeSection, selectedRepo]);
 
   // Chat → Harness subsection acts on the SETTINGS scope — the repo picked in the scope bar,
   // or every open repository under "All repositories". The footer's daemon poll only knows
@@ -369,13 +411,6 @@ export function Settings({
     void ompUpdate.checkNow();
   }, [activeSection, ompUpdate.checkNow]);
 
-  const switchScope = (nextScope: SettingsScope) => {
-    setScope(nextScope);
-    if (nextScope.kind === "global" && activeSection === "backup") {
-      setActiveSection("notifications");
-    }
-  };
-
   const loadScope = (nextScope: SettingsScope) => {
     if (nextScope.kind === "global") {
       ipc
@@ -399,9 +434,9 @@ export function Settings({
       .catch((e) => reportError(e, "Couldn't load settings"));
   };
 
-  const loadStorage = () =>
+  const loadStorage = (repoPath: string) =>
     ipc
-      .storageInfo()
+      .storageInfo(repoPath)
       .then((info) => {
         setStorage(info);
         setStorageErr("");
@@ -413,11 +448,33 @@ export function Settings({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope.kind, scope.kind === "repo" ? scope.repoPath : "global"]);
 
-  // storageInfo() walks disk — load it lazily when the section is opened rather than on
-  // every settings mount, matching the backup section's own lazy-load pattern below.
+  // storageInfo walks disk — load it lazily when Storage is opened on a repository
+  // chip. All repositories skips the walk; the panel shows the shared empty placeholder.
   useEffect(() => {
     if (activeSection !== "storage") return;
-    loadStorage();
+    if (scope.kind !== "repo") {
+      setStorage(null);
+      setStorageErr("");
+      return;
+    }
+    const repoPath = scope.repoPath;
+    let alive = true;
+    setStorage(null);
+    setStorageErr("");
+    ipc
+      .storageInfo(repoPath)
+      .then((info) => {
+        if (alive) {
+          setStorage(info);
+          setStorageErr("");
+        }
+      })
+      .catch((e) => {
+        if (alive) setStorageErr(String(e));
+      });
+    return () => {
+      alive = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection, scope.kind, scope.kind === "repo" ? scope.repoPath : "global"]);
   useEffect(() => {
@@ -527,8 +584,8 @@ export function Settings({
   };
 
   // ---- Backup (issue #79) ----
-  // Repo scope only: backup settings are per-repository, and the global tier exists purely
-  // as the inheritance base. Every control writes through saveRepoOverrides immediately.
+  // Per-repository. All repositories shows the same empty placeholder as Storage;
+  // controls write through saveRepoOverrides immediately.
 
   const refreshBackups = () => {
     if (scope.kind !== "repo") return;
@@ -701,7 +758,7 @@ export function Settings({
   // Irreversible: archived tasks, archived sessions and the worktrees of archived tasks.
   // Reload the numbers even on failure — a partial purge already changed the disk.
   const purgeArchived = async () => {
-    if (!storage) return;
+    if (scope.kind !== "repo" || !storage) return;
     const n = storage.archived_task_count;
     const m = storage.archived_session_count;
     const ok = await confirmDanger(
@@ -719,7 +776,7 @@ export function Settings({
     setPurgeBusy(true);
     setPurgeErrors([]);
     try {
-      const res = await ipc.deleteAllArchivedStorage();
+      const res = await ipc.deleteAllArchivedStorage(scope.repoPath);
       setPurgeErrors(res.errors);
       if (res.errors.length) {
         toast.error(`Deleted ${res.deleted_tasks} task(s), ${res.deleted_sessions} session(s) — ${res.errors.length} failed (listed below)`);
@@ -729,7 +786,7 @@ export function Settings({
     } catch (e) {
       reportError(e, "Delete failed");
     } finally {
-      await loadStorage();
+      await loadStorage(scope.repoPath);
       setPurgeBusy(false);
     }
   };
@@ -863,7 +920,7 @@ export function Settings({
   const globalOnly = (label: string) => (
     <div className="dim" style={{ marginBottom: 12 }}>
       {label} are global-only. Switch to{" "}
-      <button type="button" className="btn ghost small" onClick={() => switchScope({ kind: "global" })}>
+      <button type="button" className="btn ghost small" onClick={() => setScope({ kind: "global" })}>
         Global
       </button>{" "}
       to edit them.
@@ -1018,6 +1075,179 @@ export function Settings({
       </p>
     </section>
   );
+
+  const renderPlaybooks = () => {
+    const configured = (isGlobal ? global : effective).defaults.playbook;
+    const candidates = playbookCatalog?.candidates ?? [];
+    const selected = candidates.find((candidate) => samePlaybookRef(candidate.source.reference, configured));
+    const unavailable = playbookCatalog && (!selected || selected.diagnostics.length > 0);
+    const ordered = pickerPreferences ? orderPlaybookCandidates(candidates, pickerPreferences) : candidates;
+    const savePreferences = async (next: PickerPreferences) => {
+      setPickerSaving(true);
+      setPlaybookError("");
+      try {
+        await ipc.savePlaybookPickerPreferences(next);
+        setPickerPreferences(next);
+      } catch (error) {
+        setPlaybookError(String(error));
+      } finally {
+        setPickerSaving(false);
+      }
+    };
+    const updatePreference = (reference: PlaybookRef, patch: Partial<PickerPreference>) => {
+      if (!pickerPreferences || pickerSaving) return;
+      const existing = pickerPreferences.entries.find((item) => samePlaybookRef(item.reference, reference));
+      const entry: PickerPreference = {
+        reference,
+        hidden: false,
+        collapsed: false,
+        badge: null,
+        color: null,
+        last_imported_at_ms: null,
+        ...existing,
+        ...patch,
+      };
+      void savePreferences({
+        ...pickerPreferences,
+        entries: existing ? pickerPreferences.entries.map((item) => (samePlaybookRef(item.reference, reference) ? entry : item)) : [...pickerPreferences.entries, entry],
+      });
+    };
+    const move = (index: number, direction: -1 | 1) => {
+      if (!pickerPreferences || pickerSaving) return;
+      const order = ordered.map((candidate) => candidate.source.reference);
+      [order[index], order[index + direction]] = [order[index + direction], order[index]];
+      // Retain preferences for identities unavailable in the currently selected repository.
+      const unavailableOrder = pickerPreferences.order.filter((reference) => !order.some((item) => samePlaybookRef(item, reference)));
+      void savePreferences({ ...pickerPreferences, order: [...order, ...unavailableOrder] });
+    };
+    return (
+      <>
+        <div className="field">
+          <label htmlFor="default-playbook">Default playbook</label>
+          {!isGlobal && sourceBadge(effective.provenance.defaults.playbook, "defaults.playbook")}
+          <select
+            id="default-playbook"
+            className="field-input"
+            value={playbookRefKey(configured)}
+            disabled={!playbookCatalog}
+            onChange={(event) => {
+              const candidate = candidates.find((item) => playbookRefKey(item.source.reference) === event.target.value);
+              if (!candidate || candidate.diagnostics.length) return;
+              const playbook = candidate.source.reference;
+              if (isGlobal) updateGlobalChoice("defaults", { playbook });
+              else saveRepoOverrides({ ...overrides, defaults: { ...overrides.defaults, playbook } });
+            }}
+          >
+            {!selected && (
+              <option value={playbookRefKey(configured)} disabled>
+                {playbookRefKey(configured)} — unavailable
+              </option>
+            )}
+            {ordered.map((candidate) => (
+              <option key={playbookRefKey(candidate.source.reference)} value={playbookRefKey(candidate.source.reference)} disabled={candidate.diagnostics.length > 0}>
+                {candidate.title || candidate.source.reference.key} — {playbookRefKey(candidate.source.reference)}
+                {candidate.diagnostics.length ? " — invalid" : ""}
+              </option>
+            ))}
+          </select>
+          {unavailable && (
+            <InlineStatus tone="warning">The configured default is unavailable. Choose a valid scoped playbook explicitly; no replacement is selected automatically.</InlineStatus>
+          )}
+        </div>
+        <h4>Personal picker preferences</h4>
+        <p className="hint">Order, visibility, badges, and colors are personal across repositories. They do not change playbook definitions or task execution.</p>
+        {playbookError && (
+          <InlineStatus tone="error" detail={playbookError}>
+            Could not load or save playbook preferences.
+          </InlineStatus>
+        )}
+        {playbookCatalog?.diagnostics.map((diagnostic) => (
+          <InlineStatus key={`${diagnostic.code}:${diagnostic.field}:${diagnostic.line}:${diagnostic.message}`} tone="warning">
+            {diagnostic.message}
+          </InlineStatus>
+        ))}
+        {!playbookCatalog && !playbookError && <LoadingState label="Loading playbooks…" state={ORB_STATE} />}
+        <ul className="connections-list" aria-label="Personal playbook picker">
+          {ordered.map((candidate, index) => {
+            const reference = candidate.source.reference;
+            const identity = playbookRefKey(reference);
+            const preference = pickerPreferences?.entries.find((item) => samePlaybookRef(item.reference, reference));
+            const appearance = playbookPickerAppearance(reference, preference);
+            return (
+              <li key={identity} aria-label={identity} style={{ padding: "12px 0" }}>
+                <div>
+                  <strong>{candidate.title || reference.key}</strong> <span className="pill">{identity}</span>{" "}
+                  <span className="pill" style={{ borderColor: appearance.color }}>
+                    {appearance.badge}
+                  </span>
+                </div>
+                <div className="hint">
+                  {candidate.source.path || "Bundled definition"} ·{" "}
+                  {candidate.modified_at_ms === null ? "Modification time unavailable" : `Modified ${new Date(candidate.modified_at_ms).toLocaleString()}`}
+                </div>
+                {candidate.diagnostics.map((diagnostic) => (
+                  <InlineStatus key={`${diagnostic.code}:${diagnostic.field}:${diagnostic.line}:${diagnostic.message}`} tone="error">
+                    {diagnostic.message}
+                  </InlineStatus>
+                ))}
+                <button
+                  type="button"
+                  className="btn ghost small"
+                  aria-label={`Move ${identity} up`}
+                  disabled={pickerSaving || !pickerPreferences || index === 0}
+                  onClick={() => move(index, -1)}
+                >
+                  <ArrowUp size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost small"
+                  aria-label={`Move ${identity} down`}
+                  disabled={pickerSaving || !pickerPreferences || index === ordered.length - 1}
+                  onClick={() => move(index, 1)}
+                >
+                  <ArrowDown size={14} />
+                </button>
+                <Checkbox
+                  label={`Hide ${identity} in picker`}
+                  checked={preference?.hidden ?? false}
+                  disabled={pickerSaving || !pickerPreferences}
+                  onChange={(hidden) => updatePreference(reference, { hidden })}
+                />
+                <label className="field">
+                  Badge for {identity}
+                  <input
+                    className="field-input"
+                    defaultValue={preference?.badge ?? ""}
+                    key={`${identity}-badge-${preference?.badge ?? ""}`}
+                    disabled={pickerSaving || !pickerPreferences}
+                    onBlur={(event) => {
+                      const badge = event.target.value.trim() || null;
+                      if (badge !== (preference?.badge ?? null)) updatePreference(reference, { badge });
+                    }}
+                  />
+                </label>
+                <label className="field">
+                  Color for {identity}
+                  <input
+                    className="field-input"
+                    placeholder="e.g. #635bff"
+                    defaultValue={preference?.color ?? ""}
+                    key={`${identity}-color-${preference?.color ?? ""}`}
+                    disabled={pickerSaving || !pickerPreferences}
+                    onBlur={(event) => {
+                      const color = event.target.value.trim() || null;
+                      if (color !== (preference?.color ?? null)) updatePreference(reference, { color });
+                    }}
+                  />
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+      </>
+    );
+  };
 
   const choiceSection = (key: ChoiceKey, title: string) => {
     const value = isGlobal ? global[key] : effective[key];
@@ -1418,7 +1648,7 @@ export function Settings({
   );
 
   const renderBackup = () => {
-    if (scope.kind !== "repo") return null;
+    if (scope.kind !== "repo") return <EmptyState title={SETTINGS_SCOPE_EMPTY_TITLE} />;
     const backup = effective.backup;
     const hasDest = backup.destination.trim() !== "";
     const retention = retentionDraft ?? backup.retention;
@@ -1535,6 +1765,8 @@ export function Settings({
 
   const renderSection = (key: string): ReactNode => {
     switch (key) {
+      case "playbooks":
+        return renderPlaybooks();
       case "connections":
         return connectionsSection();
       case "notifications":
@@ -1612,6 +1844,9 @@ export function Settings({
         );
       }
       case "storage":
+        if (isGlobal) {
+          return <EmptyState title={SETTINGS_SCOPE_EMPTY_TITLE} />;
+        }
         return (
           <div className="mcp-guide">
             {storageErr ? (
@@ -1651,7 +1886,7 @@ export function Settings({
                   )}
                 </div>
                 {storageRow("App config", storage.app_config_path)}
-                {storageRow("Active repo", storage.active_repo)}
+                {storageRow("Repository", storage.repo_path)}
                 {storageRow(".alinery", storage.alinery_dir)}
                 {storageRow("Repo config", storage.repo_config_path)}
                 {storageRow("Harnesses", storage.harnesses_path)}
@@ -1857,6 +2092,30 @@ export function Settings({
                 label={
                   <>
                     Show agent reply bubbles <span className="dsc">— filled bubble around agent text replies only</span>
+                  </>
+                }
+              />
+              <Checkbox
+                checked={appearance.chat_show_block_copy_buttons !== false}
+                disabled={!isGlobal}
+                onChange={(enabled) => {
+                  if (isGlobal) saveAppearance({ ...appearance, chat_show_block_copy_buttons: enabled });
+                }}
+                label={
+                  <>
+                    Show block copy buttons <span className="dsc">— copy individual code blocks and quotes independently of per-message copy icons</span>
+                  </>
+                }
+              />
+              <Checkbox
+                checked={appearance.chat_show_copy_buttons !== false}
+                disabled={!isGlobal}
+                onChange={(enabled) => {
+                  if (isGlobal) saveAppearance({ ...appearance, chat_show_copy_buttons: enabled });
+                }}
+                label={
+                  <>
+                    Show copy buttons <span className="dsc">— per-message copy icon inside chat bubbles</span>
                   </>
                 }
               />
@@ -2125,7 +2384,7 @@ export function Settings({
           <>
             {!isGlobal && globalOnly("Experimental settings")}
             <Checkbox
-              checked={global.experiments?.show_original_kanban ?? false}
+              checked={global.experiments?.show_original_kanban ?? true}
               disabled={!isGlobal}
               onChange={setShowOriginalKanban}
               label={
@@ -2297,7 +2556,7 @@ export function Settings({
           <div className="settings-scope-detail">{selectedScopeDetail}</div>
         </div>
         <div className="settings-scope-actions" role="group" aria-label="Choose settings scope">
-          <button className={`scope-chip${isGlobal ? " on" : ""}`} type="button" onClick={() => switchScope({ kind: "global" })}>
+          <button className={`scope-chip${isGlobal ? " on" : ""}`} type="button" onClick={() => setScope({ kind: "global" })}>
             All repositories
           </button>
           {repoOptions.map((repo) => (
@@ -2306,7 +2565,7 @@ export function Settings({
               className={`scope-chip${!isGlobal && selectedRepo === repo ? " on" : ""}`}
               type="button"
               title={repo}
-              onClick={() => switchScope({ kind: "repo", repoPath: repo })}
+              onClick={() => setScope({ kind: "repo", repoPath: repo })}
             >
               {repoName(repo)}
             </button>
@@ -2315,23 +2574,18 @@ export function Settings({
       </div>
       <div className="settings-shell">
         <nav className="settings-nav">
-          {visibleSections.map((s) => {
-            const isDisabled = s.key === "backup" && isGlobal;
-            return (
-              <button
-                type="button"
-                key={s.key}
-                className={`settings-navitem${visibleActiveSection === s.key ? " on" : ""}`}
-                disabled={isDisabled}
-                title={isDisabled ? "Backup is only available when a repository is selected." : undefined}
-                onClick={() => {
-                  setActiveSection(s.key);
-                }}
-              >
-                {s.label}
-              </button>
-            );
-          })}
+          {visibleSections.map((s) => (
+            <button
+              type="button"
+              key={s.key}
+              className={`settings-navitem${visibleActiveSection === s.key ? " on" : ""}`}
+              onClick={() => {
+                setActiveSection(s.key);
+              }}
+            >
+              {s.label}
+            </button>
+          ))}
         </nav>
         <div className="settings-panel">{renderSection(visibleActiveSection)}</div>
       </div>

@@ -135,6 +135,36 @@ function stampFor(at: number | undefined, parts: ChatStampParts): string {
   return formatChatStamp(at, parts);
 }
 
+function copyTextForEntry(entry: ChatEntry): string {
+  switch (entry.type) {
+    case "prompt":
+    case "follow_up": {
+      const attachments = entry.attachments?.map((item) => `Attached ${item.kind}: ${item.name}`) ?? [];
+      return [entry.text, ...attachments].filter(Boolean).join("\n");
+    }
+    case "slash":
+      return `/${entry.name}${entry.args ? ` ${entry.args}` : ""}`;
+    case "thinking":
+    case "text":
+    case "tool_result":
+    case "error":
+    case "abort":
+      return entry.text;
+    case "tool_call":
+      return [entry.target, entry.args, entry.detail].filter(Boolean).join("\n");
+    case "subagent_status":
+      return [entry.role, entry.summary].filter(Boolean).join("\n");
+    case "approval":
+      return [entry.action, entry.detail, entry.scope].filter(Boolean).join("\n");
+    case "turn_marker":
+      return `Turn ${entry.turn} ${entry.phase}${entry.stopReason ? ` · ${entry.stopReason}` : ""}`;
+    case "harness":
+      return [entry.event, entry.text].filter(Boolean).join("\n");
+    case "redacted_thinking":
+      return "";
+  }
+}
+
 function WorkRail({
   entry,
   defaultExpanded = false,
@@ -212,7 +242,7 @@ function Msg({
   showActorLabels?: boolean;
   /** Marks agent text replies so bubble CSS can target them without touching other Msg skins. */
   reply?: boolean;
-  /** Raw message text; when set, a copy button is shown in the row meta. */
+  /** Raw message text; when set, a copy button is shown inside the bubble. */
   copyText?: string;
   children?: ReactNode;
 }) {
@@ -221,7 +251,7 @@ function Msg({
   const Icon = KIND_ICON[type];
   const who = whoLabel(actor);
   const when = stampFor(at, stamp);
-  const showMeta = Boolean(when) || showActorLabels || Boolean(copyText);
+  const showMeta = Boolean(when) || showActorLabels;
   return (
     <article className={`chat-msg chat-msg-${lane}${mine ? " chat-msg-mine" : ""}${reply ? " chat-msg-reply" : ""}`} aria-label={`${when} ${who} ${TYPE_LABEL[type]}`.trim()}>
       {showMeta ? (
@@ -237,12 +267,16 @@ function Msg({
               <span className="chat-msg-who">{who}</span>
             </>
           ) : null}
-          {copyText ? <CopyChatMessageButton text={copyText} /> : null}
         </div>
       ) : null}
       <div className={`chat-msg-body ${kindFace(type)}`.trim()}>
         {kicker ? <div className="chat-msg-kicker">{kicker}</div> : null}
         {children}
+        {copyText ? (
+          <div className="chat-msg-copy-row">
+            <CopyChatMessageButton text={copyText} />
+          </div>
+        ) : null}
       </div>
     </article>
   );
@@ -278,6 +312,8 @@ function ChatEntryRowImpl({
   showDate = true,
   showTime = true,
   showActorLabels = false,
+  showBlockCopyButtons = true,
+  showCopyButton = true,
 }: {
   entry: ChatEntry;
   onApprove?: (id: string, allow: boolean) => void;
@@ -286,8 +322,11 @@ function ChatEntryRowImpl({
   showDate?: boolean;
   showTime?: boolean;
   showActorLabels?: boolean;
+  showBlockCopyButtons?: boolean;
+  showCopyButton?: boolean;
 }) {
   const stamp: ChatStampParts = { date: showDate, time: showTime };
+  const copyText = showCopyButton ? copyTextForEntry(entry) : "";
   if (isWork(entry)) return <WorkRail entry={entry} defaultExpanded={defaultExpanded} autoCollapseThinking={autoCollapseThinking} stamp={stamp} />;
 
   switch (entry.type) {
@@ -309,7 +348,7 @@ function ChatEntryRowImpl({
     }
     case "approval":
       return (
-        <Msg at={entry.at} actor={entry.actor} type="approval" stamp={stamp} showActorLabels={showActorLabels} kicker={<Status tone="wait">waiting</Status>}>
+        <Msg at={entry.at} actor={entry.actor} type="approval" stamp={stamp} showActorLabels={showActorLabels} copyText={copyText} kicker={<Status tone="wait">waiting</Status>}>
           <p className="chat-msg-title">{entry.action}</p>
           {entry.detail ? <p className="chat-msg-muted">{entry.detail}</p> : null}
           {entry.scope ? <p className="chat-work-meta">{entry.scope}</p> : null}
@@ -330,7 +369,7 @@ function ChatEntryRowImpl({
           actor={entry.actor}
           type="slash"
           stamp={stamp}
-          showActorLabels={showActorLabels}
+          copyText={copyText}
           kicker={
             <>
               <span className="chat-work-meta chat-face-strong">/{entry.name}</span>
@@ -344,19 +383,27 @@ function ChatEntryRowImpl({
     case "error":
     case "abort":
       return (
-        <Msg at={entry.at} actor={entry.actor} type={entry.type} stamp={stamp} showActorLabels={showActorLabels}>
+        <Msg at={entry.at} actor={entry.actor} type={entry.type} stamp={stamp} showActorLabels={showActorLabels} copyText={copyText}>
           <p>{entry.text}</p>
         </Msg>
       );
     case "prompt":
       return (
-        <Msg at={entry.at} actor={entry.actor} type={entry.type} stamp={stamp} showActorLabels={showActorLabels}>
+        <Msg at={entry.at} actor={entry.actor} type={entry.type} stamp={stamp} showActorLabels={showActorLabels} copyText={copyText}>
           <UserRowBody entry={entry} />
         </Msg>
       );
     case "follow_up":
       return (
-        <Msg at={entry.at} actor={entry.actor} type="follow_up" stamp={stamp} showActorLabels={showActorLabels} kicker={<Status tone="wait">queued · after this turn</Status>}>
+        <Msg
+          at={entry.at}
+          actor={entry.actor}
+          type="follow_up"
+          stamp={stamp}
+          showActorLabels={showActorLabels}
+          copyText={copyText}
+          kicker={<Status tone="wait">queued · after this turn</Status>}
+        >
           <UserRowBody entry={entry} />
         </Msg>
       );
@@ -368,8 +415,8 @@ function ChatEntryRowImpl({
           type="text"
           stamp={stamp}
           showActorLabels={showActorLabels}
+          copyText={showCopyButton && !entry.streaming ? entry.text : undefined}
           reply
-          copyText={entry.streaming ? undefined : entry.text}
           kicker={entry.streaming ? <Status tone="wait">live</Status> : undefined}
         >
           {entry.streaming ? (
@@ -378,7 +425,7 @@ function ChatEntryRowImpl({
               <span className="chat-caret" aria-hidden />
             </p>
           ) : (
-            <ChatMarkdown text={entry.text} />
+            <ChatMarkdown text={entry.text} showBlockCopyButtons={showBlockCopyButtons} />
           )}
         </Msg>
       );
@@ -389,6 +436,7 @@ function ChatEntryRowImpl({
           actor={entry.actor}
           type="harness"
           stamp={stamp}
+          copyText={copyText}
           showActorLabels={showActorLabels}
           kicker={<span className="chat-work-meta chat-face-strong">{entry.event}</span>}
         >

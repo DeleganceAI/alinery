@@ -93,6 +93,10 @@ pub(crate) struct AppearancePrefs {
     pub(crate) chat_show_actor_labels: bool,
     #[serde(default = "default_true")]
     pub(crate) chat_show_agent_bubbles: bool,
+    #[serde(default = "default_true")]
+    pub(crate) chat_show_block_copy_buttons: bool,
+    #[serde(default = "default_true")]
+    pub(crate) chat_show_copy_buttons: bool,
     #[serde(default = "default_session_default_view")]
     pub(crate) session_default_view: String,
     /// "system" | "light" | "dark" — absent in pre-reskin configs (serde default).
@@ -129,6 +133,8 @@ impl Default for AppearancePrefs {
             chat_show_time: true,
             chat_show_actor_labels: true,
             chat_show_agent_bubbles: true,
+            chat_show_block_copy_buttons: true,
+            chat_show_copy_buttons: true,
             session_default_view: default_session_default_view(),
             mode: default_appearance_mode(),
         }
@@ -235,6 +241,8 @@ pub(crate) fn sanitize_appearance(prefs: AppearancePrefs) -> AppearancePrefs {
         chat_show_time: prefs.chat_show_time,
         chat_show_actor_labels: prefs.chat_show_actor_labels,
         chat_show_agent_bubbles: prefs.chat_show_agent_bubbles,
+        chat_show_block_copy_buttons: prefs.chat_show_block_copy_buttons,
+        chat_show_copy_buttons: prefs.chat_show_copy_buttons,
         session_default_view: match prefs.session_default_view.trim() {
             "terminal" => "terminal".into(),
             _ => default_session_default_view(),
@@ -255,27 +263,38 @@ pub(crate) fn sanitize_app_config(mut cfg: AppConfig) -> AppConfig {
     cfg
 }
 
+fn read_existing_app_config(path: &Path) -> Result<Option<AppConfig>, String> {
+    let source = match fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("read application configuration {}: {error}", path.display())),
+    };
+    toml::from_str::<AppConfig>(&source).map(sanitize_app_config).map(Some).map_err(|error| {
+        format!(
+            "invalid application configuration {} (playbook defaults require a scope-qualified reference): {error}",
+            path.display()
+        )
+    })
+}
+
 pub(crate) fn load_app_config(app: &AppHandle) -> AppConfig {
     let Ok(p) = app_config_path(app) else {
         return AppConfig::default();
     };
-    fs::read_to_string(&p)
-        .ok()
-        .and_then(|s| toml::from_str::<AppConfig>(&s).ok())
-        .map(sanitize_app_config)
-        .unwrap_or_default()
+    read_existing_app_config(&p).ok().flatten().unwrap_or_default()
 }
 
 pub(crate) fn write_app_config_at(path: &Path, cfg: &AppConfig) -> Result<(), String> {
+    // An unrelated appearance/repository edit must not erase a corrupt file.
+    let prior = read_existing_app_config(path)?;
     if let Some(parent) = path.parent() {
         // 0700: this is the same app config dir that later holds `auth.json`, and it is created
         // here first on a fresh install, so `create_dir_all` at the umask is what would decide
         // the mode of the directory the credential lives in.
         alinery_core::create_dir_owner_only(parent)?;
     }
-    let prior = fs::read_to_string(path).ok().and_then(|s| toml::from_str::<AppConfig>(&s).ok());
     let s = toml::to_string(cfg).map_err(|e| e.to_string())?;
-    fs::write(path, s).map_err(|e| format!("write {}: {e}", path.display()))?;
+    write_owner_only_bytes(path, s.as_bytes()).map_err(|e| format!("write {}: {e}", path.display()))?;
     if let Some(prior) = prior {
         if prior.mcp_enabled != cfg.mcp_enabled {
             alinery_core::append_info(path, &format!("settings.app mcp_enabled={}", cfg.mcp_enabled));
@@ -289,8 +308,8 @@ pub(crate) fn write_app_config(app: &AppHandle, cfg: &AppConfig) -> Result<(), S
 }
 
 #[tauri::command]
-pub(crate) fn read_app_config(app: AppHandle) -> AppConfig {
-    let cfg = load_app_config(&app);
+pub(crate) fn read_app_config(app: AppHandle) -> Result<AppConfig, String> {
+    let cfg = read_existing_app_config(&app_config_path(&app)?)?.unwrap_or_default();
     let active = (!cfg.active_repo.is_empty()).then(|| PathBuf::from(&cfg.active_repo));
     let _ = set_active_repo_global(active.clone());
     if let Some(state) = app.try_state::<AppState>() {
@@ -318,7 +337,7 @@ pub(crate) fn read_app_config(app: AppHandle) -> AppConfig {
         }
     }
     emit(&app, alinery_core::TelemetryEvent::AppOpen { cold_start: true });
-    cfg
+    Ok(cfg)
 }
 
 #[tauri::command]

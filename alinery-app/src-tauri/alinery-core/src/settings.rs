@@ -148,6 +148,34 @@ pub fn load_global_settings(app_config: &Path) -> GlobalSettings {
     normalize_global_settings(global)
 }
 
+/// Missing settings inherit product defaults; present invalid values fail closed.
+pub fn load_global_settings_strict(app_config: &Path) -> Result<GlobalSettings, String> {
+    match fs::read_to_string(app_config) {
+        Ok(text) => parse_global_settings(&text).map(normalize_global_settings).map_err(|error| {
+            format!(
+                "invalid global settings {} (playbook defaults require a scope-qualified v2 reference): {error}",
+                app_config.display()
+            )
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(default_global_settings()),
+        Err(error) => Err(format!("read settings {}: {error}", app_config.display())),
+    }
+}
+
+pub fn load_repo_overrides_strict(repo: &Path) -> Result<RepoOverrides, String> {
+    let path = config_toml_path(repo);
+    match fs::read_to_string(&path) {
+        Ok(text) => toml::from_str(&text).map_err(|error| {
+            format!(
+                "invalid repository settings {} (playbook defaults require a scope-qualified v2 reference): {error}",
+                path.display()
+            )
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(RepoOverrides::default()),
+        Err(error) => Err(format!("read settings {}: {error}", path.display())),
+    }
+}
+
 pub fn prepare_telemetry_prefs(mut t: TelemetryPrefs) -> TelemetryPrefs {
     if t.prompted && t.enabled && t.install_id.is_empty() {
         t.install_id = uuid::Uuid::new_v4().to_string();
@@ -379,7 +407,9 @@ fn log_global_diff(app_config: &Path, prev: &GlobalSettings, next: &GlobalSettin
     }
     push_changed_quoted(&mut fields, "defaults.harness", &prev.defaults.harness, &next.defaults.harness);
     push_changed_quoted(&mut fields, "defaults.model", &prev.defaults.model, &next.defaults.model);
-    push_changed_quoted(&mut fields, "defaults.playbook", &prev.defaults.playbook, &next.defaults.playbook);
+    if prev.defaults.playbook != next.defaults.playbook {
+        fields.push("defaults.playbook=changed".into());
+    }
     push_changed_bool(&mut fields, "defaults.draft_autosave", prev.defaults.draft_autosave, next.defaults.draft_autosave);
     push_changed_quoted(&mut fields, "backup.destination", &prev.backup.destination, &next.backup.destination);
     push_changed_bool(&mut fields, "backup.enabled", prev.backup.enabled, next.backup.enabled);
@@ -461,7 +491,9 @@ fn log_repo_field_diff(app_config: &Path, repo: &Path, prev: &RepoOverrides, nex
     push_opt_secret(&mut fields, "github.token", &prev.github.token, &next.github.token);
     push_opt_quoted(&mut fields, "defaults.harness", &prev.defaults.harness, &next.defaults.harness);
     push_opt_quoted(&mut fields, "defaults.model", &prev.defaults.model, &next.defaults.model);
-    push_opt_quoted(&mut fields, "defaults.playbook", &prev.defaults.playbook, &next.defaults.playbook);
+    if prev.defaults.playbook != next.defaults.playbook {
+        fields.push("defaults.playbook=changed".into());
+    }
     push_opt_bool(&mut fields, "defaults.draft_autosave", prev.defaults.draft_autosave, next.defaults.draft_autosave);
     push_opt_quoted(&mut fields, "backup.destination", &prev.backup.destination, &next.backup.destination);
     push_opt_bool(&mut fields, "backup.enabled", prev.backup.enabled, next.backup.enabled);
@@ -523,6 +555,80 @@ mod tests {
         (dir, app_config, repo)
     }
 
+    #[test]
+    fn legacy_defaults_migrate_and_round_trip_without_losing_settings() {
+        use crate::playbook::{PlaybookRef, PlaybookScope};
+
+        let (dir, app_config, repo) = temp_pair("legacy-playbook-defaults");
+        let original = "active_repo='/keep'\nknown_repos=['/keep','/another']\n[appearance]\nui_scale=1.25\n[global.defaults]\nplaybook='superdevelop'\nmodel='saved-model'\n";
+        fs::write(&app_config, original).unwrap();
+        fs::write(config_toml_path(&repo), "[defaults]\nplaybook='custom'\n[backup]\nenabled=true\n").unwrap();
+
+        let scoped = crate::read_scoped_settings_strict(&app_config, &repo).unwrap();
+        assert_eq!(
+            scoped.global.defaults.playbook,
+            PlaybookRef {
+                scope: PlaybookScope::Bundled,
+                key: "superdevelop".into()
+            }
+        );
+        assert_eq!(
+            scoped.effective.defaults.playbook,
+            PlaybookRef {
+                scope: PlaybookScope::Repo,
+                key: "custom".into()
+            }
+        );
+        assert_eq!(scoped.effective.defaults.model, "saved-model");
+        assert!(scoped.effective.backup.enabled);
+        assert_eq!(fs::read_to_string(&app_config).unwrap(), original, "reading must not rewrite user files");
+
+        write_global_settings(&app_config, &scoped.global).unwrap();
+        write_repo_overrides(Some(&app_config), &repo, &scoped.overrides).unwrap();
+        let saved: toml::Value = toml::from_str(&fs::read_to_string(&app_config).unwrap()).unwrap();
+        assert_eq!(saved["active_repo"].as_str(), Some("/keep"));
+        assert_eq!(
+            saved["known_repos"].as_array().unwrap(),
+            &vec![toml::Value::String("/keep".into()), toml::Value::String("/another".into())]
+        );
+        assert_eq!(saved["appearance"]["ui_scale"].as_float(), Some(1.25));
+        assert_eq!(saved["global"]["defaults"]["playbook"]["scope"].as_str(), Some("bundled"));
+        let saved_repo: toml::Value = toml::from_str(&fs::read_to_string(config_toml_path(&repo)).unwrap()).unwrap();
+        assert_eq!(saved_repo["defaults"]["playbook"]["scope"].as_str(), Some("repo"));
+        let reloaded = crate::read_scoped_settings_strict(&app_config, &repo).unwrap();
+        assert_eq!(reloaded.global, scoped.global);
+        assert_eq!(reloaded.overrides, scoped.overrides);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn defaults_migration_preserves_explicit_scopes_and_rejects_invalid_references() {
+        use crate::playbook::{PlaybookRef, PlaybookScope};
+
+        let global = parse_global_settings("[global.defaults.playbook]\nscope='global'\nkey='superdevelop'\n").unwrap();
+        assert_eq!(
+            global.defaults.playbook,
+            PlaybookRef {
+                scope: PlaybookScope::Global,
+                key: "superdevelop".into()
+            }
+        );
+        let custom = parse_global_settings("[global.defaults]\nplaybook='custom'\n").unwrap();
+        assert_eq!(
+            custom.defaults.playbook,
+            PlaybookRef {
+                scope: PlaybookScope::Repo,
+                key: "custom".into()
+            }
+        );
+        assert!(parse_global_settings("[global.defaults]\nplaybook='../escape'\n").is_err());
+        assert!(parse_global_settings("[global.defaults.playbook]\nscope='unknown'\nkey='superdevelop'\n").is_err());
+        assert!(parse_global_settings("[global.defaults.playbook]\nkey='superdevelop'\n").is_err());
+        assert!(toml::from_str::<crate::RepoOverrides>("[defaults]\nplaybook=12\n").is_err());
+        assert!(serde_json::from_str::<PlaybookRef>("\"superdevelop\"").is_err(), "wire references remain scope-qualified");
+        assert!(toml::from_str::<crate::RepoOverrides>("").unwrap().defaults.playbook.is_none());
+    }
+
     fn log_text(app_config: &Path) -> String {
         fs::read_to_string(log_path(app_config)).unwrap_or_default()
     }
@@ -536,6 +642,21 @@ mod tests {
             }
         }
         out
+    }
+
+    #[test]
+    fn original_kanban_defaults_on_without_overriding_saved_opt_out() {
+        let (dir, app_config) = temp_app("alinery_original_kanban");
+        assert!(load_global_settings(&app_config).experiments.show_original_kanban);
+        assert!(parse_global_settings("[global]").unwrap().experiments.show_original_kanban);
+        assert!(parse_global_settings("[global.experiments]").unwrap().experiments.show_original_kanban);
+
+        fs::write(&app_config, "[global.experiments]\nshow_original_kanban = false\n").unwrap();
+        let saved = load_global_settings(&app_config);
+        assert!(!saved.experiments.show_original_kanban);
+        write_global_settings(&app_config, &saved).unwrap();
+        assert!(!load_global_settings(&app_config).experiments.show_original_kanban);
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -632,11 +753,11 @@ mod tests {
         let (dir, app_config) = temp_app("alinery_log_grid_settings");
         write_global_settings(&app_config, &default_global_settings()).unwrap();
         let mut next = default_global_settings();
-        next.experiments.show_original_kanban = true;
+        next.experiments.show_original_kanban = false;
         next.grid_views[0].name = "Private planning name".into();
         write_global_settings(&app_config, &next).unwrap();
         let text = log_text(&app_config);
-        assert!(text.contains("experiments.show_original_kanban=true"), "{text}");
+        assert!(text.contains("experiments.show_original_kanban=false"), "{text}");
         assert!(text.contains("grid_views=changed"), "{text}");
         assert!(!text.contains("Private planning name"), "{text}");
         let _ = fs::remove_dir_all(dir);

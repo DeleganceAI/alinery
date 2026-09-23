@@ -25,6 +25,8 @@ export type ChatPrefs = {
   showTime: boolean;
   showActorLabels: boolean;
   showAgentBubbles: boolean;
+  showBlockCopyButtons: boolean;
+  showCopyButtons: boolean;
 };
 
 /** @deprecated Prefer ChatPrefs; kept as an alias for call sites mid-rename. */
@@ -52,6 +54,8 @@ export const DEFAULT_CHAT_VISIBILITY: ChatPrefs = {
   showTime: true,
   showActorLabels: true,
   showAgentBubbles: true,
+  showBlockCopyButtons: true,
+  showCopyButtons: true,
 };
 
 function normalizeMaxWidth(value: unknown): ChatMaxWidth {
@@ -85,6 +89,8 @@ export function chatVisibilityFromAppearance(input: AppearancePrefs | Record<str
     showTime: input.chat_show_time !== false,
     showActorLabels: input.chat_show_actor_labels !== false,
     showAgentBubbles: input.chat_show_agent_bubbles !== false,
+    showBlockCopyButtons: input.chat_show_block_copy_buttons !== false,
+    showCopyButtons: input.chat_show_copy_buttons !== false,
   };
 }
 

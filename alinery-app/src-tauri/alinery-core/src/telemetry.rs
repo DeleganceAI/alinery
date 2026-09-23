@@ -522,6 +522,19 @@ pub fn ingest_url(endpoint: &str) -> String {
     format!("{}/api/{TELEMETRY_ORG}/{TELEMETRY_STREAM}/_json", endpoint.trim_end_matches('/'))
 }
 
+/// Length of a complete HTTP/1 request in `buf` (headers + `Content-Length` body).
+/// Ingest test sinks wait for this: Linux often splits headers and JSON across reads,
+/// and stopping at `\r\n\r\n` ACK's an empty body.
+pub fn complete_http_request_len(buf: &[u8]) -> Option<usize> {
+    let header_end = buf.windows(4).position(|window| window == b"\r\n\r\n")?;
+    let headers = std::str::from_utf8(&buf[..header_end]).ok()?;
+    let content_length = headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("content-length").then(|| value.trim().parse::<usize>().ok()).flatten()
+    })?;
+    Some(header_end + 4 + content_length)
+}
+
 // ponytail: one event per POST, no batching. APP.md § "Client rules" prescribes batching and
 // the endpoint takes an array, so a short coalescing window would cut request count several-fold
 // and make the 60/min per-IP budget generous even behind a NAT (see APP.md § "What the per-IP
@@ -547,34 +560,7 @@ pub fn send(prefs: &TelemetryPrefs, event: &TelemetryEvent) -> Result<(), String
 }
 
 fn basic_auth_value() -> String {
-    use std::io::Write;
-    // Manual base64 so we do not pull another crate just for the header.
-    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let raw = format!("{INGEST_USER}:{INGEST_PASSWORD}");
-    let bytes = raw.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len().div_ceil(3) * 4);
-    let mut i = 0;
-    while i < bytes.len() {
-        let b0 = bytes[i];
-        let b1 = if i + 1 < bytes.len() { bytes[i + 1] } else { 0 };
-        let b2 = if i + 2 < bytes.len() { bytes[i + 2] } else { 0 };
-        let n = ((b0 as u32) << 16) | ((b1 as u32) << 8) | (b2 as u32);
-        out.push(TABLE[((n >> 18) & 0x3F) as usize]);
-        out.push(TABLE[((n >> 12) & 0x3F) as usize]);
-        if i + 1 < bytes.len() {
-            out.push(TABLE[((n >> 6) & 0x3F) as usize]);
-        } else {
-            out.push(b'=');
-        }
-        if i + 2 < bytes.len() {
-            out.push(TABLE[(n & 0x3F) as usize]);
-        } else {
-            out.push(b'=');
-        }
-        i += 3;
-    }
-    let _ = Write::write(&mut std::io::sink(), &out);
-    String::from_utf8(out).unwrap_or_default()
+    crate::rpc_chunk::encode_base64(format!("{INGEST_USER}:{INGEST_PASSWORD}").as_bytes())
 }
 
 /// The consent rule, in one place: nothing leaves the machine unless the user was asked, said
@@ -649,7 +635,8 @@ endpoint = "{endpoint}"
         assert_eq!(obj["event"], "app.open");
         assert_eq!(obj["anon_id"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
         assert_eq!(obj["app_version"], env!("CARGO_PKG_VERSION"));
-        assert_eq!(obj["os"], "macos");
+        // Host OS, not a Mac-only constant — Linux CI would otherwise fail here.
+        assert_eq!(obj["os"], app_os());
         let props = obj["props"].as_object().expect("nested props");
         assert_eq!(props.len(), 1);
         assert_eq!(props["cold_start"], true);
@@ -714,14 +701,13 @@ endpoint = "{endpoint}"
         assert_eq!(ingest_url("http://127.0.0.1:5080/"), expected);
     }
 
-    fn complete_http_request_len(buf: &[u8]) -> Option<usize> {
-        let header_end = buf.windows(4).position(|window| window == b"\r\n\r\n")?;
-        let headers = std::str::from_utf8(&buf[..header_end]).ok()?;
-        let content_length = headers.lines().find_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            name.eq_ignore_ascii_case("content-length").then(|| value.trim().parse::<usize>().ok()).flatten()
-        })?;
-        Some(header_end + 4 + content_length)
+    #[test]
+    fn complete_http_request_len_waits_for_the_body() {
+        let headers = b"POST /x HTTP/1.1\r\nContent-Length: 2\r\n\r\n";
+        assert_eq!(complete_http_request_len(headers), Some(headers.len() + 2));
+        assert!(headers.len() < complete_http_request_len(headers).unwrap());
+        let complete = b"POST /x HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}";
+        assert_eq!(complete_http_request_len(complete), Some(complete.len()));
     }
 
     fn serve_one(listener: TcpListener) -> std::thread::JoinHandle<Vec<u8>> {
@@ -741,7 +727,7 @@ endpoint = "{endpoint}"
                     Ok(n) => n,
                 };
                 buf.extend_from_slice(&chunk[..n]);
-                if complete_http_request_len(&buf).is_some_and(|len| buf.len() >= len) {
+                if crate::complete_http_request_len(&buf).is_some_and(|len| buf.len() >= len) {
                     break;
                 }
             }

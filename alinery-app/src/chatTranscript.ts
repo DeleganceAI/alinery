@@ -646,12 +646,37 @@ function applySubagent(state: ChatTranscriptState, event: Record<string, unknown
   if (!subagentId) return state;
   const label = asString(event.agent) ?? asString(event.name) ?? subagentId;
   const role = asString(event.agentSource) ?? asString(event.role);
-  const summary = asString((progress?.description ?? event.description ?? event.summary ?? event.text ?? event.message ?? event.preview) as unknown) ?? "";
+  // Locals so TS narrows them: optional-chain property narrowing is unreliable.
+  const rawRecentOutput: unknown = progress?.recentOutput;
+  const progressToolCount: unknown = progress?.toolCount;
+  const progressDurationMs: unknown = progress?.durationMs;
+  // OMP stores recentOutput newest-first (executor.ts refreshRecentOutput reverses the tail), so
+  // element 0 is what the subagent is saying now. `description` is an async LLM-generated label,
+  // so it is a fallback, not a live preview.
+  const newestOutput = Array.isArray(rawRecentOutput) ? asString(rawRecentOutput[0]) : undefined;
+  const summary =
+    newestOutput ||
+    asString(progress?.lastIntent) ||
+    asString(progress?.description) ||
+    asString((event.description ?? event.summary ?? event.text ?? event.message ?? event.preview) as unknown) ||
+    "";
   let rawStatus = asString((progress?.status ?? event.status ?? event.state) as unknown) ?? "running";
   if (rawStatus === "started" || rawStatus === "pending") rawStatus = "running";
   const status = (SUBAGENT_STATUS as string[]).includes(rawStatus) ? (rawStatus as SubagentStatus) : "running";
-  const tools = typeof event.tools === "number" ? event.tools : undefined;
-  const durationMs = typeof event.durationMs === "number" ? event.durationMs : typeof event.duration_ms === "number" ? event.duration_ms : undefined;
+  const currentTool = asString(progress?.currentTool);
+  // Only a progress snapshot carries activity, and its status stays "running" until the terminal
+  // frame — so a running agent with no current tool is reasoning between tool calls. Lifecycle,
+  // event, and hydration frames leave `activity` undefined on purpose.
+  const activity = progress ? (currentTool ? `using ${currentTool}` : status === "running" ? "thinking" : undefined) : undefined;
+  const tools = typeof progressToolCount === "number" ? progressToolCount : typeof event.tools === "number" ? event.tools : undefined;
+  const durationMs =
+    typeof progressDurationMs === "number"
+      ? progressDurationMs
+      : typeof event.durationMs === "number"
+        ? event.durationMs
+        : typeof event.duration_ms === "number"
+          ? event.duration_ms
+          : undefined;
   return appendEntry(state, {
     actor: subagent(label),
     type: "subagent_status",
@@ -660,6 +685,7 @@ function applySubagent(state: ChatTranscriptState, event: Record<string, unknown
     role,
     status,
     summary,
+    activity,
     tools,
     durationMs,
     at: Date.now(),
@@ -927,8 +953,16 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
     return openTurn(state);
   }
   if (event.type === "agent_end" || event.type === "turn_end") {
-    const stop = asString(event.stopReason) ?? (event.isTerminal === false ? undefined : asString(event.reason));
-    return closeTurn(state, stop);
+    const message = asRecord(event.message);
+    const stop = asString(event.stopReason) ?? asString(message?.stopReason) ?? (event.isTerminal === false ? undefined : asString(event.reason));
+    let next = closeTurn(state, stop);
+    const errorText = asString(message?.errorMessage);
+    if (stop === "error" && errorText) {
+      const hostedKeyDeath = message?.errorStatus === 401 && /invalid_api_key/i.test(errorText);
+      const text = hostedKeyDeath ? `${errorText} Kill this session, then Start fresh.` : errorText;
+      next = appendEntry(next, { actor: ACTOR.omp, type: "error", text, at: Date.now() });
+    }
+    return next;
   }
 
   if (event.type === "subagent_lifecycle" || event.type === "subagent_progress" || event.type === "subagent_event" || event.type === "subagent_status") {

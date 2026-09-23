@@ -23,7 +23,7 @@ const globalSettings: GlobalSettings = {
   },
 
   github: { token: "" },
-  defaults: { harness: "claude", model: "", playbook: "", draft_autosave: false },
+  defaults: { harness: "claude", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
   backup: {
     destination: "",
     enabled: false,

@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { flushSync } from "react-dom";
+import { afterPaint } from "../afterPaint";
 import * as ipc from "../ipc";
 import { PlaybookGraph } from "../PlaybookGraph";
-import { Checkbox, InlineStatus, ModelInput, ompDefaultModel } from "../shared";
-import type { BoardTask, DraftOrigin, PlaybookStepSummary, PlaybookSummary, TargetedCreateResult } from "../types";
+import { Checkbox, InlineStatus, ModelInput, ompDefaultModel, orderPlaybookCandidates, playbookPickerAppearance, playbookRefKey, samePlaybookRef } from "../shared";
+import * as taskMutationGuard from "../taskMutationGuard";
+import { toast } from "../toast";
+import type { BoardTask, DraftOrigin, PickerPreferences, PlaybookCandidate, PlaybookRef, ScopedPlaybook, TargetedCreateResult } from "../types";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 type ErrState = { msg: string; detail: string } | null;
@@ -18,12 +22,16 @@ const slugifyTaskName = (value: string) => {
 export function CreateTaskPage({
   onCancel,
   onCreated,
+  onBusy = () => {},
+  onOpened = () => {},
   initialDraft,
   activeRepo,
   knownRepos,
 }: {
   onCancel: () => void;
-  onCreated: (result: TargetedCreateResult) => void;
+  onCreated: (result: TargetedCreateResult) => void | Promise<void>;
+  onBusy?: (kind: "create" | "duplicate" | null) => void;
+  onOpened?: () => void;
   initialDraft?: BoardTask;
   activeRepo: string;
   knownRepos: string[];
@@ -39,7 +47,6 @@ export function CreateTaskPage({
   const [attachments, setAttachments] = useState<string[]>([]);
   const [attachmentDraft, setAttachmentDraft] = useState("");
   const [dropping, setDropping] = useState(false);
-  const [attachmentErrors, setAttachmentErrors] = useState<string[]>([]);
   const [created, setCreated] = useState<TargetedCreateResult | null>(null);
   const [err, setErr] = useState<ErrState>(null);
   const [mode, setMode] = useState<"inline" | "linear" | "github">(initialDraft?.linear_id ? "linear" : initialDraft?.github_issue ? "github" : "inline");
@@ -47,12 +54,18 @@ export function CreateTaskPage({
   const [linearId, setLinearId] = useState(initialDraft?.linear_id ?? "");
   const [githubIssue, setGithubIssue] = useState(initialDraft?.github_issue ?? "");
   const [importing, setImporting] = useState(false);
-  const [useWorktree, setUseWorktree] = useState(initialDraft ? initialDraft.has_worktree : true);
+  const [maxLiveSessions, setMaxLiveSessions] = useState(String(initialDraft?.max_live_sessions ?? 10));
+  const [start, setStart] = useState(true);
   const [branchName, setBranchName] = useState(initialDraft?.branch ?? "");
   const [worktreeName, setWorktreeName] = useState(initialDraft?.has_worktree ? initialDraft.worktree : "");
-  const [playbooks, setPlaybooks] = useState<PlaybookSummary[]>([]);
-  const [playbook, setPlaybook] = useState(initialDraft?.playbook || "superdevelop");
-  const [playbookSteps, setPlaybookSteps] = useState<PlaybookStepSummary[]>([]);
+  const [playbooks, setPlaybooks] = useState<PlaybookCandidate[]>([]);
+  const [pickerPreferences, setPickerPreferences] = useState<PickerPreferences>({ order: [], entries: [] });
+  const [playbook, setPlaybook] = useState<PlaybookRef | null>(initialDraft?.playbook_ref ?? null);
+  const [selectedSource, setSelectedSource] = useState<ScopedPlaybook | null>(null);
+  const [sourceError, setSourceError] = useState("");
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogRevision, setCatalogRevision] = useState(0);
+  const resetAutoAdvance = useRef(!initialDraft);
   const [autoAdvance, setAutoAdvance] = useState<string[]>(initialDraft?.auto_advance ?? []);
   const harness = "omp";
   const [model, setModel] = useState("");
@@ -60,24 +73,29 @@ export function CreateTaskPage({
   const [draftAutosave, setDraftAutosave] = useState(true);
   const [draftSlug, setDraftSlug] = useState(initialDraft?.slug ?? "");
   const [draftOrigins, setDraftOrigins] = useState<DraftOrigin[]>(initialDraft ? [{ repoPath: initialDraft.repo_path, slug: initialDraft.slug }] : []);
-  const [creating, setCreating] = useState(false);
+  const mutationKind = useSyncExternalStore(taskMutationGuard.subscribe, taskMutationGuard.currentKind);
   const [playbookNeedsReselection, setPlaybookNeedsReselection] = useState(false);
   const [modelNeedsReselection, setModelNeedsReselection] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
-  const draftSlugRef = useRef(initialDraft?.slug ?? "");
   const creatingRef = useRef(false);
-  const draftSaveInFlightRef = useRef<Promise<void> | null>(null);
+  const draftSaveInFlightRef = useRef<Promise<void>>(Promise.resolve());
+  const draftIdentities = useRef(new Map(initialDraft ? [[initialDraft.repo_path, initialDraft.slug]] : []));
+  const draftWriteGeneration = useRef(0);
   const targetRequest = useRef(0);
   const modelRequest = useRef(0);
   const initialTargetLoaded = useRef(false);
   const repoRef = useRef(repoPath);
   const ticketLoaded = useRef(false);
+  const onOpenedRef = useRef(onOpened);
+  onOpenedRef.current = onOpened;
   // dirty only after a real user edit (or reopen of an existing draft).
   const dirtyRef = useRef(!!initialDraft);
-  const setCurrentDraftSlug = (slug: string) => {
-    draftSlugRef.current = slug;
-    setDraftSlug(slug);
-  };
+  const cap = Number(maxLiveSessions);
+  const validCap = /^\d+$/.test(maxLiveSessions) && Number.isInteger(cap) && cap > 0 && cap <= 4_294_967_295;
+
+  // The busy flag is the shared guard, not this component's own: a create started from
+  // the ⌘N form and a duplicate started from a board are the same slot.
+  const creating = mutationKind === "create";
 
   useEffect(() => {
     const t = window.setTimeout(() => titleRef.current?.focus(), 40);
@@ -92,34 +110,29 @@ export function CreateTaskPage({
     let alive = true;
     const request = ++targetRequest.current;
     setErr(null);
-    Promise.all([ipc.readConfigForRepo(repoPath), ipc.listPlaybooksForRepo(repoPath)])
-      .then(async ([c, ws]) => {
+    setCatalogLoading(true);
+    setSelectedSource(null);
+    Promise.all([ipc.readConfigForRepo(repoPath), ipc.listPlaybookCatalog(repoPath), ipc.accountStatus().catch(() => null)])
+      .then(async ([c, catalog, account]) => {
         if (!alive || request !== targetRequest.current) return;
         setDraftAutosave(c.defaults.draft_autosave !== false);
-        setPlaybooks(ws);
-        setDefaultModel(ompDefaultModel(c.defaults));
-
+        setPlaybooks(orderPlaybookCandidates(catalog.candidates, catalog.picker_preferences));
+        setPickerPreferences(catalog.picker_preferences);
+        const resolvedDefaultModel = ompDefaultModel(c.defaults) || (account?.signedIn ? "alinery/DeepSeek-V4.1-Flash" : "");
+        setDefaultModel(resolvedDefaultModel);
+        if (catalog.diagnostics.length) {
+          setErr({ msg: "Some playbook sources could not be loaded.", detail: catalog.diagnostics.map((diagnostic) => diagnostic.message).join("\n") });
+        }
+        const choice = initialTargetLoaded.current ? playbook : initialDraft ? initialDraft.playbook_ref : c.defaults.playbook;
+        const candidate = catalog.candidates.find((item) => samePlaybookRef(item.source.reference, choice));
+        setPlaybook(choice ?? null);
+        setPlaybookNeedsReselection(!candidate || candidate.diagnostics.length > 0);
         if (!initialTargetLoaded.current) {
           initialTargetLoaded.current = true;
-          const initialPlaybook = initialDraft?.playbook || ws[0]?.key || "";
-          setPlaybook(initialPlaybook);
-          setAutoAdvance(
-            initialDraft?.auto_advance?.length
-              ? initialDraft.auto_advance
-              : (ws.find((w) => w.key === initialPlaybook)?.auto_advance ?? []).filter((edge) => edge.default_enabled).map((edge) => edge.key),
-          );
-          setPlaybookNeedsReselection(!initialPlaybook || !ws.some((w) => w.key === initialPlaybook));
-          setModel(ompDefaultModel(c.defaults));
+          setModel(initialDraft?.launch_defaults?.model ?? resolvedDefaultModel);
           setModelNeedsReselection(false);
-        } else {
-          if (!ws.some((w) => w.key === playbook)) {
-            setPlaybook("");
-            setAutoAdvance([]);
-            setPlaybookNeedsReselection(true);
-          } else {
-            setPlaybookNeedsReselection(false);
-          }
         }
+        setCatalogLoading(false);
         if (initialDraft && initialDraft.repo_path === repoPath && !ticketLoaded.current) {
           try {
             const raw = await ipc.readArtifactForRepo(repoPath, initialDraft.slug, "00-ticket.md");
@@ -140,12 +153,19 @@ export function CreateTaskPage({
         }
       })
       .catch((e) => {
-        if (alive && request === targetRequest.current) setErr({ msg: "Couldn't load repository settings.", detail: String(e) });
+        if (alive && request === targetRequest.current) {
+          setCatalogLoading(false);
+          setPlaybookNeedsReselection(true);
+          setErr({ msg: "Couldn't load repository settings.", detail: String(e) });
+        }
+      })
+      .finally(() => {
+        if (alive && request === targetRequest.current) onOpenedRef.current();
       });
     return () => {
       alive = false;
     };
-  }, [repoPath]);
+  }, [repoPath, catalogRevision]);
 
   useEffect(() => {
     let alive = true;
@@ -170,63 +190,90 @@ export function CreateTaskPage({
   }, [repoPath, harness]);
 
   useEffect(() => {
-    if (!playbook) {
-      setPlaybookSteps([]);
-      return;
-    }
-    const target = repoPath;
+    let alive = true;
+    setSelectedSource(null);
+    setSourceError("");
+    if (!playbook || catalogLoading || playbookNeedsReselection) return;
     ipc
-      .listPlaybookStepsForRepo(target, playbook)
-      .then((steps) => {
-        if (repoRef.current === target) setPlaybookSteps(steps);
+      .readPlaybook(playbook, repoPath)
+      .then((source) => {
+        if (!alive || !samePlaybookRef(source.source.reference, playbook)) return;
+        setSelectedSource(source);
+        if (resetAutoAdvance.current) {
+          setAutoAdvance(source.definition.step.filter((step) => step.auto_advance_default).map((step) => step.key));
+          resetAutoAdvance.current = false;
+        } else {
+          const stepKeys = new Set(source.definition.step.map((step) => step.key));
+          setAutoAdvance((current) => current.filter((key) => stepKeys.has(key)));
+        }
       })
-      .catch(() => {
-        if (repoRef.current === target) setPlaybookSteps([]);
+      .catch((error) => {
+        if (alive) setSourceError(String(error));
       });
-  }, [repoPath, playbook]);
+    return () => {
+      alive = false;
+    };
+  }, [repoPath, playbook, catalogLoading, playbookNeedsReselection, catalogRevision]);
 
   // Debounced draft write — only after user edit and when setting is on.
   useEffect(() => {
-    if (!draftAutosave || !dirtyRef.current || creatingRef.current) return;
+    if (!draftAutosave || !dirtyRef.current || creatingRef.current || taskMutationGuard.currentKind() || !validCap) return;
     const n = name.trim();
     if (!n || !playbook || !harness) return;
     const target = repoPath;
+    const generation = draftWriteGeneration.current;
     const handle = window.setTimeout(() => {
-      if (!dirtyRef.current || creatingRef.current) return;
-      const save = ipc
-        .writeDraftForRepo({
-          repoPath: target,
-          draftSlug: draftSlugRef.current,
-          name: n,
-          description: desc,
-          evidence,
-          linearId,
-          githubIssue,
-          playbook,
-          harness,
-          model,
-          autoAdvance,
-          useWorktree,
-          branchName: branchName.trim(),
-          worktreeName: worktreeName.trim(),
-          taskSlug,
-        })
-        .then((t) => {
+      if (!dirtyRef.current || creatingRef.current || taskMutationGuard.currentKind() || generation !== draftWriteGeneration.current) return;
+      const save = draftSaveInFlightRef.current
+        .then(async () => {
+          if (creatingRef.current || taskMutationGuard.currentKind() || generation !== draftWriteGeneration.current) return;
+          const t = await ipc.writeDraftForRepo({
+            repoPath: target,
+            draftSlug: draftIdentities.current.get(target) ?? "",
+            name: n,
+            description: desc,
+            evidence,
+            linearId,
+            githubIssue,
+            playbook,
+            harness,
+            model,
+            autoAdvance,
+            maxLiveSessions: cap,
+            branchName: branchName.trim(),
+            worktreeName: worktreeName.trim(),
+            taskSlug,
+          });
+          draftIdentities.current.set(target, t.slug);
           setDraftOrigins((origins) =>
             origins.some((origin) => origin.repoPath === target && origin.slug === t.slug) ? origins : [...origins, { repoPath: target, slug: t.slug }],
           );
-          if (repoRef.current === target) setCurrentDraftSlug(t.slug);
+          if (repoRef.current === target) setDraftSlug(t.slug);
         })
         .catch((e) => {
           if (repoRef.current === target) setErr({ msg: "Couldn't save the draft.", detail: String(e) });
         });
       draftSaveInFlightRef.current = save;
-      save.finally(() => {
-        if (draftSaveInFlightRef.current === save) draftSaveInFlightRef.current = null;
-      });
     }, 400);
     return () => window.clearTimeout(handle);
-  }, [repoPath, name, desc, evidence, linearId, githubIssue, playbook, harness, model, autoAdvance, useWorktree, branchName, worktreeName, taskSlug, draftAutosave]);
+  }, [
+    repoPath,
+    name,
+    desc,
+    evidence,
+    linearId,
+    githubIssue,
+    playbook,
+    harness,
+    model,
+    autoAdvance,
+    branchName,
+    worktreeName,
+    taskSlug,
+    draftAutosave,
+    maxLiveSessions,
+    mutationKind,
+  ]);
 
   // onDragDropEvent carries `paths` on "enter" and "drop" only, and "enter" fires first —
   // so the highlight predicate is enter||over, not drop.
@@ -250,60 +297,91 @@ export function CreateTaskPage({
     };
   }, []);
 
+  const sourceReady = selectedSource !== null && samePlaybookRef(selectedSource.source.reference, playbook) && !catalogLoading && !playbookNeedsReselection;
   const create = () => {
     const n = name.trim();
-    if (!n || !taskSlug || creatingRef.current || !playbook || playbookNeedsReselection || modelNeedsReselection) return;
+    if (!n || !taskSlug || !sourceReady || !selectedSource || modelNeedsReselection || !validCap) return;
+    if (creatingRef.current) {
+      taskMutationGuard.refuseIfBusy();
+      return;
+    }
+    // A create or duplicate already running owns the slot; refuse rather than queue.
+    if (!taskMutationGuard.claim("create")) return;
     creatingRef.current = true;
+    draftWriteGeneration.current += 1;
     dirtyRef.current = false;
-    setCreating(true);
-    setErr(null);
     const target = repoPath;
-    const pendingDraftSave = draftSaveInFlightRef.current;
-    const createAfterDraftSettles = () =>
-      ipc.createTaskForRepo({
-        repoPath: target,
-        draftSlug: draftSlugRef.current,
-        name: n,
-        description: desc,
-        evidence,
-        attachments,
-        linearId,
-        githubIssue,
-        playbook,
-        harness,
-        model,
-        autoAdvance,
-        useWorktree,
-        branchName: branchName.trim(),
-        worktreeName: worktreeName.trim(),
-        taskSlug,
-      });
-    (pendingDraftSave ?? Promise.resolve())
-      .then(createAfterDraftSettles)
-      .then(({ task, session, attachment_errors }) => {
-        const origins = [...draftOrigins, { repoPath: target, slug: draftSlugRef.current || task.slug }, { repoPath: target, slug: task.slug }].filter(
-          (origin, index, all) => all.findIndex((item) => item.repoPath === origin.repoPath && item.slug === origin.slug) === index,
-        );
-        Promise.all(
-          origins.map((origin) =>
-            ipc.deleteDraftForRepo(origin.repoPath, origin.slug).catch(() => {
-              // A promoted task is intentionally retained; cleanup is draft-only.
-            }),
-          ),
-        );
-        if (attachment_errors?.length) {
-          // Navigation deferred, not cancelled — creating stays true so the form cannot re-create.
-          setAttachmentErrors(attachment_errors);
-          setCreated({ repoPath: target, task, session });
-          return;
+    flushSync(() => {
+      onBusy("create");
+      setErr(null);
+    });
+    let provisioningRequested = false;
+    let resultReceived = false;
+    afterPaint()
+      .then(() => draftSaveInFlightRef.current)
+      .then(async () => {
+        const prepared = await ipc.prepareTaskAttachments(attachments);
+        provisioningRequested = true;
+        return ipc.createTaskForRepo({
+          repoPath: target,
+          request: {
+            ...prepared,
+            draft_slug: draftIdentities.current.get(target) || undefined,
+            name: n,
+            description: desc,
+            evidence,
+            linear_id: linearId,
+            github_issue: githubIssue,
+            related_tasks: initialDraft?.related_tasks ?? [],
+            playbook: { reference: selectedSource.source.reference, source: selectedSource.source_text },
+            launch_defaults: { harness, model },
+            auto_advance_steps: autoAdvance,
+            max_live_sessions: cap,
+            start,
+            branch_name: branchName.trim() || undefined,
+            worktree_name: worktreeName.trim() || undefined,
+            requested_slug: taskSlug,
+          },
+        });
+      })
+      .then(async (result) => {
+        resultReceived = true;
+        setCreated({ ...result, repoPath: target });
+        if (result.creation !== "ready" || !result.task || result.start === "failed" || result.errors.length) {
+          toast.error(`Task creation needs attention: ${result.errors.map((error) => error.message).join("; ") || "Inspect the creation result."}`);
+        } else {
+          toast.success("Task created");
         }
-        onCreated({ repoPath: target, task, session });
+        if (result.creation === "ready" && result.task) {
+          const origins = [...draftOrigins, ...Array.from(draftIdentities.current, ([originRepo, slug]) => ({ repoPath: originRepo, slug }))];
+          for (const origin of origins) {
+            void ipc.deleteDraftForRepo(origin.repoPath, origin.slug).catch(() => {
+              // Deletion is draft-only; a promoted task is never removed.
+            });
+          }
+          if (result.start !== "failed" && result.errors.length === 0 && !result.attachment_errors?.length) {
+            await onCreated({ ...result, repoPath: target });
+          }
+        }
       })
       .catch((e) => {
-        creatingRef.current = false;
-        dirtyRef.current = true;
-        setCreating(false);
-        if (repoRef.current === target) setErr({ msg: "Couldn't create the task.", detail: String(e) });
+        if (resultReceived) {
+          toast.error(`Couldn't open the task: ${e}`);
+          setErr({ msg: "Couldn't open the task.", detail: String(e) });
+        } else if (provisioningRequested) {
+          // A lost reply can follow durable provisioning. Never blindly retry it.
+          toast.error(`Creation outcome is unknown. Inspect the repository before creating another task: ${e}`);
+          setErr({ msg: "Creation outcome is unknown. Inspect the repository before creating another task.", detail: String(e) });
+        } else {
+          creatingRef.current = false;
+          dirtyRef.current = true;
+          toast.error(`Couldn't prepare task attachments. No creation was requested: ${e}`);
+          setErr({ msg: "Couldn't prepare task attachments. No creation was requested.", detail: String(e) });
+        }
+      })
+      .finally(() => {
+        taskMutationGuard.release();
+        onBusy(null);
       });
   };
 
@@ -382,12 +460,13 @@ export function CreateTaskPage({
       });
   };
 
-  const selectPlaybook = (key: string) => {
+  const selectPlaybook = (reference: PlaybookRef) => {
     dirtyRef.current = true;
-    setPlaybook(key);
+    resetAutoAdvance.current = true;
+    setSelectedSource(null);
+    setPlaybook(reference);
     setPlaybookNeedsReselection(false);
-    const wf = playbooks.find((w) => w.key === key);
-    setAutoAdvance((wf?.auto_advance ?? []).filter((edge) => edge.default_enabled).map((edge) => edge.key));
+    setAutoAdvance([]);
     setModel(defaultModel);
     setModelNeedsReselection(false);
   };
@@ -397,15 +476,18 @@ export function CreateTaskPage({
     repoRef.current = nextRepo;
     dirtyRef.current = false;
     setRepoPath(nextRepo);
-    setDraftSlug(draftOrigins.find((origin) => origin.repoPath === nextRepo)?.slug ?? "");
+    setDraftSlug(draftIdentities.current.get(nextRepo) ?? "");
+    setImporting(false);
     setErr(null);
   };
 
   const clearDraft = () => {
+    if (creatingRef.current) return;
     const slug = draftSlug;
+    draftWriteGeneration.current += 1;
     const reset = () => {
       dirtyRef.current = false;
-      setCurrentDraftSlug("");
+      setDraftSlug("");
       setName("");
       setTaskSlug("");
       setSlugEdited(false);
@@ -413,31 +495,30 @@ export function CreateTaskPage({
       setEvidence("");
       setAttachments([]);
       setAttachmentDraft("");
-      setAttachmentErrors([]);
+      draftIdentities.current.delete(repoPath);
       setCreated(null);
       setErr(null);
       setMode("inline");
       setRef("");
       setLinearId("");
       setGithubIssue("");
-      setUseWorktree(true);
       setBranchName("");
       setWorktreeName("");
-      setPlaybook("");
+      setPlaybook(null);
+      setSelectedSource(null);
       setAutoAdvance([]);
       setModel("");
       setPlaybookNeedsReselection(false);
       setModelNeedsReselection(false);
     };
-    if (!slug) {
-      reset();
-      return;
-    }
     const target = repoPath;
     setErr(null);
     dirtyRef.current = false;
-    ipc
-      .deleteDraftForRepo(target, slug)
+    draftSaveInFlightRef.current
+      .then(() => {
+        const storedSlug = draftIdentities.current.get(target) ?? slug;
+        if (storedSlug) return ipc.deleteDraftForRepo(target, storedSlug);
+      })
       .then(() => {
         setDraftOrigins((origins) => origins.filter((origin) => origin.repoPath !== target || origin.slug !== slug));
         reset();
@@ -451,16 +532,20 @@ export function CreateTaskPage({
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) create();
   };
 
-  const selectedPlaybook = playbooks.find((w) => w.key === playbook);
+  const selectedPlaybook = playbooks.find((item) => samePlaybookRef(item.source.reference, playbook));
 
   // Why the create button is unavailable — shown beside it, not hidden in a tooltip.
   const createBlockedReason = !name.trim()
     ? "Type a task name first."
-    : playbookNeedsReselection || modelNeedsReselection
-      ? "Select any unavailable target options before creating."
-      : !playbook
-        ? "Select a playbook."
-        : "";
+    : !validCap
+      ? "Maximum live sessions must be a positive whole number no greater than 4294967295."
+      : playbookNeedsReselection
+        ? "The selected or configured playbook is unavailable or invalid. Choose a valid scoped playbook."
+        : modelNeedsReselection
+          ? "Select a model available in this repository."
+          : !sourceReady
+            ? sourceError || "Select a playbook and wait for its validated source."
+            : "";
 
   return (
     <div className="createpage createpage-with-preview" onKeyDown={onKey}>
@@ -468,7 +553,7 @@ export function CreateTaskPage({
         <h1 className="create-title">New task</h1>
         <label className="create-field">
           <span>Repository</span>
-          <select className="field-input" value={repoPath} onChange={(e) => selectRepo(e.target.value)}>
+          <select className="field-input" value={repoPath} disabled={creating} onChange={(e) => selectRepo(e.target.value)}>
             {knownRepos.map((repo) => (
               <option key={repo} value={repo}>
                 {repo}
@@ -612,22 +697,20 @@ export function CreateTaskPage({
           ))}
           <div className="hint">Local files are copied into the task. URLs are recorded, never fetched. Drop files anywhere on this form.</div>
         </div>
-        {(playbooks.find((w) => w.key === playbook)?.auto_advance.length ?? 0) > 0 && (
+        {!!selectedSource?.definition.step.length && (
           <div className="create-field">
-            <span>Auto-advance</span>
-            {playbooks
-              .find((w) => w.key === playbook)
-              ?.auto_advance.map((edge) => (
-                <Checkbox
-                  key={edge.key}
-                  checked={autoAdvance.includes(edge.key)}
-                  onChange={(checked) => {
-                    dirtyRef.current = true;
-                    setAutoAdvance((cur) => (checked ? [...cur, edge.key] : cur.filter((k) => k !== edge.key)));
-                  }}
-                  label={edge.title}
-                />
-              ))}
+            <span>Automatic completion permission for future executions</span>
+            {selectedSource.definition.step.map((step) => (
+              <Checkbox
+                key={step.key}
+                checked={autoAdvance.includes(step.key)}
+                onChange={(checked) => {
+                  dirtyRef.current = true;
+                  setAutoAdvance((cur) => (checked ? [...cur, step.key] : cur.filter((key) => key !== step.key)));
+                }}
+                label={step.title}
+              />
+            ))}
           </div>
         )}
         <label className="create-field">
@@ -659,14 +742,7 @@ export function CreateTaskPage({
           {modelNeedsReselection && <InlineStatus tone="error">Select a model available in this repository.</InlineStatus>}
         </label>
         <div className="crow worktree-row">
-          <Checkbox
-            checked={useWorktree}
-            onChange={(v) => {
-              dirtyRef.current = true;
-              setUseWorktree(v);
-            }}
-            label="Use worktree"
-          />
+          <span>Dedicated task worktree</span>
           <input
             className="field-input worktree-input"
             value={branchName}
@@ -676,27 +752,51 @@ export function CreateTaskPage({
             }}
             placeholder="Branch name (optional — auto if blank or taken)"
           />
-          {useWorktree && (
-            <input
-              className="field-input worktree-input"
-              value={worktreeName}
-              onChange={(e) => {
-                dirtyRef.current = true;
-                setWorktreeName(e.target.value);
-              }}
-              placeholder="Worktree folder name (optional — auto if blank or taken)"
-            />
-          )}
+          <input
+            className="field-input worktree-input"
+            value={worktreeName}
+            onChange={(e) => {
+              dirtyRef.current = true;
+              setWorktreeName(e.target.value);
+            }}
+            placeholder="Worktree folder name (optional — auto if blank or taken)"
+          />
         </div>
-        {!useWorktree && <InlineStatus tone="info">No worktree — the main repo's working directory switches to the new branch immediately when this task is created.</InlineStatus>}
-        {attachmentErrors.length > 0 && (
-          <InlineStatus tone="warning">
-            Task created. Not attached:
-            {attachmentErrors.map((entry) => (
-              <div key={entry}>{entry}</div>
+        <label className="create-field">
+          <span>Maximum live sessions</span>
+          <input className="field-input" type="number" min="1" max="4294967295" step="1" value={maxLiveSessions} onChange={(event) => setMaxLiveSessions(event.target.value)} />
+        </label>
+        <Checkbox checked={start} onChange={setStart} label="Start eligible sessions after creation" />
+        {created && (
+          <section aria-label="Creation result">
+            <InlineStatus tone={created.creation === "partial" || created.start === "failed" ? "warning" : "info"}>
+              Creation: {created.creation}. Start: {created.start}.
+            </InlineStatus>
+            {created.errors.map((error) => (
+              <InlineStatus key={`${error.stage}:${error.code}:${error.message}`} tone="error" detail={error.code}>
+                {error.stage}: {error.message}
+              </InlineStatus>
             ))}
-          </InlineStatus>
+            {created.attachment_errors?.map((error) => (
+              <InlineStatus key={error} tone="warning">
+                {error}
+              </InlineStatus>
+            ))}
+            {created.sessions.map((session) => (
+              <button className="btn ghost" type="button" key={session.id} disabled={!created.task} onClick={() => onCreated({ ...created, selectedSessionId: session.id })}>
+                Open session {session.id}
+              </button>
+            ))}
+            {created.executions.map((execution) => (
+              <div key={execution.id}>
+                {execution.candidate.step_key}: {execution.lifecycle}
+                {execution.error ? ` — ${execution.error}` : ""}
+              </div>
+            ))}
+            {!created.task && <InlineStatus tone="warning">No task identity was returned. Inspect the repository before trying again.</InlineStatus>}
+          </section>
         )}
+        {creating && <InlineStatus tone="info">Creating New Task… You can keep using Alinery while the worktree is set up.</InlineStatus>}
         {err && (
           <InlineStatus tone="error" detail={err.detail}>
             {err.msg}
@@ -704,22 +804,17 @@ export function CreateTaskPage({
         )}
         <div className="create-actions">
           {created ? (
-            <button className="btn" type="button" onClick={() => onCreated(created)}>
+            <button className="btn" type="button" disabled={!created.task} onClick={() => onCreated(created)}>
               Open task
             </button>
           ) : (
-            <button
-              type="button"
-              className="btn"
-              disabled={!name.trim() || !taskSlug || creating || !playbook || playbookNeedsReselection || modelNeedsReselection}
-              onClick={create}
-            >
+            <button type="button" className="btn" disabled={creating || creatingRef.current || !!createBlockedReason || !taskSlug} onClick={create}>
               {creating ? "Creating…" : "Create task"}
             </button>
           )}
           {!created && createBlockedReason && !creating && <span className="hint">{createBlockedReason}</span>}
           {draftSlug ? (
-            <button className="btn ghost" onClick={clearDraft} type="button">
+            <button className="btn ghost" disabled={creating || creatingRef.current} onClick={clearDraft} type="button">
               Clear draft
             </button>
           ) : null}
@@ -737,38 +832,60 @@ export function CreateTaskPage({
         </div>
         <div className="playbook-panel-controls">
           <div className="playbook-panel-label">Choose a playbook</div>
+          <button type="button" className="btn ghost small" disabled={creating} onClick={() => setCatalogRevision((revision) => revision + 1)}>
+            Refresh playbooks
+          </button>
           <div className="playbook-picker" role="radiogroup" aria-label="Choose playbook">
             {playbooks.length > 0 ? (
-              playbooks.map((item) => (
-                <label className={`playbook-option${playbook === item.key ? " selected" : ""}`} key={item.key}>
-                  <input
-                    checked={playbook === item.key}
-                    className="playbook-option-input"
-                    name="create-playbook"
-                    onChange={() => selectPlaybook(item.key)}
-                    type="radio"
-                    value={item.key}
-                  />
-                  <span className="playbook-option-content">
-                    <span className="playbook-option-kicker">{item.key}</span>
-                    <span className="playbook-option-topline">
-                      <span className="playbook-option-title">{item.title}</span>
-                      <span className="playbook-option-meta">
-                        {item.steps.length} {item.steps.length === 1 ? "step" : "steps"}
+              playbooks.map((item) => {
+                const preference = pickerPreferences.entries.find((entry) => samePlaybookRef(entry.reference, item.source.reference));
+                if (preference?.hidden && !item.diagnostics.length && !samePlaybookRef(playbook, item.source.reference)) return null;
+                const appearance = playbookPickerAppearance(item.source.reference, preference);
+                return (
+                  <label
+                    className={`playbook-option${samePlaybookRef(playbook, item.source.reference) ? " selected" : ""}`}
+                    key={playbookRefKey(item.source.reference)}
+                    style={{ borderColor: appearance.color }}
+                  >
+                    <input
+                      checked={samePlaybookRef(playbook, item.source.reference)}
+                      disabled={creating || item.diagnostics.length > 0}
+                      className="playbook-option-input"
+                      name="create-playbook"
+                      onChange={() => selectPlaybook(item.source.reference)}
+                      type="radio"
+                      value={playbookRefKey(item.source.reference)}
+                    />
+                    <span className="playbook-option-content">
+                      <span className="playbook-option-kicker">{playbookRefKey(item.source.reference)}</span>
+                      <span className="playbook-option-topline">
+                        <span className="playbook-option-title">{item.title ?? item.source.reference.key}</span>
+                        <span className="pill" style={{ borderColor: appearance.color }}>
+                          {appearance.badge}
+                        </span>
+                        <span className="playbook-option-meta">
+                          {item.modified_at_ms == null ? "Modification time unavailable" : new Date(item.modified_at_ms).toLocaleString()}
+                        </span>
                       </span>
+                      <span className="playbook-option-description">{item.description}</span>
+                      {item.diagnostics.map((diagnostic) => (
+                        <span key={`${diagnostic.code}:${diagnostic.field}:${diagnostic.line}:${diagnostic.message}`}>{diagnostic.message}</span>
+                      ))}
                     </span>
-                    <span className="playbook-option-description">{item.description}</span>
-                  </span>
-                  <span aria-hidden="true" className="playbook-option-indicator" />
-                </label>
-              ))
+                    <span aria-hidden="true" className="playbook-option-indicator" />
+                  </label>
+                );
+              })
             ) : (
               <div className="playbook-empty">No playbooks available in this repository.</div>
             )}
           </div>
-          {playbookNeedsReselection && <InlineStatus tone="error">Select a playbook available in this repository.</InlineStatus>}
+          {playbookNeedsReselection && <InlineStatus tone="error">The selected or configured playbook is unavailable or invalid. Choose a valid scoped playbook.</InlineStatus>}
+          {sourceError && <InlineStatus tone="error">{sourceError}</InlineStatus>}
         </div>
-        <PlaybookGraph title={selectedPlaybook?.title ?? playbook} steps={playbookSteps} autoAdvanceEdges={selectedPlaybook?.auto_advance} selectedAutoAdvance={autoAdvance} />
+        {selectedSource && (
+          <PlaybookGraph title={selectedPlaybook?.title ?? selectedSource.definition.title} steps={selectedSource.definition.step} selectedAutoAdvance={autoAdvance} />
+        )}
       </aside>
     </div>
   );

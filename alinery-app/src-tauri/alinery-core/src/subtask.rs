@@ -9,8 +9,9 @@ use crate::paths::{
     alinery_dir, artifacts_dir, safe_component, session_meta_path, session_scrollback_path, sessions_dir, subtask_snapshot_dir, subtask_snapshot_staging_dir, tasks_dir,
     worktrees_dir,
 };
-use crate::shared::{get_playbook, ordered_auto_advance_edges, read_session_meta_full, write_meta_atomic};
-use crate::task::{compose_ticket, read_task, task_dir, write_task_unlocked};
+use crate::shared::{read_session_meta_full, write_meta_atomic};
+use crate::task::{read_task, task_dir, write_task_unlocked};
+use crate::task_creation::{provision_task_with_reservation, CreateTaskRequest, TaskPlaybookPackage};
 use crate::types::{
     CreateSubtaskInput, CreateSubtaskResult, FinalizeMode, FinalizeSubtaskResult, FinishInspection, SessionMeta, SnapshotProvenance, SubtaskArtifactState, SubtaskGitState, Task,
     TaskRelationships, TaskSummary,
@@ -257,121 +258,112 @@ pub fn task_worktree_is_clean(task: &Task) -> Result<bool, String> {
     worktree_clean(Path::new(&task.worktree))
 }
 
-fn rollback_created_child(repo: &Path, child_slug: &str, worktree: &Path, parent_path: &Path, parent_bytes: &[u8], meta_path: &Path, meta_bytes: &[u8]) {
-    let _ = write_bytes_atomic(parent_path, parent_bytes);
-    let _ = write_bytes_atomic(meta_path, meta_bytes);
-    let mut remove_worktree = git_cmd(repo);
-    remove_worktree.args(["worktree", "remove", "--force"]).arg(worktree);
-    let _ = remove_worktree.output();
-    let _ = fs::remove_dir_all(task_dir(repo, child_slug));
-    let mut delete_branch = git_cmd(repo);
-    delete_branch.args(["branch", "-D", child_slug]);
-    let _ = delete_branch.output();
+fn validate_subtask_creation(repo: &Path, input: &CreateSubtaskInput) -> Result<ManagerContext, String> {
+    let manager = resolve_subtask_manager(repo, &input.manager_session_id)?;
+    if !manager.meta.subtask_slug.is_empty() {
+        return Err("sub-task manager already has an active child".into());
+    }
+    if manager.parent.draft || manager.parent.archived {
+        return Err("sub-task parent must be a non-draft active task".into());
+    }
+    if !manager.parent.active_subtask.is_empty() {
+        return Err("sub-task parent already has an active child".into());
+    }
+    if !manager.parent.has_worktree || manager.parent.worktree.is_empty() {
+        return Err("sub-task parent has no dedicated worktree".into());
+    }
+    if !task_worktree_is_clean(&manager.parent)? {
+        return Err("sub-task parent worktree must exist and be clean".into());
+    }
+    if !exact_child_slug(&input.slug) {
+        return Err("sub-task slug must use lowercase ASCII letters, numbers, and single dashes without normalization".into());
+    }
+    if task_dir(repo, &input.slug).exists() {
+        return Err("sub-task slug collides with an existing task".into());
+    }
+    if worktrees_dir(repo).join(&input.slug).exists() {
+        return Err("sub-task slug collides with an existing worktree".into());
+    }
+    if ref_exists(repo, &input.slug) {
+        return Err("sub-task slug collides with an existing or invalid Git ref".into());
+    }
+    Ok(manager)
 }
 
-pub fn create_subtask(repo: &Path, input: CreateSubtaskInput) -> Result<CreateSubtaskResult, String> {
-    with_task_mutation_lock(repo, "create sub-task", || {
-        let mut manager = resolve_subtask_manager(repo, &input.manager_session_id)?;
-        if !manager.meta.subtask_slug.is_empty() {
-            return Err("sub-task manager already has an active child".into());
-        }
-        if manager.parent.draft || manager.parent.archived {
-            return Err("sub-task parent must be a non-draft active task".into());
-        }
-        if !manager.parent.active_subtask.is_empty() {
-            return Err("sub-task parent already has an active child".into());
-        }
-        if !manager.parent.has_worktree || manager.parent.worktree.is_empty() {
-            return Err("sub-task parent has no dedicated worktree".into());
-        }
-        let parent_worktree = PathBuf::from(&manager.parent.worktree);
-        if !parent_worktree.is_dir() {
-            return Err("sub-task parent worktree is missing".into());
-        }
-        if !exact_child_slug(&input.slug) {
-            return Err("sub-task slug must use lowercase ASCII letters, numbers, and single dashes without normalization".into());
-        }
-        if task_dir(repo, &input.slug).exists() {
-            return Err("sub-task slug collides with an existing task".into());
-        }
-        let child_worktree = worktrees_dir(repo).join(&input.slug);
-        if child_worktree.exists() {
-            return Err("sub-task slug collides with an existing worktree".into());
-        }
-        if ref_exists(repo, &input.slug) {
-            return Err("sub-task slug collides with an existing or invalid Git ref".into());
-        }
-        let playbook = get_playbook(repo, &input.playbook).ok_or_else(|| format!("unknown playbook: {}", input.playbook))?;
-        if manager.parent.branch.is_empty() {
-            return Err("sub-task parent has no recorded branch".into());
-        }
-
-        let parent_path = task_dir(repo, &manager.owner_slug).join("task.md");
-        let parent_bytes = fs::read(&parent_path).map_err(|e| format!("read {}: {e}", parent_path.display()))?;
-        let meta_bytes = fs::read(&manager.meta_path).map_err(|e| format!("read {}: {e}", manager.meta_path.display()))?;
-
-        let mut add = git_cmd(repo);
-        add.args(["worktree", "add"]).arg(&child_worktree).args(["-b", &input.slug, &manager.parent.branch]);
-        let output = command_output(add, "git worktree add")?;
-        if !output.status.success() {
-            let mut delete_branch = git_cmd(repo);
-            delete_branch.args(["branch", "-D", &input.slug]);
-            let _ = delete_branch.output();
-            return Err(format!("git worktree add failed: {}", String::from_utf8_lossy(&output.stderr).trim()));
-        }
-
-        let attempt = (|| {
-            let task_path = task_dir(repo, &input.slug);
-            fs::create_dir_all(task_path.join("sessions")).map_err(|e| e.to_string())?;
-            fs::create_dir_all(task_path.join("artifacts")).map_err(|e| e.to_string())?;
-            let child = Task {
-                name: input.name.trim().to_string(),
-                slug: input.slug.clone(),
-                requested_slug: String::new(),
-                branch: input.slug.clone(),
-                worktree: child_worktree.to_string_lossy().into_owned(),
-                has_worktree: true,
-                created: now_secs(),
-                archived: false,
-                pr_url: String::new(),
-                linear_id: String::new(),
-                github_issue: String::new(),
-                playbook: input.playbook.clone(),
-                auto_advance: ordered_auto_advance_edges(&playbook)
-                    .into_iter()
-                    .filter(|(_, edge)| edge.default_enabled)
-                    .map(|(key, _)| key.clone())
-                    .collect(),
-                parent_task: manager.owner_slug.clone(),
-                active_subtask: String::new(),
-                subtask_outcome: String::new(),
-                draft: false,
-                related_tasks: Vec::new(),
-                telemetry_id: crate::new_telemetry_id(),
-            };
-            if child.name.is_empty() {
-                return Err("sub-task name is empty".into());
+/// Daemon-only child provisioning. Relationship reservation shares the task intent
+/// lock; Git and input installation use the same retained, partial-outcome saga as
+/// ordinary tasks. The daemon schedules every eligible root only after readiness.
+pub fn create_subtask(repo: &Path, lane: &str, app_config_identity: &str, input: CreateSubtaskInput) -> Result<CreateSubtaskResult, String> {
+    let manager = with_task_mutation_lock(repo, "inspect sub-task creation", || validate_subtask_creation(repo, &input))?;
+    let state = crate::execution::read_execution_state(repo, &manager.owner_slug)?;
+    if state.owning_lane != lane || state.owning_app_config_identity != app_config_identity {
+        return Err("sub-task parent belongs to another daemon lane or app configuration".into());
+    }
+    if state.creation != "ready" {
+        return Err("sub-task parent provisioning is not ready".into());
+    }
+    let source = fs::read_to_string(crate::execution::task_playbook_path(repo, &manager.owner_slug)?).map_err(|error| format!("read retained parent definition: {error}"))?;
+    if crate::execution::definition_identity(source.as_bytes()) != state.definition_identity {
+        return Err("retained parent definition integrity mismatch".into());
+    }
+    let base_ref = task_head(repo, &manager.parent, true, "parent")?;
+    let inherited_definition = input.playbook.is_none();
+    let request = CreateTaskRequest {
+        name: input.name.clone(),
+        draft_slug: None,
+        requested_slug: Some(input.slug.clone()),
+        description: input.instructions.clone(),
+        evidence: String::new(),
+        attachments: Vec::new(),
+        original_ticket: None,
+        attachment_urls: Vec::new(),
+        attachment_errors: Vec::new(),
+        linear_id: String::new(),
+        github_issue: String::new(),
+        related_tasks: Vec::new(),
+        parent_task: manager.owner_slug.clone(),
+        playbook: input.playbook.clone().unwrap_or(TaskPlaybookPackage {
+            reference: state.reference,
+            source,
+        }),
+        branch_name: Some(input.slug.clone()),
+        worktree_name: Some(input.slug.clone()),
+        base_ref: Some(base_ref.clone()),
+        launch_defaults: state.launch_defaults,
+        auto_advance_steps: inherited_definition.then(|| state.enabled_steps.into_iter().collect()),
+        max_live_sessions: Some(input.max_live_sessions.unwrap_or(state.max_live_sessions)),
+        start: input.start,
+    };
+    let provisioning = provision_task_with_reservation(
+        repo,
+        lane,
+        app_config_identity,
+        &request,
+        || {
+            let current = validate_subtask_creation(repo, &input)?;
+            let current_state = crate::execution::read_execution_state(repo, &current.owner_slug)?;
+            if current_state.owning_lane != lane || current_state.owning_app_config_identity != app_config_identity || current_state.creation != "ready" {
+                return Err("sub-task parent ownership or provisioning changed during creation".into());
             }
-            write_task_unlocked(repo, &child)?;
-            let ticket = compose_ticket(&child.name, &input.instructions, "", &[], &[], &[]);
-            if !ticket.is_empty() {
-                write_bytes_atomic(&artifacts_dir(repo, &child.slug).join("00-ticket.md"), ticket.as_bytes())?;
+            if current.owner_slug != manager.owner_slug || task_head(repo, &current.parent, true, "parent")? != base_ref {
+                return Err("sub-task parent changed during creation".into());
             }
-            manager.parent.active_subtask = child.slug.clone();
-            write_task_unlocked(repo, &manager.parent)?;
-            manager.meta.subtask_slug = child.slug.clone();
-            write_meta_atomic(&manager.meta_path, &serde_json::to_value(&manager.meta).map_err(|e| e.to_string())?)?;
-            Ok(CreateSubtaskResult {
-                parent_task: TaskSummary::from(&manager.parent),
-                child_task: TaskSummary::from(&child),
-                manager_session: manager.meta.clone(),
-            })
-        })();
-
-        if attempt.is_err() {
-            rollback_created_child(repo, &input.slug, &child_worktree, &parent_path, &parent_bytes, &manager.meta_path, &meta_bytes);
-        }
-        attempt
+            Ok(())
+        },
+        |child| {
+            let mut parent = read_task(repo, &manager.owner_slug).ok_or("sub-task parent is missing")?;
+            parent.active_subtask = child.slug.clone();
+            write_task_unlocked(repo, &parent)?;
+            let mut meta = read_session_meta_full(&manager.meta_path).ok_or("sub-task manager is missing")?;
+            meta.subtask_slug = child.slug.clone();
+            write_meta_atomic(&manager.meta_path, &serde_json::to_value(&meta).map_err(|error| error.to_string())?)
+        },
+    )?;
+    Ok(CreateSubtaskResult {
+        parent_task: TaskSummary::from(&read_task(repo, &manager.owner_slug).unwrap_or(manager.parent)),
+        child_task: provisioning.task.as_ref().map(TaskSummary::from),
+        manager_session: read_session_meta_full(&manager.meta_path).unwrap_or(manager.meta),
+        provisioning,
     })
 }
 
@@ -883,7 +875,11 @@ mod tests {
             worktree: format!("/tmp/{slug}"),
             has_worktree: true,
             created: 1,
-            playbook: "superdevelop".into(),
+            engine_version: 2,
+            playbook_ref: Some(crate::playbook::PlaybookRef {
+                scope: crate::playbook::PlaybookScope::Repo,
+                key: "subtask-test".into(),
+            }),
             ..Default::default()
         }
     }
@@ -891,6 +887,10 @@ mod tests {
     fn run_git(path: &Path, args: &[&str]) {
         let output = git_cmd(path).args(args).output().unwrap();
         assert!(output.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&output.stderr));
+    }
+
+    fn retained_source() -> &'static str {
+        "+++\nversion = 2\nkey = \"subtask-test\"\ntitle = \"Subtask\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"omp\"\n[[step]]\nkey = \"left\"\ntitle = \"Left\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\nmodel = \"\"\nharness = \"\"\ninputs = [{path=\"ticket.md\", mode=\"single\"}]\noutputs = [{path=\"left.md\"}]\n[[step]]\nkey = \"right\"\ntitle = \"Right\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\nmodel = \"\"\nharness = \"\"\ninputs = [{path=\"ticket.md\", mode=\"single\"}]\noutputs = [{path=\"right.md\"}]\n+++\n<!-- alinery:step left -->\nInvestigate left.\n<!-- alinery:step right -->\nInvestigate right.\n"
     }
 
     fn lifecycle_repo(name: &str) -> (PathBuf, Task, SessionMeta) {
@@ -903,7 +903,6 @@ mod tests {
         fs::write(repo.join("seed.txt"), "seed").unwrap();
         run_git(&repo, &["add", "."]);
         run_git(&repo, &["commit", "-m", "seed"]);
-        crate::shared::ensure_playbooks(&repo).unwrap();
         let parent_worktree = worktrees_dir(&repo).join("a");
         fs::create_dir_all(worktrees_dir(&repo)).unwrap();
         let mut add = git_cmd(&repo);
@@ -913,13 +912,18 @@ mod tests {
         let mut parent = task("a");
         parent.worktree = parent_worktree.to_string_lossy().into_owned();
         write_task_unlocked(&repo, &parent).unwrap();
+        let source = retained_source();
+        fs::write(crate::execution::task_playbook_path(&repo, "a").unwrap(), source).unwrap();
+        let mut state = crate::execution::new_execution_state(parent.playbook_ref.clone().unwrap(), source, "lane".into(), 10, BTreeSet::new(), Default::default()).unwrap();
+        state.creation = "ready".into();
+        state.owning_app_config_identity = "config".into();
+        crate::execution::write_execution_state_unlocked(&repo, "a", &mut state).unwrap();
         fs::create_dir_all(sessions_dir(&repo, "a")).unwrap();
         let manager = SessionMeta {
             id: "manager".into(),
             worktree: parent.worktree.clone(),
             created: 2,
-            harness: "claude".into(),
-            playbook: "superdevelop".into(),
+            harness: "omp".into(),
             generic: true,
             subtask_manager: true,
             ..Default::default()
@@ -933,8 +937,8 @@ mod tests {
             manager_session_id: "manager".into(),
             name: "Child B".into(),
             slug: "b".into(),
-            playbook: "superdevelop".into(),
             instructions: "Investigate the follow-up.".into(),
+            ..Default::default()
         }
     }
     #[test]
@@ -971,36 +975,36 @@ mod tests {
     }
 
     #[test]
-    fn subtask_creation_from_dirty_parent_keeps_changes_parent_only() {
+    fn subtask_creation_rejects_dirty_parent_without_moving_changes() {
         let (repo, parent, _) = lifecycle_repo("dirty-parent-create");
         let parent_marker = Path::new(&parent.worktree).join("uncommitted-parent.txt");
         fs::write(&parent_marker, b"parent-only").unwrap();
-
-        let created = create_subtask(&repo, create_input()).unwrap();
-        let child = read_task(&repo, &created.child_task.slug).unwrap();
-
-        assert!(parent_marker.is_file(), "sub-task creation must not clean or move parent changes");
-        assert!(
-            !Path::new(&child.worktree).join("uncommitted-parent.txt").exists(),
-            "child starts from the recorded branch, not dirty parent files"
-        );
-        assert_eq!(read_task(&repo, &parent.slug).unwrap().active_subtask, child.slug);
+        assert!(create_subtask(&repo, "lane", "config", create_input()).is_err());
+        assert_eq!(fs::read(&parent_marker).unwrap(), b"parent-only");
+        assert!(read_task(&repo, &parent.slug).unwrap().active_subtask.is_empty());
+        assert!(!task_dir(&repo, "b").exists());
+        assert!(!worktrees_dir(&repo).join("b").exists());
         let _ = fs::remove_dir_all(repo);
     }
 
     #[test]
     fn subtask_creation_inspection_and_integrated_finalize_follow_git_invariants() {
         let (repo, parent, _) = lifecycle_repo("lifecycle");
-        let created = create_subtask(&repo, create_input()).unwrap();
+        let created = create_subtask(&repo, "lane", "config", create_input()).unwrap();
         assert_eq!(created.parent_task.slug, "a");
-        assert_eq!(created.child_task.slug, "b");
+        assert_eq!(created.child_task.as_ref().unwrap().slug, "b");
         assert_eq!(created.manager_session.subtask_slug, "b");
         let child = read_task(&repo, "b").unwrap();
         assert_eq!(child.parent_task, "a");
         assert!(child.active_subtask.is_empty());
         assert!(child.linear_id.is_empty() && child.github_issue.is_empty() && child.pr_url.is_empty() && child.requested_slug.is_empty());
         assert_eq!(read_task(&repo, "a").unwrap().active_subtask, "b");
-        assert_eq!(fs::read_dir(sessions_dir(&repo, "b")).unwrap().count(), 0);
+        assert_eq!(created.provisioning.creation, "ready");
+        let mut state = crate::execution::read_execution_state(&repo, "b").unwrap();
+        let definition = crate::execution::read_task_playbook(&repo, "b", &state).unwrap();
+        let roots = crate::playbook_scheduler::reconcile_graph(&definition, &mut state).unwrap();
+        assert_eq!(roots.iter().map(|root| root.step_key.as_str()).collect::<BTreeSet<_>>(), BTreeSet::from(["left", "right"]));
+        assert_eq!(fs::read(crate::execution::task_playbook_path(&repo, "b").unwrap()).unwrap(), retained_source().as_bytes());
         assert!(fs::read_to_string(artifacts_dir(&repo, "b").join("00-ticket.md"))
             .unwrap()
             .contains("Investigate the follow-up."));
@@ -1063,7 +1067,7 @@ mod tests {
     #[test]
     fn subtask_finish_rejects_worktrees_on_unrecorded_or_detached_branches() {
         let (repo, parent, _) = lifecycle_repo("finish-branch-identity");
-        create_subtask(&repo, create_input()).unwrap();
+        create_subtask(&repo, "lane", "config", create_input()).unwrap();
         let child = read_task(&repo, "b").unwrap();
         let child_worktree = Path::new(&child.worktree);
         let parent_worktree = Path::new(&parent.worktree);
@@ -1101,7 +1105,7 @@ mod tests {
     fn non_integrated_finalize_modes_persist_finished_outcome() {
         for (name, mode) in [("artifacts-only", FinalizeMode::ArtifactsOnly), ("archive-without-code", FinalizeMode::ArchiveWithoutCode)] {
             let (repo, _, _) = lifecycle_repo(name);
-            create_subtask(&repo, create_input()).unwrap();
+            create_subtask(&repo, "lane", "config", create_input()).unwrap();
             let result = finalize_subtask(&repo, "manager", mode).unwrap();
             assert_eq!(result.archived_child.subtask_outcome, "finished");
             assert_eq!(read_task(&repo, "b").unwrap().subtask_outcome, "finished");
@@ -1110,22 +1114,40 @@ mod tests {
     }
 
     #[test]
-    fn subtask_creation_rolls_back_after_manager_binding_write_failure() {
+    fn subtask_creation_rejects_bound_manager_and_exact_slug_collisions() {
+        let (repo, _, _) = lifecycle_repo("creation-exclusion");
+        fs::create_dir_all(task_dir(&repo, "b")).unwrap();
+        assert!(create_subtask(&repo, "lane", "config", create_input()).is_err());
+        assert!(!task_dir(&repo, "b-2").exists());
+        fs::remove_dir(task_dir(&repo, "b")).unwrap();
+        create_subtask(&repo, "lane", "config", create_input()).unwrap();
+        let mut another = create_input();
+        another.slug = "c".into();
+        assert!(create_subtask(&repo, "lane", "config", another).is_err());
+        assert!(!task_dir(&repo, "c").exists());
+        assert_eq!(read_task(&repo, "a").unwrap().active_subtask, "b");
+        let _ = fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn subtask_partial_git_creation_preserves_worktree_and_relationships() {
         use std::os::unix::fs::PermissionsExt;
-
-        let (repo, _, _) = lifecycle_repo("create-rollback");
-        let manager_dir = sessions_dir(&repo, "a");
-        fs::set_permissions(&manager_dir, fs::Permissions::from_mode(0o500)).unwrap();
-        let result = create_subtask(&repo, create_input());
-        fs::set_permissions(&manager_dir, fs::Permissions::from_mode(0o700)).unwrap();
-
-        assert!(result.is_err());
-        assert!(read_task(&repo, "a").unwrap().active_subtask.is_empty());
-        assert!(read_session_meta_full(&manager_dir.join("manager.meta.json")).unwrap().subtask_slug.is_empty());
-        assert!(!task_dir(&repo, "b").exists());
-        assert!(!worktrees_dir(&repo).join("b").exists());
-        let mut show = git_cmd(&repo);
-        assert!(!show.args(["show-ref", "--verify", "--quiet", "refs/heads/b"]).status().unwrap().success());
+        let (repo, _, _) = lifecycle_repo("partial-git");
+        let hook = repo.join(".git/hooks/post-checkout");
+        fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+        let result = create_subtask(&repo, "lane", "config", create_input()).unwrap();
+        assert_eq!(result.provisioning.creation, "partial");
+        assert!(result.provisioning.errors.iter().any(|error| error.stage == "git_worktree"));
+        let child = result.child_task.unwrap();
+        assert_eq!(child.slug, "b");
+        assert!(Path::new(&child.worktree).is_dir());
+        assert!(ref_exists(&repo, "b"));
+        assert_eq!(read_task(&repo, &result.parent_task.slug).unwrap().active_subtask, "b");
+        assert_eq!(result.manager_session.subtask_slug, "b");
+        assert_eq!(crate::execution::read_execution_state(&repo, "b").unwrap().creation, "partial");
+        assert!(create_subtask(&repo, "lane", "config", create_input()).is_err());
+        validate_task_relationships(&load_relationship_tasks(&repo).unwrap()).unwrap();
         let _ = fs::remove_dir_all(repo);
     }
 
@@ -1147,14 +1169,13 @@ mod tests {
     #[test]
     fn killing_bound_subtask_archives_active_lineage_and_preserves_its_record() {
         let (repo, _, _) = lifecycle_repo("kill-lineage");
-        create_subtask(&repo, create_input()).unwrap();
+        create_subtask(&repo, "lane", "config", create_input()).unwrap();
         let child = read_task(&repo, "b").unwrap();
         let nested_manager = SessionMeta {
             id: "manager-b".into(),
             worktree: child.worktree.clone(),
             created: 3,
-            harness: "claude".into(),
-            playbook: "superdevelop".into(),
+            harness: "omp".into(),
             generic: true,
             subtask_manager: true,
             ..Default::default()
@@ -1162,12 +1183,14 @@ mod tests {
         write_meta_atomic(&session_meta_path(&repo, "b", "manager-b"), &serde_json::to_value(&nested_manager).unwrap()).unwrap();
         create_subtask(
             &repo,
+            "lane",
+            "config",
             CreateSubtaskInput {
                 manager_session_id: "manager-b".into(),
                 name: "Grandchild C".into(),
                 slug: "c".into(),
-                playbook: "superdevelop".into(),
                 instructions: String::new(),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1176,7 +1199,7 @@ mod tests {
             id: "child-session".into(),
             worktree: grandchild.worktree.clone(),
             created: 4,
-            harness: "claude".into(),
+            harness: "omp".into(),
             generic: true,
             ..Default::default()
         };
@@ -1272,12 +1295,5 @@ mod tests {
         archive_task_guarded(&repo, "u").unwrap();
         assert!(read_task(&repo, "u").unwrap().archived);
         let _ = fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn subtask_mutation_lock_path_is_dedicated() {
-        let repo = repo("lock-path");
-        assert_ne!(crate::paths::task_mutation_lock_path(&repo), crate::paths::alinery_app_lock_path(&repo));
-        assert_ne!(crate::paths::task_mutation_lock_path(&repo), crate::paths::alineryd_reconciler_lock_path(&repo));
     }
 }
