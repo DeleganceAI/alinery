@@ -340,14 +340,10 @@ pub fn resolve_launch_prompt(repo: &Path, launch: &LaunchFields) -> Result<Optio
         } else {
             let relationships = crate::subtask::read_task_relationships(repo, &task.slug)?;
             let child = relationships
-                .active_subtask
+                .active_subtasks
+                .into_iter()
+                .find(|child| child.slug == launch.subtask_slug)
                 .ok_or_else(|| format!("relationship corruption: manager '{}' is bound to missing child '{}'", launch.id, launch.subtask_slug))?;
-            if child.slug != launch.subtask_slug {
-                return Err(format!(
-                    "relationship corruption: manager '{}' is bound to child '{}' but parent points to '{}'",
-                    launch.id, launch.subtask_slug, child.slug
-                ));
-            }
             recovery_manager_prompt(repo, &task, &child, worktree, &launch.id)
         };
         return append_launch_context(repo, &task, prompt).map(Some);

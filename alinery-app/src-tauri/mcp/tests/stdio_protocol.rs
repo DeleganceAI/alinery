@@ -160,7 +160,8 @@ fn create_subtask_keeps_stdout_json_rpc_framed_and_retains_child_definition() {
     let persisted = alinery_core::read_task(&fixture.root, "b").unwrap();
     assert_eq!(persisted.parent_task, "a");
     assert_eq!(persisted.playbook_ref.as_ref().unwrap().key, "one-shot");
-    assert_eq!(alinery_core::read_task(&fixture.root, "a").unwrap().active_subtask, "b");
+    assert!(alinery_core::read_task(&fixture.root, "a").unwrap().active_subtask.is_empty());
+    assert_eq!(alinery_core::read_task_relationships(&fixture.root, "a").unwrap().active_subtasks[0].slug, "b");
     assert_eq!(result.provisioning.creation, "ready");
     assert_eq!(result.provisioning.start, "not_requested");
     assert!(result.provisioning.sessions.iter().all(|session| session.started_at.is_none()));

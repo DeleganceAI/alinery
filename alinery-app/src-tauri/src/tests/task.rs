@@ -1710,8 +1710,8 @@ fn board_tasks_reject_missing_and_cyclic_relationships() {
         github_issue: String::new(),
         playbook: "superdevelop".into(),
         auto_advance: vec![],
-        parent_task: String::new(),
-        active_subtask: "missing".into(),
+        parent_task: "missing".into(),
+        active_subtask: String::new(),
         subtask_outcome: String::new(),
         related_tasks: Vec::new(),
         draft: false,
@@ -1719,10 +1719,8 @@ fn board_tasks_reject_missing_and_cyclic_relationships() {
         ..Default::default()
     };
     write_task(&repo, &parent).unwrap();
-    assert!(board_tasks_for_repo(&repo, "/repo")
-        .err()
-        .unwrap()
-        .contains("task 'parent' names missing active child 'missing'"));
+    assert!(board_tasks_for_repo(&repo, "/repo").err().unwrap().contains("task 'parent' names missing parent 'missing'"));
+    parent.parent_task.clear();
 
     let child = Task {
         name: "Child".into(),

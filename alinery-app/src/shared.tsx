@@ -261,7 +261,8 @@ export function sameBoardTasks(left: BoardTask[], right: BoardTask[]) {
         task.slug === other.slug &&
         task.requested_slug === other.requested_slug &&
         task.parent_task === other.parent_task &&
-        task.active_subtask === other.active_subtask &&
+        (task.active_subtask_slugs ?? []).length === (other.active_subtask_slugs ?? []).length &&
+        (task.active_subtask_slugs ?? []).every((slug, i) => slug === (other.active_subtask_slugs ?? [])[i]) &&
         task.branch === other.branch &&
         task.worktree === other.worktree &&
         task.has_worktree === other.has_worktree &&

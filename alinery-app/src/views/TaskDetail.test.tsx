@@ -149,19 +149,38 @@ const manager: SessionMeta = {
   harness_resume_token: "",
 };
 
-function state(overrides: Partial<SubtaskManagerState> = {}): SubtaskManagerState {
+type LegacySubtaskStateOverrides = Partial<SubtaskManagerState> & {
+  active_subtask?: SubtaskManagerState["active_subtasks"][number]["child"] | null;
+  manager_session?: SessionMeta | null;
+  can_recover?: boolean;
+};
+
+function state(overrides: LegacySubtaskStateOverrides = {}): SubtaskManagerState {
+  const legacyActiveChild = overrides.active_subtask ?? null;
+  const legacyManager = overrides.manager_session ?? null;
+  const active_subtasks =
+    overrides.active_subtasks ??
+    (legacyActiveChild
+      ? [
+          {
+            child: legacyActiveChild,
+            manager_session: legacyManager,
+            manager_owner_task_slug: overrides.manager_owner_task_slug ?? "parent",
+            can_recover: overrides.can_recover ?? false,
+          },
+        ]
+      : []);
   return {
     task: parentTask,
     parent_task: null,
-    active_subtask: null,
+    setup_manager_session: overrides.setup_manager_session ?? (legacyActiveChild ? null : legacyManager),
     parent_manager_session: null,
     parent_manager_owner_task_slug: "",
-    manager_session: null,
     manager_owner_task_slug: "parent",
     can_start: true,
-    can_recover: false,
     disabled_reason: "",
     ...overrides,
+    active_subtasks,
   };
 }
 
@@ -248,7 +267,7 @@ beforeEach(() => {
   ipcSpies.restoreTaskForRepo.mockReset().mockResolvedValue(undefined);
   ipcSpies.archiveSessionForRepo.mockReset();
   ipcSpies.discardSubtask.mockImplementation(async () => {
-    const child = scenario.state.active_subtask;
+    const child = scenario.state.active_subtasks[0]?.child ?? null;
     scenario.task = { ...scenario.task, active_subtask: "" };
     scenario.state = state();
     if (child) {
@@ -429,20 +448,23 @@ describe("Task Detail sub-task manager projection", () => {
     expect(onOpenSession).toHaveBeenCalledWith("parent", "manager-1", "/worktrees/parent", "", "claude", "sonnet", "", true, "attach");
   });
 
-  it("projects an unbound manager once as Sub-task setup instead of a Generic session", async () => {
-    scenario.state = state({ manager_session: manager, can_start: false, disabled_reason: "A sub-task setup manager already exists" });
-    scenario.sessions = [manager];
+  it("projects unbound managers as Sub-task setup rows while allowing another start", async () => {
+    const secondManager = { ...manager, id: "manager-2", created: 11 };
+    scenario.state = state({ manager_session: secondManager, can_start: true, disabled_reason: "" });
+    scenario.sessions = [manager, secondManager];
     const { onOpenSession } = await renderDetail();
 
-    const setup = await screen.findByText("Sub-task setup");
+    const setupRows = await screen.findAllByText("Sub-task setup");
+    expect(setupRows).toHaveLength(2);
     expect(screen.queryByText("Generic")).toBeNull();
-    fireEvent.click(setup.closest("button") as HTMLButtonElement);
-    expect(onOpenSession).toHaveBeenCalledWith("parent", "manager-1", "/worktrees/parent", "", "claude", "sonnet", "", true, "attach");
+    expect((screen.getByRole("button", { name: "Start sub-task" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(setupRows[0].closest("button") as HTMLButtonElement);
+    expect(onOpenSession).toHaveBeenCalledWith("parent", "manager-2", "/worktrees/parent", "", "claude", "sonnet", "", true, "attach");
   });
 
   it("quiets an acknowledged failed sub-task manager row", async () => {
     let failedManager = { ...manager, started_at: 10, ended_at: 20, exit_code: 143 };
-    scenario.state = state({ manager_session: failedManager, can_start: false, disabled_reason: "A sub-task setup manager already exists" });
+    scenario.state = state({ manager_session: failedManager, can_start: true, disabled_reason: "" });
     scenario.sessions = [failedManager];
     scenario.managerObservation = {
       lifecycle: { state: "exited", code: 143 },
@@ -459,7 +481,7 @@ describe("Task Detail sub-task manager projection", () => {
       if (id !== failedManager.id) return;
       failedManager = { ...failedManager, exit_notification_read_at: 20 };
       scenario.sessions = [failedManager];
-      scenario.state = { ...scenario.state, manager_session: failedManager };
+      scenario.state = { ...scenario.state, setup_manager_session: failedManager };
     });
 
     await renderDetail();
@@ -574,7 +596,7 @@ describe("Task Detail sub-task manager projection", () => {
   });
 
   it("hard-deletes an unusable setup manager after explicit confirmation", async () => {
-    scenario.state = state({ manager_session: manager, can_start: false, disabled_reason: "A sub-task setup manager already exists" });
+    scenario.state = state({ manager_session: manager, can_start: true, disabled_reason: "" });
     scenario.sessions = [manager];
     await renderDetail();
 
@@ -587,14 +609,14 @@ describe("Task Detail sub-task manager projection", () => {
         "Discard setup",
       ),
     );
-    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", "manager-1"));
+    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", "manager-1", undefined));
     await waitFor(() => expect(screen.queryByText("Sub-task setup")).toBeNull());
     expect((screen.getByRole("button", { name: "Start sub-task" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("keeps setup state when destructive confirmation is declined", async () => {
     confirmSpies.confirmDanger.mockResolvedValue(false);
-    scenario.state = state({ manager_session: manager, can_start: false, disabled_reason: "A sub-task setup manager already exists" });
+    scenario.state = state({ manager_session: manager, can_start: true, disabled_reason: "" });
     scenario.sessions = [manager];
     await renderDetail();
 
@@ -625,7 +647,7 @@ describe("Task Detail sub-task manager projection", () => {
         "Kill sub-task",
       ),
     );
-    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", "manager-1"));
+    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", "manager-1", "child"));
     const childLabel = await screen.findByText("Child", { selector: "span" });
     const childRow = childLabel.closest("tr") as HTMLTableRowElement;
     expect(within(childRow).getByText("KILLED")).toBeDefined();
@@ -714,7 +736,7 @@ describe("Task Detail sub-task manager projection", () => {
     const replace = within(childRow).getByRole("button", { name: "Replace manager session" });
     expect(screen.getAllByRole("button", { name: "Replace manager session" })).toHaveLength(1);
     fireEvent.click(replace);
-    await waitFor(() => expect(ipcSpies.recoverSubtaskManager).toHaveBeenCalledWith("parent"));
+    await waitFor(() => expect(ipcSpies.recoverSubtaskManager).toHaveBeenCalledWith("parent", "child"));
     expect(onOpenSession).toHaveBeenCalledWith("parent", "manager-1", "/worktrees/parent", "", "claude", "sonnet", "", true, "attach");
   });
 
@@ -725,7 +747,7 @@ describe("Task Detail sub-task manager projection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Kill sub-task" }));
 
-    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", ""));
+    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", "", "child"));
     expect(ipcSpies.recoverSubtaskManager).not.toHaveBeenCalled();
     const childLabel = await screen.findByText("Child", { selector: "span" });
     const childRow = childLabel.closest("tr") as HTMLTableRowElement;

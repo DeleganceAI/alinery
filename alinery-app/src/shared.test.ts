@@ -293,7 +293,7 @@ describe("re-render comparators", () => {
   });
 
   it("sameBoardTasks notices sub-task pointer changes", () => {
-    const parent = { ...task(), active_subtask: "child" } as BoardTask;
+    const parent = { ...task(), active_subtask_slugs: ["child"] } as BoardTask;
     const child = { ...task(), slug: "child", parent_task: "s" } as BoardTask;
     expect(sameBoardTasks([task()], [parent])).toBe(false);
     expect(sameBoardTasks([child], [{ ...child, parent_task: "other-parent" } as BoardTask])).toBe(false);

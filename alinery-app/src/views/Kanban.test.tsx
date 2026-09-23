@@ -52,7 +52,7 @@ const task = (over: Partial<BoardTask>): BoardTask =>
 
 const tasks = [
   task({ name: "Designing", slug: "designing", current_column_key: "research-design" }),
-  task({ name: "Parent", slug: "parent", active_subtask: "child", current_column_key: "todo-draft" }),
+  task({ name: "Parent", slug: "parent", active_subtask_slugs: ["child"], current_column_key: "todo-draft" }),
   task({ name: "Child", slug: "child", parent_task: "parent", current_column_key: "research-design" }),
   task({ name: "Reviewing", slug: "designing", repo_path: "/other", current_column_key: "in-review" }),
   task({ name: "Archived one", slug: "archived-one", archived: true, current_column_key: "in-review" }),
@@ -173,7 +173,7 @@ describe("sub-task cards", () => {
     await waitFor(() => expect(screen.getByText("Parent")).toBeDefined());
 
     expect(screen.queryByText("Child")).toBeNull();
-    expect(screen.getByText("Active child · child")).toBeDefined();
+    expect(screen.getByText("Active children · 1")).toBeDefined();
     expect(cardsUnder("Research & Design")).toEqual(["Designing"]);
     expect(screen.getByText("Research & Design").closest(".col")?.querySelector(".cnt")?.textContent).toBe("1");
 

@@ -231,10 +231,12 @@ pub(crate) fn resolve_task_activity_for_repo(repo: &Path, slugs: &[String], stat
         let mut activity_task = task;
         let mut visited = HashSet::from([activity_task.slug.clone()]);
         loop {
-            if activity_task.active_subtask.is_empty() || task_has_actionable_session(repo, &activity_task, &sessions, &statuses_by_id) {
-                break;
-            }
-            let child_slug = activity_task.active_subtask.clone();
+            let child_slug = match alinery_core::read_task_relationships(repo, &activity_task.slug) {
+                Ok(relationships) if relationships.active_subtasks.len() == 1 && !task_has_actionable_session(repo, &activity_task, &sessions, &statuses_by_id) => {
+                    relationships.active_subtasks[0].slug.clone()
+                }
+                _ => break,
+            };
             if !visited.insert(child_slug.clone()) {
                 break;
             }

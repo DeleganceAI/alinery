@@ -271,7 +271,7 @@ fn build_tree(repo: &Path, viewing_slug: &str) -> Result<Vec<ResolvedNode>, Stri
             children,
         ));
     }
-    if let Some(child) = relationships.active_subtask {
+    for child in relationships.active_subtasks {
         let child_root = resolve_artifact_directory(repo, &format!(".alinery/tasks/{}/artifacts", child.slug))?;
         let children = owned_nodes(viewing_slug, &child.slug, &child_root, ArtifactTreeSource::ActiveChild, true, "active-child", true)?;
         nodes.push(relationship_folder(viewing_slug, &child.slug, &child.slug, ArtifactTreeSource::ActiveChild, children));

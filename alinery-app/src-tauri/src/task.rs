@@ -19,6 +19,7 @@ pub(crate) struct BoardTask {
     pub(crate) latest_session_column_key: String,
     pub(crate) current_column_key: String,
     pub(crate) current_column_title: String,
+    pub(crate) active_subtask_slugs: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -924,6 +925,7 @@ pub(crate) fn board_task(repo: &Path, repo_path: &str, task: Task) -> Result<Boa
         latest_session_column_key: String::new(),
         current_column_key: String::new(),
         current_column_title: String::new(),
+        active_subtask_slugs: Vec::new(),
     })
 }
 
@@ -931,9 +933,29 @@ fn board_tasks_from_loaded(repo: &Path, repo_path: &str, tasks: Vec<Task>) -> Re
     alinery_core::validate_task_relationship_fields(
         tasks
             .iter()
-            .map(|task| (task.slug.as_str(), task.parent_task.as_str(), task.active_subtask.as_str(), task.archived)),
+            .map(|task| (task.slug.as_str(), task.parent_task.as_str(), task.active_subtask.as_str(), task.archived, task.draft)),
     )?;
-    tasks.into_iter().map(|task| board_task(repo, repo_path, task)).collect()
+    let mut active_children_by_parent: HashMap<String, Vec<(u64, String)>> = HashMap::new();
+    for task in &tasks {
+        if !task.archived && !task.parent_task.is_empty() {
+            active_children_by_parent
+                .entry(task.parent_task.clone())
+                .or_default()
+                .push((task.created, task.slug.clone()));
+        }
+    }
+    for children in active_children_by_parent.values_mut() {
+        children.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    }
+    tasks
+        .into_iter()
+        .map(|task| {
+            let slug = task.slug.clone();
+            let mut board_task = board_task(repo, repo_path, task)?;
+            board_task.active_subtask_slugs = active_children_by_parent.remove(&slug).unwrap_or_default().into_iter().map(|(_, slug)| slug).collect();
+            Ok(board_task)
+        })
+        .collect()
 }
 
 #[cfg(test)]

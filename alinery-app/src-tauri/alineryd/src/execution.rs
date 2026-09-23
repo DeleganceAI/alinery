@@ -378,17 +378,33 @@ pub(super) fn create_session(
                 model,
             } => {
                 let task = task.as_ref().ok_or("manager requires task")?;
-                if read_task_session_metas(repo, slug).iter().any(|m| m.subtask_manager && !m.archived && m.ended_at.is_none()) {
-                    return Err("task already has a live or unstarted manager".into());
-                }
                 let child = subtask_slug.clone().unwrap_or_default();
+                let metas = read_task_session_metas(repo, slug);
                 if *recover {
+                    if child.is_empty() {
+                        return Err("manager recovery requires a child task".into());
+                    }
+                    if metas.iter().any(|m| m.subtask_manager && !m.archived && m.ended_at.is_none() && m.subtask_slug == child) {
+                        return Err("active sub-task already has a live or unstarted manager".into());
+                    }
                     let target = read_task(repo, &child).ok_or("missing child task")?;
-                    if target.parent_task != slug || task.active_subtask != child {
+                    if target.archived || target.parent_task != slug {
                         return Err("invalid manager recovery binding".into());
                     }
-                } else if !task.active_subtask.is_empty() || !child.is_empty() {
-                    return Err("task already has an active child".into());
+                } else {
+                    if !child.is_empty() {
+                        return Err("new sub-task manager cannot bind an existing child".into());
+                    }
+                    if !alinery_core::task_has_existing_worktree(task) {
+                        return Err("sub-task parent has no dedicated worktree".into());
+                    }
+                    if alinery_core::read_task_relationships(repo, slug)?
+                        .active_subtasks
+                        .iter()
+                        .any(|child| child.draft || child.archived || !child.has_worktree || child.worktree.is_empty() || !std::path::Path::new(&child.worktree).is_dir())
+                    {
+                        return Err("All active sub-tasks need dedicated worktrees before starting another".into());
+                    }
                 }
                 (harness.clone(), model.clone().unwrap_or_default(), None, true, child)
             }

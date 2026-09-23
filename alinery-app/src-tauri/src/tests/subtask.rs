@@ -13,10 +13,10 @@ fn subtask_discard_stops_sessions_before_deleting_state() {
         ..Default::default()
     };
     fs::write(session_meta_path(&repo, &parent.slug, &manager.id), serde_json::to_vec(&manager).unwrap()).unwrap();
-    assert!(discard_subtask_with(&repo, &parent.slug, &manager.id, |_, _| Err("daemon refused kill".into())).is_err());
+    assert!(discard_subtask_with(&repo, &parent.slug, &manager.id, None, |_, _| Err("daemon refused kill".into())).is_err());
     assert!(session_meta_path(&repo, &parent.slug, &manager.id).exists());
     let mut stopped = Vec::new();
-    let removed = discard_subtask_with(&repo, &parent.slug, &manager.id, |owner, id| {
+    let removed = discard_subtask_with(&repo, &parent.slug, &manager.id, None, |owner, id| {
         stopped.push((owner.to_string(), id.to_string()));
         Ok(())
     })
@@ -24,6 +24,27 @@ fn subtask_discard_stops_sessions_before_deleting_state() {
     assert_eq!(stopped, vec![(parent.slug.clone(), manager.id.clone())]);
     assert_eq!(removed, vec![manager.id.clone()]);
     assert!(!session_meta_path(&repo, &parent.slug, &manager.id).exists());
+    fs::remove_dir_all(repo).unwrap();
+}
+
+#[test]
+fn existing_setup_manager_does_not_block_starting_another() {
+    let repo = init_git_test_repo("subtask-multiple-setup");
+    let mut parent = create_task_for_test(&repo, "Parent", true, "", "");
+    parent.engine_version = 2;
+    write_task(&repo, &parent).unwrap();
+    let manager = SessionMeta {
+        id: "manager".into(),
+        worktree: parent.worktree.clone(),
+        harness: "omp".into(),
+        generic: true,
+        subtask_manager: true,
+        ..Default::default()
+    };
+    fs::write(session_meta_path(&repo, &parent.slug, &manager.id), serde_json::to_vec(&manager).unwrap()).unwrap();
+    let state = subtask_state_in(&repo, &parent.slug).unwrap();
+    assert!(state.can_start, "{}", state.disabled_reason);
+    assert_eq!(state.setup_manager_session.as_ref().map(|session| session.id.as_str()), Some("manager"));
     fs::remove_dir_all(repo).unwrap();
 }
 
@@ -38,16 +59,14 @@ fn historical_tasks_cannot_offer_executable_managers() {
 }
 
 #[test]
-fn subtask_manager_recovery_targets_the_reciprocal_active_child() {
+fn subtask_manager_recovery_targets_the_selected_active_child() {
     let repo = unique_attachment_temp("subtask-manager-recovery");
-    let mut parent = create_task_for_test(&repo, "Parent", false, "", "");
+    let parent = create_task_for_test(&repo, "Parent", false, "", "");
     let mut child = create_task_for_test(&repo, "Child", false, "", "");
-    parent.active_subtask = child.slug.clone();
     child.parent_task = parent.slug.clone();
-    write_task(&repo, &parent).unwrap();
     write_task(&repo, &child).unwrap();
 
-    let request = crate::subtask::subtask_manager_request_in(&repo, parent.slug.clone(), true).unwrap();
+    let request = crate::subtask::subtask_manager_request_in(&repo, parent.slug.clone(), true, Some(child.slug.clone())).unwrap();
     assert!(matches!(
         request.target,
         alinery_core::task_creation::ExecutionSessionTarget::SubtaskManager {
@@ -56,7 +75,7 @@ fn subtask_manager_recovery_targets_the_reciprocal_active_child() {
             ..
         } if slug == child.slug
     ));
-    let request = crate::subtask::subtask_manager_request_in(&repo, parent.slug.clone(), false).unwrap();
+    let request = crate::subtask::subtask_manager_request_in(&repo, parent.slug.clone(), false, None).unwrap();
     assert!(matches!(
         request.target,
         alinery_core::task_creation::ExecutionSessionTarget::SubtaskManager {
@@ -71,16 +90,11 @@ fn subtask_manager_recovery_targets_the_reciprocal_active_child() {
 #[test]
 fn subtask_manager_recovery_rejects_absent_or_invalid_active_child() {
     let repo = unique_attachment_temp("subtask-manager-invalid-recovery");
-    let mut parent = create_task_for_test(&repo, "Parent", false, "", "");
-    assert!(crate::subtask::subtask_manager_request_in(&repo, parent.slug.clone(), true).is_err());
-
-    parent.active_subtask = "missing-child".into();
-    write_task(&repo, &parent).unwrap();
-    assert!(crate::subtask::subtask_manager_request_in(&repo, parent.slug.clone(), true).is_err());
+    let parent = create_task_for_test(&repo, "Parent", false, "", "");
+    assert!(crate::subtask::subtask_manager_request_in(&repo, parent.slug.clone(), true, None).is_err());
+    assert!(crate::subtask::subtask_manager_request_in(&repo, parent.slug.clone(), true, Some("missing-child".into())).is_err());
 
     let child = create_task_for_test(&repo, "Child", false, "", "");
-    parent.active_subtask = child.slug.clone();
-    write_task(&repo, &parent).unwrap();
-    assert!(crate::subtask::subtask_manager_request_in(&repo, parent.slug.clone(), true).is_err());
+    assert!(crate::subtask::subtask_manager_request_in(&repo, parent.slug.clone(), true, Some(child.slug)).is_err());
     fs::remove_dir_all(repo).unwrap();
 }

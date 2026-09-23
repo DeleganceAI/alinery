@@ -105,6 +105,7 @@ export type BoardTask = Task & {
   latest_session_column_key: string;
   current_column_key: string;
   current_column_title: string;
+  active_subtask_slugs?: string[];
 };
 export type TaskActivityRef = { repoPath: string; taskSlug: string };
 export type PullRequest = { number: number; url: string; state: "open" | "merged" | "closed" };
@@ -380,18 +381,23 @@ export type SessionMeta = {
 export type TaskSummary = Pick<Task, "name" | "slug" | "branch" | "worktree" | "has_worktree" | "playbook" | "archived" | "draft" | "subtask_outcome">;
 export type TaskRelationships = {
   parent_task: TaskSummary | null;
-  active_subtask: TaskSummary | null;
+  active_subtasks: TaskSummary[];
+};
+export type SubtaskChildState = {
+  child: TaskSummary;
+  manager_session: SessionMeta | null;
+  manager_owner_task_slug: string;
+  can_recover: boolean;
 };
 export type SubtaskManagerState = {
   task: TaskSummary;
   parent_task: TaskSummary | null;
-  active_subtask: TaskSummary | null;
+  active_subtasks: SubtaskChildState[];
+  setup_manager_session: SessionMeta | null;
   parent_manager_session: SessionMeta | null;
   parent_manager_owner_task_slug: string;
-  manager_session: SessionMeta | null;
   manager_owner_task_slug: string;
   can_start: boolean;
-  can_recover: boolean;
   disabled_reason: string;
 };
 export type TaskPanelRow =

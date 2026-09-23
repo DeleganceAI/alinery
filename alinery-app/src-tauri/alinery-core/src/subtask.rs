@@ -38,17 +38,47 @@ fn task_map(tasks: &[Task]) -> Result<HashMap<&str, &Task>, String> {
 }
 
 fn validate_relationship_set(tasks: &[Task]) -> Result<(), String> {
-    validate_task_relationship_fields(
-        tasks
-            .iter()
-            .map(|task| (task.slug.as_str(), task.parent_task.as_str(), task.active_subtask.as_str(), task.archived)),
-    )
+    let mut by_slug = HashMap::with_capacity(tasks.len());
+    for task in tasks {
+        if task.slug.is_empty() || safe_component(&task.slug) != Some(task.slug.as_str()) {
+            return Err(relationship_error(format!("invalid task slug '{}'", task.slug)));
+        }
+        if by_slug.insert(task.slug.as_str(), task).is_some() {
+            return Err(relationship_error(format!("duplicate task slug '{}'", task.slug)));
+        }
+    }
+
+    for task in tasks {
+        if task.parent_task == task.slug {
+            return Err(relationship_error(format!("task '{}' links to itself", task.slug)));
+        }
+        if !task.parent_task.is_empty() {
+            let parent = by_slug
+                .get(task.parent_task.as_str())
+                .ok_or_else(|| relationship_error(format!("task '{}' names missing parent '{}'", task.slug, task.parent_task)))?;
+            if !task.archived && (parent.archived || parent.draft) {
+                return Err(relationship_error(format!("active task '{}' names inactive parent '{}'", task.slug, parent.slug)));
+            }
+        }
+    }
+
+    for task in tasks {
+        let mut seen = HashSet::new();
+        let mut cursor = task;
+        while !cursor.parent_task.is_empty() {
+            if !seen.insert(cursor.slug.as_str()) {
+                return Err(relationship_error(format!("parent cycle reaches '{}'", cursor.slug)));
+            }
+            cursor = by_slug[cursor.parent_task.as_str()];
+        }
+    }
+    Ok(())
 }
 
-pub fn validate_task_relationship_fields<'a>(tasks: impl IntoIterator<Item = (&'a str, &'a str, &'a str, bool)>) -> Result<(), String> {
+pub fn validate_task_relationship_fields<'a>(tasks: impl IntoIterator<Item = (&'a str, &'a str, &'a str, bool, bool)>) -> Result<(), String> {
     let tasks = tasks.into_iter().collect::<Vec<_>>();
     let mut by_slug = HashMap::with_capacity(tasks.len());
-    for task @ (slug, _, _, _) in &tasks {
+    for task @ (slug, _, _, _, _) in &tasks {
         if slug.is_empty() {
             return Err(relationship_error("task slug is empty"));
         }
@@ -57,37 +87,16 @@ pub fn validate_task_relationship_fields<'a>(tasks: impl IntoIterator<Item = (&'
         }
     }
 
-    for (slug, parent_slug, child_slug, archived) in &tasks {
-        if parent_slug == slug || child_slug == slug {
+    for (slug, parent_slug, _legacy_child_slug, archived, _draft) in &tasks {
+        if parent_slug == slug {
             return Err(relationship_error(format!("task '{slug}' links to itself")));
         }
         if !parent_slug.is_empty() {
             let parent = by_slug
                 .get(parent_slug)
                 .ok_or_else(|| relationship_error(format!("task '{slug}' names missing parent '{parent_slug}'")))?;
-            if *archived {
-                if parent.2 == *slug {
-                    return Err(relationship_error(format!("archived task '{slug}' is still active on parent '{}'", parent.0)));
-                }
-            } else if parent.2 != *slug {
-                return Err(relationship_error(format!(
-                    "task '{slug}' names parent '{}', but that parent names active child '{}'",
-                    parent.0, parent.2
-                )));
-            }
-        }
-        if !child_slug.is_empty() {
-            let child = by_slug
-                .get(child_slug)
-                .ok_or_else(|| relationship_error(format!("task '{slug}' names missing active child '{child_slug}'")))?;
-            if child.3 {
-                return Err(relationship_error(format!("task '{slug}' names archived active child '{}'", child.0)));
-            }
-            if child.1 != *slug {
-                return Err(relationship_error(format!(
-                    "task '{slug}' names active child '{}', but that child names parent '{}'",
-                    child.0, child.1
-                )));
+            if !archived && (parent.3 || parent.4) {
+                return Err(relationship_error(format!("active task '{slug}' names inactive parent '{}'", parent.0)));
             }
         }
     }
@@ -95,15 +104,6 @@ pub fn validate_task_relationship_fields<'a>(tasks: impl IntoIterator<Item = (&'
     for task in &tasks {
         let mut seen = HashSet::new();
         let mut cursor = *task;
-        while !cursor.2.is_empty() {
-            if !seen.insert(cursor.0) {
-                return Err(relationship_error(format!("active-child cycle reaches '{}'", cursor.0)));
-            }
-            cursor = by_slug[cursor.2];
-        }
-
-        seen.clear();
-        cursor = *task;
         while !cursor.1.is_empty() {
             if !seen.insert(cursor.0) {
                 return Err(relationship_error(format!("parent cycle reaches '{}'", cursor.0)));
@@ -146,9 +146,14 @@ pub fn read_task_relationships(repo: &Path, task_slug: &str) -> Result<TaskRelat
     let tasks = load_relationship_tasks(repo)?;
     let by_slug = task_map(&tasks)?;
     let task = by_slug.get(task_slug).ok_or_else(|| format!("no such task: {task_slug}"))?;
+    let mut active_subtasks = tasks
+        .iter()
+        .filter(|candidate| candidate.parent_task == task.slug && !candidate.archived)
+        .collect::<Vec<_>>();
+    active_subtasks.sort_by(|left, right| right.created.cmp(&left.created).then_with(|| left.slug.cmp(&right.slug)));
     Ok(TaskRelationships {
         parent_task: (!task.parent_task.is_empty()).then(|| TaskSummary::from(by_slug[task.parent_task.as_str()])),
-        active_subtask: (!task.active_subtask.is_empty()).then(|| TaskSummary::from(by_slug[task.active_subtask.as_str()])),
+        active_subtasks: active_subtasks.into_iter().map(TaskSummary::from).collect(),
     })
 }
 
@@ -197,16 +202,18 @@ fn resolve_bound_manager(repo: &Path, manager_session_id: &str) -> Result<(Manag
     if manager.meta.subtask_slug.is_empty() {
         return Err("sub-task manager is not bound to an active child".into());
     }
-    if manager.parent.active_subtask != manager.meta.subtask_slug {
-        return Err(relationship_error("manager binding does not match its parent active child"));
+    let tasks = load_relationship_tasks(repo)?;
+    let by_slug = task_map(&tasks)?;
+    let child_task = by_slug
+        .get(manager.meta.subtask_slug.as_str())
+        .ok_or_else(|| relationship_error("active child task is missing"))?;
+    if child_task.archived {
+        return Err(relationship_error("manager binding points to an archived child"));
     }
-    let relationships = read_task_relationships(repo, &manager.owner_slug)?;
-    let child = relationships.active_subtask.ok_or_else(|| relationship_error("manager parent has no active child"))?;
-    if child.slug != manager.meta.subtask_slug {
+    if child_task.parent_task != manager.owner_slug {
         return Err(relationship_error("manager binding does not match reciprocal child"));
     }
-    let child_task = read_task(repo, &child.slug).ok_or_else(|| relationship_error("active child task is missing"))?;
-    Ok((manager, child_task))
+    Ok((manager, (*child_task).clone()))
 }
 
 fn command_output(mut command: std::process::Command, description: &str) -> Result<std::process::Output, String> {
@@ -258,6 +265,14 @@ pub fn task_worktree_is_clean(task: &Task) -> Result<bool, String> {
     worktree_clean(Path::new(&task.worktree))
 }
 
+pub fn task_has_existing_worktree(task: &Task) -> bool {
+    !task.draft && !task.archived && task.has_worktree && !task.worktree.is_empty() && Path::new(&task.worktree).is_dir()
+}
+
+fn summary_has_existing_worktree(task: &TaskSummary) -> bool {
+    !task.draft && !task.archived && task.has_worktree && !task.worktree.is_empty() && Path::new(&task.worktree).is_dir()
+}
+
 fn validate_subtask_creation(repo: &Path, input: &CreateSubtaskInput) -> Result<ManagerContext, String> {
     let manager = resolve_subtask_manager(repo, &input.manager_session_id)?;
     if !manager.meta.subtask_slug.is_empty() {
@@ -266,14 +281,15 @@ fn validate_subtask_creation(repo: &Path, input: &CreateSubtaskInput) -> Result<
     if manager.parent.draft || manager.parent.archived {
         return Err("sub-task parent must be a non-draft active task".into());
     }
-    if !manager.parent.active_subtask.is_empty() {
-        return Err("sub-task parent already has an active child".into());
-    }
-    if !manager.parent.has_worktree || manager.parent.worktree.is_empty() {
+    if !task_has_existing_worktree(&manager.parent) {
         return Err("sub-task parent has no dedicated worktree".into());
     }
     if !task_worktree_is_clean(&manager.parent)? {
         return Err("sub-task parent worktree must exist and be clean".into());
+    }
+    let relationships = read_task_relationships(repo, &manager.owner_slug)?;
+    if relationships.active_subtasks.iter().any(|child| !summary_has_existing_worktree(child)) {
+        return Err("All active sub-tasks need dedicated worktrees before starting another".into());
     }
     if !exact_child_slug(&input.slug) {
         return Err("sub-task slug must use lowercase ASCII letters, numbers, and single dashes without normalization".into());
@@ -351,9 +367,6 @@ pub fn create_subtask(repo: &Path, lane: &str, app_config_identity: &str, input:
             Ok(())
         },
         |child| {
-            let mut parent = read_task(repo, &manager.owner_slug).ok_or("sub-task parent is missing")?;
-            parent.active_subtask = child.slug.clone();
-            write_task_unlocked(repo, &parent)?;
             let mut meta = read_session_meta_full(&manager.meta_path).ok_or("sub-task manager is missing")?;
             meta.subtask_slug = child.slug.clone();
             write_meta_atomic(&manager.meta_path, &serde_json::to_value(&meta).map_err(|error| error.to_string())?)
@@ -556,8 +569,10 @@ pub fn inspect_subtask_finish(repo: &Path, manager_session_id: &str, observed_li
         snapshot_path: snapshot_path.to_string_lossy().into_owned(),
     };
     let mut common = Vec::new();
-    if !child.active_subtask.is_empty() {
-        common.push(format!("child '{}' still has active child '{}'", child.slug, child.active_subtask));
+    let active_children = read_task_relationships(repo, &child.slug)?.active_subtasks;
+    if !active_children.is_empty() {
+        let slugs = active_children.into_iter().map(|child| child.slug).collect::<Vec<_>>().join(", ");
+        common.push(format!("child '{}' still has active child(s): {slugs}", child.slug));
     }
     if let Err(error) = validate_snapshot_source(&artifacts_dir(repo, &child.slug)) {
         common.push(error);
@@ -623,10 +638,8 @@ pub fn finalize_subtask(repo: &Path, manager_session_id: &str, mode: FinalizeMod
         if !mode_blockers.is_empty() {
             return Err(format!("cannot finalize as {}: {}", mode_key(mode), mode_blockers.join("; ")));
         }
-        let (mut manager, mut child) = resolve_bound_manager(repo, manager_session_id)?;
-        let parent_path = task_dir(repo, &manager.parent.slug).join("task.md");
+        let (manager, mut child) = resolve_bound_manager(repo, manager_session_id)?;
         let child_path = task_dir(repo, &child.slug).join("task.md");
-        let parent_bytes = fs::read(&parent_path).map_err(|e| e.to_string())?;
         let child_bytes = fs::read(&child_path).map_err(|e| e.to_string())?;
         let snapshot = install_snapshot(repo, &manager.parent, &child)?;
 
@@ -634,12 +647,6 @@ pub fn finalize_subtask(repo: &Path, manager_session_id: &str, mode: FinalizeMod
         child.subtask_outcome = outcome_for_mode(mode).into();
         if let Err(error) = write_task_unlocked(repo, &child) {
             let _ = write_bytes_atomic(&child_path, &child_bytes);
-            return Err(error);
-        }
-        manager.parent.active_subtask.clear();
-        if let Err(error) = write_task_unlocked(repo, &manager.parent) {
-            let _ = write_bytes_atomic(&child_path, &child_bytes);
-            let _ = write_bytes_atomic(&parent_path, &parent_bytes);
             return Err(error);
         }
         Ok(FinalizeSubtaskResult {
@@ -656,20 +663,28 @@ struct DiscardContext {
     sessions: Vec<(String, String)>,
 }
 
-fn discard_context(repo: &Path, owner_task_slug: &str, manager_session_id: &str) -> Result<DiscardContext, String> {
+fn discard_context(repo: &Path, owner_task_slug: &str, manager_session_id: &str, child_slug: Option<&str>) -> Result<DiscardContext, String> {
+    let tasks = load_relationship_tasks(repo)?;
+    let by_slug = task_map(&tasks)?;
     let manager = if manager_session_id.is_empty() {
-        let tasks = load_relationship_tasks(repo)?;
-        let by_slug = task_map(&tasks)?;
         let parent = by_slug.get(owner_task_slug).ok_or_else(|| format!("no such task: {owner_task_slug}"))?;
-        if parent.active_subtask.is_empty() {
-            return Err("task has no active sub-task to discard".into());
-        }
+        let selected_child_slug = if let Some(child_slug) = child_slug.filter(|slug| !slug.is_empty()) {
+            child_slug.to_string()
+        } else {
+            let mut active_children = tasks.iter().filter(|task| task.parent_task == parent.slug && !task.archived).collect::<Vec<_>>();
+            active_children.sort_by(|left, right| right.created.cmp(&left.created).then_with(|| left.slug.cmp(&right.slug)));
+            match active_children.as_slice() {
+                [] => return Err("task has no active sub-task to discard".into()),
+                [only] => only.slug.clone(),
+                _ => return Err("multiple active sub-tasks; choose one child to discard".into()),
+            }
+        };
         ManagerContext {
             owner_slug: owner_task_slug.to_string(),
             parent: (*parent).clone(),
             meta: SessionMeta {
                 subtask_manager: true,
-                subtask_slug: parent.active_subtask.clone(),
+                subtask_slug: selected_child_slug,
                 ..Default::default()
             },
             meta_path: PathBuf::new(),
@@ -679,29 +694,37 @@ fn discard_context(repo: &Path, owner_task_slug: &str, manager_session_id: &str)
         if manager.owner_slug != owner_task_slug {
             return Err("sub-task manager does not belong to this task".into());
         }
+        if let Some(child_slug) = child_slug.filter(|slug| !slug.is_empty()) {
+            if manager.meta.subtask_slug != child_slug {
+                return Err("sub-task manager does not belong to the selected child".into());
+            }
+        }
         manager
     };
 
-    let tasks = load_relationship_tasks(repo)?;
     let mut descendants = Vec::new();
     if !manager.meta.subtask_slug.is_empty() {
-        if manager.parent.active_subtask != manager.meta.subtask_slug {
-            return Err(relationship_error("manager binding does not match its parent active child"));
+        let selected = by_slug
+            .get(manager.meta.subtask_slug.as_str())
+            .ok_or_else(|| relationship_error("active child task is missing"))?;
+        if selected.archived || selected.parent_task != manager.owner_slug {
+            return Err(relationship_error("manager binding does not match reciprocal child"));
         }
-        let by_slug = task_map(&tasks)?;
-        let mut parent_slug = manager.owner_slug.as_str();
-        let mut child_slug = manager.meta.subtask_slug.as_str();
-        loop {
-            let child = by_slug.get(child_slug).ok_or_else(|| relationship_error("active child task is missing"))?;
-            if child.parent_task != parent_slug {
-                return Err(relationship_error("manager binding does not match reciprocal child"));
+        let mut stack = vec![selected.slug.as_str()];
+        while let Some(slug) = stack.pop() {
+            let task = by_slug.get(slug).ok_or_else(|| relationship_error("active descendant task is missing"))?;
+            if task.archived {
+                continue;
             }
-            descendants.push((*child).clone());
-            if child.active_subtask.is_empty() {
-                break;
+            descendants.push((*task).clone());
+            let mut children = tasks
+                .iter()
+                .filter(|candidate| candidate.parent_task == task.slug && !candidate.archived)
+                .collect::<Vec<_>>();
+            children.sort_by(|left, right| right.created.cmp(&left.created).then_with(|| left.slug.cmp(&right.slug)));
+            for child in children.into_iter().rev() {
+                stack.push(child.slug.as_str());
             }
-            parent_slug = child.slug.as_str();
-            child_slug = child.active_subtask.as_str();
         }
     }
 
@@ -733,8 +756,8 @@ fn discard_context(repo: &Path, owner_task_slug: &str, manager_session_id: &str)
     })
 }
 
-pub fn subtask_discard_sessions(repo: &Path, owner_task_slug: &str, manager_session_id: &str) -> Result<Vec<(String, String)>, String> {
-    discard_context(repo, owner_task_slug, manager_session_id).map(|context| context.sessions)
+pub fn subtask_discard_sessions(repo: &Path, owner_task_slug: &str, manager_session_id: &str, child_slug: Option<&str>) -> Result<Vec<(String, String)>, String> {
+    discard_context(repo, owner_task_slug, manager_session_id, child_slug).map(|context| context.sessions)
 }
 
 fn restore_task_bytes(originals: &[(PathBuf, Vec<u8>)]) {
@@ -743,9 +766,8 @@ fn restore_task_bytes(originals: &[(PathBuf, Vec<u8>)]) {
     }
 }
 
-fn archive_killed_lineage(repo: &Path, manager: &ManagerContext, descendants: &[Task]) -> Result<(), String> {
-    let parent_path = task_dir(repo, &manager.parent.slug).join("task.md");
-    let mut originals = vec![(parent_path.clone(), fs::read(&parent_path).map_err(|e| format!("read {}: {e}", parent_path.display()))?)];
+fn archive_killed_lineage(repo: &Path, _manager: &ManagerContext, descendants: &[Task]) -> Result<(), String> {
+    let mut originals = Vec::new();
     for task in descendants {
         let path = task_dir(repo, &task.slug).join("task.md");
         originals.push((path.clone(), fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?));
@@ -759,9 +781,7 @@ fn archive_killed_lineage(repo: &Path, manager: &ManagerContext, descendants: &[
             killed.subtask_outcome = "killed".into();
             write_task_unlocked(repo, &killed)?;
         }
-        let mut parent = manager.parent.clone();
-        parent.active_subtask.clear();
-        write_task_unlocked(repo, &parent)
+        Ok::<(), String>(())
     })();
     if let Err(error) = write_result {
         restore_task_bytes(&originals);
@@ -788,9 +808,9 @@ fn move_if_present(source: PathBuf, destination: PathBuf, moved: &mut Vec<(PathB
     Ok(())
 }
 
-pub fn discard_subtask(repo: &Path, owner_task_slug: &str, manager_session_id: &str) -> Result<(), String> {
+pub fn discard_subtask(repo: &Path, owner_task_slug: &str, manager_session_id: &str, child_slug: Option<&str>) -> Result<(), String> {
     with_task_mutation_lock(repo, "discard or kill sub-task", || {
-        let DiscardContext { manager, descendants, sessions } = discard_context(repo, owner_task_slug, manager_session_id)?;
+        let DiscardContext { manager, descendants, sessions } = discard_context(repo, owner_task_slug, manager_session_id, child_slug)?;
         if !manager.meta.subtask_slug.is_empty() {
             return archive_killed_lineage(repo, &manager, &descendants);
         }
@@ -828,17 +848,15 @@ pub fn discard_subtask(repo: &Path, owner_task_slug: &str, manager_session_id: &
 
 pub fn ensure_task_can_archive(repo: &Path, slug: &str) -> Result<(), String> {
     let task = read_task(repo, slug).ok_or_else(|| format!("no such task: {slug}"))?;
-    if !task.active_subtask.is_empty() {
+    if !read_task_relationships(repo, slug)?.active_subtasks.is_empty() {
         return Err("task has an active child; finalize the sub-task first".into());
     }
     if !task.parent_task.is_empty() && !task.archived {
         let parent = read_task(repo, &task.parent_task).ok_or_else(|| relationship_error("active child parent is missing"))?;
-        if parent.active_subtask == task.slug {
-            return Err(format!(
-                "This task is still active under “{}”. Open the parent task and use its sub-task manager to finish or kill this task.",
-                parent.name
-            ));
-        }
+        return Err(format!(
+            "This task is still active under “{}”. Open the parent task and use its sub-task manager to finish or kill this task.",
+            parent.name
+        ));
     }
     Ok(())
 }
@@ -959,17 +977,29 @@ mod tests {
     }
 
     #[test]
-    fn subtask_relationship_validation_rejects_mismatch_archive_and_cycles() {
+    fn subtask_relationship_validation_accepts_multiple_active_children_from_parent_task() {
+        let a = task("a");
+        let mut b = task("b");
+        let mut c = task("c");
+        b.parent_task = "a".into();
+        c.parent_task = "a".into();
+
+        validate_task_relationships(&[a, b, c]).unwrap();
+    }
+
+    #[test]
+    fn subtask_relationship_validation_rejects_missing_inactive_parents_and_cycles() {
         let mut a = task("a");
         let mut b = task("b");
-        a.active_subtask = "b".into();
         b.parent_task = "wrong".into();
         assert!(validate_task_relationships(&[a.clone(), b.clone()]).unwrap_err().contains(RELATIONSHIP_ERROR));
         b.parent_task = "a".into();
         b.archived = true;
-        assert!(validate_task_relationships(&[a.clone(), b.clone()]).unwrap_err().contains("archived"));
+        validate_task_relationships(&[a.clone(), b.clone()]).unwrap();
         b.archived = false;
-        b.active_subtask = "a".into();
+        a.archived = true;
+        assert!(validate_task_relationships(&[a.clone(), b.clone()]).unwrap_err().contains("inactive parent"));
+        a.archived = false;
         a.parent_task = "b".into();
         assert!(validate_task_relationships(&[a, b]).unwrap_err().contains("cycle"));
     }
@@ -982,6 +1012,7 @@ mod tests {
         assert!(create_subtask(&repo, "lane", "config", create_input()).is_err());
         assert_eq!(fs::read(&parent_marker).unwrap(), b"parent-only");
         assert!(read_task(&repo, &parent.slug).unwrap().active_subtask.is_empty());
+        assert!(read_task_relationships(&repo, &parent.slug).unwrap().active_subtasks.is_empty());
         assert!(!task_dir(&repo, "b").exists());
         assert!(!worktrees_dir(&repo).join("b").exists());
         let _ = fs::remove_dir_all(repo);
@@ -998,7 +1029,8 @@ mod tests {
         assert_eq!(child.parent_task, "a");
         assert!(child.active_subtask.is_empty());
         assert!(child.linear_id.is_empty() && child.github_issue.is_empty() && child.pr_url.is_empty() && child.requested_slug.is_empty());
-        assert_eq!(read_task(&repo, "a").unwrap().active_subtask, "b");
+        assert!(read_task(&repo, "a").unwrap().active_subtask.is_empty());
+        assert_eq!(read_task_relationships(&repo, "a").unwrap().active_subtasks[0].slug, "b");
         assert_eq!(created.provisioning.creation, "ready");
         let mut state = crate::execution::read_execution_state(&repo, "b").unwrap();
         let definition = crate::execution::read_task_playbook(&repo, "b", &state).unwrap();
@@ -1065,6 +1097,65 @@ mod tests {
     }
 
     #[test]
+    fn subtask_creation_allows_second_worktree_child_from_second_manager() {
+        let (repo, parent, _) = lifecycle_repo("second-child-create");
+        let first = create_subtask(&repo, "lane", "config", create_input()).unwrap();
+        assert_eq!(first.child_task.as_ref().unwrap().slug, "b");
+
+        let second_manager = SessionMeta {
+            id: "manager-c".into(),
+            worktree: parent.worktree.clone(),
+            created: 3,
+            harness: "claude".into(),
+            playbook: "superdevelop".into(),
+            generic: true,
+            subtask_manager: true,
+            ..Default::default()
+        };
+        write_meta_atomic(&session_meta_path(&repo, "a", "manager-c"), &serde_json::to_value(&second_manager).unwrap()).unwrap();
+
+        let second = create_subtask(
+            &repo,
+            "lane",
+            "config",
+            CreateSubtaskInput {
+                manager_session_id: "manager-c".into(),
+                name: "Child C".into(),
+                slug: "c".into(),
+                playbook: None,
+                instructions: "Run a second independent investigation.".into(),
+                start: false,
+                max_live_sessions: None,
+            },
+        )
+        .expect("a second worktree-backed child should be allowed through a fresh manager");
+
+        assert_eq!(second.child_task.as_ref().unwrap().slug, "c");
+        assert_eq!(read_task(&repo, "b").unwrap().parent_task, "a");
+        assert_eq!(read_task(&repo, "c").unwrap().parent_task, "a");
+        assert_eq!(read_session_meta_full(&session_meta_path(&repo, "a", "manager")).unwrap().subtask_slug, "b");
+        assert_eq!(read_session_meta_full(&session_meta_path(&repo, "a", "manager-c")).unwrap().subtask_slug, "c");
+        let _ = fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn bound_manager_rejects_child_slug_path_traversal_metadata() {
+        let (repo, _, mut manager) = lifecycle_repo("manager-child-traversal");
+        let outside_dir = alinery_dir(&repo).join("outside-child");
+        fs::create_dir_all(&outside_dir).unwrap();
+        let mut outside = task("outside-child");
+        outside.parent_task = "a".into();
+        write_bytes_atomic(&outside_dir.join("task.md"), toml::to_string(&outside).unwrap().as_bytes()).unwrap();
+
+        manager.subtask_slug = "../outside-child".into();
+        write_meta_atomic(&session_meta_path(&repo, "a", "manager"), &serde_json::to_value(&manager).unwrap()).unwrap();
+
+        let error = inspect_subtask_finish(&repo, "manager", Vec::new()).unwrap_err();
+        assert!(error.contains("relationship corruption: active child task is missing"), "{error}");
+        let _ = fs::remove_dir_all(repo);
+    }
+
+    #[test]
     fn subtask_finish_rejects_worktrees_on_unrecorded_or_detached_branches() {
         let (repo, parent, _) = lifecycle_repo("finish-branch-identity");
         create_subtask(&repo, "lane", "config", create_input()).unwrap();
@@ -1125,7 +1216,8 @@ mod tests {
         another.slug = "c".into();
         assert!(create_subtask(&repo, "lane", "config", another).is_err());
         assert!(!task_dir(&repo, "c").exists());
-        assert_eq!(read_task(&repo, "a").unwrap().active_subtask, "b");
+        assert!(read_task(&repo, "a").unwrap().active_subtask.is_empty());
+        assert_eq!(read_task_relationships(&repo, "a").unwrap().active_subtasks[0].slug, "b");
         let _ = fs::remove_dir_all(repo);
     }
 
@@ -1143,7 +1235,8 @@ mod tests {
         assert_eq!(child.slug, "b");
         assert!(Path::new(&child.worktree).is_dir());
         assert!(ref_exists(&repo, "b"));
-        assert_eq!(read_task(&repo, &result.parent_task.slug).unwrap().active_subtask, "b");
+        assert!(read_task(&repo, &result.parent_task.slug).unwrap().active_subtask.is_empty());
+        assert_eq!(read_task_relationships(&repo, &result.parent_task.slug).unwrap().active_subtasks[0].slug, "b");
         assert_eq!(result.manager_session.subtask_slug, "b");
         assert_eq!(crate::execution::read_execution_state(&repo, "b").unwrap().creation, "partial");
         assert!(create_subtask(&repo, "lane", "config", create_input()).is_err());
@@ -1157,8 +1250,8 @@ mod tests {
         let scrollback = session_scrollback_path(&repo, "a", &manager.id);
         fs::write(&scrollback, b"expired login").unwrap();
 
-        assert_eq!(subtask_discard_sessions(&repo, "a", "manager").unwrap(), vec![("a".into(), "manager".into())]);
-        discard_subtask(&repo, "a", "manager").unwrap();
+        assert_eq!(subtask_discard_sessions(&repo, "a", "manager", None).unwrap(), vec![("a".into(), "manager".into())]);
+        discard_subtask(&repo, "a", "manager", None).unwrap();
 
         assert!(read_task(&repo, "a").is_some());
         assert!(!session_meta_path(&repo, "a", "manager").exists());
@@ -1216,11 +1309,11 @@ mod tests {
         fs::write(Path::new(&grandchild.worktree).join("dirty-child"), b"dirty").unwrap();
         fs::write(artifacts_dir(&repo, "b").join("01-result.md"), b"result").unwrap();
 
-        let planned = subtask_discard_sessions(&repo, "a", "manager").unwrap();
+        let planned = subtask_discard_sessions(&repo, "a", "manager", None).unwrap();
         assert!(planned.contains(&("a".into(), "manager".into())));
         assert!(planned.contains(&("b".into(), "manager-b".into())));
         assert!(planned.contains(&("c".into(), "child-session".into())));
-        discard_subtask(&repo, "a", "manager").unwrap();
+        discard_subtask(&repo, "a", "manager", None).unwrap();
 
         assert!(read_task(&repo, "a").unwrap().active_subtask.is_empty());
         for slug in ["b", "c"] {
