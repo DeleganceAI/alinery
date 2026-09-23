@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-pub const RUNNER_EVENT_PROTOCOL_VERSION: u16 = 2;
+pub const RUNNER_EVENT_PROTOCOL_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -87,6 +87,9 @@ pub enum RunnerEvent {
         omp_session_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         omp_turn_id: Option<u64>,
+    },
+    SessionNameSuggested {
+        name: String,
     },
     AdapterError {
         detail: String,

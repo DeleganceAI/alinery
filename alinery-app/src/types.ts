@@ -375,6 +375,17 @@ export type SessionMeta = {
   // ---- semantic checkpoint (daemon-owned, meta-persisted, Step 4) ----
   semantic?: SemanticCheckpoint | null;
 };
+export type SessionNameSource = "auto" | "user";
+export type SessionName = { name: string; source: SessionNameSource };
+export type SessionDisplayMeta = SessionMeta & {
+  name?: string | null;
+  name_source?: SessionNameSource | null;
+  name_error?: string | null;
+};
+export type SessionDisplayContext = { session: SessionDisplayMeta; task_name: string; subtask_name: string | null };
+export type NameCommit =
+  | { kind: "session"; repo_path: string; task_slug: string; session_id: string; value: SessionName }
+  | { kind: "task"; repo_path: string; task_slug: string; task: Task };
 export type TaskSummary = Pick<Task, "name" | "slug" | "branch" | "worktree" | "has_worktree" | "playbook" | "archived" | "draft" | "subtask_outcome">;
 export type TaskRelationships = {
   parent_task: TaskSummary | null;
@@ -393,8 +404,8 @@ export type SubtaskManagerState = {
   disabled_reason: string;
 };
 export type TaskPanelRow =
-  | { kind: "session"; session: SessionMeta }
-  | { kind: "subtask_manager"; session: SessionMeta; owner_task_slug: string; child?: TaskSummary; active_child: boolean }
+  | { kind: "session"; session: SessionDisplayMeta }
+  | { kind: "subtask_manager"; session: SessionDisplayMeta; owner_task_slug: string; child?: TaskSummary; active_child: boolean }
   | { kind: "subtask_history"; child: TaskSummary };
 export type CreateSubtaskInput = {
   manager_session_id: string;
@@ -441,9 +452,10 @@ export type SnapshotProvenance = {
   branch: string;
   snapshot_time: number;
 };
-export type SessionListItem = SessionMeta & {
+export type SessionListItem = SessionDisplayMeta & {
   task_slug: string;
   task_name: string;
+  subtask_name?: string | null;
   task_worktree: string;
   repo_path: string;
   playbook_title: string;

@@ -1,4 +1,4 @@
-import { ArrowLeft, MessageSquare } from "lucide-react";
+import { ArrowLeft, MessageSquare, Pencil } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -36,6 +36,7 @@ import {
 } from "../chatTranscript";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
+import { NameEditor, restoreNameFocus } from "../NameEditor";
 
 import {
   abortAndPromptCommand,
@@ -81,7 +82,9 @@ import type {
   ArtifactTreeNode,
   HostedCatalogView,
   LifecycleState,
+  NameCommit,
   ReviewHandoffSource,
+  SessionDisplayContext,
   SessionMessageActionProvenance,
   SessionObservation,
   Task,
@@ -189,6 +192,7 @@ export function SessionView({
   onStartReviewHandoff,
   onOpenRelatedTask,
   onDiagramZoomOpenChange,
+  onNameCommitted,
 }: {
   id: string;
   cwd: string;
@@ -213,6 +217,7 @@ export function SessionView({
   onStartReviewHandoff: (source: ReviewHandoffSource) => void;
   onOpenRelatedTask: (slug: string, relatedRepoPath?: string) => void;
   onDiagramZoomOpenChange?: (open: boolean) => void;
+  onNameCommitted?: (change: NameCommit) => void;
 }) {
   const [artifactItems, setArtifactItems] = useState<ArtifactListItem[]>([]);
   const [artifactTree, setArtifactTree] = useState<ArtifactTreeNode[]>([]);
@@ -254,6 +259,86 @@ export function SessionView({
   const recoverableArtifactDraftAnchorIds = recoverableArtifactDrafts.map((draft) => draft.anchor_id);
   const [task, setTask] = useState<Task | null>(null);
   const [parentTask, setParentTask] = useState<Task | null>(null);
+  const [display, setDisplay] = useState<SessionDisplayContext | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const nameTrigger = useRef<HTMLButtonElement | null>(null);
+  const displayRequest = useRef(0);
+  const displayEpoch = useRef(0);
+  const displayScope = `${repoPath}\u0000${taskSlug}\u0000${id}`;
+  const currentDisplayScope = useRef(displayScope);
+  if (currentDisplayScope.current !== displayScope) {
+    currentDisplayScope.current = displayScope;
+    displayEpoch.current += 1;
+    displayRequest.current += 1;
+  }
+  const refreshDisplay = async () => {
+    const epoch = displayEpoch.current;
+    const request = ++displayRequest.current;
+    try {
+      const next = await ipc.getSessionDisplay(repoPath, taskSlug, id);
+      if (epoch === displayEpoch.current && request === displayRequest.current) setDisplay(next);
+    } catch {
+      // Naming is optional; history and Terminal stay usable when the read fails.
+    }
+  };
+  const closeNameEditor = () => {
+    flushSync(() => setEditingName(false));
+    restoreNameFocus(nameTrigger.current);
+  };
+  const saveName = async (name: string) => {
+    const epoch = displayEpoch.current;
+    const value = await ipc.renameSession({ repoPath, taskSlug, sessionId: id, name });
+    if (epoch === displayEpoch.current) {
+      displayEpoch.current += 1;
+      displayRequest.current += 1;
+      setDisplay((current) =>
+        current
+          ? { ...current, session: { ...current.session, name: value.name, name_source: value.source, name_error: null } }
+          : {
+              session: {
+                id,
+                worktree: cwd,
+                created: 0,
+                archived: false,
+                phase,
+                harness,
+                model,
+                playbook: playbook || "",
+                generic: false,
+                harness_resume_token: "",
+                name: value.name,
+                name_source: value.source,
+              },
+              task_name: task?.name || taskSlug,
+              subtask_name: null,
+            },
+      );
+      closeNameEditor();
+      void refreshDisplay();
+    }
+    onNameCommitted?.({ kind: "session", repo_path: repoPath, task_slug: taskSlug, session_id: id, value });
+  };
+
+  useEffect(() => {
+    let alive = true;
+    let timer = 0;
+    setDisplay(null);
+    setEditingName(false);
+    if (taskSlug) {
+      const poll = () => {
+        void refreshDisplay().finally(() => {
+          if (alive) timer = window.setTimeout(poll, 3000);
+        });
+      };
+      poll();
+    }
+    return () => {
+      alive = false;
+      displayEpoch.current += 1;
+      displayRequest.current += 1;
+      window.clearTimeout(timer);
+    };
+  }, [repoPath, taskSlug, id]);
   const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
   const [executionError, setExecutionError] = useState("");
   const [completionBusy, setCompletionBusy] = useState(false);
@@ -600,29 +685,33 @@ export function SessionView({
   // practice this modal only surfaces for omp (id_source = "manual"). ponytail: omp auto-resume
   useEffect(() => {
     let alive = true;
-    if (!hasTask) {
-      setTask(null);
-      setParentTask(null);
-      return;
-    }
-    ipc
-      .listTasks()
-      .then((tasks) => {
-        if (!alive) return;
+    let timer = 0;
+    let request = 0;
+    setTask(null);
+    setParentTask(null);
+    if (!hasTask) return;
+    const poll = async () => {
+      const epoch = displayEpoch.current;
+      const sequence = ++request;
+      try {
+        const tasks = await ipc.listTasks(repoPath);
+        if (!alive || epoch !== displayEpoch.current || sequence !== request) return;
         const currentTask = tasks.find((candidate) => candidate.slug === taskSlug) ?? null;
         setTask(currentTask);
         setParentTask(currentTask?.parent_task ? (tasks.find((candidate) => candidate.slug === currentTask.parent_task) ?? null) : null);
-      })
-      .catch(() => {
-        if (alive) {
-          setTask(null);
-          setParentTask(null);
-        }
-      });
+      } catch {
+        // Retain the last known context through a transient read failure.
+      } finally {
+        if (alive && sequence === request) timer = window.setTimeout(poll, 3000);
+      }
+    };
+    void poll();
     return () => {
       alive = false;
+      request += 1;
+      window.clearTimeout(timer);
     };
-  }, [hasTask, taskSlug]);
+  }, [hasTask, taskSlug, repoPath, id]);
 
   useEffect(() => {
     setArtifactTab("playbook");
@@ -1731,9 +1820,42 @@ export function SessionView({
           <ArrowLeft size={16} strokeWidth={1.5} aria-hidden="true" /> Back
         </button>
         {hasTask && (
-          <span className="session-task" title={taskSlug}>
-            {task?.name || taskSlug}
-          </span>
+          <div className="session-identity">
+            <div className="editable-name">
+              <span className="editable-name-display" role="group" aria-label="Session name" tabIndex={-1} hidden={editingName}>
+                <strong className="editable-name-text" title={display?.session.name || "Unnamed session"}>
+                  {display?.session.name || "Unnamed session"}
+                </strong>
+                <button ref={nameTrigger} type="button" className="name-edit-button" aria-label="Rename session" title="Rename session" onClick={() => setEditingName(true)}>
+                  <Pencil size={14} aria-hidden="true" />
+                </button>
+              </span>
+              {editingName && <NameEditor key={displayScope} value={display?.session.name || ""} label="Session name" onSave={saveName} onCancel={closeNameEditor} />}
+            </div>
+            <div className="session-context">
+              <span className="session-task" title={display?.task_name || task?.name || taskSlug}>
+                {display?.task_name || task?.name || taskSlug}
+              </span>
+              {task?.parent_task && (
+                <button type="button" className="btn ghost small" onClick={() => onOpenRelatedTask(task.parent_task || "", repoPath)}>
+                  {parentTask?.name || task.parent_task}
+                </button>
+              )}
+              {display?.session.subtask_manager &&
+                (display.session.subtask_slug ? (
+                  <button type="button" className="btn ghost small" onClick={() => onOpenRelatedTask(display.session.subtask_slug || "", repoPath)}>
+                    {display.subtask_name || display.session.subtask_slug}
+                  </button>
+                ) : (
+                  <span>Sub-task setup</span>
+                ))}
+            </div>
+            {display?.session.name_error && (
+              <InlineStatus tone="error" detail={display.session.name_error}>
+                Could not read session name.
+              </InlineStatus>
+            )}
+          </div>
         )}
         {(executionStep || phase) && <span className="pill">{executionStep?.title ?? phase}</span>}
         <span className="pill">{harnessDisplayName(harness) + (model ? ` · ${model}` : "")}</span>

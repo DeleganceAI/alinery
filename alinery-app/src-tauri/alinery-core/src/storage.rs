@@ -246,7 +246,7 @@ fn session_ids(dir: &Path) -> Vec<String> {
         .collect()
 }
 
-/// Every file belonging to one session: its meta, its scrollback, and any crashed
+/// Every file belonging to one session: its meta, name, scrollback, and any crashed
 /// `atomic_tmp_path` leftover (`<id>.<something>.tmp.<pid>.<nanos>.<seq>`). The `<id>.` prefix
 /// keeps session `a1` from claiming session `a`'s files.
 fn session_files(dir: &Path, id: &str) -> Vec<PathBuf> {
@@ -257,7 +257,10 @@ fn session_files(dir: &Path, id: &str) -> Vec<PathBuf> {
     rd.flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            let keep = name == format!("{id}.meta.json") || name == format!("{id}.scrollback") || (name.starts_with(&prefix) && name.contains(".tmp."));
+            let keep = name == format!("{id}.meta.json")
+                || name == format!("{id}.name.json")
+                || name == format!("{id}.scrollback")
+                || (name.starts_with(&prefix) && name.contains(".tmp."));
             keep.then(|| e.path())
         })
         .collect()
@@ -433,6 +436,53 @@ mod tests {
     }
 
     #[test]
+    fn storage_stats_counts_archived_session_names_as_reclaimable() {
+        let repo = temp_repo("name-accounting");
+        write_task_md(&repo, "live", false, "");
+        let meta_bytes = write_session_meta(&repo, "live", "s1", true);
+        let name_bytes = write_file(&session_file(&repo, "live", "s1.name.json"), r#"{"name":"Repair cache eviction","source":"user"}"#);
+        write_session_meta(&repo, "live", "s10", false);
+        write_file(&session_file(&repo, "live", "s10.name.json"), r#"{"name":"Import CSV","source":"auto"}"#);
+
+        let stats = storage_stats(&repo);
+        let total = recursive_size(&alinery_dir(&repo));
+        fs::remove_dir_all(&repo).unwrap();
+
+        assert_eq!(stats.archived_session_count, 1, "a name sidecar is not another session");
+        assert_eq!(stats.archived_bytes, meta_bytes + name_bytes, "the displayed reclaimable size includes the archived name");
+        assert_eq!(stats.active_bytes, total - meta_bytes - name_bytes);
+    }
+
+    #[test]
+    fn purge_removes_archived_session_name_without_touching_other_names() {
+        let repo = temp_repo("name-purge");
+        write_task_md(&repo, "live", false, "");
+        write_session_meta(&repo, "live", "s1", true);
+        let archived_name = session_file(&repo, "live", "s1.name.json");
+        write_file(&archived_name, r#"{"name":"Repair cache eviction","source":"user"}"#);
+        write_session_meta(&repo, "live", "s10", false);
+        write_file(&session_file(&repo, "live", "broken.meta.json"), "{not json");
+        let retained = ["s10.name.json", "broken.name.json", "orphan.name.json"];
+        let name = r#"{"name":"Keep this name","source":"user"}"#;
+        for file in retained {
+            write_file(&session_file(&repo, "live", file), name);
+        }
+
+        let result = purge_archived_storage(&repo, &|_, _| {}).unwrap();
+        let archived_name_remains = archived_name.exists();
+        let retained_contents: Vec<_> = retained.iter().map(|file| fs::read_to_string(session_file(&repo, "live", file)).unwrap()).collect();
+        fs::remove_dir_all(&repo).unwrap();
+
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(result.deleted_sessions, 1);
+        assert!(!archived_name_remains, "purging an archived session must not orphan its persisted name");
+        assert!(
+            retained_contents.iter().all(|contents| contents == name),
+            "live, unreadable and orphan records are not purge targets"
+        );
+    }
+
+    #[test]
     fn storage_stats_buckets_cover_whole_alinery_dir() {
         let repo = temp_repo("coverage");
         build_mixed_repo(&repo);
@@ -521,6 +571,20 @@ mod tests {
         assert_eq!(after.active_bytes, want_active, "active bytes untouched");
 
         let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn purge_archived_task_includes_name_sidecars() {
+        let repo = temp_repo("purge_task_names");
+        write_task_md(&repo, "arch", true, "");
+        write_session_meta(&repo, "arch", "s1", false);
+        let name = session_file(&repo, "arch", "s1.name.json");
+        write_file(&name, r#"{"name":"Retained","source":"user"}"#);
+        let result = purge_archived_storage(&repo, &|_, _| {}).unwrap();
+        assert_eq!(result.deleted_tasks, 1);
+        assert!(!name.exists());
+        assert!(!task_dir(&repo, "arch").exists());
+        let _ = fs::remove_dir_all(repo);
     }
 
     #[test]

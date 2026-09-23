@@ -129,6 +129,10 @@ while :; do sleep 1; done
 }
 
 fn run_result_emit(socket: &Path) -> Output {
+    run_event_result_emit(socket, br#"{"type":"phase_completed","omp_session_id":"omp-session"}"#)
+}
+
+fn run_event_result_emit(socket: &Path, event: &[u8]) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_alinery-runner"))
         .env("ALINERY_SESSION_ID", "runner-result-test")
         .env("ALINERY_DAEMON_SOCKET", socket)
@@ -140,12 +144,7 @@ fn run_result_emit(socket: &Path) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(br#"{"type":"phase_completed","omp_session_id":"omp-session"}"#)
-        .unwrap();
+    child.stdin.take().unwrap().write_all(event).unwrap();
     child.wait_with_output().unwrap()
 }
 
@@ -256,4 +255,124 @@ fn emit_result_reports_bounded_delivery_failure_without_terminal_noise() {
         serde_json::json!({"status": "delivery_failed"})
     );
     server.join().unwrap();
+}
+
+#[test]
+fn invalid_session_name_returns_actionable_rejection_without_transport() {
+    let root = tempfile::tempdir().unwrap();
+    for name in ["x".repeat(41), " ".into(), "bad\u{7}name".into()] {
+        let event = serde_json::to_vec(&serde_json::json!({"type":"session_name_suggested","name":name})).unwrap();
+        let output = run_event_result_emit(&root.path().join("missing.sock"), &event);
+        assert_eq!(output.status.code(), Some(2));
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["status"], "rejected");
+        assert_eq!(report["reason"], alinery_core::validate_session_name(&name).unwrap_err());
+    }
+}
+
+#[test]
+fn session_name_result_requires_matching_durable_acknowledgement() {
+    use serde_json::json;
+    let saved = json!({"status":"saved","value":{"name":"Repair cache eviction","source":"auto"}});
+    let unchanged = json!({"status":"unchanged","value":{"name":"Human correction","source":"user"}});
+    for (reply, expected, code) in [
+        (json!({"ok":true,"session_name":saved}), saved.clone(), 0),
+        (json!({"ok":true,"session_name":unchanged}), unchanged.clone(), 0),
+        (json!({"error":"stale owner"}), json!({"status":"rejected","reason":"stale owner"}), 2),
+        (json!({"ok":true}), json!({"status":"delivery_failed"}), 3),
+        (
+            json!({"ok":true,"completion":{"status":"human_authorization_required"}}),
+            json!({"status":"delivery_failed"}),
+            3,
+        ),
+        (
+            json!({"ok":true,"session_name":saved,"completion":{"status":"human_authorization_required"}}),
+            json!({"status":"delivery_failed"}),
+            3,
+        ),
+        (
+            json!({"ok":true,"session_name":{"status":"saved","value":{"name":"x","source":"foreign"}}}),
+            json!({"status":"delivery_failed"}),
+            3,
+        ),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("daemon.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                match listener.accept() {
+                    Ok((mut connection, _)) => {
+                        connection.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                        let mut request = String::new();
+                        BufReader::new(&connection).read_line(&mut request).unwrap();
+                        let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+                        assert_eq!(request["event"]["type"], "session_name_suggested");
+                        writeln!(connection, "{reply}").unwrap();
+                        return;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline => thread::sleep(Duration::from_millis(5)),
+                    _ => return,
+                }
+            }
+        });
+        let output = run_event_result_emit(&socket, br#"{"type":"session_name_suggested","name":"Repair cache eviction"}"#);
+        server.join().unwrap();
+        assert_eq!(output.status.code(), Some(code));
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(), expected);
+    }
+}
+
+#[test]
+fn session_name_delivery_failure_never_claims_a_saved_name() {
+    for (reply, delay) in [
+        (Vec::new(), Duration::ZERO),
+        (b"not-json\n".to_vec(), Duration::ZERO),
+        (
+            b"{\"ok\":true,\"session_name\":{\"status\":\"saved\",\"value\":{\"name\":\"x\",\"source\":\"auto\"}}}".to_vec(),
+            Duration::ZERO,
+        ),
+        (
+            format!(
+                "{{\"ok\":true,\"session_name\":{{\"status\":\"saved\",\"value\":{{\"name\":\"{}\",\"source\":\"auto\"}}}}}}\n",
+                "x".repeat(65536)
+            )
+            .into_bytes(),
+            Duration::ZERO,
+        ),
+        (Vec::new(), Duration::from_secs(6)),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("daemon.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                match listener.accept() {
+                    Ok((mut connection, _)) => {
+                        connection.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                        let mut request = String::new();
+                        BufReader::new(&connection).read_line(&mut request).unwrap();
+                        thread::sleep(delay);
+                        let _ = connection.write_all(&reply);
+                        return;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline => thread::sleep(Duration::from_millis(5)),
+                    _ => return,
+                }
+            }
+        });
+        let started = Instant::now();
+        let output = run_event_result_emit(&socket, br#"{"type":"session_name_suggested","name":"Repair cache"}"#);
+        assert!(started.elapsed() < Duration::from_secs(6), "naming acknowledgement has a bounded deadline");
+        server.join().unwrap();
+        assert_eq!(output.status.code(), Some(3));
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+            serde_json::json!({"status":"delivery_failed"})
+        );
+    }
 }

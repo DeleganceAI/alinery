@@ -44,7 +44,7 @@ import type {
   PlaybookRef,
   RepoScope,
   ReviewHandoffRecord,
-  SessionMeta,
+  SessionDisplayMeta,
   SessionObservation,
   Tab,
   Task,
@@ -130,13 +130,16 @@ export function finalizedSubtaskNotice(task: Pick<Task, "archived" | "parent_tas
   return `Finalized into ${parentLabel} as ${task.subtask_outcome.toUpperCase()}. Any open session may be stale. Changes after finalization are not included in the parent snapshot or integrated result.`;
 }
 
-export function sameSessionMetas(left: SessionMeta[], right: SessionMeta[]) {
+export function sameSessionMetas(left: SessionDisplayMeta[], right: SessionDisplayMeta[]) {
   return (
     left.length === right.length &&
     left.every((session, index) => {
       const other = right[index];
       return (
         session.id === other.id &&
+        session.name === other.name &&
+        session.name_source === other.name_source &&
+        session.name_error === other.name_error &&
         session.worktree === other.worktree &&
         session.created === other.created &&
         session.archived === other.archived &&

@@ -68,7 +68,7 @@ pub(crate) fn app_config_dir_of(app_config: &Path) -> Option<&Path> {
     alinery_core::app_config_dir_of(app_config)
 }
 
-pub(crate) fn app_config_path(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn app_config_path<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let app_config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     let launch_root = std::env::var_os(ALINERY_DEV_LAUNCH_ROOT);
     Ok(app_config_path_for(&app_config_dir, &app.config().identifier, launch_root.as_deref()))
@@ -85,7 +85,7 @@ pub(crate) fn validate_known_target_repo(known_repos: &[String], requested: &str
     alinery_core::resolve_target_repo(requested, None, known_repos)
 }
 
-pub(crate) fn target_repo_for_app(app: &AppHandle, repo_path: &str) -> Result<PathBuf, String> {
+pub(crate) fn target_repo_for_app<R: tauri::Runtime>(app: &AppHandle<R>, repo_path: &str) -> Result<PathBuf, String> {
     validate_known_target_repo(&load_app_config(app).known_repos, repo_path)
 }
 

@@ -200,10 +200,7 @@ pub fn provision_task_with_reservation(
     after_reserve: impl FnOnce(&Task) -> Result<(), String>,
 ) -> Result<CreateTaskReply, String> {
     let definition = parse_playbook_md(&request.playbook.source).map_err(|e| format!("invalid playbook: {e:?}"))?;
-    let name = request.name.trim();
-    if name.is_empty() {
-        return Err("task name is empty".into());
-    }
+    let name = crate::validate_task_name(&request.name)?;
     let enabled: BTreeSet<String> = request
         .auto_advance_steps
         .clone()
