@@ -369,9 +369,9 @@ const PRESETS: Record<PresetKey, GridConfig> = {
     sort: "manual",
     mode: "compact",
     width: 150,
-    height: 64,
+    height: 78,
     rowSpacing: 10,
-    columnSpacing: 10,
+    columnSpacing: 8,
     label: 190,
     tracks: 1,
     columnCards: 2,
@@ -381,7 +381,7 @@ const PRESETS: Record<PresetKey, GridConfig> = {
     direction: "ltr",
     memory: "previous",
     path: "all",
-    properties: ["name", "stage", "status"],
+    properties: ["activity", "name", "repo", "stage", "status", "sessions", "updatedHours", "createdDays", "attention", "pullRequest"],
   },
 };
 

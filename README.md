@@ -122,6 +122,13 @@ and tile width (up to 960px). Detailed and compact cards show every enabled prop
 scroll a card if its contents exceed the fixed tile height. Icon-only mode hides text.
 Draft tasks appear with a Draft label and open their saved creation form.
 
+On a fresh workspace, the default Kanban+ view starts with **Progress lanes**: playbook
+steps left-to-right, all step labels, no grouping, repository fill, attention borders,
+manual lane order, compact cards, active tasks only, fixed brightness, and archives
+hidden. Tile size is 150 × 78px, row/column spacing is 10/8px, and the first column is
+190px. Every card property except playbook is enabled. Existing saved Grid layouts
+are restored unchanged; additional Grid tabs retain their Step Kanban starting layout.
+
 Enter a **New preset name** and choose **Save as new preset** to reuse the current
 settings across repositories and Grid tabs. Select a user-created preset to delete it;
 built-in presets cannot be deleted. Saving another name creates a new preset without

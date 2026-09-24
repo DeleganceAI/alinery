@@ -237,6 +237,23 @@ const columnNames = () =>
 const laneStepNames = (lane: HTMLElement) => [...lane.querySelectorAll(".task-grid-lane-step")].map((cell) => cell.textContent);
 
 describe("configurable task grid", () => {
+  it("preserves an existing workspace when the initial preset changes for new users", async () => {
+    const props = { allRepos: false, onOpen: () => {}, registerNav: () => {}, storageKey: "existing-user" };
+    const oldView = render(<Grid {...props} initialPreset="kanban" />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.change(screen.getByLabelText(/Tile width/), { target: { value: "480" } });
+    fireEvent.click(screen.getByLabelText("Show archived"));
+    oldView.unmount();
+
+    render(<Grid {...props} initialPreset="progress" />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    expect((screen.getByLabelText("Position model") as HTMLSelectElement).value).toBe("packed");
+    expect((screen.getByLabelText(/Tile width/) as HTMLInputElement).value).toBe("480");
+    expect((screen.getByLabelText("Show archived") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("pull request") as HTMLInputElement).checked).toBe(false);
+  });
+
   it("saves named settings across repositories without changing the original preset", async () => {
     const props = { allRepos: false, onOpen: () => {}, registerNav: () => {} };
     const first = render(<Grid {...props} storageKey="repo-a:view:presets" />);
