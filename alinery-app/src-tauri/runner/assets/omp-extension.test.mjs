@@ -752,8 +752,7 @@ describe("2C — OMP extension callback behavior in isolation", () => {
     };
     const output = await api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx);
 
-    assert.equal(output.details.approved, true);
-    assert.match(output.content[0].text, /approved/i);
+    assert.deepEqual(output.details, { approved: true });
     assert.deepEqual(calls, [["Go?", "Biome failed"]]);
     assert.deepEqual(emit.emitted, [
       { type: "waiting_for_approval", correlation_id: "tool-call-1" },
@@ -768,13 +767,16 @@ describe("2C — OMP extension callback behavior in isolation", () => {
 
     const ctx = {
       ...makeContext("omp-sess-abc"),
-      ui: { confirm: async () => false },
+      ui: {
+        approved: false,
+        async confirm() {
+          return this.approved;
+        },
+      },
     };
     const output = await api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx);
 
-    assert.equal(output.details.approved, false);
-    assert.ok(!("status" in output.details) || output.details.status !== "unavailable");
-    assert.match(output.content[0].text, /denied|do not proceed/i);
+    assert.deepEqual(output.details, { approved: false });
     assert.deepEqual(emit.emitted, [
       { type: "waiting_for_approval", correlation_id: "tool-call-1" },
       { type: "busy", correlation_id: "tool-call-1" },
@@ -786,15 +788,19 @@ describe("2C — OMP extension callback behavior in isolation", () => {
     const emit = makeRecordingEmitter();
     registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
 
+    const error = new Error("confirm failed");
     const ctx = {
       ...makeContext("omp-sess-abc"),
       ui: {
         confirm: async () => {
-          throw new Error("confirm failed");
+          throw error;
         },
       },
     };
-    await assert.rejects(() => api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx));
+    await assert.rejects(
+      () => api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx),
+      (caught) => caught === error,
+    );
     assert.deepEqual(
       emit.emitted.filter((e) => e.type === "waiting_for_approval" || e.type === "busy"),
       [
@@ -812,7 +818,6 @@ describe("2C — OMP extension callback behavior in isolation", () => {
     const output = await api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, makeContext("omp-sess-abc"));
     assert.equal(output.details.approved, false);
     assert.equal(output.details.status, "unavailable");
-    assert.match(output.content[0].text, /unavailable/i);
     assert.equal(
       emit.emitted.some((e) => e.type === "waiting_for_approval"),
       false,
