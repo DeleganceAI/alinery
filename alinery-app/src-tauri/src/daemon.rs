@@ -12,19 +12,64 @@ pub(crate) fn task_daemon_for(repo: &Path, task_slug: &str, app_config: &Path) -
         .map_err(|error| error.to_string())
 }
 
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(crate) enum ExecutionAvailability {
+    Available,
+    Offline { detail: String },
+    ForeignOwner { detail: String },
+    Incompatible { detail: String },
+    Unavailable { detail: String },
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AppTaskExecutionReply {
+    #[serde(flatten)]
+    pub execution: alinery_core::task_creation::TaskExecutionReply,
+    pub live: ExecutionAvailability,
+}
+
+pub(crate) fn saved_task_execution_for(repo: &Path, task_slug: &str) -> Result<alinery_core::task_creation::TaskExecutionReply, String> {
+    let state = alinery_core::execution::read_execution_state(repo, task_slug)?;
+    let definition = alinery_core::execution::read_task_playbook(repo, task_slug, &state)?;
+    Ok(alinery_core::task_creation::TaskExecutionReply { state, definition })
+}
+
+pub(crate) fn task_execution_for(repo: &Path, task_slug: &str, app_config: &Path) -> Result<AppTaskExecutionReply, String> {
+    // Validate durable data before observing its owner. Browsing never starts or adopts a lane.
+    let saved = saved_task_execution_for(repo, task_slug)?;
+    let lane = saved.state.owning_lane.as_str();
+    let socket = alinery_core::alineryd_socket_path(repo, (!lane.is_empty()).then_some(lane));
+    let live = match daemon_client::connect_compatible(socket, app_config) {
+        Ok((client, _)) => match client.get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug: task_slug.into() }) {
+            Ok(execution) => {
+                return Ok(AppTaskExecutionReply {
+                    execution,
+                    live: ExecutionAvailability::Available,
+                })
+            }
+            Err(detail) => ExecutionAvailability::Unavailable { detail },
+        },
+        Err(error) => {
+            let detail = error.to_string();
+            match error {
+                daemon_client::DaemonClientError::Unreachable { .. } => ExecutionAvailability::Offline { detail },
+                daemon_client::DaemonClientError::AppConfigMismatch { .. } => ExecutionAvailability::ForeignOwner { detail },
+                daemon_client::DaemonClientError::ProtocolMismatch { .. } => ExecutionAvailability::Incompatible { detail },
+                daemon_client::DaemonClientError::Malformed(_) | daemon_client::DaemonClientError::Launch(_) => ExecutionAvailability::Unavailable { detail },
+            }
+        }
+    };
+    Ok(AppTaskExecutionReply { execution: saved, live })
+}
+
 #[tauri::command]
-pub(crate) fn get_task_execution(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    repo_path: Option<String>,
-    task_slug: String,
-) -> Result<alinery_core::task_creation::TaskExecutionReply, String> {
+pub(crate) fn get_task_execution(app: AppHandle, repo_path: Option<String>, task_slug: String) -> Result<AppTaskExecutionReply, String> {
     let repo = match repo_path {
         Some(path) => target_repo_for_app(&app, &path)?,
-        None => require_owned_active_repo(&state)?,
+        None => active_repo()?,
     };
-    require_repo_owned(&state, &repo)?;
-    task_daemon_for(&repo, &task_slug, &app_config_path(&app)?)?.get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug })
+    task_execution_for(&repo, &task_slug, &app_config_path(&app)?)
 }
 
 #[tauri::command]

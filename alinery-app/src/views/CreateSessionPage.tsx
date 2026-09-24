@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { askConfirm } from "../confirm";
 import * as ipc from "../ipc";
-import { InlineStatus, ModelInput, repoName, taskKey } from "../shared";
+import { ExecutionAvailabilityNotice, InlineStatus, ModelInput, repoName, taskKey } from "../shared";
 import type { BoardTask, SessionTypeChoice, TaskExecutionReply } from "../types";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
@@ -41,6 +41,7 @@ export function CreateSessionPage({
   const existing = mode === "existing";
   const effectiveHarness = auxiliary ? harness : "omp";
   const exactTaskLoaded = loadedTaskId === taskId;
+  const executionAvailable = executionView?.live?.status === "available" && !executionError;
 
   useEffect(() => {
     let alive = true;
@@ -119,7 +120,7 @@ export function CreateSessionPage({
     }
   };
 
-  const disabled = busy || decisionPending || !task?.worktree || !exactTaskLoaded || (!auxiliary && (!execution || !!executionError));
+  const disabled = busy || decisionPending || !task?.worktree || !exactTaskLoaded || (!auxiliary && (!execution || !executionAvailable));
   const launch = async () => {
     if (disabled || !task) return;
     let choice: SessionTypeChoice;
@@ -193,7 +194,7 @@ export function CreateSessionPage({
             }}
           >
             {executionView && (
-              <optgroup label={executionView.definition.title}>
+              <optgroup label={executionView.definition.title} disabled={!executionAvailable}>
                 {records.flatMap((record) => {
                   const title = executionView.definition.step.find((item) => item.key === record.candidate.step_key)?.title ?? record.candidate.step_key;
                   const options = [];
@@ -221,6 +222,7 @@ export function CreateSessionPage({
             <option value="auxiliary">Auxiliary session (outside task graph)</option>
           </select>
         </label>
+        {executionView && <ExecutionAvailabilityNotice live={executionView.live} controls />}
         {auxiliary && (
           <label className="create-field">
             <span>Auxiliary harness</span>
@@ -244,7 +246,9 @@ export function CreateSessionPage({
             <p>
               Execution {execution.id} · {execution.lifecycle} · Current owner {execution.owner_session_id}
             </p>
-            {mode === "recover" && <p>Recovery retains these assignments and replaces only this proven-stopped owner. Its completion permission will be reset.</p>}
+            {mode === "recover" && executionAvailable && (
+              <p>Recovery retains these assignments and replaces only this proven-stopped owner. Its completion permission will be reset.</p>
+            )}
             {mode === "manual" && (
               <p>This independent execution uses the selected input occurrences. The daemon reserves new output paths; it does not complete the original execution.</p>
             )}
@@ -278,6 +282,17 @@ export function CreateSessionPage({
           <details>
             <summary>Retained step instructions</summary>
             <pre className="mono">{step.prompt}</pre>
+          </details>
+        )}
+        {executionView && !executionAvailable && auxiliary && (
+          <details>
+            <summary>Retained playbook instructions</summary>
+            {executionView.definition.step.map((savedStep) => (
+              <section key={savedStep.key}>
+                <h3>{savedStep.title}</h3>
+                <pre className="mono">{savedStep.prompt}</pre>
+              </section>
+            ))}
           </details>
         )}
         {effectiveHarness !== "no-harness" && !existing && (

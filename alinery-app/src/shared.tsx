@@ -34,6 +34,7 @@ import type {
   ArtifactListItem,
   ArtifactTreeNode,
   BoardTask,
+  ExecutionAvailability,
   GridViewDefinition,
   KanbanColumn,
   LifecycleState,
@@ -411,7 +412,19 @@ export function LoadingState({ label, state = "working" }: { label: string; stat
 /** Inline status line (DESIGN.md §Error/§Success): plain-language message with
  *  tone icon; optional exact technical detail (copyable) and recovery action.
  *  Errors are announced; other tones are polite status. */
-export function InlineStatus({ tone, children, detail, action }: { tone: "error" | "warning" | "success" | "info"; children: ReactNode; detail?: string; action?: ReactNode }) {
+export function InlineStatus({
+  tone,
+  children,
+  detail,
+  action,
+  onDismiss,
+}: {
+  tone: "error" | "warning" | "success" | "info";
+  children: ReactNode;
+  detail?: string;
+  action?: ReactNode;
+  onDismiss?: () => void;
+}) {
   const Icon = tone === "error" ? CircleAlert : tone === "warning" ? TriangleAlert : tone === "success" ? CircleCheck : Info;
   return (
     <div className={`inline-status ${tone}`} role={tone === "error" ? "alert" : "status"}>
@@ -421,7 +434,41 @@ export function InlineStatus({ tone, children, detail, action }: { tone: "error"
         {detail && <pre className="inline-status-detail">{detail}</pre>}
         {action && <div className="inline-status-action">{action}</div>}
       </div>
+      {onDismiss && (
+        <button type="button" className="iconbtn" aria-label="Dismiss notice" title="Dismiss notice" onClick={onDismiss}>
+          <X size={14} strokeWidth={1.5} aria-hidden="true" />
+        </button>
+      )}
     </div>
+  );
+}
+
+export function executionAvailabilityLabel(live: ExecutionAvailability | undefined): string {
+  switch (live?.status) {
+    case "available":
+      return "Live execution status available";
+    case "offline":
+      return "Owner daemon is unavailable";
+    case "foreign_owner":
+      return "Owned by another Alinery app instance";
+    case "incompatible":
+      return "Owner daemon uses an incompatible protocol";
+    default:
+      return "Live execution status is unavailable";
+  }
+}
+
+export function ExecutionAvailabilityNotice({ live, controls = false }: { live: ExecutionAvailability | undefined; controls?: boolean }) {
+  if (live?.status === "available") return null;
+  return (
+    <InlineStatus tone="info">
+      {executionAvailabilityLabel(live)}. Showing saved progress, not confirmed live status.
+      {controls && " Execution controls are disabled until the correct owner is reachable."}
+      <details>
+        <summary>Technical details</summary>
+        <pre className="inline-status-detail">{live?.detail ?? "Owner availability could not be determined."}</pre>
+      </details>
+    </InlineStatus>
   );
 }
 

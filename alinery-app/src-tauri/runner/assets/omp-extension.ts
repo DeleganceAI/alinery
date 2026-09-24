@@ -36,6 +36,7 @@ export interface OmpToolParameters {
 
 export interface OmpExtensionContext {
   readonly cwd: string;
+  readonly hasUI?: boolean;
   readonly sessionManager: {
     getSessionId(): string;
   };
@@ -572,13 +573,16 @@ export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompl
     description:
       "Request an explicit Allow/Deny for a binary go/no-go, especially when checks failed or something is blocked. " +
       "Do not use this instead of fixing issues the agent can fix itself. Do not dump a table as the question. " +
-      "After Deny, do not proceed with the gated action. For multi-option questions use ask.",
+      "After Deny or unavailable approval, do not proceed with the gated action. For multi-option questions use ask. " +
+      "Before alinery_save_playbook, review the complete source with the user and request approval for that exact source and " +
+      "destination (scope and key), explicitly stating create versus replace. Recommend global scope unless repo-local is intended. " +
+      "Material source or destination changes require renewed approval. This is an agent-followed gate, not a backend approval receipt.",
     parameters: api.zod.z.object({ title: api.zod.z.string(), message: api.zod.z.string() }),
     async execute(toolCallId: string, input: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, context: OmpExtensionContext) {
       const title = typeof input.title === "string" && input.title !== "" ? input.title : "Approval required";
       const message = typeof input.message === "string" && input.message !== "" ? input.message : "Approval needed.";
       const ui = context.ui;
-      if (typeof ui?.confirm !== "function") {
+      if (context.hasUI === false || typeof ui?.confirm !== "function") {
         return {
           content: [{ type: "text" as const, text: "Approval UI is unavailable. Do not proceed with the gated action." }],
           details: { approved: false, status: "unavailable" },
@@ -587,8 +591,10 @@ export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompl
 
       await safeEmit(emit, { type: "waiting_for_approval", correlation_id: toolCallId });
       try {
+        // RPC UI methods use instance state; never detach confirm from its receiver.
         const ok = await ui.confirm(title, message);
-        if (ok) {
+        // The native Allow button sends true; no other (even truthy) response grants approval.
+        if (ok === true) {
           return {
             content: [{ type: "text" as const, text: "User approved. You may proceed with the gated action." }],
             details: { approved: true },
@@ -597,6 +603,12 @@ export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompl
         return {
           content: [{ type: "text" as const, text: "User denied. Do not proceed with the gated action." }],
           details: { approved: false },
+        };
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text" as const, text: `Approval UI is unavailable: ${reason}. Do not proceed with the gated action.` }],
+          details: { approved: false, status: "unavailable" },
         };
       } finally {
         await safeEmit(emit, { type: "busy", correlation_id: toolCallId });

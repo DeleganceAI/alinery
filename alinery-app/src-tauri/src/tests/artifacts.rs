@@ -208,6 +208,14 @@ fn list_artifacts_with_metadata_includes_handoff_records() {
     let repo = std::env::temp_dir().join(format!("alinery-handoff-metadata-{n}"));
     let artifacts = repo.join(".alinery/tasks/task/artifacts");
     fs::create_dir_all(&artifacts).unwrap();
+    write_task(
+        &repo,
+        &Task {
+            slug: "task".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     fs::write(artifacts.join("review-handoff-001.md"), "# Handoff\n").unwrap();
     let record = alinery_core::ReviewHandoffRecord {
         version: 1,
@@ -224,7 +232,7 @@ fn list_artifacts_with_metadata_includes_handoff_records() {
         created_at_ms: 7,
     };
     fs::write(artifacts.join("review-handoff-001.handoff.json"), serde_json::to_string(&record).unwrap()).unwrap();
-    let items = alinery_core::list_artifacts_with_metadata_for(&repo, "task").unwrap();
+    let items = crate::list_artifacts_with_metadata_in(&repo, "task").unwrap();
     let item = items.iter().find(|item| item.name == "review-handoff-001.md").unwrap();
     assert_eq!(item.handoffs, vec![record]);
     assert!(item.modified_at_ms.is_some());
@@ -239,6 +247,14 @@ fn list_artifacts_with_metadata_maps_session_artifact_override() {
     let sessions = repo.join(".alinery/tasks/task/sessions");
     fs::create_dir_all(&artifacts).unwrap();
     fs::create_dir_all(&sessions).unwrap();
+    write_task(
+        &repo,
+        &Task {
+            slug: "task".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     fs::write(artifacts.join("06-implementation-002.md"), "# Implementation\n").unwrap();
     let meta = SessionMeta {
         id: "s1".into(),
@@ -250,7 +266,7 @@ fn list_artifacts_with_metadata_maps_session_artifact_override() {
         ..Default::default()
     };
     fs::write(sessions.join("s1.meta.json"), serde_json::to_string(&meta).unwrap()).unwrap();
-    let items = alinery_core::list_artifacts_with_metadata_for(&repo, "task").unwrap();
+    let items = crate::list_artifacts_with_metadata_in(&repo, "task").unwrap();
     let item = items.iter().find(|item| item.name == "06-implementation-002.md").unwrap();
     assert_eq!(item.playbook_step, "implementation");
     assert_eq!(item.session_id, "s1");
@@ -689,5 +705,55 @@ fn nested_artifact_list_sorts_numerically_and_excludes_reserved_namespaces() {
         list_artifacts_for(&repo, "task").unwrap(),
         ["research/10-result-1.md", "research/2-result-10.md", "research/2-result-2.md",]
     );
+    fs::remove_dir_all(repo).unwrap();
+}
+
+#[test]
+fn execution_artifact_metadata_browses_saved_ownership_offline_without_locks() {
+    use alinery_core::execution::{install_seed, reserve_execution, write_execution_state_unlocked, ExecutionCandidate};
+    let repo = activity_repo("art-off");
+    write_retained_discovery_task(&repo, "task", "offline-owner", false);
+    let mut saved = crate::saved_task_execution_for(&repo, "task").unwrap();
+    let seed = install_seed(&mut saved.state, "ticket.md", "0-ticket-1.md").unwrap();
+    let candidate = ExecutionCandidate {
+        step_key: "implementation".into(),
+        context_id: "root".into(),
+        inputs: std::collections::BTreeMap::from([("ticket.md".into(), vec![seed])]),
+        complete_collection_id: None,
+        each_collection_id: None,
+        each_member_id: None,
+        manual: false,
+    };
+    let execution_id = reserve_execution(&repo, "task", &saved.definition, &mut saved.state, candidate, &Default::default(), None, false).unwrap();
+    let record = saved.state.executions[&execution_id].clone();
+    let output = &record.outputs[0].relative_path;
+    fs::create_dir_all(artifacts_dir(&repo, "task")).unwrap();
+    fs::write(artifacts_dir(&repo, "task").join(output), "# Saved report\n").unwrap();
+    write_execution_state_unlocked(&repo, "task", &mut saved.state).unwrap();
+    let stale = SessionMeta {
+        id: "stale-session".into(),
+        phase: "stale-step".into(),
+        artifact: output.clone(),
+        ..Default::default()
+    };
+    fs::write(sessions_dir(&repo, "task").join("stale-session.meta.json"), serde_json::to_vec(&stale).unwrap()).unwrap();
+    let state_path = alinery_core::execution::execution_state_path(&repo, "task").unwrap();
+    let before = fs::read(&state_path).unwrap();
+    let owner = AppState::default();
+    assert!(owner.claim_repo(&repo));
+    let items = alinery_core::with_task_mutation_lock(&repo, "hold while browsing artifacts", || crate::list_artifacts_with_metadata_in(&repo, "task")).unwrap();
+    let item = items.iter().find(|item| &item.name == output).unwrap();
+    assert_eq!(item.execution_id.as_deref(), Some(execution_id.as_str()));
+    assert_eq!(item.session_id, record.owner_session_id);
+    assert_eq!(item.playbook_step, "implementation");
+    assert_eq!(item.accepted, Some(false));
+    assert_eq!(fs::read(&state_path).unwrap(), before);
+    assert!(!alinery_core::alineryd_socket_path(&repo, Some("offline-owner")).exists());
+    assert!(!crate::current_alineryd_socket_path(&repo).exists());
+    assert!(!alinery_core::alineryd_lock_path(&repo, Some("offline-owner")).exists());
+    fs::write(alinery_core::execution::task_playbook_path(&repo, "task").unwrap(), "corrupt definition").unwrap();
+    assert!(crate::list_artifacts_with_metadata_in(&repo, "task").is_err());
+    fs::write(state_path, "corrupt state").unwrap();
+    assert!(crate::list_artifacts_with_metadata_in(&repo, "task").is_err());
     fs::remove_dir_all(repo).unwrap();
 }

@@ -89,6 +89,34 @@ describe("retained execution session selection", () => {
     await waitFor(() => expect(created).toHaveBeenCalledWith(task, { kind: "auxiliary" }, "no-harness", "", undefined));
   });
 
+  it.each(["offline", "foreign_owner", undefined] as const)("keeps saved bindings browsable but blocks graph launches when live status is %s", async (status) => {
+    const saved = executionReply([executionRecord({ lifecycle: "queued" }), executionRecord({ id: "stopped", lifecycle: "failed", shutdown_confirmed: true })]);
+    mocks.getTaskExecution.mockResolvedValue({ ...saved, live: status ? { status, detail: "Owner cannot be queried" } : undefined });
+    const created = renderPage();
+    const queued = await screen.findByRole("option", { name: /Start queued · Retained worker · execution-a/ });
+    expect((queued.closest("optgroup") as HTMLOptGroupElement).disabled).toBe(true);
+    expect(screen.getByText("research/1-request-2.md")).toBeDefined();
+    expect(screen.getByText("research/2-result-10.md")).toBeDefined();
+    fireEvent.click(screen.getByText("Retained step instructions"));
+    expect(screen.getByText("Use the exact assigned request, not the newest filename.")).toBeDefined();
+
+    for (const selection of ["existing:execution-a", "recover:stopped", "manual:execution-a"]) {
+      // Force selection as well as a keyboard launch to exercise the handler's authority guard.
+      choose(selection);
+      const launch = screen.getByRole("button", { name: "Launch" });
+      expect((launch as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.click(launch);
+      fireEvent.keyDown(launch, { key: "Enter", ctrlKey: true });
+    }
+    expect(created).not.toHaveBeenCalled();
+
+    choose("auxiliary");
+    fireEvent.click(screen.getByText("Retained playbook instructions"));
+    expect(screen.getByText("Use the exact assigned request, not the newest filename.")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    await waitFor(() => expect(created).toHaveBeenCalledWith(task, { kind: "auxiliary" }, "no-harness", "", undefined));
+  });
+
   it("does not replace another task's binding with a late query response", async () => {
     let resolve!: (value: TaskExecutionReply) => void;
     const pending = new Promise<TaskExecutionReply>((accept) => {

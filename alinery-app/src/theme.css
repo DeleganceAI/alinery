@@ -7027,6 +7027,10 @@ dialog.modal::backdrop {
   border-color: var(--border);
   background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
 }
+/* Keep notice actions clear of the floating settings button. */
+.task-grid-settings-toggle-floating ~ .inline-status {
+  margin-right: 40px;
+}
 .task-grid-settings-toggle svg,
 .task-grid-hide svg,
 .task-grid-focus-actions svg {

@@ -6,6 +6,7 @@ import {
   ArchiveTaskModal,
   Checkbox,
   EMPTY_TASK_ACTIVITY,
+  executionAvailabilityLabel,
   InlineStatus,
   repoName,
   sameBoardTasks,
@@ -739,6 +740,7 @@ export function Grid({
   const [loaded, setLoaded] = useState(false);
   const [err, setErr] = useState("");
   const [executionErrors, setExecutionErrors] = useState<{ ref: ExecutionRef; error: string }[]>([]);
+  const [dismissedAvailability, setDismissedAvailability] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(initialWorkspace.settingsOpen);
   const [preset, setPreset] = useState<PresetSelection>(initialWorkspace.preset);
   const [config, setConfig] = useState<GridConfig>(initialWorkspace.config);
@@ -803,6 +805,14 @@ export function Grid({
     }
     return [...refs.values()].sort((left, right) => left.key.localeCompare(right.key));
   }, [tasks, showArchived]);
+  const unavailableExecutions = executionRefs.flatMap((ref) => {
+    const execution = executions[ref.key];
+    return execution && execution.live?.status !== "available" ? [{ ref, live: execution.live }] : [];
+  });
+  const availabilityKey = JSON.stringify(unavailableExecutions.map(({ ref, live }) => [ref.key, live?.status]));
+  useEffect(() => {
+    setDismissedAvailability((current) => (current === availabilityKey ? current : null));
+  }, [availabilityKey]);
 
   useEffect(() => {
     if (!active) return;
@@ -1442,11 +1452,34 @@ export function Grid({
           {err}
         </div>
       )}
+      {unavailableExecutions.length > 0 && dismissedAvailability !== availabilityKey && (
+        <InlineStatus tone="warning" onDismiss={() => setDismissedAvailability(availabilityKey)}>
+          <details className="task-grid-execution-errors">
+            <summary>
+              Showing saved progress for {unavailableExecutions.length} {unavailableExecutions.length === 1 ? "task" : "tasks"} · live status unavailable
+            </summary>
+            <ul>
+              {unavailableExecutions.map(({ ref, live }) => (
+                <li key={ref.key}>
+                  <strong>{ref.slug}</strong> · {repoName(ref.repoPath)}: {executionAvailabilityLabel(live)}
+                  {live && (
+                    <details>
+                      <summary>Technical details</summary>
+                      <p>{ref.repoPath}</p>
+                      <pre>{live.detail}</pre>
+                    </details>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
+        </InlineStatus>
+      )}
       {executionErrors.length > 0 && (
         <InlineStatus tone="error">
           <details className="task-grid-execution-errors">
             <summary>
-              Execution status unavailable for {executionErrors.length} {executionErrors.length === 1 ? "task" : "tasks"}. Show details
+              Couldn't read execution state for {executionErrors.length} {executionErrors.length === 1 ? "task" : "tasks"}. Show details
             </summary>
             <ul>
               {executionErrors.map(({ ref, error }) => (

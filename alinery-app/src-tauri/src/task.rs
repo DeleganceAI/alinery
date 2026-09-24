@@ -852,11 +852,9 @@ pub(crate) fn retained_task_definition(repo: &Path, task: &Task) -> Result<Optio
     }
     // Display uses the task-owned snapshot, never a live owner or the mutable library.
     // The shared reader checks both the stored state and the retained source's integrity.
-    let read = || {
-        let execution = alinery_core::execution::read_execution_state(repo, &task.slug)?;
-        alinery_core::execution::read_task_playbook(repo, &task.slug, &execution)
-    };
-    read().map(Some).map_err(|error| format!("task {}: {error}", task_dir(repo, &task.slug).display()))
+    saved_task_execution_for(repo, &task.slug)
+        .map(|execution| Some(execution.definition))
+        .map_err(|error| format!("task {}: {error}", task_dir(repo, &task.slug).display()))
 }
 
 pub(crate) fn is_primary_playbook_session(_repo: &Path, task: &Task, session: &SessionMeta) -> bool {

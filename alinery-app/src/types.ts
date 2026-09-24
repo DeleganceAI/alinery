@@ -656,7 +656,8 @@ export type TaskExecutionState = {
     }
   >;
 };
-export type TaskExecutionReply = { state: TaskExecutionState; definition: NormalizedPlaybook };
+export type ExecutionAvailability = { status: "available" } | { status: "offline" | "foreign_owner" | "incompatible" | "unavailable"; detail: string };
+export type TaskExecutionReply = { state: TaskExecutionState; definition: NormalizedPlaybook; live: ExecutionAvailability };
 export type TaskAttachment = { name: string; bytes: string };
 export type PreparedTaskAttachments = { attachments: TaskAttachment[]; attachment_urls: string[]; attachment_errors: string[] };
 export type CreateTaskRequest = {
