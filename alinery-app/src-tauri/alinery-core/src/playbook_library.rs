@@ -24,6 +24,7 @@ pub const BUNDLED_PLAYBOOKS: &[(&str, &str)] = &[
     ("primed-feature-development", include_str!("../../playbooks/primed-feature-development/playbook.md")),
     ("systematic-evidence-review", include_str!("../../playbooks/systematic-evidence-review/playbook.md")),
     ("academic-survey", include_str!("../../playbooks/academic-survey/playbook.md")),
+    ("spec", include_str!("../../playbooks/spec/playbook.md")),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
