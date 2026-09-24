@@ -3,7 +3,7 @@ import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import * as ipc from "../ipc";
 import { PullRequestIndicator } from "../PullRequestIndicator";
 import { ArchiveTaskModal, Checkbox, EMPTY_TASK_ACTIVITY, repoName, sameBoardTasks, sameKanbanColumns, TaskActivityIndicators, taskKey, useBoardTaskActivity } from "../shared";
-import type { BoardNav, BoardTask, KanbanColumn, NormalizedStep, TaskActivityStatus, TaskExecutionReply } from "../types";
+import type { BoardNav, BoardTask, KanbanColumn, TaskActivityStatus, TaskExecutionReply } from "../types";
 import { usePointerDrag } from "../usePointerDrag";
 import { useTaskPullRequests } from "../useTaskPullRequests";
 
@@ -533,7 +533,7 @@ function borderTone(field: BorderField, fact: TaskFacts, values: string[], none:
   return stableTone(field, field === "accent" ? "Accent" : factValue(fact, field), "border", values);
 }
 
-function stagePath(fact: TaskFacts, executions: Record<string, TaskExecutionReply>): ProgressCell[] {
+function stagePath(fact: TaskFacts, executions: Record<string, TaskExecutionReply>, knownSteps: BoardTask["playbook_steps"]): ProgressCell[] {
   const execution = executions[fact.id];
   const states = new Map<string, Map<string, number>>();
   if (execution) {
@@ -547,28 +547,32 @@ function stagePath(fact: TaskFacts, executions: Record<string, TaskExecutionRepl
       counts.set(record.lifecycle, (counts.get(record.lifecycle) ?? 0) + 1);
     }
   }
-  const steps: NormalizedStep[] = execution?.definition.step ?? [];
+  const steps = execution?.definition.step ?? knownSteps;
   const path: ProgressCell[] = steps.map((step) => {
     const counts = states.get(step.key);
     return {
       key: step.key,
-      label: step.short || step.title || step.key,
+      label: step.title || step.key,
       active: Boolean(counts?.has("starting") || counts?.has("running") || counts?.has("finishing")),
       summary: counts
         ? [...counts]
             .sort(([left], [right]) => left.localeCompare(right))
             .map(([state, count]) => `${count} ${state.replace(/_/g, " ")}`)
             .join(", ")
-        : execution?.state.enabled_steps.includes(step.key)
-          ? "Not started"
-          : "Not started · Human completion required",
+        : !execution
+          ? fact.task.draft
+            ? undefined
+            : "Execution unavailable"
+          : execution.state.enabled_steps.includes(step.key)
+            ? "Not started"
+            : "Not started · Human completion required",
     };
   });
   const current = fact.task.current_phase || "";
   if (!path.some((step) => step.key === current)) {
     path.push({ key: current, label: fact.stage, summary: execution || fact.task.draft ? undefined : "Execution unavailable" });
   }
-  return path.sort((left, right) => left.label.localeCompare(right.label) || left.key.localeCompare(right.key));
+  return path;
 }
 
 function currentProgressKey(fact: TaskFacts, field: ProgressField) {
@@ -584,8 +588,14 @@ function currentProgressKey(fact: TaskFacts, field: ProgressField) {
   }
 }
 
-function progressPath(fact: TaskFacts, field: ProgressField, columns: KanbanColumn[], executions: Record<string, TaskExecutionReply>): ProgressCell[] {
-  if (field === "stage") return stagePath(fact, executions);
+function progressPath(
+  fact: TaskFacts,
+  field: ProgressField,
+  columns: KanbanColumn[],
+  executions: Record<string, TaskExecutionReply>,
+  knownSteps: BoardTask["playbook_steps"],
+): ProgressCell[] {
+  if (field === "stage") return stagePath(fact, executions, knownSteps);
   if (field === "status") return STATUS_ORDER.map((key) => ({ key, label: STATUS_LABELS[key] }));
   if (field === "createdWindow") return AGE_WINDOWS.map((value) => ({ key: value, label: value }));
   const path = columns.map((column) => ({ key: column.key, label: column.title || column.key }));
@@ -1318,7 +1328,7 @@ export function Grid({
   const groupsWrapWidth = groupTracks * groupOuterWidth + Math.max(0, groupTracks - 1) * config.columnSpacing;
   const planText =
     config.position === "lanes"
-      ? `fixed task lanes · ${config.progress === "stage" ? "retained step membership · actual execution counts · alphabetical layout, not execution order" : `position by ${optionLabel(PROGRESS_OPTIONS, config.progress).toLowerCase()}`}`
+      ? `fixed task lanes · ${config.progress === "stage" ? "playbook declaration order · execution counts when available, not a linear execution history" : `position by ${optionLabel(PROGRESS_OPTIONS, config.progress).toLowerCase()}`}`
       : `outer grid: ${groupTracks} group track${groupTracks === 1 ? "" : "s"} · ${config.columnCards} card${config.columnCards === 1 ? "" : "s"} per column · ${config.columnFlow === "scroll" ? "single scrolling row" : "wrapped rows"} · ${config.width} × ${config.height}px task cells`;
   const fillLegendValues = config.fill === "none" ? [] : orderedFieldValues(config.fill, visibleFacts, columns);
   const borderLegendValues = config.border === "none" ? [] : config.border === "accent" ? ["Accent"] : orderedFieldValues(config.border, visibleFacts, columns);
@@ -1381,7 +1391,7 @@ export function Grid({
   };
 
   const renderLane = (fact: TaskFacts) => {
-    const semanticCells = progressPath(fact, config.progress, columns, executions);
+    const semanticCells = progressPath(fact, config.progress, columns, executions, taskSteps[fact.id] ?? []);
     const currentKey = currentProgressKey(fact, config.progress);
     const currentSemanticIndex = Math.max(
       0,

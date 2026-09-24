@@ -718,6 +718,13 @@ describe("configurable task grid", () => {
     });
     expect(screen.getByRole("alert").textContent).toContain("retained execution unavailable");
     expect(within(screen.getByLabelText("Build API retained steps")).queryByText(/1 completed/)).toBeNull();
+    const offline = screen.getByLabelText("Build API retained steps");
+    expect([...offline.querySelectorAll(".task-grid-lane-step")].map((cell) => cell.textContent)).toEqual([
+      "Research · Execution unavailable",
+      "Design · Execution unavailable",
+      "Implementation · Execution unavailable",
+    ]);
+    expect(within(offline).queryByText(/Not started|Human completion required/)).toBeNull();
     expect(within(screen.getByLabelText("Review queue retained steps")).getByText(/Context · 1 completed/)).toBeDefined();
     failing = false;
     await act(async () => {
@@ -727,7 +734,28 @@ describe("configurable task grid", () => {
     expect(within(screen.getByLabelText("Build API retained steps")).getByText(/Research · 1 completed/)).toBeDefined();
   });
 
-  it("uses each task's retained definition and concurrent states without projecting auxiliary activity or source order", async () => {
+  it("shows legacy library steps in declaration order in row view without execution state", async () => {
+    ipcMock.listBoardTasks.mockResolvedValue([
+      makeTask({ name: "Legacy row", engine_version: 1, playbook_steps: [], current_phase: "implementation", current_step_title: "implementation" }),
+    ]);
+    ipcMock.getTaskExecution.mockRejectedValue(new Error("execution.json not found"));
+    render(<Grid allRepos={false} onOpen={() => {}} registerNav={() => {}} initialPreset="progress" />);
+    const lane = await screen.findByLabelText("Legacy row retained steps");
+    await waitFor(() =>
+      expect([...lane.querySelectorAll(".task-grid-lane-step")].map((cell) => cell.textContent)).toEqual([
+        "Research · Execution unavailable",
+        "Design · Execution unavailable",
+        "Implementation · Execution unavailable",
+      ]),
+    );
+    expect(within(lane).getByRole("button", { name: /Legacy row.*Implementation/ })).toBeDefined();
+    expect(within(lane).queryByText(/Not started|Human completion required/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.change(screen.getByLabelText("Display direction"), { target: { value: "rtl" } });
+    expect([...lane.querySelectorAll(".task-grid-lane-step")].map((cell) => cell.textContent?.split(" · ")[0])).toEqual(["Implementation", "Design", "Research"]);
+  });
+
+  it("uses each task's retained definition and concurrent states without projecting auxiliary activity or a linear execution history", async () => {
     ipcMock.listBoardTasks.mockResolvedValue([
       makeTask({ name: "Original", slug: "shared", current_phase: "work", current_step_title: "Original work", latest_session_title: "Auxiliary notes" }),
       makeTask({ name: "Revised", slug: "revised", current_phase: "work", current_step_title: "Revised work" }),

@@ -140,6 +140,12 @@ Drag a column's grip (or focus it and press Left/Right) to change the order.
 Custom column order is remembered per grouping in each Grid view and included in saved
 presets. **Reset column order** restores the default without changing task execution.
 
+For one row per task, choose **Position model → Stable task lanes**, **Progress by →
+Playbook step**, and **Path labels → Every playbook step** (or select **Progress lanes**).
+Each row shows its own playbook's steps in declaration order, with the task card under
+its latest recorded step. Step labels remain visible when execution data is unavailable;
+live counts and completion permissions are shown only when execution data can be read.
+
 ### Sub-tasks
 
 Sub-tasks give rabbit holes a place of their own, so you can investigate a side question and return to the main task knowing exactly where you left off.
