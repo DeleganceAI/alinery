@@ -638,6 +638,121 @@ describe("2C — OMP extension callback behavior in isolation", () => {
     assert.equal(shutdownRequests, 2, "session reset must clear the shutdown latch");
   });
 
+  test("locked_completion_waits_for_approval_then_rechecks_daemon_acceptance", async () => {
+    const api = makeFakeApi();
+    const emit = makeRecordingEmitter();
+    let attempts = 0;
+    let shutdowns = 0;
+    let answer;
+    let present;
+    const shown = new Promise((resolve) => {
+      present = resolve;
+    });
+    registerCallbacks(
+      api,
+      emit,
+      async () => {
+        attempts += 1;
+        return attempts === 1 ? { status: "human_authorization_required" } : { status: "accepted", receipt_id: "approved-receipt" };
+      },
+      undefined,
+    );
+    const pending = api.callTool(
+      "alinery_phase_complete",
+      {},
+      {
+        ...makeContext("completion-session"),
+        shutdown() {
+          shutdowns += 1;
+        },
+        ui: {
+          confirm(title) {
+            present(title);
+            return new Promise((resolve) => {
+              answer = resolve;
+            });
+          },
+        },
+      },
+    );
+    assert.equal(await shown, "Allow this session to complete");
+    assert.equal(attempts, 1);
+    assert.equal(shutdowns, 0);
+    answer(true);
+    assert.deepEqual((await pending).details, { status: "accepted", receipt_id: "approved-receipt" });
+    assert.equal(attempts, 2);
+    assert.equal(shutdowns, 1);
+  });
+
+  test("completion_denial_or_unavailable_ui_never_retries_or_shuts_down", async () => {
+    for (const response of [false, undefined, "true", new Error("UI disconnected")]) {
+      const api = makeFakeApi();
+      const emit = makeRecordingEmitter();
+      let attempts = 0;
+      registerCallbacks(
+        api,
+        emit,
+        async () => {
+          attempts += 1;
+          return { status: "human_authorization_required" };
+        },
+        undefined,
+      );
+      const result = await api.callTool(
+        "alinery_phase_complete",
+        {},
+        {
+          ...makeContext("completion-session"),
+          shutdown() {
+            assert.fail("must remain interactive");
+          },
+          ui: {
+            async confirm() {
+              if (response instanceof Error) throw response;
+              return response;
+            },
+          },
+        },
+      );
+      assert.equal(result.details.status, "human_authorization_required");
+      assert.equal(attempts, 1);
+      assert.deepEqual(emit.emitted.at(-1), { type: "busy", correlation_id: "tool-call-1" });
+    }
+  });
+
+  test("an_allowed_confirmation_does_not_replace_daemon_permission_or_output_validation", async () => {
+    for (const outcome of [
+      { status: "human_authorization_required" },
+      { status: "invalid_outputs", diagnostics: ["report missing"] },
+      { status: "rejected", reason: "owner changed" },
+    ]) {
+      const api = makeFakeApi();
+      const emit = makeRecordingEmitter();
+      let attempts = 0;
+      let confirmations = 0;
+      registerCallbacks(api, emit, async () => (++attempts === 1 ? { status: "human_authorization_required" } : outcome), undefined);
+      const result = await api.callTool(
+        "alinery_phase_complete",
+        {},
+        {
+          ...makeContext("completion-session"),
+          shutdown() {
+            assert.fail("must remain interactive");
+          },
+          ui: {
+            async confirm() {
+              confirmations += 1;
+              return true;
+            },
+          },
+        },
+      );
+      assert.deepEqual(result.details, outcome);
+      assert.equal(attempts, 2);
+      assert.equal(confirmations, 1);
+    }
+  });
+
   test("completion_tool_keeps_locked_invalid_and_transport_failures_interactive", async () => {
     const cases = [
       { outcome: { status: "human_authorization_required" } },
