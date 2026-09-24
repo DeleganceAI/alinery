@@ -10,11 +10,92 @@ pub(crate) fn load_session_meta_for(repo: &Path, slug: &str, id: &str) -> Result
 }
 
 #[derive(Serialize, Clone)]
+pub(crate) struct SessionDisplayMeta {
+    #[serde(flatten)]
+    pub(crate) meta: SessionMeta,
+    pub(crate) name: Option<String>,
+    pub(crate) name_source: Option<alinery_core::SessionNameSource>,
+    pub(crate) name_error: Option<String>,
+}
+
+impl std::ops::Deref for SessionDisplayMeta {
+    type Target = SessionMeta;
+    fn deref(&self) -> &Self::Target {
+        &self.meta
+    }
+}
+
+#[derive(Serialize, Clone)]
+pub(crate) struct SessionDisplayContext {
+    pub(crate) session: SessionDisplayMeta,
+    pub(crate) task_name: String,
+    pub(crate) subtask_name: Option<String>,
+}
+
+fn project_session_display(repo: &Path, task_slug: &str, meta: SessionMeta) -> SessionDisplayMeta {
+    let (name, name_source, name_error) = match alinery_core::read_session_name(repo, task_slug, &meta.id) {
+        Ok(Some(value)) => (Some(value.name), Some(value.source), None),
+        Ok(None) => (None, None, None),
+        Err(error) => (None, None, Some(error.chars().take(256).collect())),
+    };
+    SessionDisplayMeta {
+        meta,
+        name,
+        name_source,
+        name_error,
+    }
+}
+
+fn current_subtask_name(repo: &Path, session: &SessionMeta) -> Option<String> {
+    if alinery_core::safe_component(&session.subtask_slug) != Some(session.subtask_slug.as_str()) {
+        return None;
+    }
+    read_task(repo, &session.subtask_slug).ok().map(|task| task.name)
+}
+
+pub(crate) fn session_display_context_for_repo(repo: &Path, task_slug: &str, session_id: &str) -> Result<SessionDisplayContext, String> {
+    if alinery_core::safe_component(task_slug) != Some(task_slug) || alinery_core::safe_component(session_id) != Some(session_id) {
+        return Err("invalid task slug or session id".into());
+    }
+    let task = read_task(repo, task_slug)?;
+    let meta = load_session_meta_for(repo, task_slug, session_id)?;
+    if meta.id != session_id || task.slug != task_slug {
+        return Err("retained display identity mismatch".into());
+    }
+    Ok(SessionDisplayContext {
+        subtask_name: current_subtask_name(repo, &meta),
+        session: project_session_display(repo, task_slug, meta),
+        task_name: task.name,
+    })
+}
+
+#[tauri::command]
+pub(crate) fn rename_session<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, AppState>,
+    repo_path: String,
+    task_slug: String,
+    session_id: String,
+    name: String,
+) -> Result<alinery_core::SessionName, String> {
+    let repo = target_repo_for_app(&app, &repo_path)?;
+    require_repo_owned(&state, &repo)?;
+    Ok(alinery_core::set_session_name(&repo, &task_slug, &session_id, &name, alinery_core::SessionNameSource::User)?.value)
+}
+
+#[tauri::command]
+pub(crate) fn get_session_display<R: tauri::Runtime>(app: AppHandle<R>, repo_path: String, task_slug: String, session_id: String) -> Result<SessionDisplayContext, String> {
+    let repo = target_repo_for_app(&app, &repo_path)?;
+    session_display_context_for_repo(&repo, &task_slug, &session_id)
+}
+
+#[derive(Serialize, Clone)]
 pub(crate) struct SessionListItem {
     #[serde(flatten)]
-    pub(crate) session: SessionMeta,
+    pub(crate) session: SessionDisplayMeta,
     pub(crate) task_slug: String,
     pub(crate) task_name: String,
+    pub(crate) subtask_name: Option<String>,
     pub(crate) task_worktree: String,
     pub(crate) repo_path: String,
     pub(crate) playbook_title: String,
@@ -155,7 +236,8 @@ pub(crate) fn session_list_items_for_repo(repo: &Path, repo_path: &str, include_
                 step.map(|step| step.title.clone()).unwrap_or_else(|| session.phase.clone())
             };
             SessionListItem {
-                session,
+                subtask_name: current_subtask_name(repo, &session),
+                session: project_session_display(repo, &task.slug, session),
                 task_slug: task.slug.clone(),
                 task_name: task.name.clone(),
                 task_worktree: task.worktree.clone(),
@@ -322,9 +404,15 @@ pub(crate) fn acknowledge_exited_session_refs(repo: &Path, refs: &[(String, Stri
 }
 
 #[tauri::command]
-pub(crate) async fn list_sessions(task_slug: String) -> Result<Vec<SessionMeta>, String> {
-    let repo = active_repo()?;
-    list_sessions_for_repo(&repo, &task_slug)
+pub(crate) async fn list_sessions(app: AppHandle, task_slug: String, repo_path: Option<String>) -> Result<Vec<SessionDisplayMeta>, String> {
+    let repo = match repo_path {
+        Some(path) => target_repo_for_app(&app, &path)?,
+        None => active_repo()?,
+    };
+    Ok(list_sessions_for_repo(&repo, &task_slug)?
+        .into_iter()
+        .map(|meta| project_session_display(&repo, &task_slug, meta))
+        .collect())
 }
 
 #[tauri::command]

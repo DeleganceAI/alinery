@@ -104,11 +104,13 @@ pub(crate) fn read_task_opt(repo: &Path, slug: &str) -> Result<Option<Task>, Str
     }
 }
 
-// task.rs — mirrors the playbook.rs:56-58 twin template; TaskDetail makes zero ipc calls with
-// the repoPath prop it receives, so this stays active-repo-implicit with no `_for_repo` twin.
 #[tauri::command]
-pub(crate) async fn get_task(slug: String) -> Result<Option<Task>, String> {
-    read_task_opt(&active_repo()?, &slug)
+pub(crate) async fn get_task(app: AppHandle, slug: String, repo_path: Option<String>) -> Result<Option<Task>, String> {
+    let repo = match repo_path {
+        Some(path) => target_repo_for_app(&app, &path)?,
+        None => active_repo()?,
+    };
+    read_task_opt(&repo, &slug)
 }
 
 pub(crate) fn write_task_unlocked(repo: &Path, task: &Task) -> Result<(), String> {
@@ -140,6 +142,13 @@ pub(crate) async fn create_task_for_repo(app: AppHandle, state: State<'_, AppSta
     tauri::async_runtime::spawn_blocking(move || daemon.create_task(&request))
         .await
         .map_err(|error| format!("create task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) fn rename_task<R: tauri::Runtime>(app: AppHandle<R>, state: State<'_, AppState>, repo_path: String, task_slug: String, name: String) -> Result<Task, String> {
+    let repo = target_repo_for_app(&app, &repo_path)?;
+    require_repo_owned(&state, &repo)?;
+    alinery_core::rename_task(&repo, &task_slug, &name)
 }
 
 #[tauri::command]
@@ -841,8 +850,11 @@ pub(crate) fn list_tasks_for_repo(repo: &Path) -> Result<Vec<Task>, String> {
 
 // Scan `.alinery/tasks/*/task.md`. Returns archived too; the UI hides them.
 #[tauri::command]
-pub(crate) async fn list_tasks() -> Result<Vec<Task>, String> {
-    let repo = active_repo()?;
+pub(crate) async fn list_tasks(app: AppHandle, repo_path: Option<String>) -> Result<Vec<Task>, String> {
+    let repo = match repo_path {
+        Some(path) => target_repo_for_app(&app, &path)?,
+        None => active_repo()?,
+    };
     list_tasks_for_repo(&repo)
 }
 

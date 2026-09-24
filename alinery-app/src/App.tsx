@@ -47,6 +47,7 @@ import type {
   BoardNav,
   BoardTask,
   CreateTaskResult,
+  NameCommit,
   NotificationPrefs,
   PlaybookRef,
   RepoScope,
@@ -136,6 +137,14 @@ export default function App() {
   const [searchData, setSearchData] = useState<SearchData>(EMPTY_SEARCH_DATA);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState("");
+  const searchRequest = useRef(0);
+  const [searchRefresh, setSearchRefresh] = useState(0);
+  const searchScope = `${appConfig?.active_repo || ""}\u0000${appConfig?.known_repos.join("\u0000") || ""}`;
+  const currentSearchScope = useRef(searchScope);
+  if (currentSearchScope.current !== searchScope) {
+    currentSearchScope.current = searchScope;
+    searchRequest.current += 1;
+  }
   const [diagramZoomOpen, setDiagramZoomOpen] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [sessionMessageDrafts, setSessionMessageDrafts] = useState<Map<string, SessionMessageDraft>>(() => new Map());
@@ -284,25 +293,54 @@ export default function App() {
   }, [appConfig?.active_repo, appConfig?.known_repos, noticeSnapshot.requestRefresh]);
 
   useEffect(() => {
-    if (!searchOpen || !appConfig?.active_repo) return;
-    let cancelled = false;
     setSearchData(EMPTY_SEARCH_DATA);
+  }, [searchScope]);
+
+  useEffect(() => {
+    const request = ++searchRequest.current;
+    if (!searchOpen || !appConfig?.active_repo) return;
     setSearchLoading(true);
     setSearchError("");
     Promise.all([ipc.listBoardTasks(true), ipc.listSessionItems(true, false)])
       .then(([tasks, sessions]) => {
-        if (!cancelled) setSearchData({ tasks, sessions });
+        if (request === searchRequest.current) setSearchData({ tasks, sessions });
       })
       .catch((error) => {
-        if (!cancelled) setSearchError(String(error));
+        if (request === searchRequest.current) setSearchError(String(error));
       })
       .finally(() => {
-        if (!cancelled) setSearchLoading(false);
+        if (request === searchRequest.current) setSearchLoading(false);
       });
     return () => {
-      cancelled = true;
+      searchRequest.current += 1;
     };
-  }, [searchOpen, appConfig?.active_repo]);
+  }, [searchOpen, searchScope, searchRefresh]);
+
+  const onNameCommitted = useCallback((change: NameCommit) => {
+    // Invalidate synchronously, before React runs the refetch effect.
+    searchRequest.current += 1;
+    setSearchData((current) => ({
+      tasks:
+        change.kind === "task"
+          ? current.tasks.map((task) => (task.repo_path === change.repo_path && task.slug === change.task_slug ? { ...task, ...change.task } : task))
+          : current.tasks,
+      sessions: current.sessions.map((session) => {
+        if (session.repo_path !== change.repo_path) return session;
+        if (change.kind === "session") {
+          return session.task_slug === change.task_slug && session.id === change.session_id
+            ? { ...session, name: change.value.name, name_source: change.value.source, name_error: null }
+            : session;
+        }
+        return {
+          ...session,
+          task_name: session.task_slug === change.task_slug ? change.task.name : session.task_name,
+          subtask_name: session.subtask_manager && session.subtask_slug === change.task_slug ? change.task.name : session.subtask_name,
+        };
+      }),
+    }));
+    setSearchRefresh((value) => value + 1);
+    if (change.kind === "task") setReloadNonce((value) => value + 1);
+  }, []);
 
   const refreshBoards = () => setReloadNonce((n) => n + 1);
 
@@ -951,9 +989,31 @@ export default function App() {
       .map((session) => ({
         id: `session:${session.repo_path}:${session.task_slug}:${session.id}`,
         kind: "session" as const,
-        title: session.task_name,
-        detail: [repoName(session.repo_path), session.step_title || session.phase || "Session", session.harness, session.model, session.id].filter(Boolean).join(" · "),
-        searchText: [session.task_slug, session.playbook, session.playbook_title, session.phase, session.step_title, session.harness, session.model, session.id].join(" "),
+        title: session.name || session.task_name,
+        detail: [
+          repoName(session.repo_path),
+          session.task_name,
+          session.subtask_manager ? session.subtask_name || session.subtask_slug || "Sub-task setup" : "",
+          session.step_title || session.phase || "Session",
+          session.harness,
+          session.model,
+          session.id,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        searchText: [
+          session.task_name,
+          session.subtask_name,
+          session.subtask_slug,
+          session.task_slug,
+          session.playbook,
+          session.playbook_title,
+          session.phase,
+          session.step_title,
+          session.harness,
+          session.model,
+          session.id,
+        ].join(" "),
         run: () => void openSessionItem(session),
       })),
   ];
@@ -1182,6 +1242,7 @@ export default function App() {
                 onCreateTask={() => openCreate()}
                 sessionSort={globalSessionSort}
                 onSessionSortChange={setGlobalSessionSort}
+                onNameCommitted={onNameCommitted}
               />
             </div>
           )}
@@ -1245,6 +1306,7 @@ export default function App() {
                   knownRepos={appConfig.known_repos}
                   sessionSort={taskSessionSort}
                   onSessionSortChange={setTaskSessionSort}
+                  onNameCommitted={onNameCommitted}
                   onBack={goBack}
                   onOpenSession={(ownerTaskSlug, id, cwd, phase, harness, model, playbook, generic, intent) => {
                     void openTaskSession({
@@ -1346,6 +1408,7 @@ export default function App() {
                   appearance={appearance}
                   onAppearanceChange={onAppearanceChange}
                   onDiagramZoomOpenChange={setDiagramZoomOpen}
+                  onNameCommitted={onNameCommitted}
                   onBack={goBack}
                   onStartFresh={() => {
                     setView({ kind: "createSession", from: view, initialTask: { repo_path: appConfig.active_repo, slug: view.taskSlug } });

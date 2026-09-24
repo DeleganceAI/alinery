@@ -63,6 +63,7 @@ const mocks = vi.hoisted(() => ({
   listSessions: vi.fn(),
   listArtifactsWithMetadata: vi.fn(),
   sessionStatuses: vi.fn(),
+  renameSession: vi.fn(),
 }));
 
 vi.mock("../ipc", () =>
@@ -72,6 +73,7 @@ vi.mock("../ipc", () =>
     listSessions: mocks.listSessions,
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
     sessionStatuses: mocks.sessionStatuses,
+    renameSession: mocks.renameSession,
   }),
 );
 
@@ -81,6 +83,7 @@ beforeEach(() => {
   mocks.listSessions.mockReset().mockResolvedValue([]);
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
   mocks.sessionStatuses.mockReset().mockResolvedValue({});
+  mocks.renameSession.mockReset();
 });
 
 afterEach(() => {
@@ -274,4 +277,45 @@ describe("an artifact read that recovers while sessions stay broken", () => {
     fireEvent.click(screen.getByRole("button", { name: "Artifacts", pressed: false }));
     expect(screen.getByText("00-ticket.md")).toBeDefined();
   });
+});
+
+it("older_poll_cannot_undo_name_commit_but_newer_poll_can_update_it", async () => {
+  vi.useFakeTimers();
+  const fixture = task();
+  let current = { ...session(), name: "Original purpose", name_source: "auto" as const };
+  mocks.getTask.mockResolvedValue(fixture);
+  mocks.listSessions.mockImplementation(async () => [current]);
+  mocks.renameSession.mockImplementation(async () => {
+    current = { ...current, name: "Committed purpose" };
+    return { name: current.name, source: "user" };
+  });
+  renderDetail({ initialTask: fixture });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  let release!: (value: (typeof current)[]) => void;
+  mocks.listSessions.mockImplementationOnce(
+    () =>
+      new Promise<(typeof current)[]>((resolve) => {
+        release = resolve;
+      }),
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Committed purpose" } });
+  await act(async () => {
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+  });
+  expect(screen.getByText("Committed purpose")).toBeDefined();
+  await act(async () => {
+    release([{ ...current, name: "Original purpose" }]);
+  });
+  expect(screen.queryByText("Original purpose")).toBeNull();
+  current = { ...current, name: "External purpose" };
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
+  expect(screen.getByText("External purpose")).toBeDefined();
 });

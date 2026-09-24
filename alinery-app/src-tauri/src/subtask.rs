@@ -123,8 +123,12 @@ pub(crate) fn discard_subtask_in(state: &AppState, repo: &Path, task_slug: &str,
 }
 
 #[tauri::command]
-pub(crate) fn subtask_state(state: State<'_, AppState>, task_slug: String) -> Result<alinery_core::SubtaskManagerState, String> {
-    let repo = require_owned_active_repo(&state)?;
+pub(crate) fn subtask_state(app: AppHandle, state: State<'_, AppState>, task_slug: String, repo_path: Option<String>) -> Result<alinery_core::SubtaskManagerState, String> {
+    let repo = match repo_path {
+        Some(path) => target_repo_for_app(&app, &path)?,
+        None => active_repo()?,
+    };
+    require_repo_owned(&state, &repo)?;
     subtask_state_in(&repo, &task_slug)
 }
 

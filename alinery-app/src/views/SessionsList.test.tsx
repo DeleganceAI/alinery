@@ -13,11 +13,13 @@ let observations: Record<string, SessionObservation> = {};
 const mocks = vi.hoisted(() => ({
   listSessionItems: vi.fn(),
   sessionListStatuses: vi.fn(),
+  renameSession: vi.fn(),
 }));
 
 vi.mock("../ipc", () =>
   mockIpc({
     listSessionItems: mocks.listSessionItems,
+    renameSession: mocks.renameSession,
     sessionListStatuses: mocks.sessionListStatuses,
     listBoardTasks: async () => boardTasks,
   }),
@@ -29,8 +31,11 @@ beforeEach(() => {
   sessionItems = [];
   observations = {};
   currentNav = null;
-  mocks.listSessionItems.mockReset().mockImplementation(async () => sessionItems);
+  mocks.listSessionItems
+    .mockReset()
+    .mockImplementation(async (allRepos, _archived, repoPath) => (allRepos ? sessionItems : sessionItems.filter((item) => item.repo_path === repoPath)));
   mocks.sessionListStatuses.mockReset().mockImplementation(async () => observations);
+  mocks.renameSession.mockReset().mockResolvedValue({ name: "Committed name", source: "user" });
 });
 
 afterEach(() => {
@@ -93,6 +98,16 @@ const session = (over: Partial<SessionListItem> = {}): SessionListItem =>
     is_playbook_step: true,
     ...over,
   }) as SessionListItem;
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 const busyObservation: SessionObservation = {
   lifecycle: { state: "live" },
@@ -409,5 +424,127 @@ describe("SessionsList time sorting and presentation", () => {
       await vi.advanceTimersByTimeAsync(60_000);
     });
     expect(times[0].textContent).toContain("2m");
+  });
+});
+
+describe("session work names", () => {
+  it("rename_keeps_repo_qualified_selection_and_ignores_stale_item_reads", async () => {
+    vi.useFakeTimers();
+    const original = session({ name: "Original name", subtask_manager: true, subtask_slug: "child", subtask_name: "Current child" });
+    const foreign = session({ repo_path: "/other", name: "Foreign name" });
+    sessionItems = [original, foreign];
+    const onOpen = vi.fn();
+    const { container } = render(<SessionsList allRepos activeRepo="/r" onOpen={onOpen} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    await act(async () => {});
+    expect(screen.getByText("Original name")).toBeDefined();
+    expect(screen.getByText("Current child")).toBeDefined();
+    const oldRead = deferred<SessionListItem[]>();
+    mocks.listSessionItems.mockReturnValueOnce(oldRead.promise);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    const row = screen.getByText("Original name").closest(".row") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "Rename session" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Committed name" } });
+    sessionItems = [{ ...original, name: "Committed name", name_source: "user" }, foreign];
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Session name" }), { key: "Enter" });
+    await act(async () => {});
+    expect(mocks.renameSession).toHaveBeenCalledWith({ repoPath: "/r", taskSlug: "a-task", sessionId: "s1", name: "Committed name" });
+    expect(onOpen).not.toHaveBeenCalled();
+    await act(async () => {
+      oldRead.resolve([original, foreign]);
+    });
+    expect(container.querySelector(".row.sel .rtt")?.textContent).toBe("Committed name");
+    expect(screen.getByText("Foreign name")).toBeDefined();
+    sessionItems = [{ ...original, name: "External name" }, foreign];
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(screen.getByText("External name")).toBeDefined();
+    fireEvent.click(screen.getByText("Foreign name"));
+    expect(onOpen).toHaveBeenLastCalledWith(foreign);
+  });
+
+  it("keeps an archived session editable and retains its draft after a failed save", async () => {
+    const archived = session({ name: "Retained work", archived: true });
+    sessionItems = [archived];
+    mocks.renameSession.mockRejectedValueOnce(new Error("Naming file is busy"));
+    const onOpen = vi.fn();
+    render(<SessionsList allRepos={false} activeRepo="/r" onOpen={onOpen} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Rename session" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Committed name" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Session name" }), { key: "Enter" });
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Naming file is busy");
+    expect(screen.getByText("Retained work")).toBeDefined();
+    expect(screen.getByRole("textbox", { name: "Session name" })).toHaveProperty("value", "Committed name");
+    sessionItems = [{ ...archived, name: "Committed name" }];
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Committed name");
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("ignores previous repo save failures without closing the current editor", async () => {
+    const original = session({ name: "Repo A work" });
+    const other = session({ repo_path: "/other", name: "Repo B work" });
+    sessionItems = [original, other];
+    const props = { allRepos: false, onOpen: vi.fn(), registerNav: vi.fn(), onCreateSession: vi.fn(), onCreateTask: vi.fn() };
+    const { rerender } = render(<SessionsList {...props} activeRepo="/r" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Rename session" }));
+    const pendingSave = deferred<never>();
+    mocks.renameSession.mockReturnValueOnce(pendingSave.promise);
+    fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Late A work" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Session name" }), { key: "Enter" });
+    rerender(<SessionsList {...props} activeRepo="/other" />);
+    await screen.findByText("Repo B work");
+    fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "B draft" } });
+    await act(async () => {
+      pendingSave.reject(new Error("Old repo error"));
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Session name" })).toHaveProperty("value", "B draft");
+    expect(screen.queryByText("Repo A work")).toBeNull();
+  });
+
+  it("does not apply an old repo read error or finalizer to a pending new repo read", async () => {
+    const oldRead = deferred<SessionListItem[]>();
+    const newRead = deferred<SessionListItem[]>();
+    mocks.listSessionItems.mockReturnValueOnce(oldRead.promise).mockReturnValueOnce(newRead.promise);
+    const props = { allRepos: false, onOpen: vi.fn(), registerNav: vi.fn(), onCreateSession: vi.fn(), onCreateTask: vi.fn() };
+    const { rerender } = render(<SessionsList {...props} activeRepo="/r" />);
+    rerender(<SessionsList {...props} activeRepo="/other" />);
+    await act(async () => {
+      oldRead.reject(new Error("Old repo offline"));
+    });
+    expect(screen.queryByText("Could not load sessions.")).toBeNull();
+    expect(screen.queryByText("No sessions yet.")).toBeNull();
+    await act(async () => {
+      newRead.resolve([session({ repo_path: "/other", name: "Current repo work" })]);
+    });
+    expect(screen.getByText("Current repo work")).toBeDefined();
+  });
+
+  it("keeps another row draft and focus when a previous row save commits", async () => {
+    const first = session({ id: "first", name: "First work" });
+    const second = session({ id: "second", name: "Second work" });
+    sessionItems = [first, second];
+    const pending = deferred<{ name: string; source: "user" }>();
+    mocks.renameSession.mockReturnValueOnce(pending.promise);
+    render(<SessionsList allRepos={false} activeRepo="/r" onOpen={vi.fn()} registerNav={vi.fn()} onCreateSession={vi.fn()} onCreateTask={vi.fn()} />);
+    const firstRow = (await screen.findByText("First work")).closest(".row") as HTMLElement;
+    const secondRow = screen.getByText("Second work").closest(".row") as HTMLElement;
+    fireEvent.click(within(firstRow).getByRole("button", { name: "Rename session" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Committed first" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(within(secondRow).getByRole("button", { name: "Rename session" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Unsubmitted second draft" } });
+    sessionItems = [{ ...first, name: "Committed first" }, second];
+    await act(async () => {
+      pending.resolve({ name: "Committed first", source: "user" });
+    });
+    expect(screen.getByText("Committed first")).toBeDefined();
+    expect(within(secondRow).getByRole("textbox", { name: "Session name" })).toHaveProperty("value", "Unsubmitted second draft");
+    expect(document.activeElement).toBe(within(secondRow).getByRole("textbox", { name: "Session name" }));
+    expect(mocks.renameSession).toHaveBeenCalledTimes(1);
   });
 });

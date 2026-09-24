@@ -16,6 +16,14 @@ fn compat(daemon_protocol: Option<u32>, daemon_build: Option<&str>, daemon_confi
 }
 
 #[test]
+fn previous_namingless_protocol_is_refused_without_requesting_restart() {
+    let result = compat(Some(11), Some(APP_BUILD), Some(APP_CONFIG_IDENTITY));
+    assert_eq!(result, DaemonCompat::ProtocolMismatch);
+    assert!(!result.usable());
+    assert_eq!(poller_action(Some(result)), PollerAction::SurfaceTakeover);
+}
+
+#[test]
 fn matching_protocol_and_build_is_current() {
     assert_eq!(compat(Some(PROTOCOL_VERSION), Some(APP_BUILD), Some(APP_CONFIG_IDENTITY),), DaemonCompat::Current);
 }

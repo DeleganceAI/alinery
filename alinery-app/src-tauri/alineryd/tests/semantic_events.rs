@@ -17,6 +17,54 @@ use alinery_core::{SessionMeta, RUNNER_EVENT_PROTOCOL_VERSION};
 use serde_json::{json, Value};
 static ROOT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+#[test]
+fn authenticated_session_name_is_persisted_without_state_transition() {
+    let fixture = Fixture::new();
+    let session = fixture.create_task(false);
+    fixture.start("task", &session);
+    let token = fixture.token_for(&session.id);
+    fixture.event(&session, &token, json!({"type":"busy"}));
+    let before = fs::read(fixture.meta_path("task", &session)).unwrap();
+    let execution_before = fs::read(fixture.root.join(".alinery/tasks/task/execution.json")).unwrap();
+    let status_before = fixture.rpc(json!({"op":"status","id":session.id}));
+    let event = json!({"type":"session_name_suggested","name":"Repair cache eviction"});
+    let reply = fixture.event(&session, &token, event.clone());
+    assert_eq!(reply["session_name"]["status"], "saved", "{reply}");
+    assert_eq!(reply["session_name"]["value"]["name"], "Repair cache eviction");
+    assert_eq!(fs::read(fixture.meta_path("task", &session)).unwrap(), before);
+    assert_eq!(fs::read(fixture.root.join(".alinery/tasks/task/execution.json")).unwrap(), execution_before);
+    assert_eq!(fixture.rpc(json!({"op":"status","id":session.id})), status_before);
+    let name_path = fixture.root.join(format!(".alinery/tasks/task/sessions/{}.name.json", session.id));
+    let stored: Value = serde_json::from_slice(&fs::read(&name_path).unwrap()).unwrap();
+    assert_eq!(stored, json!({"name":"Repair cache eviction","source":"auto"}));
+    alinery_core::set_session_name(&fixture.root, "task", &session.id, "Human correction", alinery_core::SessionNameSource::User).unwrap();
+    let reply = fixture.event(&session, &token, event.clone());
+    assert_eq!(reply["session_name"], json!({"status":"unchanged","value":{"name":"Human correction","source":"user"}}));
+    assert!(fixture.event(&session, "foreign", event.clone())["error"].is_string());
+    assert!(fixture.rpc(json!({"op":"event","version":2,"session_id":session.id,"token":token,"event":event}))["error"].is_string());
+    let mut unknown = session.clone();
+    unknown.id = "foreign-session".into();
+    assert_eq!(fixture.event(&unknown, &token, event.clone())["error"], "unknown-session");
+    let execution_path = fixture.root.join(".alinery/tasks/task/execution.json");
+    alinery_core::with_task_mutation_lock(&fixture.root, "simulate recovered graph owner", || {
+        let mut graph: Value = serde_json::from_slice(&fs::read(&execution_path).unwrap()).unwrap();
+        graph["executions"][&session.execution_id]["owner_session_id"] = json!("recovered-owner");
+        fs::write(&execution_path, serde_json::to_vec(&graph).unwrap()).unwrap();
+        Ok(())
+    })
+    .unwrap();
+    let graph_before_rejection = fs::read(&execution_path).unwrap();
+    let rejected = fixture.event(&session, &token, event.clone());
+    assert!(rejected["error"].is_string(), "authenticated old graph owner must reject: {rejected}");
+    assert_eq!(fs::read(&execution_path).unwrap(), graph_before_rejection);
+    assert_eq!(
+        alinery_core::read_session_name(&fixture.root, "task", &session.id).unwrap().unwrap().name,
+        "Human correction"
+    );
+    fixture.release(&session);
+    assert!(fixture.event(&session, &token, event)["error"].is_string());
+}
+
 fn unique_root() -> PathBuf {
     let counter = ROOT_COUNTER.fetch_add(1, Ordering::Relaxed);
     PathBuf::from(format!("/tmp/sgsem-{}-{counter}", std::process::id()))

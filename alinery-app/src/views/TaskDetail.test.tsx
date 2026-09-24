@@ -3,7 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
 import { navReady, requireNav } from "../test/nav";
-import type { BoardNav, BoardTask, ExecutionAvailability, SessionMeta, SessionObservation, SubtaskManagerState, Task, TaskActivityRef, TaskActivitySummary } from "../types";
+import type {
+  BoardNav,
+  BoardTask,
+  ExecutionAvailability,
+  SessionDisplayMeta,
+  SessionMeta,
+  SessionObservation,
+  SubtaskManagerState,
+  Task,
+  TaskActivityRef,
+  TaskActivitySummary,
+} from "../types";
 import { executionRecord, executionReply } from "./executionTestFixture";
 import { TaskDetail } from "./TaskDetail";
 
@@ -11,7 +22,7 @@ const scenario = vi.hoisted(() => ({
   task: {} as Task,
   relatedTasks: [] as Task[],
   state: {} as SubtaskManagerState,
-  sessions: [] as SessionMeta[],
+  sessions: [] as SessionDisplayMeta[],
   childActivity: {
     status: null,
     active_session: null,
@@ -27,6 +38,8 @@ const ipcSpies = vi.hoisted(() => ({
   createSessionForRepo: vi.fn(),
   restoreTaskForRepo: vi.fn(),
   archiveSessionForRepo: vi.fn(),
+  renameSession: vi.fn(),
+  renameTask: vi.fn(),
 }));
 
 const mocks = vi.hoisted(() => ({
@@ -76,6 +89,8 @@ vi.mock("../ipc", () =>
     createSessionForRepo: ipcSpies.createSessionForRepo,
     restoreTaskForRepo: ipcSpies.restoreTaskForRepo,
     archiveSessionForRepo: ipcSpies.archiveSessionForRepo,
+    renameSession: ipcSpies.renameSession,
+    renameTask: ipcSpies.renameTask,
     markSessionNotificationRead: mocks.markSessionNotificationRead,
     startSubtaskManager: ipcSpies.startSubtaskManager,
     recoverSubtaskManager: ipcSpies.recoverSubtaskManager,
@@ -247,6 +262,21 @@ beforeEach(() => {
   ipcSpies.recoverSubtaskManager.mockResolvedValue({ session: { ...manager, subtask_slug: "child" }, execution: null, start: "started" });
   ipcSpies.restoreTaskForRepo.mockReset().mockResolvedValue(undefined);
   ipcSpies.archiveSessionForRepo.mockReset();
+  ipcSpies.renameSession.mockReset().mockImplementation(async ({ sessionId, name }: { sessionId: string; name: string }) => {
+    scenario.sessions = scenario.sessions.map((item) => (item.id === sessionId ? { ...item, name, name_source: "user" } : item));
+    return { name, source: "user" };
+  });
+  ipcSpies.renameTask.mockReset().mockImplementation(async (_repo: string, childSlug: string, name: string) => {
+    const updated = { ...(scenario.relatedTasks.find((item) => item.slug === childSlug) ?? scenario.task), name };
+    if (scenario.task.slug === childSlug) scenario.task = updated;
+    if (scenario.childBoardTask.slug === childSlug) scenario.childBoardTask = { ...scenario.childBoardTask, ...updated };
+    scenario.relatedTasks = scenario.relatedTasks.map((item) => (item.slug === childSlug ? updated : item));
+    scenario.state = {
+      ...scenario.state,
+      active_subtask: scenario.state.active_subtask?.slug === childSlug ? { ...scenario.state.active_subtask, name } : scenario.state.active_subtask,
+    };
+    return updated;
+  });
   ipcSpies.discardSubtask.mockImplementation(async () => {
     const child = scenario.state.active_subtask;
     scenario.task = { ...scenario.task, active_subtask: "" };
@@ -326,6 +356,258 @@ async function renderDetail(slug = "parent") {
   await screen.findByRole("heading", { name: scenario.task.name });
   return { onOpenSession, onOpenRelatedTask, onNewSession };
 }
+
+describe("session work names", () => {
+  it("shows names immediately after status while same-step sessions retain their identities", async () => {
+    const named = [
+      { ...session({ id: "cache", created: 10 }), name: "Repair cache eviction", name_source: "user" as const },
+      { ...session({ id: "csv", created: 20 }), name: "Import <CSV>", name_source: "auto" as const },
+    ];
+    scenario.sessions = named;
+    const { onOpenSession } = await renderDetail();
+    await screen.findAllByText("superdevelop · research");
+
+    for (const item of named) {
+      const cell = screen.getByText(item.name).closest("td") as HTMLTableCellElement;
+      const row = cell.closest("tr") as HTMLTableRowElement;
+      expect(within(row).getAllByRole("cell")[1]).toBe(cell);
+      expect(within(row).getByText("superdevelop · research")).toBeDefined();
+      fireEvent.click(cell);
+      expect(onOpenSession.mock.lastCall?.[1]).toBe(item.id);
+      fireEvent.keyDown(row, { key: "Enter" });
+      expect(onOpenSession.mock.lastCall?.[1]).toBe(item.id);
+    }
+    expect(
+      screen
+        .getAllByRole("columnheader")
+        .slice(0, 2)
+        .map((header) => header.textContent),
+    ).toEqual(["Status", "Name"]);
+  });
+
+  it("keeps a manager work name distinct from its current child name when relationship metadata is raw", async () => {
+    const rawManager = { ...manager, subtask_slug: "child" };
+    scenario.state = state({ active_subtask: childSummary, manager_session: rawManager });
+    const namedManager = { ...rawManager, name: "Coordinate cache repair", name_source: "auto" as const };
+    scenario.sessions = [namedManager];
+    const { onOpenRelatedTask, onOpenSession } = await renderDetail();
+    const openManager = await screen.findByRole("button", { name: "Open manager session" });
+    const row = openManager.closest("tr") as HTMLTableRowElement;
+    const child = within(row).getByText("Child");
+
+    expect(within(row).getAllByRole("cell")[1].textContent).toContain("Coordinate cache repair");
+    expect(within(row).getByText("Sub-task manager")).toBeDefined();
+    fireEvent.click(child);
+    expect(onOpenRelatedTask).toHaveBeenLastCalledWith("child");
+    fireEvent.click(within(row).getByRole("button", { name: "Open manager session" }));
+    expect(onOpenSession.mock.lastCall?.[1]).toBe(rawManager.id);
+  });
+});
+
+describe("retained name editing", () => {
+  it("name_column_aligns_every_retained_row_variant", async () => {
+    scenario.relatedTasks = [
+      { ...childBoardTask, slug: "finished", name: "Finished child", archived: true, subtask_outcome: "merged" },
+      { ...childBoardTask, slug: "managerless", name: "Managerless child", archived: true, subtask_outcome: "killed" },
+    ];
+    scenario.sessions = [
+      { ...session({ id: "ordinary" }), name: "Ordinary work" },
+      { ...session({ id: "terminal", generic: true, harness: "terminal" }), name: "Terminal work" },
+      { ...manager, id: "finished-manager", subtask_slug: "finished", archived: true, name: "Historical coordination" },
+    ];
+    scenario.state = state({ active_subtask: childSummary, can_recover: true, can_start: false });
+    await renderDetail();
+    fireEvent.click(screen.getByLabelText("Show archived"));
+    await screen.findByText("Historical coordination");
+    expect(screen.getAllByRole("columnheader")).toHaveLength(7);
+    for (const [name, type] of [
+      ["Ordinary work", "superdevelop · research"],
+      ["Terminal work", "Auxiliary"],
+      ["Historical coordination", "Sub-task manager"],
+      ["Managerless child", "Sub-task history"],
+      ["Child", "Manager unavailable"],
+    ]) {
+      const cell = screen
+        .getAllByText(name)
+        .find((node) => node.closest("td"))
+        ?.closest("td") as HTMLTableCellElement;
+      const row = cell.closest("tr") as HTMLTableRowElement;
+      const cells = within(row).getAllByRole("cell");
+      expect(cells).toHaveLength(7);
+      expect(cells[1]).toBe(cell);
+      expect(cells[2].textContent).toContain(type);
+      if (name === "Managerless child" || name === "Child") {
+        expect(within(row).queryByRole("button", { name: "Rename session" })).toBeNull();
+        expect(within(row).getByRole("button", { name: "Rename task" })).toBeDefined();
+      }
+    }
+  });
+
+  it("retained_session_rename_is_independent_of_execution", async () => {
+    scenario.sessions = [
+      session({ id: "live" }),
+      session({ id: "terminal", harness: "terminal", generic: true }),
+      session({ id: "never" }),
+      session({ id: "exited", ended_at: 20 }),
+      session({ id: "history", archived: true }),
+    ];
+    const { onOpenSession, onNewSession } = await renderDetail();
+    fireEvent.click(screen.getByLabelText("Show archived"));
+    await screen.findAllByRole("button", { name: "Rename session" });
+    for (const trigger of screen.getAllByRole("button", { name: "Rename session" })) {
+      const row = trigger.closest("tr") as HTMLTableRowElement;
+      const nameCell = within(row).getAllByRole("cell")[1];
+      expect(within(nameCell).getByRole("button", { name: "Rename session" })).toBe(trigger);
+      fireEvent.click(trigger);
+      const input = within(nameCell).getByRole("textbox", { name: "Session name" });
+      fireEvent.change(input, { target: { value: "Shared purpose" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      fireEvent.click(trigger);
+      await waitFor(() => expect(within(row).queryByRole("textbox")).toBeNull());
+      expect(document.activeElement).toBe(within(nameCell).getByRole("group", { name: "Session name" }));
+      expect(within(row).getAllByRole("cell")[1].textContent).toContain("Shared purpose");
+    }
+    expect(new Set(ipcSpies.renameSession.mock.calls.map(([args]) => args.sessionId))).toEqual(new Set(["live", "terminal", "never", "exited", "history"]));
+    expect(onOpenSession).not.toHaveBeenCalled();
+    expect(onNewSession).not.toHaveBeenCalled();
+    expect(ipcSpies.createSessionForRepo).not.toHaveBeenCalled();
+    ipcSpies.renameSession.mockRejectedValueOnce(new Error("Name storage busy"));
+    const row = screen.getAllByRole("button", { name: "Rename session" })[0].closest("tr") as HTMLTableRowElement;
+    fireEvent.click(within(row).getByRole("button", { name: "Rename session" }));
+    fireEvent.change(within(row).getByRole("textbox"), { target: { value: "Rejected draft" } });
+    fireEvent.click(within(row).getByRole("button", { name: "Save" }));
+    expect(await within(row).findByText(/Name storage busy/)).toBeDefined();
+    expect(within(row).getAllByRole("cell")[1].textContent).toContain("Shared purpose");
+    expect((within(row).getByRole("textbox") as HTMLInputElement).value).toBe("Rejected draft");
+  });
+
+  it("opens only the selected child editor after manager recovery", async () => {
+    const previous = { ...manager, id: "previous", subtask_slug: "child", ended_at: 20, name: "Previous manager" };
+    const current = { ...manager, id: "current", subtask_slug: "child", name: "Current manager" };
+    scenario.sessions = [previous, current];
+    scenario.relatedTasks = [childBoardTask];
+    scenario.state = state({ active_subtask: childSummary, manager_session: current });
+    await renderDetail();
+    const oldRow = (await screen.findByText("Previous manager")).closest("tr") as HTMLTableRowElement;
+    const newRow = screen.getByText("Current manager").closest("tr") as HTMLTableRowElement;
+    fireEvent.click(within(oldRow).getByRole("button", { name: "Rename task" }));
+    expect(screen.getAllByRole("textbox", { name: "Task name" })).toHaveLength(1);
+    expect(within(newRow).queryByRole("textbox")).toBeNull();
+    const input = within(oldRow).getByRole("textbox", { name: "Task name" });
+    expect(document.activeElement).toBe(input);
+    fireEvent.change(input, { target: { value: "Corrected child purpose" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(screen.queryByRole("textbox")).toBeNull());
+    expect(ipcSpies.renameTask).toHaveBeenCalledTimes(1);
+    expect(ipcSpies.renameTask).toHaveBeenCalledWith("/repo", "child", "Corrected child purpose");
+  });
+
+  it("keeps a reopened editor draft when an earlier save of the same session finishes", async () => {
+    scenario.sessions = [
+      { ...session({ id: "a" }), name: "Session A" },
+      { ...session({ id: "b" }), name: "Session B" },
+    ];
+    const pending = deferred<{ name: string; source: "user" }>();
+    ipcSpies.renameSession.mockReturnValueOnce(pending.promise);
+    await renderDetail();
+    const a = (await screen.findByText("Session A")).closest("tr") as HTMLTableRowElement;
+    const b = screen.getByText("Session B").closest("tr") as HTMLTableRowElement;
+    fireEvent.click(within(a).getByRole("button", { name: "Rename session" }));
+    fireEvent.change(within(a).getByRole("textbox"), { target: { value: "First committed name" } });
+    fireEvent.keyDown(within(a).getByRole("textbox"), { key: "Enter" });
+    fireEvent.click(within(b).getByRole("button", { name: "Rename session" }));
+    fireEvent.click(within(a).getByRole("button", { name: "Rename session" }));
+    const reopened = within(a).getByRole("textbox") as HTMLInputElement;
+    fireEvent.change(reopened, { target: { value: "New unsaved draft" } });
+    await act(async () => {
+      scenario.sessions = scenario.sessions.map((item) => (item.id === "a" ? { ...item, name: "First committed name" } : item));
+      pending.resolve({ name: "First committed name", source: "user" });
+    });
+    expect(within(a).getByRole("textbox")).toBe(reopened);
+    expect(reopened.value).toBe("New unsaved draft");
+    expect(document.activeElement).toBe(reopened);
+  });
+
+  it("child_rename_updates_parent_history_heading_and_current_links", async () => {
+    scenario.relatedTasks = [{ ...childBoardTask, archived: true, subtask_outcome: "merged" }];
+    await renderDetail();
+    const row = (await screen.findByRole("button", { name: "Open task" })).closest("tr") as HTMLTableRowElement;
+    fireEvent.click(within(row).getByRole("button", { name: "Rename task" }));
+    fireEvent.change(within(row).getByRole("textbox", { name: "Task name" }), { target: { value: "A retained child purpose longer than forty characters" } });
+    fireEvent.click(within(row).getByRole("button", { name: "Save" }));
+    expect(await within(row).findByText("A retained child purpose longer than forty characters")).toBeDefined();
+    expect(ipcSpies.renameTask).toHaveBeenCalledWith("/repo", "child", "A retained child purpose longer than forty characters");
+    cleanup();
+    scenario.task = { ...scenario.relatedTasks[0] };
+    scenario.state = state({ task: scenario.task, parent_task: { ...parentTask, name: "Current parent purpose" } });
+    await renderDetail("child");
+    fireEvent.click(screen.getByRole("button", { name: "Rename task" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Task name" }), { target: { value: "Revised child purpose" } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    expect(await screen.findByRole("heading", { name: "Revised child purpose" })).toBeDefined();
+    expect(screen.getByRole("button", { name: /Current parent purpose/ })).toBeDefined();
+  });
+
+  it("keeps a retained manager editable when its child record is unavailable", async () => {
+    scenario.sessions = [{ ...manager, archived: true, ended_at: 20, subtask_slug: "removed-child", name: "Retained coordination" }];
+    await renderDetail();
+    fireEvent.click(screen.getByLabelText("Show archived"));
+    const row = (await screen.findByText("Retained coordination")).closest("tr") as HTMLTableRowElement;
+    expect(within(row).getByText("removed-child")).toBeDefined();
+    expect(within(row).queryByRole("button", { name: "Rename task" })).toBeNull();
+    fireEvent.click(within(row).getByRole("button", { name: "Rename session" }));
+    fireEvent.change(within(row).getByRole("textbox"), { target: { value: "Preserved manager purpose" } });
+    fireEvent.keyDown(within(row).getByRole("textbox"), { key: "Enter" });
+    expect(await within(row).findByText("Preserved manager purpose")).toBeDefined();
+  });
+
+  it("older_relationship_task_and_board_reads_cannot_undo_child_name_commit", async () => {
+    vi.useFakeTimers();
+    const oldChild = { ...childBoardTask, name: "Old child purpose" };
+    scenario.relatedTasks = [oldChild];
+    scenario.task = { ...parentTask, related_tasks: [{ repo_path: "/repo", slug: "child", name: "Snapshot child" }] };
+    scenario.state = state({ task: scenario.task, active_subtask: oldChild, manager_session: manager });
+    scenario.sessions = [{ ...manager, name: "Manager purpose" }];
+    scenario.childBoardTask = oldChild;
+    renderSeededDetail({ slug: "parent", repoPath: "/repo", initialTask: scenario.task });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const tasksRead = deferred<Task[]>();
+    const relationshipRead = deferred<SubtaskManagerState>();
+    const boardRead = deferred<BoardTask[]>();
+    const oldRelationship = scenario.state;
+    mocks.listTasks.mockReturnValueOnce(tasksRead.promise);
+    mocks.subtaskState.mockReturnValueOnce(relationshipRead.promise);
+    mocks.listBoardTasks.mockReturnValueOnce(boardRead.promise);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    const row = screen.getByRole("button", { name: "Open manager session" }).closest("tr") as HTMLTableRowElement;
+    fireEvent.click(within(row).getByRole("button", { name: "Rename task" }));
+    fireEvent.change(within(row).getByRole("textbox"), { target: { value: "Committed child purpose" } });
+    await act(async () => {
+      fireEvent.keyDown(within(row).getByRole("textbox"), { key: "Enter" });
+    });
+    expect(within(row).getByText("Committed child purpose")).toBeDefined();
+    await act(async () => {
+      tasksRead.resolve([scenario.task, oldChild]);
+      relationshipRead.resolve(oldRelationship);
+      boardRead.resolve([oldChild]);
+    });
+    expect(within(row).queryByText("Old child purpose")).toBeNull();
+    expect(screen.getByRole("button", { name: "Open Committed child purpose" })).toBeDefined();
+    expect(within(row).getByText("Manager purpose")).toBeDefined();
+    scenario.childBoardTask = { ...oldChild, name: "External child purpose" };
+    scenario.relatedTasks = [scenario.childBoardTask];
+    scenario.state = { ...scenario.state, active_subtask: scenario.childBoardTask };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(within(row).getByText("External child purpose")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Open External child purpose" })).toBeDefined();
+  });
+});
 
 describe("task session archive pending feedback", () => {
   it("keeps the session pending until IPC settles and exposes errors before retry", async () => {
@@ -1493,6 +1775,7 @@ describe("the empty-sessions row", () => {
     listSessionsDeferred.resolve([]);
 
     await waitFor(() => expect(screen.getByText("No sessions yet.")).toBeDefined());
+    expect(screen.getByText("No sessions yet.").closest("td")?.colSpan).toBe(screen.getAllByRole("columnheader").length);
   });
 });
 

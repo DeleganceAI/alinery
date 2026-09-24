@@ -39,7 +39,7 @@ If the user selects **Approve** in the `ask` popup, immediately call `alinery_cr
 
 If the parent worktree status is `DIRTY`, explain whether the uncommitted parent changes could matter, then call the `ask` tool to decide whether cleanup is required before choosing the child playbook. If the user declines cleanup in the `ask` popup, explain that the child starts from the parent's committed branch and excludes uncommitted parent files.
 
-1. Discuss the child name, playbook, optional instructions, and an editable safe slug. Suggest `{{PARENT_SLUG}}-<playbook-key>[-<descriptor>]`, but keep the user's exact approved slug. Every question during this discussion must use the `ask` tool, never prose.
+1. Discuss a concise, purpose-specific child name, playbook, optional instructions, and an editable safe slug. Name the work rather than only its playbook. Suggest `{{PARENT_SLUG}}-<playbook-key>[-<descriptor>]`, but keep the user's exact approved slug. Every question during this discussion must use the `ask` tool, never prose.
 2. Show one exact proposal with name, slug, playbook, and instructions.
 3. Immediately call the `ask` tool for approval. This must open the `ask` popup; do not print a question in the terminal.
 4. If the `ask` popup answer is **Approve**, immediately call `alinery_create_subtask` with `manager_session_id = "{{MANAGER_SESSION_ID}}"` and the approved fields. Do not ask the user to repeat approval.

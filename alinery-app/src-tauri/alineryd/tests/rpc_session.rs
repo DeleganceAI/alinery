@@ -86,6 +86,9 @@ printf '%s\n' "$0" "$@" > "$ALINERY_REPO/argv.$ALINERY_SESSION_ID.tmp"
 mv "$ALINERY_REPO/argv.$ALINERY_SESSION_ID.tmp" "$ALINERY_REPO/argv.$ALINERY_SESSION_ID"
 printf '%s' "${ALINERY_HOST_EXECUTABLE-}" > "$ALINERY_REPO/host.$ALINERY_SESSION_ID.tmp"
 mv "$ALINERY_REPO/host.$ALINERY_SESSION_ID.tmp" "$ALINERY_REPO/host.$ALINERY_SESSION_ID"
+printf '%s' "${ALINERY_SESSION_NAMING-}" > "$ALINERY_REPO/naming.$ALINERY_SESSION_ID"
+printf '%s' "$ALINERY_EVENT_TOKEN" > "$ALINERY_REPO/token.$ALINERY_SESSION_ID.tmp"
+mv "$ALINERY_REPO/token.$ALINERY_SESSION_ID.tmp" "$ALINERY_REPO/token.$ALINERY_SESSION_ID"
 rpc=0
 prev=
 for a in "$@"; do
@@ -205,6 +208,7 @@ model_arg = []
 prompt_injection = "arg"
 adapter = "omp"
 
+env = {{ ALINERY_SESSION_NAMING = "1" }}
 [harness.resume]
 enabled = true
 id_source = "manual"
@@ -408,6 +412,37 @@ fn start_daemon(root: &Path, runner: &Path, capture: &Path, protected_host: Opti
     let _ = child.kill();
     let _ = child.wait();
     panic!("alineryd did not become ready");
+}
+
+#[test]
+fn session_name_survives_same_id_restate_and_does_not_consume_pending_pty_seed() {
+    let fixture = Fixture::new();
+    let id = fixture.spawn_omp();
+    let token_path = fixture.root.join(format!("token.{id}"));
+    wait_until(Duration::from_secs(5), || token_path.exists());
+    let old_token = fs::read_to_string(&token_path).unwrap();
+    assert_eq!(fs::read_to_string(fixture.root.join(format!("naming.{id}"))).unwrap(), "1");
+    let event = json!({"type":"session_name_suggested","name":"Repair CSV import"});
+    let name = |token: &str| fixture.rpc(json!({"op":"event","version":alinery_core::RUNNER_EVENT_PROTOCOL_VERSION,"session_id":id,"token":token,"event":event}));
+    let first = name(&old_token);
+    assert_eq!(first["session_name"]["status"], "saved", "{first}");
+    fs::remove_file(&token_path).unwrap();
+    assert_eq!(fixture.restate(id, "pty")["ok"], true);
+    let editor = fixture.root.join(format!("editor.{id}"));
+    wait_until(Duration::from_secs(5), || token_path.exists() && editor.exists());
+    let token = fs::read_to_string(&token_path).unwrap();
+    assert_ne!(token, old_token);
+    assert_eq!(fs::read_to_string(fixture.root.join(format!("naming.{id}"))).unwrap(), "1");
+    assert!(name(&old_token)["error"].is_string());
+    assert_eq!(name(&token)["session_name"]["status"], "unchanged");
+    let submitted = fixture.root.join(format!("submitted.{id}"));
+    assert!(!submitted.exists(), "naming must not consume a pending PTY seed");
+    assert_eq!(
+        fixture.rpc(json!({"op":"event","version":alinery_core::RUNNER_EVENT_PROTOCOL_VERSION,"session_id":id,"token":token,"event":{"type":"idle"}}))["ok"],
+        true
+    );
+    wait_until(Duration::from_secs(5), || submitted.exists());
+    assert_eq!(fs::read_to_string(submitted).unwrap().matches("TRANSPORT_SEED_SENTINEL").count(), 1);
 }
 
 #[test]
@@ -895,6 +930,16 @@ fn omp_setup_session_is_attachable_but_never_a_listed_session() {
         argv.lines().any(|arg| arg == "--model=openai-codex/gpt-5.5"),
         "setup must start without saved credentials: {argv}"
     );
+    let token_path = fixture.root.join(format!("token.{id}"));
+    wait_until(Duration::from_secs(5), || token_path.exists());
+    assert_eq!(
+        fs::read_to_string(fixture.root.join(format!("naming.{id}"))).unwrap(),
+        "",
+        "taskless setup must override overlay naming eligibility"
+    );
+    let token = fs::read_to_string(token_path).unwrap();
+    let rejected = fixture.rpc(json!({"op":"event","version":alinery_core::RUNNER_EVENT_PROTOCOL_VERSION,"session_id":id,"token":token,"event":{"type":"session_name_suggested","name":"Forbidden setup name"}}));
+    assert!(rejected["error"].is_string(), "{rejected}");
     assert!(!argv.contains("--session-dir"), "setup session must not be given a journal: {argv}");
     assert!(!fixture.root.join(format!(".alinery/sessions/{id}.omp")).exists());
 
