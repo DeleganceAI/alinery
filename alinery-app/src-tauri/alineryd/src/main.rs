@@ -991,7 +991,13 @@ fn dispatch_pty_seed(pending: PendingPtySeed, reg: Registry, repo: PathBuf, lane
     });
 }
 
-fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Path) -> Result<(Option<CompletionOutcome>, Option<PendingPtySeed>), String> {
+enum RunnerEventResult {
+    Passive,
+    Completion(CompletionOutcome),
+    SessionName(alinery_core::SessionNameOutcome),
+}
+
+fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Path) -> Result<(RunnerEventResult, Option<PendingPtySeed>), String> {
     let envelope: RunnerEventEnvelope = serde_json::from_value(req.clone()).map_err(|_| "invalid-event".to_string())?;
     if envelope.version != RUNNER_EVENT_PROTOCOL_VERSION {
         return Err("unsupported-event-version".into());
@@ -1004,6 +1010,19 @@ fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Pa
         }
         if session.replacing.load(Ordering::SeqCst) {
             return Err("session transport replacement in progress".into());
+        }
+        if let RunnerEvent::SessionNameSuggested { name } = &envelope.event {
+            // Registry → inner → nonblocking task lock. Pin the current registry
+            // entry through persistence, so restate cannot replace its token/inner.
+            let state = session.inner.lock().unwrap_or_else(|e| e.into_inner());
+            if !process_accepts_runner_events(&state.state.process) {
+                return Err("session-exited".into());
+            }
+            if state.state.adapter != HarnessAdapter::Omp {
+                return Err("unsupported-adapter".into());
+            }
+            let outcome = alinery_core::set_session_name(repo, &session.task_slug, &envelope.session_id, name, alinery_core::SessionNameSource::Auto)?;
+            return Ok((RunnerEventResult::SessionName(outcome), None));
         }
         (session.inner.clone(), session.meta_path.clone(), session.task_slug.clone())
     };
@@ -1057,7 +1076,7 @@ fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Pa
     } else {
         None
     };
-    Ok((completion, pending_seed))
+    Ok((completion.map_or(RunnerEventResult::Passive, RunnerEventResult::Completion), pending_seed))
 }
 
 fn handle_conn(
@@ -1200,8 +1219,9 @@ fn handle_conn(
         "event" => match handle_runner_event(&req, reg, repo, app_config) {
             Ok((completion, pending_seed)) => {
                 match completion {
-                    Some(completion) => reply(&mut stream, json!({"ok":true,"completion":completion})),
-                    None => reply(&mut stream, json!({"ok":true})),
+                    RunnerEventResult::Completion(completion) => reply(&mut stream, json!({"ok":true,"completion":completion})),
+                    RunnerEventResult::SessionName(outcome) => reply(&mut stream, json!({"ok":true,"session_name":outcome})),
+                    RunnerEventResult::Passive => reply(&mut stream, json!({"ok":true})),
                 }
                 // Let the startup callback return before feeding its TUI input coordinator.
                 if let Some(pending) = pending_seed {
@@ -1919,6 +1939,7 @@ fn spawn_session(
     for (key, value) in &harness.env {
         cmd.env(key, subst(value, &cwd, &model, token));
     }
+    cmd.env_remove("ALINERY_SESSION_NAMING");
     if let Some(path) = &runner_path {
         let namespace = (!daemon_namespace.is_empty()).then_some(daemon_namespace);
         cmd.env("ALINERY_RUNNER_PATH", path);
@@ -1927,6 +1948,9 @@ fn spawn_session(
         cmd.env("ALINERY_DAEMON_NAMESPACE", daemon_namespace);
         cmd.env("ALINERY_EVENT_PROTOCOL_VERSION", RUNNER_EVENT_PROTOCOL_VERSION.to_string());
         cmd.env("ALINERY_EVENT_TOKEN", &event_token);
+        if !launch.task_slug.is_empty() {
+            cmd.env("ALINERY_SESSION_NAMING", "1");
+        }
         if let Some(host) = protected_host.as_ref() {
             cmd.env("ALINERY_HOST_EXECUTABLE", host);
         }
@@ -2343,6 +2367,205 @@ mod rpc_ring_tests {
         }
     }
 
+    #[test]
+    fn restate_reservation_cannot_cross_a_pinned_naming_commit() {
+        use std::os::unix::fs::OpenOptionsExt;
+        let repo = std::env::temp_dir().join(format!("alinery-name-reservation-{}", uuid::Uuid::new_v4()));
+        alinery_core::write_task(
+            &repo,
+            &alinery_core::Task {
+                slug: "task".into(),
+                name: "Task".into(),
+                has_worktree: true,
+                worktree: repo.to_string_lossy().into_owned(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let task_path = alinery_core::task_dir(&repo, "task").join("task.md");
+        let task_bytes = fs::read(&task_path).unwrap();
+        fs::remove_file(&task_path).unwrap();
+        let fifo = std::ffi::CString::new(task_path.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        fs::create_dir_all(alinery_core::sessions_dir(&repo, "task")).unwrap();
+        let meta_path = session_meta_path(&repo, "task", "s1");
+        fs::write(
+            &meta_path,
+            serde_json::to_vec(&alinery_core::SessionMeta {
+                id: "s1".into(),
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let pair = native_pty_system().openpty(PtySize::default()).unwrap();
+        let inner = Arc::new(Mutex::new(empty_inner()));
+        let replacing = Arc::new(AtomicBool::new(false));
+        let reg: Registry = Arc::new(Mutex::new(HashMap::from([(
+            "s1".into(),
+            Sess {
+                io: SessionIo::Pty {
+                    writer: Arc::new(Mutex::new(pair.master.take_writer().unwrap())),
+                    master: pair.master,
+                    scrollback_path: repo.join("unused"),
+                },
+                inner: inner.clone(),
+                pid: None,
+                meta_path,
+                event_token: "current".into(),
+                task_slug: "task".into(),
+                replacing: replacing.clone(),
+                pending_pty_seed: true,
+            },
+        )])));
+        let worker_reg = reg.clone();
+        let worker_repo = repo.clone();
+        let worker = std::thread::spawn(move || restate_session(&worker_reg, &worker_repo, &worker_repo.join("unused"), "", &Arc::new(None), "s1", SessionTransport::Rpc));
+        // Opening the FIFO writer succeeds only once restate has captured the
+        // registry generation and entered its ownership read. No timing guess.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut writer = loop {
+            match fs::OpenOptions::new().write(true).custom_flags(libc::O_NONBLOCK).open(&task_path) {
+                Ok(writer) => break writer,
+                Err(error) if error.raw_os_error() == Some(libc::ENXIO) && Instant::now() < deadline => std::thread::yield_now(),
+                Err(error) => panic!("restate did not reach ownership-read rendezvous: {error}"),
+            }
+        };
+        let map = reg.lock().unwrap_or_else(|error| error.into_inner());
+        let state = inner.lock().unwrap_or_else(|error| error.into_inner());
+        writer.write_all(&task_bytes).unwrap();
+        drop(writer);
+        // These are the exact guards held by naming through its durable commit.
+        // A reserved replacement must wait until they are released.
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while !replacing.load(Ordering::SeqCst) && Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        let reserved_during_commit = replacing.load(Ordering::SeqCst);
+        drop(state);
+        drop(map);
+        let result = worker.join().unwrap();
+        fs::remove_dir_all(repo).unwrap();
+        assert!(result.is_err(), "fixture never authorizes an actual replacement launch");
+        assert!(!reserved_during_commit, "replacement reservation crossed naming's pinned registry/inner commit guards");
+    }
+
+    #[test]
+    fn session_name_rejects_replaced_and_ineligible_registry_owners_without_state_changes() {
+        let repo = std::env::temp_dir().join(format!("alinery-name-handler-{}", uuid::Uuid::new_v4()));
+        alinery_core::write_task(
+            &repo,
+            &alinery_core::Task {
+                slug: "task".into(),
+                name: "Task".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        fs::create_dir_all(alinery_core::sessions_dir(&repo, "task")).unwrap();
+        let meta_path = session_meta_path(&repo, "task", "s1");
+        fs::write(
+            &meta_path,
+            serde_json::to_vec(&alinery_core::SessionMeta {
+                id: "s1".into(),
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let pair = native_pty_system().openpty(PtySize::default()).unwrap();
+        let mut inner = empty_inner();
+        inner.state.process = ProcessState::Alive;
+        inner.state.adapter = HarnessAdapter::Omp;
+        inner.completion_in_flight = true;
+        let inner = Arc::new(Mutex::new(inner));
+        let reg: Registry = Arc::new(Mutex::new(HashMap::from([(
+            "s1".into(),
+            Sess {
+                io: SessionIo::Pty {
+                    writer: Arc::new(Mutex::new(pair.master.take_writer().unwrap())),
+                    master: pair.master,
+                    scrollback_path: repo.join("unused"),
+                },
+                inner: inner.clone(),
+                pid: None,
+                meta_path: meta_path.clone(),
+                event_token: "current".into(),
+                task_slug: "task".into(),
+                replacing: Arc::new(AtomicBool::new(false)),
+                pending_pty_seed: true,
+            },
+        )])));
+        let request = json!({"version":RUNNER_EVENT_PROTOCOL_VERSION,"session_id":"s1","token":"current","event":{"type":"session_name_suggested","name":"Repair cache"}});
+        let call = |request: &Value| handle_runner_event(request, &reg, &repo, &repo.join("app.toml"));
+        let before = fs::read(&meta_path).unwrap();
+        let state_before = inner.lock().unwrap().state.clone();
+        alinery_core::with_task_mutation_lock(&repo, "hold naming commit", || {
+            assert!(call(&request).is_err(), "busy task lock must reject rather than block or claim saved");
+            Ok(())
+        })
+        .unwrap();
+        assert!(alinery_core::read_session_name(&repo, "task", "s1").unwrap().is_none());
+        assert!(matches!(call(&request), Ok((RunnerEventResult::SessionName(_), None))));
+        for process in [ProcessState::Starting, ProcessState::Alive] {
+            inner.lock().unwrap().state.process = process;
+            assert!(matches!(call(&request), Ok((RunnerEventResult::SessionName(_), None))));
+        }
+        {
+            let map = reg.lock().unwrap();
+            map["s1"].replacing.store(true, Ordering::SeqCst);
+        }
+        assert_eq!(call(&request).err().unwrap(), "session transport replacement in progress");
+        {
+            let mut map = reg.lock().unwrap();
+            let session = map.get_mut("s1").unwrap();
+            session.replacing.store(false, Ordering::SeqCst);
+            session.event_token = "replacement".into();
+            let mut replacement = empty_inner();
+            replacement.state = state_before.clone();
+            replacement.completion_in_flight = true;
+            session.inner = Arc::new(Mutex::new(replacement));
+        }
+        assert_eq!(call(&request).err().unwrap(), "invalid-event-token", "the stale registry generation cannot commit");
+        let mut current = request.clone();
+        current["token"] = json!("replacement");
+        assert!(matches!(call(&current), Ok((RunnerEventResult::SessionName(_), None))));
+        for (state, expected) in [
+            (
+                SessionState {
+                    process: ProcessState::Exited { code: Some(0) },
+                    ..state_before.clone()
+                },
+                "session-exited",
+            ),
+            (
+                SessionState {
+                    adapter: HarnessAdapter::Unsupported,
+                    ..state_before.clone()
+                },
+                "unsupported-adapter",
+            ),
+        ] {
+            reg.lock().unwrap()["s1"].inner.lock().unwrap().state = state;
+            assert_eq!(call(&current).err().unwrap(), expected);
+        }
+        {
+            let mut map = reg.lock().unwrap();
+            let session = map.get_mut("s1").unwrap();
+            session.inner.lock().unwrap().state = state_before.clone();
+            session.task_slug.clear();
+        }
+        assert!(call(&current).is_err(), "taskless identity must not name a retained task session");
+        let map = reg.lock().unwrap();
+        assert!(map["s1"].pending_pty_seed);
+        assert!(map["s1"].inner.lock().unwrap().completion_in_flight);
+        assert_eq!(inner.lock().unwrap().state, state_before);
+        assert_eq!(fs::read(&meta_path).unwrap(), before);
+        assert_eq!(alinery_core::read_session_name(&repo, "task", "s1").unwrap().unwrap().name, "Repair cache");
+        drop(map);
+        fs::remove_dir_all(repo).unwrap();
+    }
+
     fn push(inner: &mut Inner, line: &str) {
         let bytes = format!("{line}\n").into_bytes();
         let kind = classify_rpc_line(&bytes);
@@ -2435,6 +2658,7 @@ fn apply_rpc_command_env(
     for (key, value) in &harness.env {
         cmd.env(key, subst(value, cwd, model, token));
     }
+    cmd.env_remove("ALINERY_SESSION_NAMING");
     if let Some(path) = runner_path {
         let namespace = (!daemon_namespace.is_empty()).then_some(daemon_namespace);
         cmd.env("ALINERY_RUNNER_PATH", path);
@@ -2443,6 +2667,9 @@ fn apply_rpc_command_env(
         cmd.env("ALINERY_DAEMON_NAMESPACE", daemon_namespace);
         cmd.env("ALINERY_EVENT_PROTOCOL_VERSION", RUNNER_EVENT_PROTOCOL_VERSION.to_string());
         cmd.env("ALINERY_EVENT_TOKEN", event_token);
+        if !launch.task_slug.is_empty() {
+            cmd.env("ALINERY_SESSION_NAMING", "1");
+        }
         if let Some(host) = protected_host.as_ref() {
             cmd.env("ALINERY_HOST_EXECUTABLE", host);
         }
@@ -3060,8 +3287,17 @@ fn restate_session(
         (sess.pid, sess.inner.clone(), sess.meta_path.clone(), sess.task_slug.clone(), sess.replacing.clone())
     };
     execution::task_for_owner(repo, &task_slug, daemon_namespace)?;
-    if replacing.swap(true, Ordering::SeqCst) {
-        return Err("session replacement already in progress".into());
+    {
+        let map = reg.lock().unwrap_or_else(|error| error.into_inner());
+        let current = map.get(id).ok_or("unknown-session")?;
+        if !Arc::ptr_eq(&current.inner, &inner) || !Arc::ptr_eq(&current.replacing, &replacing) {
+            return Err("session transport changed during replacement preparation".into());
+        }
+        // Naming pins this same registry guard through its commit. A previously
+        // captured replacement handle cannot reserve across that boundary.
+        if replacing.swap(true, Ordering::SeqCst) {
+            return Err("session replacement already in progress".into());
+        }
     }
     let prepared = (|| {
         let meta = read_session_meta_full(&meta_path).ok_or("missing session")?;
@@ -3109,7 +3345,14 @@ fn restate_session(
         Err(error) => {
             // Re-enable the reader before observing its proof, so an exit that
             // arrives after this failed replacement still releases ownership.
-            replacing.store(false, Ordering::SeqCst);
+            {
+                let map = reg.lock().unwrap_or_else(|error| error.into_inner());
+                let Some(current) = map.get(id) else { return Err(error) };
+                if !Arc::ptr_eq(&current.inner, &inner) || !Arc::ptr_eq(&current.replacing, &replacing) {
+                    return Err(error);
+                }
+                replacing.store(false, Ordering::SeqCst);
+            }
             let inner = inner.lock().unwrap_or_else(|e| e.into_inner());
             if inner.reaped_and_drained {
                 if let ProcessState::Exited { code } = inner.state.process {

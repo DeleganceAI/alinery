@@ -1014,16 +1014,41 @@ mod tests {
     #[test]
     fn extract_restores_curated_tree_into_empty_target() {
         let (repo, dest) = fixture_repo("bk_extract");
+        let session_name = br#"{"name":"Repair cache eviction","source":"user"}"#;
+        plant(alinery_dir(&repo).join("tasks/alpha/sessions/s1.name.json"), session_name);
         create_backup(&repo, &ready(&dest), BackupTrigger::Manual, "9.9.9").unwrap();
         let target = repo.parent().unwrap().join("restored").join(".alinery");
         extract_backup_into(&only_zip(&dest), &target, Some(&repo)).unwrap();
         assert_eq!(fs::read(target.join("tasks/alpha/task.md")).unwrap(), b"name = \"alpha\"\n");
         assert_eq!(fs::read(target.join("tasks/alpha/sessions/s1.scrollback")).unwrap(), vec![0u8, 27, 91, 255, 10]);
+        assert_eq!(fs::read(target.join("tasks/alpha/sessions/s1.name.json")).unwrap(), session_name);
         assert!(target.join("sessions/root1.meta.json").is_file());
         assert!(target.join("config.toml").is_file());
         assert!(target.join("harnesses.toml").is_file());
         assert!(target.join("playbooks.toml").is_file());
         assert!(target.join("playbooks/custom.md").is_file());
+        cleanup(&repo);
+    }
+
+    #[test]
+    fn restored_session_name_is_readable_through_core_authority() {
+        let (repo, dest) = fixture_repo("bk_name_read");
+        let task = crate::Task {
+            slug: "named".into(),
+            name: "Named task".into(),
+            ..Default::default()
+        };
+        crate::write_task(&repo, &task).unwrap();
+        let meta = crate::SessionMeta {
+            id: "s1".into(),
+            ..Default::default()
+        };
+        plant(crate::session_meta_path(&repo, "named", "s1"), &serde_json::to_vec(&meta).unwrap());
+        crate::set_session_name(&repo, "named", "s1", "Repair cache", crate::SessionNameSource::User).unwrap();
+        create_backup(&repo, &ready(&dest), BackupTrigger::Manual, "9.9.9").unwrap();
+        let restored = repo.parent().unwrap().join("restored");
+        extract_backup_into(&only_zip(&dest), &alinery_dir(&restored), Some(&repo)).unwrap();
+        assert_eq!(crate::read_session_name(&restored, "named", "s1").unwrap().unwrap().name, "Repair cache");
         cleanup(&repo);
     }
 

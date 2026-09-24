@@ -170,6 +170,33 @@ pub fn session_meta_path(repo: &Path, task_slug: &str, id: &str) -> PathBuf {
     dir.join(format!("{id}.meta.json"))
 }
 
+pub fn session_name_path(repo: &Path, task_slug: &str, id: &str) -> PathBuf {
+    sessions_dir(repo, task_slug).join(format!("{id}.name.json"))
+}
+
+/// Verify retained storage without following repository-controlled directory/file links.
+pub(crate) fn validate_retained_file(repo: &Path, path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    let relative = path.strip_prefix(repo).map_err(|_| "storage path escapes repository")?;
+    let mut current = repo.to_path_buf();
+    let mut components = relative.components().peekable();
+    while let Some(component) = components.next() {
+        if !matches!(component, std::path::Component::Normal(_)) {
+            return Err("invalid retained storage path".into());
+        }
+        current.push(component.as_os_str());
+        let metadata = std::fs::symlink_metadata(&current).map_err(|_| "retained storage is unavailable")?;
+        if components.peek().is_none() {
+            if !metadata.is_file() || metadata.nlink() != 1 {
+                return Err("retained storage must be a regular, unlinked file".into());
+            }
+        } else if !metadata.is_dir() {
+            return Err("retained storage directory must not be a link".into());
+        }
+    }
+    Ok(())
+}
+
 // Alinery-owned OMP conversation dir, sibling of `<id>.meta.json`. Not the worktree
 // checkout and not `~/.omp/agent/sessions/`.
 pub fn session_omp_dir(repo: &Path, task_slug: &str, id: &str) -> PathBuf {

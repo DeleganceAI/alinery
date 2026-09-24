@@ -277,7 +277,7 @@ fn read_existing_app_config(path: &Path) -> Result<Option<AppConfig>, String> {
     })
 }
 
-pub(crate) fn load_app_config(app: &AppHandle) -> AppConfig {
+pub(crate) fn load_app_config<R: tauri::Runtime>(app: &AppHandle<R>) -> AppConfig {
     let Ok(p) = app_config_path(app) else {
         return AppConfig::default();
     };

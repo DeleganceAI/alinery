@@ -3581,7 +3581,7 @@ dialog.modal::backdrop {
 }
 .task-session-table {
   width: 100%;
-  min-width: 0;
+  min-width: calc(560px * var(--ui-scale));
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -3601,7 +3601,7 @@ dialog.modal::backdrop {
   font-size: calc(13px * var(--ui-scale));
   vertical-align: middle;
 }
-.task-session-table td:not(.session-actions) {
+.task-session-table td:not(.session-actions):not(.session-name-cell) {
   overflow: hidden;
 }
 .task-session-table td > .pill,
@@ -3612,6 +3612,108 @@ dialog.modal::backdrop {
   overflow: hidden;
   text-overflow: ellipsis;
   vertical-align: middle;
+}
+.task-session-table .session-name-cell {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.session-name-cell > .name-error {
+  display: block;
+  color: var(--danger);
+  margin-top: 4px;
+}
+.editable-name {
+  min-width: 0;
+}
+.editable-name-display {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.editable-name-display[hidden] {
+  display: none;
+}
+.editable-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.name-edit-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+}
+.editable-name:hover .name-edit-button,
+.name-edit-button:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.name-edit-button:hover {
+  color: var(--text);
+  background: var(--surface-subtle);
+}
+.name-edit-button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+@media (hover: none) {
+  .name-edit-button {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.name-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  white-space: normal;
+}
+.name-editor input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 8px;
+}
+.name-editor-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+.name-editor-actions > .btn {
+  padding: 5px;
+}
+.name-editor .err {
+  grid-column: 1 / -1;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.session-name-cell .name-editor {
+  grid-template-columns: minmax(0, 1fr);
+}
+.session-name-cell .name-editor-actions {
+  justify-content: flex-end;
+}
+.session-actions > .name-editor {
+  flex-basis: 100%;
+  width: 100%;
 }
 .task-session-table tbody tr:hover {
   background: var(--surface-subtle);
@@ -3690,6 +3792,9 @@ dialog.modal::backdrop {
 }
 .task-session-table .session-time-col {
   width: calc(76px * var(--ui-scale));
+}
+.task-session-table .session-name-col {
+  width: 24%;
 }
 .session-sort-header {
   border: 0;
@@ -3950,10 +4055,39 @@ dialog.modal::backdrop {
 .sessionhd {
   flex: 0 0 auto;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
+}
+.sessionhd > .btn,
+.session-view-hatch {
+  flex-shrink: 0;
+}
+.session-identity {
+  flex: 1 1 28rem;
+  min-width: min(100%, 18rem);
+}
+.session-identity .editable-name {
+  max-width: 48ch;
+}
+.session-context {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.sessionhd > .pill {
+  min-width: 0;
+  max-width: min(100%, 28rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .session-execution-bar {
   display: flex;
@@ -4820,12 +4954,11 @@ dialog.modal::backdrop {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-strong);
-  font-size: calc(14px * var(--ui-scale));
-  font-weight: 600;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
 }
 .session-path {
-  flex: 1 1 auto;
+  flex: 1 1 12rem;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

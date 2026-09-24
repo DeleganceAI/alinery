@@ -67,6 +67,12 @@ Review the decision before starting Plan. Other bundled Playbooks cover one-shot
 
 **Sessions survive app quit.** A per-repository daemon (`alineryd`) owns the agent and terminal processes. Leave sessions running when you close the app, then reconnect when you return. Stopping sessions is an explicit action; the quit dialog also offers **Quit & close all repos**.
 
+**Editable work names.** Task-attached OMP agents suggest a short, work-specific session name early in an ordinary working turn, once they understand the task. This uses the working agent, not a separate naming model or background upload service; an unavailable model or an older running extension can leave the session unnamed. Names appear beside status in the task's session table, in the global session list, session header, and search, with task and execution-type context retained.
+
+Use **Rename session** to correct any retained task-attached session, including never-started, exited, archived, and Terminal sessions, without starting it. Names are trimmed, single-line text, limited to 40 Unicode characters (generated names should prefer fewer than 30). A human correction always takes precedence over later automatic suggestions. Names persist independently of session lifecycle data and never change session IDs or execution state. Terminal names are manual only; the taskless Terminal drawer is unchanged.
+
+In the task table and session header, hover the name or Tab to its pencil to edit it in place. Enter saves; Escape cancels. The check and cancel buttons provide the same actions without a keyboard. Finishing an edit returns focus to the name field, without leaving the pencil visible on a previously edited item.
+
 Task records, sessions, and artifacts live under your repository's `.alinery/` directory. The app runs locally, and product-usage telemetry is opt-in.
 
 Board and session discovery read saved task metadata and the task's retained playbook, even when its owning daemon is offline or incompatible. Saved session output remains readable without reviving the owner. Live execution queries and mutations still require the compatible owning daemon; an unavailable owner is not proof that a session stopped or completed. Missing or corrupt retained data is reported as a storage error, not replaced by the current library definition or an empty execution state.
@@ -104,6 +110,8 @@ and receives the immediate parent's ticket and artifact paths in every generated
 The parent shows the active child as its manager row; the child links back through its header
 instead of projecting the parent manager as one of its sessions. Parent sessions remain available
 while the child blocks the parent's sub-task slot.
+
+The manager proposes a descriptive child name through the existing creation approval. Use **Rename task** in the child heading or its parent row to edit that name later, including retained archived children. The child's current name and the manager session's own work name remain independent. Renaming changes no slug, branch, worktree, relationship, or historical artifact; task names do not inherit the session-name length limit.
 
 While the child is active, the parent's artifact tree shows a live logical `subtasks/<child>/`
 folder. `alinery_finalize_subtask` replaces that view with an immutable snapshot, archives the child,

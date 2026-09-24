@@ -1,4 +1,4 @@
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Pencil } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -11,6 +11,7 @@ import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassificat
 import { CopyArtifactButton, CopyTextButton, copyTextToClipboard } from "../chat/CopyMessage";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
+import { NameEditor, restoreNameFocus } from "../NameEditor";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PullRequestIndicator } from "../PullRequestIndicator";
 import {
@@ -54,7 +55,9 @@ import type {
   ArtifactTreeNode,
   BoardNav,
   BoardTask,
+  NameCommit,
   RelatedTaskRef,
+  SessionDisplayMeta,
   SessionMeta,
   SessionObservation,
   SubtaskManagerState,
@@ -134,6 +137,7 @@ export function TaskDetail({
   onAppearanceChange,
   knownRepos,
   sessionSort: controlledSessionSort,
+  onNameCommitted,
   onSessionSortChange,
 }: {
   slug: string;
@@ -161,12 +165,27 @@ export function TaskDetail({
   onAppearanceChange: (next: AppearancePrefs) => void;
   onDiagramZoomOpenChange?: (open: boolean) => void;
   sessionSort?: SessionSort;
+  onNameCommitted?: (change: NameCommit) => void;
   onSessionSortChange?: (sort: SessionSort) => void;
 }) {
   const [task, setTask] = useState<Task | null>(initialTask ?? null);
   const pullRequests = useTaskPullRequests(task && task.slug === slug && !task.draft ? [{ repoPath, taskSlug: slug }] : []);
   const pullRequest = pullRequests[`${repoPath}:${slug}`];
   const taskMutationEpoch = useRef(0);
+  const nameReadRequest = useRef(0);
+  const scopeRef = useRef({ repoPath, slug, alive: true });
+  if (scopeRef.current.repoPath !== repoPath || scopeRef.current.slug !== slug) {
+    scopeRef.current.alive = false;
+    scopeRef.current = { repoPath, slug, alive: true };
+    taskMutationEpoch.current += 1;
+    nameReadRequest.current += 1;
+  }
+  const scope = scopeRef.current;
+  const beginNameRead = () => {
+    const epoch = taskMutationEpoch.current;
+    const request = ++nameReadRequest.current;
+    return () => scope.alive && scopeRef.current === scope && epoch === taskMutationEpoch.current && request === nameReadRequest.current;
+  };
   const [repoTasks, setRepoTasks] = useState<Task[]>([]);
   const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
   const [executionError, setExecutionError] = useState("");
@@ -178,7 +197,7 @@ export function TaskDetail({
   const activeExecutions = executions.filter((execution) => ["starting", "running", "finishing", "interrupted"].includes(execution.lifecycle));
   const queuedExecutionCount = executions.filter((execution) => execution.lifecycle === "queued" && execution.start_requested).length;
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
-  const [sessions, setSessions] = useState<SessionMeta[]>([]);
+  const [sessions, setSessions] = useState<SessionDisplayMeta[]>([]);
   const [sessionStatuses, setSessionStatuses] = useState<Record<string, SessionObservation>>({});
   const [subtaskState, setSubtaskState] = useState<SubtaskManagerState | null>(null);
   const [childActivity, setChildActivity] = useState<TaskActivitySummary>(EMPTY_TASK_ACTIVITY);
@@ -189,6 +208,9 @@ export function TaskDetail({
   const loadWarning = combineLoadWarnings(sessionsError, artifactsError);
   const [busy, setBusy] = useState("");
   const sessionArchivePending = useRef(false);
+  const [editingName, setEditingName] = useState<string | null>(null);
+  const nameTrigger = useRef<HTMLButtonElement | null>(null);
+  const editorVersion = useRef(0);
   const [boardTasks, setBoardTasks] = useState<BoardTask[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [sessionSort, setSessionSort] = useSessionSort(
@@ -232,7 +254,7 @@ export function TaskDetail({
   const currentManagerRow: TaskPanelRow | null = subtaskState?.manager_session
     ? {
         kind: "subtask_manager",
-        session: subtaskState.manager_session,
+        session: sessions.find((session) => session.id === subtaskState.manager_session?.id) ?? subtaskState.manager_session,
         owner_task_slug: subtaskState.manager_owner_task_slug,
         child: subtaskState.active_subtask ?? undefined,
         active_child: subtaskState.active_subtask !== null,
@@ -242,7 +264,9 @@ export function TaskDetail({
     if (currentManagerRow?.session.id === session.id) return [currentManagerRow];
     const finishedRow = finishedRowByManagerId.get(session.id);
     if (finishedRow) return [finishedRow];
-    return session.subtask_manager ? [] : [{ kind: "session", session }];
+    return session.subtask_manager
+      ? [{ kind: "subtask_manager", session, owner_task_slug: slug, child: repoTasks.find((candidate) => candidate.slug === session.subtask_slug), active_child: false }]
+      : [{ kind: "session", session }];
   });
   if (currentManagerRow && !projectedRows.some((row) => row.kind === "subtask_manager" && row.session.id === currentManagerRow.session.id)) {
     projectedRows.push(currentManagerRow);
@@ -289,44 +313,43 @@ export function TaskDetail({
     artifactTab,
   );
 
-  const refreshChildActivity = async (managerState: SubtaskManagerState, epoch: number) => {
+  const refreshChildActivity = async (managerState: SubtaskManagerState, isCurrent: () => boolean) => {
     const childSlug = managerState.active_subtask?.slug;
     if (!childSlug) {
-      if (epoch !== taskMutationEpoch.current) return;
+      if (!isCurrent()) return;
       setChildActivity(EMPTY_TASK_ACTIVITY);
       setChildPlaybookStep("");
       return;
     }
     const [activity, boardTasks] = await Promise.all([
       ipc.listTaskActivity([{ repoPath, taskSlug: childSlug }]).catch(() => ({}) as Record<string, TaskActivitySummary>),
-      ipc.listBoardTasks(false).catch(() => []),
+      ipc.listBoardTasks(true).catch(() => []),
     ]);
-    if (epoch !== taskMutationEpoch.current) return;
+    if (!isCurrent()) return;
     const child = boardTasks.find((candidate) => candidate.repo_path === repoPath && candidate.slug === childSlug);
     setChildActivity(activity[`${repoPath}:${childSlug}`] ?? EMPTY_TASK_ACTIVITY);
     setChildPlaybookStep(child ? [child.playbook_title, child.current_step_title].filter(Boolean).join(" · ") : (managerState.active_subtask?.playbook ?? ""));
   };
 
-  const commitFetchedSubtaskState = async (fetched: SubtaskManagerState, epoch: number) => {
-    if (epoch !== taskMutationEpoch.current) return;
+  const commitFetchedSubtaskState = async (fetched: SubtaskManagerState, isCurrent: () => boolean) => {
+    if (!isCurrent()) return;
     setSubtaskState(fetched);
-    await refreshChildActivity(fetched, epoch);
+    await refreshChildActivity(fetched, isCurrent);
   };
 
-  const commitFetchedTask = (fetched: Task | null, epoch: number) => {
-    if (epoch !== taskMutationEpoch.current) return;
+  const commitFetchedTask = (fetched: Task | null) => {
     setTask((current) => (current && fetched && sameTask(current, fetched) ? current : fetched));
   };
-
   const refreshExecution = async () => {
     const request = ++executionRequest.current;
+    const capturedScope = scope;
     try {
       const value = await ipc.getTaskExecution(slug, repoPath);
-      if (request !== executionRequest.current) return;
+      if (!capturedScope.alive || scopeRef.current !== capturedScope || request !== executionRequest.current) return;
       setExecutionView(value);
       setExecutionError("");
     } catch (error) {
-      if (request !== executionRequest.current) return;
+      if (!capturedScope.alive || scopeRef.current !== capturedScope || request !== executionRequest.current) return;
       setExecutionError(String(error));
     }
   };
@@ -344,25 +367,25 @@ export function TaskDetail({
   };
 
   const load = async () => {
-    const taskFetchEpoch = taskMutationEpoch.current;
+    const isCurrent = beginNameRead();
     // Every optional read is pre-wrapped so one rejection can never fail the shared
     // Promise.all — a removed custom playbook or a transient artifact-scan error must not
     // discard whatever else in this wave succeeded.
     const [taskResult, managerResult, tasksResult, , sessionsResult, artifactsResult, artifactTreeResult] = await Promise.all([
-      ipc.getTask(slug).then(
+      ipc.getTask(slug, repoPath).then(
         (value) => ({ ok: true, value }) as const,
         (error) => ({ ok: false, error }) as const,
       ),
-      ipc.subtaskState(slug).then(
+      ipc.subtaskState(slug, repoPath).then(
         (value) => ({ ok: true, value }) as const,
         () => ({ ok: false }) as const,
       ),
-      ipc.listTasks().then(
+      ipc.listTasks(repoPath).then(
         (value) => ({ ok: true, value }) as const,
         () => ({ ok: false }) as const,
       ),
       refreshExecution(),
-      ipc.listSessions(slug).then(
+      ipc.listSessions(slug, repoPath).then(
         (value) => ({ ok: true, value }) as const,
         (error) => ({ ok: false, error }) as const,
       ),
@@ -375,25 +398,40 @@ export function TaskDetail({
         () => ({ ok: false }) as const,
       ),
     ]);
+    if (!scope.alive || scopeRef.current !== scope) return;
+    if (artifactTreeResult.ok) setArtifactTree(artifactTreeResult.value);
+    if (artifactsResult.ok) {
+      setArtifactItems((current) => (sameArtifactListItems(current, artifactsResult.value) ? current : artifactsResult.value));
+      setArtifactsError("");
+    } else {
+      setArtifactsError(String(artifactsResult.error));
+    }
+    if (!isCurrent()) return;
 
     // getTask's success is independent of every other request here: its failure is the only
     // one that belongs in the "Couldn't load the task." error bar, and it must never discard
     // an already-seeded header.
     const t = taskResult.ok ? taskResult.value : null;
     if (taskResult.ok) {
-      commitFetchedTask(t, taskFetchEpoch);
+      commitFetchedTask(t);
       ipc
         .listBoardTasks(true)
-        .then(setBoardTasks)
-        .catch(() => setBoardTasks([]));
+        .then((value) => {
+          if (isCurrent()) setBoardTasks(value);
+        })
+        .catch(() => {});
       if (tasksResult.ok) setRepoTasks(tasksResult.value);
-      if (managerResult.ok) await commitFetchedSubtaskState(managerResult.value, taskFetchEpoch);
-      if (artifactTreeResult.ok) setArtifactTree(artifactTreeResult.value);
+      if (managerResult.ok) await commitFetchedSubtaskState(managerResult.value, isCurrent);
+      if (!isCurrent()) return;
       if (t?.worktree) {
         ipc
           .worktreeExists(slug)
-          .then((ok) => setWorktreeMissing(!ok))
-          .catch(() => setWorktreeMissing(false));
+          .then((ok) => {
+            if (isCurrent()) setWorktreeMissing(!ok);
+          })
+          .catch(() => {
+            if (isCurrent()) setWorktreeMissing(false);
+          });
       } else {
         setWorktreeMissing(false);
       }
@@ -412,12 +450,6 @@ export function TaskDetail({
     } else {
       setSessionsError(String(sessionsResult.error));
     }
-    if (artifactsResult.ok) {
-      setArtifactItems((current) => (sameArtifactListItems(current, artifactsResult.value) ? current : artifactsResult.value));
-      setArtifactsError("");
-    } else {
-      setArtifactsError(String(artifactsResult.error));
-    }
 
     const statuses = await ipc
       .sessionStatuses(
@@ -425,23 +457,24 @@ export function TaskDetail({
         slug,
       )
       .catch(() => ({}) as Record<string, SessionObservation>);
+    if (!isCurrent()) return;
     setSessionStatuses((current) => (sameSessionObservationMaps(current, statuses) ? current : statuses));
   };
 
   const refreshLiveTaskState = async () => {
-    const taskFetchEpoch = taskMutationEpoch.current;
+    const isCurrent = beginNameRead();
     // Same independence as load(): a failing artifact scan on a 3s poll must not discard a
     // good listSessions result, and vice versa.
-    const [tasksResult, managerResult, sessionsResult, artifactsResult, artifactTreeResult] = await Promise.all([
-      ipc.listTasks().then(
+    const [tasksResult, managerResult, sessionsResult, artifactsResult, artifactTreeResult, boardResult] = await Promise.all([
+      ipc.listTasks(repoPath).then(
         (value) => ({ ok: true, value }) as const,
         () => ({ ok: false }) as const,
       ),
-      ipc.subtaskState(slug).then(
+      ipc.subtaskState(slug, repoPath).then(
         (value) => ({ ok: true, value }) as const,
         () => ({ ok: false }) as const,
       ),
-      ipc.listSessions(slug).then(
+      ipc.listSessions(slug, repoPath).then(
         (value) => ({ ok: true, value }) as const,
         () => ({ ok: false }) as const,
       ),
@@ -453,22 +486,27 @@ export function TaskDetail({
         (value) => ({ ok: true, value }) as const,
         () => ({ ok: false }) as const,
       ),
+      ipc.listBoardTasks(true).then(
+        (value) => ({ ok: true, value }) as const,
+        () => ({ ok: false }) as const,
+      ),
       refreshExecution(),
     ]);
-    if (tasksResult.ok) {
-      const refreshedTask = tasksResult.value.find((candidate) => candidate.slug === slug) ?? null;
-      commitFetchedTask(refreshedTask, taskFetchEpoch);
-      setRepoTasks(tasksResult.value);
-    }
-    if (managerResult.ok) await commitFetchedSubtaskState(managerResult.value, taskFetchEpoch);
+    if (!scope.alive || scopeRef.current !== scope) return;
     if (artifactTreeResult.ok) setArtifactTree(artifactTreeResult.value);
-    // A successful poll is a recovery: clear that resource's warning and, for sessions, let
-    // the empty state through — otherwise a failed first load left "No sessions yet." hidden
-    // and the stale warning up forever. Poll *failures* stay silent (3s cadence would flap).
     if (artifactsResult.ok) {
       setArtifactItems((current) => (sameArtifactListItems(current, artifactsResult.value) ? current : artifactsResult.value));
       setArtifactsError("");
     }
+    if (!isCurrent()) return;
+    if (boardResult.ok) setBoardTasks(boardResult.value);
+    if (tasksResult.ok) {
+      const refreshedTask = tasksResult.value.find((candidate) => candidate.slug === slug) ?? null;
+      commitFetchedTask(refreshedTask);
+      setRepoTasks(tasksResult.value);
+    }
+    if (managerResult.ok) await commitFetchedSubtaskState(managerResult.value, isCurrent);
+    if (!isCurrent()) return;
     if (!sessionsResult.ok) return;
     const ss = sessionsResult.value;
     setSessions((current) => (sameSessionMetas(current, ss) ? current : ss));
@@ -480,18 +518,35 @@ export function TaskDetail({
         slug,
       )
       .catch(() => ({}) as Record<string, SessionObservation>);
+    if (!isCurrent()) return;
     setSessionStatuses((current) => (sameSessionObservationMaps(current, statuses) ? current : statuses));
   };
 
   useEffect(() => {
     let alive = true;
     let timer = 0;
+    scope.alive = true;
+    setEditingName(null);
+    editorVersion.current += 1;
+    nameTrigger.current = null;
+    setTask(initialTask ?? null);
+    setRepoTasks([]);
+    setBoardTasks([]);
+    setSessions([]);
+    setSessionsLoaded(false);
+    setSubtaskState(null);
+    setErr(null);
+    setSessionsError("");
+    setArtifactsError("");
     setExecutionView(null);
     setExecutionError("");
     // Every read inside load() is individually wrapped, so this only fires on an unexpected
     // throw — but without it that throw would be a silent unhandled rejection, which is what
     // the old whole-body try/catch prevented.
-    load().catch((e) => setErr({ msg: "Couldn't load the task.", detail: String(e) }));
+    const loadEpoch = taskMutationEpoch.current;
+    load().catch((e) => {
+      if (scope.alive && scopeRef.current === scope && loadEpoch === taskMutationEpoch.current) setErr({ msg: "Couldn't load the task.", detail: String(e) });
+    });
     // alineryd owns auto-advance creation; Task Detail only polls sessions/artifacts for display.
     const poll = () => {
       refreshLiveTaskState()
@@ -503,6 +558,9 @@ export function TaskDetail({
     timer = window.setTimeout(poll, 3000);
     return () => {
       alive = false;
+      scope.alive = false;
+      taskMutationEpoch.current += 1;
+      nameReadRequest.current += 1;
       executionRequest.current += 1;
       window.clearTimeout(timer);
     };
@@ -654,19 +712,20 @@ export function TaskDetail({
     setBusy("restore");
     try {
       await ipc.restoreTaskForRepo(repoPath, slug);
+      if (!scope.alive || scopeRef.current !== scope) return;
       taskMutationEpoch.current += 1;
-      const restoreEpoch = taskMutationEpoch.current;
+      const isCurrent = beginNameRead();
       setTask((current) => (current ? { ...current, archived: false } : current));
       setSubtaskState(null);
       void ipc
-        .subtaskState(slug)
-        .then((value) => commitFetchedSubtaskState(value, restoreEpoch))
+        .subtaskState(slug, repoPath)
+        .then((value) => commitFetchedSubtaskState(value, isCurrent))
         .catch(() => {});
       toast("Task restored", "success");
     } catch (error) {
-      setErr({ msg: "Couldn't restore the task.", detail: String(error) });
+      if (scope.alive && scopeRef.current === scope) setErr({ msg: "Couldn't restore the task.", detail: String(error) });
     } finally {
-      setBusy("");
+      if (scope.alive && scopeRef.current === scope) setBusy("");
     }
   };
 
@@ -758,6 +817,97 @@ export function TaskDetail({
     }
   };
 
+  const closeNameEditor = () => {
+    editorVersion.current += 1;
+    flushSync(() => setEditingName(null));
+    restoreNameFocus(nameTrigger.current);
+  };
+  const renameControl = (kind: "session" | "task", owner: string, value: string, sessionId?: string) => {
+    const key = `${repoPath}:${slug}:${kind}:${owner}:${sessionId ?? ""}`;
+    return (
+      <>
+        <span
+          className={kind === "session" ? "editable-name-display" : undefined}
+          role={kind === "session" ? "group" : undefined}
+          aria-label={kind === "session" ? "Session name" : undefined}
+          tabIndex={kind === "session" ? -1 : undefined}
+          hidden={editingName === key}
+        >
+          {kind === "session" && (
+            <span className="editable-name-text" title={value}>
+              {value || "—"}
+            </span>
+          )}
+          <button
+            type="button"
+            className={kind === "session" ? "name-edit-button" : "btn ghost small"}
+            aria-label={`Rename ${kind}`}
+            title={`Rename ${kind}`}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (editingName === key) return;
+              nameTrigger.current = event.currentTarget;
+              editorVersion.current += 1;
+              setEditingName(key);
+            }}
+          >
+            {kind === "session" ? <Pencil size={14} aria-hidden="true" /> : `Rename ${kind}`}
+          </button>
+        </span>
+        {editingName === key && (
+          <NameEditor
+            key={key}
+            kind={kind}
+            value={value}
+            label={kind === "session" ? "Session name" : "Task name"}
+            onCancel={closeNameEditor}
+            onSave={async (name) => {
+              const capturedScope = scope;
+              const editor = editorVersion.current;
+              if (kind === "session" && sessionId) {
+                const committed = await ipc.renameSession({ repoPath, taskSlug: owner, sessionId, name });
+                onNameCommitted?.({ kind: "session", repo_path: repoPath, task_slug: owner, session_id: sessionId, value: committed });
+                if (!capturedScope.alive || scopeRef.current !== capturedScope) return;
+                taskMutationEpoch.current += 1;
+                setSessions((current) =>
+                  current.map((item) => (item.id === sessionId ? { ...item, name: committed.name, name_source: committed.source, name_error: null } : item)),
+                );
+                setSubtaskState((current) =>
+                  current?.manager_session?.id === sessionId
+                    ? { ...current, manager_session: { ...current.manager_session, ...{ name: committed.name, name_source: committed.source, name_error: null } } }
+                    : current,
+                );
+              } else {
+                const updated = await ipc.renameTask(repoPath, owner, name);
+                onNameCommitted?.({ kind: "task", repo_path: repoPath, task_slug: owner, task: updated });
+                if (!capturedScope.alive || scopeRef.current !== capturedScope) return;
+                taskMutationEpoch.current += 1;
+                setTask((current) => (current?.slug === owner ? updated : current));
+                setRepoTasks((current) => current.map((item) => (item.slug === owner ? updated : item)));
+                setBoardTasks((current) => current.map((item) => (item.repo_path === repoPath && item.slug === owner ? { ...item, ...updated } : item)));
+                setSubtaskState((current) =>
+                  current
+                    ? {
+                        ...current,
+                        task: current.task.slug === owner ? updated : current.task,
+                        parent_task: current.parent_task?.slug === owner ? updated : current.parent_task,
+                        active_subtask: current.active_subtask?.slug === owner ? updated : current.active_subtask,
+                      }
+                    : current,
+                );
+              }
+              if (editorVersion.current === editor) closeNameEditor();
+              void load();
+            }}
+          />
+        )}
+      </>
+    );
+  };
+
   const relatedTags = task?.related_tasks ?? [];
   const relatedCandidates = boardTasks.filter((candidate) => {
     if (candidate.archived || candidate.draft) return false;
@@ -767,11 +917,24 @@ export function TaskDetail({
   const saveRelated = (next: RelatedTaskRef[]) => {
     setBusy("related");
     setErr(null);
+    const epoch = taskMutationEpoch.current;
     ipc
       .setRelatedTasksForRepo(repoPath, slug, next)
-      .then((updated) => setTask(updated))
-      .catch((e) => setErr({ msg: "Couldn't update related tasks.", detail: String(e) }))
-      .finally(() => setBusy(""));
+      .then((updated) => {
+        if (!scope.alive || scopeRef.current !== scope) return;
+        if (epoch === taskMutationEpoch.current) {
+          taskMutationEpoch.current += 1;
+          setTask(updated);
+        } else {
+          void load();
+        }
+      })
+      .catch((e) => {
+        if (scope.alive && scopeRef.current === scope && epoch === taskMutationEpoch.current) setErr({ msg: "Couldn't update related tasks.", detail: String(e) });
+      })
+      .finally(() => {
+        if (scope.alive && scopeRef.current === scope) setBusy("");
+      });
   };
 
   const finalizedNotice = task ? finalizedSubtaskNotice(task, subtaskState?.parent_task) : "";
@@ -783,6 +946,7 @@ export function TaskDetail({
           <div className="task-panel-head task-info-head">
             <div>
               <div className="task-panel-label">Task</div>
+              {task?.parent_task && renameControl("task", task.slug, task.name)}
               <h2>{task?.name ?? slug}</h2>
             </div>
             <button type="button" className="btn ghost small" onClick={onBack}>
@@ -904,7 +1068,7 @@ export function TaskDetail({
               <div className="task-related-tags">
                 {relatedTags.map((tag) => {
                   const open = !knownRepos || knownRepos.includes(tag.repo_path);
-                  const label = tag.name || tag.slug;
+                  const label = boardTasks.find((candidate) => candidate.repo_path === tag.repo_path && candidate.slug === tag.slug)?.name || tag.name || tag.slug;
                   return (
                     <span key={`${tag.repo_path}:${tag.slug}`} className={`task-related-tag${open ? "" : " closed"}`}>
                       <button
@@ -1002,7 +1166,7 @@ export function TaskDetail({
                 <span className="dim task-session-disabled">
                   {task.archived
                     ? task.worktree
-                      ? "task archived — read-only"
+                      ? "task archived — new sessions disabled; names remain editable"
                       : "Task archived; worktree removed. Restoring keeps it available for history and related-task links, but new sessions remain disabled."
                     : worktreeMissing
                       ? "worktree missing on disk"
@@ -1030,7 +1194,8 @@ export function TaskDetail({
               <thead>
                 <tr>
                   <th className="status-col">Status</th>
-                  <th>Step</th>
+                  <th className="session-name-col">Name</th>
+                  <th>Type</th>
                   <th>Harness</th>
                   <th className="session-time-col" aria-sort={sessionSort.field === "started" ? (sessionSort.direction === "desc" ? "descending" : "ascending") : undefined}>
                     <button
@@ -1066,7 +1231,7 @@ export function TaskDetail({
               <tbody>
                 {sessionsLoaded && taskPanelRows.length === 0 && !subtaskState?.can_recover && (
                   <tr className="empty-row">
-                    <td colSpan={6}>
+                    <td colSpan={7}>
                       <EmptyState title="No sessions yet." hint="Start a session to run a harness in this task's worktree." />
                     </td>
                   </tr>
@@ -1079,7 +1244,7 @@ export function TaskDetail({
                         <td className="status-col">
                           <span className="statusdot unknown" title="No manager session record" />
                         </td>
-                        <td>
+                        <td className="session-name-cell">
                           <button type="button" className="manager-row-primary" onClick={() => onOpenRelatedTask(row.child.slug)}>
                             <span title={row.child.name}>{row.child.name}</span>
                             <span className="dim mono" title={row.child.slug}>
@@ -1087,6 +1252,8 @@ export function TaskDetail({
                             </span>
                             {outcome && <span className={`pill ${subtaskOutcomeClass(row.child)}`}>{outcome}</span>}
                           </button>
+                        </td>
+                        <td>
                           <span className="badge todo" title="Sub-task history">
                             Sub-task history
                           </span>
@@ -1101,6 +1268,7 @@ export function TaskDetail({
                           <span className="dim">—</span>
                         </td>
                         <td className="session-actions">
+                          {renameControl("task", row.child.slug, row.child.name)}
                           <button type="button" className="btn ghost small" onClick={() => onOpenRelatedTask(row.child.slug)}>
                             Open task
                           </button>
@@ -1112,7 +1280,7 @@ export function TaskDetail({
                   const obs = sessionStatuses[s.id] ?? null;
                   const isLive = obs ? obs.lifecycle.state === "live" : false;
                   if (row.kind === "subtask_manager") {
-                    const label = row.child ? row.child.name : "Sub-task setup";
+                    const label = row.child ? row.child.name : s.subtask_slug || "Sub-task setup";
                     const detail = row.child?.slug;
                     const harnessLabel = `${harnessDisplayName(s.harness)}${s.model ? ` · ${s.model}` : ""}`;
                     const canReplaceThisManager = row.active_child && subtaskState?.can_recover === true && subtaskState.manager_session?.id === s.id;
@@ -1132,6 +1300,10 @@ export function TaskDetail({
                             exitCode={s.exit_code}
                             exitAcknowledged={hasAcknowledgedExit(s)}
                           />
+                        </td>
+                        <td className="session-name-cell editable-name">
+                          {renameControl("session", row.owner_task_slug, s.name ?? "", s.id)}
+                          {s.name_error && <span className="name-error">{s.name_error}</span>}
                         </td>
                         <td>
                           <button type="button" className="manager-row-primary" onClick={activate}>
@@ -1171,7 +1343,8 @@ export function TaskDetail({
                           <SessionTimestamp kind="updated" value={sessionUpdatedAt(s)} now={sessionNow} />
                         </td>
                         <td className="session-actions">
-                          {!row.child?.archived && (
+                          {row.child && renameControl("task", row.child.slug, row.child.name, s.id)}
+                          {!s.archived && !row.child?.archived && (!s.subtask_slug || row.child) && (
                             <button
                               type="button"
                               className="btn danger small"
@@ -1248,6 +1421,10 @@ export function TaskDetail({
                           exitAcknowledged={hasAcknowledgedExit(s)}
                         />
                       </td>
+                      <td className="session-name-cell editable-name">
+                        {renameControl("session", slug, s.name ?? "", s.id)}
+                        {s.name_error && <span className="name-error">{s.name_error}</span>}
+                      </td>
                       <td>
                         <div className="session-step-cell">
                           <span className="pill" title={sessionType}>
@@ -1293,13 +1470,15 @@ export function TaskDetail({
                     <td className="status-col">
                       <span className="statusdot unknown" />
                     </td>
-                    <td>
+                    <td className="session-name-cell">
                       <button type="button" className="manager-row-primary" onClick={() => onOpenRelatedTask(subtaskState.active_subtask?.slug ?? "")}>
                         <span title={subtaskState.active_subtask.name}>{subtaskState.active_subtask.name}</span>
                         <span className="dim mono" title={subtaskState.active_subtask.slug}>
                           {subtaskState.active_subtask.slug}
                         </span>
                       </button>
+                    </td>
+                    <td>
                       <span className="badge todo" title="Manager unavailable">
                         Manager unavailable
                       </span>
@@ -1312,6 +1491,7 @@ export function TaskDetail({
                       <span className="dim">—</span>
                     </td>
                     <td className="session-actions">
+                      {renameControl("task", subtaskState.active_subtask.slug, subtaskState.active_subtask.name)}
                       <button type="button" className="btn danger small" disabled={!!busy} onClick={() => void discardSubtask(null, subtaskState.active_subtask ?? undefined)}>
                         {busy === "discard-subtask:active-child" ? "Killing…" : "Kill sub-task"}
                       </button>

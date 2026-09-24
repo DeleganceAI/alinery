@@ -25,7 +25,7 @@ const transportEnvironment = {
   ALINERY_SESSION_ID: sessionId,
   ALINERY_DAEMON_SOCKET: socketPath,
   ALINERY_DAEMON_NAMESPACE: "manual-completion-smoke",
-  ALINERY_EVENT_PROTOCOL_VERSION: "2",
+  ALINERY_EVENT_PROTOCOL_VERSION: "3",
   ALINERY_EVENT_TOKEN: eventToken,
 };
 

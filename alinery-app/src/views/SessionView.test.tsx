@@ -39,6 +39,8 @@ const writeChatAttachmentBytes = vi.hoisted(() => vi.fn(async (_slug: string, fi
 const readChatImage = vi.hoisted(() => vi.fn(async () => ({ mime_type: "image/png", data: "aa" })));
 const getTaskExecution = vi.hoisted(() => vi.fn());
 const allowExecutionCompletion = vi.hoisted(() => vi.fn());
+const getSessionDisplay = vi.hoisted(() => vi.fn(async () => null));
+const renameSession = vi.hoisted(() => vi.fn());
 
 const task: Task = {
   name: "Task",
@@ -88,6 +90,8 @@ vi.mock("../SessionTerminal", () => ({ SessionTerminal: () => <div data-testid="
 vi.mock("../confirm", () => ({ confirmDanger }));
 vi.mock("../ipc", () =>
   mockIpc({
+    getSessionDisplay,
+    renameSession,
     getTaskExecution,
     allowExecutionCompletion,
     listTasks: () => {
@@ -267,6 +271,119 @@ function renderSession(overrides: Partial<ComponentProps<typeof SessionView>> = 
   return render(sessionView(overrides));
 }
 
+describe("session work names", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    scenario.tasks = [{ ...task }];
+    scenario.tasksPromise = null;
+    scenario.tasksError = null;
+    startSession.mockClear();
+    getSessionDisplay.mockReset();
+    renameSession.mockReset();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    getSessionDisplay.mockReset().mockResolvedValue(null);
+  });
+
+  it.each(["omp", "no-harness"])("history_and_terminal_names_refresh_without_starting_sessions (%s)", async (harness) => {
+    const context = { session: { id: "session", name: "Historical work", subtask_manager: true, subtask_slug: "child" }, task_name: "Current task", subtask_name: "Current child" };
+    scenario.tasks = [
+      { ...task, parent_task: "parent" },
+      { ...task, slug: "parent", name: "Current parent" },
+    ];
+    getSessionDisplay.mockResolvedValue(context as never);
+    renderSession({ intent: "history", harness });
+    await flushPromises();
+    expect(screen.getByText("Historical work")).toBeDefined();
+    expect(screen.getByText("Current child")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Current parent" })).toBeDefined();
+    expect(getSessionDisplay).toHaveBeenCalledWith("/repo", "task", "session");
+    getSessionDisplay.mockResolvedValue({ ...context, session: { ...context.session, name: "External name" }, task_name: "Renamed task", subtask_name: "Renamed child" } as never);
+    scenario.tasks = [
+      { ...task, parent_task: "parent" },
+      { ...task, slug: "parent", name: "Renamed parent" },
+    ];
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(screen.getByText("External name")).toBeDefined();
+    expect(screen.getByText("Renamed task")).toBeDefined();
+    expect(screen.getByText("Renamed child")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Renamed parent" })).toBeDefined();
+    expect(startSession).not.toHaveBeenCalled();
+  });
+
+  it("rename_keys_do_not_submit_chat_or_change_session", async () => {
+    getSessionDisplay.mockResolvedValue({ session: { id: "session", name: "Old name" }, task_name: "Task", subtask_name: null } as never);
+    renameSession.mockResolvedValue({ name: "Saved name", source: "user" });
+    const onBack = vi.fn();
+    renderSession({ intent: "history", onBack });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
+    expect(screen.queryByRole("button", { name: "Rename session" })).toBeNull();
+    fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Discard" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Session name" }), { key: "Escape" });
+    expect(renameSession).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(screen.getByRole("group", { name: "Session name" }));
+    expect(onBack).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Saved name" } });
+    getSessionDisplay.mockResolvedValue({ session: { id: "session", name: "Saved name" }, task_name: "Task", subtask_name: null } as never);
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Session name" }), { key: "Enter" });
+    await flushPromises();
+    expect(screen.getByText("Saved name")).toBeDefined();
+    expect(document.activeElement).toBe(screen.getByRole("group", { name: "Session name" }));
+    expect(renameSession).toHaveBeenCalledWith({ repoPath: "/repo", taskSlug: "task", sessionId: "session", name: "Saved name" });
+    expect(onBack).not.toHaveBeenCalled();
+    expect(startSession).not.toHaveBeenCalled();
+  });
+
+  it("keeps a committed header across stale polls and ignores a previous repo save", async () => {
+    const original = { session: { id: "session", name: "Original" }, task_name: "Task", subtask_name: null };
+    getSessionDisplay.mockResolvedValue(original as never);
+    const { rerender } = renderSession({ intent: "history" });
+    await flushPromises();
+    const oldPoll = deferred<never>();
+    getSessionDisplay.mockReturnValueOnce(oldPoll.promise);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    renameSession.mockResolvedValue({ name: "Committed", source: "user" });
+    getSessionDisplay.mockResolvedValue({ ...original, session: { ...original.session, name: "Committed" } } as never);
+    fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Committed" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Session name" }), { key: "Enter" });
+    await flushPromises();
+    await act(async () => {
+      oldPoll.resolve(original as never);
+    });
+    expect(screen.getByText("Committed")).toBeDefined();
+    getSessionDisplay.mockResolvedValue({ ...original, session: { ...original.session, name: "External" } } as never);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(screen.getByText("External")).toBeDefined();
+    const lateSave = deferred<{ name: string; source: string }>();
+    renameSession.mockReturnValueOnce(lateSave.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Late old repo" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Session name" }), { key: "Enter" });
+    getSessionDisplay.mockResolvedValue({ ...original, session: { ...original.session, name: "Other repo" } } as never);
+    rerender(sessionView({ intent: "history", repoPath: "/other" }));
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Keep this draft" } });
+    await act(async () => {
+      lateSave.resolve({ name: "Late old repo", source: "user" });
+    });
+    expect(screen.getByText("Other repo")).toBeDefined();
+    expect(screen.getByRole("textbox", { name: "Session name" })).toHaveProperty("value", "Keep this draft");
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Session name" }));
+  });
+});
+
 describe("session archive pending feedback", () => {
   beforeEach(() => {
     scenario.tasks = [{ ...task }];
@@ -341,17 +458,13 @@ describe("the session toolbar names the parent task", () => {
   it("falls back to the task slug before listTasks resolves", () => {
     scenario.tasksPromise = deferred<Task[]>().promise;
     renderSession();
-    const title = screen.getByTitle("task");
-    expect(title.textContent).toBe("task");
-    expect(title.className).toContain("session-task");
+    expect(screen.getByText("task")).toBeDefined();
   });
 
   it("replaces the slug with the task name once listTasks resolves", async () => {
     scenario.tasks = [{ ...task, name: "Human Readable Task" }];
     renderSession();
-    await waitFor(() => {
-      expect(screen.getByTitle("task").textContent).toBe("Human Readable Task");
-    });
+    expect(await screen.findByText("Human Readable Task")).toBeDefined();
   });
 
   it("keeps the slug when the task cannot be loaded", async () => {
@@ -360,7 +473,7 @@ describe("the session toolbar names the parent task", () => {
     await waitFor(() => {
       expect(scenario.taskCalls).toBeGreaterThan(0);
     });
-    expect(screen.getByTitle("task").textContent).toBe("task");
+    expect(screen.getByText("task")).toBeDefined();
   });
 });
 

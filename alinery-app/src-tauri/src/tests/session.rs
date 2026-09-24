@@ -4,6 +4,133 @@
 use super::*;
 
 #[test]
+fn manual_rename_uses_owned_explicit_repo_without_daemon() {
+    use tauri::Manager;
+    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let repo_a = init_git_test_repo("name-command-a");
+    let repo_b = init_git_test_repo("name-command-b");
+    for repo in [&repo_a, &repo_b] {
+        write_activity_task(repo, "task", "implementation", true);
+        fs::write(
+            session_meta_path(repo, "task", "same"),
+            serde_json::to_vec(&SessionMeta {
+                id: "same".into(),
+                archived: true,
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let mut task = read_task(repo, "task").unwrap();
+        task.archived = true;
+        write_task(repo, &task).unwrap();
+    }
+    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+    context.config_mut().identifier = format!("test.alinery.names.{}", uuid::Uuid::new_v4());
+    let app = tauri::test::mock_builder().manage(AppState::default()).build(context).unwrap();
+    let config_path = crate::app_config_path(app.handle()).unwrap();
+    crate::write_app_config_at(
+        &config_path,
+        &AppConfig {
+            known_repos: vec![repo_a.display().to_string(), repo_b.display().to_string()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    set_active_repo_global(Some(repo_b.clone())).unwrap();
+    let saved = crate::rename_session(
+        app.handle().clone(),
+        app.state(),
+        repo_a.display().to_string(),
+        "task".into(),
+        "same".into(),
+        "  Offline history  ".into(),
+    )
+    .unwrap();
+    assert_eq!(saved.name, "Offline history");
+    assert_eq!(
+        crate::get_session_display(app.handle().clone(), repo_a.display().to_string(), "task".into(), "same".into())
+            .unwrap()
+            .session
+            .name
+            .as_deref(),
+        Some("Offline history")
+    );
+    assert_eq!(alinery_core::read_session_name(&repo_b, "task", "same").unwrap(), None);
+    assert!(crate::rename_session(app.handle().clone(), app.state(), "/unknown".into(), "task".into(), "same".into(), "No".into()).is_err());
+    let owner = AppState::default();
+    assert!(owner.claim_repo(&repo_b));
+    assert!(crate::rename_session(app.handle().clone(), app.state(), repo_b.display().to_string(), "task".into(), "same".into(), "No".into()).is_err());
+    assert!(!alinery_core::alineryd_socket_path(&repo_a, None).exists());
+    assert!(!alinery_core::alineryd_socket_path(&repo_b, None).exists());
+    set_active_repo_global(None).unwrap();
+    drop(app);
+    drop(owner);
+    let _ = fs::remove_dir_all(config_path.parent().unwrap());
+    let _ = fs::remove_dir_all(repo_a);
+    let _ = fs::remove_dir_all(repo_b);
+}
+
+#[test]
+fn display_lists_keep_missing_and_corrupt_names_visible() {
+    let repo = activity_repo("session-display");
+    write_task(
+        &repo,
+        &Task {
+            slug: "task".into(),
+            name: "Task".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    write_task(
+        &repo,
+        &Task {
+            slug: "child".into(),
+            name: "Child".into(),
+            archived: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    fs::create_dir_all(sessions_dir(&repo, "task")).unwrap();
+    let mut child = read_task(&repo, "child").unwrap();
+    child.name = "Current child name".into();
+    write_task(&repo, &child).unwrap();
+    for id in ["healthy", "missing", "corrupt", "unsafe"] {
+        let meta = SessionMeta {
+            id: id.into(),
+            subtask_slug: "child".into(),
+            ..Default::default()
+        };
+        fs::write(session_meta_path(&repo, "task", id), serde_json::to_vec(&meta).unwrap()).unwrap();
+    }
+    alinery_core::set_session_name(&repo, "task", "healthy", "Useful work", alinery_core::SessionNameSource::User).unwrap();
+    fs::write(alinery_core::session_name_path(&repo, "task", "corrupt"), "{").unwrap();
+    let sentinel = repo.join("sentinel");
+    fs::write(&sentinel, "private").unwrap();
+    std::os::unix::fs::symlink(&sentinel, alinery_core::session_name_path(&repo, "task", "unsafe")).unwrap();
+    let rows = session_list_items_for_repo(&repo, &repo.display().to_string(), true).unwrap();
+    assert_eq!(rows.len(), 4);
+    for row in rows {
+        let display = crate::session_display_context_for_repo(&repo, "task", &row.session.meta.id).unwrap();
+        assert_eq!(display.subtask_name.as_deref(), Some("Current child name"));
+        assert_eq!(row.subtask_name, display.subtask_name);
+        assert_eq!(display.session.name, row.session.name);
+        match row.session.meta.id.as_str() {
+            "healthy" => assert_eq!(row.session.name.as_deref(), Some("Useful work")),
+            "missing" => assert!(row.session.name.is_none() && row.session.name_error.is_none()),
+            _ => assert!(row.session.name.is_none() && row.session.name_error.as_ref().is_some_and(|error| error.len() < 512)),
+        }
+    }
+    fs::remove_dir_all(task_dir(&repo, "child")).unwrap();
+    assert!(crate::session_display_context_for_repo(&repo, "task", "healthy").unwrap().subtask_name.is_none());
+    assert_eq!(crate::list_sessions_for_repo(&repo, "task").unwrap().len(), 4);
+    assert_eq!(alinery_core::all_session_meta_paths(&repo).len(), 4);
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
 fn durable_session_discovery_preserves_offline_history_without_live_state() {
     let repo = activity_repo("durable-sessions");
     let task = write_retained_discovery_task(&repo, "offline", "foreign", false);

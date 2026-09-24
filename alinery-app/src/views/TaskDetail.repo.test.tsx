@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
@@ -46,6 +46,7 @@ const mocks = vi.hoisted(() => ({
   sessionStatuses: vi.fn(),
   pushAndCompareUrlForRepo: vi.fn(),
   killSessionForRepo: vi.fn(),
+  renameSession: vi.fn(),
 }));
 
 vi.mock("../ipc", () =>
@@ -56,6 +57,7 @@ vi.mock("../ipc", () =>
     sessionStatuses: mocks.sessionStatuses,
     pushAndCompareUrlForRepo: mocks.pushAndCompareUrlForRepo,
     killSessionForRepo: mocks.killSessionForRepo,
+    renameSession: mocks.renameSession,
   }),
 );
 
@@ -66,6 +68,7 @@ beforeEach(() => {
   mocks.sessionStatuses.mockReset().mockResolvedValue({});
   mocks.pushAndCompareUrlForRepo.mockReset().mockResolvedValue("https://example.test/compare");
   mocks.killSessionForRepo.mockReset().mockResolvedValue(undefined);
+  mocks.renameSession.mockReset();
 });
 
 afterEach(() => {
@@ -189,4 +192,122 @@ describe("a session kill issued from task detail", () => {
 
     await waitFor(() => expect(mocks.killSessionForRepo).toHaveBeenCalledWith(repoB, "s1", "task-x"));
   });
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+it.each(["commit", "reject"] as const)("late_name_commit_cannot_patch_another_repo: %s", async (outcome) => {
+  const pending = deferred<{ name: string; source: "user" }>();
+  mocks.renameSession.mockReturnValueOnce(pending.promise);
+  const onNameCommitted = vi.fn();
+  const session = {
+    id: "same-session",
+    worktree: "/w",
+    created: 1,
+    archived: false,
+    phase: "research",
+    harness: "omp",
+    model: "",
+    playbook: "",
+    generic: true,
+    harness_resume_token: "",
+    name: "Repo A purpose",
+  };
+  mocks.getTask.mockResolvedValue(task({ name: "Repo A task" }));
+  mocks.listSessions.mockResolvedValue([session]);
+  const view = (repoPath: string) => (
+    <TaskDetail
+      slug="task-x"
+      repoPath={repoPath}
+      onBack={noop}
+      onOpenSession={noop}
+      onNewSession={noop}
+      onOpenRelatedTask={noop}
+      onDuplicate={noop}
+      duplicating={false}
+      registerNav={noop}
+      appearance={DEFAULT_APPEARANCE}
+      onAppearanceChange={noop}
+      onNameCommitted={onNameCommitted}
+    />
+  );
+  const { rerender } = render(view("/repo-a"));
+  fireEvent.click(await screen.findByRole("button", { name: "Rename session" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Committed in A" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  mocks.getTask.mockResolvedValue(task({ name: "Repo B task" }));
+  mocks.listSessions.mockResolvedValue([{ ...session, name: "Repo B purpose" }]);
+  rerender(view("/repo-b"));
+  await screen.findByText("Repo B purpose");
+  fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "B draft" } });
+  await act(async () => {
+    if (outcome === "commit") pending.resolve({ name: "Committed in A", source: "user" });
+    else pending.reject(new Error("Repo A storage failure"));
+  });
+  expect(screen.getByText("Repo B purpose")).toBeDefined();
+  expect(screen.queryByText("Committed in A")).toBeNull();
+  expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("B draft");
+  expect(screen.queryByText("Repo A storage failure")).toBeNull();
+  if (outcome === "commit")
+    expect(onNameCommitted).toHaveBeenCalledWith({
+      kind: "session",
+      repo_path: "/repo-a",
+      task_slug: "task-x",
+      session_id: "same-session",
+      value: { name: "Committed in A", source: "user" },
+    });
+  else expect(onNameCommitted).not.toHaveBeenCalled();
+});
+
+it("late name-bearing reads cannot replace another repository's task or sessions", async () => {
+  const oldTask = deferred<Task>();
+  const oldSessions = deferred<SessionMeta[]>();
+  mocks.getTask.mockReturnValueOnce(oldTask.promise).mockResolvedValue(task({ name: "Current repository task" }));
+  mocks.listSessions.mockReturnValueOnce(oldSessions.promise).mockResolvedValue([]);
+  const props = {
+    slug: "task-x",
+    onBack: noop,
+    onOpenSession: noop,
+    onNewSession: noop,
+    onOpenRelatedTask: noop,
+    onDuplicate: noop,
+    duplicating: false,
+    registerNav: noop,
+    appearance: DEFAULT_APPEARANCE,
+    onAppearanceChange: noop,
+  };
+  const { rerender } = render(<TaskDetail {...props} repoPath="/repo-a" />);
+  rerender(<TaskDetail {...props} repoPath="/repo-b" />);
+  await screen.findByRole("heading", { name: "Current repository task" });
+  await act(async () => {
+    oldTask.reject(new Error("Old repository read failure"));
+    oldSessions.resolve([
+      {
+        id: "same-session",
+        worktree: "/w",
+        created: 1,
+        archived: false,
+        phase: "research",
+        harness: "omp",
+        model: "",
+        playbook: "",
+        generic: true,
+        harness_resume_token: "",
+        ...{ name: "Old repository session" },
+      },
+    ]);
+  });
+  expect(screen.getByRole("heading", { name: "Current repository task" })).toBeDefined();
+  expect(screen.queryByText("Old repository session")).toBeNull();
+  expect(screen.queryByText(/Old repository read failure/)).toBeNull();
+  expect(screen.getByText("No sessions yet.")).toBeDefined();
 });

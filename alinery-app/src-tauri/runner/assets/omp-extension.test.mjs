@@ -139,6 +139,119 @@ function makeCompletionEmitter(emit, outcome = { status: "accepted", receipt_id:
   };
 }
 
+test("naming prompt preserves context and stops after acknowledged name", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "alinery-naming-"));
+  const runner = path.join(root, "runner");
+  const capture = path.join(root, "request");
+  writeFileSync(runner, `#!/bin/sh\n/bin/cat > '${capture}'\nprintf '%s\\n' '{"status":"unchanged","value":{"name":"Human correction","source":"user"}}'\n`, { mode: 0o755 });
+  const keys = [
+    "ALINERY_RUNNER_PATH",
+    "ALINERY_SESSION_ID",
+    "ALINERY_DAEMON_SOCKET",
+    "ALINERY_DAEMON_NAMESPACE",
+    "ALINERY_EVENT_PROTOCOL_VERSION",
+    "ALINERY_EVENT_TOKEN",
+    "ALINERY_SESSION_NAMING",
+  ];
+  const previous = keys.map((key) => process.env[key]);
+  try {
+    Object.assign(process.env, {
+      ALINERY_RUNNER_PATH: runner,
+      ALINERY_SESSION_ID: "own",
+      ALINERY_DAEMON_SOCKET: "/unused",
+      ALINERY_DAEMON_NAMESPACE: "",
+      ALINERY_EVENT_PROTOCOL_VERSION: "3",
+      ALINERY_EVENT_TOKEN: "captured",
+      ALINERY_SESSION_NAMING: "1",
+    });
+    const api = makeFakeApi();
+    ext.default(api);
+    const systemPrompt = ["Original safety instruction"];
+    const result = await api.trigger("before_agent_start", { systemPrompt });
+    assert.ok(result?.systemPrompt?.length > systemPrompt.length, "eligible working turn receives naming instruction");
+    assert.equal(result.systemPrompt[0], systemPrompt[0]);
+    assert.deepEqual(systemPrompt, ["Original safety instruction"]);
+    assert.equal(process.env.ALINERY_SESSION_NAMING, undefined);
+    const outcome = await api.callTool("alinery_set_session_name", { name: "A useful purpose with thirty characters", session_id: "foreign", source: "user" }, makeContext("own"));
+    assert.deepEqual(JSON.parse(readFileSync(capture, "utf8")), { type: "session_name_suggested", name: "A useful purpose with thirty characters" });
+    assert.deepEqual(outcome.details, { status: "unchanged", value: { name: "Human correction", source: "user" } });
+    assert.equal(await api.trigger("before_agent_start", { systemPrompt }), undefined);
+  } finally {
+    keys.forEach((key, index) => {
+      if (previous[index] === undefined) delete process.env[key];
+      else process.env[key] = previous[index];
+    });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("taskless and unavailable transport never require naming", async () => {
+  const api = makeFakeApi();
+  const emit = makeRecordingEmitter();
+  registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
+  assert.equal(await api.trigger("before_agent_start", { systemPrompt: ["ordinary"] }), undefined);
+  assert.ok(!api.getRegisteredTools().includes("alinery_set_session_name"));
+});
+
+function installNaming(api, runner, eligible = true) {
+  const values = {
+    ALINERY_RUNNER_PATH: runner,
+    ALINERY_SESSION_ID: "own",
+    ALINERY_DAEMON_SOCKET: "/unused",
+    ALINERY_DAEMON_NAMESPACE: "",
+    ALINERY_EVENT_PROTOCOL_VERSION: "3",
+    ALINERY_EVENT_TOKEN: "captured",
+    ALINERY_SESSION_NAMING: eligible ? "1" : "0",
+  };
+  const previous = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
+  try {
+    Object.assign(process.env, values);
+    ext.default(api);
+    assert.equal(process.env.ALINERY_SESSION_NAMING, undefined, "eligibility is launch-only");
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+test("session name transport requires matching successful acknowledgement", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "alinery-naming-errors-"));
+  const runner = path.join(root, "runner");
+  try {
+    const good = '{"status":"saved","value":{"name":"Repair cache","source":"auto"}}';
+    for (const script of [
+      `printf '%s\\n' '${good}'; exit 1`,
+      `printf '%s' '${good}'`,
+      `printf '%s\\n' '{"status":"accepted","receipt_id":"wrong-kind"}'`,
+      `printf '%s\\n' '{"status":"saved","value":{"name":"x","source":"foreign"}}'`,
+      `printf '%s\\n' '{"status":"rejected","reason":"stale owner"}'; exit 2`,
+      `printf '%s\\n' 'not-json'`,
+      `printf '%65537s\\n' x`,
+      "exec /bin/sleep 8",
+    ]) {
+      writeFileSync(runner, `#!/bin/sh\n/bin/cat >/dev/null\n${script}\n`, { mode: 0o755 });
+      const api = makeFakeApi();
+      installNaming(api, runner);
+      assert.ok(api.getRegisteredTools().includes("alinery_set_session_name"));
+      await assert.rejects(api.callTool("alinery_set_session_name", { name: "Repair cache" }, makeContext("own")));
+      assert.ok((await api.trigger("before_agent_start", { systemPrompt: ["ordinary"] }))?.systemPrompt.length > 1);
+      await api.trigger("agent_start", { type: "agent_start" });
+      await api.trigger("agent_end", { type: "agent_end" });
+    }
+    const api = makeFakeApi();
+    installNaming(api, runner, false);
+    assert.ok(!api.getRegisteredTools().includes("alinery_set_session_name"));
+    assert.equal(await api.trigger("before_agent_start", { systemPrompt: ["ordinary"] }), undefined);
+    const environment = { ALINERY_SESSION_NAMING: "1" };
+    assert.equal(ext.captureRunnerConfig(environment), undefined);
+    assert.equal(environment.ALINERY_SESSION_NAMING, undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("runner credentials are scrubbed from tool children and retained only for emit", () => {
   const inherited = {
     PATH: process.env.PATH,
@@ -147,7 +260,7 @@ test("runner credentials are scrubbed from tool children and retained only for e
     ALINERY_SESSION_ID: "alinery-session",
     ALINERY_DAEMON_SOCKET: "/tmp/alineryd.sock",
     ALINERY_DAEMON_NAMESPACE: "namespace",
-    ALINERY_EVENT_PROTOCOL_VERSION: "1",
+    ALINERY_EVENT_PROTOCOL_VERSION: "3",
     ALINERY_EVENT_TOKEN: "secret-token",
     ALINERY_HOST_EXECUTABLE: "/canonical/Alinery Dev",
     ALINERY_PTY_INITIAL_PROMPT: "private initial task instructions",
@@ -211,7 +324,7 @@ test("empty production namespace keeps runner transport available", () => {
     ALINERY_SESSION_ID: "alinery-session",
     ALINERY_DAEMON_SOCKET: "/tmp/alineryd.sock",
     ALINERY_DAEMON_NAMESPACE: "",
-    ALINERY_EVENT_PROTOCOL_VERSION: "1",
+    ALINERY_EVENT_PROTOCOL_VERSION: "3",
     ALINERY_EVENT_TOKEN: "secret-token",
   };
 

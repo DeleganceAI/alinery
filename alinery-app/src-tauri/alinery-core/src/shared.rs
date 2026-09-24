@@ -1113,6 +1113,7 @@ pub fn reduce_runner_event(current: &SessionState, event: &RunnerEvent) -> Runne
             state.agent = AgentState::Unknown;
             state.playbook = PlaybookState::Failed { reason: detail.clone() };
         }
+        RunnerEvent::SessionNameSuggested { .. } => {}
     }
 
     RunnerReduction {
@@ -2172,6 +2173,30 @@ prompt_injection = "arg"
                 playbook: PlaybookState::InProgress,
                 adapter: HarnessAdapter::Omp,
                 message_adapter: MessageAdapter::Unsupported,
+            }
+        }
+
+        #[test]
+        fn session_name_event_preserves_state_and_never_requests_completion() {
+            let event = serde_json::from_str::<RunnerEvent>(r#"{"type":"session_name_suggested","name":"Repair cache eviction"}"#)
+                .expect("the authenticated naming event must deserialize");
+            for state in [
+                SessionState {
+                    agent: AgentState::Busy,
+                    ..live_omp_state()
+                },
+                SessionState {
+                    agent: AgentState::WaitingForInput { correlation_id: "input".into() },
+                    ..live_omp_state()
+                },
+                SessionState {
+                    playbook: PlaybookState::Completed,
+                    ..live_omp_state()
+                },
+            ] {
+                let reduced = reduce_runner_event(&state, &event);
+                assert_eq!(reduced.state, state);
+                assert!(!reduced.completion_attempt_required);
             }
         }
 
