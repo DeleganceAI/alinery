@@ -353,10 +353,10 @@ function ChatEntryRowImpl({
           {entry.detail ? <p className="chat-msg-muted">{entry.detail}</p> : null}
           {entry.scope ? <p className="chat-work-meta">{entry.scope}</p> : null}
           <div className="chat-msg-actions">
-            <button type="button" className="btn primary small" onClick={() => onApprove?.(entry.requestId, true)}>
+            <button type="button" className="btn primary small" disabled={entry.disabled} onClick={() => onApprove?.(entry.requestId, true)}>
               Allow
             </button>
-            <button type="button" className="btn ghost small" onClick={() => onApprove?.(entry.requestId, false)}>
+            <button type="button" className="btn ghost small" disabled={entry.disabled || entry.denyDisabled} onClick={() => onApprove?.(entry.requestId, false)}>
               Deny
             </button>
           </div>
