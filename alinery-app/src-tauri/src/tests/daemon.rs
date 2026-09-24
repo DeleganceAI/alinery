@@ -261,10 +261,11 @@ fn recording_lane_with_response(socket_path: PathBuf, response: impl Fn(&str) ->
                         break;
                     }
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                // Same as the fixtures in tests/mod.rs: ECONNABORTED and EINTR must
+                // not tear the listener down.
+                Err(_) => {
                     std::thread::sleep(Duration::from_millis(5));
                 }
-                Err(error) => panic!("lane listener failed: {error}"),
             }
         }
         drop(listener);
@@ -891,7 +892,7 @@ fn a_reachable_foreign_daemon_on_another_protocol_is_refused_and_never_cached() 
     );
 
     set_active_repo_global(None).unwrap();
-    let _ = socket.join();
+    let _ = socket.calls();
     let _ = fs::remove_dir_all(repo);
 }
 
@@ -931,7 +932,7 @@ fn a_reachable_foreign_daemon_with_another_app_config_is_refused_and_never_cache
     );
 
     set_active_repo_global(None).unwrap();
-    assert!(socket.join().unwrap() >= 2);
+    assert!(socket.calls() >= 2);
     let _ = fs::remove_dir_all(repo);
 }
 
@@ -972,7 +973,7 @@ fn a_reachable_foreign_daemon_on_our_protocol_is_cached_and_used() {
     );
 
     set_active_repo_global(None).unwrap();
-    let _ = socket.join();
+    let _ = socket.calls();
     let _ = fs::remove_dir_all(repo);
 }
 
@@ -1059,7 +1060,7 @@ fn ensure_daemon_adoption_uses_reported_host_guard_readiness() {
     }
 
     for (repo, socket) in fixtures {
-        let _ = socket.join();
+        let _ = socket.calls();
         let _ = fs::remove_dir_all(repo);
     }
 }

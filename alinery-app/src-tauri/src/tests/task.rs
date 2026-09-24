@@ -77,9 +77,9 @@ fn durable_board_discovery_keeps_offline_and_archived_owners_and_retained_titles
     }
     // Only the explicit compatibility probes above connect (liveness + version).
     // Discovery must not query, launch, or take over any owner.
-    assert_eq!(healthy.join().unwrap(), 2);
-    assert_eq!(incompatible.join().unwrap(), 2);
-    assert_eq!(foreign_config.join().unwrap(), 2);
+    assert_eq!(healthy.calls(), 2);
+    assert_eq!(incompatible.calls(), 2);
+    assert_eq!(foreign_config.calls(), 2);
     assert!(!alinery_core::alineryd_socket_path(&repo, Some("offline")).exists());
     let _ = fs::remove_dir_all(repo);
 }
