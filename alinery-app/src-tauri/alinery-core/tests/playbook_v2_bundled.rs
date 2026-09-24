@@ -10,7 +10,7 @@ use alinery_core::execution::{
     TaskExecutionState,
 };
 use alinery_core::playbook::{ArtifactSelector, NormalizedPlaybook, PlaybookRef, PlaybookScope};
-use alinery_core::playbook_library::{load_playbook_catalog, resolve_playbook, PlaybookRoots};
+use alinery_core::playbook_library::{load_playbook_catalog, resolve_playbook, PlaybookRoots, BUNDLED_PLAYBOOKS};
 use alinery_core::playbook_scheduler::reconcile_graph;
 
 const SLUG: &str = "trace";
@@ -838,6 +838,31 @@ fn bundled_systematic_evidence_review_trace() {
 }
 
 #[test]
+fn bundled_codebase_research_trace() {
+    let trace = Trace::new("codebase-research");
+    assert!(trace.definition.step.iter().all(|step| !step.is_coding_step));
+    linear_trace(
+        "codebase-research",
+        &[
+            ("frame", &["ticket.md"], &["research-brief.md"]),
+            ("discover", &["research-brief.md"], &["candidate-ledger.md"]),
+            ("inspect", &["research-brief.md", "candidate-ledger.md"], &["implementation-evidence.md"]),
+            (
+                "compare",
+                &["research-brief.md", "candidate-ledger.md", "implementation-evidence.md"],
+                &["approach-comparison.md"],
+            ),
+            (
+                "recommend",
+                &["research-brief.md", "candidate-ledger.md", "implementation-evidence.md", "approach-comparison.md"],
+                &["recommendation.md"],
+            ),
+        ],
+        &["recommend"],
+    );
+}
+
+#[test]
 fn bundled_catalog_ignores_legacy_without_rewriting_bytes() {
     let trace = Trace::new("superdevelop");
     let registry = trace.repo.join(".alinery/playbooks.toml");
@@ -848,6 +873,7 @@ fn bundled_catalog_ignores_legacy_without_rewriting_bytes() {
     fs::write(&registry, registry_bytes).unwrap();
     fs::write(&prompt, prompt_bytes).unwrap();
     let catalog = load_playbook_catalog(&trace.roots);
+    assert_eq!(catalog.candidates.len(), BUNDLED_PLAYBOOKS.len());
     assert!(catalog.candidates.iter().all(|candidate| candidate.source.reference.scope == PlaybookScope::Bundled));
     assert!(resolve_playbook(
         &trace.roots,
