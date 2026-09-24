@@ -266,7 +266,8 @@ export const detachSession = (id: string, attachId: number) => invoke<void>("det
 export const ensureDrawerTerminal = () => invoke<SessionMeta>("ensure_drawer_terminal");
 export const killSession = (id: string, taskSlug: string) => invoke<void>("kill_session", { id, taskSlug });
 export const killSessionForRepo = (repoPath: string, id: string, taskSlug: string) => invoke<void>("kill_session_for_repo", { repoPath, id, taskSlug });
-export const listSessionItems = (allRepos: boolean, includeArchived: boolean) => invoke<SessionListItem[]>("list_session_items", { allRepos, includeArchived });
+export const listSessionItems = (allRepos: boolean, includeArchived: boolean, repoPath?: string) =>
+  invoke<SessionListItem[]>("list_session_items", { allRepos, includeArchived, repoPath });
 export const listSessions = (taskSlug: string, repoPath?: string) => invoke<SessionDisplayMeta[]>("list_sessions", { taskSlug, repoPath });
 export const markSessionNotificationRead = (repoPath: string, taskSlug: string, id: string) => invoke<void>("mark_session_notification_read", { repoPath, taskSlug, id });
 export const clearSessionNotifications = (refs: SessionNotificationClearRef[]) => invoke<void>("clear_session_notifications", { refs });
@@ -370,8 +371,8 @@ export const validatePlaybookSource = (source: string) => invoke<PlaybookValidat
 export const renderPlaybookSource = (definition: NormalizedPlaybook) => invoke<string>("render_playbook_source", { definition });
 export const savePlaybookSource = (request: SavePlaybookRequest, repoPath?: string) => invoke<ScopedPlaybook>("save_playbook_source", { request, repoPath });
 export const deletePlaybookSource = (reference: PlaybookRef, repoPath?: string) => invoke<void>("delete_playbook_source", { reference, repoPath });
-export const readPlaybookPickerPreferences = () => invoke<PickerPreferences>("read_playbook_picker_preferences");
-export const savePlaybookPickerPreferences = (preferences: PickerPreferences) => invoke<void>("save_playbook_picker_preferences", { preferences });
+export const readPlaybookPickerPreferences = (repoPath?: string) => invoke<PickerPreferences>("read_playbook_picker_preferences", { repoPath });
+export const savePlaybookPickerPreferences = (preferences: PickerPreferences, repoPath?: string) => invoke<void>("save_playbook_picker_preferences", { preferences, repoPath });
 
 // ── update.rs ─────────────────────────────────────────────────────────
 export const checkUpdate = () => invoke<UpdateStatus>("check_update");

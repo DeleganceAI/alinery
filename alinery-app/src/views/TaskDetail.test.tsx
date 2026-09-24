@@ -3,7 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
 import { navReady, requireNav } from "../test/nav";
-import type { BoardNav, BoardTask, SessionDisplayMeta, SessionMeta, SessionObservation, SubtaskManagerState, Task, TaskActivityRef, TaskActivitySummary } from "../types";
+import type {
+  BoardNav,
+  BoardTask,
+  ExecutionAvailability,
+  SessionDisplayMeta,
+  SessionMeta,
+  SessionObservation,
+  SubtaskManagerState,
+  Task,
+  TaskActivityRef,
+  TaskActivitySummary,
+} from "../types";
 import { executionRecord, executionReply } from "./executionTestFixture";
 import { TaskDetail } from "./TaskDetail";
 
@@ -628,8 +639,9 @@ describe("task session archive pending feedback", () => {
   });
 });
 
-it("switches the retained task playbook between its live list and graph-only canvas", async () => {
+it("switches the saved task playbook between its list and graph-only canvas while the owner is offline", async () => {
   const retained = executionReply();
+  retained.live = { status: "offline", detail: "Owner socket unavailable" };
   retained.state.enabled_steps = ["worker"];
   mocks.getTaskExecution.mockResolvedValue(retained);
   await renderDetail();
@@ -1298,8 +1310,75 @@ describe("authoritative task execution", () => {
     fireEvent.click(screen.getByRole("button", { name: "History" }));
     fireEvent.click(await screen.findByRole("button", { name: "Allow this session to complete · owner-a" }));
     await waitFor(() => expect(mocks.allowExecutionCompletion).toHaveBeenCalledWith("a-task", "execution-a", "owner-a", "/r"));
-    expect(await screen.findByText(/Execution state unavailable/)).toBeDefined();
+    await waitFor(() => expect(within(screen.getByRole("alert")).getByText("Error: owner changed")).toBeDefined());
     expect((screen.getByRole("button", { name: "Allow this session to complete · owner-a" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("retains saved execution details while live authority changes and only grants completion after recovery", async () => {
+    vi.useFakeTimers();
+    const fixture = task();
+    const retained = executionReply();
+    let live: ExecutionAvailability = { status: "offline", detail: "Daemon socket disconnected" };
+    let corrupt = false;
+    mocks.getTask.mockResolvedValue(fixture);
+    mocks.getTaskExecution.mockImplementation(async () => {
+      if (corrupt) throw new Error("Invalid execution.json");
+      return { ...retained, live };
+    });
+    renderSeededDetail({ initialTask: fixture });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("group", { name: "Task playbook view" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    const completion = () => screen.getByRole("button", { name: "Allow this session to complete · owner-a" }) as HTMLButtonElement;
+    const assignments = within(screen.getByRole("article", { name: "Execution execution-a" }));
+    fireEvent.click(assignments.getByText("Inputs and outputs"));
+    expect(assignments.getByText("research/1-request-2.md")).toBeDefined();
+    expect(completion().disabled).toBe(true);
+    fireEvent.click(completion());
+    expect(mocks.allowExecutionCompletion).not.toHaveBeenCalled();
+    expect((screen.getByText("Daemon socket disconnected").closest("details") as HTMLDetailsElement).open).toBe(false);
+
+    live = { status: "foreign_owner", detail: "Different app configuration owns this lane" };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(completion().disabled).toBe(true);
+    fireEvent.click(completion());
+    expect(mocks.allowExecutionCompletion).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect((screen.getByText(live.detail).closest("details") as HTMLDetailsElement).open).toBe(false);
+    expect(assignments.getByText("research/2-result-10.md")).toBeDefined();
+
+    live = { status: "available" };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(completion().disabled).toBe(false);
+    expect(screen.queryByText("Different app configuration owns this lane")).toBeNull();
+    await act(async () => {
+      fireEvent.click(completion());
+    });
+    expect(mocks.allowExecutionCompletion).toHaveBeenCalledExactlyOnceWith("a-task", "execution-a", "owner-a", "/r");
+
+    corrupt = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(within(screen.getByRole("alert")).getByText("Error: Invalid execution.json")).toBeDefined();
+    expect(completion().disabled).toBe(true);
+    expect(assignments.getByText("research/1-request-2.md")).toBeDefined();
+    fireEvent.click(completion());
+    expect(mocks.allowExecutionCompletion).toHaveBeenCalledTimes(1);
+
+    corrupt = false;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(completion().disabled).toBe(false);
   });
 
   it("shows queued interrupted and accepted-but-live state with exact assignments and creation failure", async () => {

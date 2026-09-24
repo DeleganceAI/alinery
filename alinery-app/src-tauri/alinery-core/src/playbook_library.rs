@@ -1,5 +1,5 @@
 //! Scope-qualified v2 library. Files are the definition registry; picker data
-//! is strictly personal presentation metadata and never participates in lookup.
+//! is presentation metadata scoped to a repository (or global without one), never definition lookup.
 use crate::fs_atomic::write_bytes_atomic;
 use crate::lockfile::lock_exclusive_blocking;
 use crate::playbook::{parse_playbook_md, render_playbook_md, valid_playbook_key, NormalizedPlaybook, PlaybookRef, PlaybookScope, PlaybookValidationError};
@@ -153,6 +153,8 @@ pub struct PickerPreferences {
 #[serde(deny_unknown_fields)]
 pub struct PickerPreference {
     pub reference: PlaybookRef,
+    #[serde(default)]
+    pub preferred: bool,
     #[serde(default)]
     pub hidden: bool,
     #[serde(default)]
@@ -502,12 +504,28 @@ fn validate_preferences(preferences: &PickerPreferences) -> Result<(), String> {
     Ok(())
 }
 
+fn picker_scope(roots: &PlaybookRoots) -> PlaybookScope {
+    if roots.repo_dir.as_os_str().is_empty() {
+        PlaybookScope::Global
+    } else {
+        PlaybookScope::Repo
+    }
+}
+
 pub fn load_picker_preferences(roots: &PlaybookRoots) -> Result<PickerPreferences, String> {
-    let path = roots.global_config_dir.join("playbooks/picker.toml");
+    let scope = picker_scope(roots);
+    if scope == PlaybookScope::Repo {
+        let directory = roots.repo_dir.join(".alinery");
+        if fs::symlink_metadata(&directory).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) {
+            return Ok(PickerPreferences::default());
+        }
+        checked_directory(&directory, false)?;
+    }
+    let path = root(roots, scope).expect("picker scope has a root").join("picker.toml");
     if fs::symlink_metadata(path.parent().expect("picker parent")).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) {
         return Ok(PickerPreferences::default());
     }
-    checked_root(roots, PlaybookScope::Global, false)?;
+    checked_root(roots, scope, false)?;
     if !check_leaf(&path)? {
         return Ok(PickerPreferences::default());
     }
@@ -520,7 +538,7 @@ pub fn load_picker_preferences(roots: &PlaybookRoots) -> Result<PickerPreference
 pub fn save_picker_preferences(roots: &PlaybookRoots, preferences: &PickerPreferences) -> Result<(), PlaybookSaveError> {
     validate_preferences(preferences).map_err(io_save)?;
     let source = toml::to_string(preferences).map_err(io_save)?;
-    with_library_lock(roots, PlaybookScope::Global, |root| {
+    with_library_lock(roots, picker_scope(roots), |root| {
         let path = root.join("picker.toml");
         check_leaf(&path).map_err(io_save)?;
         write_bytes_atomic(&path, source.as_bytes()).map_err(io_save)
@@ -713,6 +731,7 @@ mod tests {
             order: vec![reference(PlaybookScope::Global), reference(PlaybookScope::Bundled)],
             entries: vec![PickerPreference {
                 reference: reference(PlaybookScope::Global),
+                preferred: true,
                 hidden: true,
                 collapsed: false,
                 badge: Some("G".into()),
@@ -725,13 +744,136 @@ mod tests {
         assert_eq!(fs::read(path).unwrap(), before);
         save(&sandbox.roots, PlaybookScope::Global, "Current", true).unwrap();
         assert_eq!(resolve_playbook(&sandbox.roots, &reference(PlaybookScope::Global)).unwrap().definition.title, "Current");
-        let picker = sandbox.roots.global_config_dir.join("playbooks/picker.toml");
+        let picker = sandbox.roots.repo_dir.join(".alinery/playbooks/picker.toml");
         fs::write(picker, "title = \"Not definition storage\"").unwrap();
         assert!(load_picker_preferences(&sandbox.roots).is_err());
         assert!(load_playbook_catalog(&sandbox.roots)
             .candidates
             .iter()
             .any(|candidate| candidate.source.reference == reference(PlaybookScope::Global) && candidate.diagnostics.is_empty()));
+    }
+
+    #[test]
+    fn picker_preferences_are_repo_isolated_without_global_inheritance() {
+        let sandbox = Sandbox::new();
+        let global_roots = PlaybookRoots {
+            global_config_dir: sandbox.roots.global_config_dir.clone(),
+            repo_dir: PathBuf::new(),
+        };
+        let other_roots = PlaybookRoots {
+            global_config_dir: sandbox.roots.global_config_dir.clone(),
+            repo_dir: sandbox.path.join("other-repo"),
+        };
+        fs::create_dir(&other_roots.repo_dir).unwrap();
+        let global_preferences = PickerPreferences {
+            order: vec![reference(PlaybookScope::Bundled), reference(PlaybookScope::Global)],
+            entries: vec![PickerPreference {
+                reference: reference(PlaybookScope::Bundled),
+                preferred: true,
+                hidden: false,
+                collapsed: false,
+                badge: None,
+                color: None,
+                last_imported_at_ms: None,
+            }],
+        };
+        save_picker_preferences(&global_roots, &global_preferences).unwrap();
+        assert_eq!(load_playbook_catalog(&sandbox.roots).picker_preferences, PickerPreferences::default());
+        assert_eq!(load_playbook_catalog(&other_roots).picker_preferences, PickerPreferences::default());
+        assert!(!sandbox.roots.repo_dir.join(".alinery").exists());
+
+        let app_config = global_roots.global_config_dir.join("app.toml");
+        let repo_config = sandbox.roots.repo_dir.join(".alinery/config.toml");
+        fs::create_dir(repo_config.parent().unwrap()).unwrap();
+        let global_config = "[global.defaults.playbook]\nscope = 'bundled'\nkey = 'one-shot'\n";
+        let local_config = "[defaults.playbook]\nscope = 'bundled'\nkey = 'review'\n";
+        fs::write(&app_config, global_config).unwrap();
+        fs::write(&repo_config, local_config).unwrap();
+        let before = crate::read_scoped_settings_strict(&app_config, &sandbox.roots.repo_dir)
+            .unwrap()
+            .effective
+            .defaults
+            .playbook;
+        let mut repo_preferences = global_preferences.clone();
+        repo_preferences.order.reverse();
+        repo_preferences.entries[0].preferred = false;
+        save_picker_preferences(&sandbox.roots, &repo_preferences).unwrap();
+        save_picker_preferences(&other_roots, &PickerPreferences::default()).unwrap();
+        assert_eq!(load_playbook_catalog(&sandbox.roots).picker_preferences, repo_preferences);
+        assert_eq!(load_playbook_catalog(&other_roots).picker_preferences, PickerPreferences::default());
+        assert_eq!(load_playbook_catalog(&global_roots).picker_preferences, global_preferences);
+        assert_eq!(
+            crate::read_scoped_settings_strict(&app_config, &sandbox.roots.repo_dir)
+                .unwrap()
+                .effective
+                .defaults
+                .playbook,
+            before
+        );
+        assert_eq!(fs::read_to_string(app_config).unwrap(), global_config);
+        assert_eq!(fs::read_to_string(repo_config).unwrap(), local_config);
+    }
+
+    #[test]
+    fn legacy_picker_metadata_does_not_imply_preferred_membership() {
+        let sandbox = Sandbox::new();
+        let root = checked_root(&sandbox.roots, PlaybookScope::Repo, true).unwrap();
+        fs::write(
+            root.join("picker.toml"),
+            "order = [{ scope = 'bundled', key = 'superdevelop' }]\n[[entries]]\nreference = { scope = 'bundled', key = 'superdevelop' }\nhidden = true\n",
+        )
+        .unwrap();
+        let preferences = load_picker_preferences(&sandbox.roots).unwrap();
+        assert_eq!(preferences.order, vec![reference(PlaybookScope::Bundled)]);
+        assert!(!preferences.entries[0].preferred);
+        assert!(preferences.entries[0].hidden);
+        save_picker_preferences(&sandbox.roots, &preferences).unwrap();
+        assert_eq!(load_picker_preferences(&sandbox.roots).unwrap(), preferences);
+    }
+
+    #[test]
+    fn invalid_picker_references_do_not_replace_saved_preferences() {
+        let sandbox = Sandbox::new();
+        let preferences = PickerPreferences {
+            order: vec![reference(PlaybookScope::Bundled)],
+            entries: Vec::new(),
+        };
+        save_picker_preferences(&sandbox.roots, &preferences).unwrap();
+        let mut invalid = preferences.clone();
+        invalid.order[0].key = "../escape".into();
+        assert!(save_picker_preferences(&sandbox.roots, &invalid).is_err());
+        assert_eq!(load_picker_preferences(&sandbox.roots).unwrap(), preferences);
+        invalid.order = vec![reference(PlaybookScope::Bundled); 2];
+        assert!(save_picker_preferences(&sandbox.roots, &invalid).is_err());
+        assert_eq!(load_picker_preferences(&sandbox.roots).unwrap(), preferences);
+        fs::write(
+            sandbox.roots.repo_dir.join(".alinery/playbooks/picker.toml"),
+            "[[entries]]\nreference = { scope = 'repo', key = '../escape' }\npreferred = true\n",
+        )
+        .unwrap();
+        assert!(load_picker_preferences(&sandbox.roots).is_err());
+    }
+
+    #[test]
+    fn picker_preferences_reject_symlinked_repo_components_and_lock() {
+        use std::os::unix::fs::symlink;
+        for component in [".alinery", ".alinery/playbooks", ".alinery/playbooks/picker.toml", ".alinery/playbooks/.mutation.lock"] {
+            let sandbox = Sandbox::new();
+            let outside = sandbox.path.join("outside");
+            fs::create_dir(&outside).unwrap();
+            let sentinel = outside.join("picker.toml");
+            fs::write(&sentinel, "order = []\n").unwrap();
+            let link = sandbox.roots.repo_dir.join(component);
+            fs::create_dir_all(link.parent().unwrap()).unwrap();
+            let is_leaf = component.ends_with("picker.toml") || component.ends_with(".mutation.lock");
+            symlink(if is_leaf { &sentinel } else { &outside }, &link).unwrap();
+            if !component.ends_with(".mutation.lock") {
+                assert!(load_picker_preferences(&sandbox.roots).is_err(), "{component}");
+            }
+            assert!(save_picker_preferences(&sandbox.roots, &PickerPreferences::default()).is_err(), "{component}");
+            assert_eq!(fs::read_to_string(&sentinel).unwrap(), "order = []\n");
+            assert!(!outside.join("playbooks").exists());
+        }
     }
 
     #[test]

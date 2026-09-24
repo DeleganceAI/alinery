@@ -122,8 +122,7 @@ export function SessionsList({
     const request = ++itemRequest.current;
     const current = () => version === scopeVersion.current && request === itemRequest.current;
     try {
-      const listed = await ipc.listSessionItems(true, showArchived);
-      const rows = allRepos ? listed : listed.filter((row) => row.repo_path === activeRepo);
+      const rows = await ipc.listSessionItems(allRepos, showArchived, activeRepo);
       if (!current()) return;
       itemsRef.current = rows;
       setItems((previous) => (sameSessionListItems(previous, rows) ? previous : rows));
@@ -153,13 +152,15 @@ export function SessionsList({
   };
 
   useEffect(() => {
+    itemsRef.current = [];
+    setItems([]);
+    setObservations({});
+    setSelectedKey("");
+    setErr("");
+    setLoaded(false);
     let alive = true;
     let timer = 0;
     setEditingKey("");
-    setItems([]);
-    itemsRef.current = [];
-    setLoaded(false);
-    setErr("");
     const poll = () => {
       load().finally(() => {
         if (alive) timer = window.setTimeout(poll, 3000);

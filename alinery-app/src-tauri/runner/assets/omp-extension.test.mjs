@@ -734,56 +734,77 @@ describe("2C — OMP extension callback behavior in isolation", () => {
     assert.deepEqual(Object.keys(schema.parameters.shape).sort(), ["message", "title"]);
   });
 
-  test("ask_approval_confirm_true_emits_wa_then_busy", async () => {
+  test("ask_approval_preserves_rpc_ui_receiver_and_waits_for_allow", async () => {
     const api = makeFakeApi();
     const emit = makeRecordingEmitter();
     registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
 
-    const calls = [];
-    const ctx = {
-      ...makeContext("omp-sess-abc"),
-      ui: {
-        pendingRequests: calls,
-        async confirm(title, message) {
-          this.pendingRequests.push([title, message]);
-          return true;
-        },
-      },
-    };
-    const output = await api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx);
+    // Match OMP's class-backed RpcExtensionUIContext, not its receiver-free TUI closures.
+    let present;
+    const request = new Promise((resolve) => {
+      present = resolve;
+    });
+    class RpcUi {
+      pendingRequests = new Map();
 
+      confirm(title, message) {
+        return new Promise((resolve) => {
+          this.pendingRequests.set("approval-1", resolve);
+          present({ type: "extension_ui_request", id: "approval-1", method: "confirm", title, message });
+        });
+      }
+
+      respond(response) {
+        const resolve = this.pendingRequests.get(response.id);
+        this.pendingRequests.delete(response.id);
+        resolve(response.cancelled ? false : response.confirmed);
+      }
+    }
+    const ui = new RpcUi();
+    const ctx = { ...makeContext("omp-sess-abc"), ui };
+    const pending = api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx);
+    const shown = await Promise.race([request, pending]);
+    assert.deepEqual(shown, {
+      type: "extension_ui_request",
+      id: "approval-1",
+      method: "confirm",
+      title: "Go?",
+      message: "Biome failed",
+    });
+    assert.deepEqual(emit.emitted, [{ type: "waiting_for_approval", correlation_id: "tool-call-1" }]);
+    ui.respond({ type: "extension_ui_response", id: shown.id, confirmed: true });
+    const output = await pending;
     assert.deepEqual(output.details, { approved: true });
-    assert.deepEqual(calls, [["Go?", "Biome failed"]]);
     assert.deepEqual(emit.emitted, [
       { type: "waiting_for_approval", correlation_id: "tool-call-1" },
       { type: "busy", correlation_id: "tool-call-1" },
     ]);
   });
 
-  test("ask_approval_confirm_false_refuses_without_aborting", async () => {
-    const api = makeFakeApi();
-    const emit = makeRecordingEmitter();
-    registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
-
-    const ctx = {
-      ...makeContext("omp-sess-abc"),
-      ui: {
-        approved: false,
-        async confirm() {
-          return this.approved;
+  test("ask_approval_denies_every_response_except_literal_allow_true", async () => {
+    for (const response of [false, undefined, null, "Allow", "true", 1, {}]) {
+      const api = makeFakeApi();
+      const emit = makeRecordingEmitter();
+      registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
+      const ctx = {
+        ...makeContext("omp-sess-abc"),
+        ui: {
+          response,
+          async confirm() {
+            return this.response;
+          },
         },
-      },
-    };
-    const output = await api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx);
-
-    assert.deepEqual(output.details, { approved: false });
-    assert.deepEqual(emit.emitted, [
-      { type: "waiting_for_approval", correlation_id: "tool-call-1" },
-      { type: "busy", correlation_id: "tool-call-1" },
-    ]);
+      };
+      const output = await api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx);
+      assert.deepEqual(output.details, { approved: false });
+      assert.deepEqual(emit.emitted, [
+        { type: "waiting_for_approval", correlation_id: "tool-call-1" },
+        { type: "busy", correlation_id: "tool-call-1" },
+      ]);
+    }
   });
 
-  test("ask_approval_emits_busy_when_confirm_throws", async () => {
+  test("ask_approval_fails_closed_and_emits_busy_when_confirm_throws", async () => {
     const api = makeFakeApi();
     const emit = makeRecordingEmitter();
     registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
@@ -797,10 +818,9 @@ describe("2C — OMP extension callback behavior in isolation", () => {
         },
       },
     };
-    await assert.rejects(
-      () => api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx),
-      (caught) => caught === error,
-    );
+    const output = await api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx);
+    assert.equal(output.details.approved, false);
+    assert.equal(output.details.status, "unavailable");
     assert.deepEqual(
       emit.emitted.filter((e) => e.type === "waiting_for_approval" || e.type === "busy"),
       [
@@ -839,6 +859,21 @@ describe("2C — OMP extension callback behavior in isolation", () => {
       false,
       "ui without confirm must not emit waiting_for_approval",
     );
+  });
+
+  test("ask_approval_omp_no_ui_context_is_unavailable_without_calling_confirm", async () => {
+    const api = makeFakeApi();
+    const emit = makeRecordingEmitter();
+    registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
+    const ctx = {
+      ...makeContext("omp-sess-abc"),
+      hasUI: false,
+      ui: { confirm: async () => assert.fail("no UI must not request confirmation") },
+    };
+    const output = await api.callTool("alinery_ask_approval", { title: "Go?", message: "Save playbook" }, ctx);
+    assert.equal(output.details.approved, false);
+    assert.equal(output.details.status, "unavailable");
+    assert.deepEqual(emit.emitted, []);
   });
 
   test("ask_approval_substitutes_empty_title_and_message", async () => {

@@ -16,6 +16,14 @@ const step = (key: string, inputs: string[], outputs: string[]): NormalizedStep 
   is_coding_step: false,
   auto_advance_default: false,
 });
+
+const denseSteps = [
+  step("seed", [], ["request.md", "context.md"]),
+  step("plan", ["request.md", "context.md"], ["plan.md"]),
+  step("build", ["request.md", "plan.md"], ["build.md"]),
+  step("review", ["request.md", "context.md", "plan.md", "build.md"], ["review.md", "notes.md"]),
+];
+
 beforeEach(() => {
   vi.stubGlobal(
     "ResizeObserver",
@@ -28,6 +36,201 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+it("defaults to reduced Flow without losing any authored inspector dependencies", () => {
+  render(<PlaybookGraph variant="definition" title="Dense" steps={denseSteps} />);
+  const modes = within(screen.getByRole("group", { name: "Graph display mode" }));
+  expect(modes.getByRole("button", { name: "Flow" }).getAttribute("aria-pressed")).toBe("true");
+  expect(modes.getByRole("button", { name: "Artifact dependencies" }).getAttribute("aria-pressed")).toBe("false");
+  expect(screen.queryByRole("button", { name: "Focus connections" })).toBeNull();
+  const flow = screen.getByRole("group", { name: "Flow ordering connections" });
+  expect(Array.from(flow.querySelectorAll("g[aria-label]"), (edge) => edge.getAttribute("aria-label"))).toEqual([
+    "seed to plan: ordering",
+    "plan to build: ordering",
+    "build to review: ordering",
+  ]);
+  expect(flow.querySelector("foreignObject")).toBeNull();
+  expect(screen.getByRole("region", { name: "seed definition" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Inspect review" }));
+  const inspector = within(screen.getByRole("region", { name: "review definition" }));
+  expect(
+    within(inspector.getByRole("list", { name: "review inputs" }))
+      .getAllByRole("listitem")
+      .map((item) => item.textContent),
+  ).toEqual(["request.mdsingle", "context.mdsingle", "plan.mdsingle", "build.mdsingle"]);
+  expect(
+    within(inspector.getByRole("list", { name: "review outputs" }))
+      .getAllByRole("listitem")
+      .map((item) => item.textContent),
+  ).toEqual(["review.md", "notes.md"]);
+  fireEvent.click(inspector.getByText("Connections (4)"));
+  const connections = within(inspector.getByRole("list", { name: "review connections" })).getAllByRole("listitem");
+  expect(connections.map((item) => item.getAttribute("aria-label"))).toEqual([
+    "seed to review: single",
+    "seed to review: single",
+    "plan to review: single",
+    "build to review: single",
+  ]);
+  expect(connections.map((item) => item.querySelector("code")?.textContent)).toEqual([
+    "request.md → request.md",
+    "context.md → context.md",
+    "plan.md → plan.md",
+    "build.md → build.md",
+  ]);
+  fireEvent.click(modes.getByRole("button", { name: "Artifact dependencies" }));
+  const dependencies = within(screen.getByRole("group", { name: "Artifact dependency connections" }));
+  expect(dependencies.getByLabelText("seed to review: request.md → request.md (single); context.md → context.md (single)")).toBeTruthy();
+  expect(
+    within(inspector.getByRole("list", { name: "review connections" }))
+      .getAllByRole("listitem")
+      .map((item) => item.textContent),
+  ).toEqual(connections.map((item) => item.textContent));
+});
+
+it("preserves selection and camera across mode switches and focuses edges without moving nodes", () => {
+  mockCanvasDimensions();
+  render(<PlaybookGraph variant="definition" title="Dense" steps={denseSteps} />);
+  const viewport = screen.getByRole("region", { name: "Dependency graph canvas" });
+  fireEvent.click(screen.getByRole("button", { name: "Inspect plan" }));
+  fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+  fireEvent.pointerDown(viewport, { button: 0, clientX: 100, clientY: 100, pointerId: 1 });
+  fireEvent.pointerMove(window, { clientX: 160, clientY: 130, pointerId: 1 });
+  fireEvent.pointerUp(window, { clientX: 160, clientY: 130, pointerId: 1 });
+  const chosenCamera = camera(viewport);
+  fireEvent.click(screen.getByRole("button", { name: "Artifact dependencies" }));
+  expect(screen.getByRole("button", { name: "Artifact dependencies" }).getAttribute("aria-pressed")).toBe("true");
+  expect(screen.getByRole("button", { name: "Flow" }).getAttribute("aria-pressed")).toBe("false");
+  expect(screen.getByRole("button", { name: "Inspect plan" }).getAttribute("aria-pressed")).toBe("true");
+  expect(screen.getByRole("region", { name: "plan definition" })).toBeTruthy();
+  expect(camera(viewport)).toEqual(chosenCamera);
+  const nodes = within(screen.getByRole("group", { name: "Graph steps" }));
+  const positions = () =>
+    nodes.getAllByRole("button").map((node) => ({
+      name: node.getAttribute("aria-label"),
+      left: node.style.left,
+      top: node.style.top,
+    }));
+  const beforeFocus = positions();
+  const dependencies = screen.getByRole("group", { name: "Artifact dependency connections" });
+  const edgeNames = () => Array.from(dependencies.querySelectorAll("g[aria-label]"), (edge) => edge.getAttribute("aria-label"));
+  const allEdges = edgeNames();
+  expect(allEdges).toHaveLength(6);
+  const focus = screen.getByRole("button", { name: "Focus connections" });
+  expect(focus.getAttribute("aria-pressed")).toBe("false");
+  fireEvent.click(focus);
+  expect(focus.getAttribute("aria-pressed")).toBe("true");
+  expect(edgeNames()).toEqual([
+    "seed to plan: request.md → request.md (single); context.md → context.md (single)",
+    "plan to build: plan.md → plan.md (single)",
+    "plan to review: plan.md → plan.md (single)",
+  ]);
+  expect(positions()).toEqual(beforeFocus);
+  expect(camera(viewport)).toEqual(chosenCamera);
+  fireEvent.click(focus);
+  expect(edgeNames()).toEqual(allEdges);
+  expect(positions()).toEqual(beforeFocus);
+  expect(camera(viewport)).toEqual(chosenCamera);
+  fireEvent.click(screen.getByRole("button", { name: "Flow" }));
+  expect(screen.getByRole("group", { name: "Flow ordering connections" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Focus connections" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Inspect plan" }).getAttribute("aria-pressed")).toBe("true");
+  expect(screen.getByRole("region", { name: "plan definition" })).toBeTruthy();
+  expect(camera(viewport)).toEqual(chosenCamera);
+});
+
+it("discloses labels only for hovered endpoints, hovered edges, or explicit selection", () => {
+  render(
+    <PlaybookGraph
+      variant="definition"
+      title="Chain"
+      steps={[step("seed", [], ["request.md"]), step("plan", ["request.md"], ["plan.md"]), step("build", ["plan.md"], ["build.md"]), step("review", ["build.md"], [])]}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Artifact dependencies" }));
+  const graph = screen.getByRole("group", { name: "Artifact dependency connections" });
+  const labels = within(graph);
+  expect(screen.getByRole("region", { name: "seed definition" })).toBeTruthy();
+  expect(graph.querySelector("foreignObject")).toBeNull();
+  const plan = screen.getByRole("button", { name: "Inspect plan" });
+  fireEvent.mouseEnter(plan);
+  expect(labels.getByText("request.md")).toBeTruthy();
+  expect(labels.getByText("plan.md")).toBeTruthy();
+  expect(labels.queryByText("build.md")).toBeNull();
+  fireEvent.mouseLeave(plan);
+  expect(graph.querySelector("foreignObject")).toBeNull();
+  const review = screen.getByRole("button", { name: "Inspect review" });
+  fireEvent.mouseEnter(review);
+  expect(labels.getByText("build.md")).toBeTruthy();
+  expect(labels.queryByText("request.md")).toBeNull();
+  fireEvent.mouseLeave(review);
+  const edge = labels.getByLabelText("seed to plan: request.md → request.md (single)");
+  fireEvent.mouseEnter(edge);
+  expect(labels.getByText("request.md")).toBeTruthy();
+  expect(labels.queryByText("plan.md")).toBeNull();
+  expect(labels.queryByText("build.md")).toBeNull();
+  fireEvent.mouseLeave(edge);
+  expect(graph.querySelector("foreignObject")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Inspect build" }));
+  expect(labels.getByText("plan.md")).toBeTruthy();
+  expect(labels.getByText("build.md")).toBeTruthy();
+  expect(labels.queryByText("request.md")).toBeNull();
+  fireEvent.mouseEnter(edge);
+  expect(labels.getByText("request.md")).toBeTruthy();
+  fireEvent.mouseLeave(edge);
+  expect(labels.queryByText("request.md")).toBeNull();
+  expect(labels.getByText("plan.md")).toBeTruthy();
+  expect(labels.getByText("build.md")).toBeTruthy();
+});
+
+it("lets compact graphs select and focus connections without an implicit initial selection", () => {
+  mockCanvasDimensions();
+  render(<PlaybookGraph variant="definition" showInspector={false} title="Compact" steps={denseSteps} />);
+  const nodes = within(screen.getByRole("group", { name: "Graph steps" }));
+  for (const node of nodes.getAllByRole("button")) expect(node.getAttribute("aria-pressed")).toBe("false");
+  expect(screen.queryByRole("region", { name: / definition$/ })).toBeNull();
+  expect(screen.queryByRole("separator")).toBeNull();
+  expect(screen.getByRole("group", { name: "Flow ordering connections" }).querySelector("g[aria-label] path.selected")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Artifact dependencies" }));
+  const dependencies = screen.getByRole("group", { name: "Artifact dependency connections" });
+  expect(dependencies.querySelector("foreignObject")).toBeNull();
+  expect(dependencies.querySelector("g[aria-label] path.selected")).toBeNull();
+  const viewport = screen.getByRole("region", { name: "Dependency graph canvas" });
+  fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+  const chosenCamera = camera(viewport);
+  const positions = nodes.getAllByRole("button").map((node) => node.getAttribute("style"));
+  fireEvent.click(nodes.getByRole("button", { name: "Highlight build" }));
+  expect(nodes.getByRole("button", { name: "Highlight build" }).getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(screen.getByRole("button", { name: "Focus connections" }));
+  expect(screen.getByRole("button", { name: "Focus connections" }).getAttribute("aria-pressed")).toBe("true");
+  expect(Array.from(dependencies.querySelectorAll("g[aria-label]"), (edge) => edge.getAttribute("aria-label"))).toEqual([
+    "seed to build: request.md → request.md (single)",
+    "plan to build: plan.md → plan.md (single)",
+    "build to review: build.md → build.md (single)",
+  ]);
+  expect(nodes.getAllByRole("button").map((node) => node.getAttribute("style"))).toEqual(positions);
+  expect(camera(viewport)).toEqual(chosenCamera);
+  expect(screen.queryByRole("region", { name: / definition$/ })).toBeNull();
+});
+
+it("retains every cyclic and self-loop relationship in Flow", () => {
+  render(
+    <PlaybookGraph
+      variant="definition"
+      title="Cycle"
+      steps={[step("seed", ["build.md"], ["request.md"]), step("plan", ["request.md"], ["plan.md"]), step("build", ["request.md", "plan.md", "build.md"], ["build.md"])]}
+    />,
+  );
+  const graph = screen.getByRole("group", { name: "Flow ordering connections" });
+  expect(Array.from(graph.querySelectorAll("g[aria-label]"), (edge) => edge.getAttribute("aria-label"))).toEqual([
+    "seed to plan: ordering",
+    "seed to build: ordering",
+    "plan to build: ordering",
+    "build to seed: ordering",
+    "build to build: ordering",
+  ]);
+  expect(graph.querySelector("foreignObject")).toBeNull();
 });
 
 it("renders shuffled selector forks, joins, cycles and concurrent active counts without document-neighbor edges", () => {
@@ -102,8 +305,6 @@ it("inspects authored definitions and navigates selector connections without exe
 
   const seedInspector = within(screen.getByRole("region", { name: "Prepare requests definition" }));
   expect(seedInspector.getByLabelText("Prepare requests prompt").textContent).toBe(seed.prompt);
-  expect(seedInspector.getByText("Inherits playbook default: provider/planning-model")).toBeTruthy();
-  expect(seedInspector.getByText("Inherits playbook default: default-harness")).toBeTruthy();
   expect(screen.queryByLabelText(/active sessions/)).toBeNull();
   expect(screen.queryByText("Automatic")).toBeNull();
 
@@ -118,8 +319,6 @@ it("inspects authored definitions and navigates selector connections without exe
   expect(inspector.getByText("Code")).toBeTruthy();
   expect(inspector.getByText("provider/coding-model")).toBeTruthy();
   expect(inspector.getByText("omp")).toBeTruthy();
-  expect(workerRegion.textContent).toContain("Coding stepYes");
-  expect(workerRegion.textContent).toContain("Automatic completion by defaultNo");
   expect(inspector.getByLabelText("Implement request prompt").textContent).toBe(worker.prompt);
   const inputs = within(inspector.getByRole("list", { name: "Implement request inputs" })).getAllByRole("listitem");
   expect(inputs.map((item) => item.textContent)).toEqual(["requests/request-*.mdeach", "context.mdsingle", "reviews/*.mdcomplete"]);
@@ -162,6 +361,7 @@ it("draws selector-derived directed connections and keeps dependency details in 
       ]}
     />,
   );
+  fireEvent.click(screen.getByRole("button", { name: "Artifact dependencies" }));
   const connections = within(screen.getByRole("group", { name: "Artifact dependency connections" }));
   for (const name of [
     "seed to sum: numbers.md → numbers.md (single)",
@@ -222,7 +422,7 @@ it("lays out fork/join layers with bounded return and self-loop routes without o
   }
 });
 
-it("illustrates wildcard workers converging into one collector with artifact labels", () => {
+it("keeps wildcard illustrations in Flow and discloses artifact labels in dependencies", () => {
   const worker = {
     ...step("square", [], ["result-square.md"]),
     inputs: [{ path: "request-*.md", mode: "each" as const }],
@@ -232,9 +432,19 @@ it("illustrates wildcard workers converging into one collector with artifact lab
   const examples = screen.getAllByRole("button", { name: /^Inspect square — example/ });
   expect(examples).toHaveLength(3);
   expect(screen.getAllByRole("button", { name: "Inspect collect" })).toHaveLength(1);
+  const flow = within(screen.getByRole("group", { name: "Flow ordering connections" }));
+  expect(flow.getByLabelText("seed to square: ordering")).toBeTruthy();
+  expect(flow.getByLabelText("square to collect: ordering")).toBeTruthy();
+  expect(flow.queryByText("request-*.md")).toBeNull();
+  expect(flow.queryByText("result-square.md")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Artifact dependencies" }));
   const connections = within(screen.getByRole("group", { name: "Artifact dependency connections" }));
+  expect(connections.queryByText("request-*.md")).toBeNull();
+  expect(connections.queryByText("result-square.md")).toBeNull();
+  fireEvent.mouseEnter(examples[1]);
   expect(connections.getByText("request-*.md")).toBeTruthy();
   expect(connections.getByText("result-square.md")).toBeTruthy();
+  fireEvent.mouseLeave(examples[1]);
   fireEvent.click(examples[1]);
   expect(screen.getByLabelText("square prompt").textContent).toBe(worker.prompt);
   for (const example of examples) expect(example.getAttribute("aria-pressed")).toBe("true");
@@ -271,4 +481,154 @@ it("stops resizing on pointer cancellation without losing the chosen width", () 
   fireEvent.pointerMove(window, { clientX: 900, pointerId: 1 });
   fireEvent.pointerUp(window, { clientX: 900, pointerId: 1 });
   expect(divider.getAttribute("aria-valuenow")).toBe(chosen);
+});
+
+// JSDOM has no layout: these are the unzoomed, UI-scaled graph dimensions.
+function mockCanvasDimensions() {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains("playbook-definition-viewport") ? 600 : 1000;
+  });
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains("playbook-definition-viewport") ? 400 : 0;
+  });
+  vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains("playbook-definition-canvas") ? 1000 : 0;
+  });
+  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains("playbook-definition-canvas") ? 500 : 0;
+  });
+}
+
+function camera(viewport: HTMLElement) {
+  const stage = viewport.querySelector<HTMLElement>(".playbook-definition-stage");
+  const canvas = viewport.querySelector<HTMLElement>(".playbook-definition-canvas");
+  if (!stage || !canvas) throw new Error("Graph canvas is not mounted");
+  const [tx, ty] = stage.style.transform.slice("translate(".length, -1).split(",").map(Number.parseFloat);
+  return { tx, ty, scale: Number(canvas.style.zoom) };
+}
+
+it("anchors wheel zoom under the pointer and fits using unzoomed dimensions", () => {
+  mockCanvasDimensions();
+  render(<PlaybookGraph variant="definition" title="Review" steps={[step("inspect", [], ["result.md"])]} />);
+  const viewport = screen.getByRole("region", { name: "Dependency graph canvas" });
+  vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue(new DOMRect(100, 50, 600, 400));
+  const before = camera(viewport);
+  const point = { x: 210 - 100, y: 150 - 50 };
+  expect(fireEvent.wheel(viewport, { deltaY: -120, clientX: 210, clientY: 150 })).toBe(false);
+  const after = camera(viewport);
+  expect(after.scale).toBeGreaterThan(before.scale);
+  expect((point.x - after.tx) / after.scale).toBeCloseTo((point.x - before.tx) / before.scale);
+  expect((point.y - after.ty) / after.scale).toBeCloseTo((point.y - before.ty) / before.scale);
+
+  fireEvent.click(screen.getByRole("button", { name: "Reset zoom" }));
+  expect(camera(viewport).scale).toBe(1);
+  expect(screen.getByLabelText("Graph zoom").textContent).toBe("100%");
+  fireEvent.click(screen.getByRole("button", { name: "Fit graph" }));
+  const fitted = camera(viewport);
+  expect(fitted.tx).toBeGreaterThanOrEqual(16);
+  expect(fitted.ty).toBeGreaterThanOrEqual(16);
+  expect(fitted.tx + 1000 * fitted.scale).toBeLessThanOrEqual(584);
+  expect(fitted.ty + 500 * fitted.scale).toBeLessThanOrEqual(384);
+  expect(fitted.scale).toBeCloseTo(before.scale);
+});
+
+it("preserves node selection and inspector content after zoom and background panning", () => {
+  mockCanvasDimensions();
+  const worker = { ...step("worker", ["request.md"], ["result.md"]), prompt: "Keep this inspector independent of the graph camera." };
+  render(<PlaybookGraph variant="definition" title="Review" steps={[step("seed", [], ["request.md"]), worker]} />);
+  const viewport = screen.getByRole("region", { name: "Dependency graph canvas" });
+  fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+  const zoomed = camera(viewport);
+  fireEvent.pointerDown(viewport, { button: 0, clientX: 100, clientY: 100, pointerId: 1 });
+  fireEvent.pointerMove(window, { clientX: 160, clientY: 130, pointerId: 1 });
+  fireEvent.pointerUp(window, { clientX: 160, clientY: 130, pointerId: 1 });
+  expect(camera(viewport)).toEqual({ ...zoomed, tx: zoomed.tx + 60, ty: zoomed.ty + 30 });
+  const panned = camera(viewport);
+  fireEvent.pointerMove(window, { clientX: 400, clientY: 300, pointerId: 1 });
+  expect(camera(viewport)).toEqual(panned);
+
+  const node = screen.getByRole("button", { name: "Inspect worker" });
+  fireEvent.pointerDown(node, { button: 0, clientX: 160, clientY: 130, pointerId: 2 });
+  fireEvent.pointerMove(window, { clientX: 200, clientY: 150, pointerId: 2 });
+  fireEvent.pointerUp(window, { clientX: 200, clientY: 150, pointerId: 2 });
+  fireEvent.click(node);
+  expect(node.getAttribute("aria-pressed")).toBe("true");
+  expect(screen.getByLabelText("worker prompt").textContent).toBe(worker.prompt);
+  expect(camera(viewport)).toEqual(panned);
+  expect(screen.getByLabelText("Graph zoom").textContent).toBe(`${Math.round(panned.scale * 100)}%`);
+});
+
+it("reveals keyboard-focused nodes without intercepting their keys", () => {
+  mockCanvasDimensions();
+  render(<PlaybookGraph variant="definition" title="Review" steps={[step("inspect", [], ["result.md"])]} />);
+  const viewport = screen.getByRole("region", { name: "Dependency graph canvas" });
+  vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 600, 400));
+  fireEvent.click(screen.getByRole("button", { name: "Reset zoom" }));
+  const node = screen.getByRole("button", { name: "Inspect inspect" });
+  vi.spyOn(node, "getBoundingClientRect").mockImplementation(() => {
+    const { tx, ty, scale } = camera(viewport);
+    return new DOMRect(tx + 800 * scale, ty + 450 * scale, GRAPH_NODE_WIDTH * scale, GRAPH_NODE_HEIGHT * scale);
+  });
+  fireEvent.focus(node);
+  const rect = node.getBoundingClientRect();
+  expect(rect.left).toBeGreaterThanOrEqual(16);
+  expect(rect.top).toBeGreaterThanOrEqual(16);
+  expect(rect.right).toBeLessThanOrEqual(584);
+  expect(rect.bottom).toBeLessThanOrEqual(384);
+  const revealed = camera(viewport);
+  expect(fireEvent.keyDown(node, { key: "+" })).toBe(true);
+  expect(fireEvent.keyDown(node, { key: "ArrowRight" })).toBe(true);
+  expect(camera(viewport)).toEqual(revealed);
+  fireEvent.click(screen.getByRole("button", { name: "Pan graph" }));
+  expect(document.activeElement).toBe(viewport);
+  expect(fireEvent.keyDown(viewport, { key: "+" })).toBe(false);
+  expect(camera(viewport).scale).toBeCloseTo(revealed.scale * 1.25);
+  const zoomed = camera(viewport);
+  fireEvent.keyDown(viewport, { key: "ArrowRight" });
+  expect(camera(viewport).tx).toBe(zoomed.tx - 40);
+  fireEvent.keyDown(viewport, { key: "Escape" });
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Pan graph" }));
+});
+
+it("attaches canvas gestures after empty and execution views without reducing the execution list", () => {
+  mockCanvasDimensions();
+  const steps = denseSteps;
+  const { rerender } = render(<PlaybookGraph variant="definition" title="Review" steps={[]} />);
+  expect(screen.queryByRole("region", { name: "Dependency graph canvas" })).toBeNull();
+  rerender(<PlaybookGraph variant="definition" title="Review" steps={steps} />);
+  const viewport = screen.getByRole("region", { name: "Dependency graph canvas" });
+  expect(fireEvent.wheel(viewport, { deltaY: -120, clientX: 100, clientY: 100 })).toBe(false);
+  const zoomed = camera(viewport);
+  rerender(<PlaybookGraph variant="definition" title="Review" steps={steps.map((entry) => ({ ...entry }))} />);
+  expect(camera(viewport)).toEqual(zoomed);
+  rerender(<PlaybookGraph variant="execution" title="Review" steps={steps} countsByStep={{ build: 2 }} selectedAutoAdvance={["review"]} />);
+  expect(screen.queryByRole("group", { name: "Graph zoom controls" })).toBeNull();
+  expect(screen.queryByRole("group", { name: "Graph display mode" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Focus connections" })).toBeNull();
+  const dependencies = within(screen.getByRole("list", { name: "Artifact dependencies" })).getAllByRole("listitem");
+  expect(dependencies.map((item) => item.getAttribute("aria-label"))).toEqual([
+    "seed to plan: single",
+    "seed to plan: single",
+    "seed to build: single",
+    "seed to review: single",
+    "seed to review: single",
+    "plan to build: single",
+    "plan to review: single",
+    "build to review: single",
+  ]);
+  expect(dependencies.map((item) => item.querySelector("code")?.textContent)).toEqual([
+    "request.md → request.md",
+    "context.md → context.md",
+    "request.md → request.md",
+    "request.md → request.md",
+    "context.md → context.md",
+    "plan.md → plan.md",
+    "plan.md → plan.md",
+    "build.md → build.md",
+  ]);
+  expect(screen.getByLabelText("build: 2 active sessions")).toBeTruthy();
+  expect(screen.getByTitle("Completion automatically authorized")).toBeTruthy();
+  expect(fireEvent.wheel(viewport, { deltaY: -120, clientX: 100, clientY: 100 })).toBe(true);
+  rerender(<PlaybookGraph variant="definition" title="Review" steps={steps} />);
+  expect(fireEvent.wheel(screen.getByRole("region", { name: "Dependency graph canvas" }), { deltaY: -120, clientX: 100, clientY: 100 })).toBe(false);
 });

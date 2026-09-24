@@ -201,6 +201,34 @@ fn effective_identifier_alone_selects_the_daemon_lane() {
 }
 
 fn recording_lane(socket_path: std::path::PathBuf, live_sessions: usize) -> (std::sync::Arc<Mutex<Vec<String>>>, std::thread::JoinHandle<()>) {
+    recording_lane_with_response(socket_path, move |op| {
+        match op {
+            "list" => serde_json::json!({
+                "sessions": (0..live_sessions)
+                    .map(|index| serde_json::json!({
+                        "id": format!("live-{index}"),
+                        "process": {"state": "alive"},
+                        "agent": {"state": "unknown"},
+                        "playbook": {"state": "in_progress"},
+                        "adapter": "unsupported",
+                        "message_adapter": "unsupported",
+                        "transport": "pty",
+                    }))
+                    .collect::<Vec<_>>(),
+            }),
+            "version" => serde_json::json!({
+                "protocol": PROTOCOL_VERSION,
+                "build_id": "fixture",
+                "app_config_identity": "fixture",
+            }),
+            "shutdown" => serde_json::json!({"ok": true}),
+            other => panic!("unexpected daemon request: {other}"),
+        }
+        .to_string()
+    })
+}
+
+fn recording_lane_with_response(socket_path: PathBuf, response: impl Fn(&str) -> String + Send + 'static) -> (std::sync::Arc<Mutex<Vec<String>>>, std::thread::JoinHandle<()>) {
     use std::io::{BufRead, BufReader};
     use std::os::unix::net::UnixListener;
     fs::create_dir_all(socket_path.parent().unwrap()).unwrap();
@@ -214,36 +242,19 @@ fn recording_lane(socket_path: std::path::PathBuf, live_sessions: usize) -> (std
         while Instant::now() < deadline {
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    // Accepted sockets inherit nonblocking mode on macOS; full execution
+                    // replies can exceed the send buffer, unlike the small version reply.
+                    stream.set_nonblocking(false).unwrap();
                     let mut line = String::new();
                     let mut reader = BufReader::new(stream.try_clone().unwrap());
                     if reader.read_line(&mut line).unwrap_or(0) == 0 {
                         continue;
                     }
+                    stream.set_write_timeout(Some(Duration::from_secs(1))).unwrap();
                     let request: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
                     let op = request.get("op").and_then(serde_json::Value::as_str).unwrap().to_string();
                     recorded.lock().unwrap_or_else(|error| error.into_inner()).push(op.clone());
-                    let response = match op.as_str() {
-                        "list" => serde_json::json!({
-                            "sessions": (0..live_sessions)
-                                .map(|index| serde_json::json!({
-                                    "id": format!("live-{index}"),
-                                    "process": {"state": "alive"},
-                                    "agent": {"state": "unknown"},
-                                    "playbook": {"state": "in_progress"},
-                                    "adapter": "unsupported",
-                                    "message_adapter": "unsupported",
-                                    "transport": "pty",
-                                }))
-                                .collect::<Vec<_>>(),
-                        }),
-                        "version" => serde_json::json!({
-                            "protocol": PROTOCOL_VERSION,
-                            "build_id": "fixture",
-                            "app_config_identity": "fixture",
-                        }),
-                        "shutdown" => serde_json::json!({"ok": true}),
-                        other => panic!("unexpected daemon request: {other}"),
-                    };
+                    let response = response(&op);
                     writeln!(stream, "{response}").unwrap();
                     stream.flush().unwrap();
                     if op == "shutdown" {
@@ -1105,4 +1116,124 @@ fn host_guard_warning_is_repo_scoped_replaced_and_cleared() {
     state.set_daemon(&warned, client(), DaemonCompat::Current, "warned-again".into(), true);
     state.clear_daemon(&warned);
     assert!(!state.daemon_host_guard_warning(&warned));
+}
+
+#[test]
+fn task_execution_offline_preserves_saved_progress_without_taking_ownership() {
+    let repo = activity_repo("exec-off");
+    write_retained_discovery_task(&repo, "task", "owner", false);
+    let config = repo.join("app.toml");
+    let saved = crate::saved_task_execution_for(&repo, "task").unwrap();
+    let owner = AppState::default();
+    let guest = AppState::default();
+    assert!(owner.claim_repo(&repo));
+    let path = alinery_core::execution::execution_state_path(&repo, "task").unwrap();
+    let before = fs::read(&path).unwrap();
+    let reply = alinery_core::with_task_mutation_lock(&repo, "hold while browsing", || crate::task_execution_for(&repo, "task", &config)).unwrap();
+    assert!(matches!(reply.live, crate::ExecutionAvailability::Offline { .. }));
+    let payload = serde_json::to_value(reply).unwrap();
+    assert_eq!(payload["state"], serde_json::to_value(&saved.state).unwrap());
+    assert_eq!(payload["definition"], serde_json::to_value(&saved.definition).unwrap());
+    assert!(payload["live"]["detail"].is_string());
+    assert!(crate::task_daemon_for(&repo, "task", &config).is_err());
+    assert!(require_repo_owned(&guest, &repo).is_err());
+    assert!(!guest.owns_repo(&repo));
+    assert_eq!(fs::read(path).unwrap(), before);
+    assert!(!alinery_core::alineryd_socket_path(&repo, Some("owner")).exists());
+    assert!(!crate::current_alineryd_socket_path(&repo).exists());
+    assert!(!alinery_core::alineryd_lock_path(&repo, Some("owner")).exists());
+    fs::remove_dir_all(repo).unwrap();
+}
+
+#[test]
+fn task_execution_classifies_owner_failures_and_uses_healthy_live_reply() {
+    for status in ["foreign_owner", "incompatible", "unavailable", "query_failure", "available"] {
+        let repo = activity_repo("exec-live");
+        write_retained_discovery_task(&repo, "task", "owner", false);
+        let config = repo.join("app.toml");
+        let saved = crate::saved_task_execution_for(&repo, "task").unwrap();
+        let mut live = saved.clone();
+        live.state.revision += 10;
+        let expected_live = serde_json::to_value(&live).unwrap();
+        let identity = alinery_core::app_config_identity(&config);
+        let (requests, server) = recording_lane_with_response(alinery_core::alineryd_socket_path(&repo, Some("owner")), move |op| {
+            if status == "unavailable" {
+                return "invalid json".into();
+            }
+            match op {
+                "version" => serde_json::json!({
+                    "protocol": if status == "incompatible" { PROTOCOL_VERSION + 1 } else { PROTOCOL_VERSION },
+                    "build_id": "fixture",
+                    "app_config_identity": if status == "foreign_owner" { "other-config" } else { &identity },
+                }),
+                "get_task_execution" if status == "query_failure" => serde_json::json!({"error": "execution query failed"}),
+                "get_task_execution" if status == "available" => serde_json::to_value(&live).unwrap(),
+                other => panic!("unexpected owner operation: {other}"),
+            }
+            .to_string()
+        });
+        let reply = crate::task_execution_for(&repo, "task", &config).unwrap();
+        let payload = serde_json::to_value(reply).unwrap();
+        assert_eq!(payload["live"]["status"], if status == "query_failure" { "unavailable" } else { status });
+        let expected = if status == "available" { expected_live } else { serde_json::to_value(&saved).unwrap() };
+        assert_eq!(payload["state"], expected["state"]);
+        assert_eq!(payload["definition"], expected["definition"]);
+        let mut expected_requests = vec!["version"];
+        if matches!(status, "available" | "query_failure") {
+            expected_requests.push("get_task_execution");
+        } else {
+            assert!(crate::task_daemon_for(&repo, "task", &config).is_err(), "mutation route must still refuse {status}");
+            expected_requests.push("version");
+        }
+        server.join().unwrap();
+        assert_eq!(
+            *requests.lock().unwrap_or_else(|error| error.into_inner()),
+            expected_requests,
+            "reads must not start, stop, or mutate sessions"
+        );
+        assert_eq!(
+            serde_json::to_value(crate::saved_task_execution_for(&repo, "task").unwrap()).unwrap(),
+            serde_json::to_value(saved).unwrap()
+        );
+        assert!(!crate::current_alineryd_socket_path(&repo).exists());
+        fs::remove_dir_all(repo).unwrap();
+    }
+}
+
+#[test]
+fn task_execution_rejects_bad_saved_data_before_contacting_owner() {
+    let repo = activity_repo("exec-bad");
+    write_retained_discovery_task(&repo, "task", "owner", false);
+    let config = repo.join("app.toml");
+    let path = alinery_core::execution::execution_state_path(&repo, "task").unwrap();
+    let retained_path = alinery_core::execution::task_playbook_path(&repo, "task").unwrap();
+    let saved = fs::read(&path).unwrap();
+    let retained = fs::read(&retained_path).unwrap();
+    let healthy = crate::saved_task_execution_for(&repo, "task").unwrap();
+    let identity = alinery_core::app_config_identity(&config);
+    let (requests, server) = recording_lane_with_response(alinery_core::alineryd_socket_path(&repo, Some("owner")), move |op| {
+        match op {
+            "version" => serde_json::json!({"protocol": PROTOCOL_VERSION, "build_id": "fixture", "app_config_identity": identity}),
+            "get_task_execution" => serde_json::to_value(&healthy).unwrap(),
+            other => panic!("unexpected owner operation: {other}"),
+        }
+        .to_string()
+    });
+    fs::write(&path, "not json").unwrap();
+    assert!(crate::task_execution_for(&repo, "task", &config).is_err());
+    fs::remove_file(&path).unwrap();
+    assert!(crate::task_execution_for(&repo, "task", &config).is_err());
+    let mut invalid: serde_json::Value = serde_json::from_slice(&saved).unwrap();
+    invalid["max_live_sessions"] = serde_json::json!(0);
+    fs::write(&path, serde_json::to_vec(&invalid).unwrap()).unwrap();
+    assert!(crate::task_execution_for(&repo, "task", &config).is_err());
+    fs::write(&path, saved).unwrap();
+    fs::write(&retained_path, "modified retained definition").unwrap();
+    assert!(crate::task_execution_for(&repo, "task", &config).is_err());
+    fs::remove_file(&retained_path).unwrap();
+    assert!(crate::task_execution_for(&repo, "task", &config).is_err());
+    fs::write(&retained_path, retained).unwrap();
+    server.join().unwrap();
+    assert!(requests.lock().unwrap_or_else(|error| error.into_inner()).is_empty());
+    fs::remove_dir_all(repo).unwrap();
 }

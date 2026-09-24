@@ -1552,6 +1552,7 @@ describe("session-scoped completion permission", () => {
     cleanup();
     getTaskExecution.mockReset();
     allowExecutionCompletion.mockReset();
+    vi.useRealTimers();
   });
 
   it("grants the displayed owner from the collapsed header while preserving the interactive composer", async () => {
@@ -1576,6 +1577,42 @@ describe("session-scoped completion permission", () => {
     fireEvent.click(await screen.findByText(/Owner replacement/));
     expect(screen.getByText("This is a previous owner. Current owner: replacement.")).toBeDefined();
     expect(screen.queryByRole("button", { name: /Allow this session to complete/ })).toBeNull();
+  });
+
+  it.each(["offline", "foreign_owner", undefined] as const)("keeps saved execution history readable without completion authority when live status is %s", async (status) => {
+    const saved = executionReply([executionRecord({ owner_session_id: "session" })]);
+    getTaskExecution.mockResolvedValue({ ...saved, live: status ? { status, detail: "Owner cannot be queried" } : undefined });
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "orphaned" }, state: null, checkpoint: {} });
+    startSession.mockClear();
+    renderSession({ intent: undefined });
+
+    const allow = await screen.findByRole("button", { name: "Allow this session to complete · session" });
+    expect((allow as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(allow);
+    fireEvent.click(screen.getByText(/Retained worker · running · Owner session/));
+    expect(screen.getByText("research/1-request-2.md")).toBeDefined();
+    expect(screen.getByText("research/2-result-10.md")).toBeDefined();
+    fireEvent.click(await screen.findByRole("button", { name: "View history" }));
+    expect(await screen.findByTestId("chat-pane")).toBeDefined();
+    expect(allowExecutionCompletion).not.toHaveBeenCalled();
+    expect(startSession).not.toHaveBeenCalled();
+  });
+
+  it("revokes completion authority when a refresh fails after a live reply", async () => {
+    vi.useFakeTimers();
+    renderSession({ intent: undefined });
+    await flushPromises();
+    const allow = screen.getByRole("button", { name: "Allow this session to complete · session" }) as HTMLButtonElement;
+    expect(allow.disabled).toBe(false);
+
+    getTaskExecution.mockRejectedValue(new Error("Execution query failed"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(allow.disabled).toBe(true);
+    fireEvent.click(allow);
+    expect(allowExecutionCompletion).not.toHaveBeenCalled();
+    expect(screen.getByText("research/2-result-10.md")).toBeDefined();
   });
 });
 
@@ -1605,5 +1642,23 @@ describe("held task sessions", () => {
     fireEvent.click(start);
     await waitFor(() => expect(startSession).toHaveBeenCalledWith("task", "session", "/repo"));
     expect(await screen.findByLabelText("Message or /command")).toBeDefined();
+  });
+
+  it.each(["offline", "foreign_owner", undefined] as const)("does not start a queued session from saved state when live status is %s", async (status) => {
+    startSession.mockClear();
+    scenario.tasks = [task];
+    scenario.tasksPromise = null;
+    scenario.tasksError = null;
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "never_started" }, state: null, checkpoint: {} });
+    const saved = executionReply([executionRecord({ owner_session_id: "session", lifecycle: "queued", start_requested: false })]);
+    getTaskExecution.mockResolvedValue({ ...saved, live: status ? { status, detail: "Owner cannot be queried" } : undefined });
+    renderSession({ intent: undefined });
+
+    await screen.findByText(/Retained worker · queued · Owner session/);
+    const start = screen.getByRole("button", { name: "Start this queued session" });
+    expect((start as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(start);
+    expect(startSession).not.toHaveBeenCalled();
+    expect(screen.getByText("research/2-result-10.md")).toBeDefined();
   });
 });

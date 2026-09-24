@@ -4,6 +4,41 @@
 use super::*;
 
 #[test]
+fn scoped_session_items_ignore_corrupt_known_repo_and_global_active_repo() {
+    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let repo_a = init_git_test_repo("scoped-sessions-a");
+    let repo_b = init_git_test_repo("scoped-sessions-b");
+    let task_a = write_retained_discovery_task(&repo_a, "healthy", "foreign", false);
+    let task_b = write_retained_discovery_task(&repo_b, "broken", "foreign", false);
+    let meta = SessionMeta {
+        id: "saved-a".into(),
+        phase: "implementation".into(),
+        ..Default::default()
+    };
+    fs::write(session_meta_path(&repo_a, &task_a.slug, &meta.id), serde_json::to_vec(&meta).unwrap()).unwrap();
+    let corrupt_path = alinery_core::execution::execution_state_path(&repo_b, &task_b.slug).unwrap();
+    fs::write(&corrupt_path, b"{broken retained state").unwrap();
+    let known_repos = vec![repo_a.display().to_string(), repo_b.display().to_string()];
+    set_active_repo_global(Some(repo_b.clone())).unwrap();
+
+    let list = |all_repos, requested: Option<&str>| {
+        crate::list_session_items_with_repo_resolver(all_repos, false, known_repos.clone(), requested, |path| validate_known_target_repo(&known_repos, path))
+    };
+    let rows = list(false, Some(&known_repos[0])).unwrap();
+    assert_eq!(rows.iter().map(|row| row.session.id.as_str()).collect::<Vec<_>>(), ["saved-a"]);
+    assert_eq!(Path::new(&rows[0].repo_path), fs::canonicalize(&repo_a).unwrap());
+    assert_eq!(crate::active_repo().unwrap(), repo_b);
+    assert!(list(false, None).is_err(), "omitted scope still reads active B");
+    assert!(list(true, Some(&known_repos[0])).is_err(), "global reads must still expose corrupt B");
+    assert!(list(false, Some("/missing-repository")).is_err(), "invalid explicit scope must not fall back");
+    assert_eq!(fs::read(&corrupt_path).unwrap(), b"{broken retained state");
+
+    set_active_repo_global(None).unwrap();
+    let _ = fs::remove_dir_all(repo_a);
+    let _ = fs::remove_dir_all(repo_b);
+}
+
+#[test]
 fn manual_rename_uses_owned_explicit_repo_without_daemon() {
     use tauri::Manager;
     let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());

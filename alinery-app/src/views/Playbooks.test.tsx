@@ -1,8 +1,9 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfirmHost } from "../confirm";
+import * as ipc from "../ipc";
 import type * as IpcFixtures from "../test/mockIpc";
-import type { NormalizedPlaybook, PlaybookCatalog, PlaybookRef, SavePlaybookRequest, ScopedPlaybook } from "../types";
+import type { NormalizedPlaybook, PickerPreference, PickerPreferences, PlaybookCatalog, PlaybookRef, SavePlaybookRequest, ScopedPlaybook } from "../types";
 import { Playbooks } from "./Playbooks";
 
 const mocks = vi.hoisted(() => ({
@@ -12,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   renderPlaybookSource: vi.fn(),
   savePlaybookSource: vi.fn(),
   deletePlaybookSource: vi.fn(),
+  savePlaybookPickerPreferences: vi.fn(),
 }));
 vi.mock("../ipc", async () => {
   const { mockIpc } = await vi.importActual<typeof IpcFixtures>("../test/mockIpc");
@@ -42,13 +44,27 @@ const definition: NormalizedPlaybook = {
   ],
 };
 let stored: ScopedPlaybook[];
-const identity = (ref: PlaybookRef) => `${ref.scope}/${ref.key}`;
-const entry = (scope: PlaybookRef["scope"]): ScopedPlaybook => ({
-  source: { reference: { scope, key: "review" }, path: scope === "bundled" ? null : `/${scope}/review/playbook.md` },
-  definition: structuredClone(definition),
-  source_text: JSON.stringify(definition),
-  modified_at_ms: scope === "bundled" ? null : 1234,
+let preferencesByRepo: Map<string | undefined, PickerPreferences>;
+const onCreateTask = vi.fn();
+const preference = (scope: PlaybookRef["scope"], preferred = true): PickerPreference => ({
+  reference: { scope, key: "review" },
+  preferred,
+  hidden: false,
+  collapsed: false,
+  badge: null,
+  color: null,
+  last_imported_at_ms: null,
 });
+const identity = (ref: PlaybookRef) => `${ref.scope}/${ref.key}`;
+const entry = (scope: PlaybookRef["scope"], overrides: Partial<NormalizedPlaybook> = {}, modifiedAt = scope === "bundled" ? null : 1234): ScopedPlaybook => {
+  const value = { ...structuredClone(definition), ...overrides };
+  return {
+    source: { reference: { scope, key: value.key }, path: scope === "bundled" ? null : `/${scope}/${value.key}/playbook.md` },
+    definition: value,
+    source_text: JSON.stringify(value),
+    modified_at_ms: modifiedAt,
+  };
+};
 
 beforeEach(() => {
   vi.stubGlobal(
@@ -61,8 +77,9 @@ beforeEach(() => {
   );
   vi.clearAllMocks();
   stored = [entry("bundled"), entry("global"), entry("repo")];
+  preferencesByRepo = new Map();
   mocks.listPlaybookCatalog.mockImplementation(
-    async (): Promise<PlaybookCatalog> => ({
+    async (repoPath?: string): Promise<PlaybookCatalog> => ({
       candidates: stored.map((item) => ({
         source: item.source,
         title: item.definition.title,
@@ -70,10 +87,13 @@ beforeEach(() => {
         modified_at_ms: item.modified_at_ms,
         diagnostics: [],
       })),
-      picker_preferences: { order: [], entries: [] },
+      picker_preferences: structuredClone(preferencesByRepo.get(repoPath) ?? { order: [], entries: [] }),
       diagnostics: [],
     }),
   );
+  mocks.savePlaybookPickerPreferences.mockImplementation(async (next: PickerPreferences, repoPath?: string) => {
+    preferencesByRepo.set(repoPath, structuredClone(next));
+  });
   mocks.readPlaybook.mockImplementation(async (ref: PlaybookRef) => structuredClone(stored.find((item) => identity(item.source.reference) === identity(ref))));
   mocks.validatePlaybookSource.mockImplementation(async (source: string) => {
     try {
@@ -120,12 +140,234 @@ async function overwrite() {
   fireEvent.click(screen.getByRole("button", { name: "Save definition" }));
   fireEvent.click(await screen.findByRole("button", { name: "Overwrite" }));
 }
+function libraryOrder() {
+  return within(screen.getByRole("table", { name: "Playbook library" }))
+    .getAllByRole("row")
+    .slice(1)
+    .map((row) => row.getAttribute("aria-label"));
+}
+
+describe("playbook library", () => {
+  it("searches titles, descriptions, keys and scoped identities across every source", async () => {
+    stored = stored.map((item) => entry(item.source.reference.scope, { title: "Release checklist", description: "Audit deployment gates" }));
+    render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    await screen.findByRole("button", { name: "Release checklist Repository" });
+    const search = screen.getByLabelText("Search playbooks");
+    for (const query of ["  ReLeAsE  ", "DEPLOYMENT", "review"]) {
+      fireEvent.change(search, { target: { value: query } });
+      expect(libraryOrder()).toEqual(["bundled/review", "global/review", "repo/review"]);
+    }
+    for (const scope of ["bundled", "global", "repo"]) {
+      fireEvent.change(search, { target: { value: `${scope}/review` } });
+      expect(libraryOrder()).toEqual([`${scope}/review`]);
+    }
+    fireEvent.change(search, { target: { value: "no such playbook" } });
+    expect(screen.queryByRole("button", { name: /Release checklist/ })).toBeNull();
+    fireEvent.change(search, { target: { value: "" } });
+    expect(libraryOrder()).toEqual(["bundled/review", "global/review", "repo/review"]);
+  });
+
+  it("toggles every column's sort direction, treats undated entries as oldest and leaves preferred order unchanged", async () => {
+    stored = [
+      entry("repo", { title: "Alpha" }, 1000),
+      entry("repo", { key: "zulu", title: "Zulu" }, null),
+      entry("global", { key: "omega", title: "Omega" }, 2000),
+      entry("global", { title: "Alpha" }, 1000),
+      entry("bundled", { title: "Alpha" }),
+    ];
+    const preferences = {
+      order: [
+        { scope: "repo", key: "review" },
+        { scope: "global", key: "review" },
+      ],
+      entries: [preference("global"), preference("repo")],
+    } satisfies PickerPreferences;
+    preferencesByRepo.set("/repo", structuredClone(preferences));
+    render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    await screen.findByRole("button", { name: "Alpha Repository" });
+    expect(screen.queryByRole("combobox", { name: "Sort playbooks" })).toBeNull();
+    expect(libraryOrder()).toEqual(["bundled/review", "global/review", "repo/review", "global/omega", "repo/zulu"]);
+    const orders = [
+      ["Playbook Name", "descending", ["repo/zulu", "global/omega", "bundled/review", "global/review", "repo/review"]],
+      ["Playbook Name", "ascending", ["bundled/review", "global/review", "repo/review", "global/omega", "repo/zulu"]],
+      ["Source", "ascending", ["bundled/review", "global/review", "global/omega", "repo/review", "repo/zulu"]],
+      ["Source", "descending", ["repo/review", "repo/zulu", "global/review", "global/omega", "bundled/review"]],
+      ["Last modified", "descending", ["global/omega", "global/review", "repo/review", "bundled/review", "repo/zulu"]],
+      ["Last modified", "ascending", ["bundled/review", "repo/zulu", "global/review", "repo/review", "global/omega"]],
+      ["Preferred for this repo", "descending", ["global/review", "repo/review", "bundled/review", "global/omega", "repo/zulu"]],
+      ["Preferred for this repo", "ascending", ["bundled/review", "global/omega", "repo/zulu", "global/review", "repo/review"]],
+    ] as const;
+    for (const [column, direction, expected] of orders) {
+      const header = screen.getByRole("button", { name: `Sort by ${column}` });
+      fireEvent.click(header);
+      expect(libraryOrder()).toEqual(expected);
+      expect(header.closest("th")?.getAttribute("aria-sort")).toBe(direction);
+      expect(
+        within(screen.getByRole("table", { name: "Playbook library" }))
+          .getAllByRole("columnheader")
+          .filter((header) => header.hasAttribute("aria-sort")),
+      ).toHaveLength(1);
+    }
+    expect(preferencesByRepo.get("/repo")).toEqual(preferences);
+    expect(mocks.savePlaybookPickerPreferences).not.toHaveBeenCalled();
+  });
+
+  it("filters preferred membership and changes it from the row without opening a playbook", async () => {
+    preferencesByRepo.set("/repo", { order: [], entries: [preference("global")] });
+    render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    await screen.findByRole("button", { name: "Review Repository" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Preferred only" }));
+    expect(libraryOrder()).toEqual(["global/review"]);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Preferred for this repo: global/review" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Review Global" })).toBeNull());
+    expect(screen.queryByRole("region", { name: "Playbook details" })).toBeNull();
+    expect(screen.getByLabelText("Search playbooks")).toBeTruthy();
+    expect(mocks.readPlaybook).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Preferred only" }));
+    expect(libraryOrder()).toEqual(["bundled/review", "global/review", "repo/review"]);
+    expect(screen.getByRole("checkbox", { name: "Preferred for this repo: global/review" })).toHaveProperty("checked", false);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Preferred for this repo: repo/review" }));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Preferred for this repo: repo/review" })).toHaveProperty("checked", true));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Preferred only" }));
+    expect(libraryOrder()).toEqual(["repo/review"]);
+    expect(mocks.readPlaybook).not.toHaveBeenCalled();
+  });
+
+  it("opens a graph-only workspace and Back restores the library controls, scroll and search focus", async () => {
+    preferencesByRepo.set("/repo", { order: [], entries: [preference("global"), preference("repo")] });
+    render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    await screen.findByRole("button", { name: "Review Repository" });
+    fireEvent.change(screen.getByLabelText("Search playbooks"), { target: { value: "review" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sort by Last modified" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Preferred only" }));
+    const library = screen.getByRole("region", { name: "Playbook library" });
+    library.scrollTop = 312;
+    fireEvent.scroll(library);
+    fireEvent.click(screen.getByRole("button", { name: "Review Global" }));
+    await screen.findByRole("region", { name: "Review graph" });
+    expect(screen.queryByRole("region", { name: "Playbook library" })).toBeNull();
+    expect(screen.queryByRole("table", { name: "Playbook library" })).toBeNull();
+    expect(screen.queryByLabelText("Search playbooks")).toBeNull();
+    expect(screen.queryByLabelText("Playbook source")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Editor" }));
+    expect(screen.getByLabelText("Playbook source")).toHaveProperty("value", JSON.stringify(definition));
+    fireEvent.click(screen.getByRole("button", { name: "Back to playbooks" }));
+    await waitFor(() => {
+      expect(screen.getByRole("region", { name: "Playbook library" }).scrollTop).toBe(312);
+      expect(document.activeElement).toBe(screen.getByLabelText("Search playbooks"));
+    });
+    expect(screen.queryByRole("region", { name: "Playbook details" })).toBeNull();
+    expect(screen.getByLabelText("Search playbooks")).toHaveProperty("value", "review");
+    expect(screen.getByRole("button", { name: "Sort by Last modified" }).closest("th")?.getAttribute("aria-sort")).toBe("descending");
+    expect(screen.getByRole("checkbox", { name: "Preferred only" })).toHaveProperty("checked", true);
+    expect(libraryOrder()).toEqual(["global/review", "repo/review"]);
+  });
+});
+
+describe("creating a task from a saved playbook", () => {
+  it("opens each scoped saved definition without persisting or changing its source", async () => {
+    render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    await screen.findByRole("button", { name: "Review Repository" });
+    expect(screen.queryByRole("button", { name: "Create task from this playbook" })).toBeNull();
+    const initialStored = structuredClone(stored);
+    for (const [scope, label] of [
+      ["bundled", "Bundled"],
+      ["global", "Global"],
+      ["repo", "Repository"],
+    ] as const) {
+      fireEvent.click(await screen.findByRole("button", { name: `Review ${label}` }));
+      await screen.findByRole("region", { name: "Review graph" });
+      const create = screen.getByRole("button", { name: "Create task from this playbook" });
+      expect(create).toHaveProperty("disabled", false);
+      fireEvent.click(create);
+      expect(onCreateTask).toHaveBeenLastCalledWith({ scope, key: "review" });
+      fireEvent.click(screen.getByRole("button", { name: "Editor" }));
+      expect(screen.getByLabelText("Playbook source")).toHaveProperty("value", initialStored[0].source_text);
+      expect(screen.queryByRole("dialog")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Back to playbooks" }));
+      await screen.findByRole("table", { name: "Playbook library" });
+    }
+    expect(onCreateTask).toHaveBeenCalledTimes(3);
+    expect(stored).toEqual(initialStored);
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+    expect(mocks.savePlaybookPickerPreferences).not.toHaveBeenCalled();
+    expect(ipc.writeGlobalSettings).not.toHaveBeenCalled();
+    expect(ipc.writeRepoOverridesForRepo).not.toHaveBeenCalled();
+  });
+
+  it("does not offer task creation for a new unsaved definition", async () => {
+    render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    fireEvent.click(screen.getByRole("button", { name: "New playbook" }));
+    await screen.findByLabelText("Save key");
+    expect(screen.queryByRole("button", { name: "Create task from this playbook" })).toBeNull();
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+    expect(onCreateTask).not.toHaveBeenCalled();
+  });
+
+  it("requires an explicit repository even for a saved global definition", async () => {
+    const view = render(<Playbooks onCreateTask={onCreateTask} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Review Global" }));
+    await screen.findByRole("region", { name: "Review graph" });
+    const create = screen.getByRole("button", { name: "Create task from this playbook" });
+    expect(create).toHaveProperty("disabled", true);
+    expect(create.getAttribute("title")).toMatch(/select a repository/i);
+    fireEvent.click(create);
+    expect(onCreateTask).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Back to playbooks" }));
+    view.rerender(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Review Global" }));
+    await screen.findByRole("region", { name: "Review graph" });
+    expect(screen.getByRole("button", { name: "Create task from this playbook" })).toHaveProperty("disabled", false);
+    fireEvent.click(screen.getByRole("button", { name: "Create task from this playbook" }));
+    expect(onCreateTask).toHaveBeenCalledWith({ scope: "global", key: "review" });
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+  });
+
+  it("blocks the selected definition in another repository and restores availability on return", async () => {
+    const view = render(<Playbooks repoPath="/repo-a" onCreateTask={onCreateTask} />);
+    await openRepo();
+    view.rerender(<Playbooks repoPath="/repo-b" onCreateTask={onCreateTask} />);
+    const create = screen.getByRole("button", { name: "Create task from this playbook" });
+    expect(create).toHaveProperty("disabled", true);
+    expect(create.getAttribute("title")).toContain("/repo-a");
+    fireEvent.click(create);
+    expect(onCreateTask).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Editor" }));
+    expect(screen.getByLabelText("Playbook source")).toHaveProperty("value", JSON.stringify(definition));
+    view.rerender(<Playbooks repoPath="/repo-a" onCreateTask={onCreateTask} />);
+    expect(create).toHaveProperty("disabled", false);
+    fireEvent.click(create);
+    expect(onCreateTask).toHaveBeenCalledWith({ scope: "repo", key: "review" });
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+  });
+
+  it("waits for an in-progress operation even when the saved source is clean", async () => {
+    let resolveValidation!: (result: { definition: NormalizedPlaybook; diagnostics: [] }) => void;
+    mocks.validatePlaybookSource.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveValidation = resolve;
+      }),
+    );
+    render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    await openRepo();
+    fireEvent.click(screen.getByRole("button", { name: "Validate" }));
+    const create = screen.getByRole("button", { name: "Create task from this playbook" });
+    expect(create).toHaveProperty("disabled", true);
+    fireEvent.click(create);
+    expect(onCreateTask).not.toHaveBeenCalled();
+    await act(async () => resolveValidation({ definition, diagnostics: [] }));
+    expect(create).toHaveProperty("disabled", false);
+    fireEvent.click(create);
+    expect(onCreateTask).toHaveBeenCalledWith({ scope: "repo", key: "review" });
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+  });
+});
 
 describe("graph-first playbook management", () => {
   it("keeps the saved graph through mode switches and updates it only after persistence", async () => {
     render(
       <>
-        <Playbooks repoPath="/repo" />
+        <Playbooks repoPath="/repo" onCreateTask={onCreateTask} />
         <ConfirmHost />
       </>,
     );
@@ -134,14 +376,24 @@ describe("graph-first playbook management", () => {
     const next = { ...definition, step: [{ ...definition.step[0], title: "Revised inspection", prompt: "New prompt" }] };
     const draft = JSON.stringify(next);
     edit(draft);
+    const create = screen.getByRole("button", { name: "Create task from this playbook" });
+    expect(create).toHaveProperty("disabled", true);
+    expect(create.getAttribute("title")).toMatch(/save/i);
+    fireEvent.click(create);
+    expect(onCreateTask).not.toHaveBeenCalled();
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByLabelText("Playbook source")).toHaveProperty("value", draft);
     fireEvent.click(screen.getByRole("button", { name: "Graph" }));
-    expect(screen.getByText("Showing saved version · Unsaved changes in editor.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Revised inspection/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Editor" }));
     expect(screen.getByLabelText("Playbook source")).toHaveProperty("value", draft);
     await overwrite();
     await screen.findByText("Definition saved.");
     fireEvent.click(screen.getByRole("button", { name: "Graph" }));
+    await waitFor(() => expect(create).toHaveProperty("disabled", false));
+    fireEvent.click(create);
+    expect(onCreateTask).toHaveBeenCalledWith({ scope: "repo", key: "review" });
     expect(screen.getByRole("button", { name: /Revised inspection/ })).toBeTruthy();
     expect(stored[2].source_text).toBe(draft);
   });
@@ -149,7 +401,7 @@ describe("graph-first playbook management", () => {
   it("invalid source retains its draft, diagnostics and previous saved graph", async () => {
     render(
       <>
-        <Playbooks repoPath="/repo" />
+        <Playbooks repoPath="/repo" onCreateTask={onCreateTask} />
         <ConfirmHost />
       </>,
     );
@@ -169,7 +421,7 @@ describe("graph-first playbook management", () => {
   it("failed persistence does not install a validated draft as the saved graph", async () => {
     render(
       <>
-        <Playbooks repoPath="/repo" />
+        <Playbooks repoPath="/repo" onCreateTask={onCreateTask} />
         <ConfirmHost />
       </>,
     );
@@ -180,6 +432,10 @@ describe("graph-first playbook management", () => {
     await overwrite();
     await screen.findByText("Disk is read-only");
     expect(screen.getByLabelText("Playbook source")).toHaveProperty("value", draft);
+    const create = screen.getByRole("button", { name: "Create task from this playbook" });
+    expect(create).toHaveProperty("disabled", true);
+    fireEvent.click(create);
+    expect(onCreateTask).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Graph" }));
     expect(screen.getByRole("region", { name: "Review graph" })).toBeTruthy();
     expect(screen.queryByRole("region", { name: "Not saved graph" })).toBeNull();
@@ -188,7 +444,7 @@ describe("graph-first playbook management", () => {
   it("bundled source is read-only and copying creates a distinct writable identity", async () => {
     render(
       <>
-        <Playbooks repoPath="/repo" />
+        <Playbooks repoPath="/repo" onCreateTask={onCreateTask} />
         <ConfirmHost />
       </>,
     );
@@ -200,30 +456,36 @@ describe("graph-first playbook management", () => {
     fireEvent.click(screen.getByRole("button", { name: "Make a copy to edit" }));
     await screen.findByLabelText("Save key");
     expect(screen.getByLabelText("Playbook source")).toHaveProperty("readOnly", false);
+    expect(screen.queryByRole("button", { name: "Create task from this playbook" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Graph" }));
     expect(screen.queryByRole("region", { name: "Review graph" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Save definition" }));
     await screen.findByText("Definition saved.");
     expect(stored.map((item) => identity(item.source.reference))).toEqual(["bundled/review", "global/review", "repo/review", "repo/review-copy"]);
+    const create = screen.getByRole("button", { name: "Create task from this playbook" });
+    await waitFor(() => expect(create).toHaveProperty("disabled", false));
+    fireEvent.click(create);
+    expect(onCreateTask).toHaveBeenCalledWith({ scope: "repo", key: "review-copy" });
     fireEvent.click(screen.getByRole("button", { name: "Delete definition" }));
     fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
     await waitFor(() => expect(stored).toHaveLength(3));
     expect(stored[0].source_text).toBe(JSON.stringify(definition));
   });
 
-  it("cancelled discard protects selection and close restores library focus only after discard", async () => {
+  it("cancelled Back preserves the unsaved buffer and discard returns focus to the library", async () => {
     render(
       <>
-        <Playbooks repoPath="/repo" />
+        <Playbooks repoPath="/repo" onCreateTask={onCreateTask} />
         <ConfirmHost />
       </>,
     );
     await openRepo();
     edit("unsaved buffer");
-    fireEvent.click(screen.getByRole("button", { name: "Review Global" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to playbooks" }));
     fireEvent.click(await screen.findByRole("button", { name: "Keep editing" }));
     expect(screen.getByLabelText("Playbook source")).toHaveProperty("value", "unsaved buffer");
-    fireEvent.click(screen.getByRole("button", { name: "Close editor" }));
+    expect(screen.queryByRole("table", { name: "Playbook library" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Back to playbooks" }));
     fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
     await waitFor(() => expect(screen.queryByRole("region", { name: "Playbook details" })).toBeNull());
     expect(document.activeElement).toBe(screen.getByLabelText("Search playbooks"));
@@ -232,7 +494,7 @@ describe("graph-first playbook management", () => {
   it("repository changes retain draft ownership even when save finishes in another repository", async () => {
     const view = render(
       <>
-        <Playbooks repoPath="/repo-a" />
+        <Playbooks repoPath="/repo-a" onCreateTask={onCreateTask} />
         <ConfirmHost />
       </>,
     );
@@ -240,7 +502,7 @@ describe("graph-first playbook management", () => {
     edit(JSON.stringify({ ...definition, description: "Draft in A" }));
     view.rerender(
       <>
-        <Playbooks repoPath="/repo-b" />
+        <Playbooks repoPath="/repo-b" onCreateTask={onCreateTask} />
         <ConfirmHost />
       </>,
     );
@@ -248,20 +510,17 @@ describe("graph-first playbook management", () => {
     await overwrite();
     await screen.findByText("Definition saved.");
     expect(mocks.savePlaybookSource).toHaveBeenCalledWith(expect.anything(), "/repo-a");
-    expect(screen.getByRole("button", { name: "Review Repository" }).getAttribute("aria-current")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Back to playbooks" }));
+    expect(await screen.findByRole("button", { name: "Review Repository" })).toBeTruthy();
   });
 
-  it("filters all scopes without discarding selection and preserves pasted source on cancelled overwrite", async () => {
+  it("preserves pasted source on cancelled overwrite", async () => {
     render(
       <>
-        <Playbooks repoPath="/repo" />
+        <Playbooks repoPath="/repo" onCreateTask={onCreateTask} />
         <ConfirmHost />
       </>,
     );
-    await openRepo();
-    fireEvent.change(screen.getByLabelText("Search playbooks"), { target: { value: "bundled/review" } });
-    expect(within(screen.getByRole("list", { name: "Playbook library" })).getAllByRole("button")).toHaveLength(1);
-    expect(screen.getByRole("region", { name: "Review graph" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Import" }));
     fireEvent.click(screen.getByRole("button", { name: "Paste source" }));
     await screen.findByLabelText("Save key");
@@ -276,7 +535,7 @@ describe("graph-first playbook management", () => {
   });
 
   it("retains the chosen pane split across mode and playbook changes", async () => {
-    render(<Playbooks repoPath="/repo" />);
+    render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
     await openRepo();
     const divider = screen.getByRole("separator", { name: "Resize graph and description" });
     fireEvent.keyDown(divider, { key: "Home" });
@@ -284,8 +543,125 @@ describe("graph-first playbook management", () => {
     fireEvent.click(screen.getByRole("button", { name: "Editor" }));
     fireEvent.click(screen.getByRole("button", { name: "Graph" }));
     expect(screen.getByRole("separator", { name: "Resize graph and description" }).getAttribute("aria-valuenow")).toBe(chosen);
-    fireEvent.click(screen.getByRole("button", { name: "Review Bundled" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to playbooks" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Review Bundled" }));
     await screen.findByRole("button", { name: "Make a copy to edit" });
     expect(screen.getByRole("separator", { name: "Resize graph and description" }).getAttribute("aria-valuenow")).toBe(chosen);
+  });
+});
+
+describe("repository preferred playbooks", () => {
+  it("preserves unreadable preferences until a successful reload, then retains unrelated metadata on change", async () => {
+    const saved: PickerPreferences = {
+      order: [{ scope: "global", key: "review" }],
+      entries: [{ ...preference("global"), badge: "Keep me", color: "#123456", last_imported_at_ms: 1234 }],
+    };
+    preferencesByRepo.set("/repo", structuredClone(saved));
+    const catalog = await mocks.listPlaybookCatalog("/repo");
+    mocks.listPlaybookCatalog.mockResolvedValueOnce({
+      ...catalog,
+      picker_preferences: { order: [], entries: [] },
+      diagnostics: [{ code: "picker_preferences", message: "Cannot parse picker.toml", severity: "error" }],
+    });
+    render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    const checkbox = await screen.findByRole("checkbox", { name: "Preferred for this repo: repo/review" });
+    fireEvent.click(checkbox);
+    expect(mocks.savePlaybookPickerPreferences).not.toHaveBeenCalled();
+    expect(preferencesByRepo.get("/repo")).toEqual(saved);
+    expect(checkbox).toHaveProperty("disabled", true);
+    expect(screen.getByRole("alert")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Review Repository" })).toHaveProperty("disabled", false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry preferences" }));
+    await waitFor(() => expect(checkbox).toHaveProperty("disabled", false));
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(checkbox);
+    await waitFor(() => expect(checkbox).toHaveProperty("checked", true));
+    expect(preferencesByRepo.get("/repo")).toEqual({ ...saved, entries: [...saved.entries, preference("repo")] });
+  });
+
+  it("persists membership without changing defaults or metadata and keeps nonpreferred and hidden entries searchable", async () => {
+    const legacy = { ...preference("global", false), hidden: true, badge: "Imported", color: "#123456", last_imported_at_ms: 1234 };
+    const order: PlaybookRef[] = [
+      { scope: "repo", key: "unavailable" },
+      { scope: "global", key: "review" },
+    ];
+    preferencesByRepo.set("/repo", { order, entries: [legacy] });
+    const view = render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    const initialCheckbox = await screen.findByRole("checkbox", { name: "Preferred for this repo: global/review" });
+    fireEvent.click(initialCheckbox);
+    await waitFor(() => expect(initialCheckbox).toHaveProperty("checked", true));
+    expect(preferencesByRepo.get("/repo")?.entries).toEqual([{ ...legacy, preferred: true }]);
+    expect(mocks.savePlaybookPickerPreferences).toHaveBeenCalledWith(expect.anything(), "/repo");
+    fireEvent.change(screen.getByLabelText("Search playbooks"), { target: { value: "repo/review" } });
+    expect(screen.getByRole("button", { name: "Review Repository" })).toBeTruthy();
+    expect(preferencesByRepo.get("/repo")?.order).toEqual(order);
+    view.unmount();
+    render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    const checkbox = await screen.findByRole("checkbox", { name: "Preferred for this repo: global/review" });
+    expect(checkbox).toHaveProperty("checked", true);
+    fireEvent.click(checkbox);
+    await waitFor(() => expect(checkbox).toHaveProperty("checked", false));
+    expect(screen.getByRole("button", { name: "Review Global" })).toBeTruthy();
+    expect(preferencesByRepo.get("/repo")?.entries).toEqual([legacy]);
+    expect(preferencesByRepo.get("/repo")?.order).toEqual(order);
+    expect(ipc.writeGlobalSettings).not.toHaveBeenCalled();
+    expect(ipc.writeRepoOverridesForRepo).not.toHaveBeenCalled();
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+  });
+
+  it("blocks concurrent changes, retains saved membership on failure and allows retry", async () => {
+    let rejectSave!: (reason: string) => void;
+    mocks.savePlaybookPickerPreferences.mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectSave = reject;
+        }),
+    );
+    render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    const checkbox = await screen.findByRole("checkbox", { name: "Preferred for this repo: repo/review" });
+    fireEvent.click(checkbox);
+    expect(checkbox).toHaveProperty("disabled", true);
+    expect(screen.getByRole("checkbox", { name: "Preferred for this repo: global/review" })).toHaveProperty("disabled", true);
+    await act(async () => rejectSave("Read-only repository"));
+    await screen.findByText("Read-only repository");
+    expect(checkbox).toHaveProperty("checked", false);
+    fireEvent.click(checkbox);
+    await waitFor(() => expect(checkbox).toHaveProperty("checked", true));
+    expect(screen.queryByText("Read-only repository")).toBeNull();
+  });
+
+  it.each(["resolve", "reject"] as const)("ignores a stale save %s after switching repositories and returning", async (outcome) => {
+    let resolveSave!: () => void;
+    let rejectSave!: (reason: string) => void;
+    mocks.savePlaybookPickerPreferences.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          resolveSave = resolve;
+          rejectSave = reject;
+        }),
+    );
+    const view = render(<Playbooks repoPath="/repo-a" onCreateTask={onCreateTask} />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Preferred for this repo: repo/review" }));
+    view.rerender(<Playbooks repoPath="/repo-b" onCreateTask={onCreateTask} />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Preferred for this repo: global/review" }));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Preferred for this repo: global/review" })).toHaveProperty("checked", true));
+    expect(mocks.savePlaybookPickerPreferences).toHaveBeenLastCalledWith(expect.anything(), "/repo-b");
+    view.rerender(<Playbooks repoPath="/repo-a" onCreateTask={onCreateTask} />);
+    await screen.findByRole("checkbox", { name: "Preferred for this repo: repo/review" });
+    await act(async () => (outcome === "resolve" ? resolveSave() : rejectSave("Stale repository failure")));
+    expect(screen.getByRole("checkbox", { name: "Preferred for this repo: repo/review" })).toHaveProperty("checked", false);
+    expect(screen.queryByText("Stale repository failure")).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "Preferred for this repo: repo/review" })).toHaveProperty("disabled", false);
+  });
+
+  it("does not allow preferences to mutate without an explicit repository", async () => {
+    render(<Playbooks onCreateTask={onCreateTask} />);
+    const checkbox = await screen.findByRole("checkbox", { name: "Preferred for this repo: repo/review" });
+    expect(checkbox).toHaveProperty("disabled", true);
+    expect(screen.getByRole("checkbox", { name: "Preferred only" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("checkbox", { name: "Preferred only" })).toHaveProperty("checked", false);
+    expect(checkbox).toHaveProperty("checked", false);
+    expect(mocks.savePlaybookPickerPreferences).not.toHaveBeenCalled();
   });
 });

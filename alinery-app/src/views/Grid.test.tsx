@@ -29,6 +29,7 @@ const makeTask = (over: Partial<BoardTask>): BoardTask => ({
   linear_id: "",
   github_issue: "",
   playbook: "superdevelop",
+  engine_version: 2,
   auto_advance: [],
   draft: false,
   repo_path: "/repo-a",
@@ -115,6 +116,7 @@ function retainedExecution(steps: NormalizedStep[], states: [string, ExecutionLi
     }),
   );
   return {
+    live: { status: "available" },
     definition: {
       version: 2,
       key: "superdevelop",
@@ -420,11 +422,129 @@ describe("configurable task grid", () => {
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ name: "Updated API" }));
   });
 
+  it("keeps legacy tasks and drafts browsable without requesting nonexistent execution state", async () => {
+    const legacy = makeTask({ name: "Legacy", slug: "legacy", engine_version: undefined });
+    const archived = makeTask({ name: "Archived legacy", slug: "archived", engine_version: 1, archived: true });
+    const draft = makeTask({ name: "Draft", slug: "draft", draft: true });
+    ipcMock.listBoardTasks.mockResolvedValue([legacy, archived, draft, tasks[0]]);
+    ipcMock.getTaskExecution.mockImplementation(async (slug) => {
+      if (slug !== "build-api") throw new Error("No execution state for this task");
+      return taskExecutions["/repo-a:build-api"];
+    });
+    const onOpen = vi.fn();
+    render(<Grid allRepos onOpen={onOpen} registerNav={() => {}} initialPreset="progress" />);
+
+    await waitFor(() => expect(within(screen.getByLabelText("Build API retained steps")).getByText(/Research · 1 completed/)).toBeDefined());
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(within(screen.getByLabelText("Legacy retained steps")).getByText(/Legacy task/)).toBeDefined();
+    expect(within(screen.getByLabelText("Draft retained steps")).getByText(/· Draft/)).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: /^Legacy, repo-a/ }));
+    fireEvent.keyDown(screen.getByRole("button", { name: /^Legacy, repo-a/ }), { key: "Enter" });
+    expect(onOpen).toHaveBeenCalledWith(legacy);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.click(screen.getByLabelText("Show archived"));
+    await waitFor(() => expect(within(screen.getByLabelText("Archived legacy retained steps")).getByText(/Legacy task/)).toBeDefined());
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps saved progress browsable across offline and foreign owners, then clears warnings when live access returns", async () => {
+    vi.useFakeTimers();
+    let available = false;
+    ipcMock.getTaskExecution.mockImplementation(async (slug, repoPath) => {
+      const retained = taskExecutions[`${repoPath}:${slug}`];
+      if (available || slug === "review-queue") return retained;
+      return {
+        ...retained,
+        live: {
+          status: slug === "build-api" ? "offline" : "foreign_owner",
+          detail: `Private daemon diagnostic for ${repoPath}:${slug}`,
+        },
+      };
+    });
+    const onOpen = vi.fn();
+    render(<Grid allRepos onOpen={onOpen} registerNav={() => {}} initialPreset="progress" />);
+    await act(async () => {});
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(within(screen.getByLabelText("Build API retained steps")).getByText(/Research · 1 completed/)).toBeDefined();
+    expect(within(screen.getByLabelText("Release app retained steps")).getByText(/PR · 1 running/)).toBeDefined();
+    const summary = screen.getByText(/Showing saved progress for 2 tasks/);
+    expect((summary.closest("details") as HTMLDetailsElement).open).toBe(false);
+    fireEvent.click(summary);
+    for (const slug of ["build-api", "release-app"]) {
+      const diagnostic = screen.getByText(`Private daemon diagnostic for /repo-a:${slug}`);
+      const detail = diagnostic.closest("details") as HTMLDetailsElement;
+      expect(detail.open).toBe(false);
+      fireEvent.click(within(detail).getByText("Technical details"));
+      expect(detail.open).toBe(true);
+    }
+    fireEvent.keyDown(screen.getByRole("button", { name: /^Build API, repo-a/ }), { key: "Enter" });
+    expect(onOpen).toHaveBeenCalledWith(tasks[0]);
+
+    available = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(screen.queryByText(/Showing saved progress/)).toBeNull();
+    expect(screen.queryByText(/Private daemon diagnostic/)).toBeNull();
+    expect(within(screen.getByLabelText("Build API retained steps")).getByText(/Research · 1 completed/)).toBeDefined();
+    expect(within(screen.getByLabelText("Release app retained steps")).getByText(/PR · 1 running/)).toBeDefined();
+  });
+
+  it("keeps availability notices dismissed across polling but resurfaces changed conditions without hiding storage errors", async () => {
+    vi.useFakeTimers();
+    let status: "offline" | "foreign_owner" | "available" = "offline";
+    let unavailableSlug = "build-api";
+    let diagnostic = 0;
+    let corrupt = false;
+    ipcMock.getTaskExecution.mockImplementation(async (slug, repoPath) => {
+      if (corrupt && slug === "build-api") throw new Error("Saved state is corrupt");
+      const retained = taskExecutions[`${repoPath}:${slug}`];
+      return status === "available" || slug !== unavailableSlug ? retained : { ...retained, live: { status, detail: `Diagnostic ${diagnostic++}` } };
+    });
+    render(<Grid allRepos onOpen={() => {}} registerNav={() => {}} initialPreset="progress" />);
+    await act(async () => {});
+    const dismiss = () => fireEvent.click(screen.getByRole("button", { name: "Dismiss notice" }));
+    const poll = async () => {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+    };
+    dismiss();
+    await poll();
+    await poll();
+    expect(screen.queryByText(/Showing saved progress/)).toBeNull();
+    expect(within(screen.getByLabelText("Build API retained steps")).getByText(/Research · 1 completed/)).toBeDefined();
+
+    status = "foreign_owner";
+    await poll();
+    expect(screen.getByRole("button", { name: "Dismiss notice" })).toBeDefined();
+    dismiss();
+    unavailableSlug = "release-app";
+    await poll();
+    expect(screen.getByRole("button", { name: "Dismiss notice" })).toBeDefined();
+    dismiss();
+
+    status = "available";
+    await poll();
+    expect(screen.queryByText(/Showing saved progress/)).toBeNull();
+    status = "offline";
+    await poll();
+    expect(screen.getByRole("button", { name: "Dismiss notice" })).toBeDefined();
+    dismiss();
+
+    corrupt = true;
+    await poll();
+    expect(screen.queryByText(/Showing saved progress/)).toBeNull();
+    expect(within(screen.getByRole("alert")).getByText("Error: Saved state is corrupt")).toBeDefined();
+  });
+
   it("reports execution refresh errors without fabricating or discarding other task states", async () => {
     vi.useFakeTimers();
     let failing = false;
     ipcMock.getTaskExecution.mockImplementation(async (slug, repoPath) => {
-      if (failing && slug === "build-api") throw new Error("retained execution unavailable");
+      if (failing && slug !== "review-queue") throw new Error(`Invalid execution.json for ${repoPath}:${slug}`);
       return taskExecutions[`${repoPath}:${slug}`];
     });
     render(<Grid allRepos={false} onOpen={() => {}} registerNav={() => {}} initialPreset="progress" />);
@@ -434,7 +554,15 @@ describe("configurable task grid", () => {
     await act(async () => {
       vi.advanceTimersByTime(3000);
     });
-    expect(screen.getByRole("alert").textContent).toContain("retained execution unavailable");
+    const alert = screen.getByRole("alert");
+    const details = within(alert)
+      .getByText(/2 tasks/)
+      .closest("details") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    fireEvent.click(within(alert).getByText(/2 tasks/));
+    expect(details.open).toBe(true);
+    expect(within(alert).getByRole("list").textContent).toContain("Invalid execution.json for /repo-a:build-api");
+    expect(within(alert).getByRole("list").textContent).toContain("Invalid execution.json for /repo-a:release-app");
     expect(within(screen.getByLabelText("Build API retained steps")).queryByText(/1 completed/)).toBeNull();
     expect(within(screen.getByLabelText("Review queue retained steps")).getByText(/Context · 1 completed/)).toBeDefined();
     failing = false;

@@ -33,6 +33,7 @@ import {
   Checkbox,
   EMPTY_TASK_ACTIVITY,
   EmptyState,
+  ExecutionAvailabilityNotice,
   finalizedSubtaskNotice,
   findOwnedArtifactNode,
   harnessDisplayName,
@@ -355,6 +356,7 @@ export function TaskDetail({
   };
 
   const allowCompletion = async (executionId: string, sessionId: string) => {
+    if (executionView?.live?.status !== "available" || executionError || busy) return;
     setBusy(`allow:${executionId}`);
     try {
       await ipc.allowExecutionCompletion(slug, executionId, sessionId, repoPath);
@@ -962,9 +964,11 @@ export function TaskDetail({
 
           {finalizedNotice && <InlineStatus tone="warning">{finalizedNotice}</InlineStatus>}
 
+          {executionView && !executionError && <ExecutionAvailabilityNotice live={executionView.live} controls />}
+
           {executionError && (
             <InlineStatus tone="error" detail={executionError}>
-              Execution state unavailable. Last known state is shown; completion grants are disabled.
+              Execution request failed. {executionView ? "The last successful read is shown, not current live state. " : ""}Completion grants are disabled.
             </InlineStatus>
           )}
 
@@ -1740,7 +1744,7 @@ export function TaskDetail({
                           <button
                             type="button"
                             className="btn small"
-                            disabled={!!busy || !!executionError}
+                            disabled={!!busy || !!executionError || executionView.live?.status !== "available"}
                             onClick={() => void allowCompletion(execution.id, execution.owner_session_id)}
                           >
                             Allow this session to complete · {execution.owner_session_id}

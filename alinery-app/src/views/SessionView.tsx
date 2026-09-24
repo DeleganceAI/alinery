@@ -66,6 +66,7 @@ import type { ContextAction } from "../shared";
 import {
   ArtifactProvenanceBadges,
   ContextActionBar,
+  ExecutionAvailabilityNotice,
   finalizedSubtaskNotice,
   findOwnedArtifactNode,
   harnessDisplayName,
@@ -341,6 +342,7 @@ export function SessionView({
   }, [repoPath, taskSlug, id]);
   const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
   const [executionError, setExecutionError] = useState("");
+  const executionAvailable = executionView?.live?.status === "available" && !executionError;
   const [completionBusy, setCompletionBusy] = useState(false);
   const execution = Object.values(executionView?.state.executions ?? {}).find((record) => record.owner_session_id === id || record.previous_session_ids.includes(id));
   const executionStep = executionView?.definition.step.find((step) => step.key === execution?.candidate.step_key);
@@ -641,7 +643,7 @@ export function SessionView({
   }, [taskSlug, repoPath, id]);
 
   const allowCompletion = async () => {
-    if (!execution || execution.owner_session_id !== id) return;
+    if (!executionAvailable || completionBusy || !execution || execution.owner_session_id !== id) return;
     setCompletionBusy(true);
     try {
       await ipc.allowExecutionCompletion(taskSlug, execution.id, id, repoPath);
@@ -1876,14 +1878,16 @@ export function SessionView({
         <CopyTextButton text={cwd} label="worktree path" />
       </div>
       {finalizedNotice && <InlineStatus tone="warning">{finalizedNotice}</InlineStatus>}
+      {executionView && <ExecutionAvailabilityNotice live={executionView.live} controls />}
       {hasTask && !navHistory && effectiveLifecycle?.state === "never_started" && (
         <div className="session-execution">
           <p>{execution?.start_requested ? "Start requested; waiting for the daemon to acquire capacity." : "This session is queued. Opening it does not start it."}</p>
           <button
             type="button"
             className="btn small"
-            disabled={completionBusy || !!execution?.start_requested}
+            disabled={!executionAvailable || completionBusy || !!execution?.start_requested}
             onClick={async () => {
+              if (!executionAvailable || completionBusy || execution?.start_requested) return;
               setCompletionBusy(true);
               try {
                 await ipc.startSession(taskSlug, id, repoPath);
@@ -1904,7 +1908,7 @@ export function SessionView({
       )}
       {executionError && (
         <InlineStatus tone="warning" detail={executionError}>
-          Execution state unavailable; completion grants are disabled.
+          Execution state unavailable; queued starts and completion grants are disabled.
         </InlineStatus>
       )}
       {execution && executionView && (
@@ -1956,7 +1960,7 @@ export function SessionView({
               className="btn small"
               aria-label={`Allow this session to complete · ${id}`}
               title={`Allow session ${id} to request completion`}
-              disabled={completionBusy || !!executionError}
+              disabled={completionBusy || !executionAvailable}
               onClick={() => void allowCompletion()}
             >
               Allow this session to complete
