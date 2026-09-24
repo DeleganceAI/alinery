@@ -93,7 +93,7 @@ export function Kanban({
         setTaskTotal(allTasks.length);
         const cols = [...baseColumns];
         tasks.forEach((t) => {
-          if (!cols.some((c) => c.key === t.current_column_key)) cols.push({ key: t.current_column_key, title: t.current_column_title || t.current_column_key });
+          if (!cols.some((c) => c.key === t.current_column_key)) cols.push({ key: t.current_column_key, title: t.current_column_title || t.current_column_key || "Other" });
         });
         const buckets: Record<string, BoardTask[]> = Object.fromEntries(cols.map((col) => [col.key, []]));
         tasks.forEach((t) => {
