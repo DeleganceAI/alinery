@@ -139,6 +139,119 @@ function makeCompletionEmitter(emit, outcome = { status: "accepted", receipt_id:
   };
 }
 
+test("naming prompt preserves context and stops after acknowledged name", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "alinery-naming-"));
+  const runner = path.join(root, "runner");
+  const capture = path.join(root, "request");
+  writeFileSync(runner, `#!/bin/sh\n/bin/cat > '${capture}'\nprintf '%s\\n' '{"status":"unchanged","value":{"name":"Human correction","source":"user"}}'\n`, { mode: 0o755 });
+  const keys = [
+    "ALINERY_RUNNER_PATH",
+    "ALINERY_SESSION_ID",
+    "ALINERY_DAEMON_SOCKET",
+    "ALINERY_DAEMON_NAMESPACE",
+    "ALINERY_EVENT_PROTOCOL_VERSION",
+    "ALINERY_EVENT_TOKEN",
+    "ALINERY_SESSION_NAMING",
+  ];
+  const previous = keys.map((key) => process.env[key]);
+  try {
+    Object.assign(process.env, {
+      ALINERY_RUNNER_PATH: runner,
+      ALINERY_SESSION_ID: "own",
+      ALINERY_DAEMON_SOCKET: "/unused",
+      ALINERY_DAEMON_NAMESPACE: "",
+      ALINERY_EVENT_PROTOCOL_VERSION: "3",
+      ALINERY_EVENT_TOKEN: "captured",
+      ALINERY_SESSION_NAMING: "1",
+    });
+    const api = makeFakeApi();
+    ext.default(api);
+    const systemPrompt = ["Original safety instruction"];
+    const result = await api.trigger("before_agent_start", { systemPrompt });
+    assert.ok(result?.systemPrompt?.length > systemPrompt.length, "eligible working turn receives naming instruction");
+    assert.equal(result.systemPrompt[0], systemPrompt[0]);
+    assert.deepEqual(systemPrompt, ["Original safety instruction"]);
+    assert.equal(process.env.ALINERY_SESSION_NAMING, undefined);
+    const outcome = await api.callTool("alinery_set_session_name", { name: "A useful purpose with thirty characters", session_id: "foreign", source: "user" }, makeContext("own"));
+    assert.deepEqual(JSON.parse(readFileSync(capture, "utf8")), { type: "session_name_suggested", name: "A useful purpose with thirty characters" });
+    assert.deepEqual(outcome.details, { status: "unchanged", value: { name: "Human correction", source: "user" } });
+    assert.equal(await api.trigger("before_agent_start", { systemPrompt }), undefined);
+  } finally {
+    keys.forEach((key, index) => {
+      if (previous[index] === undefined) delete process.env[key];
+      else process.env[key] = previous[index];
+    });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("taskless and unavailable transport never require naming", async () => {
+  const api = makeFakeApi();
+  const emit = makeRecordingEmitter();
+  registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
+  assert.equal(await api.trigger("before_agent_start", { systemPrompt: ["ordinary"] }), undefined);
+  assert.ok(!api.getRegisteredTools().includes("alinery_set_session_name"));
+});
+
+function installNaming(api, runner, eligible = true) {
+  const values = {
+    ALINERY_RUNNER_PATH: runner,
+    ALINERY_SESSION_ID: "own",
+    ALINERY_DAEMON_SOCKET: "/unused",
+    ALINERY_DAEMON_NAMESPACE: "",
+    ALINERY_EVENT_PROTOCOL_VERSION: "3",
+    ALINERY_EVENT_TOKEN: "captured",
+    ALINERY_SESSION_NAMING: eligible ? "1" : "0",
+  };
+  const previous = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
+  try {
+    Object.assign(process.env, values);
+    ext.default(api);
+    assert.equal(process.env.ALINERY_SESSION_NAMING, undefined, "eligibility is launch-only");
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+test("session name transport requires matching successful acknowledgement", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "alinery-naming-errors-"));
+  const runner = path.join(root, "runner");
+  try {
+    const good = '{"status":"saved","value":{"name":"Repair cache","source":"auto"}}';
+    for (const script of [
+      `printf '%s\\n' '${good}'; exit 1`,
+      `printf '%s' '${good}'`,
+      `printf '%s\\n' '{"status":"accepted","receipt_id":"wrong-kind"}'`,
+      `printf '%s\\n' '{"status":"saved","value":{"name":"x","source":"foreign"}}'`,
+      `printf '%s\\n' '{"status":"rejected","reason":"stale owner"}'; exit 2`,
+      `printf '%s\\n' 'not-json'`,
+      `printf '%65537s\\n' x`,
+      "exec /bin/sleep 8",
+    ]) {
+      writeFileSync(runner, `#!/bin/sh\n/bin/cat >/dev/null\n${script}\n`, { mode: 0o755 });
+      const api = makeFakeApi();
+      installNaming(api, runner);
+      assert.ok(api.getRegisteredTools().includes("alinery_set_session_name"));
+      await assert.rejects(api.callTool("alinery_set_session_name", { name: "Repair cache" }, makeContext("own")));
+      assert.ok((await api.trigger("before_agent_start", { systemPrompt: ["ordinary"] }))?.systemPrompt.length > 1);
+      await api.trigger("agent_start", { type: "agent_start" });
+      await api.trigger("agent_end", { type: "agent_end" });
+    }
+    const api = makeFakeApi();
+    installNaming(api, runner, false);
+    assert.ok(!api.getRegisteredTools().includes("alinery_set_session_name"));
+    assert.equal(await api.trigger("before_agent_start", { systemPrompt: ["ordinary"] }), undefined);
+    const environment = { ALINERY_SESSION_NAMING: "1" };
+    assert.equal(ext.captureRunnerConfig(environment), undefined);
+    assert.equal(environment.ALINERY_SESSION_NAMING, undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("runner credentials are scrubbed from tool children and retained only for emit", () => {
   const inherited = {
     PATH: process.env.PATH,
@@ -147,7 +260,7 @@ test("runner credentials are scrubbed from tool children and retained only for e
     ALINERY_SESSION_ID: "alinery-session",
     ALINERY_DAEMON_SOCKET: "/tmp/alineryd.sock",
     ALINERY_DAEMON_NAMESPACE: "namespace",
-    ALINERY_EVENT_PROTOCOL_VERSION: "1",
+    ALINERY_EVENT_PROTOCOL_VERSION: "3",
     ALINERY_EVENT_TOKEN: "secret-token",
     ALINERY_HOST_EXECUTABLE: "/canonical/Alinery Dev",
     ALINERY_PTY_INITIAL_PROMPT: "private initial task instructions",
@@ -211,7 +324,7 @@ test("empty production namespace keeps runner transport available", () => {
     ALINERY_SESSION_ID: "alinery-session",
     ALINERY_DAEMON_SOCKET: "/tmp/alineryd.sock",
     ALINERY_DAEMON_NAMESPACE: "",
-    ALINERY_EVENT_PROTOCOL_VERSION: "1",
+    ALINERY_EVENT_PROTOCOL_VERSION: "3",
     ALINERY_EVENT_TOKEN: "secret-token",
   };
 
@@ -621,67 +734,93 @@ describe("2C — OMP extension callback behavior in isolation", () => {
     assert.deepEqual(Object.keys(schema.parameters.shape).sort(), ["message", "title"]);
   });
 
-  test("ask_approval_confirm_true_emits_wa_then_busy", async () => {
+  test("ask_approval_preserves_rpc_ui_receiver_and_waits_for_allow", async () => {
     const api = makeFakeApi();
     const emit = makeRecordingEmitter();
     registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
 
-    const calls = [];
-    const ctx = {
-      ...makeContext("omp-sess-abc"),
-      ui: {
-        pendingRequests: calls,
-        async confirm(title, message) {
-          this.pendingRequests.push([title, message]);
-          return true;
+    // Match OMP's class-backed RpcExtensionUIContext, not its receiver-free TUI closures.
+    let present;
+    const request = new Promise((resolve) => {
+      present = resolve;
+    });
+    class RpcUi {
+      pendingRequests = new Map();
+
+      confirm(title, message) {
+        return new Promise((resolve) => {
+          this.pendingRequests.set("approval-1", resolve);
+          present({ type: "extension_ui_request", id: "approval-1", method: "confirm", title, message });
+        });
+      }
+
+      respond(response) {
+        const resolve = this.pendingRequests.get(response.id);
+        this.pendingRequests.delete(response.id);
+        resolve(response.cancelled ? false : response.confirmed);
+      }
+    }
+    const ui = new RpcUi();
+    const ctx = { ...makeContext("omp-sess-abc"), ui };
+    const pending = api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx);
+    const shown = await Promise.race([request, pending]);
+    assert.deepEqual(shown, {
+      type: "extension_ui_request",
+      id: "approval-1",
+      method: "confirm",
+      title: "Go?",
+      message: "Biome failed",
+    });
+    assert.deepEqual(emit.emitted, [{ type: "waiting_for_approval", correlation_id: "tool-call-1" }]);
+    ui.respond({ type: "extension_ui_response", id: shown.id, confirmed: true });
+    const output = await pending;
+    assert.deepEqual(output.details, { approved: true });
+    assert.deepEqual(emit.emitted, [
+      { type: "waiting_for_approval", correlation_id: "tool-call-1" },
+      { type: "busy", correlation_id: "tool-call-1" },
+    ]);
+  });
+
+  test("ask_approval_denies_every_response_except_literal_allow_true", async () => {
+    for (const response of [false, undefined, null, "Allow", "true", 1, {}]) {
+      const api = makeFakeApi();
+      const emit = makeRecordingEmitter();
+      registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
+      const ctx = {
+        ...makeContext("omp-sess-abc"),
+        ui: {
+          response,
+          async confirm() {
+            return this.response;
+          },
         },
-      },
-    };
-    const output = await api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx);
-
-    assert.equal(output.details.approved, true);
-    assert.match(output.content[0].text, /approved/i);
-    assert.deepEqual(calls, [["Go?", "Biome failed"]]);
-    assert.deepEqual(emit.emitted, [
-      { type: "waiting_for_approval", correlation_id: "tool-call-1" },
-      { type: "busy", correlation_id: "tool-call-1" },
-    ]);
+      };
+      const output = await api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx);
+      assert.deepEqual(output.details, { approved: false });
+      assert.deepEqual(emit.emitted, [
+        { type: "waiting_for_approval", correlation_id: "tool-call-1" },
+        { type: "busy", correlation_id: "tool-call-1" },
+      ]);
+    }
   });
 
-  test("ask_approval_confirm_false_refuses_without_aborting", async () => {
+  test("ask_approval_fails_closed_and_emits_busy_when_confirm_throws", async () => {
     const api = makeFakeApi();
     const emit = makeRecordingEmitter();
     registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
 
-    const ctx = {
-      ...makeContext("omp-sess-abc"),
-      ui: { confirm: async () => false },
-    };
-    const output = await api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx);
-
-    assert.equal(output.details.approved, false);
-    assert.ok(!("status" in output.details) || output.details.status !== "unavailable");
-    assert.match(output.content[0].text, /denied|do not proceed/i);
-    assert.deepEqual(emit.emitted, [
-      { type: "waiting_for_approval", correlation_id: "tool-call-1" },
-      { type: "busy", correlation_id: "tool-call-1" },
-    ]);
-  });
-
-  test("ask_approval_emits_busy_when_confirm_throws", async () => {
-    const api = makeFakeApi();
-    const emit = makeRecordingEmitter();
-    registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
-
+    const error = new Error("confirm failed");
     const ctx = {
       ...makeContext("omp-sess-abc"),
       ui: {
         confirm: async () => {
-          throw new Error("confirm failed");
+          throw error;
         },
       },
     };
-    await assert.rejects(() => api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx));
+    const output = await api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, ctx);
+    assert.equal(output.details.approved, false);
+    assert.equal(output.details.status, "unavailable");
     assert.deepEqual(
       emit.emitted.filter((e) => e.type === "waiting_for_approval" || e.type === "busy"),
       [
@@ -699,7 +838,6 @@ describe("2C — OMP extension callback behavior in isolation", () => {
     const output = await api.callTool("alinery_ask_approval", { title: "Go?", message: "Biome failed" }, makeContext("omp-sess-abc"));
     assert.equal(output.details.approved, false);
     assert.equal(output.details.status, "unavailable");
-    assert.match(output.content[0].text, /unavailable/i);
     assert.equal(
       emit.emitted.some((e) => e.type === "waiting_for_approval"),
       false,
@@ -721,6 +859,21 @@ describe("2C — OMP extension callback behavior in isolation", () => {
       false,
       "ui without confirm must not emit waiting_for_approval",
     );
+  });
+
+  test("ask_approval_omp_no_ui_context_is_unavailable_without_calling_confirm", async () => {
+    const api = makeFakeApi();
+    const emit = makeRecordingEmitter();
+    registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
+    const ctx = {
+      ...makeContext("omp-sess-abc"),
+      hasUI: false,
+      ui: { confirm: async () => assert.fail("no UI must not request confirmation") },
+    };
+    const output = await api.callTool("alinery_ask_approval", { title: "Go?", message: "Save playbook" }, ctx);
+    assert.equal(output.details.approved, false);
+    assert.equal(output.details.status, "unavailable");
+    assert.deepEqual(emit.emitted, []);
   });
 
   test("ask_approval_substitutes_empty_title_and_message", async () => {

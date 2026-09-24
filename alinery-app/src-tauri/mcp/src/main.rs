@@ -419,6 +419,8 @@ fn list_tools() -> Value {
         {"name":"alinery_read_config","description":"Read .alinery/config.toml","inputSchema":{"type":"object","properties":{"repo":repo_prop()},"required":["repo"]}},
         {"name":"alinery_write_config","description":"Write .alinery/config.toml (validated as TOML)","inputSchema":{"type":"object","properties":{"repo":repo_prop(),"content":{"type":"string"}},"required":["repo"]}},
         {"name":"alinery_list_playbooks","description":"List playbook summaries","inputSchema":{"type":"object","properties":{"repo":repo_prop()},"required":["repo"]}},
+        {"name":"alinery_read_playbook","description":"Read an exact bundled, global, or repo playbook, including its complete Markdown source, parsed definition, resolved source path, and modification time. Use the repo root returned by alinery_list_repos, not an agent worktree. Read before editing; no scope fallback occurs.","inputSchema":{"type":"object","additionalProperties":false,"properties":{"repo":repo_prop(),"reference":playbook_ref_schema()},"required":["repo","reference"]}},
+        {"name":"alinery_save_playbook","description":"Create or explicitly replace a global or repo playbook from complete v2 Markdown. Recommend global scope unless repository-specific behavior is intended. Before calling, obtain alinery_ask_approval for the reviewed complete source and exact destination (repo, scope, key, and create versus replace). Denied or unavailable approval means do not save; material source or destination changes require renewed approval. This is an agent-followed trust boundary: the backend validates and atomically saves but does not verify an approval receipt; no approved argument is accepted. overwrite defaults false; replacement requires overwrite=true. Bundled definitions are read-only. Use the registered repo root, not an agent worktree. Repo saves require exclusive repository ownership and fail repo-busy while an Alinery desktop window owns that repo; use the owning desktop editor or close its repository first. Global saves do not require repository ownership.","inputSchema":{"type":"object","additionalProperties":false,"properties":{"repo":repo_prop(),"target":{"type":"object","additionalProperties":false,"properties":{"scope":{"type":"string","enum":["global","repo"]},"key":{"type":"string"}},"required":["scope","key"]},"source":{"type":"string","description":"Complete v2 playbook Markdown, with declared key matching target.key."},"overwrite":{"type":"boolean","default":false}},"required":["repo","target","source"]}},
         {"name":"alinery_create_subtask","description":"Create an approved child through its manager daemon, retaining the exact scoped definition and reporting all initial sessions and partial outcomes.","inputSchema":{"type":"object","additionalProperties":false,"properties":{"repo":repo_prop(),"manager_session_id":{"type":"string"},"name":{"type":"string"},"slug":{"type":"string"},"playbook":playbook_ref_schema(),"instructions":{"type":"string"},"start":{"type":"boolean","default":false}},"required":["repo","manager_session_id","name","slug"]}},
         {"name":"alinery_inspect_subtask_finish","description":"Inspect durable Git and artifact state before finishing a child","inputSchema":{"type":"object","additionalProperties":false,"properties":{"repo":repo_prop(),"manager_session_id":{"type":"string"}},"required":["repo","manager_session_id"]}},
         {"name":"alinery_finalize_subtask","description":"Finalize an inspected child with an explicit code disposition","inputSchema":{"type":"object","additionalProperties":false,"properties":{"repo":repo_prop(),"manager_session_id":{"type":"string"},"mode":{"type":"string","enum":["artifacts_only","integrated_code","archive_without_code"]}},"required":["repo","manager_session_id","mode"]}},
@@ -447,6 +449,120 @@ fn library_roots(repo: &Path, app_config: &Path) -> Result<alinery_core::playboo
         global_config_dir: alinery_core::app_config_dir_of(app_config).ok_or("app config root is unavailable")?.to_path_buf(),
         repo_dir: repo.to_path_buf(),
     })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReadPlaybookArguments {
+    repo: String,
+    reference: alinery_core::playbook::PlaybookRef,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SavePlaybookArguments {
+    repo: String,
+    target: alinery_core::playbook::PlaybookRef,
+    source: String,
+    #[serde(default)]
+    overwrite: bool,
+}
+
+fn playbook_error(error: impl serde::Serialize) -> Value {
+    let mut response = text_result(serde_json::to_string(&error).expect("playbook errors are JSON serializable"));
+    response["isError"] = json!(true);
+    response
+}
+
+fn playbook_result<T: serde::Serialize, E: serde::Serialize>(result: Result<T, E>) -> Value {
+    match result {
+        Ok(value) => text_result(serde_json::to_string(&value).expect("playbook results are JSON serializable")),
+        Err(error) => playbook_error(error),
+    }
+}
+
+fn claim_playbook_repo(repo: &Path) -> Result<alinery_core::lockfile::LockFile, alinery_core::playbook_library::PlaybookSaveError> {
+    let claim = || -> Result<_, String> {
+        let directory = alinery_core::alinery_dir(repo);
+        match std::fs::create_dir(&directory) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(format!("prepare repository ownership: {error}")),
+        }
+        // The library checks its own paths, but ownership must not follow a linked .alinery
+        // or lock marker before entering the library.
+        let metadata = std::fs::symlink_metadata(&directory).map_err(|error| error.to_string())?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(format!("{} is not a regular directory", directory.display()));
+        }
+        let path = alinery_core::alinery_app_lock_path(repo);
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(_) => return Err(format!("{} is not a regular file", path.display())),
+            Err(error) => return Err(error.to_string()),
+        }
+        alinery_core::lockfile::try_lock_exclusive(&path)
+            .map_err(|error| format!("lock repository {}: {error}", repo.display()))?
+            .ok_or_else(|| {
+                format!(
+                    "repo-busy: another Alinery window owns {}; use its playbook editor or close its repository before retrying",
+                    repo.display()
+                )
+            })
+    };
+    claim().map_err(|message| alinery_core::playbook_library::PlaybookSaveError::Io { message })
+}
+
+fn call_playbook_library(name: &str, args: Value, process_repo: Option<&Path>, app_config: Option<&Path>) -> Value {
+    use alinery_core::playbook_library::{resolve_playbook, save_playbook, PlaybookSaveError, SavePlaybookRequest};
+
+    // Decode before repo resolution: JSON Schema is guidance, not an input-validation boundary.
+    let (requested_repo, reference, save) = if name == "alinery_read_playbook" {
+        let arguments: ReadPlaybookArguments = match serde_json::from_value(args) {
+            Ok(arguments) => arguments,
+            Err(error) => return playbook_error(json!({"kind":"invalid_arguments","message":error.to_string()})),
+        };
+        (arguments.repo, arguments.reference, None)
+    } else {
+        let arguments: SavePlaybookArguments = match serde_json::from_value(args) {
+            Ok(arguments) => arguments,
+            Err(error) => return playbook_error(json!({"kind":"invalid_arguments","message":error.to_string()})),
+        };
+        (arguments.repo, arguments.target, Some((arguments.source, arguments.overwrite)))
+    };
+    let repo = match resolve_call_repo(name, &json!({"repo":requested_repo}), process_repo, app_config) {
+        Ok(repo) => repo,
+        Err(response) => return playbook_error(json!({"kind":"invalid_repo","message":response["content"][0]["text"]})),
+    };
+    let roots = match effective_app_config_path(app_config).and_then(|config| library_roots(&repo, &config)) {
+        Ok(roots) => roots,
+        Err(message) => return playbook_error(json!({"kind":"io","message":message})),
+    };
+    match save {
+        None => playbook_result(resolve_playbook(&roots, &reference)),
+        Some((source, overwrite)) => {
+            let request = SavePlaybookRequest {
+                target: reference,
+                source,
+                overwrite,
+            };
+            let _ownership = if request.target.scope == alinery_core::playbook::PlaybookScope::Repo {
+                // Validate before creating even the ownership marker. The shared save revalidates
+                // under its own contract; no parser or persistence rules are duplicated here.
+                if let Err(diagnostics) = alinery_core::playbook_library::validate_playbook_for_storage(&request.target.key, &request.source) {
+                    return playbook_error(PlaybookSaveError::Invalid { diagnostics });
+                }
+                match claim_playbook_repo(&repo) {
+                    Ok(guard) => Some(guard),
+                    Err(error) => return playbook_error(error),
+                }
+            } else {
+                None
+            };
+            playbook_result(save_playbook(&roots, request))
+        }
+    }
 }
 
 fn creation_playbook(repo: &Path, app_config: &Path, reference: alinery_core::playbook::PlaybookRef) -> Result<alinery_core::task_creation::TaskPlaybookPackage, String> {
@@ -617,6 +733,10 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
     // The one tool with no repo argument at all — it reports the global known-repos list.
     if name == "alinery_list_repos" {
         return text_result(list_repos_text(process_repo, app_config));
+    }
+
+    if matches!(name, "alinery_read_playbook" | "alinery_save_playbook") {
+        return call_playbook_library(name, args, process_repo, app_config);
     }
 
     let repo = match resolve_call_repo(name, &args, process_repo, app_config) {
@@ -1508,6 +1628,303 @@ mod tests {
         assert_eq!(scopes.len(), 3);
         assert_eq!(std::fs::read_to_string(legacy).unwrap(), "legacy sentinel");
         let _ = std::fs::remove_dir_all(repo);
+    }
+
+    fn authored_playbook_source(title: &str) -> String {
+        let source = alinery_core::playbook_library::BUNDLED_PLAYBOOKS.iter().find(|(key, _)| *key == "superdevelop").unwrap().1;
+        let mut definition = alinery_core::playbook::parse_playbook_md(source).unwrap();
+        definition.title = title.into();
+        alinery_core::playbook::render_playbook_md(&definition)
+    }
+
+    fn playbook_payload(response: &Value, is_error: bool) -> Value {
+        assert_eq!(response["isError"].as_bool().unwrap_or(false), is_error, "{response}");
+        serde_json::from_str(text_content(response)).unwrap()
+    }
+
+    #[test]
+    fn playbook_authoring_round_trip_preserves_scopes_and_requires_explicit_replace() {
+        let repo = unique_repo("playbook-round-trip");
+        let config = repo.join("config/instances/dev/app.toml");
+        let call = |name: &str, arguments: Value| handle_tool_call(json!({"name":name,"arguments":arguments}), repo.to_str().unwrap(), Some(&config));
+        let bundled = playbook_payload(&call("alinery_read_playbook", json!({"reference":{"scope":"bundled","key":"superdevelop"}})), false);
+        for (scope, title) in [("global", "Global authoring"), ("repo", "Repo authoring")] {
+            let source = authored_playbook_source(title);
+            let saved = playbook_payload(
+                &call("alinery_save_playbook", json!({"target":{"scope":scope,"key":"superdevelop"},"source":source})),
+                false,
+            );
+            let path = if scope == "global" {
+                repo.join("config/playbooks/superdevelop/playbook.md")
+            } else {
+                repo.join(".alinery/playbooks/superdevelop/playbook.md")
+            };
+            assert!(saved["modified_at_ms"].as_u64().is_some());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), saved["source_text"].as_str().unwrap());
+            let expected_path = if scope == "global" { path.clone() } else { path.canonicalize().unwrap() };
+            assert_eq!(saved["source"]["path"], json!(expected_path));
+            let read = playbook_payload(&call("alinery_read_playbook", json!({"reference":{"scope":scope,"key":"superdevelop"}})), false);
+            assert_eq!(read, saved);
+            assert_eq!(read["definition"]["title"], title);
+        }
+        let path = repo.join(".alinery/playbooks/superdevelop/playbook.md");
+        let before = std::fs::read(&path).unwrap();
+        let replacement = authored_playbook_source("Reviewed replacement");
+        let conflict = playbook_payload(
+            &call("alinery_save_playbook", json!({"target":{"scope":"repo","key":"superdevelop"},"source":replacement})),
+            true,
+        );
+        assert_eq!(conflict["kind"], "conflict");
+        assert_eq!(conflict["source"]["reference"], json!({"scope":"repo","key":"superdevelop"}));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let replaced = playbook_payload(
+            &call(
+                "alinery_save_playbook",
+                json!({"target":{"scope":"repo","key":"superdevelop"},"source":replacement,"overwrite":true}),
+            ),
+            false,
+        );
+        assert_eq!(replaced["definition"]["title"], "Reviewed replacement");
+        let read = playbook_payload(&call("alinery_read_playbook", json!({"reference":{"scope":"repo","key":"superdevelop"}})), false);
+        assert_eq!(read, replaced);
+        let global = playbook_payload(&call("alinery_read_playbook", json!({"reference":{"scope":"global","key":"superdevelop"}})), false);
+        assert_eq!(global["definition"]["title"], "Global authoring");
+        assert_eq!(
+            playbook_payload(&call("alinery_read_playbook", json!({"reference":{"scope":"bundled","key":"superdevelop"}})), false),
+            bundled
+        );
+        let catalog: Value = serde_json::from_str(text_content(&call("alinery_list_playbooks", json!({})))).unwrap();
+        let candidate = catalog["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["source"]["reference"] == json!({"scope":"repo","key":"superdevelop"}))
+            .unwrap();
+        assert_eq!(candidate["title"], "Reviewed replacement");
+        assert!(!repo.join("config/instances/dev/playbooks").exists());
+        std::fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[test]
+    fn playbook_invalid_source_and_bundled_writes_preserve_existing_bytes() {
+        let repo = unique_repo("playbook-invalid");
+        let config = repo.join("config/app.toml");
+        let call = |name: &str, arguments: Value| handle_tool_call(json!({"name":name,"arguments":arguments}), repo.to_str().unwrap(), Some(&config));
+        let source = authored_playbook_source("Original");
+        let invalid = playbook_payload(
+            &call(
+                "alinery_save_playbook",
+                json!({"target":{"scope":"repo","key":"superdevelop"},"source":"not a v2 playbook"}),
+            ),
+            true,
+        );
+        assert_eq!(invalid["kind"], "invalid");
+        assert!(!repo.join(".alinery").exists(), "invalid source must not even prepare the ownership marker");
+        playbook_payload(
+            &call("alinery_save_playbook", json!({"target":{"scope":"repo","key":"superdevelop"},"source":source})),
+            false,
+        );
+        let path = repo.join(".alinery/playbooks/superdevelop/playbook.md");
+        let before = std::fs::read(&path).unwrap();
+        for (key, source) in [
+            ("superdevelop", "invalid Markdown".to_string()),
+            ("different-key", source.clone()),
+            ("../escape", source.clone()),
+        ] {
+            let invalid = playbook_payload(
+                &call("alinery_save_playbook", json!({"target":{"scope":"repo","key":key},"source":source,"overwrite":true})),
+                true,
+            );
+            assert_eq!(invalid["kind"], "invalid");
+            assert!(!invalid["diagnostics"].as_array().unwrap().is_empty());
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+        assert!(!repo.join(".alinery/playbooks/different-key").exists());
+        let bundled = playbook_payload(
+            &call(
+                "alinery_save_playbook",
+                json!({"target":{"scope":"bundled","key":"superdevelop"},"source":source,"overwrite":true}),
+            ),
+            true,
+        );
+        assert_eq!(bundled, json!({"kind":"read_only","reference":{"scope":"bundled","key":"superdevelop"}}));
+        let missing = playbook_payload(&call("alinery_read_playbook", json!({"reference":{"scope":"repo","key":"missing"}})), true);
+        assert_eq!(missing["kind"], "unknown");
+        assert_eq!(missing["source"]["reference"], json!({"scope":"repo","key":"missing"}));
+        std::fs::write(&path, "invalid file on disk").unwrap();
+        let invalid = playbook_payload(&call("alinery_read_playbook", json!({"reference":{"scope":"repo","key":"superdevelop"}})), true);
+        assert_eq!(invalid["kind"], "invalid");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "invalid file on disk");
+        std::fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[test]
+    fn playbook_tools_reject_malformed_and_unauthorized_calls_without_writes() {
+        let repo = unique_repo("playbook-arguments");
+        let stranger = unique_repo("playbook-stranger");
+        let config = repo.join("config/app.toml");
+        let save = json!({"repo":repo,"target":{"scope":"repo","key":"superdevelop"},"source":authored_playbook_source("Original")});
+        let read = json!({"repo":repo,"reference":{"scope":"bundled","key":"superdevelop"}});
+        let mut cases = vec![
+            ("alinery_read_playbook", json!(null)),
+            ("alinery_save_playbook", json!([])),
+            ("alinery_save_playbook", json!({"target":{"scope":"repo","key":"superdevelop"},"source":"x"})),
+        ];
+        for (field, value) in [("repo", json!(false)), ("source", json!(42)), ("overwrite", json!("true")), ("approved", json!(true))] {
+            let mut arguments = save.clone();
+            arguments[field] = value;
+            cases.push(("alinery_save_playbook", arguments));
+        }
+        for (name, base, field) in [("alinery_read_playbook", &read, "reference"), ("alinery_save_playbook", &save, "target")] {
+            for value in [
+                json!({"scope":"repo","key":"superdevelop","path":"/tmp/spoof"}),
+                json!({"scope":"unknown","key":"superdevelop"}),
+                json!({"scope":"repo","key":false}),
+                json!({"scope":null,"key":"superdevelop"}),
+                json!({"scope":"repo"}),
+                json!("repo/superdevelop"),
+            ] {
+                let mut arguments = base.clone();
+                arguments[field] = value;
+                cases.push((name, arguments));
+            }
+            let mut arguments = base.clone();
+            arguments["unknown"] = json!(true);
+            cases.push((name, arguments));
+        }
+        for (name, arguments) in cases {
+            let result = handle_tool_call_in(json!({"name":name,"arguments":arguments}), Some(&repo), Some(&config), "");
+            assert_eq!(playbook_payload(&result, true)["kind"], "invalid_arguments", "{result}");
+        }
+        for name in ["alinery_read_playbook", "alinery_save_playbook"] {
+            let mut arguments = if name == "alinery_read_playbook" { read.clone() } else { save.clone() };
+            arguments["repo"] = json!(stranger);
+            let result = handle_tool_call_in(json!({"name":name,"arguments":arguments}), Some(&repo), Some(&config), "");
+            assert_eq!(playbook_payload(&result, true)["kind"], "invalid_repo");
+        }
+        assert!(!repo.join(".alinery").exists());
+        assert!(!stranger.join(".alinery").exists());
+        assert!(!config.parent().unwrap().exists());
+        std::fs::remove_dir_all(repo).unwrap();
+        std::fs::remove_dir_all(stranger).unwrap();
+    }
+
+    #[test]
+    fn playbook_repo_ownership_is_required_but_global_save_is_independent() {
+        let repo = unique_repo("playbook-owner");
+        let config = repo.join("config/app.toml");
+        let call = |name: &str, arguments: Value| handle_tool_call(json!({"name":name,"arguments":arguments}), repo.to_str().unwrap(), Some(&config));
+        let original = authored_playbook_source("Original");
+        playbook_payload(
+            &call("alinery_save_playbook", json!({"target":{"scope":"repo","key":"superdevelop"},"source":original})),
+            false,
+        );
+        let path = repo.join(".alinery/playbooks/superdevelop/playbook.md");
+        let before = std::fs::read(&path).unwrap();
+        let owner = alinery_core::lockfile::try_lock_exclusive(&alinery_core::alinery_app_lock_path(&repo)).unwrap().unwrap();
+        let source = authored_playbook_source("Replacement");
+        let busy = playbook_payload(
+            &call(
+                "alinery_save_playbook",
+                json!({"target":{"scope":"repo","key":"superdevelop"},"source":source,"overwrite":true}),
+            ),
+            true,
+        );
+        assert_eq!(busy["kind"], "io");
+        assert!(busy["message"].as_str().unwrap().contains("repo-busy"));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let read = playbook_payload(&call("alinery_read_playbook", json!({"reference":{"scope":"repo","key":"superdevelop"}})), false);
+        assert_eq!(read["definition"]["title"], "Original");
+        playbook_payload(
+            &call("alinery_save_playbook", json!({"target":{"scope":"global","key":"superdevelop"},"source":source})),
+            false,
+        );
+        assert!(alinery_core::lockfile::try_lock_exclusive(&alinery_core::alinery_app_lock_path(&repo)).unwrap().is_none());
+        drop(owner);
+        playbook_payload(
+            &call(
+                "alinery_save_playbook",
+                json!({"target":{"scope":"repo","key":"superdevelop"},"source":source,"overwrite":true}),
+            ),
+            false,
+        );
+        std::fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn playbook_ownership_refuses_linked_directories_and_lock_markers() {
+        for link_directory in [true, false] {
+            let repo = unique_repo("playbook-linked-owner");
+            let outside = unique_repo("playbook-link-target");
+            let sentinel = outside.join("sentinel");
+            std::fs::write(&sentinel, "untouched").unwrap();
+            if link_directory {
+                std::os::unix::fs::symlink(&outside, repo.join(".alinery")).unwrap();
+            } else {
+                std::fs::create_dir(repo.join(".alinery")).unwrap();
+                std::os::unix::fs::symlink(&sentinel, alinery_core::alinery_app_lock_path(&repo)).unwrap();
+            }
+            let result = handle_tool_call(
+                json!({"name":"alinery_save_playbook","arguments":{"target":{"scope":"repo","key":"superdevelop"},"source":authored_playbook_source("Refused")}}),
+                repo.to_str().unwrap(),
+                Some(&repo.join("config/app.toml")),
+            );
+            assert_eq!(playbook_payload(&result, true)["kind"], "io");
+            assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "untouched");
+            assert!(!outside.join("playbooks").exists());
+            assert!(!outside.join(".alinery-app.lock").exists());
+            std::fs::remove_dir_all(repo).unwrap();
+            std::fs::remove_dir_all(outside).unwrap();
+        }
+    }
+
+    #[test]
+    fn playbook_targeting_uses_known_repo_not_agent_worktree_or_other_repo() {
+        let repo = unique_repo("playbook-known-root");
+        let other = unique_repo("playbook-other-root");
+        let committed = alinery_core::git_cmd(&repo)
+            .args(["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial"])
+            .output()
+            .unwrap();
+        assert!(committed.status.success(), "{committed:?}");
+        let worktree = repo.join("agent-worktree");
+        let added = alinery_core::git_cmd(&repo).args(["worktree", "add", "-b", "agent"]).arg(&worktree).output().unwrap();
+        assert!(added.status.success(), "{added:?}");
+        let config = repo.join("config/instances/dev/app.toml");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(&config, format!("known_repos = [{:?}, {:?}]\n", repo.to_str().unwrap(), other.to_str().unwrap())).unwrap();
+        let call = |name: &str, arguments: Value| handle_tool_call_in(json!({"name":name,"arguments":arguments}), Some(&worktree), Some(&config), "");
+        let source = authored_playbook_source("Known repo");
+        let saved = playbook_payload(
+            &call("alinery_save_playbook", json!({"repo":repo,"target":{"scope":"repo","key":"superdevelop"},"source":source})),
+            false,
+        );
+        assert_eq!(
+            saved["source"]["path"],
+            json!(repo.canonicalize().unwrap().join(".alinery/playbooks/superdevelop/playbook.md"))
+        );
+        assert!(!worktree.join(".alinery").exists());
+        assert!(!other.join(".alinery").exists());
+        let absent = playbook_payload(
+            &call("alinery_read_playbook", json!({"repo":other,"reference":{"scope":"repo","key":"superdevelop"}})),
+            true,
+        );
+        assert_eq!(absent["kind"], "unknown");
+        playbook_payload(
+            &call(
+                "alinery_save_playbook",
+                json!({"repo":repo,"target":{"scope":"global","key":"superdevelop"},"source":source}),
+            ),
+            false,
+        );
+        let shared = playbook_payload(
+            &call("alinery_read_playbook", json!({"repo":other,"reference":{"scope":"global","key":"superdevelop"}})),
+            false,
+        );
+        assert_eq!(shared["definition"]["title"], "Known repo");
+        std::fs::remove_dir_all(repo).unwrap();
+        std::fs::remove_dir_all(other).unwrap();
     }
 
     #[test]

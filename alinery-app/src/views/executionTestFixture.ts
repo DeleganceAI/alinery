@@ -33,6 +33,7 @@ export function executionRecord(overrides: Partial<ExecutionRecord> = {}): Execu
 
 export function executionReply(records: ExecutionRecord[] = [executionRecord()]): TaskExecutionReply {
   return {
+    live: { status: "available" },
     definition: {
       version: 2,
       key: "retained",

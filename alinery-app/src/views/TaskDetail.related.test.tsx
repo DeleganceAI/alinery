@@ -134,3 +134,17 @@ describe("related-task tags", () => {
     expect(onOpenRelatedTask).toHaveBeenCalledTimes(1);
   });
 });
+
+it("resolves retained current related names without rewriting snapshots", async () => {
+  const related = { repo_path: "/other", slug: "retained", name: "Historical snapshot" };
+  const fixture = task({ related_tasks: [related, { repo_path: "/other", slug: "missing", name: "Missing fallback" }] });
+  mocks.getTask.mockResolvedValue(fixture);
+  mocks.listBoardTasks.mockResolvedValue([board({ repo_path: "/other", slug: "retained", name: "Current retained name", archived: true })]);
+  const onOpenRelatedTask = vi.fn();
+  renderDetail({ initialTask: fixture, onOpenRelatedTask });
+  fireEvent.click(await screen.findByRole("button", { name: "Open Current retained name" }));
+  expect(onOpenRelatedTask).toHaveBeenCalledWith("retained", "/other");
+  expect(screen.getByRole("button", { name: "Open Missing fallback" })).toBeDefined();
+  expect(related.name).toBe("Historical snapshot");
+  expect(mocks.setRelatedTasksForRepo).not.toHaveBeenCalled();
+});

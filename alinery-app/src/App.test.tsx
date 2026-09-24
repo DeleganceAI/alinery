@@ -1,22 +1,38 @@
-import { readFileSync } from "node:fs";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { DEFAULT_APPEARANCE } from "./appearance";
-import type { SessionNoticeRow, SessionSort } from "./sessionAttention";
+import * as ipc from "./ipc";
+import type { SessionNoticeRow } from "./sessionAttention";
 import type {
   AppConfig,
   BoardTask,
+  Config,
   CreateTaskResult,
   NotificationPrefs,
   PlaybookCatalog,
   ReviewHandoffResult,
+  ScopedPlaybook,
   SessionListItem,
   SessionMeta,
   SessionTypeChoice,
   TaskActivitySession,
 } from "./types";
+import type * as CreateTaskModule from "./views/CreateTaskPage";
+import { executionReply } from "./views/executionTestFixture";
+import type { SessionsList as SessionsListComponent } from "./views/SessionsList";
+import type { TaskDetail as TaskDetailComponent } from "./views/TaskDetail";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 const task: BoardTask = {
   name: "Task",
@@ -150,6 +166,9 @@ const appConfig: AppConfig = {
   },
 };
 
+const actualCreation = vi.hoisted(() => ({ enabled: false }));
+const namingScenario = vi.hoisted(() => ({ realSessions: false, realTaskDetail: false }));
+
 const { ipcMocks, ipcModule } = vi.hoisted(() => {
   const ipcMocks = {
     createSessionForRepo: vi.fn(),
@@ -164,6 +183,18 @@ const { ipcMocks, ipcModule } = vi.hoisted(() => {
     markSessionNotificationRead: vi.fn(async () => {}),
     listSessionItems: vi.fn(),
     sessionListStatuses: vi.fn(),
+    renameSession: vi.fn(),
+    listBoardTasks: vi.fn(),
+    renameTask: vi.fn(),
+    getTask: vi.fn(),
+    listTasks: vi.fn(),
+    subtaskState: vi.fn(),
+    listSessions: vi.fn(),
+    getTaskExecution: vi.fn(),
+    listArtifactsWithMetadata: vi.fn(),
+    listTaskArtifactTree: vi.fn(),
+    listArtifactCommentDraftsForRepo: vi.fn(),
+    worktreeExists: vi.fn(),
     clearSessionNotifications: vi.fn(),
     setDockBadgeCount: vi.fn(),
     readAppConfig: vi.fn(),
@@ -308,27 +339,25 @@ vi.mock("./views/TaskList", () => ({
     </div>
   ),
 }));
-vi.mock("./views/SessionsList", () => ({
-  SessionsList: ({
-    onOpen,
-    sessionSort,
-    onSessionSortChange,
-  }: {
-    onOpen: (value: SessionListItem) => void;
-    sessionSort: SessionSort;
-    onSessionSortChange: (sort: SessionSort) => void;
-  }) => (
-    <div>
-      <span>global sort:{sessionSort.field}</span>
-      <button type="button" onClick={() => onSessionSortChange({ field: "updated", direction: "desc" })}>
-        choose global updated
-      </button>
-      <button type="button" onClick={() => onOpen(globalSession)}>
-        open global session
-      </button>
-    </div>
-  ),
-}));
+vi.mock("./views/SessionsList", async (importOriginal) => {
+  const real = await importOriginal<{ SessionsList: typeof SessionsListComponent }>();
+  return {
+    SessionsList: (props: Parameters<typeof SessionsListComponent>[0]) =>
+      namingScenario.realSessions ? (
+        <real.SessionsList {...props} />
+      ) : (
+        <div>
+          <span>global sort:{props.sessionSort?.field}</span>
+          <button type="button" onClick={() => props.onSessionSortChange?.({ field: "updated", direction: "desc" })}>
+            choose global updated
+          </button>
+          <button type="button" onClick={() => props.onOpen(globalSession)}>
+            open global session
+          </button>
+        </div>
+      ),
+  };
+});
 vi.mock("./views/NotificationsList", () => ({
   NotificationsList: ({
     allRepos,
@@ -363,40 +392,32 @@ vi.mock("./views/NotificationsList", () => ({
     </div>
   ),
 }));
-vi.mock("./views/TaskDetail", () => ({
-  TaskDetail: ({
-    initialTask,
-    onOpenSession,
-    onNewSession,
-    onBack,
-    sessionSort,
-    onSessionSortChange,
-  }: {
-    initialTask?: BoardTask;
-    onOpenSession: (ownerTaskSlug: string, id: string, cwd: string, phase: string, harness: string, model: string, playbook: string, generic: boolean) => void;
-    onNewSession: () => void;
-    onBack: () => void;
-    sessionSort: SessionSort;
-    onSessionSortChange: (sort: SessionSort) => void;
-  }) => (
-    <div>
-      <span>task detail:{initialTask?.slug}</span>
-      <span>task sort:{sessionSort.field}</span>
-      <button type="button" onClick={() => onSessionSortChange({ field: "started", direction: "desc" })}>
-        choose task started
-      </button>
-      <button type="button" onClick={onBack}>
-        back from task
-      </button>
-      <button type="button" onClick={() => onOpenSession(task.slug, "detail-design", task.worktree, "design", "omp", "", "superdevelop", false)}>
-        open detail session
-      </button>
-      <button type="button" onClick={onNewSession}>
-        new task session
-      </button>
-    </div>
-  ),
-}));
+vi.mock("./views/TaskDetail", async (importOriginal) => {
+  const real = await importOriginal<{ TaskDetail: typeof TaskDetailComponent }>();
+  return {
+    TaskDetail: (props: Parameters<typeof TaskDetailComponent>[0]) =>
+      namingScenario.realTaskDetail ? (
+        <real.TaskDetail {...props} />
+      ) : (
+        <div>
+          <span>task detail:{props.initialTask?.slug}</span>
+          <span>task sort:{props.sessionSort?.field}</span>
+          <button type="button" onClick={() => props.onSessionSortChange?.({ field: "started", direction: "desc" })}>
+            choose task started
+          </button>
+          <button type="button" onClick={props.onBack}>
+            back from task
+          </button>
+          <button type="button" onClick={() => props.onOpenSession(task.slug, "detail-design", task.worktree, "design", "omp", "", "superdevelop", false)}>
+            open detail session
+          </button>
+          <button type="button" onClick={props.onNewSession}>
+            new task session
+          </button>
+        </div>
+      ),
+  };
+});
 vi.mock("./views/CreateSessionPage", () => ({
   CreateSessionPage: ({ onCreated }: { onCreated: (task: BoardTask, choice: SessionTypeChoice, harness: string, model: string, prompt?: string) => Promise<void> }) => (
     <div>
@@ -415,15 +436,16 @@ vi.mock("./views/CreateSessionPage", () => ({
     </div>
   ),
 }));
-vi.mock("./views/CreateTaskPage", () => ({
-  CreateTaskPage: ({
+vi.mock("./views/CreateTaskPage", async (importOriginal) => {
+  const actual = await importOriginal<typeof CreateTaskModule>();
+  const MockCreateTaskPage = ({
     initialDraft,
     onCreated,
-    onOpened,
+    onOpened = () => {},
   }: {
     initialDraft?: BoardTask;
     onCreated: (result: CreateTaskResult & { repoPath: string; selectedSessionId?: string }) => void;
-    onOpened: () => void;
+    onOpened?: () => void;
   }) => {
     useEffect(() => onOpened(), [onOpened]);
     const result: CreateTaskResult & { repoPath: string } = {
@@ -449,8 +471,11 @@ vi.mock("./views/CreateTaskPage", () => ({
         </button>
       </div>
     );
-  },
-}));
+  };
+  return {
+    CreateTaskPage: (props: Parameters<typeof actual.CreateTaskPage>[0]) => (actualCreation.enabled ? <actual.CreateTaskPage {...props} /> : <MockCreateTaskPage {...props} />),
+  };
+});
 vi.mock("./views/Settings", () => ({
   SECTIONS: [],
   Settings: ({ onNotificationsChange }: { onNotificationsChange: (next: NotificationPrefs) => void }) => (
@@ -532,6 +557,12 @@ vi.mock("./views/ReviewHandoffPage", () => ({
 }));
 
 beforeEach(() => {
+  actualCreation.enabled = false;
+  namingScenario.realSessions = false;
+  namingScenario.realTaskDetail = false;
+  Element.prototype.scrollIntoView = vi.fn();
+  ipcMocks.listBoardTasks.mockReset().mockResolvedValue([task]);
+  ipcMocks.renameSession.mockReset();
   ipcMocks.readAppConfig.mockResolvedValue(appConfig);
   ipcMocks.createSessionForRepo.mockResolvedValue({ session: session("created-implementation", "implementation"), execution: null, start: "started" });
   ipcMocks.startSession.mockResolvedValue({ session: session("queued-design"), execution: null, start: "started" });
@@ -547,43 +578,19 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   window.localStorage.clear();
 });
 
-it("replaces the intro with Playbooks while retaining the global draft on return", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
-  const style = document.createElement("style");
-  style.textContent = readFileSync("src/theme.css", "utf8");
-  document.head.append(style);
-  try {
-    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "" });
-    render(<App />);
-    const introButton = await screen.findByRole("button", { name: "Playbooks" });
-    const intro = introButton.closest(".view") as HTMLElement;
-    expect(getComputedStyle(intro).display).toBe("flex");
-    fireEvent.click(introButton);
-    fireEvent.click(await screen.findByRole("button", { name: "Import" }));
-    expect(getComputedStyle(intro).display).toBe("none");
-    fireEvent.click(screen.getByRole("button", { name: "Paste source" }));
-    const editor = await screen.findByRole("textbox", { name: "Playbook source" });
-    fireEvent.change(editor, { target: { value: "Keep this global draft" } });
-    expect(screen.queryByRole("button", { name: "Back to previous view" })).toBeNull();
-    fireEvent.keyDown(document.body, { key: "Escape" });
-    expect(getComputedStyle(intro).display).toBe("flex");
-    expect(getComputedStyle(editor.closest(".view") as HTMLElement).display).toBe("none");
-    fireEvent.click(await screen.findByRole("button", { name: "Playbooks" }));
-    expect(getComputedStyle(intro).display).toBe("none");
-    expect(await screen.findByRole("textbox", { name: "Playbook source" })).toHaveProperty("value", "Keep this global draft");
-  } finally {
-    style.remove();
-  }
+it("opens Playbooks from the top tab after selecting a repository, without an intro shortcut", async () => {
+  ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "" });
+  render(<App />);
+  await screen.findByRole("button", { name: "Add a repository" });
+  expect(screen.queryByRole("button", { name: "Playbooks" })).toBeNull();
+
+  fireEvent.click(screen.getByTitle(task.repo_path));
+  fireEvent.click(await screen.findByRole("button", { name: "Playbooks" }));
+  await screen.findByRole("table", { name: "Playbook library" });
 });
 
 async function renderApp() {
@@ -641,13 +648,80 @@ describe("creation result navigation", () => {
 });
 
 describe("Playbooks navigation", () => {
+  it("opens the real creation form with the selected scoped playbook and returns without creating a task", async () => {
+    actualCreation.enabled = true;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const sources: ScopedPlaybook[] = (["bundled", "repo"] as const).map((scope) => ({
+      source: { reference: { scope, key: "review" }, path: null },
+      source_text: "saved definition",
+      modified_at_ms: null,
+      definition: {
+        version: 2,
+        key: "review",
+        title: `${scope} review`,
+        description: "",
+        default_model: "",
+        default_harness: "omp",
+        preamble: "",
+        section_order: ["inspect"],
+        step: [
+          {
+            key: "inspect",
+            title: "Inspect",
+            short: "",
+            inputs: [],
+            outputs: [{ path: "result.md" }],
+            model: "",
+            harness: "",
+            prompt: "Inspect the work.",
+            is_coding_step: false,
+            auto_advance_default: false,
+          },
+        ],
+      },
+    }));
+    ipcMocks.listPlaybookCatalog.mockResolvedValue({
+      candidates: sources.map((source) => ({ source: source.source, title: source.definition.title, description: "", modified_at_ms: null, diagnostics: [] })),
+      picker_preferences: { order: [], entries: [] },
+      diagnostics: [],
+    });
+    vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => {
+      const source = sources.find((source) => source.source.reference.scope === reference.scope);
+      if (!source) throw new Error("Unknown preview scope");
+      return source;
+    });
+    vi.mocked(ipc.readConfigForRepo).mockResolvedValue({ defaults: { playbook: sources[0].source.reference, draft_autosave: false } } as Config);
+    vi.mocked(ipc.listHarnessModelsForRepo).mockResolvedValue([]);
+    vi.mocked(ipc.getCurrentWebview, { partial: true }).mockReturnValue({ onDragDropEvent: async () => () => {} });
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: "Playbooks" }));
+    fireEvent.click(await screen.findByRole("button", { name: "repo review Repository" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create task from this playbook" }));
+    expect(await screen.findByRole("radio", { name: /repo review/ })).toHaveProperty("checked", true);
+    expect(screen.getByRole("radio", { name: /bundled review/ })).toHaveProperty("checked", false);
+    expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "");
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await screen.findByRole("button", { name: "Create task from this playbook" });
+    expect(screen.queryByRole("radio", { name: /repo review/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    expect(await screen.findByRole("radio", { name: /bundled review/ })).toHaveProperty("checked", true);
+  });
+
   it("opens the library from a task and returns with the keyboard", async () => {
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
     fireEvent.click(await screen.findByRole("button", { name: "open list task" }));
     await screen.findByText("task detail:task");
     fireEvent.click(screen.getByRole("button", { name: "Playbooks" }));
-    await screen.findByRole("list", { name: "Playbook library" });
+    await screen.findByRole("table", { name: "Playbook library" });
     fireEvent.keyDown(document.body, { key: "Escape" });
     await screen.findByText("task detail:task");
   });
@@ -945,5 +1019,128 @@ describe("global notification owner", () => {
         { repo_path: "/foreign", task_slug: "task", id: "foreign-completion" },
       ]),
     );
+  });
+});
+
+describe("session work names", () => {
+  it("keyboard activation of a real session Rename does not open the selected session", async () => {
+    namingScenario.realSessions = true;
+    ipcMocks.listSessionItems.mockResolvedValue([{ ...globalSession, name: "Keyboard work" }]);
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
+    const rename = await screen.findByRole("button", { name: "Rename session" });
+    rename.focus();
+    // jsdom does not synthesize the native button click; dispatch it after
+    // proving the key was not consumed by App's selected-session navigation.
+    expect(fireEvent.keyDown(rename, { key: "Enter" })).toBe(true);
+    await act(async () => {});
+    expect(screen.queryByText("session:global-design")).toBeNull();
+    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+    fireEvent.click(rename);
+    expect(screen.getByRole("textbox", { name: "Session name" })).toHaveProperty("value", "Keyboard work");
+  });
+
+  it("open_search_keeps_committed_name_when_old_results_arrive", async () => {
+    namingScenario.realSessions = true;
+    const original = { ...globalSession, name: "Original work", subtask_manager: true, subtask_slug: "child", subtask_name: "Current child" };
+    ipcMocks.listSessionItems.mockResolvedValue([original]);
+    await renderApp();
+    await waitFor(() => expect(ipcMocks.sessionListStatuses).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
+    await screen.findByText("Original work");
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "Current child" } });
+    await waitFor(() => expect(within(screen.getByRole("listbox")).getByText("Original work")).toBeDefined());
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
+    const commit = deferred<{ name: string; source: string }>();
+    ipcMocks.renameSession.mockReturnValue(commit.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Committed work" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Session name" }), { key: "Enter" });
+    const oldRead = deferred<SessionListItem[]>();
+    ipcMocks.listSessionItems.mockReturnValueOnce(oldRead.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await act(async () => {});
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "Current child" } });
+    const committed = { ...original, name: "Committed work", name_source: "user" as const };
+    const freshRead = deferred<SessionListItem[]>();
+    ipcMocks.listSessionItems.mockReturnValue(freshRead.promise);
+    await act(async () => {
+      commit.resolve({ name: "Committed work", source: "user" });
+    });
+    const palette = screen.getByRole("listbox");
+    expect(within(palette).getByText("Committed work")).toBeDefined();
+    expect(within(palette).getByText(/Current child/)).toBeDefined();
+    await act(async () => {
+      oldRead.resolve([original]);
+    });
+    expect(within(palette).getByText("Committed work")).toBeDefined();
+    expect(within(palette).queryByText("Original work")).toBeNull();
+    await act(async () => {
+      freshRead.resolve([{ ...committed, name: "External work" }]);
+    });
+    fireEvent.click(within(palette).getByText("External work"));
+    await screen.findByText("session:global-design");
+    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "global-design");
+  });
+
+  it("a real child rename patches task and manager search names without replacing manager work names", async () => {
+    namingScenario.realTaskDetail = true;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const child = { ...task, name: "Original child", parent_task: "parent" };
+    const parent = { ...task, slug: "parent", name: "Parent" };
+    const manager = { ...globalSession, task_slug: "parent", task_name: "Parent", name: "Coordinate work", subtask_manager: true, subtask_slug: "task", subtask_name: child.name };
+    ipcMocks.getTask.mockResolvedValue(child);
+    ipcMocks.listTasks.mockResolvedValue([child, parent]);
+    ipcMocks.listBoardTasks.mockResolvedValue([child, parent]);
+    ipcMocks.subtaskState.mockResolvedValue({
+      task: child,
+      parent_task: parent,
+      active_subtask: null,
+      parent_manager_session: null,
+      parent_manager_owner_task_slug: "",
+      manager_session: null,
+      manager_owner_task_slug: "task",
+      can_start: true,
+      can_recover: false,
+      disabled_reason: "",
+    });
+    ipcMocks.listSessions.mockResolvedValue([]);
+    ipcMocks.getTaskExecution.mockResolvedValue(executionReply([]));
+    ipcMocks.listArtifactsWithMetadata.mockResolvedValue([]);
+    ipcMocks.listTaskArtifactTree.mockResolvedValue([]);
+    ipcMocks.listArtifactCommentDraftsForRepo.mockResolvedValue([]);
+    ipcMocks.worktreeExists.mockResolvedValue(true);
+    ipcMocks.listSessionItems.mockResolvedValue([manager]);
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "open list task" }));
+    await screen.findByRole("heading", { name: "Original child" });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Search actions, tasks, and sessions" }), { target: { value: "Original child" } });
+    await within(screen.getByRole("listbox")).findByText("Coordinate work");
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search actions, tasks, and sessions" }), { key: "Escape" });
+    const committed = { ...child, name: "Renamed child" };
+    const commit = deferred<typeof child>();
+    ipcMocks.renameTask.mockReturnValue(commit.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Rename task" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Task name" }), { target: { value: committed.name } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Task name" }), { key: "Enter" });
+    const pending = deferred<SessionListItem[]>();
+    ipcMocks.listSessionItems.mockReturnValue(pending.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Search actions, tasks, and sessions" }), { target: { value: "Renamed child" } });
+    await act(async () => {
+      commit.resolve(committed);
+    });
+    expect(within(screen.getByRole("listbox")).getByText("Renamed child")).toBeDefined();
+    expect(within(screen.getByRole("listbox")).getByText("Coordinate work")).toBeDefined();
+    expect(ipcMocks.renameTask).toHaveBeenCalledWith("/repo", "task", "Renamed child");
   });
 });

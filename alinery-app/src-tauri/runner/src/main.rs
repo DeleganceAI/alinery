@@ -423,7 +423,15 @@ fn exec_replace(executable: &str, argv: &[String]) -> Result<(), String> {
 enum DaemonEventAck {
     Passive,
     Completion(CompletionOutcome),
+    SessionName(alinery_core::SessionNameOutcome),
     Rejected { reason: String },
+}
+
+#[derive(Clone, Copy)]
+enum ExpectedResult {
+    Passive,
+    Completion,
+    SessionName,
 }
 
 /// Emit one event. Passive lifecycle callbacks preserve the original silent,
@@ -442,6 +450,7 @@ fn cmd_emit(report_result: bool) -> i32 {
 fn emit_report(result: Result<DaemonEventAck, ()>) -> (Value, i32) {
     match result {
         Ok(DaemonEventAck::Completion(outcome)) => (serde_json::to_value(outcome).expect("completion outcome is serializable"), 0),
+        Ok(DaemonEventAck::SessionName(outcome)) => (serde_json::to_value(outcome).expect("session name outcome is serializable"), 0),
         Ok(DaemonEventAck::Passive) => (serde_json::json!({"status": "delivery_failed"}), 3),
         Ok(DaemonEventAck::Rejected { reason }) => (serde_json::json!({"status": "rejected", "reason": reason}), 2),
         Err(()) => (serde_json::json!({"status": "delivery_failed"}), 3),
@@ -463,8 +472,17 @@ fn try_emit() -> Result<DaemonEventAck, ()> {
 
     let raw = read_stdin_bounded(MAX_STDIN_BYTES)?;
     let event: RunnerEvent = serde_json::from_slice(&raw).map_err(|_| ())?;
+    if let RunnerEvent::SessionNameSuggested { name } = &event {
+        if let Err(reason) = alinery_core::validate_session_name(name) {
+            return Ok(DaemonEventAck::Rejected { reason });
+        }
+    }
     validate_event(&event)?;
-    let completion = matches!(&event, RunnerEvent::PhaseCompleted { .. });
+    let expected = match &event {
+        RunnerEvent::PhaseCompleted { .. } => ExpectedResult::Completion,
+        RunnerEvent::SessionNameSuggested { .. } => ExpectedResult::SessionName,
+        _ => ExpectedResult::Passive,
+    };
 
     let envelope = RunnerEventEnvelope {
         version: RUNNER_EVENT_PROTOCOL_VERSION,
@@ -477,7 +495,7 @@ fn try_emit() -> Result<DaemonEventAck, ()> {
         return Err(());
     }
 
-    send_event_to_daemon(&socket_path, &request, completion)
+    send_event_to_daemon(&socket_path, &request, expected)
 }
 
 fn read_env(name: &str) -> Result<String, ()> {
@@ -503,7 +521,9 @@ fn read_bounded(reader: impl Read, limit: usize) -> Result<Vec<u8>, ()> {
 /// Validate that the event is a well-formed typed vocabulary member.
 fn validate_event(event: &RunnerEvent) -> Result<(), ()> {
     match event {
-        RunnerEvent::Busy { .. } | RunnerEvent::Idle { .. } | RunnerEvent::PhaseCompleted { .. } | RunnerEvent::AdapterError { .. } => Ok(()),
+        RunnerEvent::Busy { .. } | RunnerEvent::Idle { .. } | RunnerEvent::PhaseCompleted { .. } | RunnerEvent::AdapterError { .. } | RunnerEvent::SessionNameSuggested { .. } => {
+            Ok(())
+        }
         RunnerEvent::WaitingForInput { correlation_id, .. } | RunnerEvent::WaitingForApproval { correlation_id, .. } => {
             if correlation_id.trim().is_empty() {
                 Err(())
@@ -542,9 +562,13 @@ pub fn build_event_request(envelope: &RunnerEventEnvelope) -> Result<Vec<u8>, ()
 
 /// Read one bounded, newline-terminated acknowledgement within an absolute deadline.
 /// A passive acknowledgement is never sufficient proof of committed completion.
-fn send_event_to_daemon(socket_path: &str, request: &[u8], completion: bool) -> Result<DaemonEventAck, ()> {
+fn send_event_to_daemon(socket_path: &str, request: &[u8], expected: ExpectedResult) -> Result<DaemonEventAck, ()> {
     let mut stream = UnixStream::connect(Path::new(socket_path)).map_err(|_| ())?;
-    let timeout = Duration::from_millis(if completion { COMPLETION_ACK_TIMEOUT_MS } else { ACK_TIMEOUT_MS });
+    let timeout = Duration::from_millis(if matches!(expected, ExpectedResult::Passive) {
+        ACK_TIMEOUT_MS
+    } else {
+        COMPLETION_ACK_TIMEOUT_MS
+    });
     let deadline = Instant::now() + timeout;
     stream.set_write_timeout(Some(timeout)).map_err(|_| ())?;
     stream.write_all(request).map_err(|_| ())?;
@@ -593,8 +617,9 @@ fn send_event_to_daemon(socket_path: &str, request: &[u8], completion: bool) -> 
     }
 
     let ack: Value = serde_json::from_slice(&ack_buf).map_err(|_| ())?;
-    if let Some(reason) = ack.get("error").and_then(Value::as_str) {
-        if !reason.is_empty() && ack.get("ok").is_none() && ack.get("completion").is_none() {
+    if let Some(error) = ack.get("error") {
+        let reason = error.as_str().ok_or(())?;
+        if !reason.is_empty() && ack.get("ok").is_none() && ack.get("completion").is_none() && ack.get("session_name").is_none() {
             return Ok(DaemonEventAck::Rejected { reason: reason.to_string() });
         }
         return Err(());
@@ -602,15 +627,29 @@ fn send_event_to_daemon(socket_path: &str, request: &[u8], completion: bool) -> 
     if ack.get("ok").and_then(Value::as_bool) != Some(true) {
         return Err(());
     }
-    match (completion, ack.get("completion")) {
-        (true, Some(value)) => {
+    match (expected, ack.get("completion"), ack.get("session_name")) {
+        (ExpectedResult::Completion, Some(value), None) => {
             let outcome: CompletionOutcome = serde_json::from_value(value.clone()).map_err(|_| ())?;
             if matches!(&outcome, CompletionOutcome::Accepted { receipt_id } if receipt_id.is_empty()) {
                 return Err(());
             }
             Ok(DaemonEventAck::Completion(outcome))
         }
-        (false, None) => Ok(DaemonEventAck::Passive),
+        (ExpectedResult::SessionName, None, Some(value)) => {
+            if value
+                .as_object()
+                .is_none_or(|object| object.len() != 2 || !object.contains_key("status") || !object.contains_key("value"))
+            {
+                return Err(());
+            }
+            let outcome: alinery_core::SessionNameOutcome = serde_json::from_value(value.clone()).map_err(|_| ())?;
+            let validated = alinery_core::validate_session_name(&outcome.value.name).map_err(|_| ())?;
+            if validated != outcome.value.name {
+                return Err(());
+            }
+            Ok(DaemonEventAck::SessionName(outcome))
+        }
+        (ExpectedResult::Passive, None, None) => Ok(DaemonEventAck::Passive),
         _ => Err(()),
     }
 }
@@ -864,7 +903,7 @@ mod tests {
             event,
         };
         let req = build_event_request(&envelope).unwrap();
-        let result = send_event_to_daemon(&socket_str, &req, false);
+        let result = send_event_to_daemon(&socket_str, &req, ExpectedResult::Passive);
 
         server.join().unwrap();
         assert_eq!(result, Ok(DaemonEventAck::Passive));
@@ -885,7 +924,7 @@ mod tests {
             conn.write_all(b"{\"error\":\"execution owner is stale\"}\n").unwrap();
         });
 
-        let result = send_event_to_daemon(&socket_str, b"{}\n", true);
+        let result = send_event_to_daemon(&socket_str, b"{}\n", ExpectedResult::Completion);
         server.join().unwrap();
         assert_eq!(
             result,
@@ -939,7 +978,7 @@ mod tests {
         let req = build_event_request(&envelope).unwrap();
 
         let start = std::time::Instant::now();
-        let result = send_event_to_daemon(&socket_str, &req, false);
+        let result = send_event_to_daemon(&socket_str, &req, ExpectedResult::Passive);
         let elapsed = start.elapsed();
 
         assert!(result.is_err(), "must fail when no ack");
@@ -952,7 +991,7 @@ mod tests {
 
     #[test]
     fn emit_silent_on_missing_socket() {
-        let result = send_event_to_daemon("/nonexistent/path/alinery.sock", b"{}\n", false);
+        let result = send_event_to_daemon("/nonexistent/path/alinery.sock", b"{}\n", ExpectedResult::Passive);
         assert!(result.is_err());
     }
 

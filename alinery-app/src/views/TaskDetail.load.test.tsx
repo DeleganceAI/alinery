@@ -63,6 +63,7 @@ const mocks = vi.hoisted(() => ({
   listSessions: vi.fn(),
   listArtifactsWithMetadata: vi.fn(),
   sessionStatuses: vi.fn(),
+  renameSession: vi.fn(),
 }));
 
 vi.mock("../ipc", () =>
@@ -72,6 +73,7 @@ vi.mock("../ipc", () =>
     listSessions: mocks.listSessions,
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
     sessionStatuses: mocks.sessionStatuses,
+    renameSession: mocks.renameSession,
   }),
 );
 
@@ -81,6 +83,7 @@ beforeEach(() => {
   mocks.listSessions.mockReset().mockResolvedValue([]);
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
   mocks.sessionStatuses.mockReset().mockResolvedValue({});
+  mocks.renameSession.mockReset();
 });
 
 afterEach(() => {
@@ -110,11 +113,11 @@ function renderDetail(props: Partial<Parameters<typeof TaskDetail>[0]> = {}) {
   );
 }
 
-describe("an unavailable execution state", () => {
+describe("an unreadable saved execution state", () => {
   it("keeps the header, sessions and artifacts visible instead of blanking the page", async () => {
     const fixture = task();
     mocks.getTask.mockResolvedValue(fixture);
-    mocks.getTaskExecution.mockRejectedValue(new Error("execution query unavailable"));
+    mocks.getTaskExecution.mockRejectedValue(new Error("Invalid execution.json"));
     mocks.listSessions.mockResolvedValue([session({ id: "s1" })]);
     mocks.listArtifactsWithMetadata.mockResolvedValue([artifactItem({ name: "00-ticket.md" })]);
 
@@ -130,9 +133,33 @@ describe("an unavailable execution state", () => {
     // Artifacts still render — switch to the Artifacts tab to observe them.
     fireEvent.click(screen.getByRole("button", { name: "Artifacts", pressed: false }));
     await waitFor(() => expect(screen.getByText("00-ticket.md")).toBeDefined());
+    expect(screen.getByRole("alert").textContent).toContain("Invalid execution.json");
 
     // getTask itself succeeded, so the primary error bar must not appear.
     expect(screen.queryByText("Couldn't load the task.")).toBeNull();
+  });
+});
+
+describe("saved execution state without live access", () => {
+  it("keeps sessions, retained history and artifacts available for a foreign owner", async () => {
+    const fixture = task();
+    const retained = executionReply([executionRecord({ owner_session_id: "s1" })]);
+    retained.live = { status: "foreign_owner", detail: "Owner configuration differs from this app" };
+    mocks.getTask.mockResolvedValue(fixture);
+    mocks.getTaskExecution.mockResolvedValue(retained);
+    mocks.listSessions.mockResolvedValue([session({ id: "s1" })]);
+    mocks.listArtifactsWithMetadata.mockResolvedValue([artifactItem({ name: "00-ticket.md" })]);
+    renderDetail({ initialTask: fixture });
+
+    await screen.findByRole("row", { name: "Open session Retained playbook · Retained worker" });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect((screen.getByText(retained.live.detail).closest("details") as HTMLDetailsElement).open).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    expect(screen.getByRole("article", { name: "Execution execution-a" })).toBeDefined();
+    expect((screen.getByRole("button", { name: "Allow this session to complete · s1" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Artifacts", pressed: false }));
+    expect(await screen.findByText("00-ticket.md")).toBeDefined();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
 
@@ -250,4 +277,45 @@ describe("an artifact read that recovers while sessions stay broken", () => {
     fireEvent.click(screen.getByRole("button", { name: "Artifacts", pressed: false }));
     expect(screen.getByText("00-ticket.md")).toBeDefined();
   });
+});
+
+it("older_poll_cannot_undo_name_commit_but_newer_poll_can_update_it", async () => {
+  vi.useFakeTimers();
+  const fixture = task();
+  let current = { ...session(), name: "Original purpose", name_source: "auto" as const };
+  mocks.getTask.mockResolvedValue(fixture);
+  mocks.listSessions.mockImplementation(async () => [current]);
+  mocks.renameSession.mockImplementation(async () => {
+    current = { ...current, name: "Committed purpose" };
+    return { name: current.name, source: "user" };
+  });
+  renderDetail({ initialTask: fixture });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  let release!: (value: (typeof current)[]) => void;
+  mocks.listSessions.mockImplementationOnce(
+    () =>
+      new Promise<(typeof current)[]>((resolve) => {
+        release = resolve;
+      }),
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Committed purpose" } });
+  await act(async () => {
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+  });
+  expect(screen.getByText("Committed purpose")).toBeDefined();
+  await act(async () => {
+    release([{ ...current, name: "Original purpose" }]);
+  });
+  expect(screen.queryByText("Original purpose")).toBeNull();
+  current = { ...current, name: "External purpose" };
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
+  expect(screen.getByText("External purpose")).toBeDefined();
 });

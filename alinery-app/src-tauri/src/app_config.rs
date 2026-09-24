@@ -94,6 +94,8 @@ pub(crate) struct AppearancePrefs {
     #[serde(default = "default_true")]
     pub(crate) chat_show_agent_bubbles: bool,
     #[serde(default = "default_true")]
+    pub(crate) chat_show_block_copy_buttons: bool,
+    #[serde(default = "default_true")]
     pub(crate) chat_show_copy_buttons: bool,
     #[serde(default = "default_session_default_view")]
     pub(crate) session_default_view: String,
@@ -131,6 +133,7 @@ impl Default for AppearancePrefs {
             chat_show_time: true,
             chat_show_actor_labels: true,
             chat_show_agent_bubbles: true,
+            chat_show_block_copy_buttons: true,
             chat_show_copy_buttons: true,
             session_default_view: default_session_default_view(),
             mode: default_appearance_mode(),
@@ -238,6 +241,7 @@ pub(crate) fn sanitize_appearance(prefs: AppearancePrefs) -> AppearancePrefs {
         chat_show_time: prefs.chat_show_time,
         chat_show_actor_labels: prefs.chat_show_actor_labels,
         chat_show_agent_bubbles: prefs.chat_show_agent_bubbles,
+        chat_show_block_copy_buttons: prefs.chat_show_block_copy_buttons,
         chat_show_copy_buttons: prefs.chat_show_copy_buttons,
         session_default_view: match prefs.session_default_view.trim() {
             "terminal" => "terminal".into(),
@@ -273,7 +277,7 @@ fn read_existing_app_config(path: &Path) -> Result<Option<AppConfig>, String> {
     })
 }
 
-pub(crate) fn load_app_config(app: &AppHandle) -> AppConfig {
+pub(crate) fn load_app_config<R: tauri::Runtime>(app: &AppHandle<R>) -> AppConfig {
     let Ok(p) = app_config_path(app) else {
         return AppConfig::default();
     };
@@ -281,7 +285,7 @@ pub(crate) fn load_app_config(app: &AppHandle) -> AppConfig {
 }
 
 pub(crate) fn write_app_config_at(path: &Path, cfg: &AppConfig) -> Result<(), String> {
-    // An unrelated appearance/repository edit must not erase a pre-v2 or corrupt file.
+    // An unrelated appearance/repository edit must not erase a corrupt file.
     let prior = read_existing_app_config(path)?;
     if let Some(parent) = path.parent() {
         // 0700: this is the same app config dir that later holds `auth.json`, and it is created

@@ -65,6 +65,9 @@ export type ChatEntry =
       role?: string;
       status: SubagentStatus;
       summary: string;
+      /** Live activity label for the drawer chip: `using <tool>` | `thinking`. Absent when the
+       *  frame carried no progress snapshot (lifecycle, subagent_event, hydration). */
+      activity?: string;
       durationMs?: number;
       tools?: number;
     })

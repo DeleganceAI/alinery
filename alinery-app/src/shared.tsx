@@ -34,17 +34,17 @@ import type {
   ArtifactListItem,
   ArtifactTreeNode,
   BoardTask,
+  ExecutionAvailability,
   GridViewDefinition,
   KanbanColumn,
   LifecycleState,
   OmpUpdateStatus,
-  PickerPreference,
   PickerPreferences,
   PlaybookCandidate,
   PlaybookRef,
   RepoScope,
   ReviewHandoffRecord,
-  SessionMeta,
+  SessionDisplayMeta,
   SessionObservation,
   Tab,
   Task,
@@ -79,17 +79,6 @@ export function orderPlaybookCandidates(candidates: PlaybookCandidate[], prefere
     const b = playbookRefKey(right.source.reference);
     return (ranks.get(a) ?? Number.MAX_SAFE_INTEGER) - (ranks.get(b) ?? Number.MAX_SAFE_INTEGER) || a.localeCompare(b);
   });
-}
-
-export function playbookPickerAppearance(reference: PlaybookRef, preference?: PickerPreference) {
-  const identity = playbookRefKey(reference);
-  let hash = 0;
-  for (let i = 0; i < identity.length; i++) hash = (Math.imul(hash, 31) + identity.charCodeAt(i)) | 0;
-  const colors = ["#38459d", "#10b981", "#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#e94242"];
-  return {
-    badge: preference?.badge || `${reference.scope[0].toUpperCase()}·${reference.key.slice(0, 2).toUpperCase()}`,
-    color: preference?.color || colors[(hash >>> 0) % colors.length],
-  };
 }
 
 export function findOwnedArtifactNode(nodes: ArtifactTreeNode[], relativePath: string): ArtifactTreeNode | undefined {
@@ -130,13 +119,16 @@ export function finalizedSubtaskNotice(task: Pick<Task, "archived" | "parent_tas
   return `Finalized into ${parentLabel} as ${task.subtask_outcome.toUpperCase()}. Any open session may be stale. Changes after finalization are not included in the parent snapshot or integrated result.`;
 }
 
-export function sameSessionMetas(left: SessionMeta[], right: SessionMeta[]) {
+export function sameSessionMetas(left: SessionDisplayMeta[], right: SessionDisplayMeta[]) {
   return (
     left.length === right.length &&
     left.every((session, index) => {
       const other = right[index];
       return (
         session.id === other.id &&
+        session.name === other.name &&
+        session.name_source === other.name_source &&
+        session.name_error === other.name_error &&
         session.worktree === other.worktree &&
         session.created === other.created &&
         session.archived === other.archived &&
@@ -425,7 +417,19 @@ export function LoadingState({ label, state = "working" }: { label: string; stat
 /** Inline status line (DESIGN.md §Error/§Success): plain-language message with
  *  tone icon; optional exact technical detail (copyable) and recovery action.
  *  Errors are announced; other tones are polite status. */
-export function InlineStatus({ tone, children, detail, action }: { tone: "error" | "warning" | "success" | "info"; children: ReactNode; detail?: string; action?: ReactNode }) {
+export function InlineStatus({
+  tone,
+  children,
+  detail,
+  action,
+  onDismiss,
+}: {
+  tone: "error" | "warning" | "success" | "info";
+  children: ReactNode;
+  detail?: string;
+  action?: ReactNode;
+  onDismiss?: () => void;
+}) {
   const Icon = tone === "error" ? CircleAlert : tone === "warning" ? TriangleAlert : tone === "success" ? CircleCheck : Info;
   return (
     <div className={`inline-status ${tone}`} role={tone === "error" ? "alert" : "status"}>
@@ -435,7 +439,41 @@ export function InlineStatus({ tone, children, detail, action }: { tone: "error"
         {detail && <pre className="inline-status-detail">{detail}</pre>}
         {action && <div className="inline-status-action">{action}</div>}
       </div>
+      {onDismiss && (
+        <button type="button" className="iconbtn" aria-label="Dismiss notice" title="Dismiss notice" onClick={onDismiss}>
+          <X size={14} strokeWidth={1.5} aria-hidden="true" />
+        </button>
+      )}
     </div>
+  );
+}
+
+export function executionAvailabilityLabel(live: ExecutionAvailability | undefined): string {
+  switch (live?.status) {
+    case "available":
+      return "Live execution status available";
+    case "offline":
+      return "Owner daemon is unavailable";
+    case "foreign_owner":
+      return "Owned by another Alinery app instance";
+    case "incompatible":
+      return "Owner daemon uses an incompatible protocol";
+    default:
+      return "Live execution status is unavailable";
+  }
+}
+
+export function ExecutionAvailabilityNotice({ live, controls = false }: { live: ExecutionAvailability | undefined; controls?: boolean }) {
+  if (live?.status === "available") return null;
+  return (
+    <InlineStatus tone="info">
+      {executionAvailabilityLabel(live)}. Showing saved progress, not confirmed live status.
+      {controls && " Execution controls are disabled until the correct owner is reachable."}
+      <details>
+        <summary>Technical details</summary>
+        <pre className="inline-status-detail">{live?.detail ?? "Owner availability could not be determined."}</pre>
+      </details>
+    </InlineStatus>
   );
 }
 

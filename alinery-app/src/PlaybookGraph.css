@@ -70,19 +70,56 @@
   min-width: 0;
 }
 
+.playbook-canvas-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.playbook-canvas-toolbar output {
+  min-width: 4ch;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  text-align: center;
+}
+
+.playbook-canvas-toolbar button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
 .playbook-definition-viewport {
+  position: relative;
   flex: 1;
-  min-height: 0;
-  overflow: auto;
+  min-height: 240px;
+  overflow: hidden;
   overscroll-behavior: contain;
+  cursor: grab;
+  touch-action: none;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
 }
-
+.playbook-definition-viewport:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.playbook-definition-viewport.is-panning,
+.playbook-definition-viewport.is-panning * {
+  cursor: grabbing;
+}
+.playbook-definition-stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
 .playbook-definition-canvas {
   position: relative;
-  margin: 0 auto;
+  margin: 0;
 }
 
 .playbook-definition-connections {
@@ -91,6 +128,13 @@
   width: 100%;
   height: 100%;
   overflow: visible;
+}
+
+.playbook-definition-connection-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
 }
 
 .playbook-definition-connection {

@@ -57,6 +57,8 @@ export type AppearancePrefs = {
   chat_show_actor_labels?: boolean;
   /** Filled bubble around agent text replies only. Absent → true. */
   chat_show_agent_bubbles?: boolean;
+  /** Copy buttons on individual code blocks and blockquotes. Absent → true. */
+  chat_show_block_copy_buttons?: boolean;
   /** Per-message copy icon inside chat bubbles. Absent → true. */
   chat_show_copy_buttons?: boolean;
   /** Preferred OMP session hatch (Chat vs Terminal) for new starts. Absent → "chat". */
@@ -376,6 +378,17 @@ export type SessionMeta = {
   // ---- semantic checkpoint (daemon-owned, meta-persisted, Step 4) ----
   semantic?: SemanticCheckpoint | null;
 };
+export type SessionNameSource = "auto" | "user";
+export type SessionName = { name: string; source: SessionNameSource };
+export type SessionDisplayMeta = SessionMeta & {
+  name?: string | null;
+  name_source?: SessionNameSource | null;
+  name_error?: string | null;
+};
+export type SessionDisplayContext = { session: SessionDisplayMeta; task_name: string; subtask_name: string | null };
+export type NameCommit =
+  | { kind: "session"; repo_path: string; task_slug: string; session_id: string; value: SessionName }
+  | { kind: "task"; repo_path: string; task_slug: string; task: Task };
 export type TaskSummary = Pick<Task, "name" | "slug" | "branch" | "worktree" | "has_worktree" | "playbook" | "archived" | "draft" | "subtask_outcome">;
 export type TaskRelationships = {
   parent_task: TaskSummary | null;
@@ -394,8 +407,8 @@ export type SubtaskManagerState = {
   disabled_reason: string;
 };
 export type TaskPanelRow =
-  | { kind: "session"; session: SessionMeta }
-  | { kind: "subtask_manager"; session: SessionMeta; owner_task_slug: string; child?: TaskSummary; active_child: boolean }
+  | { kind: "session"; session: SessionDisplayMeta }
+  | { kind: "subtask_manager"; session: SessionDisplayMeta; owner_task_slug: string; child?: TaskSummary; active_child: boolean }
   | { kind: "subtask_history"; child: TaskSummary };
 export type CreateSubtaskInput = {
   manager_session_id: string;
@@ -442,9 +455,10 @@ export type SnapshotProvenance = {
   branch: string;
   snapshot_time: number;
 };
-export type SessionListItem = SessionMeta & {
+export type SessionListItem = SessionDisplayMeta & {
   task_slug: string;
   task_name: string;
+  subtask_name?: string | null;
   task_worktree: string;
   repo_path: string;
   playbook_title: string;
@@ -569,7 +583,15 @@ export type PlaybookValidationError = { code: string; message: string; line: num
 export type PlaybookSource = { reference: PlaybookRef; path: string | null };
 export type ScopedPlaybook = { source: PlaybookSource; definition: NormalizedPlaybook; source_text: string; modified_at_ms: number | null };
 export type PlaybookCandidate = { source: PlaybookSource; title: string | null; description: string | null; modified_at_ms: number | null; diagnostics: PlaybookValidationError[] };
-export type PickerPreference = { reference: PlaybookRef; hidden: boolean; collapsed: boolean; badge: string | null; color: string | null; last_imported_at_ms: number | null };
+export type PickerPreference = {
+  reference: PlaybookRef;
+  preferred?: boolean;
+  hidden: boolean;
+  collapsed: boolean;
+  badge: string | null;
+  color: string | null;
+  last_imported_at_ms: number | null;
+};
 export type PickerPreferences = { order: PlaybookRef[]; entries: PickerPreference[] };
 export type PlaybookCatalog = { candidates: PlaybookCandidate[]; picker_preferences: PickerPreferences; diagnostics: PlaybookValidationError[] };
 export type PlaybookValidation = { definition: NormalizedPlaybook | null; diagnostics: PlaybookValidationError[] };
@@ -649,7 +671,8 @@ export type TaskExecutionState = {
     }
   >;
 };
-export type TaskExecutionReply = { state: TaskExecutionState; definition: NormalizedPlaybook };
+export type ExecutionAvailability = { status: "available" } | { status: "offline" | "foreign_owner" | "incompatible" | "unavailable"; detail: string };
+export type TaskExecutionReply = { state: TaskExecutionState; definition: NormalizedPlaybook; live: ExecutionAvailability };
 export type TaskAttachment = { name: string; bytes: string };
 export type PreparedTaskAttachments = { attachments: TaskAttachment[]; attachment_urls: string[]; attachment_errors: string[] };
 export type CreateTaskRequest = {
@@ -790,7 +813,7 @@ export type View =
   | { kind: "notifications" }
   | { kind: "playbooks" }
   | { kind: "settings"; section?: SettingsSectionKey }
-  | { kind: "create"; from: View; draft?: BoardTask }
+  | { kind: "create"; from: View; draft?: BoardTask; initialPlaybook?: PlaybookRef }
   | { kind: "createSession"; from: View; initialTask?: { repo_path: string; slug: string } }
   | { kind: "task"; slug: string; from: View; repoPath?: string; initialTask?: Task }
   | {

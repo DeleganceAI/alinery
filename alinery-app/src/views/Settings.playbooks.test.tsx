@@ -1,7 +1,6 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
-import * as ipc from "../ipc";
 import type * as IpcFixtures from "../test/mockIpc";
 import type { GlobalSettings, PickerPreferences, PlaybookCatalog, PlaybookRef } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
@@ -98,11 +97,6 @@ function openSettings() {
     />,
   );
 }
-function pickerOrder() {
-  return within(screen.getByRole("list", { name: "Personal playbook picker" }))
-    .getAllByRole("listitem")
-    .map((item) => item.getAttribute("aria-label"));
-}
 
 describe("Scoped playbook settings", () => {
   it("keeps three same-key scopes distinct and preserves an unavailable configured default until explicitly replaced", async () => {
@@ -112,7 +106,7 @@ describe("Scoped playbook settings", () => {
     await screen.findByRole("option", { name: "Shared — global/shared" });
     expect(select.value).toBe("global/missing");
     expect(screen.getByText(/configured default is unavailable/)).toBeTruthy();
-    expect(pickerOrder()).toEqual(["bundled/shared", "global/shared", "repo/shared"]);
+    expect(Array.from(select.options).map((option) => option.value)).toEqual(["global/missing", "bundled/shared", "global/shared", "repo/shared"]);
     expect(mocks.writeGlobalSettings).not.toHaveBeenCalled();
     fireEvent.change(select, { target: { value: "global/shared" } });
     await waitFor(() => expect(select.value).toBe("global/shared"));
@@ -124,7 +118,7 @@ describe("Scoped playbook settings", () => {
     expect(mocks.savePlaybookPickerPreferences).not.toHaveBeenCalled();
   });
 
-  it("shows invalid choices and actual timestamp availability without replacing the invalid default", async () => {
+  it("shows invalid choices without replacing the invalid default", async () => {
     saved.defaults.playbook = { scope: "repo", key: "shared" };
     catalog.candidates[2].diagnostics = [{ code: "invalid_selector", message: "Output selector overlaps another producer", severity: "error", line: 14, field: "step.outputs" }];
     openSettings();
@@ -132,37 +126,36 @@ describe("Scoped playbook settings", () => {
     expect(invalid.disabled).toBe(true);
     expect((screen.getByLabelText("Default playbook") as HTMLSelectElement).value).toBe("repo/shared");
     expect(screen.getByText("Output selector overlaps another producer")).toBeTruthy();
-    expect(screen.getByText(/Bundled definition · Modification time unavailable/)).toBeTruthy();
-    expect(screen.getByText(`/global/shared/playbook.md · Modified ${new Date(1700000000000).toLocaleString()}`)).toBeTruthy();
     expect(mocks.writeGlobalSettings).not.toHaveBeenCalled();
   });
 
-  it("personal picker preferences persist without rewriting definitions", async () => {
-    const originalCatalog = structuredClone(catalog);
-    const first = openSettings();
-    const move = await screen.findByRole("button", { name: "Move repo/shared up" });
-    fireEvent.click(move);
-    await waitFor(() => expect(pickerOrder()).toEqual(["bundled/shared", "repo/shared", "global/shared"]));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Hide global/shared in picker" }));
-    await waitFor(() => expect((screen.getByRole("checkbox", { name: "Hide global/shared in picker" }) as HTMLInputElement).checked).toBe(true));
-    const badge = screen.getByLabelText("Badge for global/shared");
-    fireEvent.change(badge, { target: { value: "Personal" } });
-    fireEvent.blur(badge);
-    await waitFor(() => expect(preferences.entries.find((entry) => entry.reference.scope === "global")?.badge).toBe("Personal"));
-    const color = screen.getByLabelText("Color for repo/shared");
-    fireEvent.change(color, { target: { value: "#123456" } });
-    fireEvent.blur(color);
-    await waitFor(() => expect(preferences.entries.find((entry) => entry.reference.scope === "repo")?.color).toBe("#123456"));
-    first.unmount();
+  it("keeps default choices independent of preferred membership, ordering and legacy visibility", async () => {
+    preferences.order = [
+      { scope: "repo", key: "shared" },
+      { scope: "global", key: "shared" },
+    ];
+    preferences.entries = [
+      {
+        reference: { scope: "repo", key: "shared" },
+        preferred: true,
+        hidden: true,
+        collapsed: false,
+        badge: "Personal",
+        color: "#123456",
+        last_imported_at_ms: null,
+      },
+    ];
+    const originalPreferences = structuredClone(preferences);
     openSettings();
-    await screen.findByRole("button", { name: "Move repo/shared up" });
-    expect(pickerOrder()).toEqual(["bundled/shared", "repo/shared", "global/shared"]);
-    expect((screen.getByRole("checkbox", { name: "Hide global/shared in picker" }) as HTMLInputElement).checked).toBe(true);
-    expect((screen.getByRole("checkbox", { name: "Hide bundled/shared in picker" }) as HTMLInputElement).checked).toBe(false);
-    expect((screen.getByLabelText("Badge for global/shared") as HTMLInputElement).value).toBe("Personal");
-    expect((screen.getByLabelText("Color for repo/shared") as HTMLInputElement).value).toBe("#123456");
-    expect(catalog).toEqual(originalCatalog);
-    expect(ipc.savePlaybookSource).not.toHaveBeenCalled();
-    expect(mocks.writeGlobalSettings).not.toHaveBeenCalled();
+    const select = (await screen.findByLabelText("Default playbook")) as HTMLSelectElement;
+    await screen.findByRole("option", { name: "Shared — repo/shared" });
+    expect(select.value).toBe("bundled/shared");
+    expect(screen.queryByRole("list", { name: "Personal playbook picker" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /Hide .* in picker/ })).toBeNull();
+    fireEvent.change(select, { target: { value: "repo/shared" } });
+    await waitFor(() => expect(saved.defaults.playbook).toEqual({ scope: "repo", key: "shared" }));
+    expect(preferences).toEqual(originalPreferences);
+    expect(mocks.readPlaybookPickerPreferences).not.toHaveBeenCalled();
+    expect(mocks.savePlaybookPickerPreferences).not.toHaveBeenCalled();
   });
 });

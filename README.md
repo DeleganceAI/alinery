@@ -22,39 +22,6 @@
 
 **Put a team of agents to work with a Playbook.** Give them a process, steer the important decisions, and build on the results. Playbooks define a ready-to-execute team of agents: who does what, how their work fits together, and where you step in to review or decide. Choose a Playbook for your task and adapt it to the way you want to work. Each task keeps its sessions, decisions, and artifacts together, so you can go down rabbit holes without losing track of the main task or the progress you’ve made.
 
-## Playbook library
-
-The **Playbooks** tab opens a searchable library beside a saved-definition graph that fills the available pane height. Directed arrows are labelled with artifact paths and show forks, joins, and dashed return paths. Wildcard `each` workers appear as three illustrative instances with an ellipsis, converging on their consumers; actual instance counts are not fixed. Select any example to inspect the shared step's prompt, inputs, outputs, coding flag, automatic-completion default, and connection details. Connections come from artifact selectors; this is not a live execution view or a graph editor.
-
-Drag the divider between the graph and description to resize them. The focused divider also supports Left/Right arrows and Home/End. The chosen split is retained while browsing playbooks and switching between Graph and Editor.
-
-**Editor** fills the remaining vertical space and shows the complete `playbook.md` with soft-wrapped text, aligned source line numbers, and simple TOML/Markdown highlighting. Switching views retains unsaved changes; the graph updates only after a validated save succeeds. Bundled documents are read-only: choose **Make a copy to edit**, then a destination scope and key. **Import** accepts a local file or pasted source. Library edits and deletion affect future task selections, never existing tasks' retained definitions.
-
-In **Task detail → Playbook**, **List** remains the default, showing active counts and automatic-completion settings. **Graph** displays only the task's retained definition graph and artifact arrows, without a step inspector or divider. Select a step to highlight its connections. The full Playbooks library keeps its step inspector. The list's **Artifact dependencies** section describes output-to-input connections, not automatic-completion decisions.
-
-Task detail's right-side **History** tab shows execution states, assigned inputs/outputs, and completion permissions. History scrolls independently from the sessions table on the left. Long task metadata is also scrollable without pushing sessions out of view.
-
-The sessions toolbar shows **N queued** immediately before **Priority**. It counts executions whose start was requested and which are still queued; deliberately held sessions are excluded. The count updates with task state and includes zero once loaded.
-
-For a human-gated running session, **Allow this session to complete** is visible beside the execution disclosure even when it is collapsed. This grants permission only; the agent still needs to request completion after finishing its assigned outputs.
-
-Each v2 task retains one validated `playbook.md`, one dedicated worktree, and file-backed
-`execution.json` state. The daemon schedules concrete artifact bindings, including fan-out,
-complete-set merges, and fresh-artifact loops. Coding ownership and the task's live-session
-capacity remain held through human review and confirmed process shutdown.
-
-Task creation checks local Git branches and durable task branch reservations before recording
-new intent. Exact names and slash-prefix conflicts are deduplicated with numeric suffixes when
-possible (`feat/one` can make a requested `feat` become `feat-1`). If an existing or reserved
-parent branch blocks every suffix (`feat` blocks `feat/one`), choose a branch outside that
-namespace. Child-task identities are never silently renamed. Git errors fail preflight; later
-failures, including races with external Git writers, still retain partial-task recovery evidence.
-
-Reusable definitions live in bundled, global, and repository scopes; identical keys do not
-shadow each other. Legacy `playbooks.toml` and split prompt files remain untouched in user
-repositories but are not v2 runtime inputs. Historical pre-v2 tasks remain readable; launching
-them requires explicit recreation rather than automatic migration or a fallback definition.
-
 ## Install
 
 For **macOS on Apple Silicon** and **Linux on x86_64**:
@@ -100,9 +67,19 @@ Review the decision before starting Plan. Other bundled Playbooks cover one-shot
 
 **Sessions survive app quit.** A per-repository daemon (`alineryd`) owns the agent and terminal processes. Leave sessions running when you close the app, then reconnect when you return. Stopping sessions is an explicit action; the quit dialog also offers **Quit & close all repos**.
 
+**Editable work names.** Task-attached OMP agents suggest a short, work-specific session name early in an ordinary working turn, once they understand the task. This uses the working agent, not a separate naming model or background upload service; an unavailable model or an older running extension can leave the session unnamed. Names appear beside status in the task's session table, in the global session list, session header, and search, with task and execution-type context retained.
+
+Use **Rename session** to correct any retained task-attached session, including never-started, exited, archived, and Terminal sessions, without starting it. Names are trimmed, single-line text, limited to 40 Unicode characters (generated names should prefer fewer than 30). A human correction always takes precedence over later automatic suggestions. Names persist independently of session lifecycle data and never change session IDs or execution state. Terminal names are manual only; the taskless Terminal drawer is unchanged.
+
+In the task table and session header, hover the name or Tab to its pencil to edit it in place. Enter saves; Escape cancels. The check and cancel buttons provide the same actions without a keyboard. Finishing an edit returns focus to the name field, without leaving the pencil visible on a previously edited item.
+
 Task records, sessions, and artifacts live under your repository's `.alinery/` directory. The app runs locally, and product-usage telemetry is opt-in.
 
-Board and session discovery read saved task metadata and the task's retained playbook, even when its owning daemon is offline or incompatible. Saved session output remains readable without reviving the owner. Live execution queries and mutations still require the compatible owning daemon; an unavailable owner is not proof that a session stopped or completed. Missing or corrupt retained data is reported as a storage error, not replaced by the current library definition or an empty execution state.
+Task, session, and board browsing read saved metadata and the task's retained playbook even when its owning daemon is offline, incompatible, or belongs to another app instance. Artifact listings and saved content do not require a live owner. Task/session detail and Kanban+ use live execution data when available; otherwise they show validated saved progress with a separate availability notice and collapsed technical details. The app does not start, adopt, or take over a daemon just to browse.
+
+The Kanban+ saved-progress notice has a dismiss button. Dismissal survives polling for the same affected tasks and availability states; the notice returns if those conditions change or live access recovers and later becomes unavailable again.
+
+Completion grants, queued starts, and primary execution creation/recovery remain gated on live owner availability, with backend ownership checks unchanged. Unavailable live status is not proof that a session stopped or completed. Missing or corrupt retained data remains a storage error, not an empty execution state or a replacement from the current playbook library.
 
 **GitHub pull requests.** Kanban cards and task detail show a clickable indicator for the
 task branch's PR: green for open, purple for merged, gray for closed without merging.
@@ -173,6 +150,8 @@ and receives the immediate parent's ticket and artifact paths in every generated
 The parent shows the active child as its manager row; the child links back through its header
 instead of projecting the parent manager as one of its sessions. Parent sessions remain available
 while the child blocks the parent's sub-task slot.
+
+The manager proposes a descriptive child name through the existing creation approval. Use **Rename task** in the child heading or its parent row to edit that name later, including retained archived children. The child's current name and the manager session's own work name remain independent. Renaming changes no slug, branch, worktree, relationship, or historical artifact; task names do not inherit the session-name length limit.
 
 While the child is active, the parent's artifact tree shows a live logical `subtasks/<child>/`
 folder. `alinery_finalize_subtask` replaces that view with an immutable snapshot, archives the child,
@@ -248,6 +227,20 @@ Point any MCP host that runs **command + args** at the `alinery-mcp` binary. Std
   }
 }
 ```
+
+### Authoring playbooks through MCP
+
+- `alinery_read_playbook({repo, reference: {scope, key}})` reads the exact `bundled`, `global`, or `repo` definition, including complete prompt source. There is no scope fallback.
+- `alinery_save_playbook({repo, target: {scope, key}, source, overwrite?})` creates or replaces a `global` or `repo` definition using the existing v2 parser and atomic library persistence. `source` is the complete Markdown document; its declared key must equal `target.key`. `overwrite` defaults to `false`; replacing an existing destination requires explicit `true`. Bundled writes are refused.
+- Both return the existing `ScopedPlaybook` as JSON in MCP text content: `source: {reference: {scope, key}, path}`, `definition`, `source_text`, and `modified_at_ms`. On save, the path and canonical `source_text` describe what was actually persisted. Failures set `isError: true` and retain JSON errors (`kind`, plus diagnostics, source/reference, or message). Invalid arguments and repository selection use `invalid_arguments` and `invalid_repo`.
+
+Use a registered repository root from `alinery_list_repos`, not the agent's task worktree. Global storage uses the server's app-config identity, including the stable global root for dev instances; it is not guessed from the agent's HOME. Repo saves acquire the existing exclusive repository ownership lock and fail with an `io` error containing `repo-busy` while an Alinery window owns that repository. Use that window's editor, or release its repository ownership before retrying; MCP does not borrow GUI ownership. Global saves do not require that lock. Reads remain available while a repository is owned.
+
+**Approval is agent-followed, not backend-enforced.** Review the complete source with the user, ask global versus a specific repository (recommend global), then call the existing OMP extension tool `alinery_ask_approval({title, message})` for that source and exact destination. Name creation versus replacement explicitly—for example, “Save ‘Incident Review’ to your global playbook library (`global/incident-review`)?” or “Replace `global/incident-review` with these reviewed changes?” For repo scope, also name the repository. Call save only after `details.approved === true`; Deny, missing/unavailable UI, or an approval error means keep the draft and do not save. Material source or destination changes require renewed approval. A create conflict is not permission to retry with `overwrite: true`: review the existing definition and obtain replacement approval first. Save accepts no `approved` flag or approval receipt.
+
+Reload with `alinery_list_playbooks({repo})` to discover saved entries; the desktop library and new-task picker use the same catalog. External MCP saves do not push a live-refresh event to an already-open library; reopen the Playbooks view to reload. Saves do not change preferences, create trial tasks, or modify existing tasks' retained definitions.
+
+The approval tool requires an OMP session with its UI transport. If an older installed runner reports `this.pendingRequests`, its embedded extension may be detaching `ui.confirm` from its receiver. Deploy the rebuilt runner and start a new session; changing repository source does not hot-reload an existing session's extension.
 
 ## Get involved
 

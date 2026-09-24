@@ -2,7 +2,19 @@ import { type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPoint
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import * as ipc from "../ipc";
 import { PullRequestIndicator } from "../PullRequestIndicator";
-import { ArchiveTaskModal, Checkbox, EMPTY_TASK_ACTIVITY, repoName, sameBoardTasks, sameKanbanColumns, TaskActivityIndicators, taskKey, useBoardTaskActivity } from "../shared";
+import {
+  ArchiveTaskModal,
+  Checkbox,
+  EMPTY_TASK_ACTIVITY,
+  executionAvailabilityLabel,
+  InlineStatus,
+  repoName,
+  sameBoardTasks,
+  sameKanbanColumns,
+  TaskActivityIndicators,
+  taskKey,
+  useBoardTaskActivity,
+} from "../shared";
 import type { BoardNav, BoardTask, KanbanColumn, TaskActivityStatus, TaskExecutionReply } from "../types";
 import { usePointerDrag } from "../usePointerDrag";
 import { useTaskPullRequests } from "../useTaskPullRequests";
@@ -790,7 +802,8 @@ export function Grid({
   const [definitionErr, setDefinitionErr] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [err, setErr] = useState("");
-  const [executionErr, setExecutionErr] = useState("");
+  const [executionErrors, setExecutionErrors] = useState<{ ref: ExecutionRef; error: string }[]>([]);
+  const [dismissedAvailability, setDismissedAvailability] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(initialWorkspace.settingsOpen);
   const [preset, setPreset] = useState<PresetSelection>(initialWorkspace.preset);
   const [savedPresets, setSavedPresets] = useState(loadSavedPresets);
@@ -911,12 +924,20 @@ export function Grid({
   const executionRefs = useMemo(() => {
     const refs = new Map<string, ExecutionRef>();
     for (const task of tasks) {
-      if (task.draft || (!showArchived && task.archived)) continue;
+      if (task.draft || (task.engine_version ?? 0) < 2 || (!showArchived && task.archived)) continue;
       const key = taskKey(task);
       refs.set(key, { key, repoPath: task.repo_path, slug: task.slug });
     }
     return [...refs.values()].sort((left, right) => left.key.localeCompare(right.key));
   }, [tasks, showArchived]);
+  const unavailableExecutions = executionRefs.flatMap((ref) => {
+    const execution = executions[ref.key];
+    return execution && execution.live?.status !== "available" ? [{ ref, live: execution.live }] : [];
+  });
+  const availabilityKey = JSON.stringify(unavailableExecutions.map(({ ref, live }) => [ref.key, live?.status]));
+  useEffect(() => {
+    setDismissedAvailability((current) => (current === availabilityKey ? current : null));
+  }, [availabilityKey]);
 
   useEffect(() => {
     if (!active) return;
@@ -937,8 +958,7 @@ export function Grid({
       loading = false;
       if (!alive) return;
       setExecutions(Object.fromEntries(entries.flatMap(({ ref, execution }) => (execution ? [[ref.key, execution]] : []))));
-      const failures = entries.filter((entry) => entry.execution === null);
-      setExecutionErr(failures.length ? `Couldn't load task executions. ${failures.map(({ ref, error }) => `${ref.repoPath}:${ref.slug}: ${error}`).join("; ")}` : "");
+      setExecutionErrors(entries.filter((entry) => entry.execution === null));
     };
     void loadExecutions();
     const timer = window.setInterval(loadExecutions, 3000);
@@ -1721,10 +1741,47 @@ export function Grid({
           {err}
         </div>
       )}
-      {executionErr && (
-        <div className="errbar" role="alert">
-          {executionErr}
-        </div>
+      {unavailableExecutions.length > 0 && dismissedAvailability !== availabilityKey && (
+        <InlineStatus tone="warning" onDismiss={() => setDismissedAvailability(availabilityKey)}>
+          <details className="task-grid-execution-errors">
+            <summary>
+              Showing saved progress for {unavailableExecutions.length} {unavailableExecutions.length === 1 ? "task" : "tasks"} · live status unavailable
+            </summary>
+            <ul>
+              {unavailableExecutions.map(({ ref, live }) => (
+                <li key={ref.key}>
+                  <strong>{ref.slug}</strong> · {repoName(ref.repoPath)}: {executionAvailabilityLabel(live)}
+                  {live && (
+                    <details>
+                      <summary>Technical details</summary>
+                      <p>{ref.repoPath}</p>
+                      <pre>{live.detail}</pre>
+                    </details>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
+        </InlineStatus>
+      )}
+      {executionErrors.length > 0 && (
+        <InlineStatus tone="error">
+          <details className="task-grid-execution-errors">
+            <summary>
+              Couldn't read execution state for {executionErrors.length} {executionErrors.length === 1 ? "task" : "tasks"}. Show details
+            </summary>
+            <ul>
+              {executionErrors.map(({ ref, error }) => (
+                <li key={ref.key}>
+                  <strong>
+                    {ref.repoPath}:{ref.slug}
+                  </strong>
+                  <div>{error}</div>
+                </li>
+              ))}
+            </ul>
+          </details>
+        </InlineStatus>
       )}
       {definitionErr && (
         <div className="errbar" role="alert">

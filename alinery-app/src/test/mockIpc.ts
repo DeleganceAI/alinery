@@ -36,6 +36,7 @@ export function mockIpc(overrides: Partial<typeof Ipc> = {}): typeof Ipc {
       "getTaskExecution",
       vi.fn(
         async (): Promise<TaskExecutionReply> => ({
+          live: { status: "available" },
           state: {
             version: 2,
             revision: 0,

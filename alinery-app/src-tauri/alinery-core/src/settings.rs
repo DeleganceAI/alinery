@@ -148,7 +148,7 @@ pub fn load_global_settings(app_config: &Path) -> GlobalSettings {
     normalize_global_settings(global)
 }
 
-/// Missing settings inherit product defaults; present invalid/legacy values fail closed.
+/// Missing settings inherit product defaults; present invalid values fail closed.
 pub fn load_global_settings_strict(app_config: &Path) -> Result<GlobalSettings, String> {
     match fs::read_to_string(app_config) {
         Ok(text) => parse_global_settings(&text).map(normalize_global_settings).map_err(|error| {
@@ -556,21 +556,77 @@ mod tests {
     }
 
     #[test]
-    fn strict_defaults_reject_legacy_references_without_discarding_scope() {
-        let (dir, app_config, repo) = temp_pair("strict-playbook-defaults");
-        fs::write(&app_config, "[global.defaults]\nplaybook = 'superdevelop'\n").unwrap();
-        assert!(load_global_settings_strict(&app_config).is_err());
-        fs::write(&app_config, "[global.defaults.playbook]\nscope = 'global'\nkey = 'custom'\n").unwrap();
-        let global = load_global_settings_strict(&app_config).unwrap();
-        assert_eq!(global.defaults.playbook.scope, crate::playbook::PlaybookScope::Global);
-        assert_eq!(global.defaults.playbook.key, "custom");
-        fs::write(config_toml_path(&repo), "[defaults]\nplaybook = 'custom'\n").unwrap();
-        assert!(crate::read_scoped_settings_strict(&app_config, &repo).is_err());
-        fs::write(config_toml_path(&repo), "[defaults.playbook]\nscope = 'repo'\nkey = 'custom'\n").unwrap();
-        let effective = crate::read_scoped_settings_strict(&app_config, &repo).unwrap().effective;
-        assert_eq!(effective.defaults.playbook.scope, crate::playbook::PlaybookScope::Repo);
-        assert_eq!(effective.defaults.playbook.key, "custom");
+    fn legacy_defaults_migrate_and_round_trip_without_losing_settings() {
+        use crate::playbook::{PlaybookRef, PlaybookScope};
+
+        let (dir, app_config, repo) = temp_pair("legacy-playbook-defaults");
+        let original = "active_repo='/keep'\nknown_repos=['/keep','/another']\n[appearance]\nui_scale=1.25\n[global.defaults]\nplaybook='superdevelop'\nmodel='saved-model'\n";
+        fs::write(&app_config, original).unwrap();
+        fs::write(config_toml_path(&repo), "[defaults]\nplaybook='custom'\n[backup]\nenabled=true\n").unwrap();
+
+        let scoped = crate::read_scoped_settings_strict(&app_config, &repo).unwrap();
+        assert_eq!(
+            scoped.global.defaults.playbook,
+            PlaybookRef {
+                scope: PlaybookScope::Bundled,
+                key: "superdevelop".into()
+            }
+        );
+        assert_eq!(
+            scoped.effective.defaults.playbook,
+            PlaybookRef {
+                scope: PlaybookScope::Repo,
+                key: "custom".into()
+            }
+        );
+        assert_eq!(scoped.effective.defaults.model, "saved-model");
+        assert!(scoped.effective.backup.enabled);
+        assert_eq!(fs::read_to_string(&app_config).unwrap(), original, "reading must not rewrite user files");
+
+        write_global_settings(&app_config, &scoped.global).unwrap();
+        write_repo_overrides(Some(&app_config), &repo, &scoped.overrides).unwrap();
+        let saved: toml::Value = toml::from_str(&fs::read_to_string(&app_config).unwrap()).unwrap();
+        assert_eq!(saved["active_repo"].as_str(), Some("/keep"));
+        assert_eq!(
+            saved["known_repos"].as_array().unwrap(),
+            &vec![toml::Value::String("/keep".into()), toml::Value::String("/another".into())]
+        );
+        assert_eq!(saved["appearance"]["ui_scale"].as_float(), Some(1.25));
+        assert_eq!(saved["global"]["defaults"]["playbook"]["scope"].as_str(), Some("bundled"));
+        let saved_repo: toml::Value = toml::from_str(&fs::read_to_string(config_toml_path(&repo)).unwrap()).unwrap();
+        assert_eq!(saved_repo["defaults"]["playbook"]["scope"].as_str(), Some("repo"));
+        let reloaded = crate::read_scoped_settings_strict(&app_config, &repo).unwrap();
+        assert_eq!(reloaded.global, scoped.global);
+        assert_eq!(reloaded.overrides, scoped.overrides);
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn defaults_migration_preserves_explicit_scopes_and_rejects_invalid_references() {
+        use crate::playbook::{PlaybookRef, PlaybookScope};
+
+        let global = parse_global_settings("[global.defaults.playbook]\nscope='global'\nkey='superdevelop'\n").unwrap();
+        assert_eq!(
+            global.defaults.playbook,
+            PlaybookRef {
+                scope: PlaybookScope::Global,
+                key: "superdevelop".into()
+            }
+        );
+        let custom = parse_global_settings("[global.defaults]\nplaybook='custom'\n").unwrap();
+        assert_eq!(
+            custom.defaults.playbook,
+            PlaybookRef {
+                scope: PlaybookScope::Repo,
+                key: "custom".into()
+            }
+        );
+        assert!(parse_global_settings("[global.defaults]\nplaybook='../escape'\n").is_err());
+        assert!(parse_global_settings("[global.defaults.playbook]\nscope='unknown'\nkey='superdevelop'\n").is_err());
+        assert!(parse_global_settings("[global.defaults.playbook]\nkey='superdevelop'\n").is_err());
+        assert!(toml::from_str::<crate::RepoOverrides>("[defaults]\nplaybook=12\n").is_err());
+        assert!(serde_json::from_str::<PlaybookRef>("\"superdevelop\"").is_err(), "wire references remain scope-qualified");
+        assert!(toml::from_str::<crate::RepoOverrides>("").unwrap().defaults.playbook.is_none());
     }
 
     fn log_text(app_config: &Path) -> String {

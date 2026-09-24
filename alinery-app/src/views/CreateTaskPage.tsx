@@ -3,7 +3,7 @@ import { flushSync } from "react-dom";
 import { afterPaint } from "../afterPaint";
 import * as ipc from "../ipc";
 import { PlaybookGraph } from "../PlaybookGraph";
-import { Checkbox, InlineStatus, ModelInput, ompDefaultModel, orderPlaybookCandidates, playbookPickerAppearance, playbookRefKey, samePlaybookRef } from "../shared";
+import { Checkbox, InlineStatus, ModelInput, ompDefaultModel, orderPlaybookCandidates, playbookRefKey, samePlaybookRef } from "../shared";
 import * as taskMutationGuard from "../taskMutationGuard";
 import { toast } from "../toast";
 import type { BoardTask, DraftOrigin, PickerPreferences, PlaybookCandidate, PlaybookRef, ScopedPlaybook, TargetedCreateResult } from "../types";
@@ -25,6 +25,7 @@ export function CreateTaskPage({
   onBusy = () => {},
   onOpened = () => {},
   initialDraft,
+  initialPlaybook,
   activeRepo,
   knownRepos,
 }: {
@@ -33,6 +34,7 @@ export function CreateTaskPage({
   onBusy?: (kind: "create" | "duplicate" | null) => void;
   onOpened?: () => void;
   initialDraft?: BoardTask;
+  initialPlaybook?: PlaybookRef;
   activeRepo: string;
   knownRepos: string[];
 }) {
@@ -60,7 +62,11 @@ export function CreateTaskPage({
   const [worktreeName, setWorktreeName] = useState(initialDraft?.has_worktree ? initialDraft.worktree : "");
   const [playbooks, setPlaybooks] = useState<PlaybookCandidate[]>([]);
   const [pickerPreferences, setPickerPreferences] = useState<PickerPreferences>({ order: [], entries: [] });
-  const [playbook, setPlaybook] = useState<PlaybookRef | null>(initialDraft?.playbook_ref ?? null);
+  const [browsePlaybooks, setBrowsePlaybooks] = useState(false);
+  const [playbookQuery, setPlaybookQuery] = useState("");
+  const [playbook, setPlaybook] = useState<PlaybookRef | null>((initialDraft ? initialDraft.playbook_ref : initialPlaybook) ?? null);
+  // Keep a one-off choice in the shortlist until the user changes views, not selections.
+  const [shortlistExtra, setShortlistExtra] = useState<PlaybookRef | null>(null);
   const [selectedSource, setSelectedSource] = useState<ScopedPlaybook | null>(null);
   const [sourceError, setSourceError] = useState("");
   const [catalogLoading, setCatalogLoading] = useState(true);
@@ -112,23 +118,31 @@ export function CreateTaskPage({
     setErr(null);
     setCatalogLoading(true);
     setSelectedSource(null);
-    Promise.all([ipc.readConfigForRepo(repoPath), ipc.listPlaybookCatalog(repoPath)])
-      .then(async ([c, catalog]) => {
+    Promise.all([ipc.readConfigForRepo(repoPath), ipc.listPlaybookCatalog(repoPath), ipc.accountStatus().catch(() => null)])
+      .then(async ([c, catalog, account]) => {
         if (!alive || request !== targetRequest.current) return;
         setDraftAutosave(c.defaults.draft_autosave !== false);
         setPlaybooks(orderPlaybookCandidates(catalog.candidates, catalog.picker_preferences));
         setPickerPreferences(catalog.picker_preferences);
-        setDefaultModel(ompDefaultModel(c.defaults));
+        setBrowsePlaybooks(
+          !catalog.candidates.some((candidate) =>
+            catalog.picker_preferences.entries.some((entry) => entry.preferred && samePlaybookRef(entry.reference, candidate.source.reference)),
+          ),
+        );
+        setPlaybookQuery("");
+        const resolvedDefaultModel = ompDefaultModel(c.defaults) || (account?.signedIn ? "alinery/DeepSeek-V4.1-Flash" : "");
+        setDefaultModel(resolvedDefaultModel);
         if (catalog.diagnostics.length) {
           setErr({ msg: "Some playbook sources could not be loaded.", detail: catalog.diagnostics.map((diagnostic) => diagnostic.message).join("\n") });
         }
-        const choice = initialTargetLoaded.current ? playbook : initialDraft ? initialDraft.playbook_ref : c.defaults.playbook;
+        const choice = initialTargetLoaded.current ? playbook : initialDraft ? initialDraft.playbook_ref : (initialPlaybook ?? c.defaults.playbook);
         const candidate = catalog.candidates.find((item) => samePlaybookRef(item.source.reference, choice));
         setPlaybook(choice ?? null);
+        setShortlistExtra(choice ?? null);
         setPlaybookNeedsReselection(!candidate || candidate.diagnostics.length > 0);
         if (!initialTargetLoaded.current) {
           initialTargetLoaded.current = true;
-          setModel(initialDraft?.launch_defaults?.model ?? ompDefaultModel(c.defaults));
+          setModel(initialDraft?.launch_defaults?.model ?? resolvedDefaultModel);
           setModelNeedsReselection(false);
         }
         setCatalogLoading(false);
@@ -531,7 +545,7 @@ export function CreateTaskPage({
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) create();
   };
 
-  const selectedPlaybook = playbooks.find((item) => samePlaybookRef(item.source.reference, playbook));
+  const extraPlaybook = playbooks.find((item) => samePlaybookRef(item.source.reference, shortlistExtra));
 
   // Why the create button is unavailable — shown beside it, not hidden in a tooltip.
   const createBlockedReason = !name.trim()
@@ -545,6 +559,24 @@ export function CreateTaskPage({
           : !sourceReady
             ? sourceError || "Select a playbook and wait for its validated source."
             : "";
+
+  const preferredKeys = new Set(pickerPreferences.entries.filter((entry) => entry.preferred).map((entry) => playbookRefKey(entry.reference)));
+  const visiblePlaybooks = browsePlaybooks
+    ? playbooks.filter((item) =>
+        `${item.title ?? ""} ${item.description ?? ""} ${playbookRefKey(item.source.reference)}`.toLowerCase().includes(playbookQuery.trim().toLowerCase()),
+      )
+    : playbooks.filter((item) => preferredKeys.has(playbookRefKey(item.source.reference)));
+  if (!browsePlaybooks && extraPlaybook && !preferredKeys.has(playbookRefKey(extraPlaybook.source.reference))) {
+    visiblePlaybooks.push(extraPlaybook);
+  }
+  // Pin the entrypoint's playbook, not the changing selection, so keyboard navigation stays stable.
+  if (!initialDraft && initialPlaybook) {
+    const seedIndex = visiblePlaybooks.findIndex((item) => samePlaybookRef(item.source.reference, initialPlaybook));
+    if (seedIndex > 0) {
+      const [seed] = visiblePlaybooks.splice(seedIndex, 1);
+      visiblePlaybooks.unshift(seed);
+    }
+  }
 
   return (
     <div className="createpage createpage-with-preview" onKeyDown={onKey}>
@@ -830,61 +862,71 @@ export function CreateTaskPage({
           {draftSlug ? <span className="pill">Draft</span> : null}
         </div>
         <div className="playbook-panel-controls">
-          <div className="playbook-panel-label">Choose a playbook</div>
+          <div className="playbook-panel-label">{browsePlaybooks ? "All playbooks" : "Preferred playbooks"}</div>
+          <button
+            type="button"
+            className="btn ghost small"
+            onClick={() => {
+              if (browsePlaybooks) setShortlistExtra(playbook);
+              setBrowsePlaybooks(!browsePlaybooks);
+              setPlaybookQuery("");
+            }}
+          >
+            {browsePlaybooks ? "Back to preferred" : "Browse all playbooks"}
+          </button>
+          {browsePlaybooks && (
+            <label className="create-field">
+              <span>Search playbooks</span>
+              <input type="search" className="field-input" value={playbookQuery} onChange={(event) => setPlaybookQuery(event.target.value)} />
+            </label>
+          )}
           <button type="button" className="btn ghost small" disabled={creating} onClick={() => setCatalogRevision((revision) => revision + 1)}>
             Refresh playbooks
           </button>
           <div className="playbook-picker" role="radiogroup" aria-label="Choose playbook">
-            {playbooks.length > 0 ? (
-              playbooks.map((item) => {
-                const preference = pickerPreferences.entries.find((entry) => samePlaybookRef(entry.reference, item.source.reference));
-                if (preference?.hidden && !item.diagnostics.length && !samePlaybookRef(playbook, item.source.reference)) return null;
-                const appearance = playbookPickerAppearance(item.source.reference, preference);
+            {visiblePlaybooks.length > 0 ? (
+              visiblePlaybooks.map((item) => {
+                const identity = playbookRefKey(item.source.reference);
+                const selected = samePlaybookRef(playbook, item.source.reference);
                 return (
-                  <label
-                    className={`playbook-option${samePlaybookRef(playbook, item.source.reference) ? " selected" : ""}`}
-                    key={playbookRefKey(item.source.reference)}
-                    style={{ borderColor: appearance.color }}
-                  >
-                    <input
-                      checked={samePlaybookRef(playbook, item.source.reference)}
-                      disabled={creating || item.diagnostics.length > 0}
-                      className="playbook-option-input"
-                      name="create-playbook"
-                      onChange={() => selectPlaybook(item.source.reference)}
-                      type="radio"
-                      value={playbookRefKey(item.source.reference)}
-                    />
-                    <span className="playbook-option-content">
-                      <span className="playbook-option-kicker">{playbookRefKey(item.source.reference)}</span>
-                      <span className="playbook-option-topline">
-                        <span className="playbook-option-title">{item.title ?? item.source.reference.key}</span>
-                        <span className="pill" style={{ borderColor: appearance.color }}>
-                          {appearance.badge}
+                  <div className={`playbook-picker-card${selected ? " selected" : ""}`} key={identity}>
+                    <label className={`playbook-option${selected ? " selected" : ""}`}>
+                      <input
+                        checked={selected}
+                        disabled={creating || catalogLoading || item.diagnostics.length > 0}
+                        className="playbook-option-input"
+                        name="create-playbook"
+                        aria-label={`${item.title ?? item.source.reference.key} — ${identity}`}
+                        onChange={() => selectPlaybook(item.source.reference)}
+                        type="radio"
+                        value={identity}
+                      />
+                      <span className="playbook-option-content">
+                        <span className="playbook-option-topline">
+                          <span className="playbook-option-title">{item.title ?? item.source.reference.key}</span>
+                          <span className="pill">{item.source.reference.scope}</span>
                         </span>
-                        <span className="playbook-option-meta">
-                          {item.modified_at_ms == null ? "Modification time unavailable" : new Date(item.modified_at_ms).toLocaleString()}
-                        </span>
+                        <span className="playbook-option-description">{item.description}</span>
+                        {selected && !preferredKeys.has(identity) && <span className="hint">Current selection · not preferred</span>}
+                        {item.diagnostics.map((diagnostic) => (
+                          <span key={`${diagnostic.code}:${diagnostic.field}:${diagnostic.line}:${diagnostic.message}`}>{diagnostic.message}</span>
+                        ))}
                       </span>
-                      <span className="playbook-option-description">{item.description}</span>
-                      {item.diagnostics.map((diagnostic) => (
-                        <span key={`${diagnostic.code}:${diagnostic.field}:${diagnostic.line}:${diagnostic.message}`}>{diagnostic.message}</span>
-                      ))}
-                    </span>
-                    <span aria-hidden="true" className="playbook-option-indicator" />
-                  </label>
+                      <span aria-hidden="true" className="playbook-option-indicator" />
+                    </label>
+                    {selected && selectedSource && (
+                      <PlaybookGraph title={item.title ?? selectedSource.definition.title} steps={selectedSource.definition.step} variant="definition" showInspector={false} />
+                    )}
+                  </div>
                 );
               })
             ) : (
-              <div className="playbook-empty">No playbooks available in this repository.</div>
+              <div className="playbook-empty">{browsePlaybooks && playbookQuery ? "No matching playbooks." : "No preferred playbooks. Browse all playbooks to choose one."}</div>
             )}
           </div>
           {playbookNeedsReselection && <InlineStatus tone="error">The selected or configured playbook is unavailable or invalid. Choose a valid scoped playbook.</InlineStatus>}
           {sourceError && <InlineStatus tone="error">{sourceError}</InlineStatus>}
         </div>
-        {selectedSource && (
-          <PlaybookGraph title={selectedPlaybook?.title ?? selectedSource.definition.title} steps={selectedSource.definition.step} selectedAutoAdvance={autoAdvance} />
-        )}
       </aside>
     </div>
   );

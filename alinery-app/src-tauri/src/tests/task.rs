@@ -936,6 +936,51 @@ fn targeted_repo_validation_rejects_unknown_or_non_git_paths() {
 }
 
 #[test]
+fn rename_task_uses_owned_explicit_repo_and_returns_committed_record() {
+    use tauri::Manager;
+    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let repo_a = init_git_test_repo("rename-task-a");
+    let repo_b = init_git_test_repo("rename-task-b");
+    for repo in [&repo_a, &repo_b] {
+        write_activity_task(repo, "child", "implementation", true);
+        let mut task = read_task(repo, "child").unwrap();
+        task.archived = true;
+        task.parent_task = "parent".into();
+        write_task(repo, &task).unwrap();
+    }
+    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+    context.config_mut().identifier = format!("test.alinery.task-names.{}", uuid::Uuid::new_v4());
+    let app = tauri::test::mock_builder().manage(AppState::default()).build(context).unwrap();
+    let config_path = crate::app_config_path(app.handle()).unwrap();
+    crate::write_app_config_at(
+        &config_path,
+        &AppConfig {
+            known_repos: vec![repo_a.display().to_string(), repo_b.display().to_string()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    set_active_repo_global(Some(repo_b.clone())).unwrap();
+    let name = "A manually corrected child name longer than forty characters";
+    let saved = crate::rename_task(app.handle().clone(), app.state(), repo_a.display().to_string(), "child".into(), format!("  {name}  ")).unwrap();
+    assert_eq!(saved.name, name);
+    assert_eq!(read_task(&repo_a, "child").unwrap().name, name);
+    assert_ne!(read_task(&repo_b, "child").unwrap().name, name);
+    assert!(crate::rename_task(app.handle().clone(), app.state(), repo_a.display().to_string(), "missing".into(), name.into()).is_err());
+    assert!(crate::rename_task(app.handle().clone(), app.state(), "/unknown".into(), "child".into(), name.into()).is_err());
+    let owner = AppState::default();
+    assert!(owner.claim_repo(&repo_b));
+    assert!(crate::rename_task(app.handle().clone(), app.state(), repo_b.display().to_string(), "child".into(), name.into()).is_err());
+    assert!(!alinery_core::alineryd_socket_path(&repo_a, None).exists());
+    set_active_repo_global(None).unwrap();
+    drop(app);
+    drop(owner);
+    let _ = fs::remove_dir_all(config_path.parent().unwrap());
+    let _ = fs::remove_dir_all(repo_a);
+    let _ = fs::remove_dir_all(repo_b);
+}
+
+#[test]
 fn targeted_draft_writes_land_only_in_selected_repo() {
     let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let repo_a = init_git_test_repo("targeted-draft-a");

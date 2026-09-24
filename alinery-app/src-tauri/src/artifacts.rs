@@ -510,17 +510,19 @@ pub(crate) async fn list_artifacts(task_slug: String) -> Result<Vec<String>, Str
     list_artifacts_for(&repo, &task_slug)
 }
 
-#[tauri::command]
-pub(crate) async fn list_artifacts_with_metadata(app: AppHandle, state: State<'_, AppState>, task_slug: String) -> Result<Vec<alinery_core::ArtifactListItem>, String> {
-    let repo = require_owned_active_repo(&state)?;
-    let task = read_task(&repo, &task_slug)?;
+pub(crate) fn list_artifacts_with_metadata_in(repo: &Path, task_slug: &str) -> Result<Vec<alinery_core::ArtifactListItem>, String> {
+    let task = read_task(repo, task_slug)?;
     if task.engine_version >= 2 {
-        let execution = task_daemon_for(&repo, &task_slug, &app_config_path(&app)?)?
-            .get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug: task_slug.clone() })?;
-        alinery_core::list_artifacts_with_execution_metadata(&repo, &task_slug, &execution.state)
+        let execution = saved_task_execution_for(repo, task_slug)?;
+        alinery_core::list_artifacts_with_execution_metadata(repo, task_slug, &execution.state)
     } else {
-        alinery_core::list_artifacts_with_metadata_for(&repo, &task_slug)
+        alinery_core::list_artifacts_with_metadata_for(repo, task_slug)
     }
+}
+
+#[tauri::command]
+pub(crate) async fn list_artifacts_with_metadata(task_slug: String) -> Result<Vec<alinery_core::ArtifactListItem>, String> {
+    list_artifacts_with_metadata_in(&active_repo()?, &task_slug)
 }
 
 #[tauri::command]

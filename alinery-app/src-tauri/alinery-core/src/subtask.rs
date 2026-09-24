@@ -814,6 +814,11 @@ pub fn discard_subtask(repo: &Path, owner_task_slug: &str, manager_session_id: &
                     trash.join("sessions").join(format!("{session_id}.scrollback")),
                     &mut moved,
                 )?;
+                move_if_present(
+                    crate::session_name_path(repo, task_slug, session_id),
+                    trash.join("sessions").join(format!("{session_id}.name.json")),
+                    &mut moved,
+                )?;
             }
             Ok::<(), String>(())
         })();
@@ -1156,6 +1161,8 @@ mod tests {
         let (repo, _, manager) = lifecycle_repo("discard-setup");
         let scrollback = session_scrollback_path(&repo, "a", &manager.id);
         fs::write(&scrollback, b"expired login").unwrap();
+        crate::set_session_name(&repo, "a", &manager.id, "Plan child work", crate::SessionNameSource::User).unwrap();
+        let name_path = crate::session_name_path(&repo, "a", &manager.id);
 
         assert_eq!(subtask_discard_sessions(&repo, "a", "manager").unwrap(), vec![("a".into(), "manager".into())]);
         discard_subtask(&repo, "a", "manager").unwrap();
@@ -1163,6 +1170,7 @@ mod tests {
         assert!(read_task(&repo, "a").is_some());
         assert!(!session_meta_path(&repo, "a", "manager").exists());
         assert!(!scrollback.exists());
+        assert!(!name_path.exists(), "discard must remove the manager's name sidecar");
         let _ = fs::remove_dir_all(repo);
     }
 

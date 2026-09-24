@@ -65,9 +65,12 @@ import type {
   SavePlaybookRequest,
   ScopedPlaybook,
   ScopedSettings,
+  SessionDisplayContext,
+  SessionDisplayMeta,
   SessionListItem,
   SessionMessageActionProvenance,
   SessionMeta,
+  SessionName,
   SessionNotificationClearRef,
   SessionObservation,
   SessionStatusRef,
@@ -241,13 +244,16 @@ export const notifyTest = () => invoke<void>("notify_test");
 export const setDockBadgeCount = (count: number) => invoke<void>("set_dock_badge_count", { count });
 
 // ── subtask.rs ────────────────────────────────────────────────────────
-export const subtaskState = (taskSlug: string) => invoke<SubtaskManagerState>("subtask_state", { taskSlug });
+export const subtaskState = (taskSlug: string, repoPath?: string) => invoke<SubtaskManagerState>("subtask_state", { taskSlug, repoPath });
 export const startSubtaskManager = (taskSlug: string) => invoke<CreateExecutionSessionReply>("start_subtask_manager", { taskSlug });
 export const recoverSubtaskManager = (taskSlug: string) => invoke<CreateExecutionSessionReply>("recover_subtask_manager", { taskSlug });
 export const discardSubtask = (taskSlug: string, managerSessionId: string) => invoke<void>("discard_subtask", { taskSlug, managerSessionId });
 
 // ── session.rs ────────────────────────────────────────────────────────
 
+export const renameSession = (a: { repoPath: string; taskSlug: string; sessionId: string; name: string }) => invoke<SessionName>("rename_session", a);
+export const renameTask = (repoPath: string, taskSlug: string, name: string) => invoke<Task>("rename_task", { repoPath, taskSlug, name });
+export const getSessionDisplay = (repoPath: string, taskSlug: string, sessionId: string) => invoke<SessionDisplayContext>("get_session_display", { repoPath, taskSlug, sessionId });
 export const archiveSession = (taskSlug: string, id: string) => invoke<void>("archive_session", { taskSlug, id });
 export const archiveSessionForRepo = (repoPath: string, taskSlug: string, id: string) => invoke<void>("archive_session_for_repo", { repoPath, taskSlug, id });
 export const createSession = (request: CreateExecutionSessionRequest) => invoke<CreateExecutionSessionReply>("create_session", { request });
@@ -260,8 +266,9 @@ export const detachSession = (id: string, attachId: number) => invoke<void>("det
 export const ensureDrawerTerminal = () => invoke<SessionMeta>("ensure_drawer_terminal");
 export const killSession = (id: string, taskSlug: string) => invoke<void>("kill_session", { id, taskSlug });
 export const killSessionForRepo = (repoPath: string, id: string, taskSlug: string) => invoke<void>("kill_session_for_repo", { repoPath, id, taskSlug });
-export const listSessionItems = (allRepos: boolean, includeArchived: boolean) => invoke<SessionListItem[]>("list_session_items", { allRepos, includeArchived });
-export const listSessions = (taskSlug: string) => invoke<SessionMeta[]>("list_sessions", { taskSlug });
+export const listSessionItems = (allRepos: boolean, includeArchived: boolean, repoPath?: string) =>
+  invoke<SessionListItem[]>("list_session_items", { allRepos, includeArchived, repoPath });
+export const listSessions = (taskSlug: string, repoPath?: string) => invoke<SessionDisplayMeta[]>("list_sessions", { taskSlug, repoPath });
 export const markSessionNotificationRead = (repoPath: string, taskSlug: string, id: string) => invoke<void>("mark_session_notification_read", { repoPath, taskSlug, id });
 export const clearSessionNotifications = (refs: SessionNotificationClearRef[]) => invoke<void>("clear_session_notifications", { refs });
 export const openSession = (a: {
@@ -324,11 +331,11 @@ export const createTaskForRepo = (a: { repoPath: string; request: CreateTaskRequ
 export const prepareTaskAttachments = (entries: string[]) => invoke<PreparedTaskAttachments>("prepare_task_attachments", { entries });
 export const duplicateTaskForRepo = (repoPath: string, sourceSlug: string) => invoke<CreateTaskResult>("duplicate_task_for_repo", { repoPath, sourceSlug });
 export const deleteDraftForRepo = (repoPath: string, slug: string) => invoke<void>("delete_draft_for_repo", { repoPath, slug });
-export const getTask = (slug: string) => invoke<Task | null>("get_task", { slug });
+export const getTask = (slug: string, repoPath?: string) => invoke<Task | null>("get_task", { slug, repoPath });
 export const listBoardTasks = (allRepos: boolean) => invoke<BoardTask[]>("list_board_tasks", { allRepos });
 export const listTaskActivity = (refs: TaskActivityRef[]) => invoke<Record<string, TaskActivitySummary>>("list_task_activity", { refs });
 export const listTaskPullRequests = (tasks: TaskActivityRef[]) => invoke<Record<string, PullRequestSnapshot>>("list_task_pull_requests", { tasks });
-export const listTasks = () => invoke<Task[]>("list_tasks");
+export const listTasks = (repoPath?: string) => invoke<Task[]>("list_tasks", { repoPath });
 export const setRelatedTasksForRepo = (repoPath: string, slug: string, related: RelatedTaskRef[]) => invoke<Task>("set_related_tasks_for_repo", { repoPath, slug, related });
 export const writeDraftForRepo = (a: {
   repoPath: string;
@@ -364,8 +371,8 @@ export const validatePlaybookSource = (source: string) => invoke<PlaybookValidat
 export const renderPlaybookSource = (definition: NormalizedPlaybook) => invoke<string>("render_playbook_source", { definition });
 export const savePlaybookSource = (request: SavePlaybookRequest, repoPath?: string) => invoke<ScopedPlaybook>("save_playbook_source", { request, repoPath });
 export const deletePlaybookSource = (reference: PlaybookRef, repoPath?: string) => invoke<void>("delete_playbook_source", { reference, repoPath });
-export const readPlaybookPickerPreferences = () => invoke<PickerPreferences>("read_playbook_picker_preferences");
-export const savePlaybookPickerPreferences = (preferences: PickerPreferences) => invoke<void>("save_playbook_picker_preferences", { preferences });
+export const readPlaybookPickerPreferences = (repoPath?: string) => invoke<PickerPreferences>("read_playbook_picker_preferences", { repoPath });
+export const savePlaybookPickerPreferences = (preferences: PickerPreferences, repoPath?: string) => invoke<void>("save_playbook_picker_preferences", { preferences, repoPath });
 
 // ── update.rs ─────────────────────────────────────────────────────────
 export const checkUpdate = () => invoke<UpdateStatus>("check_update");

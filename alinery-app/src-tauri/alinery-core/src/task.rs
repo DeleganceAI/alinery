@@ -175,6 +175,31 @@ pub fn mutate_task<T>(repo: &Path, slug: &str, operation: &str, mutate: impl FnO
     })
 }
 
+pub fn validate_task_name(input: &str) -> Result<&str, String> {
+    let name = input.trim();
+    if name.is_empty() {
+        return Err("task name is empty".into());
+    }
+    Ok(name)
+}
+
+pub fn rename_task(repo: &Path, task_slug: &str, name: &str) -> Result<Task, String> {
+    let name = validate_task_name(name)?;
+    if safe_component(task_slug) != Some(task_slug) {
+        return Err("invalid task slug".into());
+    }
+    let path = task_dir(repo, task_slug).join("task.md");
+    crate::paths::validate_retained_file(repo, &path)?;
+    mutate_task(repo, task_slug, "rename task", |task| {
+        crate::paths::validate_retained_file(repo, &path)?;
+        if task.slug != task_slug {
+            return Err("task slug does not match retained target".into());
+        }
+        task.name = name.to_owned();
+        Ok(task.clone())
+    })
+}
+
 pub fn restore_task(repo: &Path, slug: &str) -> Result<(), String> {
     with_task_mutation_lock(repo, "restore task", || {
         let mut task = read_task(repo, slug).ok_or_else(|| format!("no such task: {slug}"))?;
@@ -370,6 +395,64 @@ mod tests {
             }],
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn rename_retained_child_preserves_identity_and_relationships() {
+        let repo = unique_temp("alinery_rename_child");
+        let mut task = restore_fixture("child");
+        task.parent_task = "parent".into();
+        write_task(&repo, &task).unwrap();
+        let name = "A child task name that is deliberately longer than forty characters";
+        let saved = rename_task(&repo, "child", &format!("  {name}  ")).unwrap();
+        task.name = name.into();
+        assert_eq!(toml::to_string(&saved).unwrap(), toml::to_string(&task).unwrap());
+        assert_eq!(toml::to_string(&read_task(&repo, "child").unwrap()).unwrap(), toml::to_string(&task).unwrap());
+        for (slug, name) in [("child", " \n "), ("missing", "No"), ("../child", "No")] {
+            assert!(rename_task(&repo, slug, name).is_err());
+        }
+        let before = fs::read(task_dir(&repo, "child").join("task.md")).unwrap();
+        task.slug = "wrong".into();
+        fs::write(task_dir(&repo, "child").join("task.md"), toml::to_string(&task).unwrap()).unwrap();
+        assert!(rename_task(&repo, "child", "No").is_err());
+        fs::write(task_dir(&repo, "child").join("task.md"), &before).unwrap();
+        let outside = repo.join("outside.md");
+        fs::rename(task_dir(&repo, "child").join("task.md"), &outside).unwrap();
+        std::os::unix::fs::symlink(&outside, task_dir(&repo, "child").join("task.md")).unwrap();
+        assert!(rename_task(&repo, "child", "No").is_err());
+        assert_eq!(fs::read(&outside).unwrap(), before);
+        assert!(!task_dir(&repo, "missing").exists());
+        let _ = fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn rename_and_other_task_mutation_preserve_both_commits() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let repo = unique_temp("alinery_rename_mutation");
+        write_task(&repo, &relationship_task("child")).unwrap();
+        let root = repo.clone();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            mutate_task(&root, "child", "ordinary mutation", |task| {
+                task.archived = true;
+                ready_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok(())
+            })
+            .unwrap()
+        });
+        ready_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let result = rename_task(&repo, "child", "New name");
+        release_tx.send(()).unwrap();
+        thread.join().unwrap();
+        assert!(result.unwrap_err().contains("busy"));
+        rename_task(&repo, "child", "New name").unwrap();
+        let saved = read_task(&repo, "child").unwrap();
+        assert!(saved.archived);
+        assert_eq!(saved.name, "New name");
+        let _ = fs::remove_dir_all(repo);
     }
 
     #[test]

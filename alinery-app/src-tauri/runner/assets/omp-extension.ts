@@ -1,7 +1,7 @@
 // OMP run-local extension for Alinery.
 //
 // Injected at session startup via --extension <path>. Registers OMP lifecycle
-// callbacks and the alinery_phase_complete and alinery_ask_approval tools. Passive callbacks emit one
+// callbacks and scoped completion, approval, and session-naming tools. Passive callbacks emit one
 // normalized RunnerEvent with bounded, terminal-silent, fail-open delivery.
 // Phase completion preserves typed daemon outcomes and requests ordinary OMP
 // shutdown only after accepted completion.
@@ -19,6 +19,7 @@
 //   ALINERY_EVENT_PROTOCOL_VERSION   runner event protocol version
 //   ALINERY_EVENT_TOKEN              per-session secret token
 //   ALINERY_HOST_EXECUTABLE          canonical host app executable (launch-only)
+//   ALINERY_SESSION_NAMING          task-attached naming eligibility (launch-only)
 
 import { spawn } from "node:child_process";
 import { realpath } from "node:fs/promises";
@@ -36,6 +37,7 @@ export interface OmpToolParameters {
 
 export interface OmpExtensionContext {
   readonly cwd: string;
+  readonly hasUI?: boolean;
   readonly sessionManager: {
     getSessionId(): string;
   };
@@ -111,6 +113,7 @@ export interface OmpExtensionAPI {
     };
   };
   on(event: "session_start", handler: (payload: unknown, context: OmpExtensionContext) => void | Promise<void>): void;
+  on(event: "before_agent_start", handler: (payload: { readonly systemPrompt: readonly string[] }) => { systemPrompt: string[] } | undefined): void;
   on(event: "agent_start", handler: (payload: OmpAgentStartPayload) => void | Promise<void>): void;
   on(event: "agent_end", handler: (payload: OmpAgentEndPayload) => void | Promise<void>): void;
   on(event: "session_stop", handler: (payload: OmpSessionStopPayload, context: OmpExtensionContext) => void | Promise<void>): void;
@@ -151,8 +154,19 @@ type RunnerEventAdapterError = {
   readonly type: "adapter_error";
   readonly detail: string;
 };
+type RunnerEventSessionName = {
+  readonly type: "session_name_suggested";
+  readonly name: string;
+};
 
-type RunnerEvent = RunnerEventBusy | RunnerEventIdle | RunnerEventWaitingForInput | RunnerEventWaitingForApproval | RunnerEventPhaseCompleted | RunnerEventAdapterError;
+type RunnerEvent =
+  | RunnerEventBusy
+  | RunnerEventIdle
+  | RunnerEventWaitingForInput
+  | RunnerEventWaitingForApproval
+  | RunnerEventPhaseCompleted
+  | RunnerEventAdapterError
+  | RunnerEventSessionName;
 
 // ---------- emitter ----------
 
@@ -166,9 +180,16 @@ export type CompletionOutcome =
 
 export type CompletionEmitter = (event: RunnerEventPhaseCompleted) => Promise<CompletionOutcome>;
 
+export type SessionNameOutcome = {
+  readonly status: "saved" | "unchanged";
+  readonly value: { readonly name: string; readonly source: "auto" | "user" };
+};
+export type SessionNameEmitter = (event: RunnerEventSessionName) => Promise<SessionNameOutcome>;
+
 interface RunnerConfig {
   readonly runnerPath: string;
   readonly environment: Readonly<Record<string, string>>;
+  readonly sessionNaming: boolean;
 }
 
 const RUNNER_ENV_NAMES = [
@@ -266,6 +287,8 @@ export async function classifyBrowserOpen(input: unknown, cwd: string, protected
  */
 export function captureRunnerConfig(environment: Record<string, string | undefined> = process.env): RunnerConfig | undefined {
   const captured: Record<string, string | undefined> = {};
+  const sessionNaming = environment.ALINERY_SESSION_NAMING === "1";
+  delete environment.ALINERY_SESSION_NAMING;
   for (const name of RUNNER_ENV_NAMES) {
     captured[name] = environment[name];
     delete environment[name];
@@ -291,6 +314,7 @@ export function captureRunnerConfig(environment: Record<string, string | undefin
 
   return {
     runnerPath,
+    sessionNaming,
     environment: {
       ALINERY_SESSION_ID: sessionId,
       ALINERY_DAEMON_SOCKET: daemonSocket,
@@ -345,102 +369,151 @@ export function makeProductionEmitter(config: RunnerConfig | undefined): Emitter
   };
 }
 
-/**
- * Production completion emitter. Unlike passive lifecycle reporting, this path
- * requires and parses the daemon acknowledgement so the model can repair/retry.
- */
-export function makeProductionCompletionEmitter(config: RunnerConfig | undefined): CompletionEmitter {
-  return async (event: RunnerEventPhaseCompleted): Promise<CompletionOutcome> => {
-    if (!config) throw new Error("runner transport unavailable");
-
-    return new Promise<CompletionOutcome>((resolve, reject) => {
-      const child = spawn(config.runnerPath, ["emit", "--result"], {
-        stdio: ["pipe", "pipe", "ignore"],
-        env: config.environment,
-      });
-      let settled = false;
-      let output = "";
-      let outputBytes = 0;
-      const fail = (error: unknown = new Error("runner delivery failed")) => {
-        if (settled) return;
+/** Shared acknowledged transport; passive callbacks deliberately remain fail-open. */
+async function emitAcknowledged(config: RunnerConfig | undefined, event: RunnerEvent): Promise<{ result: Record<string, unknown>; code: number | null }> {
+  if (!config) throw new Error("runner transport unavailable");
+  // The packaged extension targets ES2022, before Promise.withResolvers.
+  return new Promise((resolve, reject) => {
+    const child = spawn(config.runnerPath, ["emit", "--result"], {
+      stdio: ["pipe", "pipe", "ignore"],
+      env: config.environment,
+    });
+    let settled = false;
+    let output = "";
+    let outputBytes = 0;
+    const fail = (error: unknown = new Error("runner delivery failed")) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(watchdog);
+      reject(error instanceof Error ? error : new Error("runner delivery failed"));
+    };
+    const watchdog = setTimeout(() => {
+      child.kill();
+      fail(new Error("runner acknowledgement timed out"));
+    }, 6_000);
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk) => {
+      outputBytes += Buffer.byteLength(chunk, "utf8");
+      if (outputBytes > 64 * 1024) {
+        child.kill();
+        fail(new Error("runner acknowledgement exceeds 64 KiB"));
+        return;
+      }
+      output += chunk;
+    });
+    child.on("error", fail);
+    child.on("close", (code) => {
+      if (settled) return;
+      try {
+        if (!output.endsWith("\n")) throw new Error("runner acknowledgement is truncated");
+        const result: unknown = JSON.parse(output);
+        if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("invalid runner acknowledgement");
         settled = true;
         clearTimeout(watchdog);
-        reject(error instanceof Error ? error : new Error(String(error)));
-      };
-      const finish = () => {
-        if (settled) return;
-        try {
-          if (!output.endsWith("\n")) throw new Error("runner acknowledgement is truncated");
-          const result = JSON.parse(output) as {
-            status?: unknown;
-            receipt_id?: unknown;
-            diagnostics?: unknown;
-            reason?: unknown;
-          };
-          let outcome: CompletionOutcome;
-          if (result.status === "accepted" && typeof result.receipt_id === "string" && result.receipt_id.length > 0) {
-            outcome = { status: "accepted", receipt_id: result.receipt_id };
-          } else if (result.status === "human_authorization_required") {
-            outcome = { status: "human_authorization_required" };
-          } else if (result.status === "invalid_outputs" && Array.isArray(result.diagnostics) && result.diagnostics.every((item) => typeof item === "string")) {
-            outcome = { status: "invalid_outputs", diagnostics: result.diagnostics };
-          } else if (result.status === "rejected" && typeof result.reason === "string" && result.reason.length > 0) {
-            outcome = { status: "rejected", reason: result.reason };
-          } else {
-            throw new Error("runner delivery failed");
-          }
-          settled = true;
-          clearTimeout(watchdog);
-          resolve(outcome);
-        } catch (error) {
-          fail(error);
-        }
-      };
-      const watchdog = setTimeout(() => {
-        child.kill();
-        fail(new Error("runner acknowledgement timed out"));
-      }, 6_000); // Runner's completion ACK deadline is 5s; allow startup and pipe drain.
-
-      child.stdout?.setEncoding("utf8");
-      child.stdout?.on("data", (chunk) => {
-        outputBytes += Buffer.byteLength(chunk, "utf8");
-        if (outputBytes > 64 * 1024) {
-          child.kill();
-          fail(new Error("runner acknowledgement exceeds 64 KiB"));
-          return;
-        }
-        output += chunk;
-      });
-      child.on("error", fail);
-      child.on("close", finish);
-      child.stdin?.on("error", fail);
-      child.stdout?.on("error", fail);
-      try {
-        // @types/node declares this callback as `() => void`, but node really does invoke
-        // it with a write error. Declaring the parameter optional keeps the runtime
-        // behaviour and satisfies the narrower published signature.
-        child.stdin?.end(JSON.stringify(event), "utf8", (error?: Error | null) => {
-          if (!error) return;
-          child.kill();
-          fail(error);
-        });
-      } catch (error) {
-        child.kill();
-        fail(error);
+        resolve({ result: result as Record<string, unknown>, code });
+      } catch {
+        fail(new Error("invalid runner acknowledgement"));
       }
     });
+    child.stdin?.on("error", fail);
+    child.stdout?.on("error", fail);
+    try {
+      child.stdin?.end(JSON.stringify(event), "utf8", (error?: Error | null) => {
+        if (!error) return;
+        child.kill();
+        fail(error);
+      });
+    } catch {
+      child.kill();
+      fail();
+    }
+  });
+}
+
+export function makeProductionCompletionEmitter(config: RunnerConfig | undefined): CompletionEmitter {
+  return async (event) => {
+    const { result } = await emitAcknowledged(config, event);
+    if (result.status === "accepted" && typeof result.receipt_id === "string" && result.receipt_id.length > 0) {
+      return { status: "accepted", receipt_id: result.receipt_id };
+    }
+    if (result.status === "human_authorization_required") return { status: "human_authorization_required" };
+    if (result.status === "invalid_outputs" && Array.isArray(result.diagnostics) && result.diagnostics.every((item) => typeof item === "string")) {
+      return { status: "invalid_outputs", diagnostics: result.diagnostics };
+    }
+    if (result.status === "rejected" && typeof result.reason === "string" && result.reason.length > 0) {
+      return { status: "rejected", reason: result.reason };
+    }
+    throw new Error("runner delivery failed");
+  };
+}
+
+export function makeProductionSessionNameEmitter(config: RunnerConfig | undefined): SessionNameEmitter {
+  return async (event) => {
+    const { result, code } = await emitAcknowledged(config, event).catch(() => {
+      throw new Error("Session name delivery failed");
+    });
+    if (result.status === "rejected" && typeof result.reason === "string") {
+      throw new Error(`Session name rejected: ${result.reason.slice(0, 300)}`);
+    }
+    if (code !== 0 || (result.status !== "saved" && result.status !== "unchanged") || Object.keys(result).some((key) => key !== "status" && key !== "value")) {
+      throw new Error("Session name delivery failed");
+    }
+    const value = result.value;
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid session name acknowledgement");
+    const record = value as Record<string, unknown>;
+    if (
+      typeof record.name !== "string" ||
+      !record.name.trim() ||
+      (record.source !== "auto" && record.source !== "user") ||
+      Object.keys(record).some((key) => key !== "name" && key !== "source")
+    ) {
+      throw new Error("Invalid session name acknowledgement");
+    }
+    return { status: result.status, value: { name: record.name, source: record.source } };
   };
 }
 
 // ---------- callback registration ----------
 
 /**
- * Register all Alinery OMP callbacks and the alinery_phase_complete and alinery_ask_approval tools against api.
+ * Register Alinery lifecycle callbacks and completion, approval, and eligible naming tools.
  * Exported for testability: tests supply a fake api and emitter.
  */
-export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompletion: CompletionEmitter, protectedHost: string | undefined, initialPtyPrompt?: string): void {
+export function registerCallbacks(
+  api: OmpExtensionAPI,
+  emit: Emitter,
+  emitCompletion: CompletionEmitter,
+  protectedHost: string | undefined,
+  initialPtyPrompt?: string,
+  emitSessionName?: SessionNameEmitter,
+): void {
   let shutdownSessionId: string | undefined;
   let pendingPtyPrompt = initialPtyPrompt;
+  if (emitSessionName) {
+    let named = false;
+    api.on("before_agent_start", (payload) =>
+      named
+        ? undefined
+        : {
+            systemPrompt: [
+              ...payload.systemPrompt,
+              "As one of your first useful actions, identify this session's requested work and call alinery_set_session_name with a concise purpose-specific phrase. Read assigned ticket/context first if necessary; defer if intent is unknown, but do not wait until the work is finished. Prefer fewer than 30 characters; never exceed 40. Do not use a generic workflow/type label.",
+            ],
+          },
+    );
+    api.registerTool({
+      name: "alinery_set_session_name",
+      label: "Name session",
+      description: "Suggest this session's short work name. An existing name, including a human correction, is preserved.",
+      parameters: api.zod.z.object({ name: api.zod.z.string() }),
+      async execute(_toolCallId, input) {
+        if (typeof input.name !== "string") throw new Error("Session name must be text");
+        const outcome = await emitSessionName({ type: "session_name_suggested", name: input.name });
+        named = true;
+        return { content: [{ type: "text", text: `Session name: ${outcome.value.name}` }], details: { ...outcome } };
+      },
+    });
+  }
   api.on("session_start", async (_payload, context) => {
     shutdownSessionId = undefined;
     if (pendingPtyPrompt !== undefined) {
@@ -572,13 +645,16 @@ export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompl
     description:
       "Request an explicit Allow/Deny for a binary go/no-go, especially when checks failed or something is blocked. " +
       "Do not use this instead of fixing issues the agent can fix itself. Do not dump a table as the question. " +
-      "After Deny, do not proceed with the gated action. For multi-option questions use ask.",
+      "After Deny or unavailable approval, do not proceed with the gated action. For multi-option questions use ask. " +
+      "Before alinery_save_playbook, review the complete source with the user and request approval for that exact source and " +
+      "destination (scope and key), explicitly stating create versus replace. Recommend global scope unless repo-local is intended. " +
+      "Material source or destination changes require renewed approval. This is an agent-followed gate, not a backend approval receipt.",
     parameters: api.zod.z.object({ title: api.zod.z.string(), message: api.zod.z.string() }),
     async execute(toolCallId: string, input: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, context: OmpExtensionContext) {
       const title = typeof input.title === "string" && input.title !== "" ? input.title : "Approval required";
       const message = typeof input.message === "string" && input.message !== "" ? input.message : "Approval needed.";
       const ui = context.ui;
-      if (typeof ui?.confirm !== "function") {
+      if (context.hasUI === false || typeof ui?.confirm !== "function") {
         return {
           content: [{ type: "text" as const, text: "Approval UI is unavailable. Do not proceed with the gated action." }],
           details: { approved: false, status: "unavailable" },
@@ -587,8 +663,10 @@ export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompl
 
       await safeEmit(emit, { type: "waiting_for_approval", correlation_id: toolCallId });
       try {
+        // RPC UI methods use instance state; never detach confirm from its receiver.
         const ok = await ui.confirm(title, message);
-        if (ok) {
+        // The native Allow button sends true; no other (even truthy) response grants approval.
+        if (ok === true) {
           return {
             content: [{ type: "text" as const, text: "User approved. You may proceed with the gated action." }],
             details: { approved: true },
@@ -597,6 +675,12 @@ export function registerCallbacks(api: OmpExtensionAPI, emit: Emitter, emitCompl
         return {
           content: [{ type: "text" as const, text: "User denied. Do not proceed with the gated action." }],
           details: { approved: false },
+        };
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text" as const, text: `Approval UI is unavailable: ${reason}. Do not proceed with the gated action.` }],
+          details: { approved: false, status: "unavailable" },
         };
       } finally {
         await safeEmit(emit, { type: "busy", correlation_id: toolCallId });
@@ -629,5 +713,12 @@ export default function (api: OmpExtensionAPI): void {
   const protectedHost = captureProtectedHost();
   const initialPtyPrompt = captureInitialPtyPrompt();
   const config = captureRunnerConfig();
-  registerCallbacks(api, makeProductionEmitter(config), makeProductionCompletionEmitter(config), protectedHost, initialPtyPrompt);
+  registerCallbacks(
+    api,
+    makeProductionEmitter(config),
+    makeProductionCompletionEmitter(config),
+    protectedHost,
+    initialPtyPrompt,
+    config?.sessionNaming ? makeProductionSessionNameEmitter(config) : undefined,
+  );
 }

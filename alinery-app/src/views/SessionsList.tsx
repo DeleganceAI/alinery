@@ -2,6 +2,7 @@ import { ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
+import { NameEditor } from "../NameEditor";
 import {
   hasAcknowledgedExit,
   orderSessionListItems,
@@ -15,7 +16,7 @@ import {
   sessionUpdatedAt,
 } from "../sessionAttention";
 import { Checkbox, EmptyState, harnessDisplayName, InlineStatus, KillButton, LoadingState, repoName, SessionTimestamp, StatusDot, sameSessionMetas, useMinuteNow } from "../shared";
-import type { BoardNav, SessionListItem, SessionObservation, SessionStatusRef } from "../types";
+import type { BoardNav, NameCommit, SessionListItem, SessionObservation, SessionStatusRef } from "../types";
 import { useSessionSort } from "../useSessionSort";
 
 const rowKey = sessionListItemKey;
@@ -28,6 +29,7 @@ function sameSessionListItems(left: SessionListItem[], right: SessionListItem[])
       return (
         item.task_slug === other.task_slug &&
         item.task_name === other.task_name &&
+        item.subtask_name === other.subtask_name &&
         item.task_worktree === other.task_worktree &&
         item.repo_path === other.repo_path &&
         item.playbook_title === other.playbook_title &&
@@ -47,6 +49,7 @@ export function SessionsList({
   onCreateTask,
   sessionSort: controlledSessionSort,
   onSessionSortChange,
+  onNameCommitted,
 }: {
   allRepos: boolean;
   activeRepo: string;
@@ -56,6 +59,7 @@ export function SessionsList({
   onCreateTask: () => void;
   sessionSort?: SessionSort;
   onSessionSortChange?: (sort: SessionSort) => void;
+  onNameCommitted?: (change: NameCommit) => void;
 }) {
   const [items, setItems] = useState<SessionListItem[]>([]);
   const [observations, setObservations] = useState<Record<string, SessionObservation>>({});
@@ -73,6 +77,24 @@ export function SessionsList({
   const [taskCount, setTaskCount] = useState<number | null>(null);
   const itemsRef = useRef<SessionListItem[]>([]);
   const statusRequest = useRef(0);
+  const itemRequest = useRef(0);
+  const scopeVersion = useRef(0);
+  const scopeKey = `${allRepos}:${activeRepo}:${showArchived}`;
+  const currentScope = useRef(scopeKey);
+  if (currentScope.current !== scopeKey) {
+    currentScope.current = scopeKey;
+    scopeVersion.current += 1;
+    itemRequest.current += 1;
+    statusRequest.current += 1;
+  }
+  const [editingKey, setEditingKey] = useState("");
+  const renameTrigger = useRef<HTMLButtonElement | null>(null);
+  const editorVersion = useRef(0);
+  const closeEditor = () => {
+    editorVersion.current += 1;
+    setEditingKey("");
+    renameTrigger.current?.focus();
+  };
 
   const refreshStatuses = (rows: SessionListItem[]) => {
     const statusRows = rows.filter((item) => !item.archived);
@@ -95,22 +117,50 @@ export function SessionsList({
       });
   };
 
-  const load = () =>
-    ipc
-      .listSessionItems(allRepos, showArchived)
-      .then((rows) => {
-        itemsRef.current = rows;
-        setItems((current) => (sameSessionListItems(current, rows) ? current : rows));
-        setSelectedKey((prev) => (prev && rows.some((row) => rowKey(row) === prev) ? prev : rows[0] ? rowKey(rows[0]) : ""));
-        setErr("");
-        refreshStatuses(rows);
-      })
-      .catch((e) => setErr(String(e)))
-      .finally(() => setLoaded(true));
+  const load = async () => {
+    const version = scopeVersion.current;
+    const request = ++itemRequest.current;
+    const current = () => version === scopeVersion.current && request === itemRequest.current;
+    try {
+      const rows = await ipc.listSessionItems(allRepos, showArchived, activeRepo);
+      if (!current()) return;
+      itemsRef.current = rows;
+      setItems((previous) => (sameSessionListItems(previous, rows) ? previous : rows));
+      setSelectedKey((prev) => (prev && rows.some((row) => rowKey(row) === prev) ? prev : rows[0] ? rowKey(rows[0]) : ""));
+      setErr("");
+      void refreshStatuses(rows);
+    } catch (error) {
+      if (current()) setErr(String(error));
+    } finally {
+      if (current()) setLoaded(true);
+    }
+  };
+
+  const saveName = async (item: SessionListItem, name: string) => {
+    const version = scopeVersion.current;
+    const editor = editorVersion.current;
+    const value = await ipc.renameSession({ repoPath: item.repo_path, taskSlug: item.task_slug, sessionId: item.id, name });
+    if (version === scopeVersion.current) {
+      itemRequest.current += 1;
+      const rows = itemsRef.current.map((row) => (rowKey(row) === rowKey(item) ? { ...row, name: value.name, name_source: value.source, name_error: null } : row));
+      itemsRef.current = rows;
+      setItems(rows);
+      if (editor === editorVersion.current) closeEditor();
+      void load();
+    }
+    onNameCommitted?.({ kind: "session", repo_path: item.repo_path, task_slug: item.task_slug, session_id: item.id, value });
+  };
 
   useEffect(() => {
+    itemsRef.current = [];
+    setItems([]);
+    setObservations({});
+    setSelectedKey("");
+    setErr("");
+    setLoaded(false);
     let alive = true;
     let timer = 0;
+    setEditingKey("");
     const poll = () => {
       load().finally(() => {
         if (alive) timer = window.setTimeout(poll, 3000);
@@ -119,9 +169,12 @@ export function SessionsList({
     poll();
     return () => {
       alive = false;
+      scopeVersion.current += 1;
+      itemRequest.current += 1;
+      statusRequest.current += 1;
       window.clearTimeout(timer);
     };
-  }, [allRepos, showArchived]);
+  }, [allRepos, activeRepo, showArchived]);
 
   const empty = loaded && items.length === 0;
 
@@ -137,7 +190,7 @@ export function SessionsList({
     return () => {
       alive = false;
     };
-  }, [empty, allRepos]);
+  }, [empty, allRepos, activeRepo]);
 
   useEffect(() => {
     let alive = true;
@@ -300,10 +353,12 @@ export function SessionsList({
               >
                 <span className="idx">{String(i + 1).padStart(2, "0")}</span>
                 <div className="rt">
-                  <div className="rtt" title={item.task_name}>
-                    {item.task_name}
+                  <div className="rtt" title={item.name || item.task_name}>
+                    {item.name || item.task_name}
                   </div>
                   <div className="meta">
+                    {item.name && <span>{item.task_name}</span>}
+                    {item.subtask_manager && <span>{item.subtask_name || item.subtask_slug || "Sub-task setup"}</span>}
                     {item.archived && <span className="pill task-archived">Archived</span>}
                     {sessionType === "No step" ? (
                       <span className="pill">No step</span>
@@ -333,6 +388,31 @@ export function SessionsList({
                     {!item.archived && <KillButton id={item.id} slug={item.task_slug} repoPath={item.repo_path} live={item.repo_path === activeRepo && isLive} onKilled={load} />}
                     {resumedBy && <span className="pill dim">Resumed</span>}
                   </div>
+                  {item.name_error && (
+                    <InlineStatus tone="error" detail={item.name_error}>
+                      Could not read session name.
+                    </InlineStatus>
+                  )}
+                  <button
+                    type="button"
+                    className="btn ghost small"
+                    aria-label="Rename session"
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (editingKey === key) return;
+                      renameTrigger.current = event.currentTarget;
+                      editorVersion.current += 1;
+                      setEditingKey(key);
+                    }}
+                  >
+                    Rename
+                  </button>
+                  {editingKey === key && (
+                    <NameEditor key={`${scopeKey}:${key}`} value={item.name || ""} label="Session name" onSave={(name) => saveName(item, name)} onCancel={closeEditor} />
+                  )}
                   <div className="rts" title={sessionDetail}>
                     {sessionDetail}
                   </div>

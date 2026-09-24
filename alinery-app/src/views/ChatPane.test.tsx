@@ -2,7 +2,7 @@ import { render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ACTOR, type ChatEntry, subagent } from "../chat/types";
-import { DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
+import { chatVisibilityFromAppearance, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
 import { ChatPane } from "./ChatPane";
 
 const at = Date.parse("2026-09-05T12:11:00Z");
@@ -12,6 +12,30 @@ function pane(entries: ChatEntry[], visibility = DEFAULT_CHAT_VISIBILITY, status
 }
 
 describe("ChatPane", () => {
+  it("updates block copy controls on existing replies without hiding whole-message copying", () => {
+    const entries: ChatEntry[] = [{ id: "copy", at, actor: ACTOR.agent, type: "text", text: "```sh\nsudo ls\n```\n\n> Quoted advice" }];
+    const view = render(<ChatPane entries={entries} visibility={chatVisibilityFromAppearance({})} />);
+    expect(view.getByRole("button", { name: "Copy code block" })).toBeTruthy();
+    expect(view.getByRole("button", { name: "Copy quote" })).toBeTruthy();
+
+    view.rerender(<ChatPane entries={entries} visibility={chatVisibilityFromAppearance({ chat_show_block_copy_buttons: false })} />);
+    expect(view.queryByRole("button", { name: "Copy code block" })).toBeNull();
+    expect(view.queryByRole("button", { name: "Copy quote" })).toBeNull();
+    expect(view.getByRole("button", { name: "Copy message" })).toBeTruthy();
+    expect(view.getByText("sudo ls")).toBeTruthy();
+    expect(view.getByText("Quoted advice")).toBeTruthy();
+
+    view.rerender(<ChatPane entries={entries} visibility={chatVisibilityFromAppearance({ chat_show_block_copy_buttons: true })} />);
+    expect(view.getByRole("button", { name: "Copy code block" })).toBeTruthy();
+    expect(view.getByRole("button", { name: "Copy quote" })).toBeTruthy();
+
+    view.rerender(<ChatPane entries={entries} visibility={chatVisibilityFromAppearance({ chat_show_copy_buttons: false })} />);
+    expect(view.queryByRole("button", { name: "Copy message" })).toBeNull();
+    expect(view.getByRole("button", { name: "Copy code block" })).toBeTruthy();
+    expect(view.getByRole("button", { name: "Copy quote" })).toBeTruthy();
+    view.unmount();
+  });
+
   it("renders thinking, text, and a tool card without flattening", () => {
     const html = pane(
       [
@@ -77,8 +101,14 @@ describe("ChatPane", () => {
     expect(html).toContain("redacted");
     expect(html).toContain("git push origin chat-pane");
     expect(html).toContain("Allow");
-    expect(html).toContain("subagents · 1 running");
+    expect(html).toContain("subagents · 1");
+    // `toContain("subagents · 1")` is a substring of the old "subagents · 1 running", so the
+    // blanket claim needs its own negative assertion to be discriminating.
+    expect(html).not.toContain("subagents · 1 running");
     expect(html).toContain("Drafting composer grow rules");
+    // The card no longer prints the subagent's origin (`agentSource`, stored as `role`) in the
+    // status position; the journal rail renders `plan running`, never the role.
+    expect(html).not.toContain("architect");
     expect(html).not.toContain("/compact");
   });
 
