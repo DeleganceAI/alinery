@@ -99,7 +99,7 @@ auto_advance_default = true
 
 # Academic Survey
 
-A separate playbook for section-by-section review; it does not replace Systematic Evidence Review or register itself in the bundled picker.
+A bundled academic survey workflow with per-source reading sessions and iterative citation discovery. It is separate from Systematic Evidence Review.
 
 Frame once, then repeat: plan a wave → parallel discovery → deduplicate → one reading session per source → consolidate → update the survey → continue or pause with the human.
 

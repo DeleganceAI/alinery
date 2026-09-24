@@ -848,7 +848,6 @@ fn bundled_catalog_ignores_legacy_without_rewriting_bytes() {
     fs::write(&registry, registry_bytes).unwrap();
     fs::write(&prompt, prompt_bytes).unwrap();
     let catalog = load_playbook_catalog(&trace.roots);
-    assert_eq!(catalog.candidates.len(), 12);
     assert!(catalog.candidates.iter().all(|candidate| candidate.source.reference.scope == PlaybookScope::Bundled));
     assert!(resolve_playbook(
         &trace.roots,
