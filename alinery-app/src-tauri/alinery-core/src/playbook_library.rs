@@ -19,10 +19,9 @@ pub const BUNDLED_PLAYBOOKS: &[(&str, &str)] = &[
     ("generic-session", include_str!("../../playbooks/generic-session/playbook.md")),
     ("natural-planning-brainstorm", include_str!("../../playbooks/natural-planning-brainstorm/playbook.md")),
     ("systematic-naming", include_str!("../../playbooks/systematic-naming/playbook.md")),
-    ("parallel-numbers", include_str!("../../playbooks/parallel-numbers/playbook.md")),
-    ("parallel-squares", include_str!("../../playbooks/parallel-squares/playbook.md")),
     ("primed-feature-development", include_str!("../../playbooks/primed-feature-development/playbook.md")),
     ("systematic-evidence-review", include_str!("../../playbooks/systematic-evidence-review/playbook.md")),
+    ("build-playbook", include_str!("../../playbooks/build-playbook/playbook.md")),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

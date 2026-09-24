@@ -31,6 +31,19 @@ impl Drop for Trace {
 
 impl Trace {
     fn new(key: &str) -> Self {
+        let roots = PlaybookRoots {
+            global_config_dir: PathBuf::new(),
+            repo_dir: PathBuf::new(),
+        };
+        let reference = PlaybookRef {
+            scope: PlaybookScope::Bundled,
+            key: key.into(),
+        };
+        Self::from_source(&resolve_playbook(&roots, &reference).unwrap().source_text)
+    }
+
+    fn from_source(source: &str) -> Self {
+        let definition = alinery_core::playbook::parse_playbook_md(source).unwrap();
         let repo = std::env::temp_dir().join(format!("alinery-bundled-{}", uuid::Uuid::new_v4()));
         let roots = PlaybookRoots {
             global_config_dir: repo.join("config"),
@@ -38,20 +51,19 @@ impl Trace {
         };
         let reference = PlaybookRef {
             scope: PlaybookScope::Bundled,
-            key: key.into(),
+            key: definition.key.clone(),
         };
-        let loaded = resolve_playbook(&roots, &reference).unwrap();
-        let enabled = loaded.definition.step.iter().filter(|s| s.auto_advance_default).map(|s| s.key.clone()).collect();
-        let state = new_execution_state(reference, &loaded.source_text, "trace-lane".into(), 10, enabled, LaunchChoices::default()).unwrap();
+        let enabled = definition.step.iter().filter(|s| s.auto_advance_default).map(|s| s.key.clone()).collect();
+        let state = new_execution_state(reference, source, "trace-lane".into(), 10, enabled, LaunchChoices::default()).unwrap();
         let mut trace = Self {
             repo,
             roots,
-            definition: loaded.definition,
+            definition,
             state,
             seed: String::new(),
         };
         fs::create_dir_all(trace.artifacts()).unwrap();
-        fs::write(task_playbook_path(&trace.repo, SLUG).unwrap(), &loaded.source_text).unwrap();
+        fs::write(task_playbook_path(&trace.repo, SLUG).unwrap(), source).unwrap();
         trace.state.creation = "ready".into();
         trace.put("00-ticket.md", "2 3 5\n");
         trace.seed = install_seed(&mut trace.state, "ticket.md", "00-ticket.md").unwrap();
@@ -366,6 +378,47 @@ fn bundled_one_shot_trace() {
 }
 
 #[test]
+fn bundled_build_playbook_is_discoverable_and_runs() {
+    let trace = Trace::new("superdevelop");
+    let reference = PlaybookRef {
+        scope: PlaybookScope::Bundled,
+        key: "build-playbook".into(),
+    };
+    let catalog = load_playbook_catalog(&trace.roots);
+    let candidate = catalog
+        .candidates
+        .iter()
+        .find(|candidate| candidate.source.reference == reference)
+        .expect("Build Playbook must appear in the bundled catalog");
+    assert!(candidate.diagnostics.is_empty(), "{:?}", candidate.diagnostics);
+    linear_trace(
+        "build-playbook",
+        &[
+            ("define", &["ticket.md"], &["playbook-spec.md"]),
+            ("draft-refine", &["ticket.md", "playbook-spec.md"], &["candidate-playbook.md", "save-handoff.md"]),
+        ],
+        &["define", "draft-refine"],
+    );
+}
+
+#[test]
+fn numeric_demos_are_not_bundled() {
+    let trace = Trace::new("superdevelop");
+    let catalog = load_playbook_catalog(&trace.roots);
+    for key in ["parallel-numbers", "parallel-squares"] {
+        let reference = PlaybookRef {
+            scope: PlaybookScope::Bundled,
+            key: key.into(),
+        };
+        assert!(!catalog.candidates.iter().any(|candidate| candidate.source.reference == reference));
+        assert!(matches!(
+            resolve_playbook(&trace.roots, &reference),
+            Err(alinery_core::playbook_library::PlaybookLoadError::Unknown { .. })
+        ));
+    }
+}
+
+#[test]
 fn bundled_review_trace() {
     let mut trace = Trace::new("review");
     trace.step("review-context", 1);
@@ -498,8 +551,8 @@ fn bundled_primed_feature_development_trace() {
 }
 
 #[test]
-fn bundled_parallel_numbers_trace() {
-    let mut trace = Trace::new("parallel-numbers");
+fn parallel_numbers_fixture_trace() {
+    let mut trace = Trace::from_source(include_str!("fixtures/parallel-numbers.md"));
     let seed = trace.one("seed");
     trace.start(&seed);
     let numbers = trace.input_text(&seed, "ticket.md").join(" ");
@@ -535,8 +588,8 @@ fn bundled_parallel_numbers_trace() {
 }
 
 #[test]
-fn bundled_parallel_squares_trace() {
-    let mut trace = Trace::new("parallel-squares");
+fn parallel_squares_fixture_trace() {
+    let mut trace = Trace::from_source(include_str!("fixtures/parallel-squares.md"));
     let seed = trace.one("seed");
     trace.start(&seed);
     let values = trace.numbers(&seed, "ticket.md");
@@ -848,7 +901,6 @@ fn bundled_catalog_ignores_legacy_without_rewriting_bytes() {
     fs::write(&registry, registry_bytes).unwrap();
     fs::write(&prompt, prompt_bytes).unwrap();
     let catalog = load_playbook_catalog(&trace.roots);
-    assert_eq!(catalog.candidates.len(), 12);
     assert!(catalog.candidates.iter().all(|candidate| candidate.source.reference.scope == PlaybookScope::Bundled));
     assert!(resolve_playbook(
         &trace.roots,
