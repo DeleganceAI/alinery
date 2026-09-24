@@ -22,59 +22,6 @@
 
 **Put a team of agents to work with a Playbook.** Give them a process, steer the important decisions, and build on the results. Playbooks define a ready-to-execute team of agents: who does what, how their work fits together, and where you step in to review or decide. Choose a Playbook for your task and adapt it to the way you want to work. Each task keeps its sessions, decisions, and artifacts together, so you can go down rabbit holes without losing track of the main task or the progress you’ve made.
 
-## Playbook library
-
-The **Playbooks** tab opens a full-page library table with playbook icons, names, descriptions, source badges, last-modified dates, and repository preference checkboxes. Search by name, description, or scoped key. Click **Playbook Name**, **Source**, **Last modified**, or **Preferred for this repo** to sort by that column; click the active header again to reverse direction. Its arrow shows the current direction. Names and sources start A–Z, dates newest first, and preferences preferred first. Entries without a known date show **—** and are treated as oldest: first in oldest-first order, last in newest-first order. **Preferred only** filters the list without changing membership or shortlist order.
-
-Click a playbook's name to open its saved-definition graph and editor in a full-width workspace, replacing the library. **Back to playbooks** restores the search, sort, preferred filter, and library scroll position. Unsaved edits require an explicit discard before returning. New/import actions remain at the top right.
-
-**Flow** is the default graph mode in Playbooks, the selected Create Task card, and Task detail's Graph view. It shows dependency ordering with step names, forks, joins, and dashed return paths. For acyclic graphs, transitive reduction removes arrows whose ordering is already explained by another path: bundled PRIMED Feature Development shows five arrows rather than fifteen. Connections come from actual artifact selectors, never document order. If the graph contains a cycle or self-loop, Flow conservatively retains all connections.
-
-Flow is an ordering visualization, **not artifact forwarding**: an omitted arrow does not remove a direct input or mean an intermediate step supplies it. Switch to **Artifact dependencies** for the complete declared producer/consumer map. Artifact names start hidden; hover a step or connection, or select a step, to reveal relevant names. **Focus connections** shows only connections entering or leaving the selected step, keeping all nodes visible and their positions unchanged. Switching modes retains step selection and pan/zoom; focusing never refits the graph. Use **Fit graph** when you want to fit the current mode's layout.
-
-The Playbooks inspector always shows full, exact inputs, outputs, and connections in either mode, including arrows omitted from Flow. Select any step to inspect its prompt, coding flag, and automatic-completion default. Wildcard `each` workers appear as three illustrative instances with an ellipsis, converging on their consumers; actual instance counts are not fixed. Selecting any example inspects the shared definition. These are static definition graphs, not live execution traces or graph editors; display choices do not change artifact assignments, scheduling, or execution permissions.
-
-Drag the divider between the graph and description to resize them. The focused divider also supports Left/Right arrows and Home/End. The chosen split is retained while browsing playbooks and switching between Graph and Editor.
-
-Graphs in **Playbooks**, **Create Task**, and **Task detail → Graph** use a shared pan/zoom canvas. Scroll over the graph to zoom around the pointer (5–800%); drag its background, or middle-drag anywhere, to pan. **Fit graph** shows the whole layout and **Reset zoom** returns to 100%. **Pan** focuses the canvas for keyboard control: arrows move the view, +/− zoom, and Escape returns to the controls. Step buttons remain keyboard-accessible, and the inspector stays at its normal text size.
-
-Create Task graph previews have a bounded canvas so large workflows do not bury the remaining cards. The mouse wheel zooms while over the canvas; scroll outside it to move through the sidebar. Selection still expands only the chosen card without removing other candidates.
-
-**Editor** fills the remaining vertical space and shows the complete `playbook.md` with soft-wrapped text, aligned source line numbers, and simple TOML/Markdown highlighting. Switching views retains unsaved changes; the graph updates only after a validated save succeeds. Bundled documents are read-only: choose **Make a copy to edit**, then a destination scope and key. **Import** accepts a local file or pasted source. Library edits and deletion affect future task selections, never existing tasks' retained definitions.
-
-The top-right action group keeps **New playbook**, **Import**, **Create task from this playbook**, **Make a copy**, **Save definition**, and **Validate** together. New/import remain available before selecting a definition; save/validate appear only for editable definitions. Import options expand beneath the toolbar.
-
-With a saved definition open, **Create task from this playbook** opens the normal Create Task page with that exact scoped playbook selected and placed first, even if it is not preferred. This temporary display order does not change saved preferences; selecting another card does not reshuffle the list. It does not create a task or start a session immediately, change the default, or add the playbook to preferred entries. Fill in the task details and submit normally; Cancel returns to the selected playbook. Save unsaved edits first. The action requires an active repository matching the open definition's library context.
-
-For the selected repository, mark definitions **Preferred for this repo** directly in the table without opening them. Library sorting never changes the saved Create Task shortlist order; existing ordering metadata is retained, but the library does not expose manual reordering controls. Preferences use the existing picker metadata at `.alinery/playbooks/picker.toml`; other repositories and the default selection in **Settings → Playbooks** remain unchanged. Existing global picker metadata is not inherited by new repositories, and nonpreferred definitions remain in the full library.
-
-**Create Task** shows that ordered shortlist, with the selected definition graph directly beneath its card. Selecting a card expands it vertically and collapses the previous graph without changing the current list or search. Focus a card and use Up/Down arrows to select another, or scroll the sidebar and click. **Browse all playbooks** and **Back to preferred** explicitly switch views without changing the task draft. Returning to preferred retains a nonpreferred selection as an extra card for that visit; selecting another card does not remove it or save preferred membership. Repositories without preferences open the library directly. The task form and the whole sidebar scroll independently; the cards do not have a separate scrolling list.
-
-In **Task detail → Playbook**, **List** remains the default, showing active counts and automatic-completion settings. **Graph** displays only the task's retained definition with the same **Flow** and **Artifact dependencies** modes, without a step inspector or divider. Select a step to highlight its connections; in Artifact dependencies, use **Focus connections** to isolate them. The full Playbooks library keeps its step inspector. The unchanged list's **Artifact dependencies** section describes output-to-input connections, not automatic-completion decisions.
-
-Task detail's right-side **History** tab shows execution states, assigned inputs/outputs, and completion permissions. History scrolls independently from the sessions table on the left. Long task metadata is also scrollable without pushing sessions out of view.
-
-The sessions toolbar shows **N queued** immediately before **Priority**. It counts executions whose start was requested and which are still queued; deliberately held sessions are excluded. The count updates with task state and includes zero once loaded.
-
-For a human-gated running session, **Allow this session to complete** is visible beside the execution disclosure even when it is collapsed. This grants permission only; the agent still needs to request completion after finishing its assigned outputs.
-
-Each v2 task retains one validated `playbook.md`, one dedicated worktree, and file-backed
-`execution.json` state. The daemon schedules concrete artifact bindings, including fan-out,
-complete-set merges, and fresh-artifact loops. Coding ownership and the task's live-session
-capacity remain held through human review and confirmed process shutdown.
-
-Task creation checks local Git branches and durable task branch reservations before recording
-new intent. Exact names and slash-prefix conflicts are deduplicated with numeric suffixes when
-possible (`feat/one` can make a requested `feat` become `feat-1`). If an existing or reserved
-parent branch blocks every suffix (`feat` blocks `feat/one`), choose a branch outside that
-namespace. Child-task identities are never silently renamed. Git errors fail preflight; later
-failures, including races with external Git writers, still retain partial-task recovery evidence.
-
-Reusable definitions live in bundled, global, and repository scopes; identical keys do not
-shadow each other. Legacy `playbooks.toml` and split prompt files remain untouched in user
-repositories but are not v2 runtime inputs. Historical pre-v2 tasks remain readable; launching
-them requires explicit recreation rather than automatic migration or a fallback definition.
-
 ## Install
 
 For **macOS on Apple Silicon** and **Linux on x86_64**:

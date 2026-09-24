@@ -117,6 +117,7 @@ function ChatPaneImpl({
                 showDate={visibility.showDate}
                 showTime={visibility.showTime}
                 showActorLabels={visibility.showActorLabels}
+                showBlockCopyButtons={visibility.showBlockCopyButtons}
                 showCopyButton={visibility.showCopyButtons}
               />
             </li>

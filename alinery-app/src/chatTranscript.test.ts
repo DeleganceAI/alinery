@@ -521,6 +521,77 @@ describe("subagent envelopes", () => {
     });
     expect(next.entries.filter((entry) => entry.type === "subagent_status")).toHaveLength(1);
   });
+
+  // The progress snapshot is the only frame carrying live activity. `currentTool` is set on
+  // tool_execution_start and cleared on tool_execution_end, so a running agent with no current
+  // tool is reasoning between calls.
+  it("labels a running subagent that is executing a tool", () => {
+    const state = applyRpcLine(emptyTranscript(), {
+      type: "subagent_progress",
+      payload: {
+        agent: "Explore",
+        agentSource: "bundled",
+        progress: { id: "sa-1", status: "running", currentTool: "read", lastIntent: "Search the repo", toolCount: 3, durationMs: 1500 },
+      },
+    });
+    const cards = collectLiveSubagents(state.entries);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.activity).toBe("using read");
+    expect(cards[0]?.tools).toBe(3);
+    expect(cards[0]?.durationMs).toBe(1500);
+    expect(cards[0]?.preview).toBe("Search the repo");
+  });
+
+  it("labels a running subagent between tools as thinking", () => {
+    const state = applyRpcLine(emptyTranscript(), {
+      type: "subagent_progress",
+      payload: { agent: "Explore", agentSource: "bundled", progress: { id: "sa-1", status: "running", description: "Still searching" } },
+    });
+    const cards = collectLiveSubagents(state.entries);
+    expect(cards[0]?.activity).toBe("thinking");
+    expect(cards[0]?.preview).toBe("Still searching");
+  });
+
+  // OMP stores recentOutput newest-first (executor.ts refreshRecentOutput reverses the tail), so
+  // element 0 is what the subagent is saying now. `description` is an async LLM-generated label.
+  it("prefers the newest output line over the intent and the description", () => {
+    const withOutput = applyRpcLine(emptyTranscript(), {
+      type: "subagent_progress",
+      payload: {
+        agent: "Explore",
+        agentSource: "bundled",
+        progress: { id: "sa-1", status: "running", recentOutput: ["newest line", "older line"], lastIntent: "intent", description: "desc" },
+      },
+    });
+    expect(collectLiveSubagents(withOutput.entries)[0]?.preview).toBe("newest line");
+
+    const withoutOutput = applyRpcLine(withOutput, {
+      type: "subagent_progress",
+      payload: {
+        agent: "Explore",
+        agentSource: "bundled",
+        progress: { id: "sa-1", status: "running", recentOutput: [], lastIntent: "intent", description: "desc" },
+      },
+    });
+    expect(collectLiveSubagents(withoutOutput.entries)[0]?.preview).toBe("intent");
+  });
+
+  // Guard: only a progress snapshot may invent an activity. Lifecycle, event-wrapped, and
+  // hydration frames carry none, and the fold must keep the last real label instead of
+  // replacing it with a fabricated one.
+  it("carries no activity on lifecycle, event, and hydration frames", () => {
+    const lifecycle = applyRpcLine(emptyTranscript(), load("live-subagent_lifecycle.json"));
+    expect(collectLiveSubagents(lifecycle.entries)[0]?.activity).toBeUndefined();
+
+    const wrapped = applyRpcLine(emptyTranscript(), {
+      type: "subagent_lifecycle",
+      event: { id: "sa-3", agent: "Explore", description: "via event", status: "started" },
+    });
+    expect(collectLiveSubagents(wrapped.entries)[0]?.activity).toBeUndefined();
+
+    const hydrated = applyRpcLine(emptyTranscript(), load("live-get_subagents.json"));
+    expect(collectLiveSubagents(hydrated.entries)[0]?.activity).toBeUndefined();
+  });
 });
 
 describe("live assistant GC and journal join", () => {
