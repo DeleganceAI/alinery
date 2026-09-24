@@ -346,24 +346,27 @@ fn status_list_socket(socket_path: std::path::PathBuf, response: Option<&str>) -
             match listener.accept() {
                 Ok((mut stream, _)) => {
                     calls += 1;
-                    let response = response.clone();
-                    std::thread::spawn(move || {
-                        if super::read_socket_line(&mut stream).is_err() {
-                            return;
-                        }
-                        if let Some(response) = response {
-                            // Not `unwrap`: `connect_path_checked` liveness-probes by
-                            // connecting and dropping without reading, so a perfectly
-                            // normal caller hands this thread a broken pipe. Panicking
-                            // killed the listener and every later op then read as a
-                            // daemon that answers nothing — which silently turned a
-                            // protocol-mismatch assertion into a missing-protocol one.
-                            let _ = stream.write_all(response.as_bytes());
-                            let _ = stream.flush();
-                        } else {
-                            std::thread::sleep(Duration::from_millis(1200));
-                        }
-                    });
+                    // Answer here, not on a fresh thread. Observation calls give up after
+                    // 250ms. On a loaded CI runner that new thread often missed the
+                    // budget, so the probe came back as a timeout ("malformed daemon
+                    // reply") instead of the classification this fixture was built to
+                    // return. The liveness probe connects and drops without a line; a
+                    // failed read is that probe, and the listener has to stay up for the
+                    // real request that follows.
+                    if super::read_socket_line(&mut stream).is_err() {
+                        continue;
+                    }
+                    if let Some(response) = &response {
+                        // Not `unwrap`: a caller can close after the read. Panicking
+                        // killed the listener, and every later op then read as a daemon
+                        // that answers nothing — a protocol mismatch turned into a
+                        // missing protocol.
+                        let _ = stream.write_all(response.as_bytes());
+                        let _ = stream.flush();
+                    } else {
+                        // Hold the socket open so the client observes a timeout, not EOF.
+                        std::thread::sleep(Duration::from_millis(1200));
+                    }
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(Duration::from_millis(5));

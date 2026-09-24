@@ -41,12 +41,12 @@ fn durable_board_discovery_keeps_offline_and_archived_owners_and_retained_titles
         Some(&version(PROTOCOL_VERSION, "different-config".into())),
     );
     assert!(crate::task_daemon_for(&repo, "healthy", &app_config).is_ok());
-    assert!(crate::task_daemon_for(&repo, "offline", &app_config).err().unwrap().contains("unreachable"));
-    assert!(crate::task_daemon_for(&repo, "incompatible", &app_config).err().unwrap().contains("repo-protocol-mismatch"));
-    assert!(crate::task_daemon_for(&repo, "foreign-config", &app_config)
-        .err()
-        .unwrap()
-        .contains("repo-app-config-mismatch"));
+    let offline_error = crate::task_daemon_for(&repo, "offline", &app_config).unwrap_err();
+    assert!(offline_error.contains("unreachable"), "{offline_error}");
+    let incompatible_error = crate::task_daemon_for(&repo, "incompatible", &app_config).unwrap_err();
+    assert!(incompatible_error.contains("repo-protocol-mismatch"), "{incompatible_error}");
+    let foreign_error = crate::task_daemon_for(&repo, "foreign-config", &app_config).unwrap_err();
+    assert!(foreign_error.contains("repo-app-config-mismatch"), "{foreign_error}");
     let library = repo.join(".alinery/playbooks/one-shot");
     fs::create_dir_all(&library).unwrap();
     let library_file = library.join("playbook.md");
