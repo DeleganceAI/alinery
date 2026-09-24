@@ -69,7 +69,7 @@ type TaskFacts = {
   createdWindow: string;
 };
 
-type ProgressCell = { key: string; label: string; summary?: string; active?: boolean };
+type ProgressCell = { key: string; label: string; active?: boolean };
 type ExecutionRef = { key: string; repoPath: string; slug: string };
 type MovementHistory = Record<string, Partial<Record<ProgressField, string[]>>>;
 type GridActivityState = TaskActivityStatus | "none";
@@ -535,42 +535,23 @@ function borderTone(field: BorderField, fact: TaskFacts, values: string[], none:
 
 function stagePath(fact: TaskFacts, executions: Record<string, TaskExecutionReply>, knownSteps: BoardTask["playbook_steps"]): ProgressCell[] {
   const execution = executions[fact.id];
-  const states = new Map<string, Map<string, number>>();
+  const activeSteps = new Set<string>();
   if (execution) {
     for (const record of Object.values(execution.state.executions)) {
-      const key = record.candidate.step_key;
-      let counts = states.get(key);
-      if (!counts) {
-        counts = new Map();
-        states.set(key, counts);
+      if (record.lifecycle === "starting" || record.lifecycle === "running" || record.lifecycle === "finishing") {
+        activeSteps.add(record.candidate.step_key);
       }
-      counts.set(record.lifecycle, (counts.get(record.lifecycle) ?? 0) + 1);
     }
   }
   const steps = execution?.definition.step ?? knownSteps;
-  const path: ProgressCell[] = steps.map((step) => {
-    const counts = states.get(step.key);
-    return {
-      key: step.key,
-      label: step.title || step.key,
-      active: Boolean(counts?.has("starting") || counts?.has("running") || counts?.has("finishing")),
-      summary: counts
-        ? [...counts]
-            .sort(([left], [right]) => left.localeCompare(right))
-            .map(([state, count]) => `${count} ${state.replace(/_/g, " ")}`)
-            .join(", ")
-        : !execution
-          ? fact.task.draft
-            ? undefined
-            : "Execution unavailable"
-          : execution.state.enabled_steps.includes(step.key)
-            ? "Not started"
-            : "Not started · Human completion required",
-    };
-  });
+  const path: ProgressCell[] = steps.map((step) => ({
+    key: step.key,
+    label: step.title || step.key,
+    active: activeSteps.has(step.key),
+  }));
   const current = fact.task.current_phase || "";
   if (!path.some((step) => step.key === current)) {
-    path.push({ key: current, label: fact.stage, summary: execution || fact.task.draft ? undefined : "Execution unavailable" });
+    path.push({ key: current, label: fact.stage });
   }
   return path;
 }
@@ -1328,7 +1309,7 @@ export function Grid({
   const groupsWrapWidth = groupTracks * groupOuterWidth + Math.max(0, groupTracks - 1) * config.columnSpacing;
   const planText =
     config.position === "lanes"
-      ? `fixed task lanes · ${config.progress === "stage" ? "playbook declaration order · execution counts when available, not a linear execution history" : `position by ${optionLabel(PROGRESS_OPTIONS, config.progress).toLowerCase()}`}`
+      ? `fixed task lanes · ${config.progress === "stage" ? "playbook declaration order" : `position by ${optionLabel(PROGRESS_OPTIONS, config.progress).toLowerCase()}`}`
       : `outer grid: ${groupTracks} group track${groupTracks === 1 ? "" : "s"} · ${config.columnCards} card${config.columnCards === 1 ? "" : "s"} per column · ${config.columnFlow === "scroll" ? "single scrolling row" : "wrapped rows"} · ${config.width} × ${config.height}px task cells`;
   const fillLegendValues = config.fill === "none" ? [] : orderedFieldValues(config.fill, visibleFacts, columns);
   const borderLegendValues = config.border === "none" ? [] : config.border === "accent" ? ["Accent"] : orderedFieldValues(config.border, visibleFacts, columns);
@@ -1478,7 +1459,6 @@ export function Grid({
                     style={{ gridColumn: visualIndex + 1, gridRow: config.progress === "stage" ? "1" : undefined, opacity: config.progress === "stage" ? 1 : undefined }}
                   >
                     {cell.label}
-                    {cell.summary ? ` · ${cell.summary}` : ""}
                   </span>
                 );
               })}
@@ -1894,7 +1874,7 @@ export function Grid({
             <span>
               {config.position === "lanes"
                 ? config.progress === "stage"
-                  ? "counts = recorded execution states, not step order"
+                  ? "steps = playbook declaration order"
                   : `movement = ${optionLabel(MEMORY_OPTIONS, config.memory)}`
                 : `brightness = ${optionLabel(BRIGHTNESS_OPTIONS, config.fade)}`}
             </span>

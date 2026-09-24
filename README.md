@@ -143,8 +143,8 @@ presets. **Reset column order** restores the default without changing task execu
 For one row per task, choose **Position model → Stable task lanes**, **Progress by →
 Playbook step**, and **Path labels → Every playbook step** (or select **Progress lanes**).
 Each row shows its own playbook's steps in declaration order, with the task card under
-its latest recorded step. Step labels remain visible when execution data is unavailable;
-live counts and completion permissions are shown only when execution data can be read.
+its latest recorded step. Labels show only step names, without execution-status suffixes,
+and remain visible when execution data is unavailable.
 
 ### Sub-tasks
 

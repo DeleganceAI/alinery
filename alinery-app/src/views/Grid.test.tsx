@@ -234,6 +234,7 @@ afterEach(() => {
 
 const columnNames = () =>
   screen.getAllByRole("button", { name: /^(Hide|Expand) .+ column$/ }).map((button) => button.getAttribute("aria-label")?.replace(/^(Hide|Expand) | column$/g, ""));
+const laneStepNames = (lane: HTMLElement) => [...lane.querySelectorAll(".task-grid-lane-step")].map((cell) => cell.textContent);
 
 describe("configurable task grid", () => {
   it("saves named settings across repositories without changing the original preset", async () => {
@@ -487,7 +488,6 @@ describe("configurable task grid", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
     fireEvent.change(screen.getByLabelText("Preset"), { target: { value: "progress" } });
     const lane = screen.getByLabelText("Draft proposal retained steps");
-    expect(within(lane).queryByText(/Execution unavailable/)).toBeNull();
     expect(within(lane).getByRole("button", { name: /Draft proposal/ })).toBeDefined();
   });
 
@@ -702,7 +702,7 @@ describe("configurable task grid", () => {
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ name: "Updated API" }));
   });
 
-  it("reports execution refresh errors without fabricating or discarding other task states", async () => {
+  it("preserves plain step labels across execution loss and recovery while active-step filtering stays accurate", async () => {
     vi.useFakeTimers();
     let failing = false;
     ipcMock.getTaskExecution.mockImplementation(async (slug, repoPath) => {
@@ -711,27 +711,28 @@ describe("configurable task grid", () => {
     });
     render(<Grid allRepos={false} onOpen={() => {}} registerNav={() => {}} initialPreset="progress" />);
     await act(async () => {});
-    expect(within(screen.getByLabelText("Build API retained steps")).getByText(/Research · 1 completed/)).toBeDefined();
+    const lane = screen.getByLabelText("Build API retained steps");
+    expect(laneStepNames(lane)).toEqual(["Research", "Design", "Implementation"]);
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.change(screen.getByLabelText("Path labels"), { target: { value: "next" } });
+    expect(laneStepNames(lane)).toEqual(["Implementation"]);
     failing = true;
     await act(async () => {
       vi.advanceTimersByTime(3000);
     });
     expect(screen.getByRole("alert").textContent).toContain("retained execution unavailable");
-    expect(within(screen.getByLabelText("Build API retained steps")).queryByText(/1 completed/)).toBeNull();
-    const offline = screen.getByLabelText("Build API retained steps");
-    expect([...offline.querySelectorAll(".task-grid-lane-step")].map((cell) => cell.textContent)).toEqual([
-      "Research · Execution unavailable",
-      "Design · Execution unavailable",
-      "Implementation · Execution unavailable",
-    ]);
-    expect(within(offline).queryByText(/Not started|Human completion required/)).toBeNull();
-    expect(within(screen.getByLabelText("Review queue retained steps")).getByText(/Context · 1 completed/)).toBeDefined();
+    expect(laneStepNames(lane)).toEqual([]);
+    expect(laneStepNames(screen.getByLabelText("Review queue retained steps"))).toEqual(["Findings"]);
+    fireEvent.change(screen.getByLabelText("Path labels"), { target: { value: "all" } });
+    expect(laneStepNames(lane)).toEqual(["Research", "Design", "Implementation"]);
     failing = false;
     await act(async () => {
       vi.advanceTimersByTime(3000);
     });
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(within(screen.getByLabelText("Build API retained steps")).getByText(/Research · 1 completed/)).toBeDefined();
+    expect(laneStepNames(lane)).toEqual(["Research", "Design", "Implementation"]);
+    fireEvent.change(screen.getByLabelText("Path labels"), { target: { value: "next" } });
+    expect(laneStepNames(lane)).toEqual(["Implementation"]);
   });
 
   it("shows legacy library steps in declaration order in row view without execution state", async () => {
@@ -741,18 +742,11 @@ describe("configurable task grid", () => {
     ipcMock.getTaskExecution.mockRejectedValue(new Error("execution.json not found"));
     render(<Grid allRepos={false} onOpen={() => {}} registerNav={() => {}} initialPreset="progress" />);
     const lane = await screen.findByLabelText("Legacy row retained steps");
-    await waitFor(() =>
-      expect([...lane.querySelectorAll(".task-grid-lane-step")].map((cell) => cell.textContent)).toEqual([
-        "Research · Execution unavailable",
-        "Design · Execution unavailable",
-        "Implementation · Execution unavailable",
-      ]),
-    );
+    await waitFor(() => expect(laneStepNames(lane)).toEqual(["Research", "Design", "Implementation"]));
     expect(within(lane).getByRole("button", { name: /Legacy row.*Implementation/ })).toBeDefined();
-    expect(within(lane).queryByText(/Not started|Human completion required/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
     fireEvent.change(screen.getByLabelText("Display direction"), { target: { value: "rtl" } });
-    expect([...lane.querySelectorAll(".task-grid-lane-step")].map((cell) => cell.textContent?.split(" · ")[0])).toEqual(["Implementation", "Design", "Research"]);
+    expect(laneStepNames(lane)).toEqual(["Implementation", "Design", "Research"]);
   });
 
   it("uses each task's retained definition and concurrent states without projecting auxiliary activity or a linear execution history", async () => {
@@ -784,20 +778,15 @@ describe("configurable task grid", () => {
     });
     render(<Grid allRepos onOpen={() => {}} registerNav={() => {}} initialPreset="progress" />);
     const original = await screen.findByLabelText("Original retained steps");
-    await waitFor(() => expect(within(original).getByText("Original work · 1 completed, 1 running")).toBeDefined());
-    expect(within(original).getByText("Untouched · Not started")).toBeDefined();
-    expect(within(original).getByText(/Gated · .*human completion/i)).toBeDefined();
-    expect(within(original).queryByText(/Disabled/)).toBeNull();
-    expect(within(original).getByText("Parallel review · 1 finishing")).toBeDefined();
-    expect(within(original).queryByText(/New audit|Revised work|Auxiliary notes/)).toBeNull();
-    expect(within(screen.getByLabelText("Revised retained steps")).getByText("New audit · 1 completed")).toBeDefined();
-    expect(within(screen.getByLabelText("Other repo retained steps")).getByText("Other work · 1 queued")).toBeDefined();
+    await waitFor(() => expect(laneStepNames(original)).toEqual(["Untouched", "Gated", "Original work", "Parallel review"]));
+    expect(laneStepNames(screen.getByLabelText("Revised retained steps"))).toEqual(["Revised work", "New audit"]);
+    expect(laneStepNames(screen.getByLabelText("Other repo retained steps"))).toEqual(["Other work"]);
     expect(screen.queryByLabelText(/Moved forward|Moved backward|Previous position/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
     fireEvent.change(screen.getByLabelText("Path labels"), { target: { value: "next" } });
-    expect(within(original).queryByText(/Untouched/)).toBeNull();
-    expect(within(original).getByText("Original work · 1 completed, 1 running")).toBeDefined();
-    expect(within(original).getByText("Parallel review · 1 finishing")).toBeDefined();
+    expect(laneStepNames(original)).toEqual(["Original work", "Parallel review"]);
+    expect(laneStepNames(screen.getByLabelText("Revised retained steps"))).toEqual(["Revised work"]);
+    expect(laneStepNames(screen.getByLabelText("Other repo retained steps"))).toEqual([]);
   });
 
   it("archives the selected repository explicitly with or without worktree removal", async () => {
