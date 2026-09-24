@@ -45,6 +45,7 @@ function task(slugOrOverrides: string | Partial<BoardTask> = "a-task", taskOverr
     repo_path: "/r",
     session_count: 2,
     playbook_title: "SuperDevelop",
+    playbook_steps: [],
     updated: 1,
     current_phase: "tdd",
     current_step_title: "TDD",

@@ -140,6 +140,7 @@ const childBoardTask: BoardTask = {
   repo_path: "/repo",
   session_count: 1,
   playbook_title: "Review",
+  playbook_steps: [],
   updated: 10,
   current_phase: "review-context",
   current_step_title: "Review Context",

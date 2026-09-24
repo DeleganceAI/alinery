@@ -274,6 +274,8 @@ export function sameBoardTasks(left: BoardTask[], right: BoardTask[]) {
         task.repo_path === other.repo_path &&
         task.session_count === other.session_count &&
         task.playbook_title === other.playbook_title &&
+        task.playbook_steps.length === other.playbook_steps.length &&
+        task.playbook_steps.every((step, i) => step.key === other.playbook_steps[i].key && step.title === other.playbook_steps[i].title) &&
         task.updated === other.updated &&
         task.current_phase === other.current_phase &&
         task.current_step_title === other.current_step_title &&

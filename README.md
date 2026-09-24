@@ -94,6 +94,42 @@ In Grid, enable **pull request** under **Card properties** to show the same icon
 any card mode. This option is off by default and saved per Grid view. Disabled
 properties and inactive Grid tabs do not request PR refreshes.
 
+**Grid settings and presets.** Open the gear to adjust layout, filters, card properties,
+and tile width (up to 960px). Detailed and compact cards show every enabled property;
+scroll a card if its contents exceed the fixed tile height. Icon-only mode hides text.
+Draft tasks appear with a Draft label and open their saved creation form.
+
+On a fresh workspace, the default Kanban+ view starts with **Progress lanes**: playbook
+steps left-to-right, all step labels, no grouping, repository fill, attention borders,
+manual lane order, compact cards, active tasks only, fixed brightness, and archives
+hidden. Tile size is 150 × 78px, row/column spacing is 10/8px, and the first column is
+190px. Every card property except playbook is enabled. Existing saved Grid layouts
+are restored unchanged; additional Grid tabs retain their Step Kanban starting layout.
+
+Enter a **New preset name** and choose **Save as new preset** to reuse the current
+settings across repositories and Grid tabs. Select a user-created preset to delete it;
+built-in presets cannot be deleted. Saving another name creates a new preset without
+changing the original. Each repository and Grid tab remembers its last settings and
+preset locally; task-specific manual ordering and hidden lanes stay with that workspace.
+Use **Show empty columns** in column layouts to include unoccupied columns, then
+collapse individual columns as needed. Classic Kanban also has **Show empty columns**
+and uses equal-height cards, with scrolling for overflowing content.
+
+Step columns default to the declared order in each task's retained playbook, including
+when its daemon is offline. Legacy tasks without a retained definition use the current
+matching library playbook for display; this does not recover their execution state.
+Multiple playbooks share matching column titles and preserve compatible step sequences;
+conflicting orders use a deterministic playbook/task tie-break.
+Drag a column's grip (or focus it and press Left/Right) to change the order.
+Custom column order is remembered per grouping in each Grid view and included in saved
+presets. **Reset column order** restores the default without changing task execution.
+
+For one row per task, choose **Position model → Stable task lanes**, **Progress by →
+Playbook step**, and **Path labels → Every playbook step** (or select **Progress lanes**).
+Each row shows its own playbook's steps in declaration order, with the task card under
+its latest recorded step. Labels show only step names, without execution-status suffixes,
+and remain visible when execution data is unavailable.
+
 ### Sub-tasks
 
 Sub-tasks give rabbit holes a place of their own, so you can investigate a side question and return to the main task knowing exactly where you left off.

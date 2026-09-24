@@ -98,6 +98,7 @@ export type BoardTask = Task & {
   repo_path: string;
   session_count: number;
   playbook_title: string;
+  playbook_steps: { key: string; title: string }[];
   updated: number;
   current_phase: string;
   current_step_title: string;

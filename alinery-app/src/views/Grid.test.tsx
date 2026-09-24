@@ -8,7 +8,9 @@ import type {
   ExecutionRecord,
   KanbanColumn,
   NormalizedStep,
+  PlaybookRef,
   PullRequestSnapshot,
+  ScopedPlaybook,
   TaskActivityMap,
   TaskActivityRef,
   TaskExecutionReply,
@@ -30,6 +32,11 @@ const makeTask = (over: Partial<BoardTask>): BoardTask => ({
   github_issue: "",
   playbook: "superdevelop",
   engine_version: 2,
+  playbook_steps: [
+    { key: "research", title: "Research" },
+    { key: "design", title: "Design" },
+    { key: "implementation", title: "Implementation" },
+  ],
   auto_advance: [],
   draft: false,
   repo_path: "/repo-a",
@@ -53,6 +60,10 @@ const tasks = [
     repo_path: "/repo-b",
     playbook: "review",
     playbook_title: "Review",
+    playbook_steps: [
+      { key: "context", title: "Context" },
+      { key: "findings", title: "Findings" },
+    ],
     current_phase: "findings",
     current_step_title: "Findings",
     latest_session_title: "Findings",
@@ -64,6 +75,11 @@ const tasks = [
     slug: "release-app",
     playbook: "one-shot",
     playbook_title: "One-shot",
+    playbook_steps: [
+      { key: "queued", title: "Queued" },
+      { key: "implementation", title: "Implementation" },
+      { key: "pr", title: "PR" },
+    ],
     current_phase: "pr",
     current_step_title: "PR",
     latest_session_title: "PR",
@@ -168,6 +184,7 @@ const ipcMock = vi.hoisted(() => ({
   listBoardTasks: vi.fn(async (_allRepos: boolean): Promise<BoardTask[]> => []),
   listKanbanColumns: vi.fn(async (_allRepos: boolean): Promise<KanbanColumn[]> => []),
   getTaskExecution: vi.fn<(slug: string, repoPath?: string) => Promise<TaskExecutionReply>>(),
+  readPlaybook: vi.fn<(reference: PlaybookRef, repoPath?: string) => Promise<ScopedPlaybook>>(),
   listTaskActivity: vi.fn(async (_refs: TaskActivityRef[]): Promise<TaskActivityMap> => ({})),
   listTaskPullRequests: vi.fn(async (_tasks: TaskActivityRef[]): Promise<Record<string, PullRequestSnapshot>> => ({})),
   openUrl: vi.fn(async (_url: string): Promise<void> => {}),
@@ -196,6 +213,12 @@ beforeEach(() => {
   ipcMock.listKanbanColumns.mockResolvedValue(columns);
   ipcMock.listTaskPullRequests.mockImplementation(async (refs) => Object.fromEntries(refs.map((ref) => [`${ref.repoPath}:${ref.taskSlug}`, { pr: null, error: null }])));
   ipcMock.getTaskExecution.mockImplementation(async (slug, repoPath) => taskExecutions[`${repoPath}:${slug}`] ?? retainedExecution([step("implementation", "Implementation")]));
+  ipcMock.readPlaybook.mockImplementation(async (reference) => ({
+    source: { reference, path: null },
+    definition: retainedExecution([step("research", "Research"), step("design", "Design"), step("implementation", "Implementation")]).definition,
+    source_text: "",
+    modified_at_ms: null,
+  }));
   ipcMock.listTaskActivity.mockResolvedValue({
     "/repo-a:build-api": { status: "running", active_session: null },
     "/repo-b:review-queue": { status: "waiting_for_approval", active_session: null },
@@ -210,7 +233,282 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+const columnNames = () =>
+  screen.getAllByRole("button", { name: /^(Hide|Expand) .+ column$/ }).map((button) => button.getAttribute("aria-label")?.replace(/^(Hide|Expand) | column$/g, ""));
+const laneStepNames = (lane: HTMLElement) => [...lane.querySelectorAll(".task-grid-lane-step")].map((cell) => cell.textContent);
+
 describe("configurable task grid", () => {
+  it("preserves an existing workspace when the initial preset changes for new users", async () => {
+    const props = { allRepos: false, onOpen: () => {}, registerNav: () => {}, storageKey: "existing-user" };
+    const oldView = render(<Grid {...props} initialPreset="kanban" />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.change(screen.getByLabelText(/Tile width/), { target: { value: "480" } });
+    fireEvent.click(screen.getByLabelText("Show archived"));
+    oldView.unmount();
+
+    render(<Grid {...props} initialPreset="progress" />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    expect((screen.getByLabelText("Position model") as HTMLSelectElement).value).toBe("packed");
+    expect((screen.getByLabelText(/Tile width/) as HTMLInputElement).value).toBe("480");
+    expect((screen.getByLabelText("Show archived") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("pull request") as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("saves named settings across repositories without changing the original preset", async () => {
+    const props = { allRepos: false, onOpen: () => {}, registerNav: () => {} };
+    const first = render(<Grid {...props} storageKey="repo-a:view:presets" />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.change(screen.getByLabelText(/Tile width/), { target: { value: "960" } });
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    fireEvent.change(screen.getByLabelText("New preset name"), { target: { value: "Wide board" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save as new preset" }));
+    const savedId = (screen.getByLabelText("Preset") as HTMLSelectElement).value;
+    fireEvent.change(screen.getByLabelText(/Tile width/), { target: { value: "480" } });
+    fireEvent.change(screen.getByLabelText("New preset name"), { target: { value: "wide BOARD" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save as new preset" }));
+    expect(screen.getByRole("alert").textContent).toContain("already exists");
+    first.unmount();
+
+    const other = render(<Grid {...props} storageKey="repo-b:view:presets" />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    expect((screen.getByLabelText(/Tile width/) as HTMLInputElement).value).toBe("150");
+    fireEvent.change(screen.getByLabelText("Preset"), { target: { value: savedId } });
+    expect((screen.getByLabelText(/Tile width/) as HTMLInputElement).value).toBe("960");
+    expect((screen.getByLabelText("Show empty columns") as HTMLInputElement).checked).toBe(true);
+    fireEvent.change(screen.getByLabelText("New preset name"), { target: { value: "Another board" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save as new preset" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete preset" }));
+    expect(screen.queryByRole("option", { name: "Another board" })).toBeNull();
+    expect(screen.getByRole("option", { name: "Wide board" })).toBeDefined();
+    other.unmount();
+
+    render(<Grid {...props} storageKey="repo-a:view:presets" />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    expect((screen.getByLabelText(/Tile width/) as HTMLInputElement).value).toBe("480");
+    expect((screen.getByLabelText("Preset") as HTMLSelectElement).value).toBe("custom");
+    fireEvent.change(screen.getByLabelText("Preset"), { target: { value: savedId } });
+    expect((screen.getByLabelText(/Tile width/) as HTMLInputElement).value).toBe("960");
+  });
+
+  it("keeps mounted views synchronized when a saved preset is deleted", async () => {
+    const props = { allRepos: false, onOpen: () => {}, registerNav: () => {} };
+    const first = render(<Grid {...props} storageKey="preset-first" />);
+    const second = render(<Grid {...props} storageKey="preset-second" />);
+    const a = within(first.container);
+    const b = within(second.container);
+    fireEvent.click(a.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.click(b.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.change(a.getByLabelText("New preset name"), { target: { value: "Shared" } });
+    fireEvent.click(a.getByRole("button", { name: "Save as new preset" }));
+    const id = (a.getByLabelText("Preset") as HTMLSelectElement).value;
+    fireEvent.change(b.getByLabelText("Preset"), { target: { value: id } });
+    fireEvent.click(a.getByRole("button", { name: "Delete preset" }));
+    expect((b.getByLabelText("Preset") as HTMLSelectElement).value).toBe("custom");
+    expect(b.queryByRole("option", { name: "Shared" })).toBeNull();
+    await act(async () => {});
+  });
+
+  it("shows empty kanban and retained-step columns on demand and still permits collapse", async () => {
+    render(<Grid allRepos={false} onOpen={() => {}} registerNav={() => {}} />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    expect(screen.queryByRole("button", { name: "Hide Research & Design column" })).toBeNull();
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    fireEvent.click(screen.getByRole("button", { name: "Hide Research & Design column" }));
+    expect(screen.getByRole("button", { name: "Expand Research & Design column" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Expand Research & Design column" }));
+    fireEvent.change(screen.getByLabelText("Group by"), { target: { value: "stage" } });
+    expect(await screen.findByRole("button", { name: "Hide Research column" })).toBeDefined();
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    expect(screen.queryByRole("button", { name: "Hide Research column" })).toBeNull();
+  });
+
+  it("keeps declared empty columns in playbook order when the execution daemon is unavailable", async () => {
+    ipcMock.listBoardTasks.mockResolvedValue([tasks[0]]);
+    ipcMock.getTaskExecution.mockRejectedValue(new Error("execution daemon unavailable"));
+    ipcMock.readPlaybook.mockResolvedValue({
+      source: { reference: { scope: "bundled", key: "superdevelop" }, path: null },
+      definition: retainedExecution([step("replacement", "Library replacement")]).definition,
+      source_text: "",
+      modified_at_ms: null,
+    });
+    render(<Grid allRepos={false} onOpen={() => {}} registerNav={() => {}} initialPreset="steps" />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    expect((await screen.findByRole("alert")).textContent).toContain("execution daemon unavailable");
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    expect(columnNames()).toEqual(["Research", "Design", "Implementation"]);
+    fireEvent.click(screen.getByRole("button", { name: "Hide Design column" }));
+    expect(screen.getByRole("button", { name: "Expand Design column" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Expand Design column" }));
+    expect(columnNames()).toEqual(["Research", "Design", "Implementation"]);
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    expect(columnNames()).toEqual(["Implementation"]);
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    expect(columnNames()).toEqual(["Research", "Design", "Implementation"]);
+  });
+
+  it.each([
+    { label: "bundled fallback", reference: undefined, scope: "bundled" },
+    { label: "repository reference", reference: { scope: "repo", key: "legacy-workflow" } as PlaybookRef, scope: "repo" },
+  ])("resolves legacy $label steps without execution.json or duplicate raw phase columns", async ({ reference, scope }) => {
+    const task = makeTask({
+      name: "Legacy task",
+      engine_version: 1,
+      playbook: "legacy-workflow",
+      playbook_ref: reference,
+      playbook_steps: [],
+      current_phase: "implementation",
+      current_step_title: "implementation",
+    });
+    ipcMock.listBoardTasks.mockResolvedValue([task]);
+    ipcMock.getTaskExecution.mockRejectedValue(new Error("execution.json not found"));
+    ipcMock.readPlaybook.mockImplementation(async (requested, repoPath) => ({
+      source: { reference: requested, path: null },
+      definition: retainedExecution(
+        requested.scope === scope && requested.key === "legacy-workflow" && repoPath === task.repo_path
+          ? [step("research", "Research"), step("design", "Design"), step("implementation", "Implementation")]
+          : [step("wrong", "Wrong library")],
+      ).definition,
+      source_text: "",
+      modified_at_ms: null,
+    }));
+    const { container } = render(<Grid allRepos={false} onOpen={() => {}} registerNav={() => {}} initialPreset="steps" />);
+    await screen.findByRole("button", { name: /Legacy task, repo-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    await waitFor(() => expect(columnNames()).toEqual(["Research", "Design", "Implementation"]));
+    const implementation = screen.getByRole("button", { name: "Hide Implementation column" }).closest("section") as HTMLElement;
+    expect(within(implementation).getByRole("button", { name: /Legacy task, repo-a/ })).toBeDefined();
+    expect(container.querySelectorAll(".task-grid-card")).toHaveLength(1);
+  });
+
+  it("merges compatible playbooks without reversing either declared step sequence", async () => {
+    ipcMock.listBoardTasks.mockResolvedValue([tasks[2], tasks[0]]);
+    render(<Grid allRepos={false} onOpen={() => {}} registerNav={() => {}} initialPreset="steps" />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    const names = columnNames();
+    expect(names.filter((name) => ["Research", "Design", "Implementation"].includes(name ?? ""))).toEqual(["Research", "Design", "Implementation"]);
+    expect(names.filter((name) => ["Queued", "Implementation", "PR"].includes(name ?? ""))).toEqual(["Queued", "Implementation", "PR"]);
+    expect(names.filter((name) => name === "Implementation")).toHaveLength(1);
+  });
+
+  it("persists keyboard column orders per grouping and in presets, with reset restoring declaration order", async () => {
+    ipcMock.listBoardTasks.mockResolvedValue([tasks[0]]);
+    const props = { allRepos: false, onOpen: () => {}, registerNav: () => {}, storageKey: "keyboard-column-order", initialPreset: "steps" as const };
+    const first = render(<Grid {...props} />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Reorder Research column; use left and right arrow keys" }), { key: "ArrowRight" });
+    expect(columnNames()).toEqual(["Design", "Research", "Implementation"]);
+    fireEvent.change(screen.getByLabelText("Group by"), { target: { value: "column" } });
+    expect(columnNames()).toEqual(["Research & Design", "Implementation", "Review"]);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Reorder Review column; use left and right arrow keys" }), { key: "ArrowLeft" });
+    expect(columnNames()).toEqual(["Research & Design", "Review", "Implementation"]);
+    fireEvent.change(screen.getByLabelText("Group by"), { target: { value: "stage" } });
+    expect(columnNames()).toEqual(["Design", "Research", "Implementation"]);
+    fireEvent.change(screen.getByLabelText("New preset name"), { target: { value: "Ordered columns" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save as new preset" }));
+    const presetId = (screen.getByLabelText("Preset") as HTMLSelectElement).value;
+    first.unmount();
+
+    const second = render(<Grid {...props} />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    expect(columnNames()).toEqual(["Design", "Research", "Implementation"]);
+    fireEvent.click(screen.getByRole("button", { name: "Reset column order" }));
+    expect(columnNames()).toEqual(["Research", "Design", "Implementation"]);
+    fireEvent.change(screen.getByLabelText("Group by"), { target: { value: "column" } });
+    expect(columnNames()).toEqual(["Research & Design", "Review", "Implementation"]);
+    second.unmount();
+
+    render(<Grid {...props} storageKey="another-column-order" />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.change(screen.getByLabelText("Preset"), { target: { value: presetId } });
+    expect(columnNames()).toEqual(["Design", "Research", "Implementation"]);
+    fireEvent.change(screen.getByLabelText("Group by"), { target: { value: "column" } });
+    expect(columnNames()).toEqual(["Research & Design", "Review", "Implementation"]);
+  });
+
+  it("reorders columns by pointer, ignores cancelled drags, and restores the saved order", async () => {
+    ipcMock.listBoardTasks.mockResolvedValue([tasks[0]]);
+    const props = { allRepos: false, onOpen: () => {}, registerNav: () => {}, storageKey: "pointer-column-order", initialPreset: "steps" as const };
+    const first = render(<Grid {...props} />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    const target = screen.getByRole("button", { name: "Hide Implementation column" }).closest("[data-column-key]") as HTMLElement;
+    vi.spyOn(target, "getBoundingClientRect").mockReturnValue({
+      x: 200,
+      y: 0,
+      width: 100,
+      height: 300,
+      top: 0,
+      right: 300,
+      bottom: 300,
+      left: 200,
+      toJSON: () => ({}),
+    });
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: vi.fn(() => target) });
+    try {
+      const handle = screen.getByRole("button", { name: "Reorder Research column; use left and right arrow keys" });
+      fireEvent.pointerDown(handle, { button: 0, pointerId: 8, clientX: 20, clientY: 20 });
+      fireEvent.pointerMove(window, { pointerId: 8, clientX: 290, clientY: 20 });
+      fireEvent.pointerCancel(window, { pointerId: 8, clientX: 290, clientY: 20 });
+      expect(columnNames()).toEqual(["Research", "Design", "Implementation"]);
+      fireEvent.pointerDown(handle, { button: 0, pointerId: 9, clientX: 20, clientY: 20 });
+      fireEvent.pointerMove(window, { pointerId: 9, clientX: 290, clientY: 20 });
+      fireEvent.pointerUp(window, { pointerId: 9, clientX: 290, clientY: 20 });
+      expect(columnNames()).toEqual(["Design", "Implementation", "Research"]);
+      first.unmount();
+
+      render(<Grid {...props} />);
+      await screen.findByRole("button", { name: /Build API, repo-a/ });
+      expect(columnNames()).toEqual(["Design", "Implementation", "Research"]);
+    } finally {
+      Reflect.deleteProperty(document, "elementFromPoint");
+    }
+  });
+
+  it("surfaces newly saved drafts without treating their absent execution as an error", async () => {
+    vi.useFakeTimers();
+    const draft = makeTask({
+      name: "Draft proposal",
+      slug: "draft-proposal",
+      draft: true,
+      playbook_steps: [],
+      session_count: 0,
+      current_phase: "",
+      current_step_title: "",
+      current_column_key: "",
+      current_column_title: "",
+    });
+    ipcMock.getTaskExecution.mockImplementation(async (slug, repoPath) => {
+      if (slug === draft.slug) throw new Error("No execution state for draft");
+      return taskExecutions[`${repoPath}:${slug}`];
+    });
+    const onOpen = vi.fn();
+    render(<Grid allRepos={false} onOpen={onOpen} registerNav={() => {}} />);
+    await act(async () => {});
+    ipcMock.listBoardTasks.mockResolvedValue([...tasks, draft]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Draft proposal, repo-a.*Draft/ }));
+    expect(onOpen).toHaveBeenLastCalledWith(draft);
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.change(screen.getByLabelText("Preset"), { target: { value: "progress" } });
+    const lane = screen.getByLabelText("Draft proposal retained steps");
+    expect(within(lane).getByRole("button", { name: /Draft proposal/ })).toBeDefined();
+  });
+
   it("renders every preset through the same real task projection", async () => {
     const onOpen = vi.fn();
     render(<Grid allRepos onOpen={onOpen} registerNav={() => {}} />);
@@ -423,9 +721,9 @@ describe("configurable task grid", () => {
   });
 
   it("keeps legacy tasks and drafts browsable without requesting nonexistent execution state", async () => {
-    const legacy = makeTask({ name: "Legacy", slug: "legacy", engine_version: undefined });
-    const archived = makeTask({ name: "Archived legacy", slug: "archived", engine_version: 1, archived: true });
-    const draft = makeTask({ name: "Draft", slug: "draft", draft: true });
+    const legacy = makeTask({ name: "Legacy", slug: "legacy", engine_version: undefined, playbook_steps: [] });
+    const archived = makeTask({ name: "Archived legacy", slug: "archived", engine_version: 1, archived: true, playbook_steps: [] });
+    const draft = makeTask({ name: "Draft", slug: "draft", draft: true, playbook_steps: [] });
     ipcMock.listBoardTasks.mockResolvedValue([legacy, archived, draft, tasks[0]]);
     ipcMock.getTaskExecution.mockImplementation(async (slug) => {
       if (slug !== "build-api") throw new Error("No execution state for this task");
@@ -434,17 +732,15 @@ describe("configurable task grid", () => {
     const onOpen = vi.fn();
     render(<Grid allRepos onOpen={onOpen} registerNav={() => {}} initialPreset="progress" />);
 
-    await waitFor(() => expect(within(screen.getByLabelText("Build API retained steps")).getByText(/Research · 1 completed/)).toBeDefined());
+    await screen.findByRole("button", { name: /^Build API, repo-a/ });
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(within(screen.getByLabelText("Legacy retained steps")).getByText(/Legacy task/)).toBeDefined();
-    expect(within(screen.getByLabelText("Draft retained steps")).getByText(/· Draft/)).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: /^Legacy, repo-a/ }));
     fireEvent.keyDown(screen.getByRole("button", { name: /^Legacy, repo-a/ }), { key: "Enter" });
     expect(onOpen).toHaveBeenCalledWith(legacy);
 
     fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
     fireEvent.click(screen.getByLabelText("Show archived"));
-    await waitFor(() => expect(within(screen.getByLabelText("Archived legacy retained steps")).getByText(/Legacy task/)).toBeDefined());
+    await screen.findByRole("button", { name: /^Archived legacy, repo-a/ });
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -467,8 +763,8 @@ describe("configurable task grid", () => {
     await act(async () => {});
 
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(within(screen.getByLabelText("Build API retained steps")).getByText(/Research · 1 completed/)).toBeDefined();
-    expect(within(screen.getByLabelText("Release app retained steps")).getByText(/PR · 1 running/)).toBeDefined();
+    expect(laneStepNames(screen.getByLabelText("Build API retained steps"))).toEqual(["Research", "Design", "Implementation"]);
+    expect(laneStepNames(screen.getByLabelText("Release app retained steps"))).toEqual(["Queued", "Implementation", "PR"]);
     const summary = screen.getByText(/Showing saved progress for 2 tasks/);
     expect((summary.closest("details") as HTMLDetailsElement).open).toBe(false);
     fireEvent.click(summary);
@@ -488,8 +784,8 @@ describe("configurable task grid", () => {
     });
     expect(screen.queryByText(/Showing saved progress/)).toBeNull();
     expect(screen.queryByText(/Private daemon diagnostic/)).toBeNull();
-    expect(within(screen.getByLabelText("Build API retained steps")).getByText(/Research · 1 completed/)).toBeDefined();
-    expect(within(screen.getByLabelText("Release app retained steps")).getByText(/PR · 1 running/)).toBeDefined();
+    expect(laneStepNames(screen.getByLabelText("Build API retained steps"))).toEqual(["Research", "Design", "Implementation"]);
+    expect(laneStepNames(screen.getByLabelText("Release app retained steps"))).toEqual(["Queued", "Implementation", "PR"]);
   });
 
   it("keeps availability notices dismissed across polling but resurfaces changed conditions without hiding storage errors", async () => {
@@ -515,7 +811,7 @@ describe("configurable task grid", () => {
     await poll();
     await poll();
     expect(screen.queryByText(/Showing saved progress/)).toBeNull();
-    expect(within(screen.getByLabelText("Build API retained steps")).getByText(/Research · 1 completed/)).toBeDefined();
+    expect(laneStepNames(screen.getByLabelText("Build API retained steps"))).toEqual(["Research", "Design", "Implementation"]);
 
     status = "foreign_owner";
     await poll();
@@ -549,7 +845,11 @@ describe("configurable task grid", () => {
     });
     render(<Grid allRepos={false} onOpen={() => {}} registerNav={() => {}} initialPreset="progress" />);
     await act(async () => {});
-    expect(within(screen.getByLabelText("Build API retained steps")).getByText(/Research · 1 completed/)).toBeDefined();
+    const lane = screen.getByLabelText("Build API retained steps");
+    expect(laneStepNames(lane)).toEqual(["Research", "Design", "Implementation"]);
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.change(screen.getByLabelText("Path labels"), { target: { value: "next" } });
+    expect(laneStepNames(lane)).toEqual(["Implementation"]);
     failing = true;
     await act(async () => {
       vi.advanceTimersByTime(3000);
@@ -563,17 +863,35 @@ describe("configurable task grid", () => {
     expect(details.open).toBe(true);
     expect(within(alert).getByRole("list").textContent).toContain("Invalid execution.json for /repo-a:build-api");
     expect(within(alert).getByRole("list").textContent).toContain("Invalid execution.json for /repo-a:release-app");
-    expect(within(screen.getByLabelText("Build API retained steps")).queryByText(/1 completed/)).toBeNull();
-    expect(within(screen.getByLabelText("Review queue retained steps")).getByText(/Context · 1 completed/)).toBeDefined();
+    expect(laneStepNames(lane)).toEqual([]);
+    expect(laneStepNames(screen.getByLabelText("Review queue retained steps"))).toEqual(["Findings"]);
+    fireEvent.change(screen.getByLabelText("Path labels"), { target: { value: "all" } });
+    expect(laneStepNames(lane)).toEqual(["Research", "Design", "Implementation"]);
     failing = false;
     await act(async () => {
       vi.advanceTimersByTime(3000);
     });
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(within(screen.getByLabelText("Build API retained steps")).getByText(/Research · 1 completed/)).toBeDefined();
+    expect(laneStepNames(lane)).toEqual(["Research", "Design", "Implementation"]);
+    fireEvent.change(screen.getByLabelText("Path labels"), { target: { value: "next" } });
+    expect(laneStepNames(lane)).toEqual(["Implementation"]);
   });
 
-  it("uses each task's retained definition and concurrent states without projecting auxiliary activity or source order", async () => {
+  it("shows legacy library steps in declaration order in row view without execution state", async () => {
+    ipcMock.listBoardTasks.mockResolvedValue([
+      makeTask({ name: "Legacy row", engine_version: 1, playbook_steps: [], current_phase: "implementation", current_step_title: "implementation" }),
+    ]);
+    ipcMock.getTaskExecution.mockRejectedValue(new Error("execution.json not found"));
+    render(<Grid allRepos={false} onOpen={() => {}} registerNav={() => {}} initialPreset="progress" />);
+    const lane = await screen.findByLabelText("Legacy row retained steps");
+    await waitFor(() => expect(laneStepNames(lane)).toEqual(["Research", "Design", "Implementation"]));
+    expect(within(lane).getByRole("button", { name: /Legacy row.*Implementation/ })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    fireEvent.change(screen.getByLabelText("Display direction"), { target: { value: "rtl" } });
+    expect(laneStepNames(lane)).toEqual(["Implementation", "Design", "Research"]);
+  });
+
+  it("uses each task's retained definition and concurrent states without projecting auxiliary activity or a linear execution history", async () => {
     ipcMock.listBoardTasks.mockResolvedValue([
       makeTask({ name: "Original", slug: "shared", current_phase: "work", current_step_title: "Original work", latest_session_title: "Auxiliary notes" }),
       makeTask({ name: "Revised", slug: "revised", current_phase: "work", current_step_title: "Revised work" }),
@@ -602,20 +920,15 @@ describe("configurable task grid", () => {
     });
     render(<Grid allRepos onOpen={() => {}} registerNav={() => {}} initialPreset="progress" />);
     const original = await screen.findByLabelText("Original retained steps");
-    await waitFor(() => expect(within(original).getByText("Original work · 1 completed, 1 running")).toBeDefined());
-    expect(within(original).getByText("Untouched · Not started")).toBeDefined();
-    expect(within(original).getByText(/Gated · .*human completion/i)).toBeDefined();
-    expect(within(original).queryByText(/Disabled/)).toBeNull();
-    expect(within(original).getByText("Parallel review · 1 finishing")).toBeDefined();
-    expect(within(original).queryByText(/New audit|Revised work|Auxiliary notes/)).toBeNull();
-    expect(within(screen.getByLabelText("Revised retained steps")).getByText("New audit · 1 completed")).toBeDefined();
-    expect(within(screen.getByLabelText("Other repo retained steps")).getByText("Other work · 1 queued")).toBeDefined();
+    await waitFor(() => expect(laneStepNames(original)).toEqual(["Untouched", "Gated", "Original work", "Parallel review"]));
+    expect(laneStepNames(screen.getByLabelText("Revised retained steps"))).toEqual(["Revised work", "New audit"]);
+    expect(laneStepNames(screen.getByLabelText("Other repo retained steps"))).toEqual(["Other work"]);
     expect(screen.queryByLabelText(/Moved forward|Moved backward|Previous position/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
     fireEvent.change(screen.getByLabelText("Path labels"), { target: { value: "next" } });
-    expect(within(original).queryByText(/Untouched/)).toBeNull();
-    expect(within(original).getByText("Original work · 1 completed, 1 running")).toBeDefined();
-    expect(within(original).getByText("Parallel review · 1 finishing")).toBeDefined();
+    expect(laneStepNames(original)).toEqual(["Original work", "Parallel review"]);
+    expect(laneStepNames(screen.getByLabelText("Revised retained steps"))).toEqual(["Revised work"]);
+    expect(laneStepNames(screen.getByLabelText("Other repo retained steps"))).toEqual([]);
   });
 
   it("archives the selected repository explicitly with or without worktree removal", async () => {

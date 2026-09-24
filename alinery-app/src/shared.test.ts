@@ -242,6 +242,7 @@ describe("re-render comparators", () => {
     repo_path: "/r",
     session_count: 0,
     playbook_title: "SuperDevelop",
+    playbook_steps: [],
     updated: 1,
     current_phase: "design",
     current_step_title: "Design",
@@ -290,6 +291,19 @@ describe("re-render comparators", () => {
     expect(sameBoardTasks([task()], [task()])).toBe(true);
     expect(sameBoardTasks([task()], [task({ current_phase: "review" })])).toBe(false);
     expect(sameBoardTasks([task()], [task({ auto_advance: ["x"] })])).toBe(false);
+  });
+
+  it("sameBoardTasks notices changed retained step metadata and declaration order", () => {
+    const steps = [
+      { key: "design", title: "Design" },
+      { key: "build", title: "Build" },
+    ];
+    const original = task({ playbook_steps: steps });
+    expect(sameBoardTasks([original], [task({ playbook_steps: steps.map((step) => ({ ...step })) })])).toBe(true);
+    expect(sameBoardTasks([original], [task({ playbook_steps: [steps[0]] })])).toBe(false);
+    expect(sameBoardTasks([original], [task({ playbook_steps: [steps[1], steps[0]] })])).toBe(false);
+    expect(sameBoardTasks([original], [task({ playbook_steps: [steps[0], { ...steps[1], key: "implement" }] })])).toBe(false);
+    expect(sameBoardTasks([original], [task({ playbook_steps: [steps[0], { ...steps[1], title: "Implement" }] })])).toBe(false);
   });
 
   it("sameBoardTasks notices sub-task pointer changes", () => {

@@ -38,6 +38,7 @@ const sourceBoardTask: BoardTask = {
   repo_path: "/repo-b",
   session_count: 1,
   playbook_title: "SuperDevelop",
+  playbook_steps: [],
   updated: 1,
   current_phase: "design",
   current_step_title: "Design",

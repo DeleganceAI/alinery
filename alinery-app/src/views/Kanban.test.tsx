@@ -42,6 +42,7 @@ const task = (over: Partial<BoardTask>): BoardTask =>
     repo_path: "/r",
     session_count: 0,
     playbook_title: "SuperDevelop",
+    playbook_steps: [],
     updated: 1,
     current_phase: "design",
     current_step_title: "Design",
@@ -164,6 +165,55 @@ describe("Kanban board placement", () => {
     await waitFor(() => expect(screen.getByText("Implementation")).toBeDefined());
     expect(cardsUnder("Implementation")).toEqual([]);
   });
+
+  it("hides columns emptied by child and archive visibility without breaking column navigation", async () => {
+    boardTasks = [
+      task({ name: "Parent", slug: "parent", current_column_key: "todo-draft" }),
+      task({ name: "Child", slug: "child", parent_task: "parent", current_column_key: "research-design" }),
+      task({ name: "Archived", slug: "archived", archived: true, current_column_key: "in-review" }),
+      task({ name: "Implementing", slug: "implementing", current_column_key: "implementation" }),
+    ];
+    const onOpen = vi.fn();
+    let nav: BoardNav | null = null;
+    render(
+      <Kanban
+        allRepos={false}
+        onOpen={onOpen}
+        onDuplicate={() => {}}
+        onOpenActiveSession={() => {}}
+        onCreate={() => {}}
+        registerNav={(next) => {
+          if (next) nav = next;
+        }}
+      />,
+    );
+    await screen.findByText("Parent");
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    expect(screen.queryByText("Research & Design")).toBeNull();
+    expect(screen.queryByText("In Review")).toBeNull();
+    expect(cardsUnder("Implementation")).toEqual(["Implementing"]);
+
+    await navReady(() => nav);
+    await act(async () => requireNav(nav).moveCol(1));
+    await act(async () => requireNav(nav).openSelected());
+    expect(onOpen).toHaveBeenLastCalledWith(boardTasks[3]);
+    await act(async () => requireNav(nav).moveCol(1));
+    await act(async () => requireNav(nav).openSelected());
+    expect(onOpen).toHaveBeenLastCalledWith(boardTasks[0]);
+
+    fireEvent.click(screen.getByLabelText("Show children"));
+    expect(cardsUnder("Research & Design")).toEqual(["Child"]);
+    fireEvent.click(screen.getByLabelText("Show archived"));
+    await waitFor(() => expect(cardsUnder("In Review")).toEqual(["Archived"]));
+
+    fireEvent.click(screen.getByLabelText("Show children"));
+    fireEvent.click(screen.getByLabelText("Show archived"));
+    await waitFor(() => expect(screen.queryByText("In Review")).toBeNull());
+    expect(screen.queryByText("Research & Design")).toBeNull();
+    fireEvent.click(screen.getByLabelText("Show empty columns"));
+    expect(cardsUnder("Research & Design")).toEqual([]);
+    expect(cardsUnder("In Review")).toEqual([]);
+  });
 });
 
 describe("sub-task cards", () => {
@@ -265,6 +315,9 @@ describe("Kanban task attention", () => {
     expect(screen.queryByText("Failed")).toBeNull();
     expect(screen.queryByText("Completed")).toBeNull();
     expect(screen.queryByText("TDD")).toBeNull();
+
+    fireEvent.keyDown(activeButton, { key: "Enter" });
+    expect(onOpen).not.toHaveBeenCalled();
 
     fireEvent.click(activeButton);
     expect(onOpenActiveSession).toHaveBeenCalledWith(row, activeSession);

@@ -71,6 +71,7 @@ export function Kanban({
   const [pendingArchive, setPendingArchive] = useState<BoardTask | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [showChildren, setShowChildren] = useState(false);
+  const [showEmptyColumns, setShowEmptyColumns] = useState(true);
   // Every task in scope, archived included. The gate asks "does a task exist at all",
   // which is not the same question as "is the board showing anything" — a repo whose
   // only tasks are archived has work to come back to, so it is not gated.
@@ -92,7 +93,7 @@ export function Kanban({
         setTaskTotal(allTasks.length);
         const cols = [...baseColumns];
         tasks.forEach((t) => {
-          if (!cols.some((c) => c.key === t.current_column_key)) cols.push({ key: t.current_column_key, title: t.current_column_title || t.current_column_key });
+          if (!cols.some((c) => c.key === t.current_column_key)) cols.push({ key: t.current_column_key, title: t.current_column_title || t.current_column_key || "Other" });
         });
         const buckets: Record<string, BoardTask[]> = Object.fromEntries(cols.map((col) => [col.key, []]));
         tasks.forEach((t) => {
@@ -207,6 +208,7 @@ export function Kanban({
         <h1 className="view-title">Kanban</h1>
         <Checkbox checked={showArchived} onChange={setShowArchived} label="Show archived" />
         <Checkbox checked={showChildren} onChange={setShowChildren} label="Show children" />
+        <Checkbox checked={showEmptyColumns} onChange={setShowEmptyColumns} label="Show empty columns" />
       </div>
       {err && (
         <InlineStatus tone="error" detail={err.detail}>
@@ -218,6 +220,7 @@ export function Kanban({
         {locked && <BoardGate columns={columns} onCreate={onCreate} />}
         {columns.map((col, ci) => {
           const cards = cardsIn(ci);
+          if (!showEmptyColumns && cards.length === 0) return null;
           return (
             <div key={col.key || "backlog"} className="col">
               <div className="col-hd">
@@ -243,7 +246,7 @@ export function Kanban({
                       aria-current={isSel || undefined}
                       onFocus={() => setSelectedTaskKey(taskKey(t))}
                       onKeyDown={(e) => {
-                        if (e.key === " " || e.key === "Enter") {
+                        if (e.target === e.currentTarget && (e.key === " " || e.key === "Enter")) {
                           e.preventDefault();
                           onOpen(t);
                         }
