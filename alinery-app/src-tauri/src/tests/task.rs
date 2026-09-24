@@ -1647,8 +1647,8 @@ fn task_activity_keys_are_repository_qualified_and_refs_deduplicated() {
     assert_eq!(activity.len(), 2);
     assert_eq!(activity_summary(&activity, &repo_a, "same-slug").status, Some(crate::TaskActivityStatus::Running));
     assert_eq!(activity_summary(&activity, &repo_b, "same-slug"), &crate::TaskActivitySummary::default());
-    assert_eq!(socket_a.join().unwrap(), 2);
-    assert_eq!(socket_b.join().unwrap(), 2);
+    assert_eq!(socket_a.calls(), 2);
+    assert_eq!(socket_b.calls(), 2);
     let _ = fs::remove_dir_all(repo_a);
     let _ = fs::remove_dir_all(repo_b);
 }
@@ -1672,7 +1672,7 @@ fn task_activity_refuses_a_different_app_config_identity() {
     );
 
     assert_eq!(activity_summary(&activity, &repo, "task"), &crate::TaskActivitySummary::default());
-    assert_eq!(socket.join().unwrap(), 2);
+    assert_eq!(socket.calls(), 2);
     let _ = fs::remove_dir_all(repo);
 }
 
@@ -1712,8 +1712,8 @@ fn task_activity_repository_failure_isolated() {
 
         assert_eq!(activity_summary(&activity, &repo_a, "task").status, Some(crate::TaskActivityStatus::Running), "{failure}");
         assert_eq!(activity_summary(&activity, &repo_b, "task"), &crate::TaskActivitySummary::default(), "{failure}");
-        assert_eq!(socket_a.join().unwrap(), 2);
-        assert_eq!(socket_b.join().unwrap(), if failure == "missing" { 0 } else { 2 });
+        assert_eq!(socket_a.calls(), 2, "{failure}");
+        assert_eq!(socket_b.calls(), if failure == "missing" { 0 } else { 2 }, "{failure}");
         let _ = fs::remove_dir_all(repo_a);
         let _ = fs::remove_dir_all(repo_b);
     }

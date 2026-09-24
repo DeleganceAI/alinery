@@ -238,23 +238,62 @@ fn activity_status_unknown(id: &str) -> super::DaemonSessionStatus {
     }
 }
 
-fn activity_list_socket(repo: &Path, response: Option<&str>) -> std::thread::JoinHandle<usize> {
+struct ActivityListSocket {
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    stop: Option<std::sync::mpsc::Sender<()>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl ActivityListSocket {
+    fn calls(mut self) -> usize {
+        self.shutdown();
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn shutdown(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for ActivityListSocket {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+fn activity_list_socket(repo: &Path, response: Option<&str>) -> ActivityListSocket {
     activity_list_socket_with_identity(repo, response, "config")
 }
 
-fn activity_list_socket_with_identity(repo: &Path, response: Option<&str>, version_identity: &str) -> std::thread::JoinHandle<usize> {
+// Passive activity observation is two round-trips on one worker: `version`, then
+// either `list` or `live_session_count` (only an identity mismatch pays for the
+// latter). A 200ms accept window measured from thread spawn lost the second one
+// whenever CI scheduled that worker late, so the summary came back empty and the
+// call count was 1. Stay up until the test reads the count. The deadline only
+// bounds a test that never does.
+fn activity_list_socket_with_identity(repo: &Path, response: Option<&str>, version_identity: &str) -> ActivityListSocket {
     let socket = super::current_alineryd_socket_path(repo);
     let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
     listener.set_nonblocking(true).unwrap();
     let response = response.map(str::to_owned);
     let version_identity = version_identity.to_owned();
-    std::thread::spawn(move || {
-        let started = std::time::Instant::now();
-        let mut calls = 0;
-        while started.elapsed() < Duration::from_millis(200) {
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls_thread = std::sync::Arc::clone(&calls);
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+    let handle = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if stop_rx.try_recv().is_ok() {
+                break;
+            }
             match listener.accept() {
                 Ok((mut stream, _)) => {
-                    calls += 1;
+                    calls_thread.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     let request = super::read_socket_line(&mut stream).unwrap_or_default();
                     let is_version = serde_json::from_str::<serde_json::Value>(&request)
                         .ok()
@@ -285,8 +324,12 @@ fn activity_list_socket_with_identity(repo: &Path, response: Option<&str>, versi
                 Err(_) => break,
             }
         }
-        calls
-    })
+    });
+    ActivityListSocket {
+        calls,
+        stop: Some(stop_tx),
+        handle: Some(handle),
+    }
 }
 
 // ---- Session list performance regression — TDD red tests (05-tdd.md) ----
