@@ -328,11 +328,27 @@ pub(crate) async fn list_sessions(task_slug: String) -> Result<Vec<SessionMeta>,
 }
 
 #[tauri::command]
-pub(crate) async fn list_session_items(app: AppHandle, all_repos: bool, include_archived: bool) -> Result<Vec<SessionListItem>, String> {
+pub(crate) async fn list_session_items(app: AppHandle, all_repos: bool, include_archived: bool, repo_path: Option<String>) -> Result<Vec<SessionListItem>, String> {
+    list_session_items_with_repo_resolver(all_repos, include_archived, load_app_config(&app).known_repos, repo_path.as_deref(), |path| {
+        target_repo_for_app(&app, path)
+    })
+}
+
+pub(crate) fn list_session_items_with_repo_resolver(
+    all_repos: bool,
+    include_archived: bool,
+    known_repos: Vec<String>,
+    repo_path: Option<&str>,
+    resolve_repo: impl FnOnce(&str) -> Result<PathBuf, String>,
+) -> Result<Vec<SessionListItem>, String> {
     let repos = if all_repos {
-        load_app_config(&app).known_repos
+        known_repos
     } else {
-        vec![active_repo()?.to_string_lossy().to_string()]
+        let repo = match repo_path {
+            Some(path) => resolve_repo(path)?,
+            None => active_repo()?,
+        };
+        vec![repo.to_string_lossy().into_owned()]
     };
     let mut out = vec![];
     for repo_path in dedupe_known_repos(repos) {

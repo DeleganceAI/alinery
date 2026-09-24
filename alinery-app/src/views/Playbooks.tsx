@@ -267,9 +267,9 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       setBusy(false);
     }
   };
-  const preferences = catalog?.picker_preferences;
+  const preferences = catalog?.diagnostics.some((item) => item.code === "picker_preferences") ? undefined : catalog?.picker_preferences;
   const savePreferences = async (next: PickerPreferences) => {
-    if (!repoPath || !catalog || pendingPreference.current !== null) return;
+    if (!repoPath || !preferences || pendingPreference.current !== null) return;
     const owner = repoPath;
     const generation = preferenceGeneration.current;
     pendingPreference.current = generation;
@@ -312,7 +312,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     .filter(
       (candidate) =>
         `${candidate.title || ""} ${candidate.description || ""} ${playbookRefKey(candidate.source.reference)}`.toLowerCase().includes(query.trim().toLowerCase()) &&
-        (!preferredOnly || !repoPath || preferredKeys.has(playbookRefKey(candidate.source.reference))),
+        (!preferredOnly || !repoPath || !preferences || preferredKeys.has(playbookRefKey(candidate.source.reference))),
     )
     .sort((left, right) => {
       const identityOrder = playbookRefKey(left.source.reference).localeCompare(playbookRefKey(right.source.reference));
@@ -449,7 +449,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                   Search playbooks
                   <input ref={searchRef} type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, description or key…" />
                 </label>
-                <Checkbox label="Preferred only" checked={!!repoPath && preferredOnly} disabled={!repoPath} onChange={setPreferredOnly} />
+                <Checkbox label="Preferred only" checked={!!repoPath && !!preferences && preferredOnly} disabled={!repoPath || !preferences} onChange={setPreferredOnly} />
               </div>
               {!repoPath && <p className="hint">Select a repository to manage its preferred playbooks.</p>}
               {preferenceError && <InlineStatus tone="error">{preferenceError}</InlineStatus>}
@@ -533,7 +533,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                           <Checkbox
                             label={<span className="sr-only">Preferred for this repo: {identity}</span>}
                             checked={isPreferred}
-                            disabled={!repoPath || preferenceSaving}
+                            disabled={!repoPath || !preferences || preferenceSaving}
                             onChange={(checked) => setPreferred(candidate.source.reference, checked)}
                           />
                         </td>
@@ -546,6 +546,14 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
             {catalog && candidates?.length === 0 && <p>{query || preferredOnly ? "No matching playbooks." : "No playbooks yet. Create or import a definition."}</p>}
             {catalog?.diagnostics.map((item) => (
               <InlineStatus key={`${item.code}:${item.message}`} tone="error">
+                {item.code === "picker_preferences" && (
+                  <>
+                    <p>Couldn't read saved playbook preferences. Preference changes are disabled to protect the file. Fix the file, then retry.</p>
+                    <button className="btn ghost" type="button" onClick={() => void refresh(repoPath)}>
+                      Retry preferences
+                    </button>
+                  </>
+                )}
                 {item.code}: {item.message}
               </InlineStatus>
             ))}

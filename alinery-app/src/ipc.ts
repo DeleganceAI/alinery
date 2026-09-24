@@ -260,7 +260,8 @@ export const detachSession = (id: string, attachId: number) => invoke<void>("det
 export const ensureDrawerTerminal = () => invoke<SessionMeta>("ensure_drawer_terminal");
 export const killSession = (id: string, taskSlug: string) => invoke<void>("kill_session", { id, taskSlug });
 export const killSessionForRepo = (repoPath: string, id: string, taskSlug: string) => invoke<void>("kill_session_for_repo", { repoPath, id, taskSlug });
-export const listSessionItems = (allRepos: boolean, includeArchived: boolean) => invoke<SessionListItem[]>("list_session_items", { allRepos, includeArchived });
+export const listSessionItems = (allRepos: boolean, includeArchived: boolean, repoPath?: string) =>
+  invoke<SessionListItem[]>("list_session_items", { allRepos, includeArchived, repoPath });
 export const listSessions = (taskSlug: string) => invoke<SessionMeta[]>("list_sessions", { taskSlug });
 export const markSessionNotificationRead = (repoPath: string, taskSlug: string, id: string) => invoke<void>("mark_session_notification_read", { repoPath, taskSlug, id });
 export const clearSessionNotifications = (refs: SessionNotificationClearRef[]) => invoke<void>("clear_session_notifications", { refs });

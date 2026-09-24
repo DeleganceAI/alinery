@@ -135,6 +135,25 @@ describe("SessionsList empty", () => {
 
 const renderedNames = (container: HTMLElement) => [...container.querySelectorAll(".list > .row .rtt")].map((node) => node.textContent);
 
+describe("SessionsList repository scope", () => {
+  it("keeps B visible when a delayed A response arrives after switching repositories", async () => {
+    let resolveA!: (rows: SessionListItem[]) => void;
+    const pendingA = new Promise<SessionListItem[]>((resolve) => {
+      resolveA = resolve;
+    });
+    mocks.listSessionItems.mockImplementation((_allRepos, _archived, repoPath) =>
+      repoPath === "/b" ? Promise.resolve([session({ repo_path: "/b", task_name: "Repository B" })]) : pendingA,
+    );
+    const props = { allRepos: false, onOpen: vi.fn(), registerNav: vi.fn(), onCreateSession: vi.fn(), onCreateTask: vi.fn() };
+    const { rerender } = render(<SessionsList {...props} activeRepo="/a" />);
+    rerender(<SessionsList {...props} activeRepo="/b" />);
+    await screen.findByText("Repository B");
+    await act(async () => resolveA([session({ repo_path: "/a", task_name: "Repository A" })]));
+    expect(screen.queryByText("Repository A")).toBeNull();
+    expect(screen.getByText("Repository B")).toBeDefined();
+  });
+});
+
 describe("SessionsList without identifiers", () => {
   it("opens the correct same-label session without exposing IDs or losing resumed state", async () => {
     const original = session({ id: "opaque-original", created: 10 });

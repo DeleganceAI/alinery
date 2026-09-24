@@ -72,6 +72,7 @@ export function SessionsList({
   // lands on a picker with nothing to pick — the real next step is a task.
   const [taskCount, setTaskCount] = useState<number | null>(null);
   const itemsRef = useRef<SessionListItem[]>([]);
+  const listRequest = useRef(0);
   const statusRequest = useRef(0);
 
   const refreshStatuses = (rows: SessionListItem[]) => {
@@ -95,20 +96,30 @@ export function SessionsList({
       });
   };
 
-  const load = () =>
-    ipc
-      .listSessionItems(allRepos, showArchived)
-      .then((rows) => {
-        itemsRef.current = rows;
-        setItems((current) => (sameSessionListItems(current, rows) ? current : rows));
-        setSelectedKey((prev) => (prev && rows.some((row) => rowKey(row) === prev) ? prev : rows[0] ? rowKey(rows[0]) : ""));
-        setErr("");
-        refreshStatuses(rows);
-      })
-      .catch((e) => setErr(String(e)))
-      .finally(() => setLoaded(true));
+  const load = async () => {
+    const request = ++listRequest.current;
+    try {
+      const rows = await ipc.listSessionItems(allRepos, showArchived, activeRepo);
+      if (request !== listRequest.current) return;
+      itemsRef.current = rows;
+      setItems((current) => (sameSessionListItems(current, rows) ? current : rows));
+      setSelectedKey((prev) => (prev && rows.some((row) => rowKey(row) === prev) ? prev : rows[0] ? rowKey(rows[0]) : ""));
+      setErr("");
+      refreshStatuses(rows);
+    } catch (e) {
+      if (request === listRequest.current) setErr(String(e));
+    } finally {
+      if (request === listRequest.current) setLoaded(true);
+    }
+  };
 
   useEffect(() => {
+    itemsRef.current = [];
+    setItems([]);
+    setObservations({});
+    setSelectedKey("");
+    setErr("");
+    setLoaded(false);
     let alive = true;
     let timer = 0;
     const poll = () => {
@@ -119,9 +130,11 @@ export function SessionsList({
     poll();
     return () => {
       alive = false;
+      listRequest.current += 1;
+      statusRequest.current += 1;
       window.clearTimeout(timer);
     };
-  }, [allRepos, showArchived]);
+  }, [allRepos, showArchived, activeRepo]);
 
   const empty = loaded && items.length === 0;
 
@@ -137,7 +150,7 @@ export function SessionsList({
     return () => {
       alive = false;
     };
-  }, [empty, allRepos]);
+  }, [empty, allRepos, activeRepo]);
 
   useEffect(() => {
     let alive = true;

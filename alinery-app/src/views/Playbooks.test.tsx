@@ -551,6 +551,35 @@ describe("graph-first playbook management", () => {
 });
 
 describe("repository preferred playbooks", () => {
+  it("preserves unreadable preferences until a successful reload, then retains unrelated metadata on change", async () => {
+    const saved: PickerPreferences = {
+      order: [{ scope: "global", key: "review" }],
+      entries: [{ ...preference("global"), badge: "Keep me", color: "#123456", last_imported_at_ms: 1234 }],
+    };
+    preferencesByRepo.set("/repo", structuredClone(saved));
+    const catalog = await mocks.listPlaybookCatalog("/repo");
+    mocks.listPlaybookCatalog.mockResolvedValueOnce({
+      ...catalog,
+      picker_preferences: { order: [], entries: [] },
+      diagnostics: [{ code: "picker_preferences", message: "Cannot parse picker.toml", severity: "error" }],
+    });
+    render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    const checkbox = await screen.findByRole("checkbox", { name: "Preferred for this repo: repo/review" });
+    fireEvent.click(checkbox);
+    expect(mocks.savePlaybookPickerPreferences).not.toHaveBeenCalled();
+    expect(preferencesByRepo.get("/repo")).toEqual(saved);
+    expect(checkbox).toHaveProperty("disabled", true);
+    expect(screen.getByRole("alert")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Review Repository" })).toHaveProperty("disabled", false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry preferences" }));
+    await waitFor(() => expect(checkbox).toHaveProperty("disabled", false));
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(checkbox);
+    await waitFor(() => expect(checkbox).toHaveProperty("checked", true));
+    expect(preferencesByRepo.get("/repo")).toEqual({ ...saved, entries: [...saved.entries, preference("repo")] });
+  });
+
   it("persists membership without changing defaults or metadata and keeps nonpreferred and hidden entries searchable", async () => {
     const legacy = { ...preference("global", false), hidden: true, badge: "Imported", color: "#123456", last_imported_at_ms: 1234 };
     const order: PlaybookRef[] = [
