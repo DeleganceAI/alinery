@@ -3,6 +3,7 @@ import { type ComponentProps, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import type { QueuedFollowUp } from "../chat/queue";
+import type * as Ipc from "../ipc";
 import type { SessionMessageDraft } from "../sessionMessage";
 import { mockIpc } from "../test/mockIpc";
 import { Toast, toast } from "../toast";
@@ -739,7 +740,7 @@ describe("leftover harness refuse", () => {
   });
 });
 
-describe("session chat open_url approval", () => {
+describe("session chat approval", () => {
   const REQUEST = "ui-open";
 
   beforeEach(() => {
@@ -782,6 +783,30 @@ describe("session chat open_url approval", () => {
     expect(responses()).toHaveLength(0);
     expect(screen.getByText("https://example.com/setup")).toBeDefined();
     expect(screen.getByTestId("chat-activity").textContent).toContain("Waiting for approval");
+  });
+
+  it("shows confirmation details only once while preserving approval controls and the waiting composer", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "waiting_for_approval", correlation_id: REQUEST }));
+    renderSession();
+    await waitFor(() => expect(rpcAttachSession).toHaveBeenCalled());
+    const calls = rpcAttachSession.mock.calls;
+    const attach = calls[calls.length - 1]?.[0] as { onLine: (line: string) => void };
+    const title = "Approve the meeting-notes specification?";
+    const detail = "Create action items without inventing owners or deadlines.";
+    await act(async () => {
+      attach.onLine(JSON.stringify({ type: "extension_ui_request", id: REQUEST, method: "confirm", title, message: detail }));
+    });
+
+    expect(screen.getAllByText(title, { exact: false })).toHaveLength(1);
+    expect(screen.getAllByText(detail, { exact: false })).toHaveLength(1);
+    expect(within(screen.getByTestId("chat-pane")).getByText(detail)).toBeDefined();
+    expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId("chat-activity").textContent).toContain("Waiting for approval");
+    expect(responses()).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Allow" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+    await waitFor(() => expect(responses()).toHaveLength(1));
+    expect(responses()[0]?.confirmed).toBe(false);
   });
 
   it("opens the link and confirms once when the user allows it", async () => {
@@ -1475,7 +1500,7 @@ describe("session chat attach handshake", () => {
   beforeEach(() => {
     scenario.tasks = [{ ...task }];
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
-    rpcWriteSession.mockClear();
+    rpcWriteSession.mockReset().mockResolvedValue(undefined);
     rpcAttachSession.mockReset();
     rpcAttachSession.mockImplementation(async () => undefined);
   });
@@ -1485,6 +1510,7 @@ describe("session chat attach handshake", () => {
     vi.useRealTimers();
     sessionStatus.mockReset();
     sessionStatus.mockResolvedValue({ lifecycle: { state: "exited" as const, code: 0 }, state: null, checkpoint: {} });
+    rpcWriteSession.mockReset().mockResolvedValue(undefined);
   });
 
   it("writes get_subagents after set_subagent_subscription", async () => {
@@ -1493,6 +1519,61 @@ describe("session chat attach handshake", () => {
     const types = rpcWriteSession.mock.calls.map(([, payload]) => (payload as { type?: string } | null)?.type);
     expect(types).toContain("get_subagents");
     expect(types.indexOf("get_subagents")).toBeGreaterThan(types.indexOf("set_subagent_subscription"));
+  });
+
+  const exitedRpc: SessionObservation = {
+    ...liveObservation("rpc"),
+    lifecycle: { state: "live_exited" },
+    state: {
+      process: { state: "exited", code: 0 },
+      agent: { state: "idle" },
+      playbook: { state: "ready_to_advance" },
+      adapter: "omp",
+      message_adapter: "omp_bracketed_paste",
+    },
+  };
+
+  it("replays a completed RPC session without issuing live commands or error toasts", async () => {
+    sessionStatus.mockResolvedValue(exitedRpc);
+    rpcWriteSession.mockRejectedValue("session-exited");
+    rpcAttachSession.mockImplementation(async (args) => {
+      const attach = args as Parameters<typeof Ipc.rpcAttachSession>[0];
+      attach.onLine(JSON.stringify({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "Completed implementation." }] } }));
+    });
+    render(<Toast />);
+    renderSession({ intent: "attach" });
+    expect(await screen.findByText("Completed implementation.")).toBeTruthy();
+    await flushPromises();
+    expect(rpcWriteSession).not.toHaveBeenCalled();
+    expect(within(screen.getByRole("status", { name: "Notifications" })).queryByText("session-exited")).toBeNull();
+  });
+
+  it("reconciles a session that exits during the RPC handshake without showing an error", async () => {
+    rpcWriteSession.mockImplementation(async (_id, payload) => {
+      if (payload && typeof payload === "object" && "type" in payload && payload.type === "negotiate_protocol") {
+        sessionStatus.mockResolvedValue(exitedRpc);
+        throw "session-exited";
+      }
+    });
+    render(<Toast />);
+    renderSession({ messageDraft: { body: "keep draft", pendingActions: [], attachments: [] } });
+    await flushPromises();
+    expect(screen.queryByRole("group", { name: "Session view" })).toBeNull();
+    expect(within(screen.getByRole("status", { name: "Notifications" })).queryByText("session-exited")).toBeNull();
+    const draft = screen.getByLabelText("Message or /command") as HTMLTextAreaElement;
+    expect(draft.value).toBe("keep draft");
+  });
+
+  it.each(["live", "unavailable"])("reports a real handshake error when refreshed status is %s", async (status) => {
+    rpcWriteSession.mockImplementation(async (_id, payload) => {
+      if (payload && typeof payload === "object" && "type" in payload && payload.type === "negotiate_protocol") {
+        if (status === "unavailable") sessionStatus.mockRejectedValue(new Error("Status unavailable"));
+        throw new Error("RPC connection failed");
+      }
+    });
+    render(<Toast />);
+    renderSession();
+    expect(await within(screen.getByRole("status", { name: "Notifications" })).findByText("Error: RPC connection failed")).toBeTruthy();
   });
 
   it("does not re-attach after a transient sessionStatus rejection", async () => {
@@ -1541,6 +1622,9 @@ describe("session-scoped completion permission", () => {
     scenario.tasksPromise = null;
     scenario.tasksError = null;
     scenario.items = [];
+    sessionStatus.mockReset().mockResolvedValue(liveObservation("rpc"));
+    rpcAttachSession.mockReset().mockResolvedValue(undefined);
+    rpcWriteSession.mockReset().mockResolvedValue(undefined);
     getTaskExecution.mockReset().mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session" })]));
     allowExecutionCompletion.mockReset().mockImplementation(async (_slug: string, executionId: string, sessionId: string) => {
       getTaskExecution.mockResolvedValue(
@@ -1555,54 +1639,93 @@ describe("session-scoped completion permission", () => {
     vi.useRealTimers();
   });
 
-  it("grants the displayed owner from the collapsed header while preserving the interactive composer", async () => {
+  async function requestCompletion(title = "Allow this session to complete") {
+    await flushPromises();
+    const attach = rpcAttachSession.mock.calls[rpcAttachSession.mock.calls.length - 1]?.[0] as { onLine: (line: string) => void };
+    await act(async () => {
+      attach.onLine(JSON.stringify({ type: "extension_ui_request", id: "completion-ask", method: "confirm", title, message: "Extension-supplied description" }));
+    });
+  }
+
+  function responses() {
+    return rpcWriteSession.mock.calls
+      .map(([, payload]) => payload as { type?: string; id?: string; confirmed?: boolean })
+      .filter((payload) => payload.type === "extension_ui_response" && payload.id === "completion-ask");
+  }
+
+  it("asks in chat only when requested and waits for the authenticated grant before releasing the tool", async () => {
+    const grant = deferred<void>();
+    allowExecutionCompletion.mockReturnValue(grant.promise);
     renderSession();
-    const allow = await screen.findByRole("button", { name: "Allow this session to complete · session" });
-    const disclosure = screen.getByLabelText("Session execution") as HTMLDetailsElement;
-    expect(disclosure.open).toBe(false);
+    await flushPromises();
+    expect(screen.queryByRole("button", { name: /Allow/ })).toBeNull();
+    await requestCompletion();
+    const pane = within(screen.getByTestId("chat-pane"));
+    const allow = pane.getByRole("button", { name: "Allow" });
+    expect(pane.getByRole("button", { name: "Deny" })).toBeDefined();
+    expect(pane.getByText(/Deny keeps the session open/)).toBeDefined();
+    expect(pane.queryByText("Extension-supplied description")).toBeNull();
     fireEvent.click(allow);
-    await waitFor(() => expect(allowExecutionCompletion).toHaveBeenCalledWith("task", "execution-a", "session", "/repo"));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Allow this session to complete · session" })).toBeNull());
-    expect(disclosure.open).toBe(false);
-    fireEvent.click(screen.getByText(/Retained worker · running · Owner session/));
-    expect(await screen.findByText("Completion permission: human_granted · session")).toBeDefined();
+    fireEvent.click(allow);
+    expect(allowExecutionCompletion).toHaveBeenCalledExactlyOnceWith("task", "execution-a", "session", "/repo");
+    expect(responses()).toEqual([]);
+    await act(async () => grant.resolve());
+    await waitFor(() => expect(responses()).toEqual([{ type: "extension_ui_response", id: "completion-ask", confirmed: true }]));
+    expect(pane.queryByRole("button", { name: "Allow" })).toBeNull();
     expect(screen.getByLabelText("Message or /command")).toBeDefined();
-    expect(screen.getByText("research/1-request-2.md")).toBeDefined();
-    expect(screen.getByText("research/2-result-10.md")).toBeDefined();
+  });
+
+  it("denies completion without granting permission or closing the composer", async () => {
+    renderSession();
+    await requestCompletion();
+    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+    await waitFor(() => expect(responses()).toEqual([{ type: "extension_ui_response", id: "completion-ask", confirmed: false }]));
+    expect(allowExecutionCompletion).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(screen.getByLabelText("Message or /command")).toBeDefined();
+  });
+
+  it("does not turn an ordinary approval into completion authority", async () => {
+    renderSession();
+    await requestCompletion("Approve a different action");
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    await waitFor(() => expect(responses()).toEqual([{ type: "extension_ui_response", id: "completion-ask", confirmed: true }]));
+    expect(allowExecutionCompletion).not.toHaveBeenCalled();
   });
 
   it("never grants a replacement from a retired owner's history", async () => {
     getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "replacement", previous_session_ids: ["session"] })]));
     renderSession();
+    await requestCompletion();
+    const allow = screen.getByRole("button", { name: "Allow" });
+    expect(allow).toHaveProperty("disabled", true);
+    fireEvent.click(allow);
+    expect(allowExecutionCompletion).not.toHaveBeenCalled();
+    expect(responses()).toEqual([]);
     fireEvent.click(await screen.findByText(/Owner replacement/));
     expect(screen.getByText("This is a previous owner. Current owner: replacement.")).toBeDefined();
-    expect(screen.queryByRole("button", { name: /Allow this session to complete/ })).toBeNull();
   });
 
   it.each(["offline", "foreign_owner", undefined] as const)("keeps saved execution history readable without completion authority when live status is %s", async (status) => {
     const saved = executionReply([executionRecord({ owner_session_id: "session" })]);
     getTaskExecution.mockResolvedValue({ ...saved, live: status ? { status, detail: "Owner cannot be queried" } : undefined });
-    sessionStatus.mockResolvedValue({ lifecycle: { state: "orphaned" }, state: null, checkpoint: {} });
-    startSession.mockClear();
-    renderSession({ intent: undefined });
-
-    const allow = await screen.findByRole("button", { name: "Allow this session to complete · session" });
-    expect((allow as HTMLButtonElement).disabled).toBe(true);
+    renderSession();
+    await requestCompletion();
+    const allow = screen.getByRole("button", { name: "Allow" });
+    expect(allow).toHaveProperty("disabled", true);
     fireEvent.click(allow);
     fireEvent.click(screen.getByText(/Retained worker · running · Owner session/));
     expect(screen.getByText("research/1-request-2.md")).toBeDefined();
     expect(screen.getByText("research/2-result-10.md")).toBeDefined();
-    fireEvent.click(await screen.findByRole("button", { name: "View history" }));
-    expect(await screen.findByTestId("chat-pane")).toBeDefined();
     expect(allowExecutionCompletion).not.toHaveBeenCalled();
-    expect(startSession).not.toHaveBeenCalled();
+    expect(responses()).toEqual([]);
   });
 
   it("revokes completion authority when a refresh fails after a live reply", async () => {
     vi.useFakeTimers();
-    renderSession({ intent: undefined });
-    await flushPromises();
-    const allow = screen.getByRole("button", { name: "Allow this session to complete · session" }) as HTMLButtonElement;
+    renderSession();
+    await requestCompletion();
+    const allow = screen.getByRole("button", { name: "Allow" }) as HTMLButtonElement;
     expect(allow.disabled).toBe(false);
 
     getTaskExecution.mockRejectedValue(new Error("Execution query failed"));
@@ -1612,7 +1735,49 @@ describe("session-scoped completion permission", () => {
     expect(allow.disabled).toBe(true);
     fireEvent.click(allow);
     expect(allowExecutionCompletion).not.toHaveBeenCalled();
-    expect(screen.getByText("research/2-result-10.md")).toBeDefined();
+    expect(responses()).toEqual([]);
+  });
+
+  it("keeps a failed grant pending and permits retry after authority recovers", async () => {
+    vi.useFakeTimers();
+    allowExecutionCompletion.mockRejectedValueOnce(new Error("grant failed"));
+    renderSession();
+    await requestCompletion();
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    await flushPromises();
+    expect(responses()).toEqual([]);
+    expect(screen.getByRole("button", { name: "Allow" })).toHaveProperty("disabled", true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    await flushPromises();
+    expect(responses()).toEqual([{ type: "extension_ui_response", id: "completion-ask", confirmed: true }]);
+    expect(allowExecutionCompletion).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not offer a false denial after permission was granted but the RPC reply failed", async () => {
+    vi.useFakeTimers();
+    rpcWriteSession.mockImplementation(async (_id, payload) => {
+      if (payload && typeof payload === "object" && "type" in payload && payload.type === "extension_ui_response") throw new Error("reply failed");
+    });
+    renderSession();
+    await requestCompletion();
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    await flushPromises();
+    expect(allowExecutionCompletion).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(screen.getByRole("button", { name: "Deny" })).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+    expect(responses().some((response) => response.confirmed === false)).toBe(false);
+    rpcWriteSession.mockResolvedValue(undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    await flushPromises();
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(allowExecutionCompletion).toHaveBeenCalledTimes(1);
+    expect(responses().map((response) => response.confirmed)).toEqual([true, true]);
   });
 });
 

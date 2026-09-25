@@ -94,14 +94,16 @@ export function PlaybookGraph({
   const selectedStep = steps.find((step) => step.key === selectedKey) ?? (showInspector ? steps[0] : undefined);
   const edges = useMemo(
     () =>
-      steps.flatMap((producer) =>
-        steps.flatMap((consumer) =>
-          consumer.inputs.flatMap((input) =>
-            producer.outputs.filter((output) => selectorsOverlap(output.path, input.path)).map((output) => ({ from: producer, to: consumer, input, output })),
-          ),
-        ),
-      ),
-    [steps],
+      variant === "definition"
+        ? steps.flatMap((producer) =>
+            steps.flatMap((consumer) =>
+              consumer.inputs.flatMap((input) =>
+                producer.outputs.filter((output) => selectorsOverlap(output.path, input.path)).map((output) => ({ from: producer, to: consumer, input, output })),
+              ),
+            ),
+          )
+        : [],
+    [variant, steps],
   );
   const connections = useMemo(() => (variant === "definition" ? edges.map(({ from, to, output }) => ({ from: from.key, to: to.key, label: output.path })) : []), [variant, edges]);
   const flowConnections = useMemo(() => reduceFlowConnections(connections).map(({ from, to }) => ({ from, to })), [connections]);
@@ -176,17 +178,6 @@ export function PlaybookGraph({
             </button>
           )}
         </div>
-        <p id={`${inspectorId}-hint`} className="playbook-definition-hint">
-          Static definition, not an execution trace.{" "}
-          {displayMode === "flow"
-            ? "Flow shows dependency ordering, not artifact forwarding. Cyclic graphs retain all connections."
-            : "All declared dependencies. Hover a step or connection, or select a step, to reveal artifact names."}{" "}
-          {showInspector ? "Inspect a step for its full inputs, outputs and connections." : "Select a step to highlight its connections."}
-        </p>
-        <p className="playbook-definition-hint">
-          Wheel to zoom; drag the background to pan. Pan: +/− zoom, arrows move, Escape returns. Dashed arrows are return paths.
-          {layout.ellipses.length > 0 && " Three example instances illustrate fan-out; actual counts vary."}
-        </p>
         <div
           ref={splitRef}
           className={`playbook-definition-layout${resizing ? " resizing" : ""}`}
@@ -221,7 +212,6 @@ export function PlaybookGraph({
                   className={`playbook-definition-viewport${panning ? " is-panning" : ""}`}
                   role="region"
                   aria-label="Dependency graph canvas"
-                  aria-describedby={`${inspectorId}-hint`}
                   tabIndex={-1}
                   onPointerDown={onPointerDown}
                   onKeyDown={(event) => {
@@ -539,21 +529,6 @@ export function PlaybookGraph({
           </div>
         ))}
       </div>
-      <h3 className="playbook-dependencies-title">Artifact dependencies</h3>
-      <p className="playbook-dependencies-hint">
-        Producer → consumer, matched by output → input path. The input mode is shown in parentheses; these connections do not indicate automatic completion.
-      </p>
-      <ul aria-label="Artifact dependencies">
-        {edges.map(({ from, to, input, output }) => (
-          <li key={`${from.key}:${output.path}:${to.key}:${input.path}`} aria-label={`${from.title} to ${to.title}: ${input.mode}`}>
-            <span>{from.title}</span> <ArrowRight size={12} aria-hidden="true" /> <span>{to.title}</span>
-            <code>
-              {output.path} → {input.path}
-            </code>{" "}
-            <span>({input.mode})</span>
-          </li>
-        ))}
-      </ul>
     </section>
   );
 }

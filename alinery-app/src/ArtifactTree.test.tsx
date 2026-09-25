@@ -7,6 +7,7 @@ import type { ArtifactTreeNode } from "./types";
 const ipcMocks = vi.hoisted(() => ({
   artifactNodePath: vi.fn(() => Promise.resolve("/tmp/evidence.png")),
   revealItemInDir: vi.fn(),
+  readAttachmentImage: vi.fn(() => new Promise<ArrayBuffer>(() => {})),
 }));
 
 vi.mock("./ipc", () => ipcMocks);
@@ -74,7 +75,7 @@ describe("ArtifactTree", () => {
 
   it("resolves attachment nodes through the opaque backend ID before reveal", async () => {
     render(<ArtifactTree taskSlug="task" nodes={nodes} onSelect={() => {}} onError={() => {}} />);
-    fireEvent.click(screen.getByText("evidence.png"));
+    fireEvent.click(screen.getByRole("button", { name: "Show evidence.png in folder" }));
     await waitFor(() => expect(ipcMocks.artifactNodePath).toHaveBeenCalledWith("task", "attachment"));
     expect(ipcMocks.revealItemInDir).toHaveBeenCalledWith("/tmp/evidence.png");
   });

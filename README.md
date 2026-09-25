@@ -63,7 +63,16 @@ The default **SuperDevelop** Playbook takes a change through:
 Clarify → Investigate → Decide → Plan → Define Tests → Build → Prepare Review
 ```
 
-Review the decision before starting Plan. Other bundled Playbooks cover one-shot implementation, code review, bug hunting, and free-form sessions. Customize them through your repository's `.alinery/playbooks.toml`.
+Review the decision before starting Plan. Other bundled Playbooks cover one-shot implementation, code review, bug hunting, and free-form sessions. **Build a New Playbook** is the bundled meta-playbook for defining, drafting, and refining a new playbook, then saving it to a global or repository library after human approval. Find it in the bundled Playbooks list or the new-task picker.
+
+**Image evidence at creation.** Paste clipboard images into Description, Evidence / pointers,
+or the Attachments input on New task. Each image has a preview (when supported), name, size,
+and Remove button. Accepted images and local files are kept in the selected task's
+`artifacts/attachments/` directory and can be revealed from Task Detail's Attachments view.
+The combined allowance is 25 MiB per file and 100 MiB per creation request; rejected files
+are reported while valid siblings are retained. URLs remain pointers and are never fetched.
+Pasted images are not saved with text drafts: Create attaches them, while Clear draft or
+leaving the form discards them.
 
 **Sessions survive app quit.** A per-repository daemon (`alineryd`) owns the agent and terminal processes. Leave sessions running when you close the app, then reconnect when you return. Stopping sessions is an explicit action; the quit dialog also offers **Quit & close all repos**.
 
@@ -101,7 +110,7 @@ Draft tasks appear with a Draft label and open their saved creation form.
 
 On a fresh workspace, the default Kanban+ view starts with **Progress lanes**: playbook
 steps left-to-right, all step labels, no grouping, repository fill, attention borders,
-manual lane order, compact cards, active tasks only, fixed brightness, and archives
+manual lane order, compact cards, all tasks, fixed brightness, and archives
 hidden. Tile size is 150 × 78px, row/column spacing is 10/8px, and the first column is
 190px. Every card property except playbook is enabled. Existing saved Grid layouts
 are restored unchanged; additional Grid tabs retain their Step Kanban starting layout.

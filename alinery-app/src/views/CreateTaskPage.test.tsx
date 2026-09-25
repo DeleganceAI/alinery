@@ -1,9 +1,10 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useState } from "react";
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Webview } from "../ipc";
 import * as taskMutationGuard from "../taskMutationGuard";
 import { mockIpc } from "../test/mockIpc";
-import type { BoardTask, Config, CreateTaskResult, PlaybookCatalog, PlaybookRef, ScopedPlaybook, TargetedCreateResult, Task } from "../types";
+import type { BoardTask, Config, CreateTaskResult, PlaybookCatalog, PlaybookRef, PreparedTaskAttachments, ScopedPlaybook, TargetedCreateResult, Task } from "../types";
 import { CreateTaskPage } from "./CreateTaskPage";
 
 const sources: ScopedPlaybook[] = [
@@ -115,7 +116,7 @@ vi.mock("../ipc", () =>
     prepareTaskAttachments: vi.fn(async () => ({ attachments: [], attachment_urls: [], attachment_errors: [] })),
     connectionStatuses: vi.fn(async () => []),
     listHarnessModelsForRepo: vi.fn(async () => []),
-    getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) as unknown as ReturnType<typeof import("../ipc").getCurrentWebview>,
+    getCurrentWebview: vi.fn(() => ({ onDragDropEvent: async () => () => {} }) as unknown as Webview),
   }),
 );
 
@@ -612,13 +613,16 @@ describe("v2 task creation", () => {
   });
 
   it("keeps attachment warnings visible before opening a ready task", async () => {
-    vi.mocked(ipc.createTaskForRepo).mockResolvedValue({ ...readyReply, attachment_errors: ["Could not copy evidence.pdf"] });
+    vi.mocked(ipc.createTaskForRepo).mockResolvedValue({
+      ...readyReply,
+      errors: [{ stage: "attachments", code: "import_failed", message: "Could not copy evidence.pdf" }],
+    });
     const onCreated = vi.fn();
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={onCreated} />);
     await screen.findByRole("checkbox", { name: "Build" });
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-    await screen.findByText("Could not copy evidence.pdf");
+    await screen.findByText(/attachments: Could not copy evidence.pdf/);
     expect(onCreated).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Open task" }));
     expect(onCreated).toHaveBeenCalledOnce();
@@ -798,5 +802,468 @@ describe("task creation feedback", () => {
     await waitFor(() => expect(toastSpies.toast).toHaveBeenCalledWith("A task is already being duplicated — wait for it to finish.", "error"));
     expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
     expect(toastSpies.loading).not.toHaveBeenCalled();
+  });
+});
+
+describe("clipboard task attachments", () => {
+  beforeEach(() => {
+    // JSDOM cannot render blob URLs; keep File and FileReader real for byte assertions.
+    let nextUrl = 0;
+    vi.stubGlobal(
+      "URL",
+      class extends URL {
+        static createObjectURL = vi.fn(() => `blob:clipboard-test-${nextUrl++}`);
+        static revokeObjectURL = vi.fn();
+      },
+    );
+  });
+
+  const openForm = async () => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("checkbox", { name: "Build" });
+    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Clipboard evidence" } });
+  };
+
+  const paste = (target: HTMLElement, files: File[], text = "", filesOnly = false) => {
+    const event = createEvent.paste(target, {
+      clipboardData: {
+        items: filesOnly ? [] : files.map((file) => ({ kind: "file", type: file.type, getAsFile: () => file })),
+        files,
+        getData: (type: string) => (type === "text/plain" ? text : ""),
+      },
+    });
+    fireEvent(target, event);
+    return event;
+  };
+
+  it.each([
+    ["Description", /Describe the feature/, "image/png", "image.png", false],
+    ["Evidence", /Logs, stack traces/, "image/jpeg", "image.jpg", false],
+    ["Attachments", /Paste file paths/, "image/png", "image.png", true],
+  ] as const)("includes bytes pasted into %s exactly once in the creation package", async (_target, placeholder, type, name, filesOnly) => {
+    await openForm();
+    // Non-text octets and padding expose lossy text encoding and data-URL prefixes.
+    const bytes = new Uint8Array([0, 255, 128, 1]);
+    paste(screen.getByPlaceholderText(placeholder), [new File([bytes], name, { type })], "", filesOnly);
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+    const submitted = vi.mocked(ipc.createTaskForRepo).mock.calls[0][0];
+    expect(submitted.repoPath).toBe("/repo");
+    expect(submitted.request.attachments).toEqual([{ name: expect.stringMatching(/^[^/\\]+\.(png|jpg|jpeg)$/), bytes: "AP+AAQ==" }]);
+  });
+
+  it("keeps repeated clipboard names independent and submits only the unremoved image", async () => {
+    await openForm();
+    const target = screen.getByPlaceholderText(/Describe the feature/);
+    paste(target, [new File([new Uint8Array([1])], "image.png", { type: "image/png" })]);
+    paste(target, [new File([new Uint8Array([2])], "image.png", { type: "image/png" })]);
+    const remove = screen.getAllByRole("button", { name: /remove/i });
+    expect(remove).toHaveLength(2);
+    fireEvent.click(remove[0]);
+    expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+    expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.attachments).toEqual([{ name: expect.stringMatching(/^[^/\\]+\.png$/), bytes: "Ag==" }]);
+  });
+
+  it("cancels image-only insertion but leaves mixed text and ordinary paste native", async () => {
+    await openForm();
+    const target = screen.getByPlaceholderText(/Logs, stack traces/);
+    const image = new File([new Uint8Array([255])], "image.png", { type: "image/png" });
+    const text = paste(target, [], "replace selection");
+    const nonImage = paste(target, [new File(["not an image"], "note.txt", { type: "text/plain" })]);
+    const mixed = paste(target, [image], "caption");
+    const imageOnly = paste(target, [image]);
+    expect({
+      text: text.defaultPrevented,
+      nonImage: nonImage.defaultPrevented,
+      mixed: mixed.defaultPrevented,
+      imageOnly: imageOnly.defaultPrevented,
+    }).toEqual({ text: false, nonImage: false, mixed: false, imageOnly: true });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+    const attachments = vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.attachments;
+    expect(attachments?.map((attachment) => attachment.bytes)).toEqual(["/w==", "/w=="]);
+    expect(new Set(attachments?.map((attachment) => attachment.name)).size).toBe(2);
+  });
+
+  describe("clipboard follow-through", () => {
+    let dropFiles: (paths: string[]) => void;
+
+    beforeEach(() => {
+      vi.mocked(ipc.createTaskForRepo).mockReset().mockResolvedValue(readyReply);
+      vi.mocked(ipc.prepareTaskAttachments).mockReset().mockResolvedValue({ attachments: [], attachment_urls: [], attachment_errors: [] });
+      vi.mocked(ipc.pickAttachmentFilesDialog).mockReset().mockResolvedValue([]);
+      vi.mocked(ipc.deleteDraftForRepo).mockReset().mockResolvedValue(undefined);
+      vi.mocked(ipc.readArtifactForRepo).mockReset().mockResolvedValue("Saved description");
+      vi.mocked(ipc.getCurrentWebview).mockReturnValue({
+        onDragDropEvent: async (handler) => {
+          dropFiles = (paths) => handler({ event: "tauri://drag-drop", id: 0, payload: { type: "drop", paths, position: { x: 0, y: 0 } } } as Parameters<typeof handler>[0]);
+          return () => {};
+        },
+      } as Webview);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.mocked(ipc.prepareTaskAttachments).mockReset().mockResolvedValue({ attachments: [], attachment_urls: [], attachment_errors: [] });
+      vi.mocked(ipc.pickAttachmentFilesDialog).mockReset();
+      vi.mocked(ipc.deleteDraftForRepo).mockReset();
+      vi.mocked(ipc.readArtifactForRepo).mockReset();
+      vi.mocked(ipc.getCurrentWebview)
+        .mockReset()
+        .mockReturnValue({
+          onDragDropEvent: async () => () => {},
+        } as unknown as Webview);
+    });
+
+    const deferred = <T,>() => {
+      let resolve!: (value: T) => void;
+      let reject!: (reason: Error) => void;
+      const promise = new Promise<T>((done, fail) => {
+        resolve = done;
+        reject = fail;
+      });
+      return { promise, resolve, reject };
+    };
+    const image = (bytes: number[], name = "image.png", size?: number) => {
+      const file = new File([new Uint8Array(bytes)], name, { type: "image/png" });
+      // Admission uses metadata; encoding still reads real tiny binary bytes.
+      if (size !== undefined) Object.defineProperty(file, "size", { value: size });
+      return file;
+    };
+    const addEntry = (value: string) => {
+      const input = screen.getByPlaceholderText(/Paste file paths/);
+      fireEvent.change(input, { target: { value } });
+      fireEvent.keyDown(input, { key: "Enter" });
+    };
+    const submittedBytes = () =>
+      vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.attachments?.map((attachment) => Array.from(atob(attachment.bytes), (character) => character.charCodeAt(0)));
+    const visibleErrors = () =>
+      screen
+        .getAllByRole("alert")
+        .map((element) => element.textContent)
+        .join("\n");
+
+    it("retains valid image siblings while reporting unusable clipboard entries", async () => {
+      await openForm();
+      const target = screen.getByPlaceholderText(/Describe the feature/);
+      const files = [image([], "empty.png"), image([9], "too-large.png", 25 * 1024 * 1024 + 1), image([0, 255, 128]), image([3], "exact.png", 25 * 1024 * 1024)];
+      const event = createEvent.paste(target, {
+        clipboardData: {
+          items: [{ kind: "file", type: "image/png", getAsFile: () => null }, ...files.map((file) => ({ kind: "file", type: file.type, getAsFile: () => file }))],
+          files,
+          getData: () => "",
+        },
+      });
+      fireEvent(target, event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(visibleErrors()).toMatch(/clipboard|unavailable|read/i);
+      expect(visibleErrors()).toMatch(/empty|zero|non.empty/i);
+      expect(visibleErrors()).toMatch(/25|too large|size/i);
+      expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(2);
+      fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+      await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+      expect(submittedBytes()).toEqual([[0, 255, 128], [3]]);
+    });
+
+    it("keeps an undecodable preview attachable with a safe generated name", async () => {
+      await openForm();
+      paste(screen.getByPlaceholderText(/Describe the feature/), [image([0, 255, 128, 1], "../private\\unsafe.exe")]);
+      const preview = screen.getByRole("img");
+      const remove = screen.getByRole("button", { name: /remove/i });
+      const row = remove.parentElement;
+      expect(row?.textContent).toMatch(/4\s*(B|bytes)/i);
+      fireEvent.error(preview);
+      expect(screen.getByText(/preview.*unavailable|unable.*preview/i)).toBeDefined();
+      expect(screen.queryByRole("img")).toBeNull();
+      expect(screen.getByRole("button", { name: /remove/i })).toBe(remove);
+      fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+      await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+      const attachment = vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.attachments?.[0];
+      expect(attachment?.name).toMatch(/^[^/\\]+\.png$/);
+      expect(attachment?.name).not.toMatch(/private|unsafe|\.\./);
+      expect(row?.textContent).toContain(attachment?.name);
+      expect(submittedBytes()).toEqual([[0, 255, 128, 1]]);
+    });
+
+    it("releases image resources only when their staging lifetime ends", async () => {
+      const live = new Set<string>();
+      let serial = 0;
+      vi.mocked(URL.createObjectURL).mockImplementation(() => {
+        const url = `blob:owned-${serial++}`;
+        live.add(url);
+        return url;
+      });
+      vi.mocked(URL.revokeObjectURL).mockImplementation((url) => {
+        expect(live.delete(url)).toBe(true);
+      });
+      const props = { activeRepo: "/repo", knownRepos: ["/repo", "/other"], initialDraft: draftTask, onCancel: () => {}, onCreated: () => {} };
+      const view = render(
+        <StrictMode>
+          <CreateTaskPage {...props} />
+        </StrictMode>,
+      );
+      await screen.findByRole("checkbox", { name: "Build" });
+      await screen.findByDisplayValue("Saved description");
+      paste(screen.getByPlaceholderText(/Describe the feature/), [image([1]), image([2])]);
+      const previews = screen.getAllByRole("img").map((element) => element.getAttribute("src"));
+      expect(new Set(previews)).toEqual(live);
+      fireEvent.click(screen.getAllByRole("button", { name: /remove/i })[0]);
+      expect(live).toEqual(new Set([previews[1]]));
+      view.rerender(
+        <StrictMode>
+          <CreateTaskPage {...props} />
+        </StrictMode>,
+      );
+      fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/other" } });
+      await screen.findByRole("checkbox", { name: "Build" });
+      expect(screen.getByRole("img").getAttribute("src")).toBe(previews[1]);
+      expect(live).toEqual(new Set([previews[1]]));
+      fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/repo" } });
+      await screen.findByRole("checkbox", { name: "Build" });
+      vi.mocked(ipc.deleteDraftForRepo).mockRejectedValueOnce(new Error("Draft deletion denied"));
+      fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
+      await screen.findByText(/Couldn't clear the draft/);
+      expect(live).toEqual(new Set([previews[1]]));
+      expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(1);
+      fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
+      await waitFor(() => expect(screen.queryByRole("button", { name: /remove/i })).toBeNull());
+      expect(live.size).toBe(0);
+      paste(screen.getByPlaceholderText(/Describe the feature/), [image([3])]);
+      expect(live.size).toBe(1);
+      view.unmount();
+      expect(live.size).toBe(0);
+      render(
+        <StrictMode>
+          <CreateTaskPage {...props} />
+        </StrictMode>,
+      );
+      await screen.findByDisplayValue("Saved description");
+      expect(screen.queryByRole("button", { name: /remove/i })).toBeNull();
+      expect(screen.queryByRole("img")).toBeNull();
+      expect(live.size).toBe(0);
+    });
+
+    it.each(["preparation", "error", "abort"] as const)("retains pasted bytes for retry after preparation or encoding failure (%s)", async (failure) => {
+      await openForm();
+      paste(screen.getByPlaceholderText(/Describe the feature/), [image([0, 255, 128, 1])]);
+      const preview = screen.getByRole("img").getAttribute("src");
+      const prepared = deferred<PreparedTaskAttachments>();
+      vi.mocked(ipc.prepareTaskAttachments).mockReturnValueOnce(prepared.promise);
+      let reader: FileReader | undefined;
+      if (failure !== "preparation") {
+        vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementationOnce(function (this: FileReader) {
+          reader = this;
+        });
+      }
+      fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+      await waitFor(() => expect(ipc.prepareTaskAttachments).toHaveBeenCalledOnce());
+      if (failure === "preparation") {
+        await act(async () => prepared.reject(new Error("Path read failed")));
+      } else {
+        await act(async () => prepared.resolve({ attachments: [], attachment_urls: [], attachment_errors: [] }));
+        await waitFor(() => expect(reader).toBeDefined());
+        act(() => reader?.dispatchEvent(new ProgressEvent(failure)));
+      }
+      await screen.findByText(/Couldn't prepare task attachments/);
+      await waitFor(() => expect(taskMutationGuard.currentKind()).toBeNull());
+      expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+      expect(screen.queryByText(/Creation outcome is unknown/)).toBeNull();
+      expect(screen.getByRole("img").getAttribute("src")).toBe(preview);
+      expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+      addEntry("/retry.txt");
+      expect(screen.getByText("/retry.txt")).toBeDefined();
+      fireEvent.click(screen.getByRole("button", { name: "Remove /retry.txt" }));
+      expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(1);
+      fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+      await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+      expect(submittedBytes()).toEqual([[0, 255, 128, 1]]);
+      expect(ipc.prepareTaskAttachments).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(["ready-with-errors", "partial", "unknown"] as const)("freezes the captured attachment package across late asynchronous mutations (%s)", async (outcome) => {
+      const picker = deferred<string[]>();
+      const preparation = deferred<PreparedTaskAttachments>();
+      const creation = deferred<CreateTaskResult>();
+      vi.mocked(ipc.pickAttachmentFilesDialog).mockReturnValueOnce(picker.promise);
+      vi.mocked(ipc.prepareTaskAttachments).mockReturnValueOnce(preparation.promise);
+      vi.mocked(ipc.createTaskForRepo).mockReturnValueOnce(creation.promise);
+      const onCreated = vi.fn();
+      render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo", "/other"]} onCancel={() => {}} onCreated={onCreated} />);
+      await screen.findByRole("checkbox", { name: "Build" });
+      fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Frozen evidence" } });
+      addEntry("/captured.bin");
+      paste(screen.getByPlaceholderText(/Describe the feature/), [image([0, 255]), image([128, 1])]);
+      fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/other" } });
+      await screen.findByRole("checkbox", { name: "Build" });
+      fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+      fireEvent.change(screen.getByPlaceholderText(/Paste file paths/), { target: { value: "/pending.txt" } });
+      const initialPreviews = screen.getAllByRole("img").map((element) => element.getAttribute("src"));
+      const mutate = () => {
+        paste(screen.getByPlaceholderText(/Describe the feature/), [image([99])]);
+        fireEvent.keyDown(screen.getByPlaceholderText(/Paste file paths/), { key: "Enter" });
+        addEntry("/late-enter.txt");
+        for (const remove of screen.getAllByRole("button", { name: /remove/i })) fireEvent.click(remove);
+        act(() => dropFiles(["/late-drop.txt"]));
+        fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+      };
+      const expectFrozen = () => {
+        expect(screen.getByText("/captured.bin")).toBeDefined();
+        expect(screen.queryByText("/pending.txt")).toBeNull();
+        expect(screen.queryByText("/late-enter.txt")).toBeNull();
+        expect(screen.queryByText("/late-drop.txt")).toBeNull();
+        expect(screen.queryByText("/late-picker.txt")).toBeNull();
+        expect(screen.getByPlaceholderText(/Paste file paths/)).toHaveProperty("value", "/pending.txt");
+        expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(3);
+        expect(screen.getAllByRole("img").map((element) => element.getAttribute("src"))).toEqual(initialPreviews);
+        expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+        expect(ipc.pickAttachmentFilesDialog).toHaveBeenCalledOnce();
+      };
+      fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+      await waitFor(() => expect(ipc.prepareTaskAttachments).toHaveBeenCalledWith(["/captured.bin"]));
+      mutate();
+      await act(async () => picker.resolve(["/late-picker.txt"]));
+      expectFrozen();
+      await act(async () => preparation.resolve({ attachments: [{ name: "captured.bin", bytes: "/wA=" }], attachment_urls: [], attachment_errors: [] }));
+      await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+      expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].repoPath).toBe("/other");
+      expect(submittedBytes()).toEqual([
+        [255, 0],
+        [0, 255],
+        [128, 1],
+      ]);
+      if (outcome === "unknown") {
+        await act(async () => creation.reject(new Error("Connection closed")));
+        await screen.findByText(/Creation outcome is unknown/);
+      } else {
+        await act(async () =>
+          creation.resolve({
+            ...readyReply,
+            creation: outcome === "partial" ? "partial" : "ready",
+            errors: [{ stage: "attachments", code: "import_failed", message: "Omitted unavailable evidence" }],
+          }),
+        );
+        await screen.findByText(/attachments: Omitted unavailable evidence/);
+        expect(screen.getByRole("button", { name: "Open task" })).toBeDefined();
+      }
+      await waitFor(() => expect(taskMutationGuard.currentKind()).toBeNull());
+      mutate();
+      expectFrozen();
+      fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
+      expect(ipc.createTaskForRepo).toHaveBeenCalledOnce();
+      expect(onCreated).not.toHaveBeenCalled();
+    });
+
+    it("serializes pending draft clearing with button and keyboard creation", async () => {
+      const deletion = deferred<void>();
+      vi.mocked(ipc.deleteDraftForRepo).mockReturnValueOnce(deletion.promise);
+      render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} initialDraft={draftTask} onCancel={() => {}} onCreated={() => {}} />);
+      await screen.findByDisplayValue("Saved description");
+      await screen.findByRole("checkbox", { name: "Build" });
+      paste(screen.getByPlaceholderText(/Describe the feature/), [image([0, 255, 128])]);
+      fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
+      await waitFor(() => expect(ipc.deleteDraftForRepo).toHaveBeenCalledOnce());
+      const create = screen.getByRole("button", { name: "Create task" });
+      expect(create).toHaveProperty("disabled", true);
+      fireEvent.click(create);
+      fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
+      await act(async () => deletion.reject(new Error("Draft deletion denied")));
+      await screen.findByText(/Couldn't clear the draft/);
+      expect(ipc.prepareTaskAttachments).not.toHaveBeenCalled();
+      expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+      expect(screen.getAllByRole("img")).toHaveLength(1);
+      expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+      expect(create).toHaveProperty("disabled", false);
+      fireEvent.click(create);
+      await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+      expect(submittedBytes()).toEqual([[0, 255, 128]]);
+    });
+
+    it.each(["clear", "unmount"] as const)("ignores picker completion after successful clear or unmount (%s)", async (end) => {
+      const picker = deferred<string[]>();
+      vi.mocked(ipc.pickAttachmentFilesDialog).mockReturnValueOnce(picker.promise);
+      const props = { activeRepo: "/repo", knownRepos: ["/repo"], initialDraft: draftTask, onCancel: () => {}, onCreated: () => {} };
+      const view = render(<CreateTaskPage {...props} />);
+      await screen.findByDisplayValue("Saved description");
+      paste(screen.getByPlaceholderText(/Describe the feature/), [image([1])]);
+      fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+      if (end === "clear") {
+        fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
+        await waitFor(() => expect(ipc.deleteDraftForRepo).toHaveBeenCalledOnce());
+        await waitFor(() => expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", ""));
+      } else {
+        view.unmount();
+        render(<CreateTaskPage {...props} />);
+        await screen.findByDisplayValue("Saved description");
+      }
+      await act(async () => picker.resolve(["/discarded-picker.txt"]));
+      expect(screen.queryByText("/discarded-picker.txt")).toBeNull();
+      expect(screen.queryByRole("button", { name: /remove/i })).toBeNull();
+      expect(screen.queryByRole("img")).toBeNull();
+      if (end === "clear") {
+        view.unmount();
+        render(<CreateTaskPage {...props} />);
+        await screen.findByDisplayValue("Saved description");
+        expect(screen.queryByRole("button", { name: /remove/i })).toBeNull();
+      }
+    });
+
+    it("combines existing attachment inputs with pasted images without fetching URLs", async () => {
+      const fetch = vi.fn();
+      vi.stubGlobal("fetch", fetch);
+      vi.mocked(ipc.pickAttachmentFilesDialog).mockResolvedValueOnce(["/picked.bin"]);
+      vi.mocked(ipc.prepareTaskAttachments).mockResolvedValueOnce({
+        attachments: [
+          { name: "picked.bin", bytes: "AP8=" },
+          { name: "dropped.bin", bytes: "gAE=" },
+        ],
+        attachment_urls: ["https://example.test/evidence.png"],
+        attachment_errors: ["Could not read /missing.bin"],
+      });
+      await openForm();
+      fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+      await screen.findByText("/picked.bin");
+      act(() => dropFiles(["/dropped.bin"]));
+      addEntry("/missing.bin");
+      addEntry("https://example.test/evidence.png");
+      paste(screen.getByPlaceholderText(/Paste file paths/), [image([255, 0, 128, 1])]);
+      fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+      await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+      expect(ipc.prepareTaskAttachments).toHaveBeenCalledWith(["/picked.bin", "/dropped.bin", "/missing.bin", "https://example.test/evidence.png"]);
+      const request = vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request;
+      expect(submittedBytes()).toEqual([
+        [0, 255],
+        [128, 1],
+        [255, 0, 128, 1],
+      ]);
+      expect(request.attachments?.map((attachment) => attachment.name)).toEqual(["picked.bin", "dropped.bin", expect.stringMatching(/^[^/\\]+\.png$/)]);
+      expect(request.attachment_urls).toEqual(["https://example.test/evidence.png"]);
+      expect(request.attachment_errors).toEqual(["Could not read /missing.bin"]);
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("keeps pasted subtotal admission ordered and recovers allowance after removal", async () => {
+      await openForm();
+      const target = screen.getByPlaceholderText(/Describe the feature/);
+      const limit = 25 * 1024 * 1024;
+      paste(target, [
+        image([1], "first.png", limit),
+        image([99], "oversize.png", limit + 1),
+        image([2], "second.png", limit),
+        image([3], "third.png", limit),
+        image([4], "fourth.png", limit),
+      ]);
+      expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(4);
+      paste(target, [image([88], "overflow.png")]);
+      expect(visibleErrors()).toMatch(/100|total|combined/i);
+      expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(4);
+      fireEvent.click(screen.getAllByRole("button", { name: /remove/i })[1]);
+      paste(target, [image([5], "replacement.png", limit)]);
+      expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(4);
+      fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+      await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+      expect(submittedBytes()).toEqual([[1], [3], [4], [5]]);
+    });
   });
 });

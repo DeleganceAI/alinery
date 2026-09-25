@@ -461,6 +461,34 @@ describe("graph-first playbook management", () => {
     expect(screen.queryByRole("region", { name: "Not saved graph" })).toBeNull();
   });
 
+  it("requires confirmation for bundled deletion and keeps the definition available after failure", async () => {
+    render(
+      <>
+        <Playbooks repoPath="/repo" onCreateTask={onCreateTask} />
+        <ConfirmHost />
+      </>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Review Bundled" }));
+    await screen.findByRole("region", { name: "Review graph" });
+    fireEvent.click(screen.getByRole("button", { name: "Delete Playbook" }));
+    const cancel = await screen.findByText("Cancel", { selector: "button" });
+    await waitFor(() => expect(document.activeElement).toBe(cancel));
+    fireEvent.click(cancel);
+    expect(mocks.deletePlaybookSource).not.toHaveBeenCalled();
+    expect(screen.getByRole("region", { name: "Review graph" })).toBeTruthy();
+
+    mocks.deletePlaybookSource.mockRejectedValueOnce("Disk is read-only");
+    fireEvent.click(screen.getByRole("button", { name: "Delete Playbook" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    await screen.findByText("Disk is read-only");
+    expect(screen.getByRole("region", { name: "Review graph" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Delete Playbook" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    await screen.findByRole("table", { name: "Playbook library" });
+    expect(libraryOrder()).toEqual(["global/review", "repo/review"]);
+    expect(screen.queryByRole("region", { name: "Playbook details" })).toBeNull();
+  });
+
   it("bundled source is read-only and copying creates a distinct writable identity", async () => {
     render(
       <>
@@ -486,7 +514,7 @@ describe("graph-first playbook management", () => {
     await waitFor(() => expect(create).toHaveProperty("disabled", false));
     fireEvent.click(create);
     expect(onCreateTask).toHaveBeenCalledWith({ scope: "repo", key: "review-copy" });
-    fireEvent.click(screen.getByRole("button", { name: "Delete definition" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Playbook" }));
     fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
     await waitFor(() => expect(stored).toHaveLength(3));
     expect(stored[0].source_text).toBe(JSON.stringify(definition));

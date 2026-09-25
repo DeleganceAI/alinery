@@ -523,11 +523,15 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     }
   };
   const remove = async () => {
-    if (busy || !selected || readOnly || !(await discard())) return;
+    if (busy || !selected || !(await discard())) return;
     if (
       (await askConfirm({
-        title: `Delete ${playbookRefKey(selected.source.reference)}?`,
-        body: `Delete only this library entry in ${editorRepoPath || "the global library"}. Existing tasks and other scopes are retained.`,
+        title: `Are you sure you want to delete ${playbookRefKey(selected.source.reference)}?`,
+        body:
+          selected.source.reference.scope === "bundled"
+            ? "Remove this bundled playbook from your library for all repositories, including after app updates. Existing tasks and copies in other scopes are retained."
+            : `Delete only this library entry in ${selected.source.reference.scope === "repo" ? editorRepoPath : "the global library"}. Existing tasks and other scopes are retained.`,
+        defaultKey: "cancel",
         choices: [
           { key: "delete", label: "Delete", tone: "danger" },
           { key: "cancel", label: "Cancel", tone: "ghost" },
@@ -1184,9 +1188,9 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
             </div>
             <footer className="playbooks-savebar">
               <span role="status">{busy ? "Working…" : notice || (dirty ? "Unsaved changes" : readOnly ? "Read-only" : "Saved definition")}</span>
-              {selected && !readOnly && (
+              {selected && (
                 <button className="btn ghost playbooks-delete" type="button" disabled={busy} onClick={() => void remove()}>
-                  Delete definition
+                  Delete Playbook
                 </button>
               )}
             </footer>

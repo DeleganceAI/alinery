@@ -212,6 +212,7 @@ pub fn run() {
             copy_chat_attachments,
             write_chat_attachment_bytes,
             read_chat_image,
+            read_attachment_image,
             list_task_artifact_tree,
             read_task_artifact_node,
             artifact_node_path,

@@ -57,6 +57,21 @@ function choose(value: string) {
 }
 
 describe("retained execution session selection", () => {
+  it("offers OMP instructions by default and lets the user switch to Terminal", async () => {
+    mocks.getTaskExecution.mockResolvedValue(executionReply([]));
+    const created = renderPage();
+    await waitFor(() => expect((screen.getByRole("button", { name: "Launch" }) as HTMLButtonElement).disabled).toBe(false));
+    expect((screen.getByLabelText("Auxiliary harness") as HTMLSelectElement).value).toBe("omp");
+    expect((screen.getByLabelText("Additional instructions") as HTMLTextAreaElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    await waitFor(() => expect(created).toHaveBeenCalledWith(task, { kind: "auxiliary" }, "omp", "", undefined));
+
+    fireEvent.change(screen.getByLabelText("Auxiliary harness"), { target: { value: "no-harness" } });
+    expect((screen.getByLabelText("Additional instructions") as HTMLTextAreaElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    await waitFor(() => expect(created).toHaveBeenLastCalledWith(task, { kind: "auxiliary" }, "no-harness", "", undefined));
+  });
+
   it("starts the exact reserved binding after its library definition was removed", async () => {
     const created = renderPage();
     await screen.findByRole("option", { name: /Start queued · Retained worker · execution-a/ });
@@ -102,6 +117,7 @@ describe("retained execution session selection", () => {
     const created = renderPage();
     await screen.findByText(/Could not load retained execution state/);
     expect(screen.queryByRole("option", { name: /Retained worker/ })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Auxiliary harness"), { target: { value: "no-harness" } });
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
     await waitFor(() => expect(created).toHaveBeenCalledWith(task, { kind: "auxiliary" }, "no-harness", "", undefined));
   });
@@ -128,6 +144,7 @@ describe("retained execution session selection", () => {
     expect(created).not.toHaveBeenCalled();
 
     choose("auxiliary");
+    fireEvent.change(screen.getByLabelText("Auxiliary harness"), { target: { value: "no-harness" } });
     fireEvent.click(screen.getByText("Retained playbook instructions"));
     expect(screen.getByText("Use the exact assigned request, not the newest filename.")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));

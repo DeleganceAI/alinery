@@ -5,6 +5,7 @@ import { flushSync } from "react-dom";
 import type { ArtifactComment, ArtifactCommentAnchor } from "../ArtifactMarkdown";
 import { ArtifactMarkdown, formatArtifactCommentTarget } from "../ArtifactMarkdown";
 import { ArtifactTree, isDirectOwnedArtifactNode } from "../ArtifactTree";
+import { AttachmentPreview } from "../AttachmentPreview";
 import type { ArtifactPaneTab } from "../artifactClassification";
 import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassification";
 import { ChatComposer } from "../ChatComposer";
@@ -18,8 +19,8 @@ import { isInteractivePromptLoginError, shouldOfferProviderSetup } from "../chat
 import { latestQueuedFollowUp, type QueuedFollowUp, queuedCountFromGetState, queuedTextsNotInEntries, reconcileQueuedFollowUps } from "../chat/queue";
 import { applySendPlan, commandOutputText, loginReply, planChatSend, setModelReply } from "../chat/send";
 import { type McpServerRow, type ProvidersDialogTab, parseMcpListOutput } from "../chat/slash";
-import type { SessionChatStatus } from "../chat/types";
-import { chatVisibilityFromAppearance, lastApprovalNotice } from "../chat/visibility";
+import type { ChatEntry, SessionChatStatus } from "../chat/types";
+import { chatVisibilityFromAppearance } from "../chat/visibility";
 import {
   appendOptimisticAbort,
   appendOptimisticUser,
@@ -344,8 +345,11 @@ export function SessionView({
   const [executionError, setExecutionError] = useState("");
   const executionAvailable = executionView?.live?.status === "available" && !executionError;
   const [completionBusy, setCompletionBusy] = useState(false);
+  const [completionGrant, setCompletionGrant] = useState<{ sessionId: string; requestId: string } | null>(null);
+  const grantedCompletionRequestId = completionGrant?.sessionId === id ? completionGrant.requestId : null;
   const execution = Object.values(executionView?.state.executions ?? {}).find((record) => record.owner_session_id === id || record.previous_session_ids.includes(id));
   const executionStep = executionView?.definition.step.find((step) => step.key === execution?.candidate.step_key);
+  const completionAvailable = executionAvailable && execution?.owner_session_id === id && execution.lifecycle === "running";
   const [reviewFindingsComments, setReviewFindingsComments] = useState<ArtifactComment[]>([]);
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [approvalStatus, setApprovalStatus] = useState("");
@@ -641,20 +645,6 @@ export function SessionView({
       window.clearInterval(timer);
     };
   }, [taskSlug, repoPath, id]);
-
-  const allowCompletion = async () => {
-    if (!executionAvailable || completionBusy || !execution || execution.owner_session_id !== id) return;
-    setCompletionBusy(true);
-    try {
-      await ipc.allowExecutionCompletion(taskSlug, execution.id, id, repoPath);
-      setExecutionView(await ipc.getTaskExecution(taskSlug, repoPath));
-      setExecutionError("");
-    } catch (error) {
-      setExecutionError(String(error));
-    } finally {
-      setCompletionBusy(false);
-    }
-  };
 
   const handleArchive = async () => {
     if (archivePending.current) return;
@@ -1306,6 +1296,8 @@ export function SessionView({
     harness,
   });
   const liveRpc = observation?.transport === "rpc";
+  // Exited RPC sessions still support replay, but their processes cannot accept commands.
+  const rpcProcessLive = liveRpc && observation?.lifecycle.state === "live" && observation.state?.process.state === "alive";
   const livePty = observation?.transport === "pty";
   const ompCoding = harness === "omp" && !leftover && !navHistory && !showPanel;
   const showChat = ompCoding && Boolean(termIntent) && !livePty;
@@ -1439,9 +1431,10 @@ export function SessionView({
           });
           const rec = value as { type?: string; success?: boolean; command?: string };
           if (
-            (rec.type === "response" && rec.success === true && (rec.command === "follow_up" || rec.command === "abort_and_prompt")) ||
-            rec.type === "turn_end" ||
-            rec.type === "agent_end"
+            rpcProcessLive &&
+            ((rec.type === "response" && rec.success === true && (rec.command === "follow_up" || rec.command === "abort_and_prompt")) ||
+              rec.type === "turn_end" ||
+              rec.type === "agent_end")
           ) {
             void ipc.rpcWriteSession(id, getStateCommand()).catch(() => undefined);
           }
@@ -1511,6 +1504,7 @@ export function SessionView({
       .then(async () => {
         if (cancelled) return;
         setTerminalConnection("open");
+        if (!rpcProcessLive) return;
         // No wait for `ready`: OMP emits it once at spawn, so on any established session the old
         // 2s deadline always expired in full and told us nothing. History no longer depends on it
         // either — it was read from the journal before this attach began.
@@ -1534,7 +1528,16 @@ export function SessionView({
           if (!cancelled) setModelRoles(roles);
         });
       })
-      .catch((error) => {
+      .catch(async (error) => {
+        if (cancelled) return;
+        try {
+          const next = await ipc.sessionStatus(id, taskSlug || null);
+          if (cancelled) return;
+          setObservation(next);
+          if (next.lifecycle.state === "live_exited" || next.lifecycle.state === "exited" || next.state?.process.state === "exited") return;
+        } catch {
+          // Without a confirmed exit, preserve the original connection error.
+        }
         if (!cancelled) {
           setTerminalConnection("failed");
           toast(String(error), "error");
@@ -1544,11 +1547,11 @@ export function SessionView({
       cancelled = true;
       void ipc.detachSession(id, attachId);
     };
-  }, [liveRpc, id, seedOmpJournal, chatAttachEpoch]);
+  }, [liveRpc, rpcProcessLive, id, taskSlug, seedOmpJournal, chatAttachEpoch]);
   useEffect(() => {
-    if (!liveRpc) return;
+    if (!rpcProcessLive) return;
     void ipc.rpcWriteSession(id, setAutoCompactionCommand(chatAutoCompaction)).catch(() => undefined);
-  }, [chatAutoCompaction, liveRpc, id]);
+  }, [chatAutoCompaction, rpcProcessLive, id]);
   const settleOpenUrl = async (requestId: string, raw: string | undefined) => {
     try {
       await settleBrowserUrl(id, requestId, raw, (error) => toast(error, "error"));
@@ -1558,7 +1561,7 @@ export function SessionView({
     }
   };
   useEffect(() => {
-    if (!liveRpc) return;
+    if (!rpcProcessLive) return;
     for (const request of chat.pendingUi) {
       if (handledUiRef.current.has(request.id)) continue;
       if (isPresentationUi(request.method)) {
@@ -1577,7 +1580,7 @@ export function SessionView({
         void settleOpenUrl(request.id, request.launchUrl || request.url);
       }
     }
-  }, [liveRpc, chat.pendingUi, id]);
+  }, [rpcProcessLive, chat.pendingUi, id]);
   useEffect(() => {
     let cancelled = false;
     void ipc
@@ -1601,7 +1604,7 @@ export function SessionView({
     // the ref, so the effect re-runs when the turn closes and offers setup then.
     if (!hostedLoaded) return;
     const offer = shouldOfferProviderSetup({
-      connected: liveRpc,
+      connected: rpcProcessLive,
       suppressed: setupOpenedRef.current || modelDialog !== null,
       busy: isTurnActive({
         pendingTurn: chat.pendingTurn,
@@ -1618,7 +1621,7 @@ export function SessionView({
     setModelError(null);
     setModelDialog({ tab: "accounts", preselect: "", setup: true });
   }, [
-    liveRpc,
+    rpcProcessLive,
     chat.sessionMeta.loginProviders,
     chat.sessionMeta.model,
     chat.sessionMeta.models,
@@ -1691,6 +1694,31 @@ export function SessionView({
 
   const pendingUiReply = chat.pendingUi.some((request) => needsUiReply(request.method));
   const chatVisibility = useMemo(() => chatVisibilityFromAppearance(appearance), [appearance]);
+  // The reserved confirm title from the run-local extension selects this UI action, not
+  // authority. Always show our own consequences and grant only through authenticated IPC.
+  const completionRequestIds = useMemo(
+    () => new Set(chat.pendingUi.filter((request) => request.method === "confirm" && request.title === "Allow this session to complete").map((request) => request.id)),
+    [chat.pendingUi],
+  );
+  const chatEntries = useMemo(
+    () =>
+      chat.entries.map(
+        (entry): ChatEntry =>
+          entry.type === "approval" && completionRequestIds.has(entry.requestId)
+            ? {
+                ...entry,
+                detail:
+                  grantedCompletionRequestId === entry.requestId
+                    ? "Completion permission was granted, but the reply could not be delivered. Allow retries the reply; it does not grant new permission."
+                    : "Allow this session to finish its current playbook step? Alinery will validate its required outputs before accepting completion. Deny keeps the session open.",
+                scope: `Session ${id}`,
+                disabled: !liveRpc || navHistory || !completionAvailable || completionBusy,
+                denyDisabled: grantedCompletionRequestId === entry.requestId,
+              }
+            : entry,
+      ),
+    [chat.entries, completionRequestIds, id, liveRpc, navHistory, completionAvailable, completionBusy, grantedCompletionRequestId],
+  );
   const turnActive = isTurnActive({
     pendingTurn: chat.pendingTurn,
     turnOpen: chat.turnOpen,
@@ -1698,7 +1726,6 @@ export function SessionView({
   });
   const chatStatus: SessionChatStatus = chat.sessionMeta.isCompacting || pendingUiReply ? "waiting_approval" : turnActive ? "running" : "idle";
   const agentState = observedState?.agent?.state;
-  const approvalNotice = agentState === "waiting_for_approval" ? lastApprovalNotice(chat.entries) : null;
   const composerCanAbort = canAbortChatSession(messageReadiness) && agentState !== "waiting_for_approval";
   const sendNowEnabled =
     turnActive &&
@@ -1742,6 +1769,30 @@ export function SessionView({
     if (handledUiRef.current.has(requestId)) return;
     handledUiRef.current.add(requestId);
     const request = chatRef.current.pendingUi.find((pending) => pending.id === requestId);
+    if (completionRequestIds.has(requestId)) {
+      if (!liveRpc || navHistory || !completionAvailable || completionBusy || !execution || (!allow && grantedCompletionRequestId === requestId)) {
+        handledUiRef.current.delete(requestId);
+        return;
+      }
+      setCompletionBusy(true);
+      try {
+        if (allow && grantedCompletionRequestId !== requestId) {
+          await ipc.allowExecutionCompletion(taskSlug, execution.id, id, repoPath);
+          setCompletionGrant({ sessionId: id, requestId });
+          setExecutionView(await ipc.getTaskExecution(taskSlug, repoPath));
+        }
+        // Do not release the waiting tool until the grant is durably acknowledged.
+        await ipc.rpcWriteSession(id, extensionUiConfirm(requestId, allow));
+        setChat((current) => dismissPendingUi(current, requestId));
+        setExecutionError("");
+      } catch (error) {
+        handledUiRef.current.delete(requestId);
+        setExecutionError(String(error));
+      } finally {
+        setCompletionBusy(false);
+      }
+      return;
+    }
     // Allowing an `open_url` means "did it open", not "was it permitted", so it goes through the
     // same settle path the login auto-open uses. Declining is a plain false — nothing is opened.
     if (allow && request?.method === "open_url") {
@@ -1836,7 +1887,7 @@ export function SessionView({
             </div>
             <div className="session-context">
               <span className="session-task" title={display?.task_name || task?.name || taskSlug}>
-                {display?.task_name || task?.name || taskSlug}
+                <span className="session-task-label">Task:</span> {display?.task_name || task?.name || taskSlug}
               </span>
               {task?.parent_task && (
                 <button type="button" className="btn ghost small" onClick={() => onOpenRelatedTask(task.parent_task || "", repoPath)}>
@@ -1954,18 +2005,6 @@ export function SessionView({
               {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
             </p>
           </details>
-          {execution.owner_session_id === id && execution.permission.kind === "locked" && execution.lifecycle === "running" && (
-            <button
-              type="button"
-              className="btn small"
-              aria-label={`Allow this session to complete · ${id}`}
-              title={`Allow session ${id} to request completion`}
-              disabled={completionBusy || !executionAvailable}
-              onClick={() => void allowCompletion()}
-            >
-              Allow this session to complete
-            </button>
-          )}
         </div>
       )}
       <div className={`sessionbody${hasTask ? "" : " no-artifacts"}`} style={{ ["--artifact-width" as string]: `${artifactWidth}px` }}>
@@ -1983,7 +2022,7 @@ export function SessionView({
               {liveRpc || harness === "omp" ? (
                 <>
                   <ChatPane
-                    entries={chat.entries}
+                    entries={chatEntries}
                     status={chatStatus}
                     visibility={chatVisibility}
                     onApprove={onApproveChat}
@@ -2023,7 +2062,7 @@ export function SessionView({
                   ) : null}
                   <div className="terminal-frame">
                     <ChatPane
-                      entries={chat.entries}
+                      entries={chatEntries}
                       status={chatStatus}
                       visibility={chatVisibility}
                       onApprove={onApproveChat}
@@ -2076,7 +2115,6 @@ export function SessionView({
                         onSendNow={sendNowEnabled ? () => void sendNow() : undefined}
                         sendNowEnabled={sendNowEnabled}
                         canAbort={composerCanAbort}
-                        approvalNotice={approvalNotice}
                         queuedCount={queuedMeta}
                       />
                       {messageError ? <InlineStatus tone="error">{messageError}</InlineStatus> : null}
@@ -2360,6 +2398,13 @@ export function SessionView({
                       <div className="dim">{artifactTab === "attachments" ? "No attachments." : "No playbook artifacts yet."}</div>
                     )}
                     {displayedArtifactItems.map((item) => {
+                      if (item.attachment && classifyAttachment(item) === "image") {
+                        return (
+                          <AttachmentPreview key={item.name} taskSlug={taskSlug} name={item.name}>
+                            <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
+                          </AttachmentPreview>
+                        );
+                      }
                       const commentCount = artifactCommentCountByArtifact[item.name] ?? 0;
                       const node = findOwnedArtifactNode(artifactTree, item.name);
                       const available = Boolean(item.attachment || node);
@@ -2392,11 +2437,6 @@ export function SessionView({
                           }}
                         >
                           <span className="artifactitem-name">{item.name}</span>
-                          {item.execution_id && (
-                            <span className="dim">
-                              Execution {item.execution_id} · {item.step_key} · {item.accepted ? "accepted" : "pending"}
-                            </span>
-                          )}
                           {!available && <span className="pill">Not yet readable</span>}
                           {commentCount > 0 && (
                             <span

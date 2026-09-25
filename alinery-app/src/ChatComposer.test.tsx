@@ -132,21 +132,6 @@ describe("ChatComposer", () => {
     expect(html).not.toContain("Steer");
   });
 
-  it("keeps send enabled and shows the approval copy while running with a notice", () => {
-    const extras = {
-      approvalNotice: { action: "Allow git push", detail: "Publishes" },
-      canAbort: false,
-      sendNowEnabled: false,
-    };
-    const html = renderToStaticMarkup(
-      <ChatComposer body="ok" status="running" catalog={[]} onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} {...extras} />,
-    );
-    expect(html).toContain("Allow git push");
-    expect(html).toContain("Publishes");
-    expect(html).not.toContain("Waiting on approval");
-    expect(html).not.toContain("Send now");
-  });
-
   it("fires onSendNow from Send now, not onSend", () => {
     const onSend = vi.fn();
     const onSendNow = vi.fn();

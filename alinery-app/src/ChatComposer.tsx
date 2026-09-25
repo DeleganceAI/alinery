@@ -24,7 +24,6 @@ export type ChatComposerProps = {
   onSendNow?: () => void;
   sendNowEnabled?: boolean;
   canAbort?: boolean;
-  approvalNotice?: { action: string; detail: string } | null;
   queuedCount?: number;
   attachments?: DraftAttachment[];
   dropping?: boolean;
@@ -48,7 +47,6 @@ export function ChatComposer({
   onSendNow,
   sendNowEnabled = false,
   canAbort,
-  approvalNotice,
   queuedCount,
   attachments,
   dropping = false,
@@ -207,12 +205,6 @@ export function ChatComposer({
   return (
     <div className="chat-composer">
       {palette ? <CommandList matches={matches} active={active} onPick={fill} onHover={setActive} /> : null}
-      {approvalNotice ? (
-        <p className="dim chat-msg-muted">
-          {approvalNotice.action}
-          {approvalNotice.detail ? ` — ${approvalNotice.detail}` : ""}
-        </p>
-      ) : null}
 
       {metrics.large ? (
         <div className="session-message-large" role="status">
