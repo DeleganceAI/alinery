@@ -362,6 +362,7 @@ export const copyChatAttachments = (taskSlug: string, paths: string[]) => invoke
 export const writeChatAttachmentBytes = (taskSlug: string, fileName: string, bytes: number[] | Uint8Array) =>
   invoke<string>("write_chat_attachment_bytes", { taskSlug, fileName, bytes });
 export const readChatImage = (taskSlug: string, name: string) => invoke<ChatImage>("read_chat_image", { taskSlug, name });
+export const readAttachmentImage = (taskSlug: string, name: string, nodeId?: string) => invoke<ArrayBuffer>("read_attachment_image", { taskSlug, name, nodeId });
 
 // ── playbook.rs ───────────────────────────────────────────────────────
 export const listKanbanColumns = (allRepos: boolean) => invoke<KanbanColumn[]>("list_kanban_columns", { allRepos });

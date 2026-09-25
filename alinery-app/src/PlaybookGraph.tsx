@@ -94,14 +94,16 @@ export function PlaybookGraph({
   const selectedStep = steps.find((step) => step.key === selectedKey) ?? (showInspector ? steps[0] : undefined);
   const edges = useMemo(
     () =>
-      steps.flatMap((producer) =>
-        steps.flatMap((consumer) =>
-          consumer.inputs.flatMap((input) =>
-            producer.outputs.filter((output) => selectorsOverlap(output.path, input.path)).map((output) => ({ from: producer, to: consumer, input, output })),
-          ),
-        ),
-      ),
-    [steps],
+      variant === "definition"
+        ? steps.flatMap((producer) =>
+            steps.flatMap((consumer) =>
+              consumer.inputs.flatMap((input) =>
+                producer.outputs.filter((output) => selectorsOverlap(output.path, input.path)).map((output) => ({ from: producer, to: consumer, input, output })),
+              ),
+            ),
+          )
+        : [],
+    [variant, steps],
   );
   const connections = useMemo(() => (variant === "definition" ? edges.map(({ from, to, output }) => ({ from: from.key, to: to.key, label: output.path })) : []), [variant, edges]);
   const flowConnections = useMemo(() => reduceFlowConnections(connections).map(({ from, to }) => ({ from, to })), [connections]);
@@ -539,21 +541,6 @@ export function PlaybookGraph({
           </div>
         ))}
       </div>
-      <h3 className="playbook-dependencies-title">Artifact dependencies</h3>
-      <p className="playbook-dependencies-hint">
-        Producer → consumer, matched by output → input path. The input mode is shown in parentheses; these connections do not indicate automatic completion.
-      </p>
-      <ul aria-label="Artifact dependencies">
-        {edges.map(({ from, to, input, output }) => (
-          <li key={`${from.key}:${output.path}:${to.key}:${input.path}`} aria-label={`${from.title} to ${to.title}: ${input.mode}`}>
-            <span>{from.title}</span> <ArrowRight size={12} aria-hidden="true" /> <span>{to.title}</span>
-            <code>
-              {output.path} → {input.path}
-            </code>{" "}
-            <span>({input.mode})</span>
-          </li>
-        ))}
-      </ul>
     </section>
   );
 }

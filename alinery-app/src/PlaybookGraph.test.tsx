@@ -233,26 +233,10 @@ it("retains every cyclic and self-loop relationship in Flow", () => {
   expect(graph.querySelector("foreignObject")).toBeNull();
 });
 
-it("renders shuffled selector forks, joins, cycles and concurrent active counts without document-neighbor edges", () => {
+it("renders concurrent active counts in the execution view", () => {
   render(
-    <PlaybookGraph
-      title="Numbers"
-      steps={[
-        step("join", ["sum.md", "product.md"], ["done.md"]),
-        step("sum", ["numbers.md"], ["sum.md"]),
-        step("continue", ["done.md"], ["ticket.md"]),
-        step("seed", ["ticket.md"], ["numbers.md"]),
-        step("product", ["numbers.md"], ["product.md"]),
-      ]}
-      countsByStep={{ sum: 2, product: 1 }}
-    />,
+    <PlaybookGraph title="Numbers" steps={[step("sum", ["numbers.md"], ["sum.md"]), step("product", ["numbers.md"], ["product.md"])]} countsByStep={{ sum: 2, product: 1 }} />,
   );
-  const relationships = within(screen.getByRole("list", { name: "Artifact dependencies" }));
-  expect(relationships.getAllByRole("listitem")).toHaveLength(6);
-  for (const name of ["seed to sum: single", "seed to product: single", "sum to join: single", "product to join: single", "join to continue: single", "continue to seed: single"]) {
-    expect(relationships.getByRole("listitem", { name })).toBeTruthy();
-  }
-  expect(relationships.queryByRole("listitem", { name: "sum to continue: single" })).toBeNull();
   expect(screen.getByLabelText("sum: 2 active sessions")).toBeTruthy();
   expect(screen.getByLabelText("product: 1 active sessions")).toBeTruthy();
 });
@@ -260,6 +244,7 @@ it("renders shuffled selector forks, joins, cycles and concurrent active counts 
 it("relates wildcard families only within the declared directory", () => {
   render(
     <PlaybookGraph
+      variant="definition"
       title="Families"
       steps={[
         step("fanout", [], ["a/request-*.md"]),
@@ -269,10 +254,12 @@ it("relates wildcard families only within the declared directory", () => {
       ]}
     />,
   );
-  const relationships = within(screen.getByRole("list", { name: "Artifact dependencies" }));
-  expect(relationships.getAllByRole("listitem")).toHaveLength(2);
-  expect(relationships.getByRole("listitem", { name: "fanout to worker: complete" })).toBeTruthy();
-  expect(relationships.getByRole("listitem", { name: "worker to merge: complete" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Artifact dependencies" }));
+  const relationships = screen.getByRole("group", { name: "Artifact dependency connections" });
+  expect(Array.from(relationships.querySelectorAll("g[aria-label]"), (edge) => edge.getAttribute("aria-label"))).toEqual([
+    "fanout to worker: a/request-*.md → a/request-*.md (complete)",
+    "worker to merge: a/result-*.md → a/result-*.md (complete)",
+  ]);
 });
 
 it("inspects authored definitions and navigates selector connections without execution state", () => {
@@ -590,7 +577,7 @@ it("reveals keyboard-focused nodes without intercepting their keys", () => {
   expect(document.activeElement).toBe(screen.getByRole("button", { name: "Pan graph" }));
 });
 
-it("attaches canvas gestures after empty and execution views without reducing the execution list", () => {
+it("attaches canvas gestures after empty and execution views", () => {
   mockCanvasDimensions();
   const steps = denseSteps;
   const { rerender } = render(<PlaybookGraph variant="definition" title="Review" steps={[]} />);
@@ -605,27 +592,6 @@ it("attaches canvas gestures after empty and execution views without reducing th
   expect(screen.queryByRole("group", { name: "Graph zoom controls" })).toBeNull();
   expect(screen.queryByRole("group", { name: "Graph display mode" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Focus connections" })).toBeNull();
-  const dependencies = within(screen.getByRole("list", { name: "Artifact dependencies" })).getAllByRole("listitem");
-  expect(dependencies.map((item) => item.getAttribute("aria-label"))).toEqual([
-    "seed to plan: single",
-    "seed to plan: single",
-    "seed to build: single",
-    "seed to review: single",
-    "seed to review: single",
-    "plan to build: single",
-    "plan to review: single",
-    "build to review: single",
-  ]);
-  expect(dependencies.map((item) => item.querySelector("code")?.textContent)).toEqual([
-    "request.md → request.md",
-    "context.md → context.md",
-    "request.md → request.md",
-    "request.md → request.md",
-    "context.md → context.md",
-    "plan.md → plan.md",
-    "plan.md → plan.md",
-    "build.md → build.md",
-  ]);
   expect(screen.getByLabelText("build: 2 active sessions")).toBeTruthy();
   expect(screen.getByTitle("Completion automatically authorized")).toBeTruthy();
   expect(fireEvent.wheel(viewport, { deltaY: -120, clientX: 100, clientY: 100 })).toBe(true);

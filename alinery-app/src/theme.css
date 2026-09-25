@@ -5854,17 +5854,6 @@ dialog.modal::backdrop {
     padding: 12px;
   }
 }
-.playbook-graph-view ul[aria-label="Artifact dependencies"] {
-  padding-left: 18px;
-  overflow-wrap: anywhere;
-}
-.playbook-graph-view ul[aria-label="Artifact dependencies"] li {
-  margin-top: 8px;
-}
-.playbook-graph-view ul[aria-label="Artifact dependencies"] code {
-  display: block;
-  font-size: 0.85em;
-}
 .playbook-graph-view {
   padding: 12px;
 }
@@ -5994,6 +5983,60 @@ dialog.modal::backdrop {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.attachment-preview {
+  flex-shrink: 0;
+  min-width: 0;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+.attachment-preview summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-scale));
+  list-style: none;
+}
+.attachment-preview summary::-webkit-details-marker {
+  display: none;
+}
+.attachment-preview summary::before {
+  content: "›";
+}
+.attachment-preview[open] summary::before {
+  transform: rotate(90deg);
+}
+.attachment-preview summary:hover {
+  color: var(--text-strong);
+}
+.attachment-preview summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.attachment-preview-body {
+  border-top: 1px solid var(--border);
+}
+.attachment-preview-body img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.attachment-preview-body p {
+  margin: 10px;
+  overflow-wrap: anywhere;
+}
+.attachment-preview-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 10px;
 }
 .artifact-tree {
   display: flex;

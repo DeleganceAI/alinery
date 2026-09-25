@@ -5,6 +5,7 @@ import { flushSync } from "react-dom";
 import type { ArtifactComment, ArtifactCommentAnchor } from "../ArtifactMarkdown";
 import { ArtifactMarkdown, formatArtifactCommentTarget } from "../ArtifactMarkdown";
 import { ArtifactTree, isDirectOwnedArtifactNode } from "../ArtifactTree";
+import { AttachmentPreview } from "../AttachmentPreview";
 import type { ArtifactPaneTab } from "../artifactClassification";
 import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassification";
 import { ChatComposer } from "../ChatComposer";
@@ -2360,6 +2361,13 @@ export function SessionView({
                       <div className="dim">{artifactTab === "attachments" ? "No attachments." : "No playbook artifacts yet."}</div>
                     )}
                     {displayedArtifactItems.map((item) => {
+                      if (item.attachment && classifyAttachment(item) === "image") {
+                        return (
+                          <AttachmentPreview key={item.name} taskSlug={taskSlug} name={item.name}>
+                            <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
+                          </AttachmentPreview>
+                        );
+                      }
                       const commentCount = artifactCommentCountByArtifact[item.name] ?? 0;
                       const node = findOwnedArtifactNode(artifactTree, item.name);
                       const available = Boolean(item.attachment || node);
@@ -2392,11 +2400,6 @@ export function SessionView({
                           }}
                         >
                           <span className="artifactitem-name">{item.name}</span>
-                          {item.execution_id && (
-                            <span className="dim">
-                              Execution {item.execution_id} · {item.step_key} · {item.accepted ? "accepted" : "pending"}
-                            </span>
-                          )}
                           {!available && <span className="pill">Not yet readable</span>}
                           {commentCount > 0 && (
                             <span
