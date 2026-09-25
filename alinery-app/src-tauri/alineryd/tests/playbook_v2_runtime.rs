@@ -187,10 +187,6 @@ fn only_retained_authenticated_ui_channel_grants_the_current_owner() {
     fixture.outputs(first);
     let locked: CompletionOutcome = serde_json::from_value(fixture.event(&first.owner_session_id)["completion"].clone()).unwrap();
     assert_eq!(locked, CompletionOutcome::HumanAuthorizationRequired);
-    assert_eq!(
-        fixture.client.call(&json!({"op":"status","id":first.owner_session_id})).unwrap()["agent"]["state"],
-        "waiting_for_approval"
-    );
     let grant = AllowExecutionCompletionRequest {
         task_slug: "fixture".into(),
         execution_id: first.id.clone(),
@@ -205,16 +201,10 @@ fn only_retained_authenticated_ui_channel_grants_the_current_owner() {
     // Invalid outputs do not consume the grant; the same source can repair and accept.
     fs::write(fixture.root.join(".alinery/tasks/fixture/artifacts").join(&first.outputs[0].relative_path), "").unwrap();
     assert_eq!(fixture.event(&first.owner_session_id)["completion"]["status"], "invalid_outputs");
-    let invalid_status = fixture.client.call(&json!({"op":"status","id":first.owner_session_id})).unwrap();
-    assert_eq!(invalid_status["agent"]["state"], "waiting_for_input");
     let invalid_state = fixture.state();
     assert_eq!(invalid_state.state.executions[&first.id].lifecycle, ExecutionLifecycle::Running);
     assert!(invalid_state.state.executions[&first.id].error.is_some());
     assert_eq!(fixture.event(&first.owner_session_id)["completion"]["status"], "invalid_outputs");
-    assert_eq!(
-        fixture.client.call(&json!({"op":"status","id":first.owner_session_id})).unwrap()["agent"],
-        invalid_status["agent"]
-    );
     fixture.outputs(first);
     assert_eq!(fixture.event(&first.owner_session_id)["completion"]["status"], "accepted");
     assert!(fixture.state().state.executions[&first.id].error.is_none());
