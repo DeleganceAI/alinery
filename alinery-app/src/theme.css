@@ -5645,7 +5645,9 @@ dialog.modal::backdrop {
   padding-left: 20px;
 }
 .playbooks-table th:nth-child(2) {
-  width: 112px;
+  /* Wide enough for the import provenance line to wrap to a few lines rather
+     than a tall ribbon; a row without one still hugs its short scope chip. */
+  width: 200px;
 }
 .playbooks-table th:nth-child(3) {
   width: 164px;
@@ -5710,13 +5712,21 @@ dialog.modal::backdrop {
 }
 .playbooks-library-source {
   display: inline-flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  max-width: 100%;
   padding: 3px 7px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-subtle);
   color: var(--text-muted);
   font-size: calc(11px * var(--ui-scale));
+  /* An imported row adds a provenance line ("Imported from community label/key")
+     far longer than the scope word. Stacked and wrapped it stays inside the
+     column; as one inline run it was 174px wide in a 112px cell and painted over
+     the Last modified date. */
+  overflow-wrap: anywhere;
 }
 .playbooks-library-row small,
 .playbooks-context,
