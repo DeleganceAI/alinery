@@ -595,7 +595,7 @@ export function registerCallbacks(
       "If accepted, do no further work: ordinary OMP shutdown has been requested. " +
       "If authorization or output correction is required, keep the session open.",
     parameters: api.zod.z.object({}),
-    async execute(_toolCallId: string, _input: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, context: OmpExtensionContext) {
+    async execute(toolCallId: string, _input: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, context: OmpExtensionContext) {
       const sessionId = context.sessionManager.getSessionId();
       if (!sessionId) {
         return completionToolResult(
@@ -610,6 +610,21 @@ export function registerCallbacks(
           type: "phase_completed",
           omp_session_id: sessionId,
         });
+        if (outcome.status === "human_authorization_required") {
+          const approval = await requestApproval(
+            emit,
+            toolCallId,
+            context,
+            "Allow this session to complete",
+            "Allow this session to finish its current playbook step? Alinery will validate its required outputs before accepting completion. Deny keeps the session open.",
+          );
+          if (!approval.details.approved) {
+            return completionToolResult(outcome.status, `${approval.content[0].text} Keep this session open.`);
+          }
+          // A UI response is not completion authority. Only the authenticated app can grant
+          // permission; re-check with the daemon before requesting ordinary shutdown.
+          outcome = await emitCompletion({ type: "phase_completed", omp_session_id: sessionId });
+        }
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         return completionToolResult("delivery_failed", `Alinery could not confirm phase completion: ${reason}. Retry after the Alinery daemon is available.`, { reason });
@@ -622,7 +637,10 @@ export function registerCallbacks(
         return completionToolResult("accepted", "Alinery accepted phase completion. Do no further work; this session is finishing.", { receipt_id: outcome.receipt_id });
       }
       if (outcome.status === "human_authorization_required") {
-        return completionToolResult(outcome.status, "Human authorization is required. Ask the user to allow this session to complete in Alinery; keep this session open.");
+        return completionToolResult(
+          outcome.status,
+          "Completion permission is still locked. Use Alinery's task execution controls to grant permission, then retry. Keep this session open.",
+        );
       }
       if (outcome.status === "invalid_outputs") {
         return completionToolResult(
@@ -653,40 +671,37 @@ export function registerCallbacks(
     async execute(toolCallId: string, input: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, context: OmpExtensionContext) {
       const title = typeof input.title === "string" && input.title !== "" ? input.title : "Approval required";
       const message = typeof input.message === "string" && input.message !== "" ? input.message : "Approval needed.";
-      const ui = context.ui;
-      if (context.hasUI === false || typeof ui?.confirm !== "function") {
-        return {
-          content: [{ type: "text" as const, text: "Approval UI is unavailable. Do not proceed with the gated action." }],
-          details: { approved: false, status: "unavailable" },
-        };
-      }
-
-      await safeEmit(emit, { type: "waiting_for_approval", correlation_id: toolCallId });
-      try {
-        // RPC UI methods use instance state; never detach confirm from its receiver.
-        const ok = await ui.confirm(title, message);
-        // The native Allow button sends true; no other (even truthy) response grants approval.
-        if (ok === true) {
-          return {
-            content: [{ type: "text" as const, text: "User approved. You may proceed with the gated action." }],
-            details: { approved: true },
-          };
-        }
-        return {
-          content: [{ type: "text" as const, text: "User denied. Do not proceed with the gated action." }],
-          details: { approved: false },
-        };
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        return {
-          content: [{ type: "text" as const, text: `Approval UI is unavailable: ${reason}. Do not proceed with the gated action.` }],
-          details: { approved: false, status: "unavailable" },
-        };
-      } finally {
-        await safeEmit(emit, { type: "busy", correlation_id: toolCallId });
-      }
+      return requestApproval(emit, toolCallId, context, title, message);
     },
   });
+}
+
+async function requestApproval(emit: Emitter, toolCallId: string, context: OmpExtensionContext, title: string, message: string) {
+  const ui = context.ui;
+  if (context.hasUI === false || typeof ui?.confirm !== "function") {
+    return {
+      content: [{ type: "text" as const, text: "Approval UI is unavailable. Do not proceed with the gated action." }],
+      details: { approved: false, status: "unavailable" },
+    };
+  }
+  await safeEmit(emit, { type: "waiting_for_approval", correlation_id: toolCallId });
+  try {
+    // RPC UI methods use instance state; never detach confirm from its receiver.
+    const ok = await ui.confirm(title, message);
+    // The native Allow button sends true; no other (even truthy) response grants approval.
+    return {
+      content: [{ type: "text" as const, text: ok === true ? "User approved. You may proceed with the gated action." : "User denied. Do not proceed with the gated action." }],
+      details: { approved: ok === true },
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      content: [{ type: "text" as const, text: `Approval UI is unavailable: ${reason}. Do not proceed with the gated action.` }],
+      details: { approved: false, status: "unavailable" },
+    };
+  } finally {
+    await safeEmit(emit, { type: "busy", correlation_id: toolCallId });
+  }
 }
 
 // ---------- fail-open wrapper ----------

@@ -238,6 +238,57 @@ const columnNames = () =>
 const laneStepNames = (lane: HTMLElement) => [...lane.querySelectorAll(".task-grid-lane-step")].map((cell) => cell.textContent);
 
 describe("configurable task grid", () => {
+  describe("default progress filter", () => {
+    const props = { allRepos: false, onOpen: () => {}, registerNav: () => {}, storageKey: "progress-filter", initialPreset: "progress" as const };
+
+    beforeEach(() => {
+      ipcMock.listBoardTasks.mockResolvedValue([makeTask({ name: "Unfinished task", slug: "unfinished", current_phase: "research", current_step_title: "Research" })]);
+      ipcMock.getTaskExecution.mockResolvedValue(
+        retainedExecution(
+          [step("research", "Research"), step("implementation", "Implementation")],
+          [
+            ["research", "completed"],
+            ["implementation", "queued"],
+          ],
+        ),
+      );
+      ipcMock.listTaskActivity.mockResolvedValue({ "/repo-a:unfinished": { status: "completed", active_session: null } });
+    });
+
+    it("keeps an unread completed-step task visible by default across remount", async () => {
+      const first = render(<Grid {...props} />);
+      await screen.findByLabelText("Completed");
+      expect(within(screen.getByRole("button", { name: /^Unfinished task, repo-a/ })).getByLabelText("Completed")).toBeDefined();
+      fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+      expect((screen.getByLabelText("Filter") as HTMLSelectElement).value).toBe("all");
+      first.unmount();
+
+      render(<Grid {...props} />);
+      await screen.findByLabelText("Completed");
+      expect(within(screen.getByRole("button", { name: /^Unfinished task, repo-a/ })).getByLabelText("Completed")).toBeDefined();
+      expect((screen.getByLabelText("Filter") as HTMLSelectElement).value).toBe("all");
+    });
+
+    it("preserves an explicit Active only filter and restores the row under All tasks", async () => {
+      const first = render(<Grid {...props} />);
+      fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+      fireEvent.change(screen.getByLabelText("Filter"), { target: { value: "all" } });
+      await screen.findByLabelText("Completed");
+      fireEvent.change(screen.getByLabelText("Filter"), { target: { value: "active" } });
+      await screen.findByText("No tasks match this grid configuration.");
+      expect(screen.queryByRole("button", { name: /^Unfinished task, repo-a/ })).toBeNull();
+      first.unmount();
+
+      render(<Grid {...props} />);
+      expect((screen.getByLabelText("Filter") as HTMLSelectElement).value).toBe("active");
+      await screen.findByText("No tasks match this grid configuration.");
+      expect(screen.queryByRole("button", { name: /^Unfinished task, repo-a/ })).toBeNull();
+      fireEvent.change(screen.getByLabelText("Filter"), { target: { value: "all" } });
+      await screen.findByLabelText("Completed");
+      expect(within(screen.getByRole("button", { name: /^Unfinished task, repo-a/ })).getByLabelText("Completed")).toBeDefined();
+    });
+  });
+
   it("preserves an existing workspace when the initial preset changes for new users", async () => {
     const props = { allRepos: false, onOpen: () => {}, registerNav: () => {}, storageKey: "existing-user" };
     const oldView = render(<Grid {...props} initialPreset="kanban" />);

@@ -4,6 +4,10 @@ Playbook IDE: a local macOS (and Linux) Tauri v2 + React/TS desktop app for task
 
 This repository is the **public product source**. Release signing, CDN publish, Linux builder droplets, and `scripts/install.sh` live elsewhere. Do not assume those scripts exist here.
 
+## README is human-edited only
+
+`README.md` is off limits to agents. You may read it for context, but must not edit, replace, delete, rename, or regenerate it. This includes documentation updates for features, fixes, and cleanup. Put suggested README changes in your handoff to the human instead.
+
 ## Do not launch the app
 
 Never launch, build-and-open, or `open` the desktop app (`npm run tauri dev` or a bundled `.app`) unless the user explicitly asks to see the window. Verify with `cargo check -p alinery-app` and `./scripts/check.sh`. If they do ask, open Alinery from this branch.
