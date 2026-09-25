@@ -46,6 +46,24 @@ pub fn branch_names_conflict(existing: &str, candidate: &str) -> bool {
     existing == candidate || branch_is_parent(existing, candidate) || branch_is_parent(candidate, existing)
 }
 
+/// Absolute paths of every worktree Git has registered in `repo`, including missing (prunable)
+/// and locked ones. `worktree list --porcelain` reports them all from the registry, not the
+/// filesystem, so this is the truth about which paths Git reserves. Fail-closed: callers must
+/// never treat an unreadable registry as empty.
+pub fn registered_worktree_paths(repo: &Path) -> Result<Vec<PathBuf>, String> {
+    let output = git_cmd(repo)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .map_err(|e| format!("git worktree list: {e}"))?;
+    if !output.status.success() {
+        return Err(format!("git worktree list: {}", String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree ").map(PathBuf::from))
+        .collect())
+}
+
 /// Canonicalized top-level directory of the Git working tree containing `path`. The single
 /// place that turns an arbitrary caller-supplied path into a trustworthy repo identity —
 /// `git rev-parse --show-toplevel` rejects anything that is not a real, locally accessible
