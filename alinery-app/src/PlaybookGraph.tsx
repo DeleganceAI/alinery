@@ -178,17 +178,6 @@ export function PlaybookGraph({
             </button>
           )}
         </div>
-        <p id={`${inspectorId}-hint`} className="playbook-definition-hint">
-          Static definition, not an execution trace.{" "}
-          {displayMode === "flow"
-            ? "Flow shows dependency ordering, not artifact forwarding. Cyclic graphs retain all connections."
-            : "All declared dependencies. Hover a step or connection, or select a step, to reveal artifact names."}{" "}
-          {showInspector ? "Inspect a step for its full inputs, outputs and connections." : "Select a step to highlight its connections."}
-        </p>
-        <p className="playbook-definition-hint">
-          Wheel to zoom; drag the background to pan. Pan: +/− zoom, arrows move, Escape returns. Dashed arrows are return paths.
-          {layout.ellipses.length > 0 && " Three example instances illustrate fan-out; actual counts vary."}
-        </p>
         <div
           ref={splitRef}
           className={`playbook-definition-layout${resizing ? " resizing" : ""}`}
@@ -223,7 +212,6 @@ export function PlaybookGraph({
                   className={`playbook-definition-viewport${panning ? " is-panning" : ""}`}
                   role="region"
                   aria-label="Dependency graph canvas"
-                  aria-describedby={`${inspectorId}-hint`}
                   tabIndex={-1}
                   onPointerDown={onPointerDown}
                   onKeyDown={(event) => {
