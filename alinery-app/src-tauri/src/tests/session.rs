@@ -454,7 +454,7 @@ fn bounded_observation_timeout_returns_error() {
         "observation waited {:?}, expected bounded timeout",
         started.elapsed()
     );
-    assert_eq!(listener.join().unwrap(), 1);
+    assert_eq!(listener.calls(), 1);
     let _ = fs::remove_dir_all(repo);
 }
 
@@ -477,7 +477,7 @@ fn session_list_statuses_groups_duplicate_refs_by_lane() {
     // Session b: Idle agent → lifecycle is Live.
     assert_eq!(statuses.get(&b).map(|obs| &obs.lifecycle), Some(&crate::LifecycleState::Live),);
     assert_eq!(statuses.get(&b).and_then(|obs| obs.state.as_ref()).map(|s| &s.agent), Some(&alinery_core::AgentState::Idle),);
-    assert_eq!(socket.join().unwrap(), 1);
+    assert_eq!(socket.calls(), 1);
     let _ = fs::remove_dir_all(repo);
 }
 
@@ -518,9 +518,9 @@ fn session_list_statuses_isolates_missing_malformed_and_timeout_lanes() {
             statuses.get(&bad).and_then(|obs| obs.state.as_ref()).is_none(),
             "failed-lane session should have no daemon state, {failure}"
         );
-        assert_eq!(healthy_socket.join().unwrap(), 1);
+        assert_eq!(healthy_socket.calls(), 1);
         if let Some(socket) = failing_socket {
-            assert_eq!(socket.join().unwrap(), 1);
+            assert_eq!(socket.calls(), 1);
         }
         let _ = fs::remove_dir_all(healthy);
         let _ = fs::remove_dir_all(failing);
@@ -552,8 +552,8 @@ fn session_list_statuses_routes_by_daemon_namespace() {
     assert_eq!(statuses.get(&a).and_then(|obs| obs.state.as_ref()).map(|s| &s.agent), Some(&alinery_core::AgentState::Busy));
     assert_eq!(statuses.get(&b).map(|obs| &obs.lifecycle), Some(&crate::LifecycleState::Live));
     assert_eq!(statuses.get(&b).and_then(|obs| obs.state.as_ref()).map(|s| &s.agent), Some(&alinery_core::AgentState::Idle));
-    assert_eq!(socket_a.join().unwrap(), 1);
-    assert_eq!(socket_b.join().unwrap(), 1);
+    assert_eq!(socket_a.calls(), 1);
+    assert_eq!(socket_b.calls(), 1);
     let _ = fs::remove_dir_all(repo);
 }
 
@@ -584,7 +584,7 @@ fn session_list_statuses_artifact_alone_does_not_override_observation() {
         statuses.get(&key).map(|obs| obs.checkpoint.phase_completed_at.is_none()).unwrap_or(false),
         "checkpoint should be empty without a completion event"
     );
-    assert_eq!(socket.join().unwrap(), 1);
+    assert_eq!(socket.calls(), 1);
     let _ = fs::remove_dir_all(repo);
 }
 

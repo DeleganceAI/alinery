@@ -497,6 +497,35 @@ pub(crate) fn read_chat_image(task_slug: String, name: String) -> Result<ChatIma
     read_chat_image_in(&active_repo()?, &task_slug, &name)
 }
 
+pub(crate) fn read_attachment_image_in(repo: &Path, task_slug: &str, name: &str, node_id: Option<&str>) -> Result<Vec<u8>, String> {
+    let path = match node_id {
+        Some(id) => artifact_node_path_for(repo, task_slug, id)?,
+        None => attachment_path_in(repo, task_slug, name)?,
+    };
+    let path = Path::new(&path);
+    let name = path.file_name().and_then(|name| name.to_str()).ok_or("invalid image name")?;
+    chat_image_mime(name)?;
+    let file = fs::File::open(path).map_err(|error| error.to_string())?;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    if !metadata.is_file() || metadata.len() > MAX_ATTACHMENT_BYTES {
+        return Err("Image must be a regular file no larger than 25 MB".into());
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_ATTACHMENT_BYTES + 1).read_to_end(&mut bytes).map_err(|error| error.to_string())?;
+    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
+        return Err("Image is larger than 25 MB".into());
+    }
+    Ok(bytes)
+}
+
+#[tauri::command]
+pub(crate) async fn read_attachment_image(state: State<'_, AppState>, task_slug: String, name: String, node_id: Option<String>) -> Result<tauri::ipc::Response, String> {
+    let repo = require_owned_active_repo(&state)?;
+    tauri::async_runtime::spawn_blocking(move || read_attachment_image_in(&repo, &task_slug, &name, node_id.as_deref()).map(tauri::ipc::Response::new))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 // Archived drafts require explicit restore. Autosave and create must treat their slugs as occupied.
 fn is_reusable_draft(task: &Task) -> bool {
     task.draft && !task.archived

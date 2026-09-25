@@ -41,12 +41,12 @@ fn durable_board_discovery_keeps_offline_and_archived_owners_and_retained_titles
         Some(&version(PROTOCOL_VERSION, "different-config".into())),
     );
     assert!(crate::task_daemon_for(&repo, "healthy", &app_config).is_ok());
-    assert!(crate::task_daemon_for(&repo, "offline", &app_config).err().unwrap().contains("unreachable"));
-    assert!(crate::task_daemon_for(&repo, "incompatible", &app_config).err().unwrap().contains("repo-protocol-mismatch"));
-    assert!(crate::task_daemon_for(&repo, "foreign-config", &app_config)
-        .err()
-        .unwrap()
-        .contains("repo-app-config-mismatch"));
+    let offline_error = crate::task_daemon_for(&repo, "offline", &app_config).unwrap_err();
+    assert!(offline_error.contains("unreachable"), "{offline_error}");
+    let incompatible_error = crate::task_daemon_for(&repo, "incompatible", &app_config).unwrap_err();
+    assert!(incompatible_error.contains("repo-protocol-mismatch"), "{incompatible_error}");
+    let foreign_error = crate::task_daemon_for(&repo, "foreign-config", &app_config).unwrap_err();
+    assert!(foreign_error.contains("repo-app-config-mismatch"), "{foreign_error}");
     let library = repo.join(".alinery/playbooks/one-shot");
     fs::create_dir_all(&library).unwrap();
     let library_file = library.join("playbook.md");
@@ -77,9 +77,9 @@ fn durable_board_discovery_keeps_offline_and_archived_owners_and_retained_titles
     }
     // Only the explicit compatibility probes above connect (liveness + version).
     // Discovery must not query, launch, or take over any owner.
-    assert_eq!(healthy.join().unwrap(), 2);
-    assert_eq!(incompatible.join().unwrap(), 2);
-    assert_eq!(foreign_config.join().unwrap(), 2);
+    assert_eq!(healthy.calls(), 2);
+    assert_eq!(incompatible.calls(), 2);
+    assert_eq!(foreign_config.calls(), 2);
     assert!(!alinery_core::alineryd_socket_path(&repo, Some("offline")).exists());
     let _ = fs::remove_dir_all(repo);
 }
@@ -782,6 +782,23 @@ fn read_chat_image_rejects_pdf() {
     fs::write(attach.join("notes.pdf"), b"%PDF").unwrap();
     assert!(read_chat_image_in(&repo, "task", "notes.pdf").is_err());
     let _ = fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn attachment_preview_preserves_bytes_above_chat_limit_and_enforces_attachment_limit() {
+    let repo = unique_attachment_temp("image-preview-limit");
+    let attach = attachments_of(&repo, "task");
+    fs::create_dir_all(&attach).unwrap();
+    let bytes = vec![42; MAX_CHAT_IMAGE_BYTES as usize + 1];
+    fs::write(attach.join("large.PNG"), &bytes).unwrap();
+    assert_eq!(crate::read_attachment_image_in(&repo, "task", "large.PNG", None).unwrap(), bytes);
+    assert!(read_chat_image_in(&repo, "task", "large.PNG").is_err());
+    fs::File::create(attach.join("oversized.png")).unwrap().set_len(MAX_ATTACHMENT_BYTES + 1).unwrap();
+    assert!(crate::read_attachment_image_in(&repo, "task", "oversized.png", None).is_err());
+    fs::write(attach.join("notes.txt"), "not an image").unwrap();
+    assert!(crate::read_attachment_image_in(&repo, "task", "notes.txt", None).is_err());
+    assert!(crate::read_attachment_image_in(&repo, "task", "../large.PNG", None).is_err());
+    let _ = fs::remove_dir_all(repo);
 }
 
 #[test]
@@ -1647,8 +1664,8 @@ fn task_activity_keys_are_repository_qualified_and_refs_deduplicated() {
     assert_eq!(activity.len(), 2);
     assert_eq!(activity_summary(&activity, &repo_a, "same-slug").status, Some(crate::TaskActivityStatus::Running));
     assert_eq!(activity_summary(&activity, &repo_b, "same-slug"), &crate::TaskActivitySummary::default());
-    assert_eq!(socket_a.join().unwrap(), 2);
-    assert_eq!(socket_b.join().unwrap(), 2);
+    assert_eq!(socket_a.calls(), 2);
+    assert_eq!(socket_b.calls(), 2);
     let _ = fs::remove_dir_all(repo_a);
     let _ = fs::remove_dir_all(repo_b);
 }
@@ -1672,7 +1689,7 @@ fn task_activity_refuses_a_different_app_config_identity() {
     );
 
     assert_eq!(activity_summary(&activity, &repo, "task"), &crate::TaskActivitySummary::default());
-    assert_eq!(socket.join().unwrap(), 2);
+    assert_eq!(socket.calls(), 2);
     let _ = fs::remove_dir_all(repo);
 }
 
@@ -1712,8 +1729,8 @@ fn task_activity_repository_failure_isolated() {
 
         assert_eq!(activity_summary(&activity, &repo_a, "task").status, Some(crate::TaskActivityStatus::Running), "{failure}");
         assert_eq!(activity_summary(&activity, &repo_b, "task"), &crate::TaskActivitySummary::default(), "{failure}");
-        assert_eq!(socket_a.join().unwrap(), 2);
-        assert_eq!(socket_b.join().unwrap(), if failure == "missing" { 0 } else { 2 });
+        assert_eq!(socket_a.calls(), 2, "{failure}");
+        assert_eq!(socket_b.calls(), if failure == "missing" { 0 } else { 2 }, "{failure}");
         let _ = fs::remove_dir_all(repo_a);
         let _ = fs::remove_dir_all(repo_b);
     }

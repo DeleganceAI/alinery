@@ -110,7 +110,7 @@ Draft tasks appear with a Draft label and open their saved creation form.
 
 On a fresh workspace, the default Kanban+ view starts with **Progress lanes**: playbook
 steps left-to-right, all step labels, no grouping, repository fill, attention borders,
-manual lane order, compact cards, active tasks only, fixed brightness, and archives
+manual lane order, compact cards, all tasks, fixed brightness, and archives
 hidden. Tile size is 150 × 78px, row/column spacing is 10/8px, and the first column is
 190px. Every card property except playbook is enabled. Existing saved Grid layouts
 are restored unchanged; additional Grid tabs retain their Step Kanban starting layout.

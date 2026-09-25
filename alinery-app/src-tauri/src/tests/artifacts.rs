@@ -617,6 +617,7 @@ fn artifact_node_adapters_preserve_opaque_owner_aware_resolution() {
     fs::create_dir_all(crate::artifacts_dir(&repo, "task").join("attachments")).unwrap();
     fs::write(crate::artifacts_dir(&repo, "task").join("01-owned.md"), "owned").unwrap();
     fs::write(crate::artifacts_dir(&repo, "task").join("attachments/evidence.txt"), "evidence").unwrap();
+    fs::write(crate::artifacts_dir(&repo, "task").join("attachments/evidence.png"), b"image bytes").unwrap();
 
     let tree = crate::list_task_artifact_tree_for(&repo, "task").unwrap();
     let owned = tree.iter().find(|node| node.label == "01-owned.md").unwrap();
@@ -624,6 +625,11 @@ fn artifact_node_adapters_preserve_opaque_owner_aware_resolution() {
     assert_eq!(crate::read_task_artifact_node_for(&repo, "task", &owned.id).unwrap(), "owned");
     assert!(crate::artifact_node_path_for(&repo, "task", &attachment.id).unwrap().ends_with("evidence.txt"));
     assert!(crate::read_task_artifact_node_for(&repo, "task", &attachment.id).is_err());
+    let image = tree.iter().flat_map(|node| node.children.iter()).find(|node| node.label == "evidence.png").unwrap();
+    assert_eq!(crate::read_attachment_image_in(&repo, "task", "ignored.png", Some(&image.id)).unwrap(), b"image bytes");
+    assert!(crate::read_attachment_image_in(&repo, "other", "evidence.png", Some(&image.id)).is_err());
+    assert!(crate::read_attachment_image_in(&repo, "task", "evidence.png", Some(&attachment.id)).is_err());
+    assert!(crate::read_attachment_image_in(&repo, "task", "evidence.png", Some(&owned.id)).is_err());
     let _ = fs::remove_dir_all(repo);
 }
 

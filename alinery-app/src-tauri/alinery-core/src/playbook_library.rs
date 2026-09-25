@@ -23,6 +23,7 @@ pub const BUNDLED_PLAYBOOKS: &[(&str, &str)] = &[
     ("parallel-squares", include_str!("../../playbooks/parallel-squares/playbook.md")),
     ("primed-feature-development", include_str!("../../playbooks/primed-feature-development/playbook.md")),
     ("systematic-evidence-review", include_str!("../../playbooks/systematic-evidence-review/playbook.md")),
+    ("academic-survey", include_str!("../../playbooks/academic-survey/playbook.md")),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -258,6 +259,17 @@ fn check_leaf(path: &Path) -> Result<bool, String> {
     }
 }
 
+// Bundled bytes are compiled in. Global tombstones keep deletions effective
+// across repositories and upgrades without changing task-owned definitions.
+fn bundled_deleted(roots: &PlaybookRoots, key: &str) -> Result<bool, String> {
+    let path = root(roots, PlaybookScope::Global).expect("global root");
+    if fs::symlink_metadata(&path).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) {
+        return Ok(false);
+    }
+    checked_root(roots, PlaybookScope::Global, false)?;
+    check_leaf(&path.join(format!(".deleted-bundled-{key}")))
+}
+
 pub fn resolve_playbook(roots: &PlaybookRoots, reference: &PlaybookRef) -> Result<ScopedPlaybook, PlaybookLoadError> {
     let source = source_for(roots, reference);
     if !valid_playbook_key(&reference.key) {
@@ -276,6 +288,9 @@ pub fn resolve_playbook(roots: &PlaybookRoots, reference: &PlaybookRef) -> Resul
         let Some((_, text)) = BUNDLED_PLAYBOOKS.iter().find(|(key, _)| *key == reference.key) else {
             return Err(PlaybookLoadError::Unknown { source });
         };
+        if bundled_deleted(roots, &reference.key).map_err(|message| PlaybookLoadError::Io { source: source.clone(), message })? {
+            return Err(PlaybookLoadError::Unknown { source });
+        }
         ((*text).to_owned(), None)
     } else {
         let path = source.path.as_ref().expect("writable scope has a path");
@@ -376,9 +391,9 @@ pub fn load_playbook_catalog(roots: &PlaybookRoots) -> PlaybookCatalog {
     references.sort();
     let candidates = references
         .into_iter()
-        .map(|reference| {
+        .filter_map(|reference| {
             let source = source_for(roots, &reference);
-            match resolve_playbook(roots, &reference) {
+            Some(match resolve_playbook(roots, &reference) {
                 Ok(playbook) => PlaybookCandidate {
                     source,
                     title: Some(playbook.definition.title),
@@ -386,6 +401,7 @@ pub fn load_playbook_catalog(roots: &PlaybookRoots) -> PlaybookCatalog {
                     modified_at_ms: playbook.modified_at_ms,
                     diagnostics: Vec::new(),
                 },
+                Err(PlaybookLoadError::Unknown { .. }) if reference.scope == PlaybookScope::Bundled => return None,
                 Err(error) => {
                     let diagnostics = match error {
                         PlaybookLoadError::Invalid { diagnostics, .. } => diagnostics,
@@ -401,7 +417,7 @@ pub fn load_playbook_catalog(roots: &PlaybookRoots) -> PlaybookCatalog {
                         diagnostics,
                     }
                 }
-            }
+            })
         })
         .collect();
     let picker_preferences = match load_picker_preferences(roots) {
@@ -456,15 +472,22 @@ pub fn save_playbook(roots: &PlaybookRoots, request: SavePlaybookRequest) -> Res
 }
 
 pub fn delete_playbook(roots: &PlaybookRoots, reference: &PlaybookRef) -> Result<(), PlaybookSaveError> {
-    if reference.scope == PlaybookScope::Bundled {
-        return Err(PlaybookSaveError::ReadOnly { reference: reference.clone() });
-    }
     if !valid_playbook_key(&reference.key) {
         return Err(PlaybookSaveError::Invalid {
             diagnostics: vec![invalid_key(&reference.key)],
         });
     }
     let source = source_for(roots, reference);
+    if reference.scope == PlaybookScope::Bundled {
+        if !BUNDLED_PLAYBOOKS.iter().any(|(key, _)| *key == reference.key) {
+            return Err(PlaybookSaveError::Unknown { source });
+        }
+        return with_library_lock(roots, PlaybookScope::Global, |root| {
+            let path = root.join(format!(".deleted-bundled-{}", reference.key));
+            check_leaf(&path).map_err(io_save)?;
+            write_bytes_atomic(&path, b"").map_err(io_save)
+        });
+    }
     with_library_lock(roots, reference.scope, |root| {
         let directory = root.join(&reference.key);
         if fs::symlink_metadata(&directory).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) {
@@ -571,6 +594,60 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
         }
+    }
+
+    #[test]
+    fn bundled_deletion_persists_across_repositories_without_deleting_copies() {
+        let sandbox = Sandbox::new();
+        let bundled = reference(PlaybookScope::Bundled);
+        save(&sandbox.roots, PlaybookScope::Global, "Personal", false).unwrap();
+        save(&sandbox.roots, PlaybookScope::Repo, "Team", false).unwrap();
+        delete_playbook(&sandbox.roots, &bundled).unwrap();
+        delete_playbook(&sandbox.roots, &bundled).unwrap();
+
+        for repo_dir in [sandbox.roots.repo_dir.clone(), sandbox.path.join("other-repo"), PathBuf::new()] {
+            let roots = PlaybookRoots {
+                global_config_dir: sandbox.roots.global_config_dir.clone(),
+                repo_dir,
+            };
+            assert!(matches!(resolve_playbook(&roots, &bundled), Err(PlaybookLoadError::Unknown { .. })));
+            let catalog = load_playbook_catalog(&roots);
+            assert!(!catalog.candidates.iter().any(|candidate| candidate.source.reference == bundled));
+            assert!(catalog.diagnostics.is_empty());
+            assert_eq!(resolve_playbook(&roots, &reference(PlaybookScope::Global)).unwrap().definition.title, "Personal");
+        }
+        assert_eq!(resolve_playbook(&sandbox.roots, &reference(PlaybookScope::Repo)).unwrap().definition.title, "Team");
+        let other = PlaybookRef {
+            scope: PlaybookScope::Bundled,
+            key: "one-shot".into(),
+        };
+        assert!(resolve_playbook(&sandbox.roots, &other).is_ok());
+        assert!(resolve_playbook(&Sandbox::new().roots, &bundled).is_ok());
+    }
+
+    #[test]
+    fn bundled_deletion_rejects_unknown_keys_and_unsafe_markers() {
+        let sandbox = Sandbox::new();
+        let unknown = PlaybookRef {
+            scope: PlaybookScope::Bundled,
+            key: "missing".into(),
+        };
+        assert!(matches!(delete_playbook(&sandbox.roots, &unknown), Err(PlaybookSaveError::Unknown { .. })));
+        let unsafe_key = PlaybookRef {
+            scope: PlaybookScope::Bundled,
+            key: "../outside".into(),
+        };
+        assert!(matches!(delete_playbook(&sandbox.roots, &unsafe_key), Err(PlaybookSaveError::Invalid { .. })));
+
+        let root = checked_root(&sandbox.roots, PlaybookScope::Global, true).unwrap();
+        let marker = root.join(".deleted-bundled-superdevelop");
+        let outside = sandbox.path.join("outside");
+        fs::write(&outside, "preserve").unwrap();
+        std::os::unix::fs::symlink(&outside, &marker).unwrap();
+        let bundled = reference(PlaybookScope::Bundled);
+        assert!(matches!(delete_playbook(&sandbox.roots, &bundled), Err(PlaybookSaveError::Io { .. })));
+        assert!(matches!(resolve_playbook(&sandbox.roots, &bundled), Err(PlaybookLoadError::Io { .. })));
+        assert_eq!(fs::read_to_string(outside).unwrap(), "preserve");
     }
 
     fn reference(scope: PlaybookScope) -> PlaybookRef {
@@ -690,10 +767,6 @@ mod tests {
     fn bundled_copy_new_key_and_delete_are_isolated() {
         let sandbox = Sandbox::new();
         assert!(matches!(save(&sandbox.roots, PlaybookScope::Bundled, "No", true), Err(PlaybookSaveError::ReadOnly { .. })));
-        assert!(matches!(
-            delete_playbook(&sandbox.roots, &reference(PlaybookScope::Bundled)),
-            Err(PlaybookSaveError::ReadOnly { .. })
-        ));
         save(&sandbox.roots, PlaybookScope::Global, "Global", false).unwrap();
         let repo = save(&sandbox.roots, PlaybookScope::Repo, "Repo", false).unwrap();
         let mut copy = repo.definition;

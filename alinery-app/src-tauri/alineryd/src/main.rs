@@ -1792,6 +1792,14 @@ fn executable_path(binary: &str, cwd: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("harness executable is missing or not executable: {binary}"))
 }
 
+// A failed spawn must not stay status-visible. The reap wait is best-effort: on a
+// slow machine it expires before the reader sets `reaped_and_drained`, and a row
+// left behind makes `status` return the Starting state instead of unknown-session.
+// The reader keeps its own handles and finishes after the row is gone.
+fn unregister_aborted_spawn(reg: &Registry, id: &str) {
+    reg.lock().unwrap_or_else(|error| error.into_inner()).remove(id);
+}
+
 fn spawn_session(
     reg: &Registry,
     repo: &Path,
@@ -2197,9 +2205,7 @@ fn spawn_session(
         () => {{
             set_spawn_lifecycle!(SpawnLifecycle::Aborted);
             terminate_child!();
-            if inner.lock().unwrap_or_else(|e| e.into_inner()).reaped_and_drained {
-                reg.lock().unwrap_or_else(|error| error.into_inner()).remove(&launch.id);
-            }
+            unregister_aborted_spawn(reg, &launch.id);
         }};
     }
 
@@ -3212,9 +3218,7 @@ fn spawn_rpc_session(
         () => {{
             set_spawn_lifecycle!(SpawnLifecycle::Aborted);
             terminate_child!();
-            if inner.lock().unwrap_or_else(|e| e.into_inner()).reaped_and_drained {
-                reg.lock().unwrap_or_else(|error| error.into_inner()).remove(&launch.id);
-            }
+            unregister_aborted_spawn(reg, &launch.id);
         }};
     }
 

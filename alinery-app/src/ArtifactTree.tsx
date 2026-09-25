@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { AttachmentPreview } from "./AttachmentPreview";
+import { classifyAttachment } from "./chat/attachments";
 import * as ipc from "./ipc";
 import type { ArtifactTreeNode } from "./types";
 
@@ -34,6 +36,15 @@ function ArtifactTreeRow({
   const folder = node.kind === "subtask_folder";
   const isCollapsed = collapsed.has(node.id);
   const badge = sourceLabels[node.source];
+  if (node.kind === "attachment" && classifyAttachment({ name: node.label }) === "image") {
+    return (
+      <div style={{ paddingLeft: `${depth * 16}px` }}>
+        <AttachmentPreview taskSlug={taskSlug} name={node.label} nodeId={node.id}>
+          {badge && <span className={`artifact-source-badge ${node.source}`}>{badge}</span>}
+        </AttachmentPreview>
+      </div>
+    );
+  }
   return (
     <>
       <button

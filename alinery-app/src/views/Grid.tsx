@@ -387,7 +387,7 @@ const PRESETS: Record<PresetKey, GridConfig> = {
     label: 190,
     tracks: 1,
     columnCards: 2,
-    filter: "active",
+    filter: "all",
     fade: "none",
     progress: "stage",
     direction: "ltr",
