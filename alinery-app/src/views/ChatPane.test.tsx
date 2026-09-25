@@ -1,8 +1,12 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ACTOR, type ChatEntry, subagent } from "../chat/types";
 import { chatVisibilityFromAppearance, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
+import { applyRpcLine, emptyTranscript } from "../chatTranscript";
 import { ChatPane } from "./ChatPane";
 
 const at = Date.parse("2026-09-05T12:11:00Z");
@@ -257,5 +261,38 @@ describe("ChatPane scroll-back paging", () => {
       />,
     );
     expect(asked).toBe(0);
+  });
+});
+
+describe("DEL-722 block-local streaming", () => {
+  it("keeps thinking expanded across recorded sibling events when expand-thinking overrides auto-collapse", () => {
+    const fixtures = join(dirname(fileURLToPath(import.meta.url)), "../chat/fixtures");
+    const visibility = { ...DEFAULT_CHAT_VISIBILITY, showThinking: true, expandThinking: true, autoCollapseThinking: true };
+    let state = emptyTranscript();
+    const view = render(<ChatPane entries={state.entries} visibility={visibility} />);
+    const expanded: boolean[] = [];
+    let originalRail: Element | null = null;
+
+    try {
+      for (const event of ["thinking_start", "thinking_end", "text_start", "text_delta", "text_end"]) {
+        const frame: unknown = JSON.parse(readFileSync(join(fixtures, `live-${event}.json`), "utf8"));
+        state = applyRpcLine(state, frame);
+        view.rerender(<ChatPane entries={state.entries} visibility={visibility} />);
+        const thinking = state.entries.find((entry) => entry.type === "thinking");
+        expect(thinking).toBeTruthy();
+        const row = view.container.querySelector(`[data-entry-id="${thinking?.id}"]`);
+        expect(row).not.toBeNull();
+        const rail = row?.querySelector(".chat-rail");
+        expect(rail).toBeTruthy();
+        if (event === "thinking_start") originalRail = rail ?? null;
+        expect.soft(rail, event).toBe(originalRail);
+        expanded.push(row?.querySelector(".chat-rail-line")?.getAttribute("aria-expanded") === "true");
+        expect.soft(row?.querySelector(".chat-work-pre")?.textContent, event).toBe(thinking?.type === "thinking" ? thinking.text : undefined);
+      }
+
+      expect(expanded).toEqual([true, true, true, true, true]);
+    } finally {
+      view.unmount();
+    }
   });
 });

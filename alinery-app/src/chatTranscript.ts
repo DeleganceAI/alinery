@@ -50,6 +50,9 @@ export type SessionChatMeta = {
   queuedMessageCount?: number;
 };
 
+type AssistantStreamKind = "thinking" | "text" | "toolCall";
+type AssistantActivity = Readonly<Partial<Record<number, AssistantStreamKind>>>;
+
 export type ChatTranscriptState = {
   ready: boolean;
   protocolVersion: number | null;
@@ -72,6 +75,7 @@ export type ChatTranscriptState = {
    */
   pendingTurn: boolean;
   liveAssistantKeys: Record<string, string>;
+  assistantActivity: AssistantActivity;
   entrySeq: number;
   /**
    * Index of the seam: entries below it came from the journal, entries at or above it from the
@@ -101,6 +105,7 @@ export function emptyTranscript(): ChatTranscriptState {
     turnOpen: false,
     pendingTurn: false,
     liveAssistantKeys: {},
+    assistantActivity: {},
     entrySeq: 0,
     liveStart: 0,
     fileStart: null,
@@ -115,6 +120,12 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function streamKind(type: unknown): AssistantStreamKind | undefined {
+  if (type === "thinking" || type === "text") return type;
+  if (type === "toolCall" || type === "tool_call") return "toolCall";
+  return undefined;
+}
+
 function mapPart(raw: unknown): ChatPart | null {
   const part = asRecord(raw);
   if (!part || typeof part.type !== "string") return null;
@@ -125,7 +136,7 @@ function mapPart(raw: unknown): ChatPart | null {
   if (part.type === "text") {
     return { type: "text", text: typeof part.text === "string" ? part.text : "" };
   }
-  if (part.type === "toolCall" || part.type === "tool_call") {
+  if (streamKind(part.type) === "toolCall") {
     return {
       type: "toolCall",
       name: typeof part.name === "string" ? part.name : undefined,
@@ -147,9 +158,45 @@ function mapPart(raw: unknown): ChatPart | null {
   return null;
 }
 
-function mapContent(raw: unknown): ChatPart[] {
+function mapContent(raw: unknown, activity?: AssistantActivity): ChatPart[] {
   if (!Array.isArray(raw)) return [];
-  return raw.map(mapPart).filter((part): part is ChatPart => part !== null);
+  const content: ChatPart[] = [];
+  // Producer indices precede filtering and are unrelated to the projector's per-kind row keys.
+  for (const [index, value] of raw.entries()) {
+    const part = mapPart(value);
+    if (!part) continue;
+    if ((part.type === "thinking" || part.type === "text" || part.type === "toolCall") && activity?.[index] === part.type) {
+      part.streaming = true;
+    }
+    content.push(part);
+  }
+  return content;
+}
+
+function updateAssistantActivity(activity: AssistantActivity, raw: unknown, eventType: string, contentIndex: unknown): AssistantActivity {
+  if (eventType === "start" || eventType === "done" || eventType === "error") return {};
+  if (!Array.isArray(raw)) return activity;
+  let changed: Partial<Record<number, AssistantStreamKind>> | undefined;
+  for (const key of Object.keys(activity)) {
+    const index = Number(key);
+    if (streamKind(asRecord(raw[index])?.type) !== activity[index]) {
+      changed ??= { ...activity };
+      delete changed[index];
+    }
+  }
+  const event = /^(thinking|text|toolcall)_(start|delta|end)$/.exec(eventType);
+  if (event && typeof contentIndex === "number" && Number.isInteger(contentIndex) && contentIndex >= 0 && contentIndex < raw.length) {
+    const kind = event[1] === "toolcall" ? "toolCall" : streamKind(event[1]);
+    if (kind && streamKind(asRecord(raw[contentIndex])?.type) === kind) {
+      const next = event[2] === "end" ? undefined : kind;
+      if ((changed ?? activity)[contentIndex] !== next) {
+        changed ??= { ...activity };
+        if (next) changed[contentIndex] = next;
+        else delete changed[contentIndex];
+      }
+    }
+  }
+  return changed ?? activity;
 }
 
 export function mapHydratedMessage(raw: unknown, rowId?: string): ChatMessage | null {
@@ -167,8 +214,6 @@ export function mapHydratedMessage(raw: unknown, rowId?: string): ChatMessage | 
   return mapped;
 }
 
-const STREAMING_EVENTS = new Set(["thinking_start", "thinking_delta", "text_start", "text_delta"]);
-
 const HARNESS_EVENTS = new Set([
   "command_output",
   "notice",
@@ -184,23 +229,6 @@ const HARNESS_EVENTS = new Set([
 ]);
 
 const PRESENTATION_UI = new Set(["setWidget", "notify", "setStatus", "setTitle", "set_editor_text"]);
-
-function withStreaming(parts: ChatPart[], streaming: boolean): ChatPart[] {
-  if (!streaming) {
-    return parts.map((part) => {
-      if (part.type === "thinking") return { type: "thinking", thinking: part.thinking };
-      if (part.type === "text") return { type: "text", text: part.text };
-      if (part.type === "toolCall") return { type: "toolCall", id: part.id, name: part.name, args: part.args };
-      return part;
-    });
-  }
-  return parts.map((part) => {
-    if (part.type === "thinking") return { ...part, streaming: true };
-    if (part.type === "text") return { ...part, streaming: true };
-    if (part.type === "toolCall") return { ...part, streaming: true };
-    return part;
-  });
-}
 
 function allocId(state: ChatTranscriptState): { id: string; entrySeq: number } {
   const entrySeq = state.entrySeq + 1;
@@ -228,8 +256,8 @@ function patchLastSlash(state: ChatTranscriptState, local: boolean): ChatTranscr
   return state;
 }
 
-function upsertMessages(state: ChatTranscriptState, content: ChatPart[], stopReason: string | undefined, streaming: boolean): ChatMessage[] {
-  const message: ChatMessage = { role: "assistant", content: withStreaming(content, streaming) };
+function upsertMessages(state: ChatTranscriptState, content: ChatPart[], stopReason: string | undefined): ChatMessage[] {
+  const message: ChatMessage = { role: "assistant", content };
   if (stopReason) message.stopReason = stopReason;
   const messages = state.messages.slice();
   const last = messages[messages.length - 1];
@@ -298,8 +326,8 @@ function journalOwnsAssistantSnapshot(state: ChatTranscriptState, content: ChatP
   return true;
 }
 
-function syncLiveAssistant(state: ChatTranscriptState, content: ChatPart[], stopReason: string | undefined, streaming: boolean): ChatTranscriptState {
-  const messages = upsertMessages(state, content, stopReason, streaming);
+function syncLiveAssistant(state: ChatTranscriptState, content: ChatPart[], stopReason: string | undefined): ChatTranscriptState {
+  const messages = upsertMessages(state, content, stopReason);
   if (journalOwnsAssistantSnapshot(state, content)) {
     return { ...state, messages };
   }
@@ -314,7 +342,7 @@ function syncLiveAssistant(state: ChatTranscriptState, content: ChatPart[], stop
     keys[key] = id;
     return id;
   };
-  const exploded = explodeAssistantParts(withStreaming(content, streaming), idFor, Date.now(), aborted);
+  const exploded = explodeAssistantParts(content, idFor, Date.now(), aborted);
   // Everything below the seam is committed journal history and can never be part of the message
   // being streamed, so it is never scanned. This runs on every token delta: over a fully loaded
   // 50 MB journal the old whole-array Map, findIndex and two filters were ~12,000 elements each.
@@ -612,14 +640,49 @@ export function appendHarnessNotice(state: ChatTranscriptState, event: string, t
   return appendEntry(state, { actor: ACTOR.omp, type: "harness", event, text, at: Date.now() });
 }
 
+function finalizeLiveAssistant(state: ChatTranscriptState, stopReason?: string): ChatTranscriptState {
+  const ids = new Set(Object.values(state.liveAssistantKeys));
+  let entries = state.entries;
+  // Hydration can replace messages while retaining live rows; finalize each projection in place.
+  for (let i = state.liveStart; i < entries.length; i += 1) {
+    const row = entries[i];
+    if (!row || !ids.has(row.id)) continue;
+    let finalized = row;
+    if (row.type === "thinking" && (row.streaming || (stopReason === "aborted" && !row.aborted))) {
+      finalized = { ...row, streaming: false, aborted: row.aborted || stopReason === "aborted" || undefined };
+    } else if (row.type === "text" && row.streaming) {
+      finalized = { ...row, streaming: false };
+    } else if (row.type === "tool_call" && row.status === "running") {
+      finalized = { ...row, status: "ok" };
+    }
+    if (finalized !== row) {
+      if (entries === state.entries) entries = entries.slice();
+      entries[i] = finalized;
+    }
+  }
+  let messages = state.messages;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message?.role !== "assistant") continue;
+    if (message.rowId === undefined && message.content.some((part) => "streaming" in part && part.streaming)) {
+      const content = message.content.map((part) => ("streaming" in part && part.streaming ? { ...part, streaming: false } : part));
+      messages = messages.slice();
+      messages[i] = { ...message, content };
+    }
+    break;
+  }
+  return { ...state, entries, messages, assistantActivity: {} };
+}
+
 function openTurn(state: ChatTranscriptState): ChatTranscriptState {
   if (state.turnOpen) return { ...state, pendingTurn: false };
-  const cleaned = dropLiveAssistantRows(state);
+  const cleaned = dropLiveAssistantRows(finalizeLiveAssistant(state));
   const turn = cleaned.turn + 1;
   return appendEntry({ ...cleaned, turn, turnOpen: true, pendingTurn: false }, { actor: ACTOR.omp, type: "turn_marker", turn, phase: "start", at: Date.now() });
 }
 
 function closeTurn(state: ChatTranscriptState, stopReason?: string): ChatTranscriptState {
+  state = finalizeLiveAssistant(state, stopReason);
   if (!state.turnOpen) {
     return { ...dropLiveAssistantRows(state), pendingTurn: false };
   }
@@ -934,7 +997,7 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
       return state;
     }
     if (role === "assistant") {
-      return syncLiveAssistant(state, content, typeof message.stopReason === "string" ? message.stopReason : undefined, event.type === "message_start");
+      return syncLiveAssistant({ ...state, assistantActivity: {} }, content, typeof message.stopReason === "string" ? message.stopReason : undefined);
     }
     return state;
   }
@@ -944,9 +1007,10 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
     if (incoming?.role !== "assistant") return state;
     const rpcEvent = asRecord(event.assistantMessageEvent);
     const eventType = typeof rpcEvent?.type === "string" ? rpcEvent.type : "";
-    const content = mapContent(incoming.content);
+    const assistantActivity = updateAssistantActivity(state.assistantActivity, incoming.content, eventType, rpcEvent?.contentIndex);
+    const content = mapContent(incoming.content, assistantActivity);
     const stopReason = typeof incoming.stopReason === "string" ? incoming.stopReason : undefined;
-    return syncLiveAssistant(state, content, stopReason, STREAMING_EVENTS.has(eventType));
+    return syncLiveAssistant({ ...state, assistantActivity }, content, stopReason);
   }
 
   if (event.type === "agent_start" || event.type === "turn_start") {
