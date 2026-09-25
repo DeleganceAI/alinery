@@ -45,6 +45,9 @@ const blankDefinition: NormalizedPlaybook = {
   section_order: ["work"],
 };
 const scopeLabels = { repo: "Repository", global: "Global", bundled: "Bundled" };
+// The accounts contract's label rule (^[a-z0-9][a-z0-9-]{1,31}$), one home for both
+// the client-side guard and the field's own state.
+const labelPattern = /^[a-z0-9][a-z0-9-]{1,31}$/;
 // A rejected save/import/publish throws its validation result, so the diagnostics ride
 // along on the error. Keep only well-formed entries.
 const validationDiagnostics = (error: unknown): PlaybookValidationError[] => {
@@ -501,8 +504,8 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     if (!repoPath || !publishPick) return;
     const reference = catalog?.candidates.find((candidate) => playbookRefKey(candidate.source.reference) === publishPick)?.source.reference;
     if (!reference) return;
-    const labelReady = showPublishLabel && /^[a-z0-9][a-z0-9-]{1,31}$/.test(publishLabel);
-    if (showPublishLabel && !labelReady) return;
+    // Confirm is disabled in this state; the guard keeps the request honest anyway.
+    if (showPublishLabel && !labelPattern.test(publishLabel)) return;
     const result = showPublishLabel
       ? await ipc.publishCommunityPlaybook({ reference, repoPath, label: publishLabel })
       : await ipc.publishCommunityPlaybook({ reference, repoPath });
@@ -656,6 +659,9 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   // A filtered-out pick must not stay confirmable: Confirm would publish a row the
   // user can no longer see.
   const publishChoiceVisible = publishChoices.some((candidate) => playbookRefKey(candidate.source.reference) === publishPick);
+  // The label field only exists once the server asks for one. Until it holds a valid
+  // slug the request would come back rejected, so Confirm stays off and the rule shows.
+  const labelValid = labelPattern.test(publishLabel);
 
   return (
     <main className="playbooks-page">
@@ -1118,6 +1124,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                     Public label
                     <input value={publishLabel} onChange={(event) => setPublishLabel(event.target.value)} />
                   </label>
+                  {!labelValid && <p className="danger-text">Label must be a lowercase slug, 2 to 32 characters, like spec-driven-development.</p>}
                 </div>
               )}
               {dirty && selected && publishPick === playbookRefKey(selected.source.reference) && <p className="dim">Unsaved editor changes are not published.</p>}
@@ -1132,7 +1139,12 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
               <button type="button" className="btn ghost small" data-autofocus onClick={() => setPublishOpen(false)}>
                 Cancel
               </button>
-              <button type="button" className="btn small" disabled={!publishPick || !attest || !publishChoiceVisible} onClick={() => void publishPicked()}>
+              <button
+                type="button"
+                className="btn small"
+                disabled={!publishPick || !attest || !publishChoiceVisible || (showPublishLabel && !labelValid)}
+                onClick={() => void publishPicked()}
+              >
                 Confirm
               </button>
             </div>

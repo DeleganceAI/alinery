@@ -1084,6 +1084,31 @@ describe("community playbooks", () => {
     });
   });
 
+  it("disables confirm and states the rule while the public label is not a slug", async () => {
+    community.accountStatus.mockResolvedValue({ signedIn: true, email: "a@example.com", plan: null, paid: false, unavailable: false });
+    community.listCommunityPlaybooks.mockResolvedValue({ playbooks: [], nextCursor: null });
+    community.publishCommunityPlaybook.mockResolvedValueOnce({ kind: "label_required" });
+    renderLibrary();
+    await screen.findByRole("button", { name: "Review Repository" });
+    await openCommunity();
+    fireEvent.click(screen.getByRole("button", { name: "Publish playbook" }));
+    const dialog = await screen.findByRole("dialog", { name: "Publish playbook" });
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Review Repository" }));
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Confirm you can share this playbook." }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+    const label = await within(dialog).findByLabelText("Public label");
+    const confirm = within(dialog).getByRole("button", { name: "Confirm" });
+    expect(within(dialog).getByText("Label must be a lowercase slug, 2 to 32 characters, like spec-driven-development.")).toBeTruthy();
+    expect(confirm).toHaveProperty("disabled", true);
+    fireEvent.change(label, { target: { value: "Spec Driven Development" } });
+    expect(confirm).toHaveProperty("disabled", true);
+    fireEvent.click(confirm);
+    expect(community.publishCommunityPlaybook).toHaveBeenCalledTimes(1);
+    fireEvent.change(label, { target: { value: "spec-driven-development" } });
+    expect(confirm).toHaveProperty("disabled", false);
+    expect(within(dialog).queryByText(/lowercase slug/)).toBeNull();
+  });
+
   it("calls update once when the local hash still matches", async () => {
     community.accountStatus.mockResolvedValue({ signedIn: true, email: "a@example.com", plan: null, paid: false, unavailable: false });
     community.communityDownloadStatus.mockResolvedValue({
