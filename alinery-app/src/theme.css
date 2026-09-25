@@ -5670,6 +5670,41 @@ dialog.modal::backdrop {
   justify-content: center;
   gap: 8px;
 }
+/* A community row offers Preview beside Import/Update. Both labels must sit on one
+   line, so the action column takes the room and the other five keep their share at
+   the min-width (the library section scrolls sideways below it). */
+.playbooks-community-table {
+  min-width: 860px;
+}
+.playbooks-community-table td:last-child {
+  /* Both labels on one line: 133px + 8px gap + 129px, plus the cell's 24px padding. */
+  width: 300px;
+}
+/* A community row offers Preview beside Import/Update. */
+.playbooks-row-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+/* Community preview dialog (Playbooks.tsx): the published document in full. */
+.playbook-preview {
+  margin: 0;
+  max-height: 52vh;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
 .playbooks-library-row {
   display: flex;
   align-items: center;

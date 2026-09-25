@@ -112,6 +112,9 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishPick, setPublishPick] = useState("");
   const [publishQuery, setPublishQuery] = useState("");
+  // null = closed. Opened before the fetch so the click is never silent; source stays
+  // empty until the document arrives.
+  const [preview, setPreview] = useState<{ name: string; source: string; error: string } | null>(null);
   const [attest, setAttest] = useState(false);
   const [publishLabel, setPublishLabel] = useState("");
   const [showPublishLabel, setShowPublishLabel] = useState(false);
@@ -409,6 +412,16 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   const refreshDownloads = async () => {
     if (!repoPath) return;
     setDownloadRows((await ipc.communityDownloadStatus({ repoPath })).rows);
+  };
+  const previewPublication = async (id: string, name: string) => {
+    setPreview({ name, source: "", error: "" });
+    const result = await ipc.previewCommunityPlaybook({ id });
+    if (result.kind === "needs_account") {
+      setPreview(null);
+      openSignup(() => previewPublication(id, name));
+      return;
+    }
+    setPreview(result.kind === "failed" ? { name, source: "", error: result.message } : { name, source: result.source, error: "" });
   };
   const importPublication = async (id: string, overwrite: boolean) => {
     if (!repoPath) return;
@@ -970,7 +983,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
             {communityFilter === "all" && communityQuery.trim().length > 0 && communityQuery.trim().length <= 80 && <p>Search can omit matches.</p>}
             {communityError && <InlineStatus tone="error">{communityError}</InlineStatus>}
             {(communityFilter === "downloaded" || communityReady) && (
-              <table className="playbooks-table" aria-label="Community playbooks">
+              <table className="playbooks-table playbooks-community-table" aria-label="Community playbooks">
                 <tbody>
                   {communityFilter === "all"
                     ? communityPlaybooks.map((item) => {
@@ -987,9 +1000,14 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                               {imported ? (
                                 <span>Downloaded{item.version > imported.importedVersion ? " Update available" : ""}</span>
                               ) : (
-                                <button type="button" onClick={() => void withAccount(() => importPublication(item.id, false))}>
-                                  Import {name}
-                                </button>
+                                <span className="playbooks-row-actions">
+                                  <button type="button" className="btn ghost small" onClick={() => void withAccount(() => previewPublication(item.id, name))}>
+                                    Preview {name}
+                                  </button>
+                                  <button type="button" className="btn ghost small" onClick={() => void withAccount(() => importPublication(item.id, false))}>
+                                    Import {name}
+                                  </button>
+                                </span>
                               )}
                             </td>
                           </tr>
@@ -1020,9 +1038,21 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                               <td>{row.remoteVersion ?? ""}</td>
                               <td>{status}</td>
                               <td>
-                                <button type="button" disabled={!row.updateAvailable || row.remoteMissing} onClick={() => void withAccount(() => updatePublication(row.id, false))}>
-                                  Update {name}
-                                </button>
+                                <span className="playbooks-row-actions">
+                                  {row.updateAvailable && !row.remoteMissing && (
+                                    <button type="button" className="btn ghost small" onClick={() => void withAccount(() => previewPublication(row.id, name))}>
+                                      Preview {name}
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="btn ghost small"
+                                    disabled={!row.updateAvailable || row.remoteMissing}
+                                    onClick={() => void withAccount(() => updatePublication(row.id, false))}
+                                  >
+                                    Update {name}
+                                  </button>
+                                </span>
                               </td>
                             </tr>
                           );
@@ -1054,6 +1084,30 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
               </button>
             )}
           </section>
+        )}
+        {preview && (
+          <Dialog onClose={() => setPreview(null)} role="dialog" ariaLabel={`Preview ${preview.name}`}>
+            <div className="mh">
+              <span className="mt">Preview {preview.name}</span>
+              <button type="button" className="x" aria-label="Close" title="Close" onClick={() => setPreview(null)}>
+                <X size={14} strokeWidth={1.5} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="mb">
+              {preview.error ? (
+                <InlineStatus tone="error">{preview.error}</InlineStatus>
+              ) : preview.source ? (
+                <pre className="playbook-preview">{preview.source}</pre>
+              ) : (
+                <LoadingState label="Loading published playbook" state={ORB_STATE} />
+              )}
+            </div>
+            <div className="mfoot">
+              <button type="button" className="btn ghost small" data-autofocus onClick={() => setPreview(null)}>
+                Close
+              </button>
+            </div>
+          </Dialog>
         )}
         {signupOpen && (
           <Dialog onClose={closeSignup} role="dialog" ariaLabel="Sign up">

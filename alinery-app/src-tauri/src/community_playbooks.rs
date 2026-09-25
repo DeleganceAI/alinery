@@ -859,6 +859,54 @@ pub(crate) async fn update_community_import(app: AppHandle, id: String, repo_pat
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum PreviewResult {
+    Loaded { source: String },
+    NeedsAccount,
+    Failed { message: String },
+}
+
+/// Read-only preview of a published document. No repo and no ownership: the body is
+/// the only read that requires a bearer, and a signed-in caller may download any
+/// publication. Nothing is written, so this never touches the import registry.
+pub(crate) fn preview_community_playbook_with<R>(http: &mut dyn CommunityHttp, base: &str, auth_path: &Path, refresh: R, id: &str) -> PreviewResult
+where
+    R: FnOnce(&str) -> Result<String, AccountAuthError>,
+{
+    if !publication_id(id) {
+        return PreviewResult::Failed {
+            message: "Playbook not found.".into(),
+        };
+    }
+    if !access_token_present(auth_path) {
+        return PreviewResult::NeedsAccount;
+    }
+    match download_source(http, base, auth_path, refresh, id) {
+        Ok(detail) => PreviewResult::Loaded { source: detail.document },
+        Err(Err(AuthRetryError::NeedsAccount)) => PreviewResult::NeedsAccount,
+        Err(Err(AuthRetryError::Transport(message))) => PreviewResult::Failed {
+            message: safe_transport(&message),
+        },
+        Err(Ok(message)) => PreviewResult::Failed { message },
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn preview_community_playbook(app: AppHandle, id: String) -> PreviewResult {
+    let auth_path = match account_auth_path_for(&app) {
+        Ok(path) => path,
+        Err(message) => return PreviewResult::Failed { message },
+    };
+    let base = accounts_url();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut http = CurlCommunityHttp;
+        preview_community_playbook_with(&mut http, &base, &auth_path, refresh_for(auth_path.clone()), &id)
+    })
+    .await
+    .unwrap_or(PreviewResult::Failed { message: UNREACHABLE.into() })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum PublishResult {
     Saved {
         id: String,

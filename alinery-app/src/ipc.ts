@@ -61,6 +61,7 @@ import type {
   PlaybookValidation,
   PreparedSessionMessageAction,
   PreparedTaskAttachments,
+  PreviewResult,
   PublishResult,
   PullRequestSnapshot,
   PurgeArchivedResult,
@@ -386,6 +387,7 @@ export const listCommunityImports = (args: { repoPath: string }) => invoke<{ imp
 export const communityDownloadStatus = (args: { repoPath: string }) => invoke<{ rows: DownloadStatusRow[] }>("community_download_status", args);
 export const importCommunityPlaybook = (args: { id: string; repoPath: string; overwrite: boolean }) => invoke<ImportResult>("import_community_playbook", args);
 export const updateCommunityImport = (args: { id: string; repoPath: string; overwriteEdited: boolean }) => invoke<UpdateResult>("update_community_import", args);
+export const previewCommunityPlaybook = (args: { id: string }) => invoke<PreviewResult>("preview_community_playbook", args);
 export const publishCommunityPlaybook = (args: { reference: PlaybookRef; repoPath: string; label?: string }) => invoke<PublishResult>("publish_community_playbook", args);
 export const checkUpdate = () => invoke<UpdateStatus>("check_update");
 export const downloadUpdate = (version: string) => invoke<StagedUpdate>("download_update", { version });

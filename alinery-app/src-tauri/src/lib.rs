@@ -190,6 +190,7 @@ pub fn run() {
             community_download_status,
             import_community_playbook,
             update_community_import,
+            preview_community_playbook,
             publish_community_playbook,
             read_playbook,
             validate_playbook_source,

@@ -639,6 +639,7 @@ export type UpdateResult =
   | { kind: "edited" }
   | { kind: "invalid"; diagnostics: PlaybookValidationError[] }
   | { kind: "failed"; message: string };
+export type PreviewResult = { kind: "loaded"; source: string } | { kind: "needs_account" } | { kind: "failed"; message: string };
 export type PublishResult =
   | { kind: "saved"; id: string; label: string; playbookKey: string; title: string; description: string; version: number }
   | { kind: "needs_account" }

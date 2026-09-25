@@ -24,6 +24,7 @@ const community = vi.hoisted(() => ({
   communityDownloadStatus: vi.fn(),
   importCommunityPlaybook: vi.fn(),
   updateCommunityImport: vi.fn(),
+  previewCommunityPlaybook: vi.fn(),
   publishCommunityPlaybook: vi.fn(),
 }));
 vi.mock("../ipc", async () => {
@@ -1107,6 +1108,91 @@ describe("community playbooks", () => {
     fireEvent.change(label, { target: { value: "spec-driven-development" } });
     expect(confirm).toHaveProperty("disabled", false);
     expect(within(dialog).queryByText(/lowercase slug/)).toBeNull();
+  });
+
+  it("previews a published playbook beside import", async () => {
+    community.accountStatus.mockResolvedValue({ signedIn: true, email: "a@example.com", plan: null, paid: false, unavailable: false });
+    community.listCommunityPlaybooks.mockResolvedValue({ playbooks: [publication(NYX_ID, "nyx")], nextCursor: null });
+    community.previewCommunityPlaybook.mockResolvedValue({ kind: "loaded", source: '+++\nversion = 2\nkey = "review"\n+++' });
+    renderLibrary();
+    await screen.findByRole("button", { name: "Review Repository" });
+    const table = await openCommunity();
+    fireEvent.click(within(table).getByRole("button", { name: "Preview nyx/review" }));
+    const dialog = await screen.findByRole("dialog", { name: "Preview nyx/review" });
+    expect(community.previewCommunityPlaybook).toHaveBeenCalledWith({ id: NYX_ID });
+    expect(within(dialog).getByText(/key = "review"/)).toBeTruthy();
+    expect(within(table).getByRole("button", { name: "Import nyx/review" })).toBeTruthy();
+    expect(community.importCommunityPlaybook).not.toHaveBeenCalled();
+  });
+
+  it("gates preview behind sign up when signed out", async () => {
+    community.listCommunityPlaybooks.mockResolvedValue({ playbooks: [publication(NYX_ID, "nyx")], nextCursor: null });
+    renderLibrary();
+    await screen.findByRole("button", { name: "Review Repository" });
+    const table = await openCommunity();
+    fireEvent.click(within(table).getByRole("button", { name: "Preview nyx/review" }));
+    await screen.findByRole("dialog", { name: "Sign up" });
+    expect(community.previewCommunityPlaybook).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "Preview nyx/review" })).toBeNull();
+  });
+
+  it("shows a preview failure inside the dialog", async () => {
+    community.accountStatus.mockResolvedValue({ signedIn: true, email: "a@example.com", plan: null, paid: false, unavailable: false });
+    community.listCommunityPlaybooks.mockResolvedValue({ playbooks: [publication(NYX_ID, "nyx")], nextCursor: null });
+    community.previewCommunityPlaybook.mockResolvedValue({ kind: "failed", message: "Playbook not found." });
+    renderLibrary();
+    await screen.findByRole("button", { name: "Review Repository" });
+    const table = await openCommunity();
+    fireEvent.click(within(table).getByRole("button", { name: "Preview nyx/review" }));
+    const dialog = await screen.findByRole("dialog", { name: "Preview nyx/review" });
+    expect(await within(dialog).findByText("Playbook not found.")).toBeTruthy();
+    expect(within(dialog).queryByText(/version = 2/)).toBeNull();
+  });
+
+  it("offers preview beside update only when an update is available", async () => {
+    community.accountStatus.mockResolvedValue({ signedIn: true, email: "a@example.com", plan: null, paid: false, unavailable: false });
+    community.communityDownloadStatus.mockResolvedValue({
+      rows: [
+        {
+          id: NYX_ID,
+          label: "nyx",
+          playbookKey: "review",
+          localKey: "review",
+          title: "Review",
+          description: "Review a change.",
+          importedVersion: 3,
+          remoteVersion: 4,
+          updateAvailable: true,
+          remoteMissing: false,
+          localMissing: false,
+          locallyEdited: false,
+          error: null,
+        },
+        {
+          id: ADA_ID,
+          label: "ada",
+          playbookKey: "review",
+          localKey: "review-copy",
+          title: "Review",
+          description: "Review a change.",
+          importedVersion: 4,
+          remoteVersion: 4,
+          updateAvailable: false,
+          remoteMissing: false,
+          localMissing: false,
+          locallyEdited: false,
+          error: null,
+        },
+      ],
+    });
+    renderLibrary();
+    await screen.findByRole("button", { name: "Review Repository" });
+    await openCommunity();
+    fireEvent.click(screen.getByRole("button", { name: "Downloaded" }));
+    expect(await screen.findByRole("button", { name: "Preview nyx/review" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Update nyx/review" })).toHaveProperty("disabled", false);
+    expect(screen.queryByRole("button", { name: "Preview ada/review" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Update ada/review" })).toHaveProperty("disabled", true);
   });
 
   it("calls update once when the local hash still matches", async () => {

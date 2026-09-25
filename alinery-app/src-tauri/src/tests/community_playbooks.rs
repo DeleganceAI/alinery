@@ -4,9 +4,9 @@
 //! or to the production Supabase host.
 use super::*;
 use crate::{
-    community_download_status_with, delete_playbook_keeping_imports, import_community_playbook_with, list_community_playbooks_with, publish_community_playbook_with,
-    read_community_imports, registry_path, update_community_import_with, write_community_imports, CommunityHttp, CommunityHttpRequest, CommunityHttpResponse,
-    CommunityImportRecord, ImportResult, PublishResult, UpdateResult,
+    community_download_status_with, delete_playbook_keeping_imports, import_community_playbook_with, list_community_playbooks_with, preview_community_playbook_with,
+    publish_community_playbook_with, read_community_imports, registry_path, update_community_import_with, write_community_imports, CommunityHttp, CommunityHttpRequest,
+    CommunityHttpResponse, CommunityImportRecord, ImportResult, PreviewResult, PublishResult, UpdateResult,
 };
 use alinery_core::playbook::{PlaybookRef, PlaybookScope};
 use alinery_core::playbook_library::PlaybookRoots;
@@ -639,6 +639,90 @@ fn update_invalid_body_keeps_version() {
     assert!(matches!(result, UpdateResult::Invalid { .. }), "{result:?}");
     assert_eq!(fs::read(playbook_file(&repo, "test")).unwrap(), before);
     assert_eq!(read_community_imports(&repo).unwrap()[0].imported_version, 3);
+}
+
+#[test]
+fn preview_needs_account() {
+    let _serial = crate::CREDENTIAL_HOOK_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let auth = auth_dir("community-preview-signed-out").join("missing-auth.json");
+    let mut http = recorder(Vec::new());
+    let result = preview_community_playbook_with(&mut http, "http://library.test", &auth, keep_refresh, IMPORT_ID);
+    assert_eq!(result, PreviewResult::NeedsAccount);
+    assert!(http.requests.is_empty());
+}
+
+#[test]
+fn preview_malformed_id_does_not_call() {
+    let _serial = crate::CREDENTIAL_HOOK_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let path = auth_dir("community-preview-id").join("auth.json");
+    write_pairing(&path, "access", "refresh-keep");
+    let mut http = recorder(Vec::new());
+    let result = preview_community_playbook_with(&mut http, "http://library.test", &path, keep_refresh, "NOT-A-UUID");
+    assert_eq!(
+        result,
+        PreviewResult::Failed {
+            message: "Playbook not found.".into()
+        }
+    );
+    assert!(http.requests.is_empty());
+}
+
+#[test]
+fn preview_returns_the_document_and_writes_nothing() {
+    let _serial = crate::CREDENTIAL_HOOK_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let (repo, _roots) = repo_roots("community-preview-ok");
+    let auth = repo.join("auth.json");
+    write_pairing(&auth, "access", "refresh-keep");
+    let document = desktop_fixture();
+    let mut http = recorder(vec![json_response(200, &source_body(IMPORT_ID, 3, &document, "test"))]);
+    let result = preview_community_playbook_with(&mut http, "http://library.test", &auth, keep_refresh, IMPORT_ID);
+    assert_eq!(result, PreviewResult::Loaded { source: document });
+    assert_eq!(http.requests.len(), 1);
+    assert_eq!(http.requests[0].method, "GET");
+    assert!(http.requests[0].url.ends_with(&format!("/api/desktop/playbooks/{IMPORT_ID}/source")));
+    assert!(!playbook_file(&repo, "test").exists());
+    assert!(!registry_path(&repo).exists());
+}
+
+#[test]
+fn preview_404_and_503_are_messages() {
+    let _serial = crate::CREDENTIAL_HOOK_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let path = auth_dir("community-preview-status").join("auth.json");
+    write_pairing(&path, "access", "refresh-keep");
+    let mut http = recorder(vec![json_response(404, r#"{"ok":false,"error":"Playbook not found.","code":"not_found"}"#)]);
+    assert_eq!(
+        preview_community_playbook_with(&mut http, "http://library.test", &path, keep_refresh, IMPORT_ID),
+        PreviewResult::Failed {
+            message: "Playbook not found.".into()
+        }
+    );
+    let mut http = recorder(vec![json_response(
+        503,
+        r#"{"ok":false,"error":"SUPABASE_SERVICE_ROLE_KEY is not configured on the server.","code":"unavailable"}"#,
+    )]);
+    let result = preview_community_playbook_with(&mut http, "http://library.test", &path, keep_refresh, IMPORT_ID);
+    let PreviewResult::Failed { message } = result else {
+        panic!("{result:?}");
+    };
+    assert!(!message.contains("SUPABASE_SERVICE_ROLE_KEY"));
+    assert_eq!(message, "Playbook library is unavailable.");
+}
+
+#[test]
+fn preview_401_refreshes_once() {
+    let _serial = crate::CREDENTIAL_HOOK_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let path = auth_dir("community-preview-401").join("auth.json");
+    write_pairing(&path, "old-access", "refresh-keep");
+    let document = desktop_fixture();
+    let mut http = recorder(vec![
+        json_response(401, r#"{"ok":false,"error":"Sign in to continue.","code":"unauthenticated"}"#),
+        json_response(200, &source_body(IMPORT_ID, 1, &document, "test")),
+    ]);
+    let result = preview_community_playbook_with(&mut http, "http://library.test", &path, keep_refresh, IMPORT_ID);
+    assert_eq!(result, PreviewResult::Loaded { source: document });
+    assert_eq!(http.requests.len(), 2);
+    assert!(http.requests[0].headers.iter().any(|header| header.contains("old-access")));
+    assert!(http.requests[1].headers.iter().any(|header| header.contains("new-access")));
 }
 
 #[test]
