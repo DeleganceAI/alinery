@@ -19,6 +19,7 @@ const community = vi.hoisted(() => ({
   accountStatus: vi.fn(),
   accountSignIn: vi.fn(),
   accountRefresh: vi.fn(),
+  accountCancelSignIn: vi.fn(),
   listCommunityImports: vi.fn(),
   listCommunityPlaybooks: vi.fn(),
   communityDownloadStatus: vi.fn(),
@@ -137,6 +138,7 @@ beforeEach(() => {
   community.accountStatus.mockResolvedValue({ signedIn: false, email: null, plan: null, paid: false, unavailable: false });
   community.accountSignIn.mockReset();
   community.accountRefresh.mockReset();
+  community.accountCancelSignIn.mockResolvedValue(undefined);
   community.listCommunityImports.mockResolvedValue({ imports: [] });
   community.listCommunityPlaybooks.mockReset();
   community.communityDownloadStatus.mockReset();
@@ -161,6 +163,21 @@ async function overwrite() {
   fireEvent.click(screen.getByRole("button", { name: "Save definition" }));
   fireEvent.click(await screen.findByRole("button", { name: "Overwrite" }));
 }
+/** A promise the test resolves by hand. The class form holds the resolver because the app
+ *  targets ES2020 — `Promise.withResolvers` is not available here. */
+class Deferred<T> {
+  readonly promise: Promise<T>;
+  #resolve!: (value: T) => void;
+  constructor() {
+    this.promise = new Promise<T>((resolve) => {
+      this.#resolve = resolve;
+    });
+  }
+  resolve(value: T): void {
+    this.#resolve(value);
+  }
+}
+
 function libraryOrder() {
   return within(screen.getByRole("table", { name: "Playbook library" }))
     .getAllByRole("row")
@@ -1193,6 +1210,104 @@ describe("community playbooks", () => {
     expect(screen.getByRole("button", { name: "Update nyx/review" })).toHaveProperty("disabled", false);
     expect(screen.queryByRole("button", { name: "Preview ada/review" })).toBeNull();
     expect(screen.getByRole("button", { name: "Update ada/review" })).toHaveProperty("disabled", true);
+  });
+
+  it("does not let a post-action reload from the previous repository land", async () => {
+    community.accountStatus.mockResolvedValue({ signedIn: true, email: "a@example.com", plan: null, paid: false, unavailable: false });
+    community.listCommunityPlaybooks.mockResolvedValue({ playbooks: [publication(NYX_ID, "nyx")], nextCursor: null });
+    const imported = new Deferred<unknown>();
+    community.importCommunityPlaybook.mockImplementationOnce(() => imported.promise);
+    const lateReload = new Deferred<unknown>();
+    let repoLoads = 0;
+    community.listCommunityImports.mockImplementation((args: { repoPath: string }) => {
+      if (args.repoPath !== "/repo") return Promise.resolve({ imports: [] });
+      repoLoads += 1;
+      // The first load is this repo's mount read; the next is the one the import triggers.
+      if (repoLoads === 1) return Promise.resolve({ imports: [] });
+      return lateReload.promise;
+    });
+    const { rerender } = render(
+      <>
+        <Playbooks repoPath="/repo" onCreateTask={onCreateTask} />
+        <ConfirmHost />
+      </>,
+    );
+    await screen.findByRole("button", { name: "Review Repository" });
+    const table = await openCommunity();
+    fireEvent.click(within(table).getByRole("button", { name: "Import nyx/review" }));
+    rerender(
+      <>
+        <Playbooks repoPath="/other" onCreateTask={onCreateTask} />
+        <ConfirmHost />
+      </>,
+    );
+    await act(async () => imported.resolve({ kind: "saved", reference: { scope: "repo", key: "review" }, importedVersion: 1, localSha256: "a".repeat(64) }));
+    // The other repository has no import of this publication, and its own load has finished.
+    await act(async () => lateReload.resolve({ imports: [{ id: NYX_ID, label: "nyx", playbookKey: "review", localKey: "review", importedVersion: 1 }] }));
+    expect(within(table).getByRole("button", { name: "Import nyx/review" })).toBeTruthy();
+    expect(within(table).queryByText("Downloaded")).toBeNull();
+  });
+
+  it("does not offer load more with a cursor that belongs to another query", async () => {
+    community.listCommunityPlaybooks.mockResolvedValueOnce({ playbooks: [publication(NYX_ID, "nyx")], nextCursor: "page-1-cursor" });
+    renderLibrary();
+    await screen.findByRole("button", { name: "Review Repository" });
+    await openCommunity();
+    expect(await screen.findByRole("button", { name: "Load more" })).toBeTruthy();
+    vi.useFakeTimers();
+    try {
+      community.listCommunityPlaybooks.mockResolvedValueOnce({ playbooks: [publication(ADA_ID, "ada")], nextCursor: "page-2-cursor" });
+      fireEvent.change(screen.getByLabelText("Search community playbooks"), { target: { value: "ada" } });
+      // The debounce has not fired: the cursor on screen was minted by the empty query.
+      expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+      await vi.advanceTimersByTimeAsync(300);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(community.listCommunityPlaybooks).toHaveBeenLastCalledWith({ q: "ada" });
+    expect(await screen.findByRole("button", { name: "Load more" })).toBeTruthy();
+  });
+
+  it("cancels the pairing this dialog started when it is dismissed", async () => {
+    const signIn = new Deferred<unknown>();
+    community.accountSignIn.mockImplementationOnce(() => signIn.promise);
+    community.accountRefresh.mockResolvedValue({ signedIn: true, email: "a@example.com", plan: null, paid: false, unavailable: false });
+    community.listCommunityPlaybooks.mockResolvedValue({ playbooks: [publication(NYX_ID, "nyx")], nextCursor: null });
+    renderLibrary();
+    await screen.findByRole("button", { name: "Review Repository" });
+    const table = await openCommunity();
+    fireEvent.click(within(table).getByRole("button", { name: "Import nyx/review" }));
+    const dialog = await screen.findByRole("dialog", { name: "Sign up" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "SIGN UP" }));
+    await waitFor(() => expect(community.accountSignIn).toHaveBeenCalledTimes(1));
+    expect(within(dialog).getByRole("button", { name: "SIGN UP" })).toHaveProperty("disabled", true);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(community.accountCancelSignIn).toHaveBeenCalledTimes(1));
+    // The cancelled pairing completing late must not continue the import it was opened for.
+    await act(async () => signIn.resolve({ signedIn: true, email: "a@example.com", plan: null, paid: false, unavailable: false }));
+    expect(community.importCommunityPlaybook).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "Sign up" })).toBeNull();
+  });
+
+  it("keeps the publish dialog and its label field across reauthentication", async () => {
+    community.accountStatus.mockResolvedValue({ signedIn: true, email: "a@example.com", plan: null, paid: false, unavailable: false });
+    community.listCommunityPlaybooks.mockResolvedValue({ playbooks: [], nextCursor: null });
+    community.publishCommunityPlaybook.mockResolvedValueOnce({ kind: "needs_account" }).mockResolvedValueOnce({ kind: "label_required" });
+    community.accountSignIn.mockResolvedValue({ signedIn: true, email: "a@example.com", plan: null, paid: false, unavailable: false });
+    community.accountRefresh.mockResolvedValue({ signedIn: true, email: "a@example.com", plan: null, paid: false, unavailable: false });
+    renderLibrary();
+    await screen.findByRole("button", { name: "Review Repository" });
+    await openCommunity();
+    fireEvent.click(screen.getByRole("button", { name: "Publish playbook" }));
+    const publish = await screen.findByRole("dialog", { name: "Publish playbook" });
+    fireEvent.click(within(publish).getByRole("radio", { name: "Review Repository" }));
+    fireEvent.click(within(publish).getByRole("checkbox", { name: "Confirm you can share this playbook." }));
+    fireEvent.click(within(publish).getByRole("button", { name: "Confirm" }));
+    const signup = await screen.findByRole("dialog", { name: "Sign up" });
+    fireEvent.click(within(signup).getByRole("button", { name: "SIGN UP" }));
+    // The resumed publish needs the public label, and that field is in the dialog that stayed.
+    expect(await within(publish).findByLabelText("Public label")).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Publish playbook" })).toBeTruthy();
   });
 
   it("calls update once when the local hash still matches", async () => {

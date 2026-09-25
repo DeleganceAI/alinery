@@ -238,18 +238,24 @@ pub(crate) fn write_community_imports(repo_dir: &Path, records: &[CommunityImpor
     write_bytes_atomic(&path, text.as_bytes())
 }
 
+/// The registry sits beside the playbooks, so its read-modify-write runs under the repo
+/// library lock: two imports that interleave here would otherwise each read the same list
+/// and the last rename would drop the other's record.
 pub(crate) fn forget_repo_import(roots: &PlaybookRoots, key: &str) -> Result<(), String> {
-    let path = registry_path(&roots.repo_dir);
-    if !path.exists() {
-        return Ok(());
-    }
-    let mut records = read_community_imports(&roots.repo_dir)?;
-    let before = records.len();
-    records.retain(|record| record.local_key != key);
-    if records.len() == before {
-        return Ok(());
-    }
-    write_community_imports(&roots.repo_dir, &records)
+    library::with_repo_library_lock(roots, || {
+        let path = registry_path(&roots.repo_dir);
+        if !path.exists() {
+            return Ok(());
+        }
+        let mut records = read_community_imports(&roots.repo_dir).map_err(io_save_error)?;
+        let before = records.len();
+        records.retain(|record| record.local_key != key);
+        if records.len() == before {
+            return Ok(());
+        }
+        write_community_imports(&roots.repo_dir, &records).map_err(io_save_error)
+    })
+    .map_err(|error| error.to_string())
 }
 
 fn publication_id(id: &str) -> bool {
@@ -526,7 +532,7 @@ fn safe_transport(error: &str) -> String {
 
 fn authed_exchange<R>(http: &mut dyn CommunityHttp, auth_path: &Path, refresh: R, method: &str, url: String, body: Option<String>) -> Result<CommunityHttpResponse, AuthRetryError>
 where
-    R: FnOnce(&str) -> Result<String, AccountAuthError>,
+    R: FnOnce(&AccountTokens) -> Result<AccountTokens, AccountAuthError>,
 {
     let method = method.to_string();
     with_access_token_retry(
@@ -572,7 +578,7 @@ fn parse_source(body: &[u8]) -> Result<SourceDetail, String> {
 
 fn download_source<R>(http: &mut dyn CommunityHttp, base: &str, auth_path: &Path, refresh: R, id: &str) -> Result<SourceDetail, Result<String, AuthRetryError>>
 where
-    R: FnOnce(&str) -> Result<String, AccountAuthError>,
+    R: FnOnce(&AccountTokens) -> Result<AccountTokens, AccountAuthError>,
 {
     let url = format!("{}/api/desktop/playbooks/{id}/source", base.trim_end_matches('/'));
     let response = authed_exchange(http, auth_path, refresh, "GET", url, None).map_err(Err)?;
@@ -588,11 +594,30 @@ where
     parse_source(&response.body).map_err(Ok)
 }
 
-fn record_import(repo_dir: &Path, record: CommunityImportRecord) -> Result<(), String> {
-    let mut records = read_community_imports(repo_dir)?;
-    records.retain(|existing| existing.id != record.id && existing.local_key != record.local_key);
-    records.push(record);
-    write_community_imports(repo_dir, &records)
+fn io_save_error(message: String) -> PlaybookSaveError {
+    PlaybookSaveError::Io { message }
+}
+
+/// The registry write runs under the same lock as the playbook save, so concurrent imports
+/// cannot each read the same list and have the last rename drop the other's record.
+fn record_import(roots: &PlaybookRoots, record: CommunityImportRecord) -> Result<(), String> {
+    library::with_repo_library_lock(roots, || {
+        let mut records = read_community_imports(&roots.repo_dir).map_err(io_save_error)?;
+        records.retain(|existing| existing.id != record.id && existing.local_key != record.local_key);
+        records.push(record);
+        write_community_imports(&roots.repo_dir, &records).map_err(io_save_error)
+    })
+    .map_err(|error| error.to_string())
+}
+
+/// What the caller saw before its network work, re-checked under the lock that owns the
+/// write. A playbook that appeared, vanished, or changed while the source was in flight is
+/// not replaced without a fresh decision.
+fn expectation(previous: &Option<Vec<u8>>) -> library::LocalPlaybookState {
+    match previous {
+        Some(bytes) => library::LocalPlaybookState::Bytes(bytes.clone()),
+        None => library::LocalPlaybookState::Absent,
+    }
 }
 
 fn restore_or_delete(roots: &PlaybookRoots, key: &str, previous: Option<Vec<u8>>) {
@@ -610,8 +635,8 @@ fn restore_or_delete(roots: &PlaybookRoots, key: &str, previous: Option<Vec<u8>>
     );
 }
 
-fn save_imported(roots: &PlaybookRoots, key: &str, document: &str, overwrite: bool) -> Result<library::ScopedPlaybook, ImportResult> {
-    match library::save_playbook(
+fn save_imported(roots: &PlaybookRoots, key: &str, document: &str, expected: &library::LocalPlaybookState) -> Result<library::ScopedPlaybook, ImportResult> {
+    match library::save_playbook_if_unchanged(
         roots,
         SavePlaybookRequest {
             target: PlaybookRef {
@@ -619,8 +644,9 @@ fn save_imported(roots: &PlaybookRoots, key: &str, document: &str, overwrite: bo
                 key: key.into(),
             },
             source: document.into(),
-            overwrite,
+            overwrite: true,
         },
+        expected,
     ) {
         Ok(saved) => Ok(saved),
         Err(PlaybookSaveError::Invalid { diagnostics }) => Err(ImportResult::Invalid { diagnostics }),
@@ -648,7 +674,7 @@ fn finish_import(roots: &PlaybookRoots, detail: &SourceDetail, key: &str, id: &s
         local_sha256: local_sha256.clone(),
         imported_at: utc_now(),
     };
-    if let Err(message) = record_import(&roots.repo_dir, record) {
+    if let Err(message) = record_import(roots, record) {
         restore_or_delete(roots, key, previous);
         return ImportResult::Failed {
             message: if message.contains(SERVICE_ROLE_KEY) { UNAVAILABLE.into() } else { message },
@@ -674,7 +700,7 @@ pub(crate) fn import_community_playbook_with<R>(
     overwrite: bool,
 ) -> ImportResult
 where
-    R: FnOnce(&str) -> Result<String, AccountAuthError>,
+    R: FnOnce(&AccountTokens) -> Result<AccountTokens, AccountAuthError>,
 {
     if !publication_id(id) {
         return ImportResult::Failed {
@@ -714,7 +740,7 @@ where
     if previous.is_some() && !overwrite {
         return ImportResult::Conflict { local_key: key };
     }
-    let saved = match save_imported(roots, &key, &detail.document, previous.is_some()) {
+    let saved = match save_imported(roots, &key, &detail.document, &expectation(&previous)) {
         Ok(saved) => saved,
         Err(result) => return result,
     };
@@ -731,7 +757,7 @@ pub(crate) fn update_community_import_with<R>(
     overwrite_edited: bool,
 ) -> UpdateResult
 where
-    R: FnOnce(&str) -> Result<String, AccountAuthError>,
+    R: FnOnce(&AccountTokens) -> Result<AccountTokens, AccountAuthError>,
 {
     if !publication_id(id) {
         return UpdateResult::Failed {
@@ -784,10 +810,13 @@ where
     if let Err(diagnostics) = parse_playbook_md(&detail.document) {
         return UpdateResult::Invalid { diagnostics };
     }
-    let saved = match save_imported(roots, &record.local_key, &detail.document, true) {
+    let saved = match save_imported(roots, &record.local_key, &detail.document, &expectation(&previous)) {
         Ok(saved) => saved,
         Err(ImportResult::Invalid { diagnostics }) => return UpdateResult::Invalid { diagnostics },
         Err(ImportResult::Failed { message }) => return UpdateResult::Failed { message },
+        // The local copy changed while the source was in flight. The user has not approved
+        // replacing that edit, so this is the same question the pre-fetch check asks.
+        Err(ImportResult::Conflict { .. }) => return UpdateResult::Edited,
         Err(_) => return UpdateResult::Failed { message: UNREACHABLE.into() },
     };
     match finish_import(roots, &detail, &record.local_key, id, &saved.source_text, previous) {
@@ -808,15 +837,19 @@ where
 }
 
 pub(crate) fn delete_playbook_keeping_imports(roots: &PlaybookRoots, reference: &PlaybookRef) -> Result<(), PlaybookSaveError> {
-    library::delete_playbook(roots, reference)?;
-    if reference.scope == PlaybookScope::Repo {
-        forget_repo_import(roots, &reference.key).map_err(|message| PlaybookSaveError::Io { message })?;
+    if reference.scope != PlaybookScope::Repo {
+        return library::delete_playbook(roots, reference);
     }
-    Ok(())
+    // Registry first, definition second. A registry that cannot be read must not cost the
+    // user the file, and a retry after a failed removal finds the record already gone
+    // instead of failing on an already-deleted playbook it can no longer repair.
+    read_community_imports(&roots.repo_dir).map_err(|message| PlaybookSaveError::Io { message })?;
+    forget_repo_import(roots, &reference.key).map_err(|message| PlaybookSaveError::Io { message })?;
+    library::delete_playbook(roots, reference)
 }
 
-fn refresh_for(auth_path: PathBuf) -> impl FnOnce(&str) -> Result<String, AccountAuthError> {
-    move |token| refresh_paired_access(&auth_path, token)
+fn refresh_for(auth_path: PathBuf) -> impl FnOnce(&AccountTokens) -> Result<AccountTokens, AccountAuthError> {
+    move |tokens| refresh_paired_access(&auth_path, tokens)
 }
 
 #[tauri::command]
@@ -870,7 +903,7 @@ pub(crate) enum PreviewResult {
 /// publication. Nothing is written, so this never touches the import registry.
 pub(crate) fn preview_community_playbook_with<R>(http: &mut dyn CommunityHttp, base: &str, auth_path: &Path, refresh: R, id: &str) -> PreviewResult
 where
-    R: FnOnce(&str) -> Result<String, AccountAuthError>,
+    R: FnOnce(&AccountTokens) -> Result<AccountTokens, AccountAuthError>,
 {
     if !publication_id(id) {
         return PreviewResult::Failed {
@@ -1204,7 +1237,7 @@ pub(crate) fn publish_community_playbook_with<R>(
     label: Option<&str>,
 ) -> PublishResult
 where
-    R: FnOnce(&str) -> Result<String, AccountAuthError>,
+    R: FnOnce(&AccountTokens) -> Result<AccountTokens, AccountAuthError>,
 {
     let loaded = match library::resolve_playbook(roots, reference) {
         Ok(playbook) => playbook,

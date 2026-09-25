@@ -446,6 +446,25 @@ fn with_library_lock<T>(roots: &PlaybookRoots, scope: PlaybookScope, mutate: imp
 }
 
 pub fn save_playbook(roots: &PlaybookRoots, request: SavePlaybookRequest) -> Result<ScopedPlaybook, PlaybookSaveError> {
+    save_playbook_locked(roots, request, None)
+}
+
+/// What a caller saw on disk before it did network work. `save_playbook` re-checks existence
+/// under the lock but not the bytes, so a caller that fetched remote source between looking
+/// and writing would replace an edit it never saw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LocalPlaybookState {
+    Absent,
+    Bytes(Vec<u8>),
+}
+
+/// Save only while the file still holds `expected`. A mismatch is `Conflict`, the same
+/// "ask before replacing" answer the existence check gives.
+pub fn save_playbook_if_unchanged(roots: &PlaybookRoots, request: SavePlaybookRequest, expected: &LocalPlaybookState) -> Result<ScopedPlaybook, PlaybookSaveError> {
+    save_playbook_locked(roots, request, Some(expected))
+}
+
+fn save_playbook_locked(roots: &PlaybookRoots, request: SavePlaybookRequest, expected: Option<&LocalPlaybookState>) -> Result<ScopedPlaybook, PlaybookSaveError> {
     if request.target.scope == PlaybookScope::Bundled {
         return Err(PlaybookSaveError::ReadOnly { reference: request.target });
     }
@@ -457,6 +476,16 @@ pub fn save_playbook(roots: &PlaybookRoots, request: SavePlaybookRequest) -> Res
         checked_directory(&directory, true).map_err(io_save)?;
         let path = directory.join("playbook.md");
         let exists = check_leaf(&path).map_err(io_save)?;
+        if let Some(expected) = expected {
+            let current = if exists {
+                LocalPlaybookState::Bytes(fs::read(&path).map_err(io_save)?)
+            } else {
+                LocalPlaybookState::Absent
+            };
+            if current != *expected {
+                return Err(PlaybookSaveError::Conflict { source: source.clone() });
+            }
+        }
         if exists && !request.overwrite {
             return Err(PlaybookSaveError::Conflict { source: source.clone() });
         }
@@ -468,6 +497,12 @@ pub fn save_playbook(roots: &PlaybookRoots, request: SavePlaybookRequest) -> Res
             modified_at_ms: modification_time(&path),
         })
     })
+}
+
+/// Run `mutate` under the repo library's mutation lock. The import registry sits beside the
+/// playbooks, so its read-modify-write has to serialize with them and with itself.
+pub fn with_repo_library_lock<T>(roots: &PlaybookRoots, mutate: impl FnOnce() -> Result<T, PlaybookSaveError>) -> Result<T, PlaybookSaveError> {
+    with_library_lock(roots, PlaybookScope::Repo, |_| mutate())
 }
 
 pub fn delete_playbook(roots: &PlaybookRoots, reference: &PlaybookRef) -> Result<(), PlaybookSaveError> {
@@ -669,6 +704,39 @@ mod tests {
                 overwrite,
             },
         )
+    }
+
+    #[test]
+    fn save_if_unchanged_refuses_a_local_edit_and_a_new_file() {
+        let sandbox = Sandbox::new();
+        let target = reference(PlaybookScope::Repo);
+        let request = |title: &str| SavePlaybookRequest {
+            target: target.clone(),
+            source: source(title),
+            overwrite: true,
+        };
+
+        // Absent, and still absent: the write lands.
+        let saved = save_playbook_if_unchanged(&sandbox.roots, request("Remote"), &LocalPlaybookState::Absent).unwrap();
+        assert_eq!(saved.definition.title, "Remote");
+
+        // Bytes that are no longer on disk: refused, and the local bytes survive.
+        let local = source("Local edit");
+        let path = sandbox.roots.repo_dir.join(".alinery/playbooks/superdevelop/playbook.md");
+        write_bytes_atomic(&path, local.as_bytes()).unwrap();
+        let stale = LocalPlaybookState::Bytes(saved.source_text.into_bytes());
+        let refused = save_playbook_if_unchanged(&sandbox.roots, request("Remote again"), &stale);
+        assert!(matches!(refused, Err(PlaybookSaveError::Conflict { .. })), "{refused:?}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), local);
+
+        // The state the caller did see: the write lands.
+        let current = LocalPlaybookState::Bytes(local.into_bytes());
+        save_playbook_if_unchanged(&sandbox.roots, request("Remote again"), &current).unwrap();
+        assert!(fs::read_to_string(&path).unwrap().contains("Remote again"));
+
+        // A file that appeared after the caller saw nothing is refused too.
+        let appeared = save_playbook_if_unchanged(&sandbox.roots, request("Third"), &LocalPlaybookState::Absent);
+        assert!(matches!(appeared, Err(PlaybookSaveError::Conflict { .. })), "{appeared:?}");
     }
 
     #[test]

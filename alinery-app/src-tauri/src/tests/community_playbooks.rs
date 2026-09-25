@@ -8,8 +8,9 @@ use crate::{
     publish_community_playbook_with, read_community_imports, registry_path, update_community_import_with, write_community_imports, CommunityHttp, CommunityHttpRequest,
     CommunityHttpResponse, CommunityImportRecord, ImportResult, PreviewResult, PublishResult, UpdateResult,
 };
+use crate::{rotated_tokens_for_test, save_tokens_for_test, AccountTokens};
 use alinery_core::playbook::{PlaybookRef, PlaybookScope};
-use alinery_core::playbook_library::PlaybookRoots;
+use alinery_core::playbook_library::{PlaybookRoots, PlaybookSaveError};
 
 fn write_pairing(path: &Path, access: &str, refresh: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -32,6 +33,40 @@ fn auth_dir(name: &str) -> std::path::PathBuf {
     unique_attachment_temp(name)
 }
 
+/// The same session with a different refresh token — what another operation's rotation
+/// looks like on disk. `write_pairing` derives the session from the refresh token, so it
+/// cannot express "same session, new generation".
+fn write_rotated_pairing(path: &Path, session_id: &str, access: &str, refresh: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        serde_json::json!({
+            "access_token": access,
+            "refresh_token": refresh,
+            "expires_at": 4_000_000_000u64,
+            "user": { "id": "u1", "email": "a@example.com", "providers": [] },
+            "plan": "Founders Edition",
+            "session_id": session_id
+        })
+        .to_string(),
+    )
+    .unwrap();
+}
+
+fn session_of(path: &Path) -> String {
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    value["session_id"].as_str().unwrap_or_default().to_string()
+}
+
+/// What a refresh seam produces from `base`, persisted the way `refresh_paired_access`
+/// persists it. The retry clears exactly the generation it tested, so a fake seam that
+/// only returned a token would not model the real one.
+fn rotated(path: &Path, tokens: &AccountTokens) -> AccountTokens {
+    let next = rotated_tokens_for_test(tokens, "new-access", "rotated-refresh");
+    save_tokens_for_test(path, &next);
+    next
+}
+
 #[test]
 fn missing_auth_does_not_call() {
     let _serial = crate::CREDENTIAL_HOOK_TEST.lock().unwrap_or_else(|e| e.into_inner());
@@ -44,9 +79,9 @@ fn missing_auth_does_not_call() {
             calls += 1;
             AuthAttempt::Response(())
         },
-        |_| {
+        |tokens| {
             refreshes += 1;
-            Ok("new-access".into())
+            Ok(rotated(&path, tokens))
         },
     );
     assert!(matches!(result, Err(AuthRetryError::NeedsAccount)), "{result:?}");
@@ -68,9 +103,9 @@ fn success_does_not_refresh() {
             // A completed non-401 status, including 404 and 503, is Response.
             AuthAttempt::Response("ok")
         },
-        |_| {
+        |tokens| {
             refreshes += 1;
-            Ok("new-access".into())
+            Ok(rotated(&path, tokens))
         },
     );
     assert_eq!(result.unwrap(), "ok");
@@ -95,7 +130,7 @@ fn unauthorized_refreshes_once() {
                 AuthAttempt::Response("ok")
             }
         },
-        |_| Ok("new-access".into()),
+        |tokens| Ok(rotated(&path, tokens)),
     );
     assert_eq!(result.unwrap(), "ok");
     assert_eq!(seen, vec!["old-access".to_string(), "new-access".to_string()]);
@@ -114,7 +149,7 @@ fn second_unauthorized_clears() {
             calls += 1;
             AuthAttempt::Unauthorized
         },
-        |_| Ok("new-access".into()),
+        |tokens| Ok(rotated(&path, tokens)),
     );
     assert!(matches!(result, Err(AuthRetryError::NeedsAccount)), "{result:?}");
     assert_eq!(calls, 2);
@@ -138,6 +173,85 @@ fn invalid_refresh_clears_without_retry() {
     assert!(matches!(result, Err(AuthRetryError::NeedsAccount)), "{result:?}");
     assert_eq!(calls, 1, "invalid refresh must not retry the call");
     assert!(!path.exists(), "invalid refresh must clear the pairing");
+}
+
+#[test]
+fn refresh_is_handed_the_originating_credential_not_a_replacement() {
+    let _serial = crate::CREDENTIAL_HOOK_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let path = auth_dir("community-auth-replaced-mid-flight").join("auth.json");
+    write_pairing(&path, "old-access", "refresh-keep");
+    let mut calls = 0;
+    let result: Result<(), AuthRetryError> = with_access_token_retry(
+        &path,
+        |_| {
+            calls += 1;
+            if calls == 1 {
+                // A different sign-in replaces the shared credential while the first
+                // request is still pending.
+                write_pairing(&path, "b-access", "b-refresh");
+            }
+            if calls == 1 {
+                AuthAttempt::Unauthorized
+            } else {
+                AuthAttempt::Response(())
+            }
+        },
+        |tokens| Ok(rotated(&path, tokens)),
+    );
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(calls, 2);
+    assert_eq!(
+        session_of(&path),
+        "session-refresh-keep",
+        "the refresh must be built from the credential the call started with, not the one that replaced it"
+    );
+}
+
+#[test]
+fn replaced_pairing_is_neither_used_nor_cleared() {
+    let _serial = crate::CREDENTIAL_HOOK_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let path = auth_dir("community-auth-replaced-refused").join("auth.json");
+    write_pairing(&path, "old-access", "refresh-keep");
+    let mut calls = 0;
+    let result: Result<(), AuthRetryError> = with_access_token_retry(
+        &path,
+        |_| {
+            calls += 1;
+            if calls == 1 {
+                write_pairing(&path, "b-access", "b-refresh");
+            }
+            AuthAttempt::Unauthorized
+        },
+        |_| Err(AccountAuthError::Replaced("the pairing changed while this request was in flight".into())),
+    );
+    assert!(matches!(result, Err(AuthRetryError::NeedsAccount)), "{result:?}");
+    assert_eq!(calls, 1, "a replaced pairing must not be retried as the replacement");
+    assert_eq!(session_of(&path), "session-b-refresh", "the replacement pairing must survive");
+}
+
+#[test]
+fn late_unauthorized_does_not_clear_a_newer_generation() {
+    let _serial = crate::CREDENTIAL_HOOK_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let path = auth_dir("community-auth-late-401").join("auth.json");
+    write_pairing(&path, "old-access", "refresh-keep");
+    let mut calls = 0;
+    let result: Result<(), AuthRetryError> = with_access_token_retry(
+        &path,
+        |_| {
+            calls += 1;
+            if calls == 2 {
+                // Another operation rotates the same session to a newer generation
+                // before this retry's late 401 lands.
+                write_rotated_pairing(&path, "session-refresh-keep", "newer-access", "refresh-newer");
+            }
+            AuthAttempt::Unauthorized
+        },
+        |tokens| Ok(rotated(&path, tokens)),
+    );
+    assert!(matches!(result, Err(AuthRetryError::NeedsAccount)), "{result:?}");
+    assert_eq!(calls, 2);
+    let stored: serde_json::Value = serde_json::from_slice(&fs::read(&path).expect("the newer generation must survive")).unwrap();
+    assert_eq!(stored["refresh_token"], "refresh-newer");
 }
 
 #[test]
@@ -427,9 +541,10 @@ fn playbook_file(repo: &Path, key: &str) -> std::path::PathBuf {
     repo.join(".alinery/playbooks").join(key).join("playbook.md")
 }
 
-fn keep_refresh(token: &str) -> Result<String, AccountAuthError> {
-    let _ = token;
-    Ok("new-access".into())
+/// The seam for tests that only need the retry to carry on: no persistence, because
+/// nothing in those flows inspects the generation it produced.
+fn keep_refresh(tokens: &AccountTokens) -> Result<AccountTokens, AccountAuthError> {
+    Ok(rotated_tokens_for_test(tokens, "new-access", "rotated-refresh"))
 }
 
 fn file_sha256(path: &Path) -> String {
@@ -753,6 +868,82 @@ fn delete_repo_playbook_forgets_import() {
     )
     .ok();
     assert_eq!(fs::read(registry_path(&repo)).unwrap(), before);
+}
+
+/// Writes a playbook into the repo when the source request is served — the window between
+/// the pre-fetch check and the write.
+struct WriteOnFetch {
+    inner: Recorder,
+    path: std::path::PathBuf,
+    bytes: Vec<u8>,
+}
+
+impl CommunityHttp for WriteOnFetch {
+    fn exchange(&mut self, request: CommunityHttpRequest) -> Result<CommunityHttpResponse, String> {
+        if request.url.ends_with("/source") {
+            fs::create_dir_all(self.path.parent().unwrap()).unwrap();
+            fs::write(&self.path, &self.bytes).unwrap();
+        }
+        self.inner.exchange(request)
+    }
+}
+
+#[test]
+fn update_does_not_replace_an_edit_made_while_the_source_was_fetched() {
+    let _serial = crate::CREDENTIAL_HOOK_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let (repo, roots) = repo_roots("community-update-race");
+    let auth = repo.join("auth.json");
+    write_pairing(&auth, "access", "refresh-keep");
+    let mut http = recorder(vec![json_response(200, &source_body(IMPORT_ID, 3, &desktop_fixture(), "test"))]);
+    import_community_playbook_with(&mut http, "http://library.test", &auth, keep_refresh, &roots, IMPORT_ID, false);
+    let path = playbook_file(&repo, "test");
+    let edited = desktop_fixture().replace("Preamble", "Locally edited preamble");
+    let mut http = WriteOnFetch {
+        inner: recorder(vec![json_response(200, &source_body(IMPORT_ID, 4, &desktop_fixture(), "test"))]),
+        path: path.clone(),
+        bytes: edited.clone().into_bytes(),
+    };
+    let result = update_community_import_with(&mut http, "http://library.test", &auth, keep_refresh, &roots, IMPORT_ID, false);
+    assert_eq!(result, UpdateResult::Edited);
+    assert_eq!(fs::read_to_string(&path).unwrap(), edited, "the edit must survive the update");
+    assert_eq!(read_community_imports(&repo).unwrap()[0].imported_version, 3, "a refused write must not bump the version");
+}
+
+#[test]
+fn import_does_not_overwrite_a_playbook_created_while_the_source_was_fetched() {
+    let _serial = crate::CREDENTIAL_HOOK_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let (repo, roots) = repo_roots("community-import-race");
+    let auth = repo.join("auth.json");
+    write_pairing(&auth, "access", "refresh-keep");
+    let path = playbook_file(&repo, "test");
+    let appeared = desktop_fixture().replace("Preamble", "Created during the fetch");
+    let mut http = WriteOnFetch {
+        inner: recorder(vec![json_response(200, &source_body(IMPORT_ID, 1, &desktop_fixture(), "test"))]),
+        path: path.clone(),
+        bytes: appeared.clone().into_bytes(),
+    };
+    let result = import_community_playbook_with(&mut http, "http://library.test", &auth, keep_refresh, &roots, IMPORT_ID, false);
+    assert_eq!(result, ImportResult::Conflict { local_key: "test".into() });
+    assert_eq!(fs::read_to_string(&path).unwrap(), appeared, "a file that appeared mid-flight is not replaced");
+    assert!(read_community_imports(&repo).unwrap().is_empty());
+}
+
+#[test]
+fn delete_keeps_the_definition_when_the_registry_cannot_be_read() {
+    let (repo, roots) = repo_roots("community-delete-bad-registry");
+    let path = playbook_file(&repo, "test");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, desktop_fixture()).unwrap();
+    fs::write(registry_path(&repo), b"not = [valid").unwrap();
+    let result = delete_playbook_keeping_imports(
+        &roots,
+        &PlaybookRef {
+            scope: PlaybookScope::Repo,
+            key: "test".into(),
+        },
+    );
+    assert!(matches!(result, Err(PlaybookSaveError::Io { .. })), "{result:?}");
+    assert!(path.is_file(), "a registry we cannot read must not cost the definition");
 }
 
 #[test]
@@ -1086,9 +1277,9 @@ fn publish_401_refreshes_once() {
         &mut http,
         "http://library.test",
         &auth,
-        |_| {
+        |tokens| {
             refreshes += 1;
-            Ok("new-access".into())
+            Ok(rotated(&auth, tokens))
         },
         &roots,
         &repo_ref("test"),
@@ -1112,7 +1303,15 @@ fn publish_second_401_clears() {
         json_response(401, &error_json("unauthenticated", "Sign in to continue.")),
         json_response(401, &error_json("unauthenticated", "Sign in to continue.")),
     ]);
-    let result = publish_community_playbook_with(&mut http, "http://library.test", &auth, |_| Ok("new-access".into()), &roots, &repo_ref("test"), None);
+    let result = publish_community_playbook_with(
+        &mut http,
+        "http://library.test",
+        &auth,
+        |tokens| Ok(rotated(&auth, tokens)),
+        &roots,
+        &repo_ref("test"),
+        None,
+    );
     assert_eq!(result, PublishResult::NeedsAccount);
     assert!(!auth.exists());
 }

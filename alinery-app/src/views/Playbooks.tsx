@@ -104,11 +104,17 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   const [communityQuery, setCommunityQuery] = useState("");
   const [imports, setImports] = useState<CommunityImportRow[]>([]);
   const [communityPlaybooks, setCommunityPlaybooks] = useState<CommunitySummary[]>([]);
-  const [communityCursor, setCommunityCursor] = useState<string | null>(null);
+  // The cursor and the query that minted it, together: a cursor from another query would
+  // page the current one from the old one's position, and the answer would be committed as
+  // if it belonged to the current query.
+  const [communityPage, setCommunityPage] = useState<{ query: string; cursor: string | null }>({ query: "", cursor: null });
   const [communityReady, setCommunityReady] = useState(false);
   const [communityError, setCommunityError] = useState("");
   const [downloadRows, setDownloadRows] = useState<DownloadStatusRow[]>([]);
   const [signupOpen, setSignupOpen] = useState(false);
+  // True only while this dialog has a pairing in flight, so Cancel knows what to cancel.
+  const [signupPairing, setSignupPairing] = useState(false);
+  const signupGeneration = useRef(0);
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishPick, setPublishPick] = useState("");
   const [publishQuery, setPublishQuery] = useState("");
@@ -201,7 +207,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
             if (!live || generation !== communityGeneration.current) return;
             if (page) {
               setCommunityPlaybooks(page.playbooks);
-              setCommunityCursor(page.nextCursor);
+              setCommunityPage({ query: trimmed, cursor: page.nextCursor });
             }
             setCommunityError("");
             setCommunityReady(true);
@@ -359,12 +365,16 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     setNotice("");
     setShowImport(false);
   };
-  const reloadImports = async (owner = repoPath) => {
+  // Repository-scoped results commit only while that repository is still the current one.
+  // A reload that lands after a switch would otherwise replace the new repo's rows with
+  // the old repo's.
+  const reloadImports = async (owner: string | undefined) => {
     if (!owner) return;
     try {
-      setImports((await ipc.listCommunityImports({ repoPath: owner })).imports);
+      const imports = (await ipc.listCommunityImports({ repoPath: owner })).imports;
+      if (currentRepo.current === owner) setImports(imports);
     } catch {
-      setImports([]);
+      if (currentRepo.current === owner) setImports([]);
     }
   };
   const showCommunity = async () => {
@@ -379,8 +389,14 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     pendingSignup.current = action;
     setSignupOpen(true);
   };
-  // Closing by any route abandons the queued action; only continueSignup keeps it.
+  // Closing by any route abandons the queued action; only continueSignup keeps it. A pairing
+  // this dialog started is cancelled on the backend too — hiding the dialog would leave the
+  // attempt registered, so a late callback could still persist it and the next attempt would
+  // be refused as already in progress.
   const closeSignup = () => {
+    signupGeneration.current += 1;
+    if (signupPairing) ipc.accountCancelSignIn().catch(() => {});
+    setSignupPairing(false);
     pendingSignup.current = null;
     setSignupOpen(false);
   };
@@ -397,21 +413,31 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     }
   };
   const continueSignup = async () => {
+    const generation = signupGeneration.current + 1;
+    signupGeneration.current = generation;
+    setSignupPairing(true);
     try {
       await ipc.accountSignIn();
+      // Dismissed while the browser was pairing: the continuation is retired even though the
+      // backend may have committed, exactly as AccountMenu retires its own.
+      if (generation !== signupGeneration.current) return;
       await ipc.accountRefresh().catch(() => undefined);
       setSignupOpen(false);
       const action = pendingSignup.current;
       pendingSignup.current = null;
       if (action) await action();
     } catch (error) {
+      if (generation !== signupGeneration.current) return;
       if (/cancelled/i.test(String(error))) return;
       toast.error(`Couldn't sign in: ${String(error)}`);
+    } finally {
+      if (generation === signupGeneration.current) setSignupPairing(false);
     }
   };
-  const refreshDownloads = async () => {
-    if (!repoPath) return;
-    setDownloadRows((await ipc.communityDownloadStatus({ repoPath })).rows);
+  const refreshDownloads = async (owner: string | undefined) => {
+    if (!owner) return;
+    const rows = (await ipc.communityDownloadStatus({ repoPath: owner })).rows;
+    if (currentRepo.current === owner) setDownloadRows(rows);
   };
   const previewPublication = async (id: string, name: string) => {
     setPreview({ name, source: "", error: "" });
@@ -423,18 +449,18 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     }
     setPreview(result.kind === "failed" ? { name, source: "", error: result.message } : { name, source: result.source, error: "" });
   };
-  const importPublication = async (id: string, overwrite: boolean) => {
-    if (!repoPath) return;
-    const result = await ipc.importCommunityPlaybook({ id, repoPath, overwrite });
+  const importPublication = async (owner: string | undefined, id: string, overwrite: boolean) => {
+    if (!owner) return;
+    const result = await ipc.importCommunityPlaybook({ id, repoPath: owner, overwrite });
     if (result.kind === "needs_account") {
-      openSignup(() => importPublication(id, overwrite));
+      openSignup(() => importPublication(owner, id, overwrite));
       return;
     }
     if (result.kind === "conflict") {
       if (
         (await askConfirm({
           title: `Overwrite repo/${result.localKey}?`,
-          body: `Replace this library definition in ${repoPath}. Existing tasks retain their original definition.`,
+          body: `Replace this library definition in ${owner}. Existing tasks retain their original definition.`,
           choices: [
             { key: "overwrite", label: "Overwrite", tone: "danger" },
             { key: "cancel", label: "Cancel", tone: "ghost" },
@@ -442,7 +468,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
         })) !== "overwrite"
       )
         return;
-      await importPublication(id, true);
+      await importPublication(owner, id, true);
       return;
     }
     if (result.kind === "invalid") {
@@ -455,12 +481,12 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       return;
     }
     if (result.kind === "saved") {
-      await refresh(repoPath);
-      await reloadImports(repoPath);
+      await refresh(owner);
+      await reloadImports(owner);
     }
   };
-  const updatePublication = async (id: string, overwriteEdited: boolean) => {
-    if (!repoPath) return;
+  const updatePublication = async (owner: string | undefined, id: string, overwriteEdited: boolean) => {
+    if (!owner) return;
     if (!overwriteEdited && editedImports.current.has(id)) {
       if (
         (await askConfirm({
@@ -473,13 +499,13 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
         })) !== "overwrite"
       )
         return;
-      await updatePublication(id, true);
+      await updatePublication(owner, id, true);
       return;
     }
-    const result = await ipc.updateCommunityImport({ id, repoPath, overwriteEdited });
+    const result = await ipc.updateCommunityImport({ id, repoPath: owner, overwriteEdited });
     if (!result) return;
     if (result.kind === "needs_account") {
-      openSignup(() => updatePublication(id, overwriteEdited));
+      openSignup(() => updatePublication(owner, id, overwriteEdited));
       return;
     }
     if (result.kind === "edited") {
@@ -495,7 +521,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
         })) !== "overwrite"
       )
         return;
-      await updatePublication(id, true);
+      await updatePublication(owner, id, true);
       return;
     }
     if (result.kind === "invalid") {
@@ -508,9 +534,9 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     }
     if (result.kind === "saved") {
       editedImports.current.delete(id);
-      await refresh(repoPath);
-      await reloadImports(repoPath);
-      await refreshDownloads();
+      await refresh(owner);
+      await reloadImports(owner);
+      await refreshDownloads(owner);
     }
   };
   const publishPicked = async () => {
@@ -524,7 +550,8 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       : await ipc.publishCommunityPlaybook({ reference, repoPath });
     if (!result) return;
     if (result.kind === "needs_account") {
-      setPublishOpen(false);
+      // The dialog stays: the resumed publish may need the public label or has diagnostics
+      // to show, and both live in it. The signup dialog stacks on top.
       openSignup(() => publishPicked());
       return;
     }
@@ -547,14 +574,17 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     if (communityFilter === "all") {
       const trimmed = communityQuery.trim();
       if (trimmed.length <= 80) {
-        communityGeneration.current += 1;
+        const generation = communityGeneration.current + 1;
+        communityGeneration.current = generation;
         try {
           const page = await ipc.listCommunityPlaybooks(trimmed ? { q: trimmed } : {});
+          if (generation !== communityGeneration.current) return;
           setCommunityPlaybooks(page.playbooks);
-          setCommunityCursor(page.nextCursor);
+          setCommunityPage({ query: trimmed, cursor: page.nextCursor });
           setCommunityError("");
           setCommunityReady(true);
         } catch (error) {
+          if (generation !== communityGeneration.current) return;
           setCommunityError(errorText(error));
         }
       }
@@ -1004,7 +1034,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                                   <button type="button" className="btn ghost small" onClick={() => void withAccount(() => previewPublication(item.id, name))}>
                                     Preview {name}
                                   </button>
-                                  <button type="button" className="btn ghost small" onClick={() => void withAccount(() => importPublication(item.id, false))}>
+                                  <button type="button" className="btn ghost small" onClick={() => void withAccount(() => importPublication(repoPath, item.id, false))}>
                                     Import {name}
                                   </button>
                                 </span>
@@ -1048,7 +1078,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                                     type="button"
                                     className="btn ghost small"
                                     disabled={!row.updateAvailable || row.remoteMissing}
-                                    onClick={() => void withAccount(() => updatePublication(row.id, false))}
+                                    onClick={() => void withAccount(() => updatePublication(repoPath, row.id, false))}
                                   >
                                     Update {name}
                                   </button>
@@ -1060,19 +1090,20 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                 </tbody>
               </table>
             )}
-            {communityFilter === "all" && communityCursor && communityQuery.trim().length <= 80 && (
+            {communityFilter === "all" && communityPage.cursor && communityPage.query === communityQuery.trim() && communityQuery.trim().length <= 80 && (
               <button
                 type="button"
                 onClick={() => {
-                  const cursor = communityCursor;
-                  const trimmed = communityQuery.trim();
+                  const cursor = communityPage.cursor;
+                  if (!cursor) return;
+                  const trimmed = communityPage.query;
                   const generation = communityGeneration.current;
                   const args = trimmed ? { q: trimmed, cursor } : { cursor };
                   void Promise.resolve(ipc.listCommunityPlaybooks(args))
                     .then((page) => {
                       if (!page || generation !== communityGeneration.current) return;
                       setCommunityPlaybooks((current) => [...current, ...page.playbooks]);
-                      setCommunityCursor(page.nextCursor);
+                      setCommunityPage({ query: trimmed, cursor: page.nextCursor });
                     })
                     .catch((error) => {
                       if (generation !== communityGeneration.current) return;
@@ -1124,7 +1155,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
               <button type="button" className="btn ghost small" data-autofocus onClick={closeSignup}>
                 Cancel
               </button>
-              <button type="button" className="btn small" onClick={() => void continueSignup()}>
+              <button type="button" className="btn small" disabled={signupPairing} onClick={() => void continueSignup()}>
                 SIGN UP
               </button>
             </div>
