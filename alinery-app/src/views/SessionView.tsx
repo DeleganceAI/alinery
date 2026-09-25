@@ -19,7 +19,7 @@ import { latestQueuedFollowUp, type QueuedFollowUp, queuedCountFromGetState, que
 import { applySendPlan, commandOutputText, loginReply, planChatSend, setModelReply } from "../chat/send";
 import { type McpServerRow, type ProvidersDialogTab, parseMcpListOutput } from "../chat/slash";
 import type { ChatEntry, SessionChatStatus } from "../chat/types";
-import { chatVisibilityFromAppearance, lastApprovalNotice } from "../chat/visibility";
+import { chatVisibilityFromAppearance } from "../chat/visibility";
 import {
   appendOptimisticAbort,
   appendOptimisticUser,
@@ -1712,7 +1712,6 @@ export function SessionView({
   });
   const chatStatus: SessionChatStatus = chat.sessionMeta.isCompacting || pendingUiReply ? "waiting_approval" : turnActive ? "running" : "idle";
   const agentState = observedState?.agent?.state;
-  const approvalNotice = agentState === "waiting_for_approval" ? lastApprovalNotice(chat.entries) : null;
   const composerCanAbort = canAbortChatSession(messageReadiness) && agentState !== "waiting_for_approval";
   const sendNowEnabled =
     turnActive &&
@@ -2102,7 +2101,6 @@ export function SessionView({
                         onSendNow={sendNowEnabled ? () => void sendNow() : undefined}
                         sendNowEnabled={sendNowEnabled}
                         canAbort={composerCanAbort}
-                        approvalNotice={approvalNotice}
                         queuedCount={queuedMeta}
                       />
                       {messageError ? <InlineStatus tone="error">{messageError}</InlineStatus> : null}

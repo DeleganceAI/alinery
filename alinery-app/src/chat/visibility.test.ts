@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ACTOR, type ChatEntry, subagent } from "./types";
-import { chatActivityLabel, chatVisibilityFromAppearance, DEFAULT_CHAT_VISIBILITY, lastApprovalNotice, visibleChatEntries, workRailDefaultExpanded } from "./visibility";
+import { chatActivityLabel, chatVisibilityFromAppearance, DEFAULT_CHAT_VISIBILITY, visibleChatEntries, workRailDefaultExpanded } from "./visibility";
 
 const thinking: ChatEntry = { id: "1", actor: ACTOR.agent, type: "thinking", text: "plan" };
 const tool: ChatEntry = { id: "2", actor: ACTOR.agent, type: "tool_call", tool: "read", status: "ok" };
@@ -88,13 +88,5 @@ describe("chatActivityLabel", () => {
     expect(chatActivityLabel("running", [])).toBe("Working…");
     expect(chatActivityLabel("running", [{ id: "1", actor: ACTOR.agent, type: "thinking", text: "plan", streaming: true }])).toBe("Thinking…");
     expect(chatActivityLabel("running", [{ id: "1", actor: ACTOR.agent, type: "tool_call", tool: "read", status: "running" }])).toBe("Working…");
-  });
-});
-
-describe("lastApprovalNotice", () => {
-  it("returns the last approval action and detail", () => {
-    const entries: ChatEntry[] = [{ id: "a", actor: ACTOR.alinery, type: "approval", requestId: "r1", action: "Allow git push", detail: "Publishes" }];
-    expect(lastApprovalNotice(entries)).toEqual({ action: "Allow git push", detail: "Publishes" });
-    expect(lastApprovalNotice([])).toBeNull();
   });
 });

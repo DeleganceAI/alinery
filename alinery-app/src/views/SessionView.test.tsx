@@ -739,7 +739,7 @@ describe("leftover harness refuse", () => {
   });
 });
 
-describe("session chat open_url approval", () => {
+describe("session chat approval", () => {
   const REQUEST = "ui-open";
 
   beforeEach(() => {
@@ -782,6 +782,30 @@ describe("session chat open_url approval", () => {
     expect(responses()).toHaveLength(0);
     expect(screen.getByText("https://example.com/setup")).toBeDefined();
     expect(screen.getByTestId("chat-activity").textContent).toContain("Waiting for approval");
+  });
+
+  it("shows confirmation details only once while preserving approval controls and the waiting composer", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "waiting_for_approval", correlation_id: REQUEST }));
+    renderSession();
+    await waitFor(() => expect(rpcAttachSession).toHaveBeenCalled());
+    const calls = rpcAttachSession.mock.calls;
+    const attach = calls[calls.length - 1]?.[0] as { onLine: (line: string) => void };
+    const title = "Approve the meeting-notes specification?";
+    const detail = "Create action items without inventing owners or deadlines.";
+    await act(async () => {
+      attach.onLine(JSON.stringify({ type: "extension_ui_request", id: REQUEST, method: "confirm", title, message: detail }));
+    });
+
+    expect(screen.getAllByText(title, { exact: false })).toHaveLength(1);
+    expect(screen.getAllByText(detail, { exact: false })).toHaveLength(1);
+    expect(within(screen.getByTestId("chat-pane")).getByText(detail)).toBeDefined();
+    expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId("chat-activity").textContent).toContain("Waiting for approval");
+    expect(responses()).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Allow" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+    await waitFor(() => expect(responses()).toHaveLength(1));
+    expect(responses()[0]?.confirmed).toBe(false);
   });
 
   it("opens the link and confirms once when the user allows it", async () => {
