@@ -1809,6 +1809,13 @@ main {
   display: grid;
   gap: 6px;
 }
+/* Publish dialog (Playbooks.tsx): a long local library scrolls inside the modal
+   instead of growing it past the window. */
+.publish-picker {
+  max-height: 42vh;
+  overflow: auto;
+  margin-bottom: 8px;
+}
 .playbook-picker-card {
   min-width: 0;
 }

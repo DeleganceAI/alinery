@@ -843,7 +843,7 @@ describe("community playbooks", () => {
     renderLibrary();
     await screen.findByRole("button", { name: "Review Repository" });
     await openCommunity();
-    fireEvent.click(screen.getByRole("radio", { name: "Downloaded" }));
+    fireEvent.click(screen.getByRole("button", { name: "Downloaded" }));
     fireEvent.click(await screen.findByRole("button", { name: "Update nyx/review" }));
     await screen.findByRole("dialog", { name: "Sign up" });
     expect(community.updateCommunityImport).not.toHaveBeenCalled();
@@ -876,7 +876,7 @@ describe("community playbooks", () => {
     renderLibrary();
     await screen.findByRole("button", { name: "Review Repository" });
     await openCommunity();
-    fireEvent.click(screen.getByRole("radio", { name: "Downloaded" }));
+    fireEvent.click(screen.getByRole("button", { name: "Downloaded" }));
     const table = await screen.findByRole("table", { name: "Community playbooks" });
     expect(table.textContent).toContain("nyx/review");
     expect(table.textContent).toContain("Update available");
@@ -912,7 +912,7 @@ describe("community playbooks", () => {
     renderLibrary();
     await screen.findByRole("button", { name: "Review Repository" });
     await openCommunity();
-    fireEvent.click(screen.getByRole("radio", { name: "Downloaded" }));
+    fireEvent.click(screen.getByRole("button", { name: "Downloaded" }));
     fireEvent.click(await screen.findByRole("button", { name: "Update nyx/review" }));
     await waitFor(() => expect(community.updateCommunityImport).toHaveBeenCalledTimes(1));
     expect(community.updateCommunityImport).toHaveBeenCalledWith({ id: NYX_ID, repoPath: "/repo", overwriteEdited: false });
@@ -1086,10 +1086,70 @@ describe("community playbooks", () => {
     renderLibrary();
     await screen.findByRole("button", { name: "Review Repository" });
     await openCommunity();
-    fireEvent.click(screen.getByRole("radio", { name: "Downloaded" }));
+    fireEvent.click(screen.getByRole("button", { name: "Downloaded" }));
     fireEvent.click(await screen.findByRole("button", { name: "Update nyx/review" }));
     await waitFor(() => expect(community.updateCommunityImport).toHaveBeenCalledTimes(1));
     expect(community.updateCommunityImport).toHaveBeenCalledWith({ id: NYX_ID, repoPath: "/repo", overwriteEdited: false });
     expect(screen.queryByRole("heading", { name: "Overwrite local copy?" })).toBeNull();
+  });
+
+  it("offers only the user's own playbooks to publish", async () => {
+    community.accountStatus.mockResolvedValue({ signedIn: true, email: "a@example.com", plan: null, paid: false, unavailable: false });
+    community.listCommunityPlaybooks.mockResolvedValue({ playbooks: [], nextCursor: null });
+    renderLibrary();
+    await screen.findByRole("button", { name: "Review Repository" });
+    await openCommunity();
+    fireEvent.click(screen.getByRole("button", { name: "Publish playbook" }));
+    const dialog = await screen.findByRole("dialog", { name: "Publish playbook" });
+    expect(within(dialog).getByText("These are playbooks you've made locally.")).toBeTruthy();
+    expect(within(dialog).getByRole("radio", { name: "Review Repository" })).toBeTruthy();
+    expect(within(dialog).getByRole("radio", { name: "Review Global" })).toBeTruthy();
+    expect(within(dialog).queryByRole("radio", { name: "Review Bundled" })).toBeNull();
+  });
+
+  it("searches the user's own playbooks and reports no matches", async () => {
+    community.accountStatus.mockResolvedValue({ signedIn: true, email: "a@example.com", plan: null, paid: false, unavailable: false });
+    community.listCommunityPlaybooks.mockResolvedValue({ playbooks: [], nextCursor: null });
+    renderLibrary();
+    await screen.findByRole("button", { name: "Review Repository" });
+    await openCommunity();
+    fireEvent.click(screen.getByRole("button", { name: "Publish playbook" }));
+    const dialog = await screen.findByRole("dialog", { name: "Publish playbook" });
+    const search = within(dialog).getByLabelText("Search your playbooks");
+    fireEvent.change(search, { target: { value: "global" } });
+    expect(within(dialog).queryByRole("radio", { name: "Review Repository" })).toBeNull();
+    expect(within(dialog).getByRole("radio", { name: "Review Global" })).toBeTruthy();
+    fireEvent.change(search, { target: { value: "nothing" } });
+    expect(within(dialog).getByText('No playbooks match "nothing".')).toBeTruthy();
+  });
+
+  it("will not confirm a pick the search has filtered out", async () => {
+    community.accountStatus.mockResolvedValue({ signedIn: true, email: "a@example.com", plan: null, paid: false, unavailable: false });
+    community.listCommunityPlaybooks.mockResolvedValue({ playbooks: [], nextCursor: null });
+    renderLibrary();
+    await screen.findByRole("button", { name: "Review Repository" });
+    await openCommunity();
+    fireEvent.click(screen.getByRole("button", { name: "Publish playbook" }));
+    const dialog = await screen.findByRole("dialog", { name: "Publish playbook" });
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Review Repository" }));
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Confirm you can share this playbook." }));
+    const confirm = within(dialog).getByRole("button", { name: "Confirm" });
+    expect(confirm).toHaveProperty("disabled", false);
+    fireEvent.change(within(dialog).getByLabelText("Search your playbooks"), { target: { value: "global" } });
+    expect(confirm).toHaveProperty("disabled", true);
+  });
+
+  it("asks for a local playbook first when the user has made none", async () => {
+    stored = [entry("bundled")];
+    community.accountStatus.mockResolvedValue({ signedIn: true, email: "a@example.com", plan: null, paid: false, unavailable: false });
+    community.listCommunityPlaybooks.mockResolvedValue({ playbooks: [], nextCursor: null });
+    renderLibrary();
+    await screen.findByRole("button", { name: "Review Bundled" });
+    await openCommunity();
+    fireEvent.click(screen.getByRole("button", { name: "Publish playbook" }));
+    const dialog = await screen.findByRole("dialog", { name: "Publish playbook" });
+    expect(within(dialog).getByText("You haven't created a playbook yet. Create one in Local before publishing.")).toBeTruthy();
+    expect(within(dialog).queryByLabelText("Search your playbooks")).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "Confirm" })).toHaveProperty("disabled", true);
   });
 });

@@ -1,4 +1,4 @@
-import { ArrowLeft, BookOpen } from "lucide-react";
+import { ArrowLeft, BookOpen, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { askConfirm } from "../confirm";
 import { ORB_STATE } from "../Indicators";
@@ -88,6 +88,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   const [signupOpen, setSignupOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishPick, setPublishPick] = useState("");
+  const [publishQuery, setPublishQuery] = useState("");
   const [attest, setAttest] = useState(false);
   const [publishLabel, setPublishLabel] = useState("");
   const [showPublishLabel, setShowPublishLabel] = useState(false);
@@ -356,6 +357,11 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     pendingSignup.current = action;
     setSignupOpen(true);
   };
+  // Closing by any route abandons the queued action; only continueSignup keeps it.
+  const closeSignup = () => {
+    pendingSignup.current = null;
+    setSignupOpen(false);
+  };
   const withAccount = async (action: () => Promise<void>) => {
     try {
       const status = await ipc.accountStatus();
@@ -619,6 +625,22 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       return (sort === "name-desc" ? -difference : difference) || identityOrder;
     });
 
+  // Publish offers what the user made — repo and global. The bundled library
+  // ships with the app and is not theirs to publish.
+  const ownPlaybooks = (catalog?.candidates ?? []).filter((candidate) => candidate.source.reference.scope !== "bundled");
+  const publishablePlaybooks = ownPlaybooks.filter((candidate) => candidate.diagnostics.length === 0);
+  const publishNeedle = publishQuery.trim().toLowerCase();
+  const publishChoices = publishablePlaybooks.filter(
+    (candidate) =>
+      publishNeedle === "" ||
+      [candidate.title || candidate.source.reference.key, candidate.description ?? "", candidate.source.reference.key, scopeLabels[candidate.source.reference.scope]].some(
+        (value) => value.toLowerCase().includes(publishNeedle),
+      ),
+  );
+  // A filtered-out pick must not stay confirmable: Confirm would publish a row the
+  // user can no longer see.
+  const publishChoiceVisible = publishChoices.some((candidate) => playbookRefKey(candidate.source.reference) === publishPick);
+
   return (
     <main className="playbooks-page">
       <div className="playbooks-detail">
@@ -673,6 +695,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                 onClick={() =>
                   void withAccount(async () => {
                     setPublishPick("");
+                    setPublishQuery("");
                     setAttest(false);
                     setPublishLabel("");
                     setShowPublishLabel(false);
@@ -889,31 +912,29 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
         )}
         {!open && libraryTab === "community" && (
           <section className="playbooks-library">
-            <div role="radiogroup" aria-label="Community list">
-              <label>
-                <input
-                  type="radio"
-                  name="community-list"
-                  checked={communityFilter === "all"}
-                  onChange={() => {
-                    setCommunityQuery("");
-                    setCommunityFilter("all");
-                  }}
-                />{" "}
+            <div className="playbooks-library-controls" role="group" aria-label="Community list">
+              <button
+                type="button"
+                className={`btn ghost small${communityFilter === "all" ? " on" : ""}`}
+                aria-pressed={communityFilter === "all"}
+                onClick={() => {
+                  setCommunityQuery("");
+                  setCommunityFilter("all");
+                }}
+              >
                 All
-              </label>
-              <label>
-                <input
-                  type="radio"
-                  name="community-list"
-                  checked={communityFilter === "downloaded"}
-                  onChange={() => {
-                    setCommunityQuery("");
-                    setCommunityFilter("downloaded");
-                  }}
-                />{" "}
+              </button>
+              <button
+                type="button"
+                className={`btn ghost small${communityFilter === "downloaded" ? " on" : ""}`}
+                aria-pressed={communityFilter === "downloaded"}
+                onClick={() => {
+                  setCommunityQuery("");
+                  setCommunityFilter("downloaded");
+                }}
+              >
                 Downloaded
-              </label>
+              </button>
             </div>
             <label>
               Search community playbooks
@@ -1009,69 +1030,92 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
           </section>
         )}
         {signupOpen && (
-          <Dialog
-            onClose={() => {
-              pendingSignup.current = null;
-              setSignupOpen(false);
-            }}
-            role="dialog"
-            ariaLabel="Sign up"
-          >
-            <h2>Sign up</h2>
-            <p>browse does not need an account. Import, update, and publish do.</p>
-            <button
-              type="button"
-              data-autofocus
-              onClick={() => {
-                pendingSignup.current = null;
-                setSignupOpen(false);
-              }}
-            >
-              Cancel
-            </button>
-            <button type="button" onClick={() => void continueSignup()}>
-              SIGN UP
-            </button>
+          <Dialog onClose={closeSignup} role="dialog" ariaLabel="Sign up">
+            <div className="mh">
+              <span className="mt">Sign up</span>
+              <button type="button" className="x" aria-label="Close" title="Close" onClick={closeSignup}>
+                <X size={14} strokeWidth={1.5} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="mb">
+              <p className="dim">browse does not need an account. Import, update, and publish do.</p>
+            </div>
+            <div className="mfoot">
+              <button type="button" className="btn ghost small" data-autofocus onClick={closeSignup}>
+                Cancel
+              </button>
+              <button type="button" className="btn small" onClick={() => void continueSignup()}>
+                SIGN UP
+              </button>
+            </div>
           </Dialog>
         )}
         {publishOpen && (
           <Dialog onClose={() => setPublishOpen(false)} role="dialog" ariaLabel="Publish playbook">
-            <h2>Publish playbook</h2>
-            <div role="radiogroup" aria-label="Local playbook">
-              {catalog?.candidates
-                .filter((candidate) => candidate.diagnostics.length === 0)
-                .map((candidate) => {
-                  const id = playbookRefKey(candidate.source.reference);
-                  const name = `${candidate.title || candidate.source.reference.key} ${scopeLabels[candidate.source.reference.scope]}`;
-                  return (
-                    <label key={id}>
-                      <input type="radio" name="publish-playbook" checked={publishPick === id} onChange={() => setPublishPick(id)} /> {name}
-                    </label>
-                  );
-                })}
+            <div className="mh">
+              <span className="mt">Publish playbook</span>
+              <button type="button" className="x" aria-label="Close" title="Close" onClick={() => setPublishOpen(false)}>
+                <X size={14} strokeWidth={1.5} aria-hidden="true" />
+              </button>
             </div>
-            <label>
-              <input type="checkbox" checked={attest} onChange={(event) => setAttest(event.target.checked)} /> Confirm you can share this playbook.
-            </label>
-            {showPublishLabel && (
-              <label>
-                Public label
-                <input value={publishLabel} onChange={(event) => setPublishLabel(event.target.value)} />
-              </label>
-            )}
-            {dirty && selected && publishPick === playbookRefKey(selected.source.reference) && <p>Unsaved editor changes are not published.</p>}
-            {publishMessage && <p>{publishMessage}</p>}
-            {publishDiagnostics.map((item) => (
-              <p key={`${item.code}:${item.message}`}>
-                {item.code} {item.message}
-              </p>
-            ))}
-            <button type="button" disabled={!publishPick || !attest} onClick={() => void publishPicked()}>
-              Confirm
-            </button>
-            <button type="button" data-autofocus onClick={() => setPublishOpen(false)}>
-              Cancel
-            </button>
+            <div className="mb">
+              {ownPlaybooks.length === 0 ? (
+                <p className="playbook-empty">You haven't created a playbook yet. Create one in Local before publishing.</p>
+              ) : publishablePlaybooks.length === 0 ? (
+                <p className="playbook-empty">None of your playbooks can be published yet. Fix their validation errors in Local first.</p>
+              ) : (
+                <>
+                  <InlineStatus tone="info">These are playbooks you've made locally.</InlineStatus>
+                  <div className="field">
+                    <label>
+                      Search your playbooks
+                      <input type="search" value={publishQuery} onChange={(event) => setPublishQuery(event.target.value)} />
+                    </label>
+                  </div>
+                  <div className="playbook-picker publish-picker" role="radiogroup" aria-label="Local playbook">
+                    {publishChoices.map((candidate) => {
+                      const id = playbookRefKey(candidate.source.reference);
+                      const name = `${candidate.title || candidate.source.reference.key} ${scopeLabels[candidate.source.reference.scope]}`;
+                      const picked = publishPick === id;
+                      return (
+                        <label key={id} className={`playbook-option${picked ? " selected" : ""}`}>
+                          <input type="radio" name="publish-playbook" className="playbook-option-input" checked={picked} onChange={() => setPublishPick(id)} />
+                          <span className="playbook-option-content">
+                            <span className="playbook-option-title">{name}</span>
+                          </span>
+                          <span aria-hidden="true" className="playbook-option-indicator" />
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {publishChoices.length === 0 && <p className="playbook-empty">No playbooks match "{publishQuery.trim()}".</p>}
+                </>
+              )}
+              <Checkbox checked={attest} onChange={setAttest} label="Confirm you can share this playbook." />
+              {showPublishLabel && (
+                <div className="field">
+                  <label>
+                    Public label
+                    <input value={publishLabel} onChange={(event) => setPublishLabel(event.target.value)} />
+                  </label>
+                </div>
+              )}
+              {dirty && selected && publishPick === playbookRefKey(selected.source.reference) && <p className="dim">Unsaved editor changes are not published.</p>}
+              {publishMessage && <p className="dim">{publishMessage}</p>}
+              {publishDiagnostics.map((item) => (
+                <p key={`${item.code}:${item.message}`} className="dim">
+                  {item.code} {item.message}
+                </p>
+              ))}
+            </div>
+            <div className="mfoot">
+              <button type="button" className="btn ghost small" data-autofocus onClick={() => setPublishOpen(false)}>
+                Cancel
+              </button>
+              <button type="button" className="btn small" disabled={!publishPick || !attest || !publishChoiceVisible} onClick={() => void publishPicked()}>
+                Confirm
+              </button>
+            </div>
           </Dialog>
         )}
         {open && (
