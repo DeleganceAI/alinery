@@ -787,7 +787,11 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
             </button>
           </div>
         )}
-        {error && <InlineStatus tone="error">{error}</InlineStatus>}
+        {error && (
+          <InlineStatus tone="error" onDismiss={() => setError("")}>
+            {error}
+          </InlineStatus>
+        )}
         {!open && libraryTab === "local" && (
           <section
             ref={libraryRef}

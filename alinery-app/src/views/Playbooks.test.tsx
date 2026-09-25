@@ -480,6 +480,8 @@ describe("graph-first playbook management", () => {
     await overwrite();
     const box = await screen.findByText(/playbook key must be a lowercase ASCII slug/, { selector: ".inline-status-msg" });
     expect(box.textContent).toBe("invalid_key: playbook key must be a lowercase ASCII slug\ninvalid_key: unsafe playbook key 'spec driven development' · line 3");
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss notice" }));
+    expect(screen.queryByText(/playbook key must be a lowercase ASCII slug/, { selector: ".inline-status-msg" })).toBeNull();
   });
 
   it("requires confirmation for bundled deletion and keeps the definition available after failure", async () => {
