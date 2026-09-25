@@ -63,7 +63,7 @@ The default **SuperDevelop** Playbook takes a change through:
 Clarify → Investigate → Decide → Plan → Define Tests → Build → Prepare Review
 ```
 
-Review the decision before starting Plan. Other bundled Playbooks cover one-shot implementation, code review, bug hunting, and free-form sessions. **Build Playbook** is the bundled meta-playbook for defining, drafting, and refining a new playbook, then saving it to a global or repository library after human approval. Find it in the bundled Playbooks list or the new-task picker.
+Review the decision before starting Plan. Other bundled Playbooks cover one-shot implementation, code review, bug hunting, and free-form sessions. **Build a New Playbook** is the bundled meta-playbook for defining, drafting, and refining a new playbook, then saving it to a global or repository library after human approval. Find it in the bundled Playbooks list or the new-task picker.
 
 **Sessions survive app quit.** A per-repository daemon (`alineryd`) owns the agent and terminal processes. Leave sessions running when you close the app, then reconnect when you return. Stopping sessions is an explicit action; the quit dialog also offers **Quit & close all repos**.
 

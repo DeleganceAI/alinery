@@ -389,7 +389,7 @@ fn bundled_build_playbook_is_discoverable_and_runs() {
         .candidates
         .iter()
         .find(|candidate| candidate.source.reference == reference)
-        .expect("Build Playbook must appear in the bundled catalog");
+        .expect("Build a New Playbook must appear in the bundled catalog");
     assert!(candidate.diagnostics.is_empty(), "{:?}", candidate.diagnostics);
     linear_trace(
         "build-playbook",
