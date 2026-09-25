@@ -1,7 +1,7 @@
 +++
 version = 2
 key = "build-playbook"
-title = "Build Playbook"
+title = "Build a New Playbook"
 description = "Define a useful playbook, draft and refine its prompts with the human, then save it to the chosen library."
 default_model = ""
 default_harness = "omp"
@@ -29,7 +29,7 @@ is_coding_step = true
 auto_advance_default = false
 +++
 
-# Build Playbook
+# Build a New Playbook
 
 Define → Draft & Refine. The result is a reviewed playbook saved through MCP after native human approval. Testing is optional and separate. Saving requires available playbook read/save tools and a working native approval interaction; this document does not install those capabilities.
 

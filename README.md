@@ -63,7 +63,7 @@ The default **SuperDevelop** Playbook takes a change through:
 Clarify → Investigate → Decide → Plan → Define Tests → Build → Prepare Review
 ```
 
-Review the decision before starting Plan. Other bundled Playbooks cover one-shot implementation, code review, bug hunting, and free-form sessions. Customize them through your repository's `.alinery/playbooks.toml`.
+Review the decision before starting Plan. Other bundled Playbooks cover one-shot implementation, code review, bug hunting, and free-form sessions. **Build a New Playbook** is the bundled meta-playbook for defining, drafting, and refining a new playbook, then saving it to a global or repository library after human approval. Find it in the bundled Playbooks list or the new-task picker.
 
 **Image evidence at creation.** Paste clipboard images into Description, Evidence / pointers,
 or the Attachments input on New task. Each image has a preview (when supported), name, size,
