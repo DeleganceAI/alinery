@@ -1850,7 +1850,7 @@ export function SessionView({
             </div>
             <div className="session-context">
               <span className="session-task" title={display?.task_name || task?.name || taskSlug}>
-                {display?.task_name || task?.name || taskSlug}
+                <span className="session-task-label">Task:</span> {display?.task_name || task?.name || taskSlug}
               </span>
               {task?.parent_task && (
                 <button type="button" className="btn ghost small" onClick={() => onOpenRelatedTask(task.parent_task || "", repoPath)}>
