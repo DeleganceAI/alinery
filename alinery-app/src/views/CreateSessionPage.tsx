@@ -23,7 +23,7 @@ export function CreateSessionPage({
   const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
   const [loadedTaskId, setLoadedTaskId] = useState("");
   const [selection, setSelection] = useState("auxiliary");
-  const [harness, setHarness] = useState("no-harness");
+  const [harness, setHarness] = useState("omp");
   const [model, setModel] = useState("");
   const [prompt, setPrompt] = useState("");
   const [pickModel, setPickModel] = useState(false);
