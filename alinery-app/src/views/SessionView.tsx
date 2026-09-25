@@ -1307,6 +1307,8 @@ export function SessionView({
     harness,
   });
   const liveRpc = observation?.transport === "rpc";
+  // Exited RPC sessions still support replay, but their processes cannot accept commands.
+  const rpcProcessLive = liveRpc && observation?.lifecycle.state === "live" && observation.state?.process.state === "alive";
   const livePty = observation?.transport === "pty";
   const ompCoding = harness === "omp" && !leftover && !navHistory && !showPanel;
   const showChat = ompCoding && Boolean(termIntent) && !livePty;
@@ -1440,9 +1442,10 @@ export function SessionView({
           });
           const rec = value as { type?: string; success?: boolean; command?: string };
           if (
-            (rec.type === "response" && rec.success === true && (rec.command === "follow_up" || rec.command === "abort_and_prompt")) ||
-            rec.type === "turn_end" ||
-            rec.type === "agent_end"
+            rpcProcessLive &&
+            ((rec.type === "response" && rec.success === true && (rec.command === "follow_up" || rec.command === "abort_and_prompt")) ||
+              rec.type === "turn_end" ||
+              rec.type === "agent_end")
           ) {
             void ipc.rpcWriteSession(id, getStateCommand()).catch(() => undefined);
           }
@@ -1512,6 +1515,7 @@ export function SessionView({
       .then(async () => {
         if (cancelled) return;
         setTerminalConnection("open");
+        if (!rpcProcessLive) return;
         // No wait for `ready`: OMP emits it once at spawn, so on any established session the old
         // 2s deadline always expired in full and told us nothing. History no longer depends on it
         // either — it was read from the journal before this attach began.
@@ -1535,7 +1539,16 @@ export function SessionView({
           if (!cancelled) setModelRoles(roles);
         });
       })
-      .catch((error) => {
+      .catch(async (error) => {
+        if (cancelled) return;
+        try {
+          const next = await ipc.sessionStatus(id, taskSlug || null);
+          if (cancelled) return;
+          setObservation(next);
+          if (next.lifecycle.state === "live_exited" || next.lifecycle.state === "exited" || next.state?.process.state === "exited") return;
+        } catch {
+          // Without a confirmed exit, preserve the original connection error.
+        }
         if (!cancelled) {
           setTerminalConnection("failed");
           toast(String(error), "error");
@@ -1545,11 +1558,11 @@ export function SessionView({
       cancelled = true;
       void ipc.detachSession(id, attachId);
     };
-  }, [liveRpc, id, seedOmpJournal, chatAttachEpoch]);
+  }, [liveRpc, rpcProcessLive, id, taskSlug, seedOmpJournal, chatAttachEpoch]);
   useEffect(() => {
-    if (!liveRpc) return;
+    if (!rpcProcessLive) return;
     void ipc.rpcWriteSession(id, setAutoCompactionCommand(chatAutoCompaction)).catch(() => undefined);
-  }, [chatAutoCompaction, liveRpc, id]);
+  }, [chatAutoCompaction, rpcProcessLive, id]);
   const settleOpenUrl = async (requestId: string, raw: string | undefined) => {
     try {
       await settleBrowserUrl(id, requestId, raw, (error) => toast(error, "error"));
@@ -1559,7 +1572,7 @@ export function SessionView({
     }
   };
   useEffect(() => {
-    if (!liveRpc) return;
+    if (!rpcProcessLive) return;
     for (const request of chat.pendingUi) {
       if (handledUiRef.current.has(request.id)) continue;
       if (isPresentationUi(request.method)) {
@@ -1578,7 +1591,7 @@ export function SessionView({
         void settleOpenUrl(request.id, request.launchUrl || request.url);
       }
     }
-  }, [liveRpc, chat.pendingUi, id]);
+  }, [rpcProcessLive, chat.pendingUi, id]);
   useEffect(() => {
     let cancelled = false;
     void ipc
@@ -1602,7 +1615,7 @@ export function SessionView({
     // the ref, so the effect re-runs when the turn closes and offers setup then.
     if (!hostedLoaded) return;
     const offer = shouldOfferProviderSetup({
-      connected: liveRpc,
+      connected: rpcProcessLive,
       suppressed: setupOpenedRef.current || modelDialog !== null,
       busy: isTurnActive({
         pendingTurn: chat.pendingTurn,
@@ -1619,7 +1632,7 @@ export function SessionView({
     setModelError(null);
     setModelDialog({ tab: "accounts", preselect: "", setup: true });
   }, [
-    liveRpc,
+    rpcProcessLive,
     chat.sessionMeta.loginProviders,
     chat.sessionMeta.model,
     chat.sessionMeta.models,
