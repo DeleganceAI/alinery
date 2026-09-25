@@ -785,6 +785,23 @@ fn read_chat_image_rejects_pdf() {
 }
 
 #[test]
+fn attachment_preview_preserves_bytes_above_chat_limit_and_enforces_attachment_limit() {
+    let repo = unique_attachment_temp("image-preview-limit");
+    let attach = attachments_of(&repo, "task");
+    fs::create_dir_all(&attach).unwrap();
+    let bytes = vec![42; MAX_CHAT_IMAGE_BYTES as usize + 1];
+    fs::write(attach.join("large.PNG"), &bytes).unwrap();
+    assert_eq!(crate::read_attachment_image_in(&repo, "task", "large.PNG", None).unwrap(), bytes);
+    assert!(read_chat_image_in(&repo, "task", "large.PNG").is_err());
+    fs::File::create(attach.join("oversized.png")).unwrap().set_len(MAX_ATTACHMENT_BYTES + 1).unwrap();
+    assert!(crate::read_attachment_image_in(&repo, "task", "oversized.png", None).is_err());
+    fs::write(attach.join("notes.txt"), "not an image").unwrap();
+    assert!(crate::read_attachment_image_in(&repo, "task", "notes.txt", None).is_err());
+    assert!(crate::read_attachment_image_in(&repo, "task", "../large.PNG", None).is_err());
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
 fn chat_file_stat_regular_file_and_rejects_directory() {
     let repo = unique_attachment_temp("chat-file-stat");
     let file = repo.join("shot.png");

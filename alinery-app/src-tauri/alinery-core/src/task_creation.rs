@@ -254,6 +254,7 @@ pub fn provision_task_with_reservation(
         let refs = String::from_utf8(refs.stdout).map_err(|error| format!("decode local Git branches: {error}"))?;
         let branches = || refs.lines().chain(reserved_tasks.iter().map(|task| task.branch.as_str()));
         let branch_occupied = |candidate: &str| branches().any(|existing| crate::branch_names_conflict(existing, candidate));
+        let registered_worktrees = crate::git::registered_worktree_paths(repo).map_err(|error| format!("read Git worktree registry: {error}"))?;
         if !request.parent_task.is_empty()
             && (crate::task_dir(repo, &requested).exists() || crate::worktrees_dir(repo).join(&worktree_base).exists() || branch_occupied(&branch_base))
         {
@@ -291,7 +292,11 @@ pub fn provision_task_with_reservation(
         fs::create_dir_all(crate::artifacts_dir(repo, &slug)).map_err(|e| e.to_string())?;
         fs::create_dir_all(crate::worktrees_dir(repo)).map_err(|e| e.to_string())?;
         let worktree_leaf = unique_name(
-            |s| crate::worktrees_dir(repo).join(s).exists() || reserved_tasks.iter().any(|t| Path::new(&t.worktree).file_name().is_some_and(|n| n == s)),
+            |s| {
+                crate::worktrees_dir(repo).join(s).exists()
+                    || registered_worktrees.iter().any(|path| path.file_name().is_some_and(|n| n == s))
+                    || reserved_tasks.iter().any(|t| Path::new(&t.worktree).file_name().is_some_and(|n| n == s))
+            },
             &worktree_base,
         );
         let task = Task {
@@ -580,6 +585,36 @@ mod tests {
         assert_eq!(state.creation, "partial");
         assert!(state.creation_error.unwrap().contains("git_worktree"));
         assert!(task_playbook_path(&repo, &task.slug).unwrap().exists());
+        fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[test]
+    fn missing_but_registered_worktree_clears_the_name() {
+        let repo = repo();
+        // A registered worktree whose directory was removed must still block its name,
+        // including when the registered path contains spaces.
+        let explicit_trees = crate::worktrees_dir(&repo).join("explicit trees");
+        std::fs::create_dir_all(crate::worktrees_dir(&repo)).unwrap();
+        git(&repo, &["worktree", "add", explicit_trees.to_str().unwrap(), "-b", "old-feat"]);
+        fs::remove_dir_all(&explicit_trees).unwrap();
+        assert!(crate::git::registered_worktree_paths(&repo)
+            .unwrap()
+            .iter()
+            .any(|p| p.file_name().unwrap() == "explicit trees"));
+
+        let mut request = request("new-feat");
+        request.worktree_name = Some("explicit trees".into());
+        let reply = provision_task(&repo, "", "fixture", &request).unwrap();
+        assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+        let task = reply.task.unwrap();
+        assert!(Path::new(&task.worktree).exists());
+        // The stale registration and its branch stay untouched.
+        assert!(crate::git::registered_worktree_paths(&repo)
+            .unwrap()
+            .iter()
+            .any(|p| p.file_name().unwrap() == "explicit trees"));
+        assert_eq!(git(&repo, &["for-each-ref", "--format=%(refname)", "refs/heads/old-feat"]), "refs/heads/old-feat\n");
+        assert!(git(&repo, &["worktree", "list"]).contains("explicit trees"));
         fs::remove_dir_all(repo).unwrap();
     }
 }

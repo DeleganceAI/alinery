@@ -5,9 +5,11 @@ import { flushSync } from "react-dom";
 import type { ArtifactComment, ArtifactCommentAnchor } from "../ArtifactMarkdown";
 import { ArtifactMarkdown, formatArtifactCommentTarget } from "../ArtifactMarkdown";
 import { ArtifactTree, isDirectOwnedArtifactNode } from "../ArtifactTree";
+import { AttachmentPreview } from "../AttachmentPreview";
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import type { ArtifactPaneTab } from "../artifactClassification";
 import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassification";
+import { classifyAttachment } from "../chat/attachments";
 import { CopyArtifactButton, CopyTextButton, copyTextToClipboard } from "../chat/CopyMessage";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
@@ -1790,6 +1792,13 @@ export function TaskDetail({
                     <div className="dim">{artifactTab === "attachments" ? "No attachments." : "No playbook artifacts yet."}</div>
                   )}
                   {displayedArtifactItems.map((item) => {
+                    if (item.attachment && classifyAttachment(item) === "image") {
+                      return (
+                        <AttachmentPreview key={item.name} taskSlug={slug} name={item.name}>
+                          <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
+                        </AttachmentPreview>
+                      );
+                    }
                     const node = findOwnedArtifactNode(artifactTree, item.name);
                     const available = Boolean(item.attachment || node);
                     return (
@@ -1823,11 +1832,6 @@ export function TaskDetail({
                         }}
                       >
                         <span className="artifactitem-name">{item.name}</span>
-                        {item.execution_id && (
-                          <span className="dim">
-                            Execution {item.execution_id} · {item.step_key} · {item.accepted ? "accepted" : "pending"}
-                          </span>
-                        )}
                         {!available && <span className="pill">Not yet readable</span>}
                         <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
                       </div>

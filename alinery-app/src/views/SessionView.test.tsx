@@ -3,6 +3,7 @@ import { type ComponentProps, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import type { QueuedFollowUp } from "../chat/queue";
+import type * as Ipc from "../ipc";
 import type { SessionMessageDraft } from "../sessionMessage";
 import { mockIpc } from "../test/mockIpc";
 import { Toast, toast } from "../toast";
@@ -1475,7 +1476,7 @@ describe("session chat attach handshake", () => {
   beforeEach(() => {
     scenario.tasks = [{ ...task }];
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
-    rpcWriteSession.mockClear();
+    rpcWriteSession.mockReset().mockResolvedValue(undefined);
     rpcAttachSession.mockReset();
     rpcAttachSession.mockImplementation(async () => undefined);
   });
@@ -1485,6 +1486,7 @@ describe("session chat attach handshake", () => {
     vi.useRealTimers();
     sessionStatus.mockReset();
     sessionStatus.mockResolvedValue({ lifecycle: { state: "exited" as const, code: 0 }, state: null, checkpoint: {} });
+    rpcWriteSession.mockReset().mockResolvedValue(undefined);
   });
 
   it("writes get_subagents after set_subagent_subscription", async () => {
@@ -1493,6 +1495,61 @@ describe("session chat attach handshake", () => {
     const types = rpcWriteSession.mock.calls.map(([, payload]) => (payload as { type?: string } | null)?.type);
     expect(types).toContain("get_subagents");
     expect(types.indexOf("get_subagents")).toBeGreaterThan(types.indexOf("set_subagent_subscription"));
+  });
+
+  const exitedRpc: SessionObservation = {
+    ...liveObservation("rpc"),
+    lifecycle: { state: "live_exited" },
+    state: {
+      process: { state: "exited", code: 0 },
+      agent: { state: "idle" },
+      playbook: { state: "ready_to_advance" },
+      adapter: "omp",
+      message_adapter: "omp_bracketed_paste",
+    },
+  };
+
+  it("replays a completed RPC session without issuing live commands or error toasts", async () => {
+    sessionStatus.mockResolvedValue(exitedRpc);
+    rpcWriteSession.mockRejectedValue("session-exited");
+    rpcAttachSession.mockImplementation(async (args) => {
+      const attach = args as Parameters<typeof Ipc.rpcAttachSession>[0];
+      attach.onLine(JSON.stringify({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "Completed implementation." }] } }));
+    });
+    render(<Toast />);
+    renderSession({ intent: "attach" });
+    expect(await screen.findByText("Completed implementation.")).toBeTruthy();
+    await flushPromises();
+    expect(rpcWriteSession).not.toHaveBeenCalled();
+    expect(within(screen.getByRole("status", { name: "Notifications" })).queryByText("session-exited")).toBeNull();
+  });
+
+  it("reconciles a session that exits during the RPC handshake without showing an error", async () => {
+    rpcWriteSession.mockImplementation(async (_id, payload) => {
+      if (payload && typeof payload === "object" && "type" in payload && payload.type === "negotiate_protocol") {
+        sessionStatus.mockResolvedValue(exitedRpc);
+        throw "session-exited";
+      }
+    });
+    render(<Toast />);
+    renderSession({ messageDraft: { body: "keep draft", pendingActions: [], attachments: [] } });
+    await flushPromises();
+    expect(screen.queryByRole("group", { name: "Session view" })).toBeNull();
+    expect(within(screen.getByRole("status", { name: "Notifications" })).queryByText("session-exited")).toBeNull();
+    const draft = screen.getByLabelText("Message or /command") as HTMLTextAreaElement;
+    expect(draft.value).toBe("keep draft");
+  });
+
+  it.each(["live", "unavailable"])("reports a real handshake error when refreshed status is %s", async (status) => {
+    rpcWriteSession.mockImplementation(async (_id, payload) => {
+      if (payload && typeof payload === "object" && "type" in payload && payload.type === "negotiate_protocol") {
+        if (status === "unavailable") sessionStatus.mockRejectedValue(new Error("Status unavailable"));
+        throw new Error("RPC connection failed");
+      }
+    });
+    render(<Toast />);
+    renderSession();
+    expect(await within(screen.getByRole("status", { name: "Notifications" })).findByText("Error: RPC connection failed")).toBeTruthy();
   });
 
   it("does not re-attach after a transient sessionStatus rejection", async () => {
