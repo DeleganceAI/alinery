@@ -7,6 +7,29 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, fs, path::Path};
 
+pub const MAX_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
+pub const MAX_ATTACHMENT_SET_BYTES: u64 = 100 * 1024 * 1024;
+
+// Suffix goes before the extension. Probe the destination filesystem so promoted
+// draft files and case aliases retain their bytes.
+pub fn unique_attachment_name(dir: &Path, base: &str) -> Option<String> {
+    if !dir.join(base).exists() {
+        return Some(base.to_string());
+    }
+    let stem = Path::new(base).file_stem()?.to_str()?;
+    let ext = Path::new(base).extension().and_then(|s| s.to_str());
+    for n in 2..=99u32 {
+        let candidate = match ext {
+            Some(ext) => format!("{stem}-{n}.{ext}"),
+            None => format!("{stem}-{n}"),
+        };
+        if !dir.join(&candidate).exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskPlaybookPackage {
@@ -217,10 +240,9 @@ pub fn provision_task_with_reservation(
     )?;
     state.owning_app_config_identity = app_config_identity.into();
     state.initial_start_requested = request.start;
-    let mut attachment_names = BTreeSet::new();
     for attachment in &request.attachments {
-        if crate::safe_component(&attachment.name) != Some(attachment.name.as_str()) || !attachment_names.insert(attachment.name.clone()) {
-            return Err(format!("invalid or duplicate attachment name '{}'", attachment.name));
+        if crate::safe_component(&attachment.name) != Some(attachment.name.as_str()) {
+            return Err(format!("invalid attachment name '{}'", attachment.name));
         }
     }
     let base = crate::slugify(name);
@@ -325,6 +347,7 @@ pub fn provision_task_with_reservation(
         Ok(task)
     })?;
     let mut stage = "git_worktree";
+    let mut attachment_errors = request.attachment_errors.clone();
     let result = (|| {
         if let Some(error) = reservation_error {
             stage = "relationships";
@@ -341,17 +364,36 @@ pub fn provision_task_with_reservation(
         }
         stage = "install_inputs";
         let mut copied = Vec::new();
+        let directory = crate::attachments_dir(repo, &task.slug);
+        let mut accepted_bytes = 0u64;
         if !request.attachments.is_empty() {
-            fs::create_dir_all(crate::artifacts_dir(repo, &task.slug).join("attachments")).map_err(|e| e.to_string())?;
+            fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
         }
         for attachment in &request.attachments {
-            crate::fs_atomic::write_bytes_durable(&crate::artifacts_dir(repo, &task.slug).join("attachments").join(&attachment.name), &attachment.bytes)?;
-            copied.push(format!("attachments/{}", attachment.name));
+            let size = attachment.bytes.len() as u64;
+            let rejection = if size > MAX_ATTACHMENT_BYTES {
+                Some("larger than 25 MiB")
+            } else if size > MAX_ATTACHMENT_SET_BYTES - accepted_bytes {
+                Some("attachment set would exceed 100 MiB")
+            } else {
+                None
+            };
+            if let Some(reason) = rejection {
+                attachment_errors.push(format!("{} — {reason}", attachment.name));
+                continue;
+            }
+            let Some(stored_name) = unique_attachment_name(&directory, &attachment.name) else {
+                attachment_errors.push(format!("{} — too many name collisions", attachment.name));
+                continue;
+            };
+            crate::fs_atomic::write_bytes_durable(&directory.join(&stored_name), &attachment.bytes)?;
+            accepted_bytes += size;
+            copied.push(stored_name);
         }
         let ticket = request
             .original_ticket
             .clone()
-            .unwrap_or_else(|| crate::compose_ticket(name, &request.description, &request.evidence, &request.attachment_urls, &copied, &request.attachment_errors));
+            .unwrap_or_else(|| crate::compose_ticket(name, &request.description, &request.evidence, &request.attachment_urls, &copied, &attachment_errors));
         crate::fs_atomic::write_bytes_durable(&crate::artifacts_dir(repo, &task.slug).join("00-ticket.md"), ticket.as_bytes())?;
         crate::task::sync_related_artifact_links(repo, &task.slug, &task.related_tasks)?;
         stage = "ready";
@@ -368,13 +410,12 @@ pub fn provision_task_with_reservation(
         executions: Vec::new(),
         creation: "ready".into(),
         start: "not_requested".into(),
-        errors: request
-            .attachment_errors
-            .iter()
+        errors: attachment_errors
+            .into_iter()
             .map(|message| CreationError {
                 stage: "attachments".into(),
                 code: "import_failed".into(),
-                message: message.clone(),
+                message,
             })
             .collect(),
     };
@@ -581,5 +622,353 @@ mod tests {
         assert!(state.creation_error.unwrap().contains("git_worktree"));
         assert!(task_playbook_path(&repo, &task.slug).unwrap().exists());
         fs::remove_dir_all(repo).unwrap();
+    }
+
+    // Keep failed assertions from leaking disposable repositories and worktrees.
+    struct AttachmentRepo(PathBuf);
+
+    impl Drop for AttachmentRepo {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn attachment_ticket_references_resolve_to_stored_bytes() {
+        let fixture = AttachmentRepo(repo());
+        let repo = &fixture.0;
+        let mut request = request("attachment-pointers");
+        request.attachments = vec![TaskAttachment {
+            name: "shot.png".into(),
+            bytes: vec![0, 255, 128, 1],
+        }];
+        let reply = provision_task(repo, "", "fixture", &request).unwrap();
+        assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+        let artifacts = crate::artifacts_dir(repo, &reply.task.unwrap().slug);
+        assert_eq!(fs::read(artifacts.join("attachments/shot.png")).unwrap(), request.attachments[0].bytes);
+        let ticket = fs::read_to_string(artifacts.join("00-ticket.md")).unwrap();
+        let references: Vec<_> = ticket.lines().filter_map(|line| line.strip_prefix("- attachments/")).collect();
+        assert_eq!(references, ["shot.png"], "{ticket}");
+        for reference in references {
+            assert_eq!(fs::read(artifacts.join("attachments").join(reference)).unwrap(), request.attachments[0].bytes);
+        }
+    }
+
+    #[test]
+    fn attachment_duplicate_names_preserve_both_payloads() {
+        let fixture = AttachmentRepo(repo());
+        let repo = &fixture.0;
+        let mut request = request("attachment-collisions");
+        request.attachments = vec![
+            TaskAttachment {
+                name: "shot.png".into(),
+                bytes: vec![1],
+            },
+            TaskAttachment {
+                name: "shot.png".into(),
+                bytes: vec![2],
+            },
+        ];
+        let reply = provision_task(repo, "", "fixture", &request).expect("valid duplicate basenames must be allocated distinct destinations");
+        assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+        assert!(reply.errors.is_empty(), "{:?}", reply.errors);
+        let attachments = crate::artifacts_dir(repo, &reply.task.unwrap().slug).join("attachments");
+        assert_eq!(fs::read(attachments.join("shot.png")).unwrap(), [1]);
+        assert_eq!(fs::read(attachments.join("shot-2.png")).unwrap(), [2]);
+    }
+
+    #[test]
+    fn attachment_direct_bytes_enforce_per_file_limit_and_keep_valid_siblings() {
+        let fixture = AttachmentRepo(repo());
+        let repo = &fixture.0;
+        let mut request = request("attachment-file-limit");
+        let limit = 25 * 1024 * 1024;
+        request.attachments = vec![
+            TaskAttachment {
+                name: "oversize.bin".into(),
+                bytes: vec![1; limit + 1],
+            },
+            TaskAttachment {
+                name: "exact.bin".into(),
+                bytes: vec![2; limit],
+            },
+            TaskAttachment {
+                name: "empty.txt".into(),
+                bytes: vec![],
+            },
+            TaskAttachment {
+                name: "small.png".into(),
+                bytes: vec![0, 255, 128],
+            },
+        ];
+        let reply = provision_task(repo, "", "fixture", &request).unwrap();
+        assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+        let artifacts = crate::artifacts_dir(repo, &reply.task.unwrap().slug);
+        let attachments = artifacts.join("attachments");
+        assert!(!attachments.join("oversize.bin").exists(), "direct byte requests must not bypass the 25 MiB limit");
+        for attachment in &request.attachments[1..] {
+            assert_eq!(fs::read(attachments.join(&attachment.name)).unwrap(), attachment.bytes);
+        }
+        assert_eq!(reply.errors.len(), 1, "{:?}", reply.errors);
+        assert_eq!(reply.errors[0].stage, "attachments");
+        assert_eq!(reply.errors[0].code, "import_failed");
+        assert!(reply.errors[0].message.contains("oversize.bin"));
+        let ticket = fs::read_to_string(artifacts.join("00-ticket.md")).unwrap();
+        assert!(ticket.contains(&reply.errors[0].message));
+        assert!(!ticket.contains("- attachments/oversize.bin"));
+    }
+
+    #[test]
+    fn attachment_set_limit_counts_only_accepted_bytes() {
+        let fixture = AttachmentRepo(repo());
+        let repo = &fixture.0;
+        let mut request = request("attachment-set-limit");
+        let limit = 25 * 1024 * 1024;
+        request.attachments = (0..4)
+            .map(|index| TaskAttachment {
+                name: format!("part-{index}.bin"),
+                bytes: vec![index; if index == 3 { limit - 1 } else { limit }],
+            })
+            .collect();
+        request.attachments.extend([
+            TaskAttachment {
+                name: "cannot-fit.bin".into(),
+                bytes: vec![8; 2],
+            },
+            TaskAttachment {
+                name: "last-byte.bin".into(),
+                bytes: vec![9],
+            },
+            TaskAttachment {
+                name: "over-set.bin".into(),
+                bytes: vec![10],
+            },
+        ]);
+        let reply = provision_task(repo, "", "fixture", &request).unwrap();
+        assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+        let attachments = crate::artifacts_dir(repo, &reply.task.unwrap().slug).join("attachments");
+        assert!(!attachments.join("cannot-fit.bin").exists(), "reject an item that would exceed the accepted-set budget");
+        assert_eq!(fs::read(attachments.join("last-byte.bin")).unwrap(), [9], "a rejection must not consume the remaining byte");
+        assert!(!attachments.join("over-set.bin").exists(), "100 MiB plus one byte must not be retained");
+        let stored: u64 = fs::read_dir(&attachments).unwrap().map(|entry| entry.unwrap().metadata().unwrap().len()).sum();
+        assert_eq!(stored, 100 * 1024 * 1024);
+        assert_eq!(reply.errors.len(), 2, "{:?}", reply.errors);
+        for (error, name) in reply.errors.iter().zip(["cannot-fit.bin", "over-set.bin"]) {
+            assert_eq!(error.stage, "attachments");
+            assert_eq!(error.code, "import_failed");
+            assert!(error.message.contains(name), "{error:?}");
+        }
+    }
+
+    #[test]
+    fn attachment_promotion_preserves_existing_and_case_aliased_files() {
+        let fixture = AttachmentRepo(repo());
+        let repo = &fixture.0;
+        let draft = Task {
+            name: "Draft".into(),
+            slug: "draft".into(),
+            draft: true,
+            ..Task::default()
+        };
+        crate::task::write_task_unlocked(repo, &draft).unwrap();
+        let existing = crate::artifacts_dir(repo, &draft.slug).join("attachments");
+        fs::create_dir_all(&existing).unwrap();
+        fs::write(existing.join("trace.log"), b"old trace").unwrap();
+        fs::write(existing.join("Shot.png"), b"old image").unwrap();
+        let case_insensitive = existing.join("shot.png").exists();
+        eprintln!("attachment filesystem case-insensitive: {case_insensitive}");
+        fs::write(existing.join("old-large.bin"), b"retained").unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(existing.join("old-large.bin"))
+            .unwrap()
+            .set_len(100 * 1024 * 1024 + 1)
+            .unwrap();
+        let mut request = request("attachment-promotion");
+        request.draft_slug = Some(draft.slug);
+        request.attachments = [("trace.log", b"first".as_slice()), ("trace.log", b"second"), ("shot.png", b"lower"), ("Shot.png", b"upper")]
+            .into_iter()
+            .map(|(name, bytes)| TaskAttachment {
+                name: name.into(),
+                bytes: bytes.to_vec(),
+            })
+            .collect();
+        let reply = provision_task(repo, "", "fixture", &request).expect("promotion must retain repeated and case-aliased inputs");
+        assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+        assert!(reply.errors.is_empty(), "old files do not consume the incoming request allowance: {:?}", reply.errors);
+        let task = reply.task.unwrap();
+        assert!(!task.draft);
+        let artifacts = crate::artifacts_dir(repo, &task.slug);
+        let attachments = artifacts.join("attachments");
+        assert_eq!(fs::read(attachments.join("trace.log")).unwrap(), b"old trace");
+        assert_eq!(fs::read(attachments.join("Shot.png")).unwrap(), b"old image");
+        let mut old_file = fs::File::open(attachments.join("old-large.bin")).unwrap();
+        assert_eq!(old_file.metadata().unwrap().len(), 100 * 1024 * 1024 + 1);
+        let mut marker = [0; 8];
+        std::io::Read::read_exact(&mut old_file, &mut marker).unwrap();
+        assert_eq!(&marker, b"retained");
+        let names = if case_insensitive {
+            ["trace-2.log", "trace-3.log", "shot-2.png", "Shot-3.png"]
+        } else {
+            ["trace-2.log", "trace-3.log", "shot.png", "Shot-2.png"]
+        };
+        let ticket = fs::read_to_string(artifacts.join("00-ticket.md")).unwrap();
+        let references: Vec<_> = ticket.lines().filter_map(|line| line.strip_prefix("- attachments/")).collect();
+        assert_eq!(references, names, "{ticket}");
+        for (name, input) in names.into_iter().zip(&request.attachments) {
+            assert_eq!(fs::read(attachments.join(name)).unwrap(), input.bytes);
+        }
+    }
+
+    #[test]
+    fn attachment_exhausted_names_report_error_without_replacement() {
+        let fixture = AttachmentRepo(repo());
+        let repo = &fixture.0;
+        let draft = Task {
+            name: "Draft".into(),
+            slug: "draft".into(),
+            draft: true,
+            ..Task::default()
+        };
+        crate::task::write_task_unlocked(repo, &draft).unwrap();
+        let existing = crate::artifacts_dir(repo, &draft.slug).join("attachments");
+        fs::create_dir_all(&existing).unwrap();
+        let names: Vec<_> = (1..=99).map(|index| if index == 1 { "shot.png".into() } else { format!("shot-{index}.png") }).collect();
+        for (index, name) in names.iter().enumerate() {
+            fs::write(existing.join(name), [index as u8]).unwrap();
+        }
+        let mut request = request("attachment-exhaustion");
+        request.draft_slug = Some(draft.slug);
+        request.attachments = vec![
+            TaskAttachment {
+                name: "shot.png".into(),
+                bytes: vec![255],
+            },
+            TaskAttachment {
+                name: "sibling.png".into(),
+                bytes: vec![254],
+            },
+        ];
+        let reply = provision_task(repo, "", "fixture", &request).unwrap();
+        assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+        let artifacts = crate::artifacts_dir(repo, &reply.task.unwrap().slug);
+        let attachments = artifacts.join("attachments");
+        for (index, name) in names.iter().enumerate() {
+            assert_eq!(fs::read(attachments.join(name)).unwrap(), [index as u8], "{name} must not be replaced");
+        }
+        assert_eq!(fs::read(attachments.join("sibling.png")).unwrap(), [254]);
+        assert!(!attachments.join("shot-100.png").exists());
+        assert_eq!(reply.errors.len(), 1, "{:?}", reply.errors);
+        assert_eq!(reply.errors[0].stage, "attachments");
+        assert_eq!(reply.errors[0].code, "import_failed");
+        assert!(reply.errors[0].message.contains("shot.png"));
+        let ticket = fs::read_to_string(artifacts.join("00-ticket.md")).unwrap();
+        assert!(ticket.contains(&reply.errors[0].message));
+        let references: Vec<_> = ticket.lines().filter_map(|line| line.strip_prefix("- attachments/")).collect();
+        assert_eq!(references, ["sibling.png"], "{ticket}");
+    }
+
+    #[test]
+    fn attachment_unsafe_names_reject_before_reservation_even_when_oversized() {
+        let fixture = AttachmentRepo(repo());
+        let repo = &fixture.0;
+        let tasks_before: Vec<_> = crate::list_tasks_for_repo(repo).into_iter().map(|task| task.slug).collect();
+        let worktrees_before = git(repo, &["worktree", "list", "--porcelain"]);
+        let branches_before = git(repo, &["for-each-ref", "--format=%(refname)", "refs/heads"]);
+        let mut request = request("attachment-unsafe");
+        request.attachments = vec![TaskAttachment {
+            name: "../escape.png".into(),
+            bytes: vec![1; 25 * 1024 * 1024 + 1],
+        }];
+        let reserved = std::cell::Cell::new(false);
+        let result = provision_task_with_reservation(
+            repo,
+            "",
+            "fixture",
+            &request,
+            || {
+                reserved.set(true);
+                Ok(())
+            },
+            |_| Ok(()),
+        );
+        assert!(result.is_err());
+        assert!(!reserved.get(), "unsafe basenames must fail before reservation, not be skipped by size admission");
+        assert_eq!(crate::list_tasks_for_repo(repo).into_iter().map(|task| task.slug).collect::<Vec<_>>(), tasks_before);
+        assert_eq!(git(repo, &["worktree", "list", "--porcelain"]), worktrees_before);
+        assert_eq!(git(repo, &["for-each-ref", "--format=%(refname)", "refs/heads"]), branches_before);
+        assert!(!crate::task_dir(repo, "new-task").exists());
+        assert!(!crate::worktrees_dir(repo).exists());
+        assert!(!crate::artifacts_dir(repo, "new-task").join("escape.png").exists());
+    }
+
+    #[test]
+    fn attachment_install_failure_retains_partial_task_identity() {
+        let fixture = AttachmentRepo(repo());
+        let repo = &fixture.0;
+        let mut request = request("attachment-install-failure");
+        request.attachments = vec![TaskAttachment {
+            name: "shot.png".into(),
+            bytes: vec![1, 2, 3],
+        }];
+        let mut reserved = None;
+        let reply = provision_task_with_reservation(
+            repo,
+            "",
+            "fixture",
+            &request,
+            || Ok(()),
+            |task| {
+                reserved = Some(task.clone());
+                fs::write(crate::artifacts_dir(repo, &task.slug).join("attachments"), b"blocked").map_err(|error| error.to_string())
+            },
+        )
+        .unwrap();
+        assert_eq!(reply.creation, "partial", "{:?}", reply.errors);
+        assert_eq!(reply.start, "not_requested");
+        assert!(reply.sessions.is_empty());
+        assert!(reply.errors.iter().any(|error| error.stage == "install_inputs" && error.code == "provisioning_failed"));
+        let task = reply.task.expect("installation failure must keep the reserved identity");
+        let reserved = reserved.unwrap();
+        assert_eq!((&task.slug, &task.branch, &task.worktree), (&reserved.slug, &reserved.branch, &reserved.worktree));
+        let persisted = crate::read_task(repo, &task.slug).unwrap();
+        assert_eq!((&persisted.branch, &persisted.worktree), (&task.branch, &task.worktree));
+        assert!(Path::new(&task.worktree).is_dir());
+        assert_eq!(git(Path::new(&task.worktree), &["branch", "--show-current"]).trim(), task.branch);
+        assert_eq!(crate::list_tasks_for_repo(repo).len(), 1);
+        let state = read_execution_state(repo, &task.slug).unwrap();
+        assert_eq!(state.creation, "partial");
+        assert!(state.creation_error.unwrap().contains("install_inputs"));
+        assert!(task_playbook_path(repo, &task.slug).unwrap().is_file());
+        assert_eq!(fs::read(crate::artifacts_dir(repo, &task.slug).join("attachments")).unwrap(), b"blocked");
+    }
+
+    #[test]
+    fn attachment_rejection_preserves_original_ticket_override() {
+        let fixture = AttachmentRepo(repo());
+        let repo = &fixture.0;
+        let mut request = request("attachment-original-ticket");
+        let original = "# Original\r\nKeep exactly.\r\n\rA final line without newline";
+        request.original_ticket = Some(original.into());
+        request.attachments = vec![
+            TaskAttachment {
+                name: "oversize.png".into(),
+                bytes: vec![1; 25 * 1024 * 1024 + 1],
+            },
+            TaskAttachment {
+                name: "retained.png".into(),
+                bytes: vec![0, 255, 128],
+            },
+        ];
+        let reply = provision_task(repo, "", "fixture", &request).unwrap();
+        assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+        let artifacts = crate::artifacts_dir(repo, &reply.task.unwrap().slug);
+        assert_eq!(fs::read(artifacts.join("00-ticket.md")).unwrap(), original.as_bytes());
+        assert!(!artifacts.join("attachments/oversize.png").exists());
+        assert_eq!(fs::read(artifacts.join("attachments/retained.png")).unwrap(), [0, 255, 128]);
+        assert_eq!(reply.errors.len(), 1, "{:?}", reply.errors);
+        assert_eq!(reply.errors[0].stage, "attachments");
+        assert_eq!(reply.errors[0].code, "import_failed");
+        assert!(reply.errors[0].message.contains("oversize.png"));
     }
 }

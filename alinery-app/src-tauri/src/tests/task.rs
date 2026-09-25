@@ -2161,3 +2161,150 @@ fn provisioning_reserves_branches_before_git_and_retains_failed_intent() {
     assert!(!task_dir(&repo, "child").exists());
     fs::remove_dir_all(repo).unwrap();
 }
+
+// Clean up real preparation/provisioning fixtures even when a regression assertion fails.
+struct PreparedAttachmentRepo(std::path::PathBuf);
+
+impl Drop for PreparedAttachmentRepo {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn prepared_attachment_request(entries: Vec<String>) -> alinery_core::CreateTaskRequest {
+    // Use preparation's public serialized reply rather than exposing its private fields.
+    // Consume each representation before decoding the next; never build JSON byte arrays.
+    let mut package = serde_json::to_value(crate::prepare_task_attachments(entries)).unwrap();
+    package["name"] = serde_json::json!("Prepared and pasted evidence");
+    package["playbook"] = serde_json::json!({
+        "reference": { "scope": "bundled", "key": "one-shot" },
+        "source": include_str!("../../playbooks/one-shot/playbook.md")
+    });
+    package["start"] = serde_json::json!(false);
+    serde_json::from_value(package).unwrap()
+}
+
+#[test]
+fn prepared_paths_and_pasted_bytes_share_durable_admission() {
+    let fixture = PreparedAttachmentRepo(init_git_test_repo("prepared-pasted-admission"));
+    let repo = &fixture.0;
+    let image = include_bytes!("../../icons/icon.png");
+    let first = repo.join("first");
+    let second = repo.join("second");
+    fs::create_dir_all(&first).unwrap();
+    fs::create_dir_all(&second).unwrap();
+    fs::write(first.join("trace.log"), b"first").unwrap();
+    fs::write(second.join("trace.log"), b"second").unwrap();
+    let missing = repo.join("missing.png").display().to_string();
+    let url = "https://example.invalid/image.png";
+    let mut entries = vec![
+        first.join("trace.log").display().to_string(),
+        url.into(),
+        missing.clone(),
+        second.join("trace.log").display().to_string(),
+    ];
+    // Sparse source files keep fixture construction bounded; preparation reads real bytes.
+    // Leave precisely one encoded image's allowance after the path-prepared package.
+    for index in 0..4 {
+        let source = repo.join(format!("part-{index}.bin"));
+        let length = if index == 3 {
+            MAX_ATTACHMENT_BYTES - image.len() as u64 - 11
+        } else {
+            MAX_ATTACHMENT_BYTES
+        };
+        fs::File::create(&source).unwrap().set_len(length).unwrap();
+        entries.push(source.display().to_string());
+    }
+    let mut request = prepared_attachment_request(entries);
+    assert_eq!(request.attachment_urls, [url]);
+    assert_eq!(request.attachment_errors.len(), 1, "{:?}", request.attachment_errors);
+    assert!(request.attachment_errors[0].contains(&missing));
+    assert_eq!(
+        request.attachments.iter().map(|attachment| attachment.bytes.len() as u64).sum::<u64>(),
+        MAX_ATTACHMENT_SET_BYTES - image.len() as u64
+    );
+    request.attachments.extend([
+        alinery_core::TaskAttachment {
+            name: "pasted.png".into(),
+            bytes: image.to_vec(),
+        },
+        alinery_core::TaskAttachment {
+            name: "over-budget.png".into(),
+            bytes: image.to_vec(),
+        },
+    ]);
+    let reply = alinery_core::provision_task(repo, "", "fixture", &request).unwrap();
+    assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+    let artifacts = artifacts_dir(repo, &reply.task.unwrap().slug);
+    let attachments = artifacts.join("attachments");
+    assert_eq!(fs::read(attachments.join("trace.log")).unwrap(), b"first");
+    assert_eq!(fs::read(attachments.join("trace-2.log")).unwrap(), b"second");
+    assert_eq!(fs::read(attachments.join("pasted.png")).unwrap(), image.as_slice());
+    assert!(
+        !attachments.join("over-budget.png").exists(),
+        "separately valid batches must share the final 100 MiB allowance"
+    );
+    let stored: u64 = fs::read_dir(&attachments).unwrap().map(|entry| entry.unwrap().metadata().unwrap().len()).sum();
+    assert_eq!(stored, MAX_ATTACHMENT_SET_BYTES);
+    assert_eq!(reply.errors.len(), 2, "{:?}", reply.errors);
+    assert_eq!(reply.errors[0].message, request.attachment_errors[0]);
+    assert!(reply.errors[1].message.contains("over-budget.png"));
+    for error in &reply.errors {
+        assert_eq!(error.stage, "attachments");
+        assert_eq!(error.code, "import_failed");
+    }
+    let ticket = fs::read_to_string(artifacts.join("00-ticket.md")).unwrap();
+    assert!(ticket.contains(url));
+    for error in &reply.errors {
+        assert!(ticket.contains(&error.message), "{ticket}");
+    }
+    let references: Vec<_> = ticket.lines().filter_map(|line| line.strip_prefix("- attachments/")).collect();
+    assert_eq!(
+        references,
+        ["trace.log", "trace-2.log", "part-0.bin", "part-1.bin", "part-2.bin", "part-3.bin", "pasted.png"],
+        "{ticket}"
+    );
+    for (reference, input) in references.into_iter().zip(&request.attachments) {
+        assert_eq!(fs::read(attachments.join(reference)).unwrap(), input.bytes);
+    }
+}
+
+#[test]
+fn preparation_preserves_file_and_set_limits_with_empty_generic_files() {
+    let fixture = PreparedAttachmentRepo(unique_attachment_temp("prepare-file-limits"));
+    let repo = &fixture.0;
+    let directory = repo.join("directory");
+    fs::create_dir_all(&directory).unwrap();
+    let oversize = repo.join("oversize.bin");
+    fs::File::create(&oversize).unwrap().set_len(MAX_ATTACHMENT_BYTES + 1).unwrap();
+    let empty = repo.join("empty.txt");
+    fs::File::create(&empty).unwrap();
+    let extra = repo.join("extra.bin");
+    fs::write(&extra, [1]).unwrap();
+    let mut entries = vec![directory.display().to_string(), oversize.display().to_string()];
+    for index in 0..4 {
+        let path = repo.join(format!("exact-{index}.bin"));
+        fs::File::create(&path).unwrap().set_len(MAX_ATTACHMENT_BYTES).unwrap();
+        entries.push(path.display().to_string());
+    }
+    entries.push(extra.display().to_string());
+    entries.push(empty.display().to_string());
+    let prepared = prepared_attachment_request(entries);
+    assert!(prepared.attachment_urls.is_empty());
+    assert_eq!(
+        prepared.attachments.iter().map(|attachment| attachment.name.as_str()).collect::<Vec<_>>(),
+        ["exact-0.bin", "exact-1.bin", "exact-2.bin", "exact-3.bin", "empty.txt"]
+    );
+    for attachment in &prepared.attachments[..4] {
+        assert_eq!(attachment.bytes.len() as u64, MAX_ATTACHMENT_BYTES);
+        assert!(attachment.bytes.iter().all(|byte| *byte == 0));
+    }
+    assert!(
+        prepared.attachments[4].bytes.is_empty(),
+        "empty generic files remain valid even when the byte allowance is full"
+    );
+    assert_eq!(prepared.attachment_errors.len(), 3, "{:?}", prepared.attachment_errors);
+    for (error, source) in prepared.attachment_errors.iter().zip([directory, oversize, extra]) {
+        assert!(error.contains(source.to_str().unwrap()), "{error}");
+    }
+}

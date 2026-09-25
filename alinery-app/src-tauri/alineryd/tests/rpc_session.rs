@@ -370,6 +370,51 @@ impl Drop for Fixture {
     }
 }
 
+#[test]
+fn create_task_persists_image_evidence_and_resolvable_references() {
+    // Valid 1x1 PNG/JPEG files, not just MIME labels on arbitrary binary bytes.
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGOQC5gGAAGUAQU3cfpMAAAAAElFTkSuQmCC";
+    let jpeg = "/9j/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9sAQwACAgICAgIDAgIDBQMDAwUGBQUFBQYIBgYGBgYICggICAgICAoKCgoKCgoKDAwMDAwMDg4ODg4PDw8PDw8PDw8P/9sAQwECAgIEBAQHBAQHEAsJCxAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ/90ABAAB/9oADAMBAAIRAxEAPwD4jooor+rD8DP/2Q==";
+    let fixture = Fixture::new();
+    let created = fixture.rpc(json!({"op": "create_task", "request": {
+        "name": "Image evidence", "requested_slug": "image-evidence",
+        "playbook": {"reference": {"scope": "repo", "key": "transport"}, "source": PLAYBOOK},
+        "attachments": [
+            {"name": "shot.png", "bytes": png},
+            {"name": "shot.png", "bytes": png},
+            {"name": "photo.jpg", "bytes": jpeg}
+        ],
+        "attachment_urls": ["https://example.invalid/evidence"],
+        "attachment_errors": ["missing.log — unavailable"],
+        "start": false
+    }}));
+    assert_eq!(created["creation"], "ready", "{created}");
+    assert_eq!(created["start"], "not_requested", "{created}");
+    let slug = created["task"]["slug"].as_str().unwrap();
+    let artifacts = alinery_core::artifacts_dir(&fixture.root, slug);
+    for (name, encoded) in [("shot.png", png), ("shot-2.png", png), ("photo.jpg", jpeg)] {
+        let expected: alinery_core::TaskAttachment = serde_json::from_value(json!({"name": name, "bytes": encoded})).unwrap();
+        assert_eq!(fs::read(artifacts.join("attachments").join(name)).unwrap(), expected.bytes);
+    }
+    let ticket = fs::read_to_string(artifacts.join("00-ticket.md")).unwrap();
+    let references: Vec<_> = ticket.lines().filter_map(|line| line.strip_prefix("- attachments/")).collect();
+    assert_eq!(references, ["shot.png", "shot-2.png", "photo.jpg"], "{ticket}");
+    for name in references {
+        assert!(artifacts.join("attachments").join(name).is_file());
+    }
+    assert!(ticket.contains("https://example.invalid/evidence"));
+    assert!(ticket.contains("missing.log — unavailable"));
+    assert_eq!(
+        created["errors"],
+        json!([{"stage": "attachments", "code": "import_failed", "message": "missing.log — unavailable"}])
+    );
+    let listed = alinery_core::list_artifacts_with_metadata_for(&fixture.root, slug).unwrap();
+    let mut attachments: Vec<_> = listed.iter().filter(|item| item.attachment).map(|item| item.name.as_str()).collect();
+    attachments.sort_unstable();
+    assert_eq!(attachments, ["photo.jpg", "shot-2.png", "shot.png"]);
+    assert_eq!(alinery_core::visible_artifact_names(&fixture.root, slug).unwrap(), ["00-ticket.md"]);
+}
+
 fn start_daemon(root: &Path, runner: &Path, capture: &Path, protected_host: Option<&Path>) -> (Child, PathBuf) {
     let socket = root.join(".alinery/alineryd.sock");
     let mut command = Command::new(env!("CARGO_BIN_EXE_alineryd"));

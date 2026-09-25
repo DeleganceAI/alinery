@@ -1,4 +1,4 @@
-/** Caps duplicated from `task.rs` (`MAX_CHAT_IMAGE_BYTES`, `MAX_ATTACHMENT_BYTES`). No FFI share. */
+/** Caps mirror app `task.rs` (images) and core `task_creation.rs` (files). No FFI share. */
 export const MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024;
 export const MAX_CHAT_FILE_BYTES = 25 * 1024 * 1024;
 export const MAX_CHAT_ATTACHMENTS = 8;

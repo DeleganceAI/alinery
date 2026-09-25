@@ -6,10 +6,51 @@ import { PlaybookGraph } from "../PlaybookGraph";
 import { Checkbox, InlineStatus, ModelInput, ompDefaultModel, orderPlaybookCandidates, playbookRefKey, samePlaybookRef } from "../shared";
 import * as taskMutationGuard from "../taskMutationGuard";
 import { toast } from "../toast";
-import type { BoardTask, DraftOrigin, PickerPreferences, PlaybookCandidate, PlaybookRef, ScopedPlaybook, TargetedCreateResult } from "../types";
+import type { BoardTask, DraftOrigin, PickerPreferences, PlaybookCandidate, PlaybookRef, ScopedPlaybook, TargetedCreateResult, TaskAttachment } from "../types";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 type ErrState = { msg: string; detail: string } | null;
+type PastedImage = { id: string; file: File; name: string; previewUrl: string; previewUnavailable: boolean };
+
+const MAX_PASTED_IMAGE_BYTES = 25 * 1024 * 1024;
+const MAX_PASTED_SET_BYTES = 100 * 1024 * 1024;
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "image/avif": "avif",
+  "image/bmp": "bmp",
+  "image/tiff": "tiff",
+  "image/heic": "heic",
+  "image/heif": "heif",
+  "image/x-icon": "ico",
+  "image/vnd.microsoft.icon": "ico",
+  "image/svg+xml": "svg",
+};
+
+function encodeImage(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("Couldn't read pasted image."));
+    reader.onabort = () => reject(new Error("Pasted image read was aborted."));
+    reader.onload = () => {
+      const result = reader.result;
+      const comma = typeof result === "string" ? result.indexOf(",") : -1;
+      if (typeof result !== "string" || comma < 0 || !result.slice(0, comma).endsWith(";base64")) {
+        reject(new Error("Invalid pasted image encoding."));
+        return;
+      }
+      const bytes = result.slice(comma + 1);
+      if (!bytes || bytes.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(bytes)) {
+        reject(new Error("Invalid pasted image encoding."));
+        return;
+      }
+      resolve(bytes);
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 const slugifyTaskName = (value: string) => {
   const slug = value
@@ -47,6 +88,10 @@ export function CreateTaskPage({
   const [desc, setDesc] = useState("");
   const [evidence, setEvidence] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
+  const [images, setImages] = useState<PastedImage[]>([]);
+  const imagesRef = useRef<PastedImage[]>([]);
+  const attachmentGeneration = useRef(0);
+  const [pasteErrors, setPasteErrors] = useState<string[]>([]);
   const [attachmentDraft, setAttachmentDraft] = useState("");
   const [dropping, setDropping] = useState(false);
   const [created, setCreated] = useState<TargetedCreateResult | null>(null);
@@ -84,6 +129,8 @@ export function CreateTaskPage({
   const [modelNeedsReselection, setModelNeedsReselection] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   const creatingRef = useRef(false);
+  const clearingRef = useRef(false);
+  const [clearing, setClearing] = useState(false);
   const draftSaveInFlightRef = useRef<Promise<void>>(Promise.resolve());
   const draftIdentities = useRef(new Map(initialDraft ? [[initialDraft.repo_path, initialDraft.slug]] : []));
   const draftWriteGeneration = useRef(0);
@@ -102,6 +149,69 @@ export function CreateTaskPage({
   // The busy flag is the shared guard, not this component's own: a create started from
   // the ⌘N form and a duplicate started from a board are the same slot.
   const creating = mutationKind === "create";
+
+  const updateImages = (next: PastedImage[]) => {
+    imagesRef.current = next;
+    setImages(next);
+  };
+
+  useEffect(
+    () => () => {
+      attachmentGeneration.current += 1;
+      for (const image of imagesRef.current) URL.revokeObjectURL(image.previewUrl);
+      imagesRef.current = [];
+    },
+    [],
+  );
+
+  const onPasteImage = (event: React.ClipboardEvent<HTMLTextAreaElement | HTMLInputElement>) => {
+    const errors: string[] = [];
+    const files: File[] = [];
+    let hasImage = false;
+    for (const item of Array.from(event.clipboardData.items)) {
+      if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+      hasImage = true;
+      const file = item.getAsFile();
+      if (file?.type.startsWith("image/")) files.push(file);
+      else errors.push("Couldn't read an image from the clipboard.");
+    }
+    if (!files.length) {
+      for (const file of Array.from(event.clipboardData.files)) {
+        if (file.type.startsWith("image/")) files.push(file);
+      }
+    }
+    if (!hasImage && !files.length) return;
+    if (!event.clipboardData.getData("text/plain")) event.preventDefault();
+    if (creatingRef.current) return;
+    let total = imagesRef.current.reduce((sum, image) => sum + image.file.size, 0);
+    const added: PastedImage[] = [];
+    for (const file of files) {
+      if (!file.size) {
+        errors.push(`${file.name} — pasted image is empty.`);
+      } else if (file.size > MAX_PASTED_IMAGE_BYTES) {
+        errors.push(`${file.name} — pasted image exceeds 25 MiB.`);
+      } else if (file.size > MAX_PASTED_SET_BYTES - total) {
+        errors.push(`${file.name} — pasted images would exceed 100 MiB.`);
+      } else {
+        const id = crypto.randomUUID();
+        const extension =
+          file.name
+            .split(/[\\/]/)
+            .pop()
+            ?.match(/\.(png|jpe?g|gif|webp|avif|bmp|tiff?|heic|heif|ico|svg)$/i)?.[1]
+            .toLowerCase() ??
+          IMAGE_EXTENSIONS[file.type.toLowerCase()] ??
+          "img";
+        added.push({ id, file, name: `pasted-image-${id}.${extension}`, previewUrl: URL.createObjectURL(file), previewUnavailable: false });
+        total += file.size;
+      }
+    }
+    setPasteErrors(errors);
+    if (added.length) {
+      dirtyRef.current = true;
+      updateImages([...imagesRef.current, ...added]);
+    }
+  };
 
   useEffect(() => {
     const t = window.setTimeout(() => titleRef.current?.focus(), 40);
@@ -291,7 +401,9 @@ export function CreateTaskPage({
   // onDragDropEvent carries `paths` on "enter" and "drop" only, and "enter" fires first —
   // so the highlight predicate is enter||over, not drop.
   useEffect(() => {
+    let alive = true;
     const un = ipc.getCurrentWebview().onDragDropEvent((event) => {
+      if (!alive || creatingRef.current) return;
       if (event.payload.type === "enter" || event.payload.type === "over") {
         setDropping(true);
         return;
@@ -306,12 +418,14 @@ export function CreateTaskPage({
       setAttachments((cur) => [...new Set([...cur, ...paths])]);
     });
     return () => {
+      alive = false;
       un.then((f) => f());
     };
   }, []);
 
   const sourceReady = selectedSource !== null && samePlaybookRef(selectedSource.source.reference, playbook) && !catalogLoading && !playbookNeedsReselection;
   const create = () => {
+    if (clearingRef.current) return;
     const n = name.trim();
     if (!n || !taskSlug || !sourceReady || !selectedSource || modelNeedsReselection || !validCap) return;
     if (creatingRef.current) {
@@ -322,8 +436,11 @@ export function CreateTaskPage({
     if (!taskMutationGuard.claim("create")) return;
     creatingRef.current = true;
     draftWriteGeneration.current += 1;
+    attachmentGeneration.current += 1;
     dirtyRef.current = false;
     const target = repoPath;
+    const capturedPaths = attachments;
+    const capturedImages = imagesRef.current;
     flushSync(() => {
       onBusy("create");
       setErr(null);
@@ -333,12 +450,17 @@ export function CreateTaskPage({
     afterPaint()
       .then(() => draftSaveInFlightRef.current)
       .then(async () => {
-        const prepared = await ipc.prepareTaskAttachments(attachments);
+        const prepared = await ipc.prepareTaskAttachments(capturedPaths);
+        const encodedImages: TaskAttachment[] = [];
+        for (const image of capturedImages) {
+          encodedImages.push({ name: image.name, bytes: await encodeImage(image.file) });
+        }
         provisioningRequested = true;
         return ipc.createTaskForRepo({
           repoPath: target,
           request: {
             ...prepared,
+            attachments: [...prepared.attachments, ...encodedImages],
             draft_slug: draftIdentities.current.get(target) || undefined,
             name: n,
             description: desc,
@@ -399,6 +521,7 @@ export function CreateTaskPage({
   };
 
   const addAttachmentEntries = (raw: string) => {
+    if (creatingRef.current) return;
     const next = raw
       .split(",")
       .map((s) => s.trim())
@@ -409,16 +532,22 @@ export function CreateTaskPage({
     setAttachmentDraft("");
   };
 
-  const pickAttachments = () =>
+  const pickAttachments = () => {
+    if (creatingRef.current) return;
+    const generation = attachmentGeneration.current;
     ipc
       .pickAttachmentFilesDialog()
       .then((paths) => {
+        if (creatingRef.current || generation !== attachmentGeneration.current) return;
         if (paths.length) {
           dirtyRef.current = true;
           setAttachments((cur) => [...new Set([...cur, ...paths])]);
         }
       })
-      .catch((e) => setErr({ msg: "Couldn't add attachments.", detail: String(e) }));
+      .catch((e) => {
+        if (!creatingRef.current && generation === attachmentGeneration.current) setErr({ msg: "Couldn't add attachments.", detail: String(e) });
+      });
+  };
 
   const importLinear = () => {
     const r = ref.trim();
@@ -485,7 +614,7 @@ export function CreateTaskPage({
   };
 
   const selectRepo = (nextRepo: string) => {
-    if (nextRepo === repoPath) return;
+    if (nextRepo === repoPath || clearingRef.current) return;
     repoRef.current = nextRepo;
     dirtyRef.current = false;
     setRepoPath(nextRepo);
@@ -495,10 +624,16 @@ export function CreateTaskPage({
   };
 
   const clearDraft = () => {
-    if (creatingRef.current) return;
+    if (creatingRef.current || clearingRef.current) return;
+    clearingRef.current = true;
+    setClearing(true);
     const slug = draftSlug;
     draftWriteGeneration.current += 1;
     const reset = () => {
+      attachmentGeneration.current += 1;
+      for (const image of imagesRef.current) URL.revokeObjectURL(image.previewUrl);
+      updateImages([]);
+      setPasteErrors([]);
       dirtyRef.current = false;
       setDraftSlug("");
       setName("");
@@ -538,6 +673,10 @@ export function CreateTaskPage({
       })
       .catch((e) => {
         if (repoRef.current === target) setErr({ msg: "Couldn't clear the draft.", detail: String(e) });
+      })
+      .finally(() => {
+        clearingRef.current = false;
+        setClearing(false);
       });
   };
 
@@ -584,7 +723,7 @@ export function CreateTaskPage({
         <h1 className="create-title">New task</h1>
         <label className="create-field">
           <span>Repository</span>
-          <select className="field-input" value={repoPath} disabled={creating} onChange={(e) => selectRepo(e.target.value)}>
+          <select className="field-input" value={repoPath} disabled={creating || clearing} onChange={(e) => selectRepo(e.target.value)}>
             {knownRepos.map((repo) => (
               <option key={repo} value={repo}>
                 {repo}
@@ -671,6 +810,7 @@ export function CreateTaskPage({
           className="field-input description"
           rows={7}
           value={desc}
+          onPaste={onPasteImage}
           onChange={(e) => {
             dirtyRef.current = true;
             setDesc(e.target.value);
@@ -683,6 +823,7 @@ export function CreateTaskPage({
             className="field-input"
             rows={4}
             value={evidence}
+            onPaste={onPasteImage}
             onChange={(e) => {
               dirtyRef.current = true;
               setEvidence(e.target.value);
@@ -696,7 +837,11 @@ export function CreateTaskPage({
             <input
               className="field-input grow"
               value={attachmentDraft}
-              onChange={(e) => setAttachmentDraft(e.target.value)}
+              disabled={creatingRef.current}
+              onPaste={onPasteImage}
+              onChange={(e) => {
+                if (!creatingRef.current) setAttachmentDraft(e.target.value);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
@@ -705,7 +850,7 @@ export function CreateTaskPage({
               }}
               placeholder="Paste file paths or http(s) URLs, comma-separated…"
             />
-            <button className="btn ghost small" type="button" onClick={pickAttachments}>
+            <button className="btn ghost small" type="button" disabled={creatingRef.current} onClick={pickAttachments}>
               Add files…
             </button>
           </div>
@@ -717,7 +862,10 @@ export function CreateTaskPage({
               <button
                 className="btn ghost small"
                 type="button"
+                disabled={creatingRef.current}
+                aria-label={`Remove ${entry}`}
                 onClick={() => {
+                  if (creatingRef.current) return;
                   dirtyRef.current = true;
                   setAttachments((cur) => cur.filter((x) => x !== entry));
                 }}
@@ -726,6 +874,46 @@ export function CreateTaskPage({
               </button>
             </div>
           ))}
+          {images.map((image) => (
+            <div key={image.id} className="attachment-row">
+              {image.previewUnavailable ? (
+                <span className="hint">Preview unavailable</span>
+              ) : (
+                <img
+                  className="attachment-thumbnail"
+                  src={image.previewUrl}
+                  alt={`Preview of ${image.name}`}
+                  onError={() => updateImages(imagesRef.current.map((item) => (item.id === image.id ? { ...item, previewUnavailable: true } : item)))}
+                />
+              )}
+              <span className="attachment-row-name" title={image.name}>
+                {image.name}
+              </span>
+              <span>
+                {image.file.size >= 1024 * 1024
+                  ? `${(image.file.size / (1024 * 1024)).toFixed(1)} MiB`
+                  : image.file.size >= 1024
+                    ? `${(image.file.size / 1024).toFixed(1)} KiB`
+                    : `${image.file.size} B`}
+              </span>
+              <button
+                className="btn ghost small"
+                type="button"
+                disabled={creatingRef.current}
+                aria-label={`Remove ${image.name}`}
+                onClick={() => {
+                  if (creatingRef.current) return;
+                  URL.revokeObjectURL(image.previewUrl);
+                  updateImages(imagesRef.current.filter((item) => item.id !== image.id));
+                  dirtyRef.current = true;
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          {pasteErrors.length > 0 && <InlineStatus tone="error">{pasteErrors.join("\n")}</InlineStatus>}
+          <div className="hint">Paste images in Description, Evidence / pointers, or Attachments. Images attach on Create and are not saved with the draft.</div>
           <div className="hint">Local files are copied into the task. URLs are recorded, never fetched. Drop files anywhere on this form.</div>
         </div>
         {!!selectedSource?.definition.step.length && (
@@ -839,14 +1027,14 @@ export function CreateTaskPage({
               Open task
             </button>
           ) : (
-            <button type="button" className="btn" disabled={creating || creatingRef.current || !!createBlockedReason || !taskSlug} onClick={create}>
+            <button type="button" className="btn" disabled={creating || clearing || creatingRef.current || !!createBlockedReason || !taskSlug} onClick={create}>
               {creating ? "Creating…" : "Create task"}
             </button>
           )}
           {!created && createBlockedReason && !creating && <span className="hint">{createBlockedReason}</span>}
           {draftSlug ? (
-            <button className="btn ghost" disabled={creating || creatingRef.current} onClick={clearDraft} type="button">
-              Clear draft
+            <button className="btn ghost" disabled={creating || clearing || creatingRef.current} onClick={clearDraft} type="button">
+              {clearing ? "Clearing draft…" : "Clear draft"}
             </button>
           ) : null}
           <button type="button" className="btn ghost" onClick={onCancel}>
