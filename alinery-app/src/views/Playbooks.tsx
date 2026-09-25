@@ -45,7 +45,27 @@ const blankDefinition: NormalizedPlaybook = {
   section_order: ["work"],
 };
 const scopeLabels = { repo: "Repository", global: "Global", bundled: "Bundled" };
-const errorText = (error: unknown) => (typeof error === "object" ? JSON.stringify(error) : String(error));
+// A rejected save/import/publish throws its validation result, so the diagnostics ride
+// along on the error. Keep only well-formed entries.
+const validationDiagnostics = (error: unknown): PlaybookValidationError[] => {
+  if (typeof error !== "object" || error === null || !("diagnostics" in error)) return [];
+  const raw = error.diagnostics;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((item): item is PlaybookValidationError => item !== null && typeof item === "object" && typeof item.code === "string" && typeof item.message === "string");
+};
+// One diagnostic per line (see .inline-status-msg, which keeps the breaks). The raw
+// result object is unreadable and repeats the field names the messages already carry.
+const errorText = (error: unknown) => {
+  const diagnostics = validationDiagnostics(error);
+  if (diagnostics.length > 0) {
+    return diagnostics.map((item) => `${item.code}: ${item.message}${item.line === null ? "" : ` · line ${item.line}`}`).join("\n");
+  }
+  if (typeof error === "object" && error !== null) {
+    if ("message" in error && typeof error.message === "string" && error.message) return error.message;
+    return JSON.stringify(error);
+  }
+  return String(error);
+};
 const libraryColumns = [
   { field: "name", label: "Playbook Name", initialDirection: "asc" },
   { field: "source", label: "Source", initialDirection: "asc" },
@@ -317,12 +337,8 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       setNotice("Definition saved.");
       await refresh(owner);
     } catch (e) {
-      if (e && typeof e === "object" && "diagnostics" in e && Array.isArray(e.diagnostics))
-        setDiagnostics(
-          e.diagnostics.filter(
-            (item): item is PlaybookValidationError => item !== null && typeof item === "object" && typeof item.code === "string" && typeof item.message === "string",
-          ),
-        );
+      const diagnostics = validationDiagnostics(e);
+      if (diagnostics.length > 0) setDiagnostics(diagnostics);
       setError(errorText(e));
     } finally {
       setBusy(false);
@@ -415,7 +431,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     }
     if (result.kind === "invalid") {
       setPublishDiagnostics(result.diagnostics);
-      setError(result.diagnostics.map((item) => `${item.code}: ${item.message}`).join("\n"));
+      setError(errorText(result));
       return;
     }
     if (result.kind === "failed") {
@@ -467,7 +483,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       return;
     }
     if (result.kind === "invalid") {
-      setError(result.diagnostics.map((item) => `${item.code}: ${item.message}`).join("\n"));
+      setError(errorText(result));
       return;
     }
     if (result.kind === "failed") {

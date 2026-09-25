@@ -461,6 +461,27 @@ describe("graph-first playbook management", () => {
     expect(screen.queryByRole("region", { name: "Not saved graph" })).toBeNull();
   });
 
+  it("shows a save rejection's diagnostics one per line, not the raw result object", async () => {
+    render(
+      <>
+        <Playbooks repoPath="/repo" onCreateTask={onCreateTask} />
+        <ConfirmHost />
+      </>,
+    );
+    await openRepo();
+    edit(JSON.stringify({ ...definition, title: "Not saved" }));
+    mocks.savePlaybookSource.mockRejectedValueOnce({
+      kind: "invalid",
+      diagnostics: [
+        { code: "invalid_key", message: "playbook key must be a lowercase ASCII slug", line: null, field: "key", severity: "error" },
+        { code: "invalid_key", message: "unsafe playbook key 'spec driven development'", line: 3, field: "key", severity: "error" },
+      ],
+    });
+    await overwrite();
+    const box = await screen.findByText(/playbook key must be a lowercase ASCII slug/, { selector: ".inline-status-msg" });
+    expect(box.textContent).toBe("invalid_key: playbook key must be a lowercase ASCII slug\ninvalid_key: unsafe playbook key 'spec driven development' · line 3");
+  });
+
   it("requires confirmation for bundled deletion and keeps the definition available after failure", async () => {
     render(
       <>

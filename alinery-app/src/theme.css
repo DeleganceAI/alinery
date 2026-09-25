@@ -880,6 +880,11 @@ main {
   min-width: 0;
   flex: 1;
 }
+/* A validation result is several diagnostics; the message carries one per line.
+   pre-line keeps the breaks while still collapsing incidental indentation. */
+.inline-status-msg {
+  white-space: pre-line;
+}
 .inline-status-detail {
   margin: 6px 0 0;
   font-family: var(--font-mono);
