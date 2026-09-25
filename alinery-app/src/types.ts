@@ -595,6 +595,56 @@ export type PickerPreference = {
 export type PickerPreferences = { order: PlaybookRef[]; entries: PickerPreference[] };
 export type PlaybookCatalog = { candidates: PlaybookCandidate[]; picker_preferences: PickerPreferences; diagnostics: PlaybookValidationError[] };
 export type PlaybookValidation = { definition: NormalizedPlaybook | null; diagnostics: PlaybookValidationError[] };
+export type CommunitySummary = {
+  id: string;
+  label: string;
+  playbookKey: string;
+  title: string;
+  description: string;
+  defaultHarness: string;
+  hasCodingStep: boolean;
+  stepCount: number;
+  version: number;
+  bodySha256: string;
+  publishedAt: string;
+  updatedAt: string;
+};
+export type CommunityPlaybookPage = { playbooks: CommunitySummary[]; nextCursor: string | null };
+export type CommunityImportRow = { id: string; label: string; playbookKey: string; localKey: string; importedVersion: number };
+export type DownloadStatusRow = {
+  id: string;
+  label: string;
+  playbookKey: string;
+  localKey: string;
+  title: string | null;
+  description: string | null;
+  importedVersion: number;
+  remoteVersion: number | null;
+  updateAvailable: boolean;
+  remoteMissing: boolean;
+  localMissing: boolean;
+  locallyEdited: boolean;
+  error: string | null;
+};
+export type ImportResult =
+  | { kind: "saved"; reference: PlaybookRef; importedVersion: number; localSha256: string }
+  | { kind: "needs_account" }
+  | { kind: "conflict"; localKey: string }
+  | { kind: "already_downloaded" }
+  | { kind: "invalid"; diagnostics: PlaybookValidationError[] }
+  | { kind: "failed"; message: string };
+export type UpdateResult =
+  | { kind: "saved"; reference: PlaybookRef; importedVersion: number; localSha256: string }
+  | { kind: "needs_account" }
+  | { kind: "edited" }
+  | { kind: "invalid"; diagnostics: PlaybookValidationError[] }
+  | { kind: "failed"; message: string };
+export type PublishResult =
+  | { kind: "saved"; id: string; label: string; playbookKey: string; title: string; description: string; version: number }
+  | { kind: "needs_account" }
+  | { kind: "label_required" }
+  | { kind: "invalid"; diagnostics: PlaybookValidationError[] }
+  | { kind: "failed"; message: string; code: string };
 export type SessionTypeChoice =
   | { kind: "primary"; step_key: string; execution_id?: string; input_occurrence_ids?: string[] }
   | { kind: "auxiliary" }

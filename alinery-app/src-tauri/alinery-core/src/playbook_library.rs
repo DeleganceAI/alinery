@@ -619,6 +619,23 @@ mod tests {
     }
 
     #[test]
+    fn community_imports_file_is_not_a_catalog_candidate() {
+        let sandbox = Sandbox::new();
+        let root = sandbox.roots.repo_dir.join(".alinery/playbooks");
+        fs::create_dir_all(&root).unwrap();
+        let registry = root.join("community-imports.toml");
+        let picker = root.join("picker.toml");
+        let registry_bytes = b"[[import]]\nid = \"8c19b367-d20b-4e60-b2ec-df73d8123aa1\"\n";
+        fs::write(&picker, "order = []\n").unwrap();
+        fs::write(&registry, registry_bytes).unwrap();
+        let catalog = load_playbook_catalog(&sandbox.roots);
+        let keys: Vec<_> = catalog.candidates.iter().map(|candidate| candidate.source.reference.key.as_str()).collect();
+        assert!(!keys.contains(&"community-imports.toml"), "{keys:?}");
+        assert!(!keys.contains(&"picker.toml"), "{keys:?}");
+        assert_eq!(fs::read(&registry).unwrap(), registry_bytes);
+    }
+
+    #[test]
     fn invalid_candidates_never_fall_back_to_another_scope() {
         let sandbox = Sandbox::new();
         let global = save(&sandbox.roots, PlaybookScope::Global, "Personal", false).unwrap();

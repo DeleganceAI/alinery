@@ -1233,6 +1233,97 @@ fn fetch_desktop_credits_after_401(accounts_url: &str, supabase_base: &str, path
     }
 }
 
+/// Outcome of one authenticated HTTP attempt. `Unauthorized` is the only 401 signal.
+/// `Response` is every other completed status, including 404 and 503.
+#[derive(Debug)]
+pub(crate) enum AuthAttempt<T> {
+    Unauthorized,
+    Transport(String),
+    Response(T),
+}
+
+#[derive(Debug)]
+pub(crate) enum AuthRetryError {
+    NeedsAccount,
+    Transport(String),
+}
+
+/// Same refresh-once-then-clear rule as `fetch_desktop_credits_after_401`.
+///
+/// `Unauthorized` is the only 401 signal. A completed 404 or 503 is `Response` and
+/// does not refresh. The second `Unauthorized` clears the pairing refresh just saved,
+/// or the original pairing if refresh did not replace the file.
+pub(crate) fn with_access_token_retry<T, C, R>(auth_path: &Path, mut call: C, refresh: R) -> Result<T, AuthRetryError>
+where
+    C: FnMut(&str) -> AuthAttempt<T>,
+    R: FnOnce(&str) -> Result<String, AccountAuthError>,
+{
+    let tokens = match load_tokens_from_path(auth_path) {
+        Ok(Some(tokens)) if !tokens.access_token.is_empty() => tokens,
+        _ => return Err(AuthRetryError::NeedsAccount),
+    };
+    match call(&tokens.access_token) {
+        AuthAttempt::Response(value) => return Ok(value),
+        AuthAttempt::Transport(message) => return Err(AuthRetryError::Transport(message)),
+        AuthAttempt::Unauthorized => {}
+    }
+    let new_access = match refresh(&tokens.refresh_token) {
+        Ok(access) => access,
+        Err(AccountAuthError::InvalidRefreshToken(_)) => {
+            let _ = clear_if_current(auth_path, generation_of(&tokens));
+            return Err(AuthRetryError::NeedsAccount);
+        }
+        Err(error) => return Err(AuthRetryError::Transport(error.to_string())),
+    };
+    match call(&new_access) {
+        AuthAttempt::Response(value) => Ok(value),
+        AuthAttempt::Transport(message) => Err(AuthRetryError::Transport(message)),
+        AuthAttempt::Unauthorized => {
+            clear_refreshed_pairing(auth_path, &tokens.session_id);
+            Err(AuthRetryError::NeedsAccount)
+        }
+    }
+}
+
+/// Drop the pairing refresh just wrote, or the original file if that write did not land.
+/// Session id survives rotation, so this still matches the credential refresh saved.
+fn clear_refreshed_pairing(path: &Path, session_id: &str) {
+    let Ok(Some(current)) = load_tokens_from_path(path) else {
+        return;
+    };
+    if current.session_id == session_id {
+        let _ = clear_if_current(path, generation_of(&current));
+    }
+}
+
+/// Loads the pairing, refreshes it against `supabase_base`, saves with compare-and-swap,
+/// and returns only the new access token. Does not return the refresh token.
+pub(crate) fn refresh_access_token_at(auth_path: &Path, supabase_base: &str) -> Result<String, AccountAuthError> {
+    let tokens = match load_tokens_from_path(auth_path) {
+        Ok(Some(tokens)) => tokens,
+        Ok(None) => return Err(AccountAuthError::Transient("no pairing".into())),
+        Err(error) => return Err(error),
+    };
+    let refreshed = refresh_account_tokens_at(supabase_base, &tokens)?;
+    match save_if_current(auth_path, generation_of(&tokens), &refreshed) {
+        Ok(_) => Ok(refreshed.access_token),
+        Err(error) => Err(AccountAuthError::Transient(error)),
+    }
+}
+
+pub(crate) fn account_auth_path_for(app: &AppHandle) -> Result<PathBuf, String> {
+    account_auth_path(app)
+}
+
+pub(crate) fn access_token_present(path: &Path) -> bool {
+    matches!(load_tokens_from_path(path), Ok(Some(tokens)) if !tokens.access_token.is_empty())
+}
+
+/// Production refresh for playbook calls. Returns only the new access token.
+pub(crate) fn refresh_paired_access(auth_path: &Path, _refresh_token: &str) -> Result<String, AccountAuthError> {
+    refresh_access_token_at(auth_path, SUPABASE_URL)
+}
+
 fn hosted_catalog_blocking(app: &AppHandle) -> HostedCatalogView {
     let accounts = accounts_url();
     let Ok(auth_path) = account_auth_path(app) else {

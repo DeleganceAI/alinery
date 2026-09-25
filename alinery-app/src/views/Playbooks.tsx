@@ -5,8 +5,20 @@ import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PlaybookSourceEditor } from "../PlaybookSourceEditor";
-import { Checkbox, InlineStatus, LoadingState, playbookRefKey, repoName, samePlaybookRef } from "../shared";
-import type { NormalizedPlaybook, PickerPreference, PickerPreferences, PlaybookCatalog, PlaybookRef, PlaybookValidationError, ScopedPlaybook } from "../types";
+import { Checkbox, Dialog, InlineStatus, LoadingState, playbookRefKey, repoName, samePlaybookRef } from "../shared";
+import { toast } from "../toast";
+import type {
+  CommunityImportRow,
+  CommunitySummary,
+  DownloadStatusRow,
+  NormalizedPlaybook,
+  PickerPreference,
+  PickerPreferences,
+  PlaybookCatalog,
+  PlaybookRef,
+  PlaybookValidationError,
+  ScopedPlaybook,
+} from "../types";
 
 const blankDefinition: NormalizedPlaybook = {
   version: 2,
@@ -64,6 +76,26 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
+  const [libraryTab, setLibraryTab] = useState<"local" | "community">("local");
+  const [communityFilter, setCommunityFilter] = useState<"all" | "downloaded">("all");
+  const [communityQuery, setCommunityQuery] = useState("");
+  const [imports, setImports] = useState<CommunityImportRow[]>([]);
+  const [communityPlaybooks, setCommunityPlaybooks] = useState<CommunitySummary[]>([]);
+  const [communityCursor, setCommunityCursor] = useState<string | null>(null);
+  const [communityReady, setCommunityReady] = useState(false);
+  const [communityError, setCommunityError] = useState("");
+  const [downloadRows, setDownloadRows] = useState<DownloadStatusRow[]>([]);
+  const [signupOpen, setSignupOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [publishPick, setPublishPick] = useState("");
+  const [attest, setAttest] = useState(false);
+  const [publishLabel, setPublishLabel] = useState("");
+  const [showPublishLabel, setShowPublishLabel] = useState(false);
+  const [publishMessage, setPublishMessage] = useState("");
+  const [publishDiagnostics, setPublishDiagnostics] = useState<PlaybookValidationError[]>([]);
+  const pendingSignup = useRef<(() => Promise<void>) | null>(null);
+  const editedImports = useRef(new Set<string>());
+  const communityGeneration = useRef(0);
   const detailRef = useRef<HTMLElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLElement>(null);
@@ -98,6 +130,18 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       .catch((e) => {
         if (live) setCatalogError(errorText(e));
       });
+    if (repoPath) {
+      ipc
+        .listCommunityImports({ repoPath })
+        .then((value) => {
+          if (live) setImports(value.imports);
+        })
+        .catch(() => {
+          if (live) setImports([]);
+        });
+    } else if (live) {
+      setImports([]);
+    }
     return () => {
       live = false;
       preferenceGeneration.current += 1;
@@ -109,11 +153,61 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   }, [open, selected]);
 
   useLayoutEffect(() => {
-    if (open || !returningToLibrary.current) return;
+    if (open || libraryTab !== "local" || !returningToLibrary.current) return;
     returningToLibrary.current = false;
     if (libraryRef.current) libraryRef.current.scrollTop = libraryScrollTop.current;
     searchRef.current?.focus({ preventScroll: true });
-  }, [open]);
+  }, [open, libraryTab]);
+
+  useEffect(() => {
+    if (libraryTab !== "community" || communityFilter !== "all") return;
+    const trimmed = communityQuery.trim();
+    if (trimmed.length > 80) return;
+    const generation = communityGeneration.current + 1;
+    communityGeneration.current = generation;
+    let live = true;
+    const timer = setTimeout(
+      () => {
+        const args = trimmed ? { q: trimmed } : {};
+        void Promise.resolve(ipc.listCommunityPlaybooks(args))
+          .then((page) => {
+            if (!live || generation !== communityGeneration.current) return;
+            if (page) {
+              setCommunityPlaybooks(page.playbooks);
+              setCommunityCursor(page.nextCursor);
+            }
+            setCommunityError("");
+            setCommunityReady(true);
+          })
+          .catch((error) => {
+            if (!live || generation !== communityGeneration.current) return;
+            setCommunityError(errorText(error));
+            setCommunityReady(true);
+          });
+      },
+      communityQuery ? 300 : 0,
+    );
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [libraryTab, communityFilter, communityQuery]);
+
+  useEffect(() => {
+    if (libraryTab !== "community" || communityFilter !== "downloaded" || !repoPath) return;
+    let live = true;
+    ipc
+      .communityDownloadStatus({ repoPath })
+      .then((value) => {
+        if (live) setDownloadRows(value.rows);
+      })
+      .catch((error) => {
+        if (live) setCommunityError(errorText(error));
+      });
+    return () => {
+      live = false;
+    };
+  }, [libraryTab, communityFilter, repoPath]);
 
   const refresh = async (owner: string | undefined) => {
     try {
@@ -242,6 +336,192 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     setNotice("");
     setShowImport(false);
   };
+  const reloadImports = async (owner = repoPath) => {
+    if (!owner) return;
+    try {
+      setImports((await ipc.listCommunityImports({ repoPath: owner })).imports);
+    } catch {
+      setImports([]);
+    }
+  };
+  const showCommunity = async () => {
+    if (libraryTab === "community") return;
+    if (!(await discard())) return;
+    if (open) close();
+    setLibraryTab("community");
+    setShowImport(false);
+  };
+  const showLocal = () => setLibraryTab("local");
+  const openSignup = (action: () => Promise<void>) => {
+    pendingSignup.current = action;
+    setSignupOpen(true);
+  };
+  const withAccount = async (action: () => Promise<void>) => {
+    try {
+      const status = await ipc.accountStatus();
+      if (!status.signedIn) {
+        openSignup(action);
+        return;
+      }
+      await action();
+    } catch (error) {
+      setError(errorText(error));
+    }
+  };
+  const continueSignup = async () => {
+    try {
+      await ipc.accountSignIn();
+      await ipc.accountRefresh().catch(() => undefined);
+      setSignupOpen(false);
+      const action = pendingSignup.current;
+      pendingSignup.current = null;
+      if (action) await action();
+    } catch (error) {
+      if (/cancelled/i.test(String(error))) return;
+      toast.error(`Couldn't sign in: ${String(error)}`);
+    }
+  };
+  const refreshDownloads = async () => {
+    if (!repoPath) return;
+    setDownloadRows((await ipc.communityDownloadStatus({ repoPath })).rows);
+  };
+  const importPublication = async (id: string, overwrite: boolean) => {
+    if (!repoPath) return;
+    const result = await ipc.importCommunityPlaybook({ id, repoPath, overwrite });
+    if (result.kind === "needs_account") {
+      openSignup(() => importPublication(id, overwrite));
+      return;
+    }
+    if (result.kind === "conflict") {
+      if (
+        (await askConfirm({
+          title: `Overwrite repo/${result.localKey}?`,
+          body: `Replace this library definition in ${repoPath}. Existing tasks retain their original definition.`,
+          choices: [
+            { key: "overwrite", label: "Overwrite", tone: "danger" },
+            { key: "cancel", label: "Cancel", tone: "ghost" },
+          ],
+        })) !== "overwrite"
+      )
+        return;
+      await importPublication(id, true);
+      return;
+    }
+    if (result.kind === "invalid") {
+      setPublishDiagnostics(result.diagnostics);
+      setError(result.diagnostics.map((item) => `${item.code}: ${item.message}`).join("\n"));
+      return;
+    }
+    if (result.kind === "failed") {
+      setError(result.message);
+      return;
+    }
+    if (result.kind === "saved") {
+      await refresh(repoPath);
+      await reloadImports(repoPath);
+    }
+  };
+  const updatePublication = async (id: string, overwriteEdited: boolean) => {
+    if (!repoPath) return;
+    if (!overwriteEdited && editedImports.current.has(id)) {
+      if (
+        (await askConfirm({
+          title: "Overwrite local copy?",
+          body: "This local copy has been edited. Update will overwrite it.",
+          choices: [
+            { key: "overwrite", label: "Overwrite", tone: "danger" },
+            { key: "cancel", label: "Cancel", tone: "ghost" },
+          ],
+        })) !== "overwrite"
+      )
+        return;
+      await updatePublication(id, true);
+      return;
+    }
+    const result = await ipc.updateCommunityImport({ id, repoPath, overwriteEdited });
+    if (!result) return;
+    if (result.kind === "needs_account") {
+      openSignup(() => updatePublication(id, overwriteEdited));
+      return;
+    }
+    if (result.kind === "edited") {
+      editedImports.current.add(id);
+      if (
+        (await askConfirm({
+          title: "Overwrite local copy?",
+          body: "This local copy has been edited. Update will overwrite it.",
+          choices: [
+            { key: "overwrite", label: "Overwrite", tone: "danger" },
+            { key: "cancel", label: "Cancel", tone: "ghost" },
+          ],
+        })) !== "overwrite"
+      )
+        return;
+      await updatePublication(id, true);
+      return;
+    }
+    if (result.kind === "invalid") {
+      setError(result.diagnostics.map((item) => `${item.code}: ${item.message}`).join("\n"));
+      return;
+    }
+    if (result.kind === "failed") {
+      setError(result.message);
+      return;
+    }
+    if (result.kind === "saved") {
+      editedImports.current.delete(id);
+      await refresh(repoPath);
+      await reloadImports(repoPath);
+      await refreshDownloads();
+    }
+  };
+  const publishPicked = async () => {
+    if (!repoPath || !publishPick) return;
+    const reference = catalog?.candidates.find((candidate) => playbookRefKey(candidate.source.reference) === publishPick)?.source.reference;
+    if (!reference) return;
+    const labelReady = showPublishLabel && /^[a-z0-9][a-z0-9-]{1,31}$/.test(publishLabel);
+    if (showPublishLabel && !labelReady) return;
+    const result = showPublishLabel
+      ? await ipc.publishCommunityPlaybook({ reference, repoPath, label: publishLabel })
+      : await ipc.publishCommunityPlaybook({ reference, repoPath });
+    if (!result) return;
+    if (result.kind === "needs_account") {
+      setPublishOpen(false);
+      openSignup(() => publishPicked());
+      return;
+    }
+    if (result.kind === "label_required") {
+      setShowPublishLabel(true);
+      return;
+    }
+    if (result.kind === "invalid") {
+      setPublishDiagnostics(result.diagnostics);
+      return;
+    }
+    if (result.kind === "failed") {
+      if (result.message === "That label is already set." || result.message === "That label is taken." || result.message === "The playbook key cannot change. Publish a new one.") {
+        setShowPublishLabel(false);
+      }
+      setPublishMessage(result.message);
+      return;
+    }
+    setPublishOpen(false);
+    if (communityFilter === "all") {
+      const trimmed = communityQuery.trim();
+      if (trimmed.length <= 80) {
+        communityGeneration.current += 1;
+        try {
+          const page = await ipc.listCommunityPlaybooks(trimmed ? { q: trimmed } : {});
+          setCommunityPlaybooks(page.playbooks);
+          setCommunityCursor(page.nextCursor);
+          setCommunityError("");
+          setCommunityReady(true);
+        } catch (error) {
+          setCommunityError(errorText(error));
+        }
+      }
+    }
+  };
   const remove = async () => {
     if (busy || !selected || readOnly || !(await discard())) return;
     if (
@@ -260,6 +540,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     try {
       await ipc.deletePlaybookSource(selected.source.reference, editorRepoPath);
       await refresh(editorRepoPath);
+      await reloadImports(editorRepoPath);
       close();
     } catch (e) {
       setError(errorText(e));
@@ -362,13 +643,44 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
               </button>
             </div>
           )}
+          <div role="tablist" aria-label="Playbook libraries">
+            <button className="tab" type="button" role="tab" aria-selected={libraryTab === "local"} onClick={showLocal}>
+              Local
+            </button>
+            <button className="tab" type="button" role="tab" aria-selected={libraryTab === "community"} onClick={() => void showCommunity()}>
+              Community
+            </button>
+          </div>
           <div className="playbooks-primary-actions" role="group" aria-label="Playbook actions">
-            <button className="btn" type="button" disabled={busy} onClick={() => void begin("new")}>
-              New playbook
-            </button>
-            <button className="btn ghost" type="button" disabled={busy} aria-expanded={showImport} onClick={() => setShowImport(!showImport)}>
-              Import
-            </button>
+            {libraryTab === "local" ? (
+              <>
+                <button className="btn" type="button" disabled={busy} onClick={() => void begin("new")}>
+                  New playbook
+                </button>
+                <button className="btn ghost" type="button" disabled={busy} aria-expanded={showImport} onClick={() => setShowImport(!showImport)}>
+                  Import
+                </button>
+              </>
+            ) : (
+              <button
+                className="btn"
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  void withAccount(async () => {
+                    setPublishPick("");
+                    setAttest(false);
+                    setPublishLabel("");
+                    setShowPublishLabel(false);
+                    setPublishMessage("");
+                    setPublishDiagnostics([]);
+                    setPublishOpen(true);
+                  })
+                }
+              >
+                Publish playbook
+              </button>
+            )}
             {open && selected && (
               <>
                 <button
@@ -412,7 +724,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
             )}
           </div>
         </div>
-        {showImport && (
+        {showImport && libraryTab === "local" && (
           <div className="playbooks-import">
             <label>
               Import local file
@@ -433,7 +745,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
           </div>
         )}
         {error && <InlineStatus tone="error">{error}</InlineStatus>}
-        {!open && (
+        {!open && libraryTab === "local" && (
           <section
             ref={libraryRef}
             className="playbooks-library"
@@ -518,7 +830,18 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                           ))}
                         </td>
                         <td>
-                          <span className="playbooks-library-source">{scopeLabels[candidate.source.reference.scope]}</span>
+                          <span className="playbooks-library-source">
+                            {scopeLabels[candidate.source.reference.scope]}
+                            {candidate.source.reference.scope === "repo" &&
+                              imports
+                                .filter((item) => item.localKey === candidate.source.reference.key)
+                                .map((item) => (
+                                  <span key={item.id}>
+                                    {" "}
+                                    Imported from community {item.label}/{item.playbookKey}
+                                  </span>
+                                ))}
+                          </span>
                         </td>
                         <td>
                           {candidate.modified_at_ms === null ? (
@@ -559,6 +882,193 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
             ))}
             <p className="playbooks-library-note">Library changes apply to future tasks only.</p>
           </section>
+        )}
+        {!open && libraryTab === "community" && (
+          <section className="playbooks-library">
+            <div role="radiogroup" aria-label="Community list">
+              <label>
+                <input
+                  type="radio"
+                  name="community-list"
+                  checked={communityFilter === "all"}
+                  onChange={() => {
+                    setCommunityQuery("");
+                    setCommunityFilter("all");
+                  }}
+                />{" "}
+                All
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="community-list"
+                  checked={communityFilter === "downloaded"}
+                  onChange={() => {
+                    setCommunityQuery("");
+                    setCommunityFilter("downloaded");
+                  }}
+                />{" "}
+                Downloaded
+              </label>
+            </div>
+            <label>
+              Search community playbooks
+              <input type="search" value={communityQuery} onChange={(event) => setCommunityQuery(event.target.value)} />
+            </label>
+            {communityQuery.trim().length > 80 && <p>Invalid query.</p>}
+            {communityFilter === "all" && communityQuery.trim().length > 0 && communityQuery.trim().length <= 80 && <p>Search can omit matches.</p>}
+            {communityError && <InlineStatus tone="error">{communityError}</InlineStatus>}
+            {(communityFilter === "downloaded" || communityReady) && (
+              <table className="playbooks-table" aria-label="Community playbooks">
+                <tbody>
+                  {communityFilter === "all"
+                    ? communityPlaybooks.map((item) => {
+                        const imported = imports.find((row) => row.id === item.id);
+                        const name = `${item.label}/${item.playbookKey}`;
+                        return (
+                          <tr key={item.id}>
+                            <td>{name}</td>
+                            <td>{item.title}</td>
+                            <td>{item.description}</td>
+                            <td>{item.version}</td>
+                            <td>{item.updatedAt}</td>
+                            <td>
+                              {imported ? (
+                                <span>Downloaded{item.version > imported.importedVersion ? " Update available" : ""}</span>
+                              ) : (
+                                <button type="button" onClick={() => void withAccount(() => importPublication(item.id, false))}>
+                                  Import {name}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    : downloadRows
+                        .filter((row) => {
+                          const needle = communityQuery.trim().toLowerCase();
+                          if (!needle) return true;
+                          return [row.title, row.description, row.label, row.playbookKey].some((value) => (value || "").toLowerCase().includes(needle));
+                        })
+                        .map((row) => {
+                          const name = `${row.label}/${row.playbookKey}`;
+                          const status = row.remoteMissing
+                            ? "No longer published"
+                            : row.error
+                              ? row.error
+                              : row.updateAvailable
+                                ? `Update available${row.localMissing ? " Local copy missing" : ""}`
+                                : row.remoteVersion != null && row.remoteVersion < row.importedVersion
+                                  ? `${row.importedVersion} ${row.remoteVersion}`
+                                  : `Up to date${row.localMissing ? " Local copy missing" : ""}`;
+                          return (
+                            <tr key={row.id}>
+                              <td>{name}</td>
+                              <td>{row.title}</td>
+                              <td>{row.importedVersion}</td>
+                              <td>{row.remoteVersion ?? ""}</td>
+                              <td>{status}</td>
+                              <td>
+                                <button type="button" disabled={!row.updateAvailable || row.remoteMissing} onClick={() => void withAccount(() => updatePublication(row.id, false))}>
+                                  Update {name}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                </tbody>
+              </table>
+            )}
+            {communityFilter === "all" && communityCursor && communityQuery.trim().length <= 80 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const cursor = communityCursor;
+                  const trimmed = communityQuery.trim();
+                  const generation = communityGeneration.current;
+                  const args = trimmed ? { q: trimmed, cursor } : { cursor };
+                  void Promise.resolve(ipc.listCommunityPlaybooks(args))
+                    .then((page) => {
+                      if (!page || generation !== communityGeneration.current) return;
+                      setCommunityPlaybooks((current) => [...current, ...page.playbooks]);
+                      setCommunityCursor(page.nextCursor);
+                    })
+                    .catch((error) => {
+                      if (generation !== communityGeneration.current) return;
+                      setCommunityError(errorText(error));
+                    });
+                }}
+              >
+                Load more
+              </button>
+            )}
+          </section>
+        )}
+        {signupOpen && (
+          <Dialog
+            onClose={() => {
+              pendingSignup.current = null;
+              setSignupOpen(false);
+            }}
+            role="dialog"
+            ariaLabel="Sign up"
+          >
+            <h2>Sign up</h2>
+            <p>browse does not need an account. Import, update, and publish do.</p>
+            <button
+              type="button"
+              data-autofocus
+              onClick={() => {
+                pendingSignup.current = null;
+                setSignupOpen(false);
+              }}
+            >
+              Cancel
+            </button>
+            <button type="button" onClick={() => void continueSignup()}>
+              SIGN UP
+            </button>
+          </Dialog>
+        )}
+        {publishOpen && (
+          <Dialog onClose={() => setPublishOpen(false)} role="dialog" ariaLabel="Publish playbook">
+            <h2>Publish playbook</h2>
+            <div role="radiogroup" aria-label="Local playbook">
+              {catalog?.candidates
+                .filter((candidate) => candidate.diagnostics.length === 0)
+                .map((candidate) => {
+                  const id = playbookRefKey(candidate.source.reference);
+                  const name = `${candidate.title || candidate.source.reference.key} ${scopeLabels[candidate.source.reference.scope]}`;
+                  return (
+                    <label key={id}>
+                      <input type="radio" name="publish-playbook" checked={publishPick === id} onChange={() => setPublishPick(id)} /> {name}
+                    </label>
+                  );
+                })}
+            </div>
+            <label>
+              <input type="checkbox" checked={attest} onChange={(event) => setAttest(event.target.checked)} /> Confirm you can share this playbook.
+            </label>
+            {showPublishLabel && (
+              <label>
+                Public label
+                <input value={publishLabel} onChange={(event) => setPublishLabel(event.target.value)} />
+              </label>
+            )}
+            {dirty && selected && publishPick === playbookRefKey(selected.source.reference) && <p>Unsaved editor changes are not published.</p>}
+            {publishMessage && <p>{publishMessage}</p>}
+            {publishDiagnostics.map((item) => (
+              <p key={`${item.code}:${item.message}`}>
+                {item.code} {item.message}
+              </p>
+            ))}
+            <button type="button" disabled={!publishPick || !attest} onClick={() => void publishPicked()}>
+              Confirm
+            </button>
+            <button type="button" data-autofocus onClick={() => setPublishOpen(false)}>
+              Cancel
+            </button>
+          </Dialog>
         )}
         {open && (
           <section className="playbooks-workspace" ref={detailRef} tabIndex={-1} aria-label="Playbook details">
