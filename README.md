@@ -63,7 +63,9 @@ The default **SuperDevelop** Playbook takes a change through:
 Clarify → Investigate → Decide → Plan → Define Tests → Build → Prepare Review
 ```
 
-Review the decision before starting Plan. Other bundled Playbooks cover one-shot implementation, code review, bug hunting, and free-form sessions. Customize them through your repository's `.alinery/playbooks.toml`.
+Review the decision before starting Plan. Other bundled Playbooks cover one-shot implementation, code review, bug hunting, and free-form sessions. Open a playbook on the **Playbooks** page to inspect it or make an editable copy.
+
+**Delete playbooks.** Open a saved playbook and choose **Delete Playbook**, then confirm. Repository and global definitions are deleted from their respective libraries. Bundled playbooks are removed from the library for all repositories on your system; this choice persists in your app configuration across restarts and updates, rather than modifying the compiled-in originals. Existing tasks keep their retained definitions, and copies in other scopes are untouched. Bundled source remains read-only for editing.
 
 **Sessions survive app quit.** A per-repository daemon (`alineryd`) owns the agent and terminal processes. Leave sessions running when you close the app, then reconnect when you return. Stopping sessions is an explicit action; the quit dialog also offers **Quit & close all repos**.
 
