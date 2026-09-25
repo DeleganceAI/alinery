@@ -35,6 +35,8 @@ import type {
   BackupListItem,
   BackupMeta,
   BoardTask,
+  CommunityImportRow,
+  CommunityPlaybookPage,
   Config,
   ConnectionStatus,
   CreateExecutionSessionReply,
@@ -43,9 +45,11 @@ import type {
   CreateTaskResult,
   DaemonStatus,
   DesktopCreditsView,
+  DownloadStatusRow,
   GitHubIssue,
   GlobalSettings,
   HostedCatalogView,
+  ImportResult,
   KanbanColumn,
   LinearTicket,
   McpStatus,
@@ -57,6 +61,8 @@ import type {
   PlaybookValidation,
   PreparedSessionMessageAction,
   PreparedTaskAttachments,
+  PreviewResult,
+  PublishResult,
   PullRequestSnapshot,
   PurgeArchivedResult,
   RelatedTaskRef,
@@ -81,6 +87,7 @@ import type {
   TaskActivityRef,
   TaskActivitySummary,
   TaskExecutionReply,
+  UpdateResult,
   UpdateStatus,
 } from "./types";
 
@@ -375,8 +382,13 @@ export const savePlaybookSource = (request: SavePlaybookRequest, repoPath?: stri
 export const deletePlaybookSource = (reference: PlaybookRef, repoPath?: string) => invoke<void>("delete_playbook_source", { reference, repoPath });
 export const readPlaybookPickerPreferences = (repoPath?: string) => invoke<PickerPreferences>("read_playbook_picker_preferences", { repoPath });
 export const savePlaybookPickerPreferences = (preferences: PickerPreferences, repoPath?: string) => invoke<void>("save_playbook_picker_preferences", { preferences, repoPath });
-
-// ── update.rs ─────────────────────────────────────────────────────────
+export const listCommunityPlaybooks = (args: { q?: string; cursor?: string }) => invoke<CommunityPlaybookPage>("list_community_playbooks", args);
+export const listCommunityImports = (args: { repoPath: string }) => invoke<{ imports: CommunityImportRow[] }>("list_community_imports", args);
+export const communityDownloadStatus = (args: { repoPath: string }) => invoke<{ rows: DownloadStatusRow[] }>("community_download_status", args);
+export const importCommunityPlaybook = (args: { id: string; repoPath: string; overwrite: boolean }) => invoke<ImportResult>("import_community_playbook", args);
+export const updateCommunityImport = (args: { id: string; repoPath: string; overwriteEdited: boolean }) => invoke<UpdateResult>("update_community_import", args);
+export const previewCommunityPlaybook = (args: { id: string }) => invoke<PreviewResult>("preview_community_playbook", args);
+export const publishCommunityPlaybook = (args: { reference: PlaybookRef; repoPath: string; label?: string }) => invoke<PublishResult>("publish_community_playbook", args);
 export const checkUpdate = () => invoke<UpdateStatus>("check_update");
 export const downloadUpdate = (version: string) => invoke<StagedUpdate>("download_update", { version });
 export const applyUpdate = (version: string) => invoke<void>("apply_update", { version });

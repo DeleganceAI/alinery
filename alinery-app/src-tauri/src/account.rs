@@ -155,6 +155,10 @@ const SIGNED_OUT: AccountStatus = AccountStatus {
 pub(crate) enum AccountAuthError {
     Corrupt(String),
     InvalidRefreshToken(String),
+    /// The credential an operation started with is no longer the stored one: another
+    /// pairing replaced it mid-flight. Never clears — the replacement is somebody's
+    /// valid session, not this operation's.
+    Replaced(String),
     Transient(String),
 }
 
@@ -167,7 +171,7 @@ impl AccountAuthError {
 impl std::fmt::Display for AccountAuthError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Corrupt(s) | Self::InvalidRefreshToken(s) | Self::Transient(s) => f.write_str(s),
+            Self::Corrupt(s) | Self::InvalidRefreshToken(s) | Self::Replaced(s) | Self::Transient(s) => f.write_str(s),
         }
     }
 }
@@ -715,6 +719,29 @@ fn generation_of(tokens: &AccountTokens) -> Expect<'_> {
     }
 }
 
+/// Test-only: the rotation a refresh seam would produce from `base`. The session id
+/// survives, as it does in production.
+#[cfg(test)]
+pub(crate) fn rotated_tokens_for_test(base: &AccountTokens, access: &str, refresh: &str) -> AccountTokens {
+    AccountTokens {
+        access_token: access.into(),
+        refresh_token: refresh.into(),
+        expires_at: base.expires_at,
+        user: base.user.clone(),
+        plan: base.plan.clone(),
+        paid: base.paid,
+        session_id: base.session_id.clone(),
+    }
+}
+
+/// Test-only: what `refresh_paired_access` does with the rotation it produced. The retry
+/// clears exactly the generation it tested, so a seam that only returned a token would
+/// not model the real one.
+#[cfg(test)]
+pub(crate) fn save_tokens_for_test(path: &Path, tokens: &AccountTokens) {
+    save_tokens_to_path(path, tokens).expect("test pairing write");
+}
+
 fn current_if(path: &Path, expect: Expect<'_>) -> Option<AccountTokens> {
     match load_tokens_from_path(path) {
         Ok(Some(current)) if expect.matches(&current) => Some(current),
@@ -1231,6 +1258,86 @@ fn fetch_desktop_credits_after_401(accounts_url: &str, supabase_base: &str, path
             last_credits_snapshot().as_ref().map(credits_view_from).unwrap_or_else(credits_hidden)
         }
     }
+}
+
+/// Outcome of one authenticated HTTP attempt. `Unauthorized` is the only 401 signal.
+/// `Response` is every other completed status, including 404 and 503.
+#[derive(Debug)]
+pub(crate) enum AuthAttempt<T> {
+    Unauthorized,
+    Transport(String),
+    Response(T),
+}
+
+#[derive(Debug)]
+pub(crate) enum AuthRetryError {
+    NeedsAccount,
+    Transport(String),
+}
+
+/// Same refresh-once-then-clear rule as `fetch_desktop_credits_after_401`.
+///
+/// `Unauthorized` is the only 401 signal. A completed 404 or 503 is `Response` and does
+/// not refresh. The refresh seam is handed the credential this call started with and
+/// returns the one it produced; the retry never re-reads the file, so a pairing that
+/// replaced the originating one mid-flight is neither refreshed nor used.
+///
+/// A second `Unauthorized` clears exactly the generation this retry tested — never
+/// whatever is on disk by then, which another operation may have rotated to.
+pub(crate) fn with_access_token_retry<T, C, R>(auth_path: &Path, mut call: C, refresh: R) -> Result<T, AuthRetryError>
+where
+    C: FnMut(&str) -> AuthAttempt<T>,
+    R: FnOnce(&AccountTokens) -> Result<AccountTokens, AccountAuthError>,
+{
+    let tokens = match load_tokens_from_path(auth_path) {
+        Ok(Some(tokens)) if !tokens.access_token.is_empty() => tokens,
+        _ => return Err(AuthRetryError::NeedsAccount),
+    };
+    match call(&tokens.access_token) {
+        AuthAttempt::Response(value) => return Ok(value),
+        AuthAttempt::Transport(message) => return Err(AuthRetryError::Transport(message)),
+        AuthAttempt::Unauthorized => {}
+    }
+    let refreshed = match refresh(&tokens) {
+        Ok(refreshed) => refreshed,
+        Err(AccountAuthError::InvalidRefreshToken(_)) => {
+            let _ = clear_if_current(auth_path, generation_of(&tokens));
+            return Err(AuthRetryError::NeedsAccount);
+        }
+        // The credential this call was authorized under is gone. Never continue — or
+        // clear — as the pairing that replaced it.
+        Err(AccountAuthError::Replaced(_)) => return Err(AuthRetryError::NeedsAccount),
+        Err(error) => return Err(AuthRetryError::Transport(error.to_string())),
+    };
+    match call(&refreshed.access_token) {
+        AuthAttempt::Response(value) => Ok(value),
+        AuthAttempt::Transport(message) => Err(AuthRetryError::Transport(message)),
+        AuthAttempt::Unauthorized => {
+            let _ = clear_if_current(auth_path, generation_of(&refreshed));
+            Err(AuthRetryError::NeedsAccount)
+        }
+    }
+}
+
+/// Production refresh for playbook calls: refreshes the credential the caller started
+/// with and keeps it only while the file still holds that same generation, so a pairing
+/// that replaced it mid-flight is reported instead of being refreshed and used. The same
+/// compare-and-swap `fetch_desktop_credits_after_401` performs.
+pub(crate) fn refresh_paired_access(auth_path: &Path, tokens: &AccountTokens) -> Result<AccountTokens, AccountAuthError> {
+    let refreshed = refresh_account_tokens_at(SUPABASE_URL, tokens)?;
+    match save_if_current(auth_path, generation_of(tokens), &refreshed) {
+        Ok(Some(())) => Ok(refreshed),
+        Ok(None) => Err(AccountAuthError::Replaced("the pairing changed while this request was in flight".into())),
+        Err(error) => Err(AccountAuthError::Transient(error)),
+    }
+}
+
+pub(crate) fn account_auth_path_for(app: &AppHandle) -> Result<PathBuf, String> {
+    account_auth_path(app)
+}
+
+pub(crate) fn access_token_present(path: &Path) -> bool {
+    matches!(load_tokens_from_path(path), Ok(Some(tokens)) if !tokens.access_token.is_empty())
 }
 
 fn hosted_catalog_blocking(app: &AppHandle) -> HostedCatalogView {

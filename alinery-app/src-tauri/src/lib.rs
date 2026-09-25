@@ -79,6 +79,7 @@ mod account;
 mod app_config;
 mod artifacts;
 mod backup;
+mod community_playbooks;
 mod connections;
 mod daemon;
 mod git_ops;
@@ -101,6 +102,7 @@ use account::*;
 use app_config::*;
 use artifacts::*;
 use backup::*;
+use community_playbooks::*;
 use connections::*;
 use daemon::*;
 use git_ops::*;
@@ -183,6 +185,13 @@ pub fn run() {
             recover_subtask_manager,
             discard_subtask,
             list_playbook_catalog,
+            list_community_playbooks,
+            list_community_imports,
+            community_download_status,
+            import_community_playbook,
+            update_community_import,
+            preview_community_playbook,
+            publish_community_playbook,
             read_playbook,
             validate_playbook_source,
             render_playbook_source,

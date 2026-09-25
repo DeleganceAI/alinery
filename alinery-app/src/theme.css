@@ -880,6 +880,11 @@ main {
   min-width: 0;
   flex: 1;
 }
+/* A validation result is several diagnostics; the message carries one per line.
+   pre-line keeps the breaks while still collapsing incidental indentation. */
+.inline-status-msg {
+  white-space: pre-line;
+}
 .inline-status-detail {
   margin: 6px 0 0;
   font-family: var(--font-mono);
@@ -1808,6 +1813,13 @@ main {
 .playbook-picker {
   display: grid;
   gap: 6px;
+}
+/* Publish dialog (Playbooks.tsx): a long local library scrolls inside the modal
+   instead of growing it past the window. */
+.publish-picker {
+  max-height: 42vh;
+  overflow: auto;
+  margin-bottom: 8px;
 }
 .playbook-picker-card {
   min-width: 0;
@@ -5633,7 +5645,9 @@ dialog.modal::backdrop {
   padding-left: 20px;
 }
 .playbooks-table th:nth-child(2) {
-  width: 112px;
+  /* Wide enough for the import provenance line to wrap to a few lines rather
+     than a tall ribbon; a row without one still hugs its short scope chip. */
+  width: 200px;
 }
 .playbooks-table th:nth-child(3) {
   width: 164px;
@@ -5655,6 +5669,41 @@ dialog.modal::backdrop {
 .playbooks-table .opt {
   justify-content: center;
   gap: 8px;
+}
+/* A community row offers Preview beside Import/Update. Both labels must sit on one
+   line, so the action column takes the room and the other five keep their share at
+   the min-width (the library section scrolls sideways below it). */
+.playbooks-community-table {
+  min-width: 860px;
+}
+.playbooks-community-table td:last-child {
+  /* Both labels on one line: 133px + 8px gap + 129px, plus the cell's 24px padding. */
+  width: 300px;
+}
+/* A community row offers Preview beside Import/Update. */
+.playbooks-row-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+/* Community preview dialog (Playbooks.tsx): the published document in full. */
+.playbook-preview {
+  margin: 0;
+  max-height: 52vh;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 .playbooks-library-row {
   display: flex;
@@ -5698,13 +5747,21 @@ dialog.modal::backdrop {
 }
 .playbooks-library-source {
   display: inline-flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  max-width: 100%;
   padding: 3px 7px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-subtle);
   color: var(--text-muted);
   font-size: calc(11px * var(--ui-scale));
+  /* An imported row adds a provenance line ("Imported from community label/key")
+     far longer than the scope word. Stacked and wrapped it stays inside the
+     column; as one inline run it was 174px wide in a 112px cell and painted over
+     the Last modified date. */
+  overflow-wrap: anywhere;
 }
 .playbooks-library-row small,
 .playbooks-context,

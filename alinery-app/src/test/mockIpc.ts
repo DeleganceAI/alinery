@@ -32,6 +32,7 @@ export function mockIpc(overrides: Partial<typeof Ipc> = {}): typeof Ipc {
         }),
       ),
     ],
+    ["listCommunityImports", vi.fn(async () => ({ imports: [] }))],
     [
       "getTaskExecution",
       vi.fn(
