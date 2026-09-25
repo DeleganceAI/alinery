@@ -2000,6 +2000,17 @@ main {
   direction: rtl;
   text-align: left;
 }
+.attachment-thumbnail {
+  width: 64px;
+  height: 64px;
+  flex: 0 0 64px;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+}
+.attachment-row > .hint {
+  max-width: 100px;
+  overflow-wrap: anywhere;
+}
 @media (max-width: 980px) {
   .createpage-with-preview {
     flex-direction: column;

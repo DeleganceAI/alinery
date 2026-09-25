@@ -65,6 +65,15 @@ Clarify → Investigate → Decide → Plan → Define Tests → Build → Prepa
 
 Review the decision before starting Plan. Other bundled Playbooks cover one-shot implementation, code review, bug hunting, and free-form sessions. Customize them through your repository's `.alinery/playbooks.toml`.
 
+**Image evidence at creation.** Paste clipboard images into Description, Evidence / pointers,
+or the Attachments input on New task. Each image has a preview (when supported), name, size,
+and Remove button. Accepted images and local files are kept in the selected task's
+`artifacts/attachments/` directory and can be revealed from Task Detail's Attachments view.
+The combined allowance is 25 MiB per file and 100 MiB per creation request; rejected files
+are reported while valid siblings are retained. URLs remain pointers and are never fetched.
+Pasted images are not saved with text drafts: Create attaches them, while Clear draft or
+leaving the form discards them.
+
 **Sessions survive app quit.** A per-repository daemon (`alineryd`) owns the agent and terminal processes. Leave sessions running when you close the app, then reconnect when you return. Stopping sessions is an explicit action; the quit dialog also offers **Quit & close all repos**.
 
 **Editable work names.** Task-attached OMP agents suggest a short, work-specific session name early in an ordinary working turn, once they understand the task. This uses the working agent, not a separate naming model or background upload service; an unavailable model or an older running extension can leave the session unnamed. Names appear beside status in the task's session table, in the global session list, session header, and search, with task and execution-type context retained.

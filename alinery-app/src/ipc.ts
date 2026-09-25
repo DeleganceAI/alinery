@@ -87,6 +87,7 @@ import type {
 export { getName, getVersion } from "@tauri-apps/api/app";
 export { listen } from "@tauri-apps/api/event";
 export { homeDir } from "@tauri-apps/api/path";
+export type { Webview } from "@tauri-apps/api/webview";
 export { getCurrentWebview } from "@tauri-apps/api/webview";
 export { getCurrentWindow } from "@tauri-apps/api/window";
 export { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";

@@ -237,6 +237,7 @@ pub const TICKET_EVIDENCE_HEADING: &str = "## Evidence & Pointers";
 
 /// The single format for every `00-ticket.md` alinery writes. Returns "" when there is nothing to
 /// say; callers skip the write. `failures` entries are already `"<entry> — <reason>"`.
+/// `copied` contains stored basenames; this composer adds the `attachments/` prefix.
 pub fn compose_ticket(name: &str, description: &str, evidence: &str, urls: &[String], copied: &[String], failures: &[String]) -> String {
     let description = description.trim();
     let evidence = evidence.trim();

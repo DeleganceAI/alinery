@@ -1,7 +1,9 @@
 //! task: extracted from lib.rs. See AGENTS.md for the module map.
 use crate::*;
 
-use alinery_core::task_creation::{CreateTaskReply, CreateTaskRequest, TaskAttachment, TaskPlaybookPackage};
+use alinery_core::task_creation::{
+    unique_attachment_name, CreateTaskReply, CreateTaskRequest, TaskAttachment, TaskPlaybookPackage, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_SET_BYTES,
+};
 pub(crate) use alinery_core::Task;
 use std::io::Read;
 
@@ -295,16 +297,6 @@ pub(crate) fn prepare_task_attachments(entries: Vec<String>) -> PreparedTaskAtta
                 .and_then(|name| name.to_str())
                 .and_then(alinery_core::safe_component)
                 .ok_or("unusable file name")?;
-            let mut name = base.to_string();
-            let mut suffix = 2u64;
-            while result.attachments.iter().any(|attachment| attachment.name == name) {
-                let stem = Path::new(base).file_stem().and_then(|stem| stem.to_str()).ok_or("unusable file name")?;
-                name = match Path::new(base).extension().and_then(|extension| extension.to_str()) {
-                    Some(extension) => format!("{stem}-{suffix}.{extension}"),
-                    None => format!("{stem}-{suffix}"),
-                };
-                suffix = suffix.checked_add(1).ok_or("too many name collisions")?;
-            }
             let mut content = Vec::new();
             fs::File::open(path)
                 .map_err(|error| error.to_string())?
@@ -317,7 +309,10 @@ pub(crate) fn prepare_task_attachments(entries: Vec<String>) -> PreparedTaskAtta
             if content.len() as u64 > MAX_ATTACHMENT_SET_BYTES - bytes {
                 return Err("attachment set would exceed 100 MB".into());
             }
-            Ok(TaskAttachment { name, bytes: content })
+            Ok(TaskAttachment {
+                name: base.to_string(),
+                bytes: content,
+            })
         })();
         match loaded {
             Ok(attachment) => {
@@ -330,30 +325,7 @@ pub(crate) fn prepare_task_attachments(entries: Vec<String>) -> PreparedTaskAtta
     result
 }
 
-pub(crate) const MAX_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
-pub(crate) const MAX_ATTACHMENT_SET_BYTES: u64 = 100 * 1024 * 1024;
 pub(crate) const MAX_CHAT_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
-
-// Suffix goes before the extension so `trace.log` collides into `trace-2.log`, never
-// `trace.log-2`. Probing is against the on-disk dir, so a promoted draft's pre-existing
-// attachments are respected.
-pub(crate) fn unique_attachment_name(dir: &Path, base: &str) -> Option<String> {
-    if !dir.join(base).exists() {
-        return Some(base.to_string());
-    }
-    let stem = Path::new(base).file_stem()?.to_str()?.to_string();
-    let ext = Path::new(base).extension().and_then(|s| s.to_str()).map(|s| s.to_string());
-    for n in 2..=99u32 {
-        let candidate = match &ext {
-            Some(ext) => format!("{stem}-{n}.{ext}"),
-            None => format!("{stem}-{n}"),
-        };
-        if !dir.join(&candidate).exists() {
-            return Some(candidate);
-        }
-    }
-    None
-}
 
 fn attachment_dir_bytes(dir: &Path) -> u64 {
     let Ok(entries) = fs::read_dir(dir) else {
