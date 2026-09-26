@@ -15,7 +15,7 @@ import type {
   TaskActivityRef,
   TaskExecutionReply,
 } from "../types";
-import { Grid } from "./Grid";
+import { Grid, resetGridBoardSnapshots } from "./Grid";
 
 const now = Math.floor(Date.now() / 1000);
 const makeTask = (over: Partial<BoardTask>): BoardTask => ({
@@ -184,6 +184,17 @@ const ipcMock = vi.hoisted(() => ({
   listBoardTasks: vi.fn(async (_allRepos: boolean): Promise<BoardTask[]> => []),
   listKanbanColumns: vi.fn(async (_allRepos: boolean): Promise<KanbanColumn[]> => []),
   getTaskExecution: vi.fn<(slug: string, repoPath?: string) => Promise<TaskExecutionReply>>(),
+  observeTaskExecutions: vi.fn(async (tasks: { repoPath: string; taskSlug: string }[]) =>
+    Promise.all(
+      tasks.map(async (task) => {
+        try {
+          return { repo_path: task.repoPath, task_slug: task.taskSlug, execution: await ipcMock.getTaskExecution(task.taskSlug, task.repoPath) };
+        } catch (error) {
+          return { repo_path: task.repoPath, task_slug: task.taskSlug, error: String(error) };
+        }
+      }),
+    ),
+  ),
   readPlaybook: vi.fn<(reference: PlaybookRef, repoPath?: string) => Promise<ScopedPlaybook>>(),
   listTaskActivity: vi.fn(async (_refs: TaskActivityRef[]): Promise<TaskActivityMap> => ({})),
   listTaskPullRequests: vi.fn(async (_tasks: TaskActivityRef[]): Promise<Record<string, PullRequestSnapshot>> => ({})),
@@ -209,6 +220,7 @@ Object.defineProperty(window, "localStorage", { configurable: true, value: local
 
 beforeEach(() => {
   window.localStorage.clear();
+  resetGridBoardSnapshots();
   ipcMock.listBoardTasks.mockResolvedValue(tasks);
   ipcMock.listKanbanColumns.mockResolvedValue(columns);
   ipcMock.listTaskPullRequests.mockImplementation(async (refs) => Object.fromEntries(refs.map((ref) => [`${ref.repoPath}:${ref.taskSlug}`, { pr: null, error: null }])));
@@ -1216,5 +1228,27 @@ describe("configurable task grid", () => {
     expect((screen.getByLabelText("Preset") as HTMLSelectElement).value).toBe("steps");
     expect(window.localStorage.getItem("alinery:grid:repo-a:view:first")).not.toBeNull();
     expect(window.localStorage.getItem("alinery:grid:repo-a:view:second")).not.toBeNull();
+  });
+
+  it("paints a shared board snapshot immediately and does not queue missed execution ticks", async () => {
+    const first = render(<Grid allRepos={false} onOpen={() => {}} registerNav={() => {}} storageKey="snapshot-a" />);
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    first.unmount();
+
+    vi.useFakeTimers();
+    const held = new Promise<never>(() => {});
+    ipcMock.observeTaskExecutions.mockClear();
+    ipcMock.observeTaskExecutions.mockReturnValue(held);
+    render(<Grid allRepos={false} onOpen={() => {}} registerNav={() => {}} storageKey="snapshot-b" />);
+    expect(screen.queryByText("Loading grid…")).toBeNull();
+    expect(screen.getByRole("button", { name: /Build API, repo-a/ })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
+    expect(screen.getByLabelText("Filter")).toBeDefined();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000);
+    });
+    expect(ipcMock.observeTaskExecutions).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
   });
 });

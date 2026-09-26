@@ -259,7 +259,8 @@ export const archiveSession = (taskSlug: string, id: string) => invoke<void>("ar
 export const archiveSessionForRepo = (repoPath: string, taskSlug: string, id: string) => invoke<void>("archive_session_for_repo", { repoPath, taskSlug, id });
 export const createSession = (request: CreateExecutionSessionRequest) => invoke<CreateExecutionSessionReply>("create_session", { request });
 export const createSessionForRepo = (a: { repoPath: string; request: CreateExecutionSessionRequest }) => invoke<CreateExecutionSessionReply>("create_session_for_repo", a);
-export const getTaskExecution = (taskSlug: string, repoPath?: string) => invoke<TaskExecutionReply>("get_task_execution", { taskSlug, repoPath });
+export type TaskExecutionOutcome = { repo_path: string; task_slug: string; execution?: TaskExecutionReply; error?: string };
+export const observeTaskExecutions = (tasks: { repoPath: string; taskSlug: string }[]) => invoke<TaskExecutionOutcome[]>("observe_task_executions", { tasks });
 export const allowExecutionCompletion = (taskSlug: string, executionId: string, sessionId: string, repoPath?: string) =>
   invoke<void>("allow_execution_completion", { taskSlug, executionId, sessionId, repoPath });
 export const startSession = (taskSlug: string, sessionId: string, repoPath?: string) => invoke<CreateExecutionSessionReply>("start_session", { taskSlug, sessionId, repoPath });
