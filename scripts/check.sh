@@ -3,14 +3,11 @@
 # returns a single verdict.
 #
 #   ./scripts/check.sh            everything
-#   ./scripts/check.sh --quick    skips the slow behavioural suites (what the
-#                                 pre-push hook runs)
+#   ./scripts/check.sh --quick    skips the slow behavioural suites
 #
 # --quick drops the suites that spawn a real alineryd over a real socket, drive a pty with
 # expect(1), or build throwaway git repos. Everything that can catch a bad code change
 # (lint, typecheck, both test suites, clippy, and the source gates) runs either way.
-#
-# Escape hatch: ALINERY_SKIP_CHECK=1 git push
 set -euo pipefail
 
 trap 'status=$?; [ "$status" -eq 0 ] || printf "\n\033[1mFAILED: check aborted (exit %s)\033[0m\n" "$status" >&2; exit "$status"' EXIT

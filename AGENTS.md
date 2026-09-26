@@ -160,16 +160,10 @@ Edit **all nine** of these, to the same `X.Y.Z`:
 
 ```bash
 ./scripts/check.sh            # everything
-./scripts/check.sh --quick    # skips the slow behavioural suites — what the pre-push hook runs
+./scripts/check.sh --quick    # skips the slow behavioural suites
 ```
 
 It covers biome, both typecheck passes, vitest, the omp-extension suite, `cargo fmt`/`clippy`/`test --workspace`, and the product shell gates. `cargo check -p alinery-app` is the fast inner-loop gate while editing; `check.sh` is the one that must pass before you call a change done.
-
-```bash
-git config core.hooksPath scripts/hooks
-```
-
-Bypass for a work-in-progress push: `ALINERY_SKIP_CHECK=1 git push`.
 
 **Two traps that will hand you a false green:**
 
