@@ -52,11 +52,16 @@ pub(crate) struct TaskActivitySession {
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TaskActivityStatus {
+    Queued,
     Running,
     WaitingForInput,
     WaitingForApproval,
     Failed,
     Completed,
+    Finishing,
+    LaunchFailed,
+    Interrupted,
+    Unknown,
 }
 
 #[derive(Serialize, Clone, Debug, Default, PartialEq, Eq)]

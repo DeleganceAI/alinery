@@ -11,6 +11,7 @@ import {
   ompDefaultModel,
   repoName,
   SessionTimestamp,
+  StatusDot,
   sameBoardTasks,
   sameKanbanColumns,
   sameLifecycleMaps,
@@ -19,13 +20,51 @@ import {
   taskKey,
   useMinuteNow,
 } from "./shared";
-import type { ArtifactTreeNode, BoardTask, KanbanColumn, LifecycleState, SessionMeta, Task, TaskActivityMap, TaskActivitySummary } from "./types";
+import type { ArtifactTreeNode, BoardTask, KanbanColumn, LifecycleState, SessionMeta, SessionObservation, Task, TaskActivityMap, TaskActivitySummary } from "./types";
 
 // shared.tsx imports ipc at module scope. Before the IPC seam existed that made this file
 // unimportable in a test at all — there was no single module to stub.
 vi.mock("./ipc");
 vi.mock("./WindowChrome", () => ({ WindowControls: () => null, useWindowFullscreen: () => false, ResizeHandles: () => null }));
 
+it("keeps execution status authoritative over legacy completion and exit props", () => {
+  const observation: SessionObservation = {
+    lifecycle: { state: "exited", code: 143 },
+    state: null,
+    checkpoint: { phase_completed_at: 100 },
+    execution: { lifecycle: "finishing", status: "finishing", error: null, failure_occurrence: null },
+  };
+  const props = { id: "session", observation, unreadCompletion: true, exitCode: 143, exitAcknowledged: true, superseded: true, notifyTransitions: false };
+  const view = render(createElement(StatusDot, props));
+  expect(view.getByText("Finishing")).toBeDefined();
+  expect(view.queryByText("Completed")).toBeNull();
+  view.rerender(createElement(StatusDot, { ...props, exitAcknowledged: false }));
+  expect(view.getByText("Finishing")).toBeDefined();
+  expect(view.queryByRole("img", { name: /Failed/ })).toBeNull();
+  view.rerender(
+    createElement(StatusDot, {
+      ...props,
+      observation: { ...observation, execution: { lifecycle: null, status: "unknown", error: "Missing execution", failure_occurrence: null } },
+    }),
+  );
+  expect(view.getByText("Unknown")).toBeDefined();
+  expect(view.queryByText("Completed")).toBeNull();
+  view.rerender(
+    createElement(StatusDot, {
+      ...props,
+      observation: { ...observation, execution: { lifecycle: "interrupted", status: "interrupted", error: null, failure_occurrence: "execution:session:interrupted" } },
+    }),
+  );
+  expect(view.getByText("Interrupted")).toBeDefined();
+  expect(view.queryByText("Exited")).toBeNull();
+  view.unmount();
+});
+
+it("refreshes session metadata when an execution failure is acknowledged without timestamps", () => {
+  const before = { id: "session", execution_id: "execution" } as SessionMeta;
+  const after = { ...before, notification_suppression: { notice: "failure" as const, occurrence: "execution:session:failed" } };
+  expect(sameSessionMetas([before], [after])).toBe(false);
+});
 it("resolves nested owned artifact paths without confusing same-name references or attachments", () => {
   const leaf: ArtifactTreeNode = { id: "opaque-owned", kind: "owned", label: "2-findings-10.md", owner_task_slug: "task", source: "owned", children: [] };
   const folder: ArtifactTreeNode = { id: "opaque-folder", kind: "subtask_folder", label: "research", owner_task_slug: "task", source: "owned", children: [leaf] };

@@ -750,8 +750,8 @@ describe("Task Detail sub-task manager projection", () => {
 
     const row = screen.getByText("Sub-task setup").closest("tr") as HTMLTableRowElement;
     expect(row.querySelector(".statusdot-failed")).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Acknowledge exited sessions" }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Acknowledge exited sessions" })).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Acknowledge failures" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Acknowledge failures" })).toBeNull());
     expect(row.querySelector(".statusdot-failed")).toBeNull();
   });
 
@@ -1578,6 +1578,29 @@ describe("attention-first session order", () => {
     expect(within(acknowledgedRow).queryByRole("img", { name: "Unread completion" })).toBeNull();
   });
 
+  it("acknowledges a launch failure without an exit while retaining its authoritative status", async () => {
+    const fixture = task();
+    let failed = session({ id: "could-not-start", execution_id: "execution", phase: "structure" });
+    mocks.getTask.mockResolvedValue(fixture);
+    mocks.listSessions.mockImplementation(async () => [failed]);
+    mocks.sessionStatuses.mockResolvedValue({
+      [failed.id]: {
+        lifecycle: { state: "never_started" },
+        state: null,
+        checkpoint: {},
+        execution: { lifecycle: "launch_failed", status: "launch_failed", error: "Harness unavailable", failure_occurrence: "execution:could-not-start:launch_failed" },
+      },
+    });
+    mocks.markSessionNotificationRead.mockImplementation(async (_repoPath: string, _taskSlug: string, id: string) => {
+      if (id === failed.id) failed = { ...failed, notification_suppression: { notice: "failure", occurrence: "execution:could-not-start:launch_failed" } };
+    });
+    renderSeededDetail({ initialTask: fixture });
+    fireEvent.click(await screen.findByRole("button", { name: "Acknowledge failures" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Acknowledge failures" })).toBeNull());
+    expect(screen.getByText("Couldn't start")).toBeDefined();
+    expect(mocks.markSessionNotificationRead).toHaveBeenCalledWith("/r", "a-task", failed.id);
+  });
+
   it("offers acknowledgment only for unacknowledged exits and mutes them after acknowledgment", async () => {
     const fixture = task();
     let stopped = session({ id: "stopped-generic", created: 20, generic: true, phase: "", ended_at: 100, exit_code: 143 });
@@ -1605,14 +1628,14 @@ describe("attention-first session order", () => {
     expect(onOpenSession.mock.lastCall?.[1]).toBe(stopped.id);
     fireEvent.click(rows[1]);
     expect(onOpenSession.mock.lastCall?.[1]).toBe(idle.id);
-    const acknowledge = screen.getByRole("button", { name: "Acknowledge exited sessions" });
+    const acknowledge = screen.getByRole("button", { name: "Acknowledge failures" });
     const stoppedRow = screen.getByRole("img", { name: "Failed: process exited with code 143" }).closest("tr") as HTMLTableRowElement;
     expect(within(stoppedRow).getByRole("img", { name: "Failed: process exited with code 143" })).toBeDefined();
 
     fireEvent.click(acknowledge);
 
     await waitFor(() => expect(mocks.markSessionNotificationRead).toHaveBeenCalledWith("/r", "a-task", "stopped-generic"));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Acknowledge exited sessions" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Acknowledge failures" })).toBeNull());
     expect(within(stoppedRow).queryByRole("img", { name: /Failed/ })).toBeNull();
     expect(stoppedRow.querySelector(".status-col")?.textContent).toBe("");
   });

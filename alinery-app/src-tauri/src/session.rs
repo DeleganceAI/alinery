@@ -119,9 +119,7 @@ pub(crate) struct SessionNotificationClearRef {
     pub(crate) notification_suppression: Option<alinery_core::NotificationSuppression>,
 }
 
-// Structured observation returned to the frontend for a single session.
-// `state` is Some only when the daemon owns the session id; `checkpoint` is always
-// read from meta so accepted completion remains visible while the daemon is offline.
+// Process observations and durable execution outcomes remain separate axes.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub(crate) struct SessionObservation {
     pub(crate) lifecycle: LifecycleState,
@@ -130,6 +128,144 @@ pub(crate) struct SessionObservation {
     pub(crate) checkpoint: alinery_core::SemanticCheckpoint,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) transport: Option<alinery_core::SessionTransport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) execution: Option<SessionExecutionObservation>,
+}
+
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SessionExecutionStatus {
+    Queued,
+    Starting,
+    Busy,
+    Idle,
+    WaitingForInput,
+    WaitingForApproval,
+    Finishing,
+    Completed,
+    LaunchFailed,
+    Failed,
+    Interrupted,
+    Superseded,
+    Unknown,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SessionExecutionObservation {
+    pub(crate) lifecycle: Option<alinery_core::execution::ExecutionLifecycle>,
+    pub(crate) status: SessionExecutionStatus,
+    pub(crate) error: Option<String>,
+    pub(crate) failure_occurrence: Option<String>,
+}
+
+#[derive(Default)]
+pub(crate) struct SessionExecutionReader {
+    states: HashMap<(PathBuf, String), Result<alinery_core::execution::TaskExecutionState, String>>,
+}
+
+impl SessionExecutionReader {
+    pub(crate) fn read(&mut self, repo: &Path, slug: &str) -> &Result<alinery_core::execution::TaskExecutionState, String> {
+        self.states
+            .entry((repo.to_path_buf(), slug.to_string()))
+            .or_insert_with(|| alinery_core::execution::read_execution_state(repo, slug))
+    }
+
+    pub(crate) fn observe(&mut self, repo: &Path, slug: &str, id: &str, meta: &SessionMeta, live: Option<&alinery_core::SessionState>) -> Option<SessionExecutionObservation> {
+        if meta.execution_id.is_empty() {
+            return None;
+        }
+        Some(project_session_execution(id, meta, self.read(repo, slug).as_ref().map_err(String::as_str), live))
+    }
+}
+
+pub(crate) fn project_session_execution(
+    id: &str,
+    meta: &SessionMeta,
+    saved: Result<&alinery_core::execution::TaskExecutionState, &str>,
+    live: Option<&alinery_core::SessionState>,
+) -> SessionExecutionObservation {
+    use alinery_core::execution::ExecutionLifecycle as Lifecycle;
+    use SessionExecutionStatus as Status;
+    let activity = live.and_then(|live| {
+        if !matches!(live.process, alinery_core::ProcessState::Starting | alinery_core::ProcessState::Alive) {
+            return None;
+        }
+        if !matches!(live.adapter, alinery_core::HarnessAdapter::Unsupported) {
+            match live.agent {
+                alinery_core::AgentState::WaitingForInput { .. } => return Some(Status::WaitingForInput),
+                alinery_core::AgentState::WaitingForApproval { .. } => return Some(Status::WaitingForApproval),
+                alinery_core::AgentState::Busy => return Some(Status::Busy),
+                alinery_core::AgentState::Idle => return Some(Status::Idle),
+                alinery_core::AgentState::Unknown => {}
+            }
+        }
+        matches!(live.process, alinery_core::ProcessState::Starting).then_some(Status::Starting)
+    });
+    let waiting = activity.filter(|status| matches!(*status, Status::WaitingForInput | Status::WaitingForApproval));
+    let unknown = |error: String| SessionExecutionObservation {
+        lifecycle: None,
+        status: waiting.unwrap_or(Status::Unknown),
+        error: Some(error),
+        failure_occurrence: None,
+    };
+    let state = match saved {
+        Ok(state) => state,
+        Err(error) => return unknown(error.to_string()),
+    };
+    let Some(record) = state.executions.get(&meta.execution_id) else {
+        return unknown(format!("execution {} is missing", meta.execution_id));
+    };
+    if meta.id != id || record.id != meta.execution_id || state.owning_lane != meta.daemon_namespace {
+        return unknown("execution/session owner or lane identity mismatch".into());
+    }
+    // Metadata can lag unrelated graph mutations, but cannot originate from a future snapshot.
+    if state.revision < meta.execution_revision {
+        return unknown("execution state predates retained session revision".into());
+    }
+    if record.owner_session_id != id {
+        return if record.previous_session_ids.iter().any(|previous| previous == id) {
+            SessionExecutionObservation {
+                lifecycle: None,
+                status: Status::Superseded,
+                error: None,
+                failure_occurrence: None,
+            }
+        } else {
+            unknown("execution/session owner or lane identity mismatch".into())
+        };
+    }
+    if record.lifecycle == Lifecycle::Completed && (record.receipt_id.as_ref().is_none_or(|receipt| receipt.is_empty()) || !record.shutdown_confirmed) {
+        return unknown("completed execution lacks accepted receipt or confirmed shutdown".into());
+    }
+    if record.lifecycle == Lifecycle::Finishing && record.receipt_id.as_ref().is_none_or(|receipt| receipt.is_empty()) {
+        return unknown("finishing execution lacks accepted receipt".into());
+    }
+    let status = match record.lifecycle {
+        Lifecycle::Queued => Status::Queued,
+        Lifecycle::Starting => Status::Starting,
+        Lifecycle::Running => activity.unwrap_or(Status::Unknown),
+        Lifecycle::Finishing => waiting.unwrap_or(Status::Finishing),
+        Lifecycle::Completed => Status::Completed,
+        Lifecycle::LaunchFailed => Status::LaunchFailed,
+        Lifecycle::Failed => Status::Failed,
+        Lifecycle::Interrupted => Status::Interrupted,
+    };
+    let failure_occurrence = match record.lifecycle {
+        Lifecycle::LaunchFailed | Lifecycle::Failed | Lifecycle::Interrupted => {
+            // JSON tuple encoding is unambiguous and independent of unrelated task revisions.
+            Some(serde_json::to_string(&(&record.id, &record.owner_session_id, &record.lifecycle)).expect("execution identity serializes"))
+        }
+        _ => None,
+    };
+    SessionExecutionObservation {
+        lifecycle: Some(record.lifecycle.clone()),
+        status,
+        error: record
+            .error
+            .clone()
+            .or_else(|| (status == Status::Unknown).then(|| "execution has no observable live activity".into())),
+        failure_occurrence,
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -316,38 +452,68 @@ fn session_notification_path(repo: &Path, task_slug: &str, id: &str) -> Result<P
 }
 
 pub(crate) fn mark_session_notification_read_in(repo: &Path, task_slug: &str, id: &str) -> Result<(), String> {
+    mark_session_notifications_read_in(repo, task_slug, id, true, None)
+}
+
+fn mark_session_notifications_read_in(repo: &Path, task_slug: &str, id: &str, include_completion: bool, clear: Option<&SessionNotificationClearRef>) -> Result<(), String> {
     let path = session_notification_path(repo, task_slug, id)?;
     let persisted: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-    let completion = completion_notification_checkpoint(&persisted);
-    let exit = exit_notification_checkpoint(&persisted);
-    if !notification_checkpoint_advances(&persisted, "notification_read_at", completion) && !notification_checkpoint_advances(&persisted, "exit_notification_read_at", exit) {
+    let execution = if persisted.get("execution_id").and_then(serde_json::Value::as_str).is_some_and(|id| !id.is_empty()) {
+        let meta: SessionMeta = serde_json::from_value(persisted.clone()).map_err(|error| error.to_string())?;
+        SessionExecutionReader::default().observe(repo, task_slug, id, &meta, None)
+    } else {
+        None
+    };
+    let completion = if include_completion && execution.as_ref().is_none_or(|execution| execution.status == SessionExecutionStatus::Completed) {
+        completion_notification_checkpoint(&persisted)
+    } else {
+        None
+    };
+    let exit = execution.is_none().then(|| exit_notification_checkpoint(&persisted)).flatten();
+    let failure = execution
+        .as_ref()
+        .and_then(|execution| execution.failure_occurrence.as_ref())
+        .map(|occurrence| alinery_core::NotificationSuppression {
+            notice: alinery_core::NotificationSuppressionKind::Failure,
+            occurrence: occurrence.clone(),
+        });
+    let suppression = match clear {
+        None => failure,
+        Some(reference) => reference.notification_suppression.clone().filter(|suppression| {
+            if execution.is_some() && suppression.notice == alinery_core::NotificationSuppressionKind::Failure {
+                failure.as_ref() == Some(suppression)
+            } else {
+                failure.is_none()
+            }
+        }),
+    };
+    let suppression_changed = suppression
+        .as_ref()
+        .is_some_and(|suppression| persisted.get("notification_suppression") != Some(&json!(suppression)));
+    if !notification_checkpoint_advances(&persisted, "notification_read_at", completion)
+        && !notification_checkpoint_advances(&persisted, "exit_notification_read_at", exit)
+        && !suppression_changed
+    {
         return Ok(());
     }
     stamp_meta(&path, |value| {
         stamp_notification_checkpoint(value, "notification_read_at", completion);
         stamp_notification_checkpoint(value, "exit_notification_read_at", exit);
+        if let Some(suppression) = suppression {
+            value["notification_suppression"] = json!(suppression);
+        }
     })
 }
 
 pub(crate) fn clear_session_notifications_in(repo: &Path, refs: &[SessionNotificationClearRef]) -> Result<(), String> {
     for reference in refs {
-        mark_session_notification_read_in(repo, &reference.task_slug, &reference.id)?;
-        if let Some(suppression) = &reference.notification_suppression {
-            let path = session_notification_path(repo, &reference.task_slug, &reference.id)?;
-            stamp_meta(&path, |value| value["notification_suppression"] = json!(suppression))?;
-        }
+        mark_session_notifications_read_in(repo, &reference.task_slug, &reference.id, true, Some(reference))?;
     }
     Ok(())
 }
 
 fn mark_session_exit_notification_read_in(repo: &Path, task_slug: &str, id: &str) -> Result<(), String> {
-    let path = session_notification_path(repo, task_slug, id)?;
-    let persisted: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-    let exit = exit_notification_checkpoint(&persisted);
-    if !notification_checkpoint_advances(&persisted, "exit_notification_read_at", exit) {
-        return Ok(());
-    }
-    stamp_meta(&path, |value| stamp_notification_checkpoint(value, "exit_notification_read_at", exit))
+    mark_session_notifications_read_in(repo, task_slug, id, false, None)
 }
 
 #[tauri::command]
@@ -810,23 +976,29 @@ pub(crate) fn resize_session(state: State<'_, AppState>, id: String, cols: u16, 
 pub(crate) async fn session_status(app: AppHandle, id: String, task_slug: Option<String>) -> SessionObservation {
     let app_state = app.state::<AppState>();
     let slug = task_slug.as_deref().unwrap_or("");
-    let meta = active_repo()
-        .ok()
-        .map(|repo| session_meta_path(&repo, slug, &id))
+    let repo = active_repo().ok();
+    let meta = repo
+        .as_ref()
+        .map(|repo| session_meta_path(repo, slug, &id))
         .and_then(|p| fs::read_to_string(&p).ok())
         .and_then(|s| serde_json::from_str::<SessionMeta>(&s).ok());
 
     let (started, ended, exit) = meta.as_ref().map(|m| (m.started_at, m.ended_at, m.exit_code)).unwrap_or((None, None, None));
     let checkpoint = meta.as_ref().map(|m| m.semantic.clone()).unwrap_or_default();
-    let live = active_repo()
-        .ok()
-        .and_then(|repo| with_session_client(&app_state, &repo, slug, &id, |d| d.session_status_observed(&id)).ok().flatten());
+    let live = repo
+        .as_ref()
+        .and_then(|repo| with_session_client(&app_state, repo, slug, &id, |d| d.session_status_observed(&id)).ok().flatten());
 
     let lifecycle = lifecycle_from_structured(started, ended, exit, live.as_ref().map(|live| &live.state));
+    let execution = repo
+        .as_ref()
+        .zip(meta.as_ref())
+        .and_then(|(repo, meta)| SessionExecutionReader::default().observe(repo, slug, &id, meta, live.as_ref().map(|live| &live.state)));
     SessionObservation {
         lifecycle,
         state: live.as_ref().map(|live| live.state.clone()),
         checkpoint,
+        execution,
         transport: live.map(|live| live.transport),
     }
 }
@@ -846,7 +1018,7 @@ pub(crate) fn lifecycle_from_structured(
 pub(crate) struct SessionStatusLaneRow {
     pub(crate) key: String,
     pub(crate) id: String,
-    pub(crate) meta: SessionMeta,
+    pub(crate) meta: std::sync::Arc<SessionMeta>,
 }
 
 pub(crate) fn unknown_session_observation(key: String) -> SessionObservation {
@@ -856,6 +1028,7 @@ pub(crate) fn unknown_session_observation(key: String) -> SessionObservation {
         state: None,
         checkpoint: alinery_core::SemanticCheckpoint::default(),
         transport: None,
+        execution: None,
     }
 }
 
@@ -863,6 +1036,7 @@ pub(crate) fn session_list_statuses_with_repo_resolver(refs: &[SessionStatusRef]
     let mut result: HashMap<String, SessionObservation> = HashMap::new();
     let mut grouped = BTreeMap::<PathBuf, Vec<SessionStatusLaneRow>>::new();
     let mut resolved_repos = HashMap::<String, Option<PathBuf>>::new();
+    let mut execution_metadata = HashMap::new();
     let own_namespace = alineryd_socket_namespace().unwrap_or_default();
 
     for reference in refs {
@@ -885,6 +1059,7 @@ pub(crate) fn session_list_statuses_with_repo_resolver(refs: &[SessionStatusRef]
         let Ok(meta) = serde_json::from_str::<SessionMeta>(&contents) else {
             continue;
         };
+        let meta = std::sync::Arc::new(meta);
         // Replace the NeverStarted placeholder with the meta-derived observation.
         // When a daemon lane fails or is offline, callers see the correct historical lifecycle.
         let meta_lifecycle = lifecycle_from_structured(meta.started_at, meta.ended_at, meta.exit_code, None);
@@ -895,9 +1070,13 @@ pub(crate) fn session_list_statuses_with_repo_resolver(refs: &[SessionStatusRef]
                 state: None,
                 checkpoint: meta.semantic.clone(),
                 transport: None,
+                execution: None,
             },
         );
         let socket_path = route_socket_path(&repo, &own_namespace, &meta.daemon_namespace).unwrap_or_else(|| current_alineryd_socket_path(&repo));
+        if !meta.execution_id.is_empty() {
+            execution_metadata.insert(key.clone(), (repo, reference.task_slug.clone(), reference.id.clone(), meta.clone()));
+        }
         grouped.entry(socket_path).or_default().push(SessionStatusLaneRow {
             key,
             id: reference.id.clone(),
@@ -940,6 +1119,7 @@ pub(crate) fn session_list_statuses_with_repo_resolver(refs: &[SessionStatusRef]
                         state: daemon_state,
                         checkpoint,
                         transport: live.map(|(_, transport)| transport),
+                        execution: None,
                     };
                     let _ = result_tx.send((row.key, observation));
                 }
@@ -953,6 +1133,12 @@ pub(crate) fn session_list_statuses_with_repo_resolver(refs: &[SessionStatusRef]
     });
 
     result.extend(result_rx);
+    let mut executions = SessionExecutionReader::default();
+    for (key, (repo, slug, id, meta)) in execution_metadata {
+        if let Some(observation) = result.get_mut(&key) {
+            observation.execution = executions.observe(&repo, &slug, &id, &meta, observation.state.as_ref());
+        }
+    }
     result
 }
 
@@ -973,6 +1159,7 @@ pub(crate) async fn session_statuses(app: AppHandle, ids: Vec<String>, task_slug
     let repo = active_repo().ok();
     let mut metadata: HashMap<String, Option<SessionMeta>> = HashMap::new();
     let mut clients = BTreeMap::<PathBuf, DaemonClient>::new();
+    let mut executions = SessionExecutionReader::default();
 
     for id in &ids {
         let meta = repo
@@ -1006,12 +1193,17 @@ pub(crate) async fn session_statuses(app: AppHandle, ids: Vec<String>, task_slug
             let live = daemon_live.get(&id).cloned();
             let daemon_state = live.as_ref().map(|(state, _)| state.clone());
             let lifecycle = lifecycle_from_structured(started, ended, exit, daemon_state.as_ref());
+            let execution = repo
+                .as_ref()
+                .zip(meta.as_ref())
+                .and_then(|(repo, meta)| executions.observe(repo, &task_slug, &id, meta, daemon_state.as_ref()));
             (
                 id,
                 SessionObservation {
                     lifecycle,
                     state: daemon_state,
                     checkpoint,
+                    execution,
                     transport: live.map(|(_, transport)| transport),
                 },
             )

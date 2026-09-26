@@ -152,7 +152,9 @@ export function sameSessionMetas(left: SessionDisplayMeta[], right: SessionDispl
         session.harness_resume_token === other.harness_resume_token &&
         session.resume_of === other.resume_of &&
         session.notification_read_at === other.notification_read_at &&
-        session.exit_notification_read_at === other.exit_notification_read_at
+        session.exit_notification_read_at === other.exit_notification_read_at &&
+        session.notification_suppression?.notice === other.notification_suppression?.notice &&
+        session.notification_suppression?.occurrence === other.notification_suppression?.occurrence
       );
     })
   );
@@ -959,6 +961,14 @@ export function ArtifactProvenanceBadges({ handoffs, onOpenRelatedTask }: { hand
 // compacted only where a row badge cannot carry the full phrase.
 function obsLabel(kind: ObservationDisplayKind): string {
   switch (kind) {
+    case "queued":
+      return "Queued";
+    case "finishing":
+      return "Finishing";
+    case "launch_failed":
+      return "Couldn't start";
+    case "interrupted":
+      return "Interrupted";
     case "failed":
       return "Failed";
     case "stale":
@@ -990,6 +1000,14 @@ function obsLabel(kind: ObservationDisplayKind): string {
 
 function obsTooltip(kind: ObservationDisplayKind): string {
   switch (kind) {
+    case "queued":
+      return "Execution is queued and has not started";
+    case "finishing":
+      return "Outputs accepted — waiting for confirmed shutdown";
+    case "launch_failed":
+      return "Execution could not start";
+    case "interrupted":
+      return "Execution interrupted — shutdown is not confirmed";
     case "failed":
       return "Playbook failed";
     case "stale":
@@ -1015,7 +1033,7 @@ function obsTooltip(kind: ObservationDisplayKind): string {
     case "idle":
       return "Agent turn complete — idle";
     case "unknown":
-      return "Agent state unknown";
+      return "Session status unknown";
   }
 }
 
@@ -1087,10 +1105,16 @@ export function StatusDot({
   const currentPolledObs = polledObs?.key === pollKey ? polledObs.observation : null;
   const obs = observation ?? currentPolledObs;
   const observedKind: ObservationDisplayKind = obs ? observationDisplayKind(obs) : "loading";
-  const acknowledgedTerminalExit = exitAcknowledged && (!obs?.state || obs.state.process.state === "exited");
-  const kind: ObservationDisplayKind = acknowledgedTerminalExit ? "exited" : superseded && (observedKind === "idle" || observedKind === "exited") ? "stale" : observedKind;
+  const acknowledgedTerminalExit = !obs?.execution && exitAcknowledged && (!obs?.state || obs.state.process.state === "exited");
+  const kind: ObservationDisplayKind = obs?.execution
+    ? observedKind
+    : acknowledgedTerminalExit
+      ? "exited"
+      : superseded && (observedKind === "idle" || observedKind === "exited")
+        ? "stale"
+        : observedKind;
   const label = obsLabel(kind);
-  const title = obsTooltip(kind);
+  const title = obs?.execution?.status === "superseded" ? "This session no longer owns the execution" : (obs?.execution?.error ?? obsTooltip(kind));
 
   // Attention notifications: fire on transitions into idle/waiting states.
   // Never notify for unsupported/unknown; artifact presence never triggers.
@@ -1105,7 +1129,16 @@ export function StatusDot({
     }
   }, [observedKind, notifyTransitions, pollKey, repoPath, slug]);
 
-  if (!exitAcknowledged && exitCode != null && exitCode !== 0 && kind !== "busy" && kind !== "starting" && kind !== "waiting_for_input" && kind !== "waiting_for_approval") {
+  if (
+    !obs?.execution &&
+    !exitAcknowledged &&
+    exitCode != null &&
+    exitCode !== 0 &&
+    kind !== "busy" &&
+    kind !== "starting" &&
+    kind !== "waiting_for_input" &&
+    kind !== "waiting_for_approval"
+  ) {
     return (
       <span
         className="statusdot statusdot-badge statusdot-failed"
@@ -1118,7 +1151,10 @@ export function StatusDot({
     );
   }
 
-  if (unreadCompletion && kind !== "busy" && kind !== "starting" && kind !== "waiting_for_input" && kind !== "waiting_for_approval" && kind !== "failed") {
+  if (
+    unreadCompletion &&
+    (obs?.execution ? kind === "completed" : kind !== "busy" && kind !== "starting" && kind !== "waiting_for_input" && kind !== "waiting_for_approval" && kind !== "failed")
+  ) {
     return (
       <span className="statusdot" title="Completed — not yet opened">
         <span className="ind-wrap" role="img" aria-label="Unread completion">
@@ -1129,12 +1165,9 @@ export function StatusDot({
     );
   }
 
-  if (kind === "busy" || kind === "starting" || kind === "loading") {
-    // When minimal mode suppresses the visible label, the accessible name keeps
-    // the state text-readable (state never lives in motion alone). All three
-    // kinds share the one activity orb; only its rate differs, because `busy`
-    // is work actually moving while starting and loading are still warming up.
-    // The visible label ("Running", "Starting", "Loading") carries the state.
+  if (kind === "busy" || kind === "starting" || kind === "loading" || kind === "finishing") {
+    // Minimal mode keeps an accessible label; only genuinely busy work animates
+    // at full speed. Finishing still awaits shutdown rather than completion.
     return (
       <span className="statusdot running" title={title} aria-label={minimal ? label : undefined}>
         <span className="ind-wrap">
@@ -1146,10 +1179,11 @@ export function StatusDot({
   }
 
   // Compact badges for waits and failures.
-  if (kind === "waiting_for_input" || kind === "waiting_for_approval" || kind === "failed" || kind === "unknown") {
+  if (kind === "waiting_for_input" || kind === "waiting_for_approval" || kind === "failed" || kind === "launch_failed" || kind === "interrupted" || kind === "unknown") {
+    const icon = kind === "launch_failed" ? "failed" : kind === "interrupted" ? "unknown" : kind;
     return (
-      <span className={`statusdot statusdot-badge statusdot-${kind}`} title={title}>
-        <StateIcon state={kind} />
+      <span className={`statusdot statusdot-badge statusdot-${icon}`} title={title}>
+        <StateIcon state={icon} />
         {label}
       </span>
     );
@@ -1158,7 +1192,7 @@ export function StatusDot({
   // Quiet dot states: stale, idle, completed, ready_to_advance, exited.
   if (minimal && obsMinimalHide(kind)) return null;
   const color = kind === "idle" || kind === "completed" || kind === "ready_to_advance" || kind === "unsupported" ? "var(--success)" : "var(--text-faint)";
-  const showLabel = !(minimal && kind !== "completed" && kind !== "ready_to_advance");
+  const showLabel = !(minimal && kind !== "completed" && kind !== "ready_to_advance" && kind !== "queued");
   return (
     <span className="statusdot" title={title} aria-label={showLabel ? undefined : label}>
       <span className="d" style={{ background: color }} />
@@ -1273,6 +1307,27 @@ export const EMPTY_TASK_ACTIVITY: TaskActivitySummary = {
 export function TaskActivityIndicators({ activity }: { activity: TaskActivitySummary }) {
   let indicator: ReactNode;
   switch (activity.status) {
+    case "queued":
+    case "finishing":
+      indicator = (
+        <span className="ind-wrap task-state-indicator task-status-icon" title={obsTooltip(activity.status)} role="img" aria-label={obsLabel(activity.status)}>
+          <RunningIndicator running={false} />
+        </span>
+      );
+      break;
+    case "unknown":
+    case "interrupted":
+      indicator = (
+        <span
+          className="task-state-indicator task-status-icon statusdot-badge statusdot-unknown"
+          title={obsTooltip(activity.status)}
+          role="img"
+          aria-label={obsLabel(activity.status)}
+        >
+          <StateIcon state="unknown" />
+        </span>
+      );
+      break;
     case "running":
       indicator = (
         <span className="ind-wrap task-state-indicator task-status-icon" title="Highest-priority session is running" role="img" aria-label="Running">
@@ -1305,8 +1360,14 @@ export function TaskActivityIndicators({ activity }: { activity: TaskActivitySum
       );
       break;
     case "failed":
+    case "launch_failed":
       indicator = (
-        <span className="task-state-indicator task-status-icon statusdot-badge statusdot-failed" title="Highest-priority session failed" role="img" aria-label="Failed">
+        <span
+          className="task-state-indicator task-status-icon statusdot-badge statusdot-failed"
+          title={obsTooltip(activity.status)}
+          role="img"
+          aria-label={obsLabel(activity.status)}
+        >
           <StateIcon state="failed" />
         </span>
       );

@@ -324,7 +324,7 @@ export function SessionsList({
             const obs = observations[key];
             const isLive = obs ? obs.lifecycle.state === "live" : false;
             const scope = `${item.repo_path}\u0000${item.task_slug}\u0000${item.playbook}\u0000${item.phase}`;
-            const superseded = !item.archived && !!item.phase && latestSessionByScope[scope]?.id !== item.id;
+            const superseded = !item.execution_id && !item.archived && !!item.phase && latestSessionByScope[scope]?.id !== item.id;
             const sessionType = item.subtask_manager
               ? "Sub-task manager"
               : item.is_playbook_step
