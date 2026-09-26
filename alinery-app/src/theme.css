@@ -3742,7 +3742,7 @@ dialog.modal::backdrop {
 .session-name-cell .name-editor-actions {
   justify-content: flex-end;
 }
-.session-actions > .name-editor {
+.session-actions-inner > .name-editor {
   flex-basis: 100%;
   width: 100%;
 }
@@ -3904,7 +3904,9 @@ dialog.modal::backdrop {
   color: var(--success);
   border-color: var(--success);
 }
-.session-actions {
+/* Flex on the td drops the cell out of the table, so its border-bottom
+   no longer shares the row edge. Keep the layout on the inner wrapper. */
+.session-actions-inner {
   display: flex;
   align-items: center;
   align-content: center;
@@ -3913,7 +3915,7 @@ dialog.modal::backdrop {
   flex-wrap: wrap;
   white-space: normal;
 }
-.session-actions > .btn {
+.session-actions-inner > .btn {
   flex: 0 0 auto;
   max-width: 100%;
   white-space: normal;
