@@ -590,10 +590,11 @@ export function registerCallbacks(
     name: "alinery_phase_complete",
     label: "Complete Alinery Phase",
     description:
-      "Signal that the current playbook phase is complete. " +
-      "Finish every required output and handoff before calling. " +
-      "If accepted, do no further work: ordinary OMP shutdown has been requested. " +
-      "If authorization or output correction is required, keep the session open.",
+      "Request completion of the current engine-assigned Alinery Playbook execution. " +
+      "When its work, outputs, checks, and substantive decisions are ready, send the user-facing handoff, then call this tool in the same assistant turn before ending it. " +
+      "For ready work, call it even when completion permission is locked; this tool handles that separate gate. " +
+      "If accepted, do no further work because ordinary OMP shutdown is requested. " +
+      "Otherwise keep the session open and resolve the reported requirement.",
     parameters: api.zod.z.object({}),
     async execute(toolCallId: string, _input: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, context: OmpExtensionContext) {
       const sessionId = context.sessionManager.getSessionId();
