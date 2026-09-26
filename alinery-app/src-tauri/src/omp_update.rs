@@ -182,34 +182,7 @@ pub(crate) fn check_omp_update(app: AppHandle) -> OmpUpdateStatus {
 }
 
 fn curl_download_to(url: &str, dest: &Path) -> Result<(), String> {
-    let https_only = url.starts_with("https://");
-    let mut config = format!(
-        "url = \"{}\"\nsilent\nshow-error\nlocation\nconnect-timeout = 5.000\nmax-time = {:.3}\noutput = \"{}\"\n",
-        crate::curl_config_quote(url),
-        DOWNLOAD_TIMEOUT.as_secs_f64(),
-        crate::curl_config_quote(&dest.display().to_string()),
-    );
-    if https_only {
-        config.push_str("proto = \"=https\"\nproto-redir = \"=https\"\n");
-    }
-    let mut child = Command::new("curl")
-        .args(["--config", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("start curl: {e}"))?;
-    child
-        .stdin
-        .take()
-        .ok_or_else(|| "curl stdin unavailable".to_string())?
-        .write_all(config.as_bytes())
-        .map_err(|e| format!("write curl request: {e}"))?;
-    let out = child.wait_with_output().map_err(|e| format!("finish curl: {e}"))?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-    }
-    Ok(())
+    alinery_core::http::download(url, dest, Duration::from_secs(5), DOWNLOAD_TIMEOUT, None)
 }
 
 fn sums_url_for_asset(asset_url: &str) -> Option<String> {

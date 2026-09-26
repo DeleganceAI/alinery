@@ -1,6 +1,6 @@
 [package]
 name = "alinery-core"
-version = "0.18.2"
+version = "0.18.3"
 license = "Apache-2.0"
 edition = "2021"
 
@@ -13,8 +13,8 @@ dirs = "5"
 libc = "0.2"
 parking_lot = "0.12"
 uuid = { version = "1", features = ["v4"] }
-# Blocking HTTP client for OpenObserve ingest. alinery-core only — do not add to
-# alinery-app / alineryd / alinery-mcp. Transport stays behind alinery_core::telemetry.
+# Blocking HTTP. OpenObserve ingest stays in telemetry.rs; everything else goes
+# through http.rs. Do not add ureq to alinery-app / alineryd / alinery-mcp.
 ureq = "2"
 # Backup archives (issue #79). Pure-Rust deflate via flate2/miniz_oxide; default features
 # are off so we do not pull aes/bzip2/zstd/lzma or a second `time` version alongside the

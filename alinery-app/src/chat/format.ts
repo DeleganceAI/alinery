@@ -40,10 +40,11 @@ export function formatIso(at: number): string {
 }
 
 export function formatContextUsage(tokens?: number, window?: number): string {
-  if (tokens == null || window == null || window <= 0) return "";
+  if (tokens == null) return "";
   const used = formatTokenCount(tokens);
-  const cap = formatTokenCount(window);
-  return `${used}/${cap}`;
+  // OMP sends contextWindow 0 when the provider has no known limit. Still show accumulated tokens.
+  if (window == null || !Number.isFinite(window) || window <= 0) return `${used}/?`;
+  return `${used}/${formatTokenCount(window)}`;
 }
 
 /** Composer footer: `128 chars`. */

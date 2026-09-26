@@ -104,6 +104,7 @@ mv() {
 }
 
 SWAP_LIB=1
+GIT_LIB="$ROOT/scripts/lib/git.sh"
 # shellcheck source=/dev/null
 . "$SWAP"
 unset SWAP_LIB
@@ -198,6 +199,61 @@ check "open-fail restore did not nest the old bundle" 0 \
 check "no .old-<pid> directory survives an open failure" 0 "$(find "$TMP" -maxdepth 1 -name 'dest.old-*' | wc -l | tr -d ' ')"
 check "open was attempted for the new bundle and again for the restore" 2 "$(call_count '^open ')"
 OPEN_FAILS=0
+
+# ── 6. git fallback: declined gate does not copy; probe failure copies; probe
+#      success leaves an existing alongside tree alone; a bad tree does not
+#      fail the app swap. dirname(staged) is $TMP, so the archive tree is
+#      $TMP/git and the dest sibling is $TMP/Alinery.git.
+plant_git() {
+  local body="$1"
+  rm -rf "$TMP/git" "$TMP/Alinery.git"
+  mkdir -p "$TMP/git/bin"
+  printf '%s\n' '#!/bin/sh' "$body" >"$TMP/git/bin/git"
+  chmod +x "$TMP/git/bin/git"
+}
+
+new_bundle_pair
+plant_git 'echo "git version fixture"; exit 0'
+reset_calls
+PREFLIGHT_RC=1
+swap_apply "$TMP/dest" "$TMP/staged"
+rc=$?
+check "declined gate still fails when a git tree is in the archive" 1 "$rc"
+check "declined gate does not install Alinery.git" 0 "$([ -e "$TMP/Alinery.git" ] && echo 1 || echo 0)"
+check "declined gate leaves dest content unchanged" old-build "$(cat "$TMP/dest/marker")"
+PREFLIGHT_RC=0
+
+git_app_visible() { return 1; }
+new_bundle_pair
+plant_git 'echo "git version fixture"; exit 0'
+reset_calls
+swap_apply "$TMP/dest" "$TMP/staged"
+rc=$?
+check "probe failure still returns 0 from swap_apply" 0 "$rc"
+check "probe failure installs the archive git" "git version fixture" "$("$TMP/Alinery.git/bin/git" --version)"
+check "probe failure still swapped the app" new-build "$(cat "$TMP/dest/marker")"
+
+git_app_visible() { return 0; }
+new_bundle_pair
+plant_git 'echo "git version replacement"; exit 0'
+mkdir -p "$TMP/Alinery.git/bin"
+printf '%s\n' 'keep-git' >"$TMP/Alinery.git/bin/git"
+reset_calls
+swap_apply "$TMP/dest" "$TMP/staged"
+rc=$?
+check "probe success still returns 0" 0 "$rc"
+check "probe success does not replace an existing Alinery.git" "keep-git" "$(cat "$TMP/Alinery.git/bin/git")"
+
+git_app_visible() { return 1; }
+new_bundle_pair
+plant_git 'exit 1'
+reset_calls
+swap_apply "$TMP/dest" "$TMP/staged"
+rc=$?
+check "a git smoke failure does not fail the app swap" 0 "$rc"
+check "app swap stands when git --version fails" new-build "$(cat "$TMP/dest/marker")"
+rm -rf "$TMP/git" "$TMP/Alinery.git"
+
 if [ "$fails" -ne 0 ]; then
   echo "FAILED: $fails check(s)" >&2
   exit 1

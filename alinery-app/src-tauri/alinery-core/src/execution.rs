@@ -806,9 +806,11 @@ pub fn execution_assignment_prompt(repo: &Path, slug: &str, state: &TaskExecutio
     use std::fmt::Write;
     let record = state.executions.get(id).ok_or("unknown execution")?;
     let root = crate::artifacts_dir(repo, slug);
-    let mut prompt = String::from(
-        "\n\n## Engine assignments (authoritative)\nRead only the assigned input occurrences for this execution; do not infer lineage or choose versions by filenames.\n",
-    );
+    let mut prompt = String::from(concat!(
+        "\n\n## Engine assignment (authoritative)\n",
+        "You are responsible for this one engine-assigned execution in an Alinery Playbook. Other executions may run before, after, or concurrently in the same task. Work only on this execution. Do not start, stop, advance, or modify other executions; the engine coordinates them.\n\n",
+        "Read only the assigned input occurrences below. Do not infer lineage or choose versions by filenames.\n",
+    ));
     for (selector, ids) in &record.candidate.inputs {
         for occurrence_id in ids {
             let occurrence = state.occurrences.get(occurrence_id).ok_or("missing assigned occurrence")?;
@@ -833,7 +835,24 @@ pub fn execution_assignment_prompt(repo: &Path, slug: &str, state: &TaskExecutio
             }
         );
     }
-    prompt.push_str("Finish output writes, verification, and your user-facing handoff before calling alinery_phase_complete. If completion is locked, keep interacting with the human. After accepted completion, finish and shut down normally; do not start further work. The daemon starts dependents only after your process exits. Do not modify other executions' artifacts.\n");
+    prompt.push_str(concat!(
+        "\nCompletion is an explicit handshake: you request completion through alinery_phase_complete, the engine validates the assigned outputs and completion permission and records acceptance, and the session then shuts down normally. A written artifact, user-facing report, idle session, or process exit does not complete this execution by itself.\n\n",
+        "When the assigned work, required outputs, verification, and substantive decisions are ready, do both of these in the same assistant turn:\n",
+        "1. Send the user-facing handoff text.\n",
+        "2. Call alinery_phase_complete before ending the turn.\n\n",
+        "Finish all required work and the handoff before invoking the tool because acceptance requests shutdown.\n\n",
+        "The example text below is illustrative. Report the actual assigned output and verification result; do not copy an unsupported claim. The tool-call line denotes an actual tool invocation, not prose to print.\n\n",
+        "Valid:\n",
+        "  assistant text: \"Design complete; here is the artifact and decision.\"\n",
+        "  assistant tool call: alinery_phase_complete({})\n\n",
+        "Not valid:\n",
+        "  assistant text: \"Design complete.\"\n",
+        "  <turn ends without calling alinery_phase_complete>\n\n",
+        "If clarification, substantive approval, output work, or another blocker remains, explain what is needed and stay interactive instead. Do not call the completion tool merely because the session is idle.\n\n",
+        "When ready, call alinery_phase_complete even when completion permission is locked. The tool handles the separate permission-to-finish gate; substantive approval of the work does not replace the completion call. If permission is denied or unavailable, stay interactive without repeatedly requesting it.\n\n",
+        "Correct invalid outputs before retrying. Resolve delivery or ownership failures rather than claiming success. Only an accepted tool result confirms completion. After acceptance, do no further work; allow ordinary shutdown. The engine releases dependent work only after confirmed process exit.\n\n",
+        "Do not modify other executions' artifacts.\n",
+    ));
     Ok(prompt)
 }
 

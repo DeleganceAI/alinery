@@ -1274,10 +1274,12 @@ export function TaskDetail({
                           <span className="dim">—</span>
                         </td>
                         <td className="session-actions">
-                          {renameControl("task", row.child.slug, row.child.name)}
-                          <button type="button" className="btn ghost small" onClick={() => onOpenRelatedTask(row.child.slug)}>
-                            Open task
-                          </button>
+                          <div className="session-actions-inner">
+                            {renameControl("task", row.child.slug, row.child.name)}
+                            <button type="button" className="btn ghost small" onClick={() => onOpenRelatedTask(row.child.slug)}>
+                              Open task
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1349,36 +1351,38 @@ export function TaskDetail({
                           <SessionTimestamp kind="updated" value={sessionUpdatedAt(s)} now={sessionNow} />
                         </td>
                         <td className="session-actions">
-                          {row.child && renameControl("task", row.child.slug, row.child.name, s.id)}
-                          {!s.archived && !row.child?.archived && (!s.subtask_slug || row.child) && (
+                          <div className="session-actions-inner">
+                            {row.child && renameControl("task", row.child.slug, row.child.name, s.id)}
+                            {!s.archived && !row.child?.archived && (!s.subtask_slug || row.child) && (
+                              <button
+                                type="button"
+                                className="btn danger small"
+                                disabled={!!busy}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void discardSubtask(s, row.child ?? undefined);
+                                }}
+                              >
+                                {busy === `discard-subtask:${s.id}` ? (row.child ? "Killing…" : "Discarding…") : row.child ? "Kill sub-task" : "Discard setup"}
+                              </button>
+                            )}
+                            {canReplaceThisManager && (
+                              <button type="button" className="btn ghost small" disabled={!!busy} onClick={recoverManager}>
+                                {busy === "subtask-recovery" ? "Recovering…" : "Replace manager session"}
+                              </button>
+                            )}
                             <button
                               type="button"
-                              className="btn danger small"
+                              className="btn ghost small"
                               disabled={!!busy}
                               onClick={(event) => {
                                 event.stopPropagation();
-                                void discardSubtask(s, row.child ?? undefined);
+                                openManagerSession(row.owner_task_slug, s);
                               }}
                             >
-                              {busy === `discard-subtask:${s.id}` ? (row.child ? "Killing…" : "Discarding…") : row.child ? "Kill sub-task" : "Discard setup"}
+                              Open manager session
                             </button>
-                          )}
-                          {canReplaceThisManager && (
-                            <button type="button" className="btn ghost small" disabled={!!busy} onClick={recoverManager}>
-                              {busy === "subtask-recovery" ? "Recovering…" : "Replace manager session"}
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            className="btn ghost small"
-                            disabled={!!busy}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              openManagerSession(row.owner_task_slug, s);
-                            }}
-                          >
-                            Open manager session
-                          </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1453,20 +1457,22 @@ export function TaskDetail({
                         <SessionTimestamp kind="updated" value={sessionUpdatedAt(s)} now={sessionNow} />
                       </td>
                       <td className="session-actions">
-                        <KillButton id={s.id} slug={slug} repoPath={repoPath} live={isLive} onKilled={load} />
-                        <button type="button" className="btn ghost small" disabled={s.archived || !!busy} onClick={() => void archiveSession(s.id)}>
-                          {busy === `archive-session:${s.id}` ? "Archiving session…" : "Archive"}
-                        </button>
-                        {s.archived && (
-                          <button
-                            type="button"
-                            className="btn ghost small"
-                            title="Replay this archived session's recorded activity (read-only)"
-                            onClick={() => onOpenSession(slug, s.id, s.worktree, s.phase, s.harness, s.model, s.playbook, s.generic, "history")}
-                          >
-                            View history
+                        <div className="session-actions-inner">
+                          <KillButton id={s.id} slug={slug} repoPath={repoPath} live={isLive} onKilled={load} />
+                          <button type="button" className="btn ghost small" disabled={s.archived || !!busy} onClick={() => void archiveSession(s.id)}>
+                            {busy === `archive-session:${s.id}` ? "Archiving session…" : "Archive"}
                           </button>
-                        )}
+                          {s.archived && (
+                            <button
+                              type="button"
+                              className="btn ghost small"
+                              title="Replay this archived session's recorded activity (read-only)"
+                              onClick={() => onOpenSession(slug, s.id, s.worktree, s.phase, s.harness, s.model, s.playbook, s.generic, "history")}
+                            >
+                              View history
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1497,13 +1503,15 @@ export function TaskDetail({
                       <span className="dim">—</span>
                     </td>
                     <td className="session-actions">
-                      {renameControl("task", subtaskState.active_subtask.slug, subtaskState.active_subtask.name)}
-                      <button type="button" className="btn danger small" disabled={!!busy} onClick={() => void discardSubtask(null, subtaskState.active_subtask ?? undefined)}>
-                        {busy === "discard-subtask:active-child" ? "Killing…" : "Kill sub-task"}
-                      </button>
-                      <button type="button" className="btn ghost small" disabled={!!busy} onClick={recoverManager}>
-                        {busy === "subtask-recovery" ? "Recovering…" : "Replace manager session"}
-                      </button>
+                      <div className="session-actions-inner">
+                        {renameControl("task", subtaskState.active_subtask.slug, subtaskState.active_subtask.name)}
+                        <button type="button" className="btn danger small" disabled={!!busy} onClick={() => void discardSubtask(null, subtaskState.active_subtask ?? undefined)}>
+                          {busy === "discard-subtask:active-child" ? "Killing…" : "Kill sub-task"}
+                        </button>
+                        <button type="button" className="btn ghost small" disabled={!!busy} onClick={recoverManager}>
+                          {busy === "subtask-recovery" ? "Recovering…" : "Replace manager session"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 )}

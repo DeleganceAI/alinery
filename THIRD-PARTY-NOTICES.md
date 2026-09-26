@@ -1,8 +1,17 @@
 # Third-party notices
 
 Third-party components retain their respective licenses. The notices below cover
-OMP, the bundled SuperDevelop adaptations, and thinking-orbs; other dependencies
-retain their own license and notice requirements.
+OMP, the bundled Git fallback, the bundled SuperDevelop adaptations, and
+thinking-orbs; other dependencies retain their own license and notice requirements.
+
+## Git
+
+When a machine has no git the app can see, the release archive's `git/` tree is
+installed beside Alinery. It is a separate program built from the official
+tarball pinned in `scripts/git-pin.txt` (sha256 in `scripts/git-pin.sha256`),
+downloaded from `https://mirrors.kernel.org/pub/software/scm/git/`. Alinery does
+not link Git. The tree ships Git's `COPYING` (GPL-2.0) and a `SOURCE` file
+naming that tarball.
 
 ## oh-my-pi / OMP
 
