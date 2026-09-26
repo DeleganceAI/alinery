@@ -65,6 +65,7 @@ step "rust: tests (--workspace)"
 # ---------- source-invariant gates ----------
 step "source gates"
 "$ROOT/scripts/tests/check-git-env-scrub.sh"
+"$ROOT/scripts/tests/check-no-curl.sh"
 "$ROOT/scripts/tests/check-no-auto-session-kill.sh"
 "$ROOT/scripts/tests/check-omp-no-path-fallback.sh"
 "$ROOT/scripts/tests/check-no-window-confirm.sh"
