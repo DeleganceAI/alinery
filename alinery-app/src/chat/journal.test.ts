@@ -17,6 +17,11 @@ describe("formatContextUsage", () => {
     expect(formatContextUsage(19200, 128000)).toBe("19.2k/128k");
     expect(formatContextUsage(undefined, 128000)).toBe("");
   });
+
+  it("shows accumulated tokens when the context limit is unknown", () => {
+    expect(formatContextUsage(19200, 0)).toBe("19.2k/?");
+    expect(formatContextUsage(850)).toBe("850/?");
+  });
 });
 
 describe("formatComposerStats", () => {
