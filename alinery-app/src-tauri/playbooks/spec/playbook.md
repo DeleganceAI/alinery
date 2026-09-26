@@ -1,7 +1,7 @@
 +++
 version = 2
 key = "spec"
-title = "Spec"
+title = "Kiro SDD"
 description = "Specify a change, then implement and review one approved slice at a time."
 default_model = ""
 default_harness = "omp"
@@ -95,7 +95,7 @@ is_coding_step = false
 auto_advance_default = true
 +++
 
-# Spec
+# Kiro SDD
 
 Specify a change, then implement and review one approved slice at a time.
 
