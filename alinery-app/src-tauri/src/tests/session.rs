@@ -2,6 +2,8 @@
 //!
 //! `use super::*` reaches the shared imports and fixtures in tests/mod.rs.
 use super::*;
+use crate::{session_list_status_key, session_list_statuses_for_refs, task_activity_key, TaskActivityStatus};
+use std::{collections::BTreeMap, path::PathBuf};
 
 #[test]
 fn scoped_session_items_ignore_corrupt_known_repo_and_global_active_repo() {
@@ -1087,6 +1089,7 @@ fn observation_omits_transport_when_daemon_does_not_own_id() {
         state: None,
         checkpoint: alinery_core::SemanticCheckpoint::default(),
         transport: None,
+        execution: None,
     };
     let value = serde_json::to_value(&observation).unwrap();
     let object = value.as_object().unwrap();
@@ -1100,7 +1103,342 @@ fn observation_includes_rpc_when_live() {
         state: None,
         checkpoint: alinery_core::SemanticCheckpoint::default(),
         transport: Some(alinery_core::SessionTransport::Rpc),
+        execution: None,
     };
     let value = serde_json::to_value(&observation).unwrap();
     assert_eq!(value["transport"], "rpc");
+}
+
+fn execution_observation_fixture(label: &str) -> (PathBuf, alinery_core::execution::TaskExecutionState, SessionMeta) {
+    use alinery_core::execution::{install_seed, reserve_execution, write_execution_state_unlocked, ExecutionCandidate};
+    let repo = activity_repo(label);
+    write_retained_discovery_task(&repo, "task", "owner", false);
+    let mut saved = crate::saved_task_execution_for(&repo, "task").unwrap();
+    let seed = install_seed(&mut saved.state, "ticket.md", "0-ticket-1.md").unwrap();
+    let candidate = ExecutionCandidate {
+        step_key: "implementation".into(),
+        context_id: "root".into(),
+        inputs: BTreeMap::from([("ticket.md".into(), vec![seed])]),
+        complete_collection_id: None,
+        each_collection_id: None,
+        each_member_id: None,
+        manual: false,
+    };
+    let execution_id = reserve_execution(&repo, "task", &saved.definition, &mut saved.state, candidate, &Default::default(), None, false).unwrap();
+    write_execution_state_unlocked(&repo, "task", &mut saved.state).unwrap();
+    let meta = SessionMeta {
+        id: saved.state.executions[&execution_id].owner_session_id.clone(),
+        execution_id,
+        execution_revision: saved.state.revision,
+        daemon_namespace: "owner".into(),
+        phase: "implementation".into(),
+        playbook: "one-shot".into(),
+        ..Default::default()
+    };
+    fs::write(session_meta_path(&repo, "task", &meta.id), serde_json::to_vec(&meta).unwrap()).unwrap();
+    (repo, saved.state, meta)
+}
+
+#[test]
+fn execution_outcomes_override_stale_activity_and_offline_checkpoints() {
+    use crate::SessionExecutionStatus as Status;
+    use alinery_core::execution::{write_execution_state_unlocked, ExecutionLifecycle as Lifecycle};
+    let (repo, mut saved, mut meta) = execution_observation_fixture("ex-matrix");
+    meta.started_at = Some(10);
+    meta.semantic.phase_completed_at = Some(20);
+    fs::write(session_meta_path(&repo, "task", &meta.id), serde_json::to_vec(&meta).unwrap()).unwrap();
+    let mut live = activity_status_busy(&meta.id);
+    live.state.playbook = alinery_core::PlaybookState::ReadyToAdvance;
+    let reference = status_ref(&repo, "task", &meta.id);
+    let key = session_list_status_key(&reference.repo_path, "task", &meta.id);
+    for (lifecycle, online, offline, board) in [
+        (Lifecycle::Queued, Status::Queued, Status::Queued, TaskActivityStatus::Queued),
+        (Lifecycle::Starting, Status::Starting, Status::Starting, TaskActivityStatus::Running),
+        (Lifecycle::Running, Status::Busy, Status::Unknown, TaskActivityStatus::Running),
+        (Lifecycle::Finishing, Status::Finishing, Status::Finishing, TaskActivityStatus::Finishing),
+        (Lifecycle::Completed, Status::Completed, Status::Completed, TaskActivityStatus::Completed),
+        (Lifecycle::LaunchFailed, Status::LaunchFailed, Status::LaunchFailed, TaskActivityStatus::LaunchFailed),
+        (Lifecycle::Failed, Status::Failed, Status::Failed, TaskActivityStatus::Failed),
+        (Lifecycle::Interrupted, Status::Interrupted, Status::Interrupted, TaskActivityStatus::Interrupted),
+    ] {
+        let record = saved.executions.get_mut(&meta.execution_id).unwrap();
+        record.receipt_id = matches!(lifecycle, Lifecycle::Finishing | Lifecycle::Completed | Lifecycle::Interrupted).then(|| "receipt".into());
+        record.shutdown_confirmed = lifecycle == Lifecycle::Completed;
+        record.lifecycle = lifecycle.clone();
+        write_execution_state_unlocked(&repo, "task", &mut saved).unwrap();
+        let projection = crate::project_session_execution(&meta.id, &meta, Ok(&saved), Some(&live.state));
+        assert_eq!(projection.status, online, "{lifecycle:?}");
+        let observations = session_list_statuses_for_refs(std::slice::from_ref(&reference));
+        assert_eq!(observations[&key].execution.as_ref().unwrap().status, offline, "{lifecycle:?}");
+        assert_eq!(observations[&key].checkpoint, meta.semantic);
+        assert!(observations[&key].state.is_none());
+        let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], std::slice::from_ref(&live));
+        assert_eq!(activity[&task_activity_key(&repo.display().to_string(), "task")].status, Some(board));
+        let offline_activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[]);
+        assert_eq!(
+            offline_activity[&task_activity_key(&repo.display().to_string(), "task")].status,
+            Some(if lifecycle == Lifecycle::Running { TaskActivityStatus::Unknown } else { board })
+        );
+        let response = serde_json::json!({"sessions": [{
+            "id": meta.id, "process": live.state.process, "agent": live.state.agent, "playbook": live.state.playbook,
+            "adapter": live.state.adapter, "message_adapter": live.state.message_adapter, "transport": "pty"
+        }]})
+        .to_string()
+            + "\n";
+        let socket_path = alinery_core::alineryd_socket_path(&repo, Some("owner"));
+        let socket = status_list_socket(socket_path.clone(), Some(&response));
+        let observed_live = session_list_statuses_for_refs(std::slice::from_ref(&reference));
+        assert_eq!(observed_live[&key].execution.as_ref().unwrap().status, online);
+        assert_eq!(
+            observed_live[&key].state.as_ref(),
+            Some(&live.state),
+            "execution outcome must not forge process or agent axes"
+        );
+        drop(socket);
+        fs::remove_file(socket_path).unwrap();
+    }
+    let record = saved.executions.get_mut(&meta.execution_id).unwrap();
+    record.lifecycle = Lifecycle::Running;
+    record.receipt_id = None;
+    alinery_core::execution::confirm_execution_exit(&mut saved, &meta.execution_id, &meta.id, Some(0)).unwrap();
+    let failed = crate::project_session_execution(&meta.id, &meta, Ok(&saved), Some(&live.state));
+    assert_eq!(failed.status, Status::Failed, "exit zero without acceptance is failure");
+    assert!(failed.failure_occurrence.is_some());
+    let record = saved.executions.get_mut(&meta.execution_id).unwrap();
+    record.lifecycle = Lifecycle::Completed;
+    assert_eq!(crate::project_session_execution(&meta.id, &meta, Ok(&saved), None).status, Status::Unknown);
+    let record = saved.executions.get_mut(&meta.execution_id).unwrap();
+    record.receipt_id = Some("receipt".into());
+    record.shutdown_confirmed = false;
+    assert_eq!(crate::project_session_execution(&meta.id, &meta, Ok(&saved), None).status, Status::Unknown);
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn execution_projection_keeps_real_waits_until_authoritative_terminal_outcome() {
+    use crate::SessionExecutionStatus as Status;
+    use alinery_core::execution::ExecutionLifecycle as Lifecycle;
+    let (repo, mut saved, meta) = execution_observation_fixture("ex-waits");
+    for lifecycle in [Lifecycle::Running, Lifecycle::Finishing] {
+        let record = saved.executions.get_mut(&meta.execution_id).unwrap();
+        record.lifecycle = lifecycle;
+        record.receipt_id = Some("receipt".into());
+        for (agent, expected) in [
+            (alinery_core::AgentState::WaitingForInput { correlation_id: "input".into() }, Status::WaitingForInput),
+            (
+                alinery_core::AgentState::WaitingForApproval {
+                    correlation_id: "approval".into(),
+                },
+                Status::WaitingForApproval,
+            ),
+        ] {
+            let mut live = activity_status_busy(&meta.id);
+            live.state.agent = agent;
+            live.state.playbook = alinery_core::PlaybookState::ReadyToAdvance;
+            assert_eq!(crate::project_session_execution(&meta.id, &meta, Ok(&saved), Some(&live.state)).status, expected);
+            let unavailable = crate::project_session_execution(&meta.id, &meta, Err("execution state unreadable"), Some(&live.state));
+            assert_eq!(unavailable.status, expected, "missing outcome must not hide a real human interaction");
+            assert_eq!(unavailable.lifecycle, None);
+        }
+    }
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn execution_identity_errors_never_borrow_replacement_owner_success() {
+    use crate::SessionExecutionStatus as Status;
+    use alinery_core::execution::ExecutionLifecycle;
+    let (repo, mut saved, meta) = execution_observation_fixture("ex-identity");
+    let record = saved.executions.get_mut(&meta.execution_id).unwrap();
+    record.lifecycle = ExecutionLifecycle::Completed;
+    record.receipt_id = Some("receipt".into());
+    record.shutdown_confirmed = true;
+    for mismatch in ["missing", "record-id", "owner", "lane", "revision"] {
+        let mut invalid = saved.clone();
+        match mismatch {
+            "missing" => {
+                invalid.executions.clear();
+            }
+            "record-id" => invalid.executions.get_mut(&meta.execution_id).unwrap().id = "other".into(),
+            "owner" => invalid.executions.get_mut(&meta.execution_id).unwrap().owner_session_id = "replacement".into(),
+            "lane" => invalid.owning_lane = "other".into(),
+            "revision" => invalid.revision = meta.execution_revision - 1,
+            _ => unreachable!(),
+        }
+        let projection = crate::project_session_execution(&meta.id, &meta, Ok(&invalid), Some(&activity_status_busy(&meta.id).state));
+        assert_eq!(projection.status, Status::Unknown, "{mismatch}");
+        assert_eq!(projection.lifecycle, None);
+        assert_eq!(projection.failure_occurrence, None);
+        assert!(projection.error.is_some());
+    }
+    saved.revision += 10;
+    assert_eq!(crate::project_session_execution(&meta.id, &meta, Ok(&saved), None).status, Status::Completed);
+    let path = alinery_core::execution::execution_state_path(&repo, "task").unwrap();
+    fs::remove_file(&path).unwrap();
+    let mut reader = crate::SessionExecutionReader::default();
+    let missing = reader.observe(&repo, "task", &meta.id, &meta, None).unwrap();
+    assert_eq!(missing.status, Status::Unknown);
+    alinery_core::execution::write_execution_state_unlocked(&repo, "task", &mut saved).unwrap();
+    assert_eq!(reader.observe(&repo, "task", &meta.id, &meta, None).unwrap(), missing, "a batch caches read errors too");
+    let mut reader = crate::SessionExecutionReader::default();
+    assert_eq!(reader.observe(&repo, "task", &meta.id, &meta, None).unwrap().status, Status::Completed);
+    fs::write(&path, "{corrupt").unwrap();
+    assert_eq!(
+        reader.observe(&repo, "task", &meta.id, &meta, None).unwrap().status,
+        Status::Completed,
+        "a batch keeps one snapshot"
+    );
+    let corrupt = crate::SessionExecutionReader::default().observe(&repo, "task", &meta.id, &meta, None).unwrap();
+    assert_eq!(corrupt.status, Status::Unknown);
+    assert!(corrupt.error.is_some());
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn previous_owner_is_stale_and_an_independent_owner_is_not() {
+    use crate::SessionExecutionStatus as Status;
+    use alinery_core::execution::{write_execution_state_unlocked, ExecutionLifecycle};
+    let (repo, mut saved, meta) = execution_observation_fixture("ex-superseded");
+    let record = saved.executions.get_mut(&meta.execution_id).unwrap();
+    record.lifecycle = ExecutionLifecycle::Completed;
+    record.receipt_id = Some("receipt".into());
+    record.shutdown_confirmed = true;
+    record.owner_session_id = "replacement".into();
+    record.previous_session_ids = vec![meta.id.clone()];
+    let previous = crate::project_session_execution(&meta.id, &meta, Ok(&saved), Some(&activity_status_busy(&meta.id).state));
+    assert_eq!(previous.status, Status::Superseded);
+    assert_eq!(previous.lifecycle, None);
+    assert_eq!(previous.error, None);
+    assert_eq!(previous.failure_occurrence, None);
+    let mut replacement = SessionMeta {
+        id: "replacement".into(),
+        ..meta.clone()
+    };
+    assert_eq!(crate::project_session_execution("replacement", &replacement, Ok(&saved), None).status, Status::Completed);
+    let mut independent = saved.executions[&meta.execution_id].clone();
+    replacement.semantic.phase_completed_at = Some(20);
+    fs::write(session_meta_path(&repo, "task", &replacement.id), serde_json::to_vec(&replacement).unwrap()).unwrap();
+    independent.id = "other-execution".into();
+    independent.owner_session_id = "other-session".into();
+    independent.previous_session_ids.clear();
+    independent.lifecycle = ExecutionLifecycle::Running;
+    independent.receipt_id = None;
+    independent.shutdown_confirmed = false;
+    saved.executions.insert(independent.id.clone(), independent);
+    write_execution_state_unlocked(&repo, "task", &mut saved).unwrap();
+    let other = SessionMeta {
+        id: "other-session".into(),
+        execution_id: "other-execution".into(),
+        execution_revision: saved.revision,
+        ..meta
+    };
+    fs::write(session_meta_path(&repo, "task", &other.id), serde_json::to_vec(&other).unwrap()).unwrap();
+    assert_eq!(crate::project_session_execution(&other.id, &other, Ok(&saved), None).status, Status::Unknown);
+    let mut reader = crate::SessionExecutionReader::default();
+    assert!(reader.observe(&repo, "task", &replacement.id, &replacement, None).unwrap().final_completion);
+    let key = task_activity_key(&repo.display().to_string(), "task");
+    assert_eq!(
+        crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[])[&key].status,
+        Some(TaskActivityStatus::Completed),
+        "a replaced owner must not hide or replace the current owner's outcome"
+    );
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn execution_failure_acknowledgement_is_occurrence_scoped_without_exit_timestamps() {
+    use alinery_core::execution::{write_execution_state_unlocked, ExecutionLifecycle as Lifecycle};
+    let (repo, mut saved, mut meta) = execution_observation_fixture("ex-ack");
+    saved.executions.get_mut(&meta.execution_id).unwrap().lifecycle = Lifecycle::LaunchFailed;
+    write_execution_state_unlocked(&repo, "task", &mut saved).unwrap();
+    crate::mark_session_notification_read_in(&repo, "task", &meta.id).unwrap();
+    meta = crate::load_session_meta_for(&repo, "task", &meta.id).unwrap();
+    let original = meta.notification_suppression.clone().unwrap();
+    assert_eq!(original.notice, alinery_core::NotificationSuppressionKind::Failure);
+    assert!(meta.ended_at.is_none());
+    let key = task_activity_key(&repo.display().to_string(), "task");
+    assert_eq!(crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[])[&key].status, None);
+    saved.enabled_steps.insert("unrelated".into());
+    write_execution_state_unlocked(&repo, "task", &mut saved).unwrap();
+    let projection = crate::project_session_execution(&meta.id, &meta, Ok(&saved), None);
+    assert_eq!(projection.status, crate::SessionExecutionStatus::LaunchFailed);
+    assert_eq!(projection.failure_occurrence.as_ref(), Some(&original.occurrence));
+    assert_eq!(crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[])[&key].status, None);
+    saved.executions.get_mut(&meta.execution_id).unwrap().lifecycle = Lifecycle::Interrupted;
+    write_execution_state_unlocked(&repo, "task", &mut saved).unwrap();
+    crate::clear_session_notifications_in(&repo, &[notification_clear_ref(&repo, &meta.id, Some(original.clone()))]).unwrap();
+    assert_eq!(
+        crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[])[&key].status,
+        Some(TaskActivityStatus::Interrupted),
+        "stale clear cannot acknowledge a new occurrence"
+    );
+    crate::acknowledge_exited_session_refs(&repo, &[("task".into(), meta.id.clone())]).unwrap();
+    let acknowledged = crate::load_session_meta_for(&repo, "task", &meta.id).unwrap();
+    assert_ne!(acknowledged.notification_suppression, Some(original));
+    assert_eq!(crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[])[&key].status, None);
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn execution_completion_acknowledgement_waits_for_confirmed_shutdown() {
+    use alinery_core::execution::{write_execution_state_unlocked, ExecutionLifecycle as Lifecycle};
+    let (repo, mut saved, mut meta) = execution_observation_fixture("ex-complete-read");
+    meta.semantic.phase_completed_at = Some(20);
+    meta.ended_at = Some(30);
+    meta.exit_code = Some(1);
+    fs::write(session_meta_path(&repo, "task", &meta.id), serde_json::to_vec(&meta).unwrap()).unwrap();
+    let record = saved.executions.get_mut(&meta.execution_id).unwrap();
+    record.lifecycle = Lifecycle::Finishing;
+    record.receipt_id = Some("receipt".into());
+    write_execution_state_unlocked(&repo, "task", &mut saved).unwrap();
+    crate::mark_session_notification_read_in(&repo, "task", &meta.id).unwrap();
+    let finishing = crate::load_session_meta_for(&repo, "task", &meta.id).unwrap();
+    assert_eq!(finishing.notification_read_at, None);
+    assert_eq!(finishing.exit_notification_read_at, None, "legacy exit cannot override execution truth");
+    assert_eq!(finishing.notification_suppression, None);
+    alinery_core::execution::confirm_execution_exit(&mut saved, &meta.execution_id, &meta.id, Some(1)).unwrap();
+    write_execution_state_unlocked(&repo, "task", &mut saved).unwrap();
+    crate::mark_session_notification_read_in(&repo, "task", &meta.id).unwrap();
+    let completed = crate::load_session_meta_for(&repo, "task", &meta.id).unwrap();
+    assert_eq!(completed.notification_read_at, Some(20));
+    assert_eq!(completed.exit_notification_read_at, None);
+    assert_eq!(
+        crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[])[&task_activity_key(&repo.display().to_string(), "task")].status,
+        None
+    );
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn queued_execution_does_not_hide_an_unacknowledged_failure() {
+    use alinery_core::execution::{write_execution_state_unlocked, ExecutionLifecycle};
+    let (repo, mut saved, mut failed) = execution_observation_fixture("ex-priority");
+    failed.created = 1;
+    saved.executions.get_mut(&failed.execution_id).unwrap().lifecycle = ExecutionLifecycle::Failed;
+    let mut queued_record = saved.executions[&failed.execution_id].clone();
+    queued_record.id = "queued-execution".into();
+    queued_record.owner_session_id = "queued-session".into();
+    queued_record.lifecycle = ExecutionLifecycle::Queued;
+    let queued = SessionMeta {
+        id: queued_record.owner_session_id.clone(),
+        execution_id: queued_record.id.clone(),
+        created: 2,
+        ..failed.clone()
+    };
+    saved.executions.insert(queued_record.id.clone(), queued_record);
+    write_execution_state_unlocked(&repo, "task", &mut saved).unwrap();
+    for meta in [&failed, &queued] {
+        fs::write(session_meta_path(&repo, "task", &meta.id), serde_json::to_vec(meta).unwrap()).unwrap();
+    }
+    let key = task_activity_key(&repo.display().to_string(), "task");
+    assert_eq!(
+        crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[])[&key].status,
+        Some(TaskActivityStatus::Failed)
+    );
+    crate::mark_session_notification_read_in(&repo, "task", &failed.id).unwrap();
+    assert_eq!(
+        crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[])[&key].status,
+        Some(TaskActivityStatus::Queued)
+    );
+    let _ = fs::remove_dir_all(repo);
 }

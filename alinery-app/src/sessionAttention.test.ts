@@ -5,11 +5,13 @@ import {
   filterSuppressedNoticeRows,
   isSessionNoticeSuppressed,
   liveNoticeSuppression,
+  notificationClearRefs,
   type ObservationDisplayKind,
   observationDisplayKind,
   orderSessionListItems,
   orderTaskPanelRows,
   PRIORITY_SESSION_SORT,
+  sameSessionObservationMaps,
   selectSessionSort,
   sessionAttentionTier,
   sessionNoticeRows,
@@ -270,6 +272,16 @@ describe("session attention ordering", () => {
     expect(ordered.map((row) => row.id)).toEqual(["wait", "busy", "failed", "inactive"]);
   });
 
+  it("keeps an execution failure ahead of newer queued work", () => {
+    const failed = item({ id: "failed", execution_id: "failed-execution", created: 1 });
+    const queued = item({ id: "queued", execution_id: "queued-execution", created: 2 });
+    const observations = {
+      [statusKey(failed)]: observation({ execution: { lifecycle: "failed", status: "failed", error: null, failure_occurrence: "failure" } }),
+      [statusKey(queued)]: observation({ execution: { lifecycle: "queued", status: "queued", error: null, failure_occurrence: null } }),
+    };
+    expect(orderSessionListItems([queued, failed], observations).map((row) => row.id)).toEqual(["failed", "queued"]);
+  });
+
   it("keeps Task Detail artifact-first fallback and deterministic descending IDs", () => {
     const rows = [session({ id: "s-a", created: 10, artifact: "done" }), session({ id: "s-b", created: 10 }), session({ id: "s-c", created: 9 })];
     const ordered = orderTaskPanelRows(
@@ -494,5 +506,93 @@ describe("notification occurrence and clear projection", () => {
       },
     };
     expect(filterSuppressedNoticeRows(sessionNoticeRows(clearedAll, changed), changed).map((row) => row.item.id)).toContain("input");
+  });
+});
+
+describe("execution-owned attention", () => {
+  const executionObservation = (
+    execution: NonNullable<SessionObservation["execution"]>,
+    liveState = true,
+  ): SessionObservation & { execution: NonNullable<SessionObservation["execution"]> } => ({
+    ...live("busy"),
+    ...(liveState ? {} : { lifecycle: { state: "exited", code: 0 }, state: null }),
+    checkpoint: { phase_completed_at: 100 },
+    execution,
+  });
+
+  it("does not mistake accepted output or zero exit for completion before confirmed shutdown", () => {
+    const meta = session({ execution_id: "execution", semantic: { phase_completed_at: 100 }, exit_code: 0 });
+    for (const liveState of [true, false]) {
+      const finishing = executionObservation({ lifecycle: "finishing", status: "finishing", error: null, failure_occurrence: null }, liveState);
+      expect(observationDisplayKind(finishing)).toBe("finishing");
+      expect(classifySessionNotice(meta, finishing)).toBeNull();
+      const completed = { ...finishing, execution: { ...finishing.execution, lifecycle: "completed" as const, status: "completed" as const } };
+      expect(observationDisplayKind(completed)).toBe("completed");
+      expect(classifySessionNotice(meta, completed)).toBe("unread_completion");
+      expect(classifySessionNotice({ ...meta, notification_read_at: 100 }, completed)).toBeNull();
+    }
+    const failed = executionObservation({ lifecycle: "failed", status: "failed", error: "No receipt", failure_occurrence: "execution:session:failed" }, false);
+    expect(classifySessionNotice({ ...meta, semantic: {} }, failed)).toBe("failure");
+  });
+
+  it("does not infer outcomes from legacy metadata when execution truth is unknown or not loaded", () => {
+    const meta = session({ execution_id: "execution", semantic: { phase_completed_at: 100 }, exit_code: 143, ended_at: 100 });
+    const unknown = executionObservation({ lifecycle: null, status: "unknown", error: "Owner mismatch", failure_occurrence: null }, false);
+    expect(observationDisplayKind(unknown)).toBe("unknown");
+    expect(classifySessionNotice(meta, unknown)).toBeNull();
+    expect(classifySessionNotice(meta)).toBeNull();
+    expect(sessionAttentionTier(meta, unknown)).toBe(3);
+  });
+
+  it("shows a replaced owner as stale without treating another execution as replaced", () => {
+    const replaced = executionObservation({ lifecycle: null, status: "superseded", error: null, failure_occurrence: null }, false);
+    const independent = executionObservation({ lifecycle: "running", status: "busy", error: null, failure_occurrence: null });
+    expect(observationDisplayKind(replaced)).toBe("stale");
+    expect(classifySessionNotice(session({ execution_id: "execution", semantic: { phase_completed_at: 100 } }), replaced)).toBeNull();
+    expect(observationDisplayKind(independent)).toBe("busy");
+  });
+
+  it("acknowledges an exact execution failure without an exit timestamp and resurfaces a new failure", () => {
+    const meta = item({ execution_id: "execution", semantic: { phase_completed_at: 100 } });
+    const failure = executionObservation(
+      { lifecycle: "launch_failed", status: "launch_failed", error: "Missing harness", failure_occurrence: "execution:session:launch_failed" },
+      false,
+    );
+    const key = statusKey(meta);
+    const observations = { [key]: failure };
+    const rows = sessionNoticeRows([meta], observations);
+    expect(rows.map((row) => row.notice)).toEqual(["failure"]);
+    expect(notificationClearRefs(rows, observations, false)[0].notification_suppression).toEqual({ notice: "failure", occurrence: "execution:session:launch_failed" });
+    const cleared = applyNotificationClearProjection([meta], rows, observations, false);
+    expect(sessionNoticeRows(cleared, observations)).toEqual([]);
+    expect(observationDisplayKind(failure)).toBe("launch_failed");
+    expect(sessionNoticeRows([{ ...cleared[0], status_revision: 500, exit_code: 143, ended_at: 100 }], observations)).toEqual([]);
+    const interrupted = executionObservation({ lifecycle: "interrupted", status: "interrupted", error: null, failure_occurrence: "execution:session:interrupted" });
+    expect(sessionNoticeRows(cleared, { [key]: interrupted }).map((row) => row.notice)).toEqual(["interrupted"]);
+    expect(observationDisplayKind(interrupted)).toBe("interrupted");
+  });
+
+  it("preserves genuine live wait suppression while accepted output remains unfinished", () => {
+    const meta = item({ execution_id: "execution", semantic: { phase_completed_at: 100 }, exit_code: 143, ended_at: 100 });
+    const waiting: SessionObservation = {
+      ...live("waiting_for_input"),
+      checkpoint: { phase_completed_at: 100 },
+      execution: { lifecycle: "finishing", status: "waiting_for_input", error: null, failure_occurrence: null },
+    };
+    const key = statusKey(meta);
+    const rows = sessionNoticeRows([meta], { [key]: waiting });
+    const cleared = applyNotificationClearProjection([meta], rows, { [key]: waiting }, true);
+    expect(filterSuppressedNoticeRows(sessionNoticeRows(cleared, { [key]: waiting }), { [key]: waiting })).toEqual([]);
+    if (!waiting.state) throw new Error("expected live wait fixture");
+    const nextWait = { ...waiting, state: { ...waiting.state, agent: { state: "waiting_for_input" as const, correlation_id: "next" } } };
+    expect(filterSuppressedNoticeRows(sessionNoticeRows(cleared, { [key]: nextWait }), { [key]: nextWait }).map((row) => row.notice)).toEqual(["waiting_for_input"]);
+    expect(sameSessionObservationMaps({ [key]: waiting }, { [key]: nextWait })).toBe(false);
+  });
+
+  it("refreshes a failure identity or diagnostic without requiring the visible status to change", () => {
+    const current = executionObservation({ lifecycle: "failed", status: "failed", error: "No receipt", failure_occurrence: "execution:session:failed" });
+    const next = { ...current, execution: { ...current.execution, failure_occurrence: "replacement:session:failed" } };
+    expect(sameSessionObservationMaps({ session: current }, { session: next })).toBe(false);
+    expect(sameSessionObservationMaps({ session: current }, { session: { ...current, execution: { ...current.execution, error: "State unreadable" } } })).toBe(false);
   });
 });

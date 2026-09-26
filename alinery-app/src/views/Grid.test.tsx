@@ -959,11 +959,12 @@ describe("configurable task grid", () => {
           ],
         );
       const original = retainedExecution(
-        [step("untouched", "Untouched"), step("gated", "Gated"), step("work", "Original work"), step("parallel", "Parallel review")],
+        [step("untouched", "Untouched"), step("gated", "Gated"), step("work", "Original work"), step("parallel", "Parallel review"), step("uncertain", "Interrupted work")],
         [
           ["work", "running"],
           ["work", "completed"],
           ["parallel", "finishing"],
+          ["uncertain", "interrupted"],
         ],
       );
       original.state.enabled_steps = original.state.enabled_steps.filter((key) => key !== "gated");
@@ -971,13 +972,13 @@ describe("configurable task grid", () => {
     });
     render(<Grid allRepos onOpen={() => {}} registerNav={() => {}} initialPreset="progress" />);
     const original = await screen.findByLabelText("Original retained steps");
-    await waitFor(() => expect(laneStepNames(original)).toEqual(["Untouched", "Gated", "Original work", "Parallel review"]));
+    await waitFor(() => expect(laneStepNames(original)).toEqual(["Untouched", "Gated", "Original work", "Parallel review", "Interrupted work"]));
     expect(laneStepNames(screen.getByLabelText("Revised retained steps"))).toEqual(["Revised work", "New audit"]);
     expect(laneStepNames(screen.getByLabelText("Other repo retained steps"))).toEqual(["Other work"]);
     expect(screen.queryByLabelText(/Moved forward|Moved backward|Previous position/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
     fireEvent.change(screen.getByLabelText("Path labels"), { target: { value: "next" } });
-    expect(laneStepNames(original)).toEqual(["Original work", "Parallel review"]);
+    expect(laneStepNames(original)).toEqual(["Original work", "Parallel review", "Interrupted work"]);
     expect(laneStepNames(screen.getByLabelText("Revised retained steps"))).toEqual(["Revised work"]);
     expect(laneStepNames(screen.getByLabelText("Other repo retained steps"))).toEqual([]);
   });

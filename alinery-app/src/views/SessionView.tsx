@@ -1912,7 +1912,7 @@ export function SessionView({
         )}
         {(executionStep || phase) && <span className="pill">{executionStep?.title ?? phase}</span>}
         <span className="pill">{harnessDisplayName(harness) + (model ? ` · ${model}` : "")}</span>
-        <StatusDot id={id} slug={taskSlug} repoPath={repoPath} observation={observation} />
+        <StatusDot id={id} slug={taskSlug} observation={observation} />
         <span className="session-path dim mono">
           {id} · {cwd}
         </span>
@@ -1930,15 +1930,15 @@ export function SessionView({
       </div>
       {finalizedNotice && <InlineStatus tone="warning">{finalizedNotice}</InlineStatus>}
       {executionView && <ExecutionAvailabilityNotice live={executionView.live} controls />}
-      {hasTask && !navHistory && effectiveLifecycle?.state === "never_started" && (
+      {hasTask && !navHistory && observation?.execution?.status === "queued" && (
         <div className="session-execution">
           <p>{execution?.start_requested ? "Start requested; waiting for the daemon to acquire capacity." : "This session is queued. Opening it does not start it."}</p>
           <button
             type="button"
             className="btn small"
-            disabled={!executionAvailable || completionBusy || !!execution?.start_requested}
+            disabled={!executionAvailable || execution?.owner_session_id !== id || completionBusy || !!execution?.start_requested}
             onClick={async () => {
-              if (!executionAvailable || completionBusy || execution?.start_requested) return;
+              if (!executionAvailable || execution?.owner_session_id !== id || completionBusy || execution.start_requested) return;
               setCompletionBusy(true);
               try {
                 await ipc.startSession(taskSlug, id, repoPath);
@@ -1957,6 +1957,7 @@ export function SessionView({
           </button>
         </div>
       )}
+      {observation?.execution?.error && <InlineStatus tone={observation.execution.status === "unknown" ? "warning" : "error"}>{observation.execution.error}</InlineStatus>}
       {executionError && (
         <InlineStatus tone="warning" detail={executionError}>
           Execution state unavailable; queued starts and completion grants are disabled.
@@ -2148,6 +2149,7 @@ export function SessionView({
                 id={id}
                 phase={phase}
                 harness={harness}
+                observation={observation}
                 model={model}
                 state={effectiveLifecycle}
                 artifactReady={artifactReady}

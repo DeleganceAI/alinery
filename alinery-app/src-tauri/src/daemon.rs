@@ -146,7 +146,7 @@ pub(crate) fn passive_session_statuses(repo: &Path, expected_app_config_identity
     client.session_statuses_observed()
 }
 
-fn task_activity_session(repo: &Path, task: &Task, session: &SessionMeta) -> TaskActivitySession {
+fn task_activity_session(repo: &Path, task: &Task, session: &SessionMeta, executions: &mut SessionExecutionReader) -> TaskActivitySession {
     let playbook = task
         .playbook_ref
         .as_ref()
@@ -155,7 +155,16 @@ fn task_activity_session(repo: &Path, task: &Task, session: &SessionMeta) -> Tas
     let step_title = if session.generic {
         "Generic".to_string()
     } else {
-        match retained_task_definition(repo, task) {
+        let definition = if task.draft || task.engine_version < 2 {
+            Ok(None)
+        } else {
+            executions
+                .read(repo, &task.slug)
+                .as_ref()
+                .map_err(Clone::clone)
+                .and_then(|state| alinery_core::execution::read_task_playbook(repo, &task.slug, state).map(Some))
+        };
+        match definition {
             Ok(Some(definition)) => definition
                 .step
                 .iter()
@@ -191,7 +200,48 @@ fn has_unacknowledged_terminal_failure(session: &SessionMeta) -> bool {
             .is_none_or(|ended_at| session.exit_notification_read_at.is_none_or(|read_at| ended_at > read_at))
 }
 
-fn project_task_session_activity(repo: &Path, task: &Task, session: &SessionMeta, daemon_state: Option<&alinery_core::SessionState>) -> TaskSessionActivityProjection {
+fn project_task_session_activity(
+    repo: &Path,
+    task: &Task,
+    session: &SessionMeta,
+    daemon_state: Option<&alinery_core::SessionState>,
+    executions: &mut SessionExecutionReader,
+) -> TaskSessionActivityProjection {
+    if let Some(execution) = executions.observe(repo, &task.slug, &session.id, session, daemon_state) {
+        use SessionExecutionStatus as Status;
+        let acknowledged_failure = execution.failure_occurrence.as_ref().is_some_and(|occurrence| {
+            session
+                .notification_suppression
+                .as_ref()
+                .is_some_and(|suppression| suppression.notice == alinery_core::NotificationSuppressionKind::Failure && &suppression.occurrence == occurrence)
+        });
+        let status = match execution.status {
+            Status::WaitingForInput => Some((0, TaskActivityStatus::WaitingForInput)),
+            Status::WaitingForApproval => Some((0, TaskActivityStatus::WaitingForApproval)),
+            Status::Starting | Status::Busy => Some((1, TaskActivityStatus::Running)),
+            Status::Queued => Some((3, TaskActivityStatus::Queued)),
+            Status::Finishing => Some((1, TaskActivityStatus::Finishing)),
+            Status::LaunchFailed if !acknowledged_failure => Some((2, TaskActivityStatus::LaunchFailed)),
+            Status::Failed if !acknowledged_failure => Some((2, TaskActivityStatus::Failed)),
+            Status::Interrupted if !acknowledged_failure => Some((2, TaskActivityStatus::Interrupted)),
+            Status::Completed
+                if session
+                    .semantic
+                    .phase_completed_at
+                    .is_some_and(|completed_at| session.notification_read_at.is_none_or(|read_at| completed_at > read_at)) =>
+            {
+                Some((2, TaskActivityStatus::Completed))
+            }
+            Status::Unknown => Some((3, TaskActivityStatus::Unknown)),
+            _ => None,
+        };
+        let active_tier = match execution.status {
+            Status::Starting | Status::Busy => Some(0),
+            Status::WaitingForInput | Status::WaitingForApproval => Some(1),
+            _ => None,
+        };
+        return TaskSessionActivityProjection { status, active_tier };
+    }
     let durable_status = if has_unacknowledged_terminal_failure(session) {
         Some((2, TaskActivityStatus::Failed))
     } else if is_primary_playbook_session(repo, task, session)
@@ -249,9 +299,15 @@ fn project_task_session_activity(repo: &Path, task: &Task, session: &SessionMeta
     TaskSessionActivityProjection { status, active_tier }
 }
 
-fn task_has_actionable_session(repo: &Path, task: &Task, sessions: &[SessionMeta], statuses_by_id: &HashMap<&str, &alinery_core::SessionState>) -> bool {
+fn task_has_actionable_session(
+    repo: &Path,
+    task: &Task,
+    sessions: &[SessionMeta],
+    statuses_by_id: &HashMap<&str, &alinery_core::SessionState>,
+    executions: &mut SessionExecutionReader,
+) -> bool {
     sessions.iter().filter(|session| !session.archived).any(|session| {
-        project_task_session_activity(repo, task, session, statuses_by_id.get(session.id.as_str()).copied())
+        project_task_session_activity(repo, task, session, statuses_by_id.get(session.id.as_str()).copied(), executions)
             .active_tier
             .is_some()
     })
@@ -260,6 +316,7 @@ fn task_has_actionable_session(repo: &Path, task: &Task, sessions: &[SessionMeta
 pub(crate) fn resolve_task_activity_for_repo(repo: &Path, slugs: &[String], statuses: &[DaemonSessionStatus]) -> HashMap<String, TaskActivitySummary> {
     let repo_path = repo.display().to_string();
     let statuses_by_id = statuses.iter().map(|status| (status.id.as_str(), &status.state)).collect::<HashMap<_, _>>();
+    let mut executions = SessionExecutionReader::default();
     let mut activity = slugs
         .iter()
         .map(|slug| (task_activity_key(&repo_path, slug), TaskActivitySummary::default()))
@@ -276,7 +333,7 @@ pub(crate) fn resolve_task_activity_for_repo(repo: &Path, slugs: &[String], stat
         let mut activity_task = task;
         let mut visited = HashSet::from([activity_task.slug.clone()]);
         loop {
-            if activity_task.active_subtask.is_empty() || task_has_actionable_session(repo, &activity_task, &sessions, &statuses_by_id) {
+            if activity_task.active_subtask.is_empty() || task_has_actionable_session(repo, &activity_task, &sessions, &statuses_by_id, &mut executions) {
                 break;
             }
             let child_slug = activity_task.active_subtask.clone();
@@ -297,7 +354,7 @@ pub(crate) fn resolve_task_activity_for_repo(repo: &Path, slugs: &[String], stat
         let mut active_choice: Option<(u8, u64, String, &SessionMeta)> = None;
 
         for session in sessions.iter().filter(|session| !session.archived) {
-            let projection = project_task_session_activity(repo, &activity_task, session, statuses_by_id.get(session.id.as_str()).copied());
+            let projection = project_task_session_activity(repo, &activity_task, session, statuses_by_id.get(session.id.as_str()).copied(), &mut executions);
 
             if let Some((tier, status)) = projection.status {
                 let replace = status_choice.as_ref().is_none_or(|(current_tier, current_created, current_id, _)| {
@@ -320,7 +377,7 @@ pub(crate) fn resolve_task_activity_for_repo(repo: &Path, slugs: &[String], stat
             }
         }
         summary.status = status_choice.map(|(_, _, _, status)| status);
-        summary.active_session = active_choice.map(|(_, _, _, session)| task_activity_session(repo, &activity_task, session));
+        summary.active_session = active_choice.map(|(_, _, _, session)| task_activity_session(repo, &activity_task, session, &mut executions));
         activity.insert(key, summary);
     }
     activity

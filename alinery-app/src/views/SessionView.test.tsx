@@ -1794,14 +1794,25 @@ describe("held task sessions", () => {
     scenario.tasks = [task];
     scenario.tasksPromise = null;
     scenario.tasksError = null;
-    sessionStatus.mockResolvedValue({ lifecycle: { state: "never_started" }, state: null, checkpoint: {} });
+    sessionStatus.mockResolvedValue({
+      lifecycle: { state: "never_started" },
+      state: null,
+      checkpoint: {},
+      execution: { lifecycle: "queued", status: "queued", error: null, failure_occurrence: null },
+    });
     getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session", lifecycle: "queued", start_requested: false })]));
     renderSession({ intent: undefined });
     const start = await screen.findByRole("button", { name: "Start this queued session" });
     expect(startSession).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("Message or /command")).toBeNull();
     startSession.mockImplementation(async () => {
-      sessionStatus.mockResolvedValue({ lifecycle: { state: "live" }, state: null, checkpoint: {}, transport: "rpc" });
+      sessionStatus.mockResolvedValue({
+        lifecycle: { state: "live" },
+        state: null,
+        checkpoint: {},
+        transport: "rpc",
+        execution: { lifecycle: "running", status: "unknown", error: null, failure_occurrence: null },
+      });
       getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session" })]));
     });
     fireEvent.click(start);
@@ -1814,7 +1825,12 @@ describe("held task sessions", () => {
     scenario.tasks = [task];
     scenario.tasksPromise = null;
     scenario.tasksError = null;
-    sessionStatus.mockResolvedValue({ lifecycle: { state: "never_started" }, state: null, checkpoint: {} });
+    sessionStatus.mockResolvedValue({
+      lifecycle: { state: "never_started" },
+      state: null,
+      checkpoint: {},
+      execution: { lifecycle: "queued", status: "queued", error: null, failure_occurrence: null },
+    });
     const saved = executionReply([executionRecord({ owner_session_id: "session", lifecycle: "queued", start_requested: false })]);
     getTaskExecution.mockResolvedValue({ ...saved, live: status ? { status, detail: "Owner cannot be queried" } : undefined });
     renderSession({ intent: undefined });
@@ -1825,5 +1841,30 @@ describe("held task sessions", () => {
     fireEvent.click(start);
     expect(startSession).not.toHaveBeenCalled();
     expect(screen.getByText("research/2-result-10.md")).toBeDefined();
+  });
+
+  it.each(["launch_failed", "unknown"] as const)("does not turn a never-started %s execution into queued work", async (status) => {
+    scenario.tasks = [task];
+    scenario.tasksPromise = null;
+    scenario.tasksError = null;
+    sessionStatus.mockResolvedValue({
+      lifecycle: { state: "never_started" },
+      state: null,
+      checkpoint: {},
+      execution: {
+        lifecycle: status === "unknown" ? null : status,
+        status,
+        error: "Cannot launch this execution",
+        failure_occurrence: status === "unknown" ? null : "execution:session:launch_failed",
+      },
+    });
+    getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session", lifecycle: "queued", start_requested: true })]));
+    renderSession({ intent: undefined });
+
+    await screen.findByText("Cannot launch this execution");
+    expect(screen.queryByRole("button", { name: "Start this queued session" })).toBeNull();
+    expect(screen.queryByText("never_started")).toBeNull();
+    expect(screen.queryByText(/waiting for the daemon to acquire capacity/)).toBeNull();
+    expect(startSession).not.toHaveBeenCalled();
   });
 });

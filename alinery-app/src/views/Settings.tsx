@@ -1646,12 +1646,20 @@ export function Settings({
             {check("banner", "Banner", "native notification")}
             {check("sound", "Sound", "notification sound")}
             {check("bounce", "Dock bounce", "off by default")}
+            <div className="dock-badge-options" role="group" aria-label="Native alert categories">
+              {check("native_input_waits", "Input alerts", "banner, sound, or bounce when a session needs input")}
+              {check("native_approval_waits", "Approval alerts", "banner, sound, or bounce when a session needs approval")}
+              {check("native_failures", "Failure alerts", "banner, sound, or bounce when an execution fails")}
+              {check("native_interruptions", "Interruption alerts", "banner, sound, or bounce when ownership is uncertain")}
+              {check("native_final_completions", "Final completion alerts", "after confirmed shutdown, not intermediate auto-advance")}
+            </div>
             {check("dock_badge", "Dock badge", "show the current notice count on the macOS Dock icon")}
             <div className="dock-badge-options" role="group" aria-label="Dock badge categories">
               {check("dock_badge_input_waits", "Input waits", "include sessions waiting for input")}
               {check("dock_badge_approval_waits", "Approval waits", "include sessions waiting for approval")}
               {check("dock_badge_failures", "Failures", "include failed sessions")}
               {check("dock_badge_completions", "Unread playbook completions", "include completed playbook steps")}
+              {check("dock_badge_interruptions", "Interruptions", "include sessions whose ownership is uncertain")}
             </div>
             <button
               type="button"

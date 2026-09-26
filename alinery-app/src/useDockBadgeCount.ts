@@ -9,6 +9,7 @@ const BADGE_PREF_BY_NOTICE: Record<SessionNoticeRow["notice"], keyof Notificatio
   waiting_for_input: "dock_badge_input_waits",
   waiting_for_approval: "dock_badge_approval_waits",
   failure: "dock_badge_failures",
+  interrupted: "dock_badge_interruptions",
   unread_completion: "dock_badge_completions",
 };
 

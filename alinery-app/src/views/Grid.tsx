@@ -125,6 +125,11 @@ function loadSavedPresets(): SavedPreset[] {
 }
 
 const STATUS_LABELS: Record<GridActivityState, string> = {
+  queued: "Queued",
+  finishing: "Finishing",
+  launch_failed: "Couldn't start",
+  interrupted: "Interrupted",
+  unknown: "Unknown",
   running: "Running",
   waiting_for_input: "Waiting for input",
   waiting_for_approval: "Waiting for approval",
@@ -132,7 +137,19 @@ const STATUS_LABELS: Record<GridActivityState, string> = {
   completed: "Complete",
   none: "No session",
 };
-const STATUS_ORDER: GridActivityState[] = ["none", "waiting_for_input", "waiting_for_approval", "failed", "running", "completed"];
+const STATUS_ORDER: GridActivityState[] = [
+  "none",
+  "waiting_for_input",
+  "waiting_for_approval",
+  "launch_failed",
+  "failed",
+  "interrupted",
+  "unknown",
+  "queued",
+  "running",
+  "finishing",
+  "completed",
+];
 const ATTENTION_ORDER = ["Input", "Approval", "None"];
 const AGE_WINDOWS = ["New this week", "8–30 days", "31–90 days", "90+ days"];
 const PROGRESS_FIELDS: ProgressField[] = ["stage", "column", "status", "createdWindow"];
@@ -550,7 +567,7 @@ function stagePath(fact: TaskFacts, executions: Record<string, TaskExecutionRepl
   const activeSteps = new Set<string>();
   if (execution) {
     for (const record of Object.values(execution.state.executions)) {
-      if (record.lifecycle === "starting" || record.lifecycle === "running" || record.lifecycle === "finishing") {
+      if (record.lifecycle === "starting" || record.lifecycle === "running" || record.lifecycle === "finishing" || record.lifecycle === "interrupted") {
         activeSteps.add(record.candidate.step_key);
       }
     }

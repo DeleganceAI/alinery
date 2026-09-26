@@ -16,6 +16,12 @@ const notifications: NotificationPrefs = {
   dock_badge_approval_waits: true,
   dock_badge_failures: true,
   dock_badge_completions: true,
+  dock_badge_interruptions: true,
+  native_input_waits: true,
+  native_approval_waits: true,
+  native_failures: true,
+  native_interruptions: true,
+  native_final_completions: true,
 };
 
 const globalSettings: GlobalSettings = {
@@ -61,7 +67,7 @@ const mcp: McpStatusHandle = {
   refresh: () => {},
 };
 
-const labels = ["Dock badge", "Input waits", "Approval waits", "Failures", "Unread playbook completions"];
+const labels = ["Dock badge", "Input waits", "Approval waits", "Failures", "Unread playbook completions", "Interruptions"];
 
 function renderNotifications(onNotificationsChange = vi.fn()) {
   render(
@@ -94,11 +100,12 @@ describe("notification badge settings", () => {
     renderNotifications();
     const group = await screen.findByRole("group", { name: "Dock badge categories" });
     expect(group.classList.contains("dock-badge-options")).toBe(true);
-    expect(group.querySelectorAll('input[type="checkbox"]')).toHaveLength(4);
+    expect(group.querySelectorAll('input[type="checkbox"]')).toHaveLength(5);
     expect(group.textContent).toContain("Input waits");
     expect(group.textContent).toContain("Approval waits");
     expect(group.textContent).toContain("Failures");
     expect(group.textContent).toContain("Unread playbook completions");
+    expect(group.textContent).toContain("Interruptions");
   });
 
   it("persists each exact preference key independently", async () => {
@@ -109,6 +116,9 @@ describe("notification badge settings", () => {
       ["Approval waits", "dock_badge_approval_waits"],
       ["Failures", "dock_badge_failures"],
       ["Unread playbook completions", "dock_badge_completions"],
+      ["Interruptions", "dock_badge_interruptions"],
+      ["Failure alerts", "native_failures"],
+      ["Final completion alerts", "native_final_completions"],
     ] as const;
     for (const [label, key] of cases) {
       const checkbox = await screen.findByRole("checkbox", { name: new RegExp(label) });

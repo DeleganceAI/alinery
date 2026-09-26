@@ -25,6 +25,7 @@ import {
   type SessionSort,
   sameSessionObservationMaps,
   selectSessionSort,
+  sessionFailureNeedsAttention,
   sessionSortArrow,
   sessionStartedAt,
   sessionUpdatedAt,
@@ -76,6 +77,16 @@ import { useTaskPullRequests } from "../useTaskPullRequests";
 
 function taskActivityLabel(activity: TaskActivitySummary): string {
   switch (activity.status) {
+    case "queued":
+      return "Queued";
+    case "finishing":
+      return "Finishing";
+    case "launch_failed":
+      return "Couldn't start";
+    case "interrupted":
+      return "Interrupted";
+    case "unknown":
+      return "Unknown";
     case "running":
       return "Running";
     case "waiting_for_input":
@@ -225,7 +236,11 @@ export function TaskDetail({
   const artifactNames = artifactItems.map((a) => a.name);
   const filteredSessions = showArchived ? sessions : sessions.filter((session) => !session.archived);
   const hasExpectedArtifact = (session: SessionMeta) => Boolean(executionForSession(session)?.receipt_id);
-  const unacknowledgedExitedSessions = sessions.filter((session) => !session.archived && hasUnacknowledgedExit(session));
+  const unacknowledgedFailures = sessions.filter(
+    (session) =>
+      !session.archived &&
+      (session.execution_id || sessionStatuses[session.id]?.execution ? sessionFailureNeedsAttention(session, sessionStatuses[session.id]) : hasUnacknowledgedExit(session)),
+  );
   const prioritySessions = orderTaskPanelRows(
     filteredSessions.map<TaskPanelRow>((session) => ({ kind: "session", session })),
     sessionStatuses,
@@ -808,14 +823,14 @@ export function TaskDetail({
     }
   };
 
-  const acknowledgeExitedSessions = async () => {
-    setBusy("acknowledge-exits");
+  const acknowledgeFailures = async () => {
+    setBusy("acknowledge-failures");
     setErr(null);
     try {
-      await Promise.all(unacknowledgedExitedSessions.map((session) => ipc.markSessionNotificationRead(repoPath, slug, session.id)));
+      await Promise.all(unacknowledgedFailures.map((session) => ipc.markSessionNotificationRead(repoPath, slug, session.id)));
       await load();
     } catch (error) {
-      setErr({ msg: "Couldn't acknowledge exited sessions.", detail: String(error) });
+      setErr({ msg: "Couldn't acknowledge session failures.", detail: String(error) });
     } finally {
       setBusy("");
     }
@@ -1151,9 +1166,9 @@ export function TaskDetail({
                 Priority
               </button>
               <Checkbox checked={showArchived} onChange={setShowArchived} label="Show archived" />
-              {unacknowledgedExitedSessions.length > 0 && (
-                <button type="button" className="btn ghost small" disabled={!!busy} onClick={() => void acknowledgeExitedSessions()}>
-                  {busy === "acknowledge-exits" ? "Acknowledging…" : "Acknowledge exited sessions"}
+              {unacknowledgedFailures.length > 0 && (
+                <button type="button" className="btn ghost small" disabled={!!busy} onClick={() => void acknowledgeFailures()}>
+                  {busy === "acknowledge-failures" ? "Acknowledging…" : "Acknowledge failures"}
                 </button>
               )}
               <button
@@ -1299,15 +1314,7 @@ export function TaskDetail({
                     return (
                       <tr key={`manager:${row.owner_task_slug}:${s.id}`} className="subtask-manager-row">
                         <td className="status-col">
-                          <StatusDot
-                            id={s.id}
-                            slug={row.owner_task_slug}
-                            repoPath={repoPath}
-                            minimal
-                            observation={obs ?? undefined}
-                            exitCode={s.exit_code}
-                            exitAcknowledged={hasAcknowledgedExit(s)}
-                          />
+                          <StatusDot id={s.id} slug={row.owner_task_slug} minimal observation={obs ?? undefined} exitCode={s.exit_code} exitAcknowledged={hasAcknowledgedExit(s)} />
                         </td>
                         <td className="session-name-cell editable-name">
                           {renameControl("session", row.owner_task_slug, s.name ?? "", s.id)}
@@ -1422,9 +1429,8 @@ export function TaskDetail({
                         <StatusDot
                           id={s.id}
                           slug={slug}
-                          repoPath={repoPath}
-                          minimal
                           observation={obs}
+                          minimal
                           superseded={superseded}
                           unreadCompletion={unreadCompletion}
                           exitCode={s.exit_code}

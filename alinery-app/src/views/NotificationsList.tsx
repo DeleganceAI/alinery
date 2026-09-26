@@ -9,6 +9,7 @@ const NOTICE_LABEL: Record<SessionNotice, string> = {
   waiting_for_input: "Needs input",
   waiting_for_approval: "Needs approval",
   failure: "Failed",
+  interrupted: "Interrupted",
   unread_completion: "Completed",
 };
 
@@ -21,7 +22,7 @@ function NoticeBadge({ notice }: { notice: SessionNotice }) {
       </span>
     );
   }
-  const state = notice === "failure" ? "failed" : notice;
+  const state = notice === "failure" ? "failed" : notice === "interrupted" ? "unknown" : notice;
   return (
     <span className={`statusdot statusdot-badge statusdot-${state}`}>
       <StateIcon state={state} />

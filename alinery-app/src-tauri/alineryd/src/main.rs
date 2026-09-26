@@ -846,6 +846,7 @@ fn accept_phase_completion(
         "accept execution completion",
         |_, state| alinery_core::execution::accept_execution_completion(repo, task_slug, state, &source.execution_id, session_id),
     )?;
+    // Refusals are tool results, not pending human interactions; the extension owns correlated waits.
     if matches!(outcome, CompletionOutcome::Accepted { .. }) {
         // Projection failures cannot revoke a receipt already durably committed.
         if let Err(error) = stamp_meta(meta_path, |value| {
@@ -860,30 +861,6 @@ fn accept_phase_completion(
                 .is_some_and(|record| record.lifecycle == ExecutionLifecycle::Completed)
         });
         let _ = set_live_playbook(reg, session_id, if completed { PlaybookState::Completed } else { PlaybookState::ReadyToAdvance });
-    } else {
-        let agent = match &outcome {
-            CompletionOutcome::HumanAuthorizationRequired => alinery_core::AgentState::WaitingForApproval {
-                correlation_id: format!("completion-permission:{}", source.execution_id),
-            },
-            CompletionOutcome::InvalidOutputs { diagnostics } => {
-                use std::hash::{Hash, Hasher};
-                let mut hash = std::collections::hash_map::DefaultHasher::new();
-                diagnostics.hash(&mut hash);
-                alinery_core::AgentState::WaitingForInput {
-                    correlation_id: format!("completion-outputs:{}:{:016x}", source.execution_id, hash.finish()),
-                }
-            }
-            CompletionOutcome::Accepted { .. } => unreachable!(),
-        };
-        let session = reg.lock().unwrap_or_else(|error| error.into_inner()).get(session_id).map(|session| session.inner.clone());
-        if let Some(inner) = session {
-            let mut inner = inner.lock().unwrap_or_else(|error| error.into_inner());
-            let mut candidate = inner.state.clone();
-            candidate.agent = agent;
-            if let Err(error) = publish_live_transition(&mut inner, meta_path, candidate) {
-                eprintln!("completion attention projection: {error}");
-            }
-        }
     }
     Ok(outcome)
 }
