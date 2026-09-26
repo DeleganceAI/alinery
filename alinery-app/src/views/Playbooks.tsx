@@ -1380,7 +1380,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
               </button>
             </div>
             <div className="mb">
-              <p className="dim">browse does not need an account. Download, update, and publish do.</p>
+              <p className="dim">To View, Download, or Publish playbooks you need an account. Sign up for free now.</p>
             </div>
             <div className="mfoot">
               <button type="button" className="btn ghost small" data-autofocus onClick={closeSignup}>

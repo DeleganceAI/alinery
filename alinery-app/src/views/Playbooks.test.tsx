@@ -864,7 +864,7 @@ describe("community playbooks", () => {
     fireEvent.click(within(table).getByRole("button", { name: "Download nyx/review" }));
     const dialog = await screen.findByRole("dialog", { name: "Sign up" });
     expect(within(dialog).getByRole("button", { name: "SIGN UP" })).toBeTruthy();
-    expect(within(dialog).getByText("browse does not need an account. Download, update, and publish do.")).toBeTruthy();
+    expect(within(dialog).getByText("To View, Download, or Publish playbooks you need an account. Sign up for free now.")).toBeTruthy();
     expect(dialog.querySelector("input[type='password']")).toBeNull();
     expect(within(dialog).getByRole("button", { name: "Cancel" }).hasAttribute("data-autofocus")).toBe(true);
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
