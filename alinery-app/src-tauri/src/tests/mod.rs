@@ -22,10 +22,10 @@ pub(crate) use super::{
     resolve_hosted_catalog, restore_backup_into, root_sessions_dir, route_socket_path, sanitize_app_config, sanitize_appearance, save_artifact_comment_draft_for,
     session_list_items_for_repo, session_meta_path, sessions_dir, set_active_repo_global, set_model_favorite_in, sign_out_at, store_credits_snapshot, subtask_state_in,
     sync_hosted_inference, task_dir, validate_known_target_repo, wait_for_daemon_gone, wait_for_desktop_login_callback, wait_for_desktop_login_callback_until,
-    wait_for_linear_callback, worktree_exists, worktrees_dir, write_draft_in_with_slug, write_global_settings_in, write_task, AccountAuthError, AccountUser, AppConfig, AppState,
-    AppearancePrefs, ArtifactCommentDraftsFile, ArtifactCommentsFile, BackupSlot, Command, DesktopCreditsView, EnsureDaemonError, LinearTokenError, OAuthCallback,
-    SessionMessageActionProvenance, SessionMeta, SignInAttempt, SignInGuard, Task, DEFAULT_CONFIG_TOML, HOSTED_MODEL_UNAVAILABLE, PROTOCOL_VERSION, SESSION_CHANNEL_BATCH_BYTES,
-    TAURI_RAW_FETCH_MIN_BYTES,
+    wait_for_linear_callback, with_access_token_retry, worktree_exists, worktrees_dir, write_draft_in_with_slug, write_global_settings_in, write_task, AccountAuthError,
+    AccountUser, AppConfig, AppState, AppearancePrefs, ArtifactCommentDraftsFile, ArtifactCommentsFile, AuthAttempt, AuthRetryError, BackupSlot, Command, DesktopCreditsView,
+    EnsureDaemonError, LinearTokenError, OAuthCallback, SessionMessageActionProvenance, SessionMeta, SignInAttempt, SignInGuard, Task, DEFAULT_CONFIG_TOML,
+    HOSTED_MODEL_UNAVAILABLE, PROTOCOL_VERSION, SESSION_CHANNEL_BATCH_BYTES, TAURI_RAW_FETCH_MIN_BYTES,
 };
 pub(crate) use alinery_core::task_creation::{unique_attachment_name, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_SET_BYTES};
 pub(crate) use alinery_core::{
@@ -40,6 +40,7 @@ mod account;
 mod app_config;
 mod artifacts;
 mod backup;
+mod community_playbooks;
 mod connections;
 mod daemon;
 mod git_ops;

@@ -5,7 +5,7 @@ use alinery_core::playbook_library::{
     self as library, PickerPreferences, PlaybookCatalog, PlaybookLoadError, PlaybookRoots, PlaybookSaveError, SavePlaybookRequest, ScopedPlaybook,
 };
 
-fn library_roots(app: &AppHandle, repo_path: Option<&str>) -> Result<PlaybookRoots, String> {
+pub(crate) fn library_roots(app: &AppHandle, repo_path: Option<&str>) -> Result<PlaybookRoots, String> {
     let repo_dir = match repo_path {
         Some(path) => target_repo_for_app(app, path)?,
         None => active_repo().unwrap_or_default(),
@@ -79,7 +79,7 @@ pub(crate) fn delete_playbook_source(app: AppHandle, reference: PlaybookRef, rep
         }
         require_repo_owned(&app.state::<AppState>(), &roots.repo_dir).map_err(|message| PlaybookSaveError::Io { message })?;
     }
-    library::delete_playbook(&roots, &reference)
+    delete_playbook_keeping_imports(&roots, &reference)
 }
 
 #[tauri::command]
