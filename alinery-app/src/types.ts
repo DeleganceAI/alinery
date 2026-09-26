@@ -610,6 +610,7 @@ export type CommunitySummary = {
   updatedAt: string;
 };
 export type CommunityPlaybookPage = { playbooks: CommunitySummary[]; nextCursor: string | null };
+export type CommunityMineResult = { kind: "loaded"; playbooks: CommunitySummary[]; truncated: boolean } | { kind: "needs_account" } | { kind: "failed"; message: string };
 export type CommunityImportRow = { id: string; label: string; playbookKey: string; localKey: string; importedVersion: number };
 export type DownloadStatusRow = {
   id: string;

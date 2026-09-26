@@ -4,9 +4,9 @@
 //! or to the production Supabase host.
 use super::*;
 use crate::{
-    community_download_status_with, delete_playbook_keeping_imports, import_community_playbook_with, list_community_playbooks_with, preview_community_playbook_with,
-    publish_community_playbook_with, read_community_imports, registry_path, update_community_import_with, write_community_imports, CommunityHttp, CommunityHttpRequest,
-    CommunityHttpResponse, CommunityImportRecord, ImportResult, PreviewResult, PublishResult, UpdateResult,
+    community_download_status_with, delete_playbook_keeping_imports, import_community_playbook_with, list_community_playbooks_with, list_my_community_playbooks_with,
+    preview_community_playbook_with, publish_community_playbook_with, read_community_imports, registry_path, update_community_import_with, write_community_imports, CommunityHttp,
+    CommunityHttpRequest, CommunityHttpResponse, CommunityImportRecord, ImportResult, MineResult, PreviewResult, PublishResult, UpdateResult,
 };
 use crate::{rotated_tokens_for_test, save_tokens_for_test, AccountTokens};
 use alinery_core::playbook::{PlaybookRef, PlaybookScope};
@@ -821,6 +821,71 @@ fn preview_404_and_503_are_messages() {
     };
     assert!(!message.contains("SUPABASE_SERVICE_ROLE_KEY"));
     assert_eq!(message, "Playbook library is unavailable.");
+}
+
+#[test]
+fn mine_needs_account_does_not_call() {
+    let _serial = crate::CREDENTIAL_HOOK_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let auth = auth_dir("community-mine-signed-out").join("missing-auth.json");
+    let mut http = recorder(Vec::new());
+    let result = list_my_community_playbooks_with(&mut http, "http://library.test", &auth, keep_refresh);
+    assert_eq!(result, MineResult::NeedsAccount);
+    assert!(http.requests.is_empty());
+}
+
+#[test]
+fn mine_lists_the_callers_playbooks() {
+    let _serial = crate::CREDENTIAL_HOOK_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let path = auth_dir("community-mine-ok").join("auth.json");
+    write_pairing(&path, "access", "refresh-keep");
+    let body = format!(r#"{{"ok":true,"playbooks":[{}],"truncated":false}}"#, summary_json(IMPORT_ID, "nyx", "review", 3));
+    let mut http = recorder(vec![json_response(200, &body)]);
+    let result = list_my_community_playbooks_with(&mut http, "http://library.test", &path, keep_refresh);
+    let MineResult::Loaded { playbooks, truncated } = result else {
+        panic!("{result:?}");
+    };
+    assert!(!truncated);
+    assert_eq!(playbooks.len(), 1);
+    assert_eq!(playbooks[0].label, "nyx");
+    assert_eq!(playbooks[0].playbook_key, "review");
+    assert_eq!(playbooks[0].version, 3);
+    assert_eq!(http.requests.len(), 1);
+    assert_eq!(http.requests[0].method, "GET");
+    assert!(http.requests[0].url.ends_with("/api/desktop/playbooks/mine"));
+    assert!(http.requests[0].body.is_none());
+    assert_eq!(bearer(&http.requests[0].headers), "access");
+}
+
+#[test]
+fn mine_keeps_the_truncated_flag() {
+    let _serial = crate::CREDENTIAL_HOOK_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let path = auth_dir("community-mine-truncated").join("auth.json");
+    write_pairing(&path, "access", "refresh-keep");
+    let mut http = recorder(vec![json_response(200, r#"{"ok":true,"playbooks":[],"truncated":true}"#)]);
+    assert_eq!(
+        list_my_community_playbooks_with(&mut http, "http://library.test", &path, keep_refresh),
+        MineResult::Loaded {
+            playbooks: Vec::new(),
+            truncated: true
+        }
+    );
+}
+
+#[test]
+fn mine_503_scrubs_the_service_role() {
+    let _serial = crate::CREDENTIAL_HOOK_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let path = auth_dir("community-mine-503").join("auth.json");
+    write_pairing(&path, "access", "refresh-keep");
+    let mut http = recorder(vec![json_response(
+        503,
+        r#"{"ok":false,"error":"SUPABASE_SERVICE_ROLE_KEY is not configured on the server.","code":"unavailable"}"#,
+    )]);
+    let result = list_my_community_playbooks_with(&mut http, "http://library.test", &path, keep_refresh);
+    let MineResult::Failed { message } = result else {
+        panic!("{result:?}");
+    };
+    assert_eq!(message, "Playbook library is unavailable.");
+    assert!(!message.contains("SUPABASE_SERVICE_ROLE_KEY"));
 }
 
 #[test]

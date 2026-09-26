@@ -198,6 +198,20 @@ fn parse_list(body: &[u8]) -> Result<CommunityList, String> {
     Ok(CommunityList { playbooks, next_cursor })
 }
 
+fn parse_mine(body: &[u8]) -> Result<(Vec<CommunitySummary>, bool), String> {
+    let value: Value = serde_json::from_slice(body).map_err(|_| UNREACHABLE.to_string())?;
+    if value.get("ok").and_then(|ok| ok.as_bool()) != Some(true) {
+        return Err(library_failure_message(200, body));
+    }
+    let playbooks = value.get("playbooks").cloned().ok_or_else(|| UNREACHABLE.to_string())?;
+    let playbooks: Vec<CommunitySummary> = serde_json::from_value(playbooks).map_err(|_| UNREACHABLE.to_string())?;
+    let truncated = match value.get("truncated") {
+        Some(Value::Bool(flag)) => *flag,
+        _ => return Err(UNREACHABLE.to_string()),
+    };
+    Ok((playbooks, truncated))
+}
+
 pub(crate) fn list_community_playbooks_with(http: &mut dyn CommunityHttp, base: &str, q: Option<&str>, cursor: Option<&str>) -> Result<CommunityList, String> {
     let url = list_url(base, q, cursor)?;
     let response = http.exchange(CommunityHttpRequest {
@@ -553,6 +567,63 @@ where
         },
         refresh,
     )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum MineResult {
+    Loaded { playbooks: Vec<CommunitySummary>, truncated: bool },
+    NeedsAccount,
+    Failed { message: String },
+}
+
+/// The caller's publications. Bearer required. No cursor. Cap 1000, with `truncated`
+/// when older rows were omitted. Browse stays anonymous; this is the only list that
+/// identifies the signed-in author.
+pub(crate) fn list_my_community_playbooks_with<R>(http: &mut dyn CommunityHttp, base: &str, auth_path: &Path, refresh: R) -> MineResult
+where
+    R: FnOnce(&AccountTokens) -> Result<AccountTokens, AccountAuthError>,
+{
+    if !access_token_present(auth_path) {
+        return MineResult::NeedsAccount;
+    }
+    let url = format!("{}/api/desktop/playbooks/mine", base.trim_end_matches('/'));
+    let response = match authed_exchange(http, auth_path, refresh, "GET", url, None) {
+        Ok(response) => response,
+        Err(AuthRetryError::NeedsAccount) => return MineResult::NeedsAccount,
+        Err(AuthRetryError::Transport(message)) => {
+            return MineResult::Failed {
+                message: safe_transport(&message),
+            }
+        }
+    };
+    if response.status == 503 || body_names_service_role(&response.body) {
+        return MineResult::Failed { message: UNAVAILABLE.into() };
+    }
+    if response.status != 200 {
+        return MineResult::Failed {
+            message: library_failure_message(response.status, &response.body),
+        };
+    }
+    match parse_mine(&response.body) {
+        Ok((playbooks, truncated)) => MineResult::Loaded { playbooks, truncated },
+        Err(message) => MineResult::Failed { message },
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn list_my_community_playbooks(app: AppHandle) -> MineResult {
+    let auth_path = match account_auth_path_for(&app) {
+        Ok(path) => path,
+        Err(message) => return MineResult::Failed { message },
+    };
+    let base = accounts_url();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut http = CurlCommunityHttp;
+        list_my_community_playbooks_with(&mut http, &base, &auth_path, refresh_for(auth_path.clone()))
+    })
+    .await
+    .unwrap_or(MineResult::Failed { message: UNREACHABLE.into() })
 }
 
 fn parse_source(body: &[u8]) -> Result<SourceDetail, String> {

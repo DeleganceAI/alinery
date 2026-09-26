@@ -191,6 +191,7 @@ pub fn run() {
             import_community_playbook,
             update_community_import,
             preview_community_playbook,
+            list_my_community_playbooks,
             publish_community_playbook,
             read_playbook,
             validate_playbook_source,

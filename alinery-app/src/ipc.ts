@@ -36,6 +36,7 @@ import type {
   BackupMeta,
   BoardTask,
   CommunityImportRow,
+  CommunityMineResult,
   CommunityPlaybookPage,
   Config,
   ConnectionStatus,
@@ -383,6 +384,7 @@ export const deletePlaybookSource = (reference: PlaybookRef, repoPath?: string) 
 export const readPlaybookPickerPreferences = (repoPath?: string) => invoke<PickerPreferences>("read_playbook_picker_preferences", { repoPath });
 export const savePlaybookPickerPreferences = (preferences: PickerPreferences, repoPath?: string) => invoke<void>("save_playbook_picker_preferences", { preferences, repoPath });
 export const listCommunityPlaybooks = (args: { q?: string; cursor?: string }) => invoke<CommunityPlaybookPage>("list_community_playbooks", args);
+export const listMyCommunityPlaybooks = () => invoke<CommunityMineResult>("list_my_community_playbooks");
 export const listCommunityImports = (args: { repoPath: string }) => invoke<{ imports: CommunityImportRow[] }>("list_community_imports", args);
 export const communityDownloadStatus = (args: { repoPath: string }) => invoke<{ rows: DownloadStatusRow[] }>("community_download_status", args);
 export const importCommunityPlaybook = (args: { id: string; repoPath: string; overwrite: boolean }) => invoke<ImportResult>("import_community_playbook", args);

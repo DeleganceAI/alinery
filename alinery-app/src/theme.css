@@ -5670,17 +5670,36 @@ dialog.modal::backdrop {
   justify-content: center;
   gap: 8px;
 }
-/* A community row offers Preview beside Import/Update. Both labels must sit on one
-   line, so the action column takes the room and the other five keep their share at
-   the min-width (the library section scrolls sideways below it). */
+/* Icon actions, so the community table does not grow a horizontal scroller for button labels. */
 .playbooks-community-table {
-  min-width: 860px;
+  min-width: 0;
 }
+.playbooks-community-table th:nth-child(2),
+.playbooks-community-table th:nth-child(3) {
+  width: auto;
+}
+.playbooks-community-table th:last-child,
 .playbooks-community-table td:last-child {
-  /* Both labels on one line: 133px + 8px gap + 129px, plus the cell's 24px padding. */
-  width: 300px;
+  width: 96px;
+  text-align: right;
 }
-/* A community row offers Preview beside Import/Update. */
+.playbooks-row-actions .btn.icon {
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+}
+.playbooks-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.playbooks-identity small {
+  color: var(--text-muted);
+  font-size: calc(11px * var(--ui-scale));
+  line-height: 1.2;
+}
+/* Preview sits beside the download and publish actions. */
 .playbooks-row-actions {
   display: inline-flex;
   flex-wrap: wrap;
