@@ -891,6 +891,59 @@ fn bundled_systematic_evidence_review_trace() {
 }
 
 #[test]
+fn bundled_spec_loop_stays_inside_slices() {
+    let mut trace = Trace::new("spec");
+    let research = trace.one("research");
+    assert_eq!(trace.state.executions[&research].permission, CompletionPermission::Automatic);
+    for step in ["specify", "design", "plan-slices", "next-slice", "implement", "review", "validate"] {
+        trace.blocked(step);
+    }
+    trace.finish_handoff(&research, 1);
+
+    let specify = trace.one("specify");
+    assert_eq!(trace.state.executions[&specify].permission, CompletionPermission::Locked);
+    trace.finish_handoff(&specify, 1);
+    let design = trace.one("design");
+    assert_eq!(trace.state.executions[&design].permission, CompletionPermission::Locked);
+    trace.finish_handoff(&design, 1);
+    let plan = trace.one("plan-slices");
+    assert_eq!(trace.state.executions[&plan].permission, CompletionPermission::Locked);
+    trace.finish_handoff(&plan, 1);
+    assert!(trace.artifacts().join(&trace.state.occurrences[&trace.output(&plan, "slice-member-0.md")].relative_path).is_file());
+
+    let next = trace.one("next-slice");
+    assert_eq!(trace.state.executions[&next].permission, CompletionPermission::Automatic);
+    trace.bound(&next, "ticket.md", BTreeSet::from([trace.seed.clone()]));
+    trace.bound(&next, "tasks.md", BTreeSet::from([trace.output(&plan, "tasks.md")]));
+    trace.finish_handoff(&next, 1);
+    let implement = trace.one("implement");
+    assert!(trace.state.executions[&implement].is_coding_step);
+    trace.finish_handoff(&implement, 1);
+
+    let review = trace.one("review");
+    trace.start(&review);
+    trace.write_handoff(&review, 1);
+    trace.accepted(&review);
+    trace.blocked("validate");
+    trace.exit(&review);
+
+    let validate = trace.one("validate");
+    assert_eq!(trace.state.executions[&validate].permission, CompletionPermission::Automatic);
+    trace.finish_handoff(&validate, 1);
+
+    let again = trace.one("next-slice");
+    trace.bound(&again, "ticket.md", BTreeSet::from([trace.output(&validate, "ticket.md")]));
+    trace.bound(&again, "tasks.md", BTreeSet::from([trace.output(&plan, "tasks.md")]));
+    assert_ne!(trace.state.executions[&again].candidate.context_id, "root");
+    assert!(!trace.state.executions[&again].candidate.inputs["ticket.md"].contains(&trace.seed));
+    trace.blocked("implement");
+    for step in ["research", "specify", "design", "plan-slices"] {
+        let runs = trace.state.executions.values().filter(|execution| execution.candidate.step_key == step).count();
+        assert_eq!(runs, 1, "{step} restarted inside the slice loop");
+    }
+}
+
+#[test]
 fn bundled_catalog_ignores_legacy_without_rewriting_bytes() {
     let trace = Trace::new("superdevelop");
     let registry = trace.repo.join(".alinery/playbooks.toml");
