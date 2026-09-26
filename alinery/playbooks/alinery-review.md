@@ -243,17 +243,47 @@ Use these priorities:
 - **P2 — Medium:** a real defect or important maintainability problem with bounded impact.
 - **P3 — Low:** a small, concrete improvement that is not a release blocker.
 
+After that inspection, and before the findings list, check the marketing version against the frozen diff. This playbook is Alinery-specific. The check is the marketing semver, not `alinery-core::PROTOCOL_VERSION`. A protocol bump is not a substitute for the marketing bump, and a marketing bump is not a protocol bump. Do not omit this check as a stylistic preference.
+
+Record whether the frozen diff changes the marketing version. The version must be the same `X.Y.Z` in all nine of these, and only these workspace packages in the lockfile:
+
+- `alinery-app/package.json` `"version"`
+- `alinery-app/package-lock.json`, both `"version"` keys (the root key and `packages[""]`)
+- `alinery-app/src-tauri/tauri.conf.json` `"version"`
+- `alinery-app/src-tauri/Cargo.toml` `[package]` version
+- `alinery-app/src-tauri/alinery-core/Cargo.toml` `[package]` version
+- `alinery-app/src-tauri/alineryd/Cargo.toml` `[package]` version
+- `alinery-app/src-tauri/mcp/Cargo.toml` `[package]` version
+- `alinery-app/src-tauri/runner/Cargo.toml` `[package]` version
+- `alinery-app/src-tauri/Cargo.lock` version on `alinery-app`, `alinery-core`, `alinery-mcp`, `alinery-runner`, and `alineryd` only
+
+Do not treat a replace of that semver string on unrelated `Cargo.lock` crates as a valid bump.
+
+Classify the reviewed change:
+
+- **small, patch** `x.y.Z+1`: a bugfix, copy, or a narrow internal fix. No new user-facing capability and no removed or incompatible behavior.
+- **medium, minor** `x.Y+1.0`: new user-visible behavior, a new playbook, a new command, or another backward-compatible addition.
+- **super large, major** `X+1.0.0`: a breaking change, removed behavior, or an incompatible contract that existing users must adapt to.
+
+If the base marketing version cannot be read, record that gap. Do not guess a number.
+
+If the version did not change, write one finding that suggests the kind and the next version from the base revision. Do not edit the files. This is a pull-request ask, not a P0 or P1, unless the reviewer later makes it blocking.
+
+If the version did change, check that all nine locations moved to the same `X.Y.Z` and that the kind matches the classification. A partial bump, mismatched files, or the wrong kind is a finding. Name the locations and the suggested kind. Do not implement the bump.
+
+Put that finding in `code-findings.md` with the other findings. Use the next stable id (`C1`, `C2`, ...). If there is no version issue, say so explicitly in the inspected-with-no-finding section. Do not invent a finding when the bump is present, complete, and the right kind.
+
 Write `code-findings.md` containing:
 
 1. The exact target identifiers and the assigned check-report role. Do not invent occurrence IDs.
 2. A short summary of the change and its highest-risk behavior.
-3. Findings ordered by priority. Each finding needs a stable id (`C1`, `C2`, ...), a short title, the tightest useful file and line location, observed behavior, expected behavior or violated invariant, a concrete failure scenario and impact, whether a check reproduced it, and the smallest correction direction without implementing it.
+3. Findings ordered by priority. Each finding needs a stable id (`C1`, `C2`, ...), a short title, the tightest useful file and line location, observed behavior, expected behavior or violated invariant, a concrete failure scenario and impact, whether a check reproduced it, and the smallest correction direction without implementing it. A marketing-version finding belongs in this list, titled as the marketing-version check, and labeled a pull-request ask rather than P0 or P1.
 4. Failed or unavailable checks that materially qualify the inspection.
-5. Important areas inspected that produced no finding.
+5. Important areas inspected that produced no finding. This is the inspected-with-no-finding section. When the marketing bump is present, complete, and the right kind, say so explicitly here.
 6. Residual uncertainty and the evidence that would resolve it.
-7. An explicit none, if there are no findings. Do not invent one.
+7. An explicit none, if there are no findings. Do not invent one, and do not invent a marketing-version finding when the bump is present, complete, and the right kind.
 
-Ready when every finding is evidence-backed, or the report explicitly says there are none, and the target identifiers match the context. Request completion then. Publish nothing.
+Ready when every finding is evidence-backed, or the report explicitly says there are none, the marketing-version check is either a finding or an explicit no-issue statement in the inspected-with-no-finding section, and the target identifiers match the context. Request completion then. Publish nothing.
 
 <!-- alinery:step vision -->
 
@@ -463,6 +493,7 @@ Produce one recommendation: `approve`, `request changes`, or `comment only`.
 - A needs-decision opportunity does not block. Mark it as input for a Linear draft. Do not write that draft here.
 - A website recommendation to change only the site, or to change both, does not request changes. Carry it. The reviewer may elevate it later.
 - A website recommendation to change the pull request goes in the later comment as a non-blocking ask unless it is also a code P0 or P1 finding or a vision or design failure. Carry the recommendation either way.
+- A missing, partial, or wrong-kind marketing bump is a pull-request ask. It does not request changes by itself. Carry it. Do not drop it as style, and do not treat `alinery-core::PROTOCOL_VERSION` as the marketing version.
 - Do not recommend `approve` when a check failed or did not run for behavior this change can affect. Use `comment only` and name that gap, unless a blocking finding already requires `request changes`.
 - Do not describe absent website, vision, or design evidence as a pass.
 
@@ -517,6 +548,7 @@ The agreed decision is `approve`, `request changes`, or `comment only`.
 
 - Keep a code P0 or P1 finding, or a real vision or design failure, as blocking unless the reviewer explicitly overrides it. Record that override.
 - A straightforward opportunity becomes an ask in the pull-request comment. It does not block by itself unless the reviewer makes it blocking or it is also a failure or a code defect.
+- When the code report has a marketing-version suggestion, include that suggestion in the paste-ready comment. It does not block unless the reviewer makes it blocking.
 - A needs-decision opportunity becomes a Linear ticket draft. It does not go in the blocking comment. Explicit none is valid.
 - A website item that recommends changing the pull request goes in the comment. It does not block unless the reviewer makes it blocking or another rule already does.
 - Website follow-ups that are site-only, or that recommend changing both, stay out of the blocking comment unless the reviewer makes them blocking. Still include them in the package.
@@ -526,7 +558,7 @@ The agreed decision is `approve`, `request changes`, or `comment only`.
 Write `review-response.md` containing:
 
 1. **Decision:** the agreed `approve`, `request changes`, or `comment only`.
-2. **Paste-ready pull-request comment:** summary, actionable findings with locations, straightforward opportunity asks, website items that require a pull-request change, verification including unavailable checks, and the next action. Match the requested audience and tone. If none was requested, be concise and professional.
+2. **Paste-ready pull-request comment:** summary, actionable findings with locations, the marketing-version suggestion when the code report has one, straightforward opportunity asks, website items that require a pull-request change, verification including unavailable checks, and the next action. Match the requested audience and tone. If none was requested, be concise and professional.
 3. **Linear ticket drafts** for needs-decision opportunities: title, why, evidence, and suggested scope. Explicit none is valid. These are drafts, not filed issues.
 4. **Website follow-ups** that are site-only or both, kept out of the blocking comment unless the reviewer made them blocking.
 5. **Human overrides and evidence limits:** what the synthesis said, what the reviewer changed, challenges you could not settle without a fresh lens, and checks or fetches that were unavailable.
