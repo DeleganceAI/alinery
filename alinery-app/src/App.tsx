@@ -110,6 +110,23 @@ function initialView(): View {
   return { kind: "grid", gridViewId: DEFAULT_GRID_VIEW_ID };
 }
 
+// Grid layout is one workspace per view, not per repository. The first time a
+// shared key is missing, adopt the scope the user is already looking at so the
+// switch does not reset tile size, preset, or column order.
+function sharedGridStorageKey(gridViewId: string, legacyScopeKey: string): string {
+  const storageKey = `view:${gridViewId}`;
+  try {
+    const next = `alinery:grid:${storageKey}`;
+    if (!window.localStorage.getItem(next)) {
+      const legacy = window.localStorage.getItem(`alinery:grid:${legacyScopeKey}:view:${gridViewId}`);
+      if (legacy) window.localStorage.setItem(next, legacy);
+    }
+  } catch {
+    // A storage failure should never make the Grid unusable.
+  }
+  return storageKey;
+}
+
 export default function App() {
   const [view, setView] = useState<View>(initialView);
   const [navInstant, setNavInstant] = useState(true);
@@ -370,9 +387,14 @@ export default function App() {
     return { ...cfg, appearance: applyAppearance(cfg.appearance) };
   };
 
+  // A repository or all-repos switch keeps the page. A page bound to one task
+  // or session cannot follow, so it zooms out to the task list.
   const viewAfterScopeChange = (current: View): View => {
-    const gridViewId = gridViewIdOf(current);
-    return gridViewId && gridViews.some((gridView) => gridView.id === gridViewId) ? { kind: "grid", gridViewId } : { kind: "list" };
+    if (!isPrimaryTab(current.kind)) return { kind: "list" };
+    if (current.kind === "grid" && gridViews.some((gridView) => gridView.id === current.gridViewId) === false) {
+      return { kind: "grid", gridViewId: gridViews[0]?.id ?? DEFAULT_GRID_VIEW_ID };
+    }
+    return current;
   };
 
   const setRepo = async (path: string) => {
@@ -1140,7 +1162,7 @@ export default function App() {
       minimalHeader,
     );
 
-  const gridStorageScopeKey = scope === "all" ? "all-repositories" : appConfig.active_repo;
+  const legacyGridScopeKey = scope === "all" ? "all-repositories" : appConfig.active_repo;
 
   const header = (
     <TopBar
@@ -1429,7 +1451,7 @@ export default function App() {
               onOpen={openBoardTask}
               onDuplicate={(task) => duplicateTask({ repoPath: task.repo_path, sourceSlug: task.slug })}
               registerNav={registerNav}
-              storageKey={`${gridStorageScopeKey}:view:${gridView.id}`}
+              storageKey={sharedGridStorageKey(gridView.id, legacyGridScopeKey)}
               initialPreset={gridView.id === DEFAULT_GRID_VIEW_ID ? "progress" : "steps"}
             />
           </div>
