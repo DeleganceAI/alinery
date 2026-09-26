@@ -14,15 +14,57 @@
 //
 // Every git invocation in the workspace goes through here; scripts/tests/check-git-env-scrub.sh
 // enforces that.
+//
+// Resolution order, first hit wins:
+//   1. `ALINERY_GIT_PATH` when that file exists (tests / dev override)
+//   2. the first usable `git` on this process's PATH
+//   3. the alongside tree install.sh placed (`Alinery.git/bin/git`, or `git/bin/git` on Linux)
+//   4. the bare name `git`, so a missing binary still fails the way it always has
+//
+// macOS `/usr/bin/git` is a stub when the Command Line Tools are not installed. Running it
+// raises the installer dialog, so it is not "usable". A Dock-launched app does not see
+// Homebrew's PATH; step 2 is this process's PATH, and the installer uses the same rule
+// when deciding whether to copy the alongside tree at all.
+//
+// The alongside binary is a relocatable tree. `GIT_EXEC_PATH` points it at its own
+// `libexec/git-core` (so `git push` over https can exec `git-remote-https`). A system git
+// keeps whatever exec path it was built with — we do not set the variable, and we do not
+// scrub a caller-supplied one. On macOS the alongside tree also gets
+// `-c credential.helper=osxkeychain` when that helper was built into it; a GUI push has
+// no tty to ask for a password.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GitProgram {
+    program: PathBuf,
+    /// True only for the alongside tree or an `ALINERY_GIT_PATH` whose layout is that tree.
+    /// A git found on PATH is never bundled, even when its own libexec sits beside it
+    /// (Homebrew). Forcing our exec path and credential helper onto that git would
+    /// override the user's helper.
+    bundled: bool,
+}
 
 /// A `git -C <dir>` command with the repo-redirecting environment stripped.
 pub fn git_cmd(dir: impl AsRef<OsStr>) -> Command {
-    let mut cmd = Command::new("git");
+    git_command(dir, &resolve_git_program())
+}
+
+fn git_command(dir: impl AsRef<OsStr>, selected: &GitProgram) -> Command {
+    let mut cmd = Command::new(&selected.program);
     cmd.arg("-C").arg(dir);
+    if selected.bundled {
+        if let Some(exec_path) = git_tree_exec_path(&selected.program) {
+            cmd.env("GIT_EXEC_PATH", &exec_path);
+            let helper = exec_path.join("git-credential-osxkeychain");
+            if cfg!(target_os = "macos") && helper.is_file() {
+                cmd.arg("-c").arg("credential.helper=osxkeychain");
+            }
+        }
+    }
     for var in [
         "GIT_DIR",
         "GIT_WORK_TREE",
@@ -35,6 +77,102 @@ pub fn git_cmd(dir: impl AsRef<OsStr>) -> Command {
         cmd.env_remove(var);
     }
     cmd
+}
+
+fn resolve_git_program() -> GitProgram {
+    let override_path = std::env::var_os("ALINERY_GIT_PATH").filter(|value| !value.is_empty()).map(PathBuf::from);
+    let alongside = crate::paths::installed_git_binary();
+    let alongside = alongside.is_file().then_some(alongside);
+    select_git_program(override_path.as_deref(), &path_git_candidates(), alongside.as_deref())
+}
+
+fn select_git_program(override_path: Option<&Path>, path_candidates: &[PathBuf], alongside: Option<&Path>) -> GitProgram {
+    if let Some(path) = override_path {
+        if path.is_file() {
+            return GitProgram { program: path.to_path_buf(), bundled: git_tree_exec_path(path).is_some() };
+        }
+    }
+    if let Some(path) = path_candidates.first() {
+        return GitProgram { program: path.clone(), bundled: false };
+    }
+    if let Some(path) = alongside {
+        if path.is_file() {
+            return GitProgram { program: path.to_path_buf(), bundled: true };
+        }
+    }
+    GitProgram { program: PathBuf::from("git"), bundled: false }
+}
+
+/// `…/bin/git` → `…/libexec/git-core`, when that directory exists.
+fn git_tree_exec_path(program: &Path) -> Option<PathBuf> {
+    let bin_dir = program.parent()?;
+    if bin_dir.file_name()? != "bin" {
+        return None;
+    }
+    let exec_path = bin_dir.parent()?.join("libexec").join("git-core");
+    exec_path.is_dir().then_some(exec_path)
+}
+
+/// macOS ships `/usr/bin/git` as an xcode-select stub. It is not a git until the developer
+/// directory exists. Anywhere else — including Linux `/usr/bin/git` — the path is a real
+/// candidate. `developer_dir_present` is passed in so tests do not run `xcode-select`.
+fn skips_macos_git_stub(path: &Path, developer_dir_present: bool) -> bool {
+    cfg!(target_os = "macos") && path == Path::new("/usr/bin/git") && !developer_dir_present
+}
+
+fn path_git_candidates() -> Vec<PathBuf> {
+    let Some(path_var) = std::env::var_os("PATH") else {
+        return Vec::new();
+    };
+    let developer_dir = developer_dir_present();
+    for dir in std::env::split_paths(&path_var) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        let candidate = dir.join("git");
+        if skips_macos_git_stub(&candidate, developer_dir) {
+            continue;
+        }
+        if is_executable_file(&candidate) {
+            return vec![candidate];
+        }
+    }
+    Vec::new()
+}
+
+fn developer_dir_present() -> bool {
+    if !cfg!(target_os = "macos") {
+        return false;
+    }
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        Command::new("xcode-select")
+            .arg("-p")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    })
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !meta.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 pub(crate) fn branch_is_parent(parent: &str, branch: &str) -> bool {
@@ -101,6 +239,11 @@ pub fn resolve_target_repo(requested: &str, process_repo: Option<&Path>, known_r
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+
+    fn env_value(cmd: &Command, key: &str) -> Option<OsString> {
+        cmd.get_envs().find(|(k, _)| *k == key).and_then(|(_, value)| value.map(OsString::from))
+    }
 
     // Guards the list itself: `-C` is not enough, so every one of these must be cleared.
     #[test]
@@ -190,5 +333,100 @@ mod tests {
         let resolved = resolve_target_repo(&with_trailing_slash, None, &known).expect("trailing-slash spelling must resolve to the same known repo");
         assert_eq!(resolved, std::fs::canonicalize(&repo).unwrap());
         let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn macos_stub_is_skipped_only_without_a_developer_dir() {
+        let stub = Path::new("/usr/bin/git");
+        let homebrew = Path::new("/opt/homebrew/bin/git");
+        if cfg!(target_os = "macos") {
+            assert!(skips_macos_git_stub(stub, false));
+            assert!(!skips_macos_git_stub(stub, true));
+            assert!(!skips_macos_git_stub(homebrew, false));
+        } else {
+            assert!(!skips_macos_git_stub(stub, false));
+            assert!(!skips_macos_git_stub(stub, true));
+        }
+    }
+
+    #[test]
+    fn path_git_beats_an_alongside_tree() {
+        let path_git = PathBuf::from("/usr/local/bin/git");
+        let alongside = PathBuf::from("/Applications/Alinery.git/bin/git");
+        let candidates = [path_git.clone()];
+        let selected = select_git_program(None, &candidates, Some(&alongside));
+        assert_eq!(selected.program, path_git);
+        assert!(!selected.bundled);
+    }
+
+    #[test]
+    fn alongside_tree_is_used_when_path_has_no_git() {
+        let alongside = unique_git_tree("alongside");
+        let program = alongside.join("bin/git");
+        let selected = select_git_program(None, &[], Some(&program));
+        assert_eq!(selected.program, program);
+        assert!(selected.bundled);
+        let _ = std::fs::remove_dir_all(alongside);
+    }
+
+    #[test]
+    fn missing_everywhere_falls_through_to_the_name_git() {
+        let missing = PathBuf::from("/no/such/alinery-git");
+        let selected = select_git_program(Some(&missing), &[], Some(&missing));
+        assert_eq!(selected.program, PathBuf::from("git"));
+        assert!(!selected.bundled);
+    }
+
+    #[test]
+    fn override_beats_path_and_alongside() {
+        let tree = unique_git_tree("override");
+        let program = tree.join("bin/git");
+        let selected = select_git_program(Some(&program), &[PathBuf::from("/usr/bin/git")], Some(Path::new("/Applications/Alinery.git/bin/git")));
+        assert_eq!(selected.program, program);
+        assert!(selected.bundled);
+        let _ = std::fs::remove_dir_all(tree);
+    }
+
+    #[test]
+    fn bundled_tree_sets_exec_path_and_not_the_repo_scrub() {
+        let tree = unique_git_tree("exec-path");
+        let program = tree.join("bin/git");
+        std::fs::write(tree.join("libexec/git-core/git-credential-osxkeychain"), b"helper").unwrap();
+        let selected = select_git_program(Some(&program), &[], None);
+        let cmd = git_command(Path::new("/tmp/repo"), &selected);
+        assert_eq!(env_value(&cmd, "GIT_EXEC_PATH").as_deref(), Some(tree.join("libexec/git-core").as_os_str()));
+        let cleared: Vec<String> = cmd.get_envs().filter(|(_, v)| v.is_none()).map(|(k, _)| k.to_string_lossy().into_owned()).collect();
+        assert!(cleared.iter().any(|name| name == "GIT_DIR"));
+        assert!(!cleared.iter().any(|name| name == "GIT_EXEC_PATH"));
+        #[cfg(target_os = "macos")]
+        {
+            let args: Vec<String> = cmd.get_args().map(|arg| arg.to_string_lossy().into_owned()).collect();
+            assert!(args.windows(2).any(|pair| pair[0] == "-c" && pair[1] == "credential.helper=osxkeychain"), "{args:?}");
+        }
+        let _ = std::fs::remove_dir_all(tree);
+    }
+
+    #[test]
+    fn system_git_sets_neither_exec_path_nor_credential_helper() {
+        let selected = GitProgram { program: PathBuf::from("/usr/bin/git"), bundled: false };
+        let cmd = git_command(Path::new("/tmp/repo"), &selected);
+        assert!(env_value(&cmd, "GIT_EXEC_PATH").is_none());
+        let args: Vec<String> = cmd.get_args().map(|arg| arg.to_string_lossy().into_owned()).collect();
+        assert!(!args.iter().any(|arg| arg == "credential.helper=osxkeychain"), "{args:?}");
+        assert_eq!(args.first().map(String::as_str), Some("-C"));
+    }
+
+    fn unique_git_tree(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("alinery-core-git-tree-{name}-{nanos}"));
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::create_dir_all(root.join("libexec/git-core")).unwrap();
+        std::fs::write(root.join("bin/git"), b"#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(root.join("bin/git"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        root
     }
 }

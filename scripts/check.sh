@@ -76,6 +76,7 @@ step "source gates"
 "$ROOT/scripts/tests/check-telemetry-privacy.sh"
 "$ROOT/scripts/tests/check-connection-status-never-decrypts.sh"
 "$ROOT/scripts/tests/omp_lib_test.sh"
+"$ROOT/scripts/tests/git_lib_test.sh"
 "$ROOT/scripts/tests/dev_fetch_omp_test.sh"
 "$ROOT/scripts/tests/install_omp_place_test.sh"
 

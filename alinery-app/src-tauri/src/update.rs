@@ -6,8 +6,9 @@
 //! `download_update` re-verifies the offer, streams the zip to a process-scoped scratch
 //! dir, checks origin/size/sha256, and extracts it with `ditto`. `apply_update` takes a
 //! version (not a caller-supplied tree), re-verifies that scratch against a fresh
-//! manifest, writes an embedded swap script (`assets/swap.sh`) plus a compile-time copy
-//! of `scripts/lib/preflight.sh`, and spawns `/bin/bash` on it, detached — the helper owns
+//! manifest, writes an embedded swap script (`assets/swap.sh`) plus compile-time copies
+//! of `scripts/lib/preflight.sh` and `scripts/lib/git.sh`, and spawns `/bin/bash` on it,
+//! detached — the helper owns
 //! teardown via `preflight_gate`, so this module never asks the daemon to end sessions.
 use crate::*;
 use std::process::Stdio;
@@ -24,6 +25,7 @@ const HOST_TRIPLE: &str = "unsupported";
 // src/update.rs -> src -> src-tauri -> alinery-app -> repo root. The shipped copy IS the
 // repo's copy, at build time, so the two cannot drift.
 const PREFLIGHT_SH: &str = include_str!("../../../scripts/lib/preflight.sh");
+const GIT_SH: &str = include_str!("../../../scripts/lib/git.sh");
 const SWAP_SH: &str = include_str!("../assets/swap.sh");
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -461,6 +463,7 @@ pub(crate) fn apply_update(version: String) -> Result<(), String> {
     require_free_space(parent, release.size.saturating_mul(3))?;
 
     write_executable_script(&scratch_dir.join("preflight.sh"), PREFLIGHT_SH)?;
+    write_executable_script(&scratch_dir.join("git.sh"), GIT_SH)?;
     let swap_path = scratch_dir.join("swap.sh");
     write_executable_script(&swap_path, SWAP_SH)?;
 
