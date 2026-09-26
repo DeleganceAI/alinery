@@ -261,10 +261,10 @@ fn parse_github_pull_refs() {
 
 #[test]
 fn github_token_lookup_pins_github_dot_com() {
-    let command = crate::gh_auth_token_command();
-    let args = command.get_args().map(|arg| arg.to_string_lossy().into_owned()).collect::<Vec<_>>();
-
-    assert_eq!(args, vec!["auth".to_string(), "token".to_string(), "--hostname".to_string(), "github.com".to_string(),]);
+    let input = alinery_core::GITHUB_CREDENTIAL_FILL;
+    assert!(input.contains("protocol=https\n"), "{input}");
+    assert!(input.contains("host=github.com\n"), "{input}");
+    assert!(input.ends_with("\n\n"), "credential fill must end with a blank line");
 }
 
 #[test]

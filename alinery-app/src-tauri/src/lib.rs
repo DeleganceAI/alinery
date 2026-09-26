@@ -20,8 +20,8 @@
 //     from the banner so sound/banner/bounce toggle independently (no new dep). (2) REMOVE-WORKTREE:
 //     end the task's live sessions, `git worktree remove --force`, clear task.worktree.
 //     (3) PR LINK: compare URL generation and background GitHub PR discovery live in
-//     git_ops.rs. (4) TICKET IMPORT: one-way Linear/GitHub imports via curl (zero
-//     new deps, mirrors the git shell-out pattern). config.toml mirrors harnesses.toml
+//     git_ops.rs. (4) TICKET IMPORT: one-way Linear/GitHub imports via ureq.
+//     GitHub auth is `git credential fill`, not the gh CLI. config.toml mirrors harnesses.toml
 //     (bundled default via include_str!, degrades to defaults on a bad edit).
 // Deferred (do NOT add here): Linear status write-back,
 //     PRD track, SQLite, session resurrection, stream-json/rich adapters, auto-advance,

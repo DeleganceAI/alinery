@@ -65,18 +65,101 @@ fn git_command(dir: impl AsRef<OsStr>, selected: &GitProgram) -> Command {
             }
         }
     }
-    for var in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_INDEX_FILE",
-        "GIT_PREFIX",
-        "GIT_COMMON_DIR",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_NAMESPACE",
-    ] {
+    scrub_git_env(&mut cmd);
+    cmd
+}
+
+/// Payload for `git credential fill` against github.com. The blank line terminates
+/// the request. No `gh` binary: the user's configured credential helper answers.
+pub const GITHUB_CREDENTIAL_FILL: &str = "protocol=https\nhost=github.com\n\n";
+
+pub struct GitCredential {
+    pub username: String,
+    pub secret: String,
+}
+
+/// Run `git credential fill`. `Ok(None)` is "git ran and has no credential" (the
+/// normal logged-out state). `Err` is git missing or the helper hanging past 5s.
+/// `GIT_TERMINAL_PROMPT=0` so a GUI launch does not block on a password prompt.
+/// Does not force `credential.helper=osxkeychain` — that override is only for
+/// bundled `git push`, and here it would hide the helper the user actually configured.
+pub fn git_credential_fill(input: &str) -> Result<Option<GitCredential>, String> {
+    let selected = resolve_git_program();
+    let mut cmd = Command::new(&selected.program);
+    cmd.arg("credential").arg("fill");
+    if selected.bundled {
+        if let Some(exec_path) = git_tree_exec_path(&selected.program) {
+            cmd.env("GIT_EXEC_PATH", exec_path);
+        }
+    }
+    scrub_git_env(&mut cmd);
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    cmd.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("git credential fill: {e}"))?;
+    {
+        use std::io::Write;
+        let mut stdin = child.stdin.take().ok_or_else(|| "git credential fill: stdin unavailable".to_string())?;
+        stdin.write_all(input.as_bytes()).map_err(|e| format!("git credential fill: {e}"))?;
+    }
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let stdout_reader = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = stdout {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = stderr {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err("git credential fill timed out".into());
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(25)),
+            Err(error) => return Err(format!("git credential fill: {error}")),
+        }
+    };
+    let stdout = stdout_reader.join().unwrap_or_default();
+    let _ = stderr_reader.join();
+    if !status.success() {
+        return Ok(None);
+    }
+    Ok(parse_git_credential(&String::from_utf8_lossy(&stdout)))
+}
+
+fn scrub_git_env(cmd: &mut Command) {
+    for var in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE"] {
         cmd.env_remove(var);
     }
-    cmd
+}
+
+fn parse_git_credential(text: &str) -> Option<GitCredential> {
+    let mut username = None;
+    let mut secret = None;
+    for line in text.lines() {
+        if let Some(value) = line.strip_prefix("username=") {
+            username = Some(value.to_string());
+        } else if let Some(value) = line.strip_prefix("password=") {
+            secret = Some(value.to_string());
+        }
+    }
+    let secret = secret.filter(|value| !value.is_empty())?;
+    Some(GitCredential { username: username.unwrap_or_default(), secret })
 }
 
 fn resolve_git_program() -> GitProgram {
@@ -404,6 +487,15 @@ mod tests {
             assert!(args.windows(2).any(|pair| pair[0] == "-c" && pair[1] == "credential.helper=osxkeychain"), "{args:?}");
         }
         let _ = std::fs::remove_dir_all(tree);
+    }
+
+    #[test]
+    fn credential_fill_parses_username_and_secret() {
+        let parsed = parse_git_credential("protocol=https\nhost=github.com\nusername=octocat\npassword=gho_secret\n").expect("credential");
+        assert_eq!(parsed.username, "octocat");
+        assert_eq!(parsed.secret, "gho_secret");
+        assert!(parse_git_credential("username=octocat\npassword=\n").is_none());
+        assert!(parse_git_credential("protocol=https\n").is_none());
     }
 
     #[test]

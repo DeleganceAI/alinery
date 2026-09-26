@@ -275,35 +275,8 @@ pub(crate) fn check_update(app: AppHandle) -> UpdateStatus {
 }
 
 fn curl_download_file(url: &str, dest: &Path, max_bytes: u64) -> Result<(), String> {
-    let https_only = url.starts_with("https://");
-    let mut config = format!(
-        "url = \"{}\"\nsilent\nshow-error\nlocation\nconnect-timeout = 5.000\nmax-time = {:.3}\nmax-filesize = {}\noutput = \"{}\"\n",
-        curl_config_quote(url),
-        DOWNLOAD_TIMEOUT.as_secs_f64(),
-        max_bytes,
-        curl_config_quote(&dest.display().to_string()),
-    );
-    if https_only {
-        config.push_str("proto = \"=https\"\nproto-redir = \"=https\"\n");
-    }
-    let mut child = Command::new("curl")
-        .args(["--config", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("start curl: {e}"))?;
-    child
-        .stdin
-        .take()
-        .ok_or_else(|| "curl stdin unavailable".to_string())?
-        .write_all(config.as_bytes())
-        .map_err(|e| format!("write curl request: {e}"))?;
-    let out = child.wait_with_output().map_err(|e| format!("finish curl: {e}"))?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-    }
-    Ok(())
+    let max_bytes = (max_bytes > 0).then_some(max_bytes);
+    alinery_core::http::download(url, dest, Duration::from_secs(5), DOWNLOAD_TIMEOUT, max_bytes)
 }
 
 fn offered_release(version: &str) -> Result<UpdateRelease, String> {

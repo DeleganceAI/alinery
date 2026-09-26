@@ -62,10 +62,10 @@ while IFS= read -r f; do
     status=1
   fi
   case "$f" in
-    */hosted_inference.rs) continue ;;
+    */hosted_inference.rs|*/http.rs) continue ;;
   esac
   if grep -nE 'ureq::' "$f"; then
-    echo "ERROR: ureq transport leaked outside telemetry.rs / hosted_inference.rs: $f" >&2
+    echo "ERROR: ureq transport leaked outside telemetry.rs / hosted_inference.rs / http.rs: $f" >&2
     status=1
   fi
 done < <(find "$CORE_SRC" -name '*.rs' -print)

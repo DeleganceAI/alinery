@@ -247,19 +247,8 @@ pub(crate) fn github_error(v: &serde_json::Value) -> Option<String> {
     })
 }
 
-pub(crate) fn gh_auth_token_command() -> Command {
-    let mut command = Command::new("gh");
-    command.args(["auth", "token", "--hostname", "github.com"]).env("PATH", login_shell_path());
-    command
-}
-
 pub(crate) fn gh_auth_token() -> Option<String> {
-    let out = gh_auth_token_command().output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let token = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (!token.is_empty()).then_some(token)
+    alinery_core::git_credential_fill(alinery_core::GITHUB_CREDENTIAL_FILL).ok().flatten().map(|credential| credential.secret)
 }
 
 fn github_json_request(url: &str, token: Option<&str>) -> Result<serde_json::Value, String> {
