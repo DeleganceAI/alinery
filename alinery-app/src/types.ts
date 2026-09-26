@@ -148,6 +148,12 @@ export type NotificationPrefs = {
   dock_badge_approval_waits: boolean;
   dock_badge_failures: boolean;
   dock_badge_completions: boolean;
+  dock_badge_interruptions: boolean;
+  native_input_waits: boolean;
+  native_approval_waits: boolean;
+  native_failures: boolean;
+  native_interruptions: boolean;
+  native_final_completions: boolean;
 };
 export type NotificationSuppressionKind = "waiting_for_input" | "waiting_for_approval" | "failure";
 export type NotificationSuppression = {
@@ -541,6 +547,7 @@ export type SessionExecutionObservation = {
   status: SessionExecutionStatus;
   error: string | null;
   failure_occurrence: string | null;
+  final_completion?: boolean;
 };
 
 export type SessionObservation = {

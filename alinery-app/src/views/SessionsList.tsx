@@ -378,7 +378,6 @@ export function SessionsList({
                       <StatusDot
                         id={item.id}
                         slug={item.task_slug}
-                        repoPath={item.repo_path}
                         observation={obs ?? null}
                         superseded={superseded}
                         exitCode={item.exit_code}

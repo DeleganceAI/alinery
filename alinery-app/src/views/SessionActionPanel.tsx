@@ -69,11 +69,7 @@ export function SessionActionPanel({
   return (
     <div className="session-action-panel">
       <div className="sap-meta">
-        {observation?.execution ? (
-          <StatusDot id={id} slug={taskSlug} repoPath={repoPath} observation={observation} notifyTransitions={false} />
-        ) : (
-          <span className={`pill sap-state ${state.state}`}>{label}</span>
-        )}
+        {observation?.execution ? <StatusDot id={id} slug={taskSlug} observation={observation} /> : <span className={`pill sap-state ${state.state}`}>{label}</span>}
         {phase && <span className="pill">{phase}</span>}
         <span className="pill">{harnessName + (model ? ` · ${model}` : "")}</span>
         <span className="dim mono sap-id">{id}</span>

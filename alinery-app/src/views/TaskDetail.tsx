@@ -1312,15 +1312,7 @@ export function TaskDetail({
                     return (
                       <tr key={`manager:${row.owner_task_slug}:${s.id}`} className="subtask-manager-row">
                         <td className="status-col">
-                          <StatusDot
-                            id={s.id}
-                            slug={row.owner_task_slug}
-                            repoPath={repoPath}
-                            minimal
-                            observation={obs ?? undefined}
-                            exitCode={s.exit_code}
-                            exitAcknowledged={hasAcknowledgedExit(s)}
-                          />
+                          <StatusDot id={s.id} slug={row.owner_task_slug} minimal observation={obs ?? undefined} exitCode={s.exit_code} exitAcknowledged={hasAcknowledgedExit(s)} />
                         </td>
                         <td className="session-name-cell editable-name">
                           {renameControl("session", row.owner_task_slug, s.name ?? "", s.id)}
@@ -1433,9 +1425,8 @@ export function TaskDetail({
                         <StatusDot
                           id={s.id}
                           slug={slug}
-                          repoPath={repoPath}
-                          minimal
                           observation={obs}
+                          minimal
                           superseded={superseded}
                           unreadCompletion={unreadCompletion}
                           exitCode={s.exit_code}

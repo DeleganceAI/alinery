@@ -63,6 +63,7 @@ import { useDaemonStatus } from "./useDaemonStatus";
 import { useDockBadgeCount } from "./useDockBadgeCount";
 import { useHotkeys } from "./useHotkeys";
 import { useMcpStatus } from "./useMcpStatus";
+import { useNativeSessionAttention } from "./useNativeSessionAttention";
 import { useOmpUpdateStatus } from "./useOmpUpdateStatus";
 import { useSessionNoticeSnapshot } from "./useSessionNoticeSnapshot";
 import { useUpdateStatus } from "./useUpdateStatus";
@@ -216,6 +217,7 @@ export default function App() {
   const mcp = useMcpStatus();
   const noticeSnapshot = useSessionNoticeSnapshot(Boolean(appConfig?.active_repo));
   useDockBadgeCount(noticeSnapshot.rows, appConfig?.global?.notifications, noticeSnapshot.loaded);
+  useNativeSessionAttention(noticeSnapshot.rows, noticeSnapshot.observations, appConfig?.global?.notifications, noticeSnapshot.loaded);
   const isFullscreen = useWindowFullscreen();
 
   const clearDrawerUi = useCallback(() => {

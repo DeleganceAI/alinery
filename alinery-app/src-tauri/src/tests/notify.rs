@@ -34,6 +34,9 @@ fn session_attention_body_maps_each_supported_reason() {
         ("idle", "idle, needs you"),
         ("waiting_for_input", "waiting for your input"),
         ("waiting_for_approval", "waiting for your approval"),
+        ("failure", "failed"),
+        ("interrupted", "interrupted and needs recovery"),
+        ("completed", "completed"),
     ] {
         let body = crate::session_attention_body(&repo, None, reason).expect("supported reason");
         assert_eq!(body, format!("session — {expected}"));

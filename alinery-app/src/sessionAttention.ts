@@ -11,7 +11,7 @@ import type {
 
 export type ObservationDisplayKind = Exclude<SessionExecutionStatus, "superseded"> | "stale" | "ready_to_advance" | "exited" | "loading" | "unsupported";
 
-export type SessionNotice = "waiting_for_input" | "waiting_for_approval" | "failure" | "unread_completion";
+export type SessionNotice = "waiting_for_input" | "waiting_for_approval" | "failure" | "interrupted" | "unread_completion";
 export type SessionNoticeRow = { item: SessionListItem; notice: SessionNotice };
 
 export type SessionSort = { field: "priority" } | { field: "started" | "updated"; direction: "desc" | "asc" };
@@ -116,14 +116,22 @@ export function hasAcknowledgedExit(session: SessionMeta): boolean {
 }
 
 export function sessionFailureNeedsAttention(session: SessionMeta, observation?: SessionObservation): boolean {
+  return executionAttention(session, observation, ["launch_failed", "failed"]);
+}
+
+export function sessionInterruptionNeedsAttention(session: SessionMeta, observation?: SessionObservation): boolean {
+  return executionAttention(session, observation, ["interrupted"]);
+}
+
+function executionAttention(session: SessionMeta, observation: SessionObservation | undefined, statuses: Array<NonNullable<SessionObservation["execution"]>["status"]>): boolean {
   if (observation?.execution) {
     const { status, failure_occurrence } = observation.execution;
     return (
-      (status === "launch_failed" || status === "failed" || status === "interrupted") &&
+      statuses.includes(status) &&
       !(failure_occurrence && session.notification_suppression?.notice === "failure" && session.notification_suppression.occurrence === failure_occurrence)
     );
   }
-  if (session.execution_id) return false;
+  if (session.execution_id || !statuses.includes("failed")) return false;
   if (hasUnacknowledgedExit(session)) return true;
   if (!observation || observationDisplayKind(observation) !== "failed") return false;
   return observation.state?.process.state !== "exited" || !hasAcknowledgedExit(session);
@@ -134,6 +142,7 @@ export function classifySessionNotice(session: SessionMeta, observation?: Sessio
   const kind = observation ? observationDisplayKind(observation) : null;
   if (kind === "waiting_for_input") return "waiting_for_input";
   if (kind === "waiting_for_approval") return "waiting_for_approval";
+  if (sessionInterruptionNeedsAttention(session, observation)) return "interrupted";
   if (sessionFailureNeedsAttention(session, observation)) return "failure";
   if (hasUnreadCompletion(session, observation)) return "unread_completion";
   return null;
@@ -144,7 +153,7 @@ export function sessionAttentionTier(session: SessionMeta, observation?: Session
   const kind = observation ? observationDisplayKind(observation) : null;
   if (kind === "waiting_for_input" || kind === "waiting_for_approval") return 0;
   if (kind === "busy" || kind === "starting" || kind === "finishing") return 1;
-  if (sessionFailureNeedsAttention(session, observation) || hasUnreadCompletion(session, observation)) return 2;
+  if (sessionFailureNeedsAttention(session, observation) || sessionInterruptionNeedsAttention(session, observation) || hasUnreadCompletion(session, observation)) return 2;
   return 3;
 }
 
@@ -274,9 +283,9 @@ export function liveNoticeSuppression(item: SessionListItem, notice: SessionNoti
   if (notice === "waiting_for_approval" && agent?.state === "waiting_for_approval") {
     return { notice, occurrence: agent.correlation_id };
   }
-  if (observation?.execution) {
+  if (observation?.execution && (notice === "failure" || notice === "interrupted")) {
     const occurrence = observation.execution.failure_occurrence;
-    return notice === "failure" && occurrence ? { notice, occurrence } : null;
+    return occurrence ? { notice: "failure", occurrence } : null;
   }
   if (notice === "failure" && observation?.state?.playbook.state === "failed" && observationDisplayKind(observation) === "failed" && (item.status_revision ?? 0) > 0) {
     return { notice, occurrence: String(item.status_revision) };
@@ -307,7 +316,8 @@ export function notificationClearRefs(
       id: row.item.id,
     };
     const observation = observations[sessionListItemKey(row.item)];
-    const suppression = suppressLive || (row.notice === "failure" && observation?.execution) ? liveNoticeSuppression(row.item, row.notice, observation) : null;
+    const suppression =
+      suppressLive || ((row.notice === "failure" || row.notice === "interrupted") && observation?.execution) ? liveNoticeSuppression(row.item, row.notice, observation) : null;
     return suppression ? { ...reference, notification_suppression: suppression } : reference;
   });
 }
@@ -328,7 +338,8 @@ export function applyNotificationClearProjection(
     const exit = !observation?.execution && !item.execution_id && item.exit_code != null && item.exit_code !== 0 ? item.ended_at : null;
     const notificationReadAt = completion != null ? Math.max(item.notification_read_at ?? -1, completion) : item.notification_read_at;
     const exitNotificationReadAt = exit != null ? Math.max(item.exit_notification_read_at ?? -1, exit) : item.exit_notification_read_at;
-    const suppression = suppressLive || (row.notice === "failure" && observation?.execution) ? liveNoticeSuppression(item, row.notice, observation) : null;
+    const suppression =
+      suppressLive || ((row.notice === "failure" || row.notice === "interrupted") && observation?.execution) ? liveNoticeSuppression(item, row.notice, observation) : null;
     return {
       ...item,
       ...(notificationReadAt != null && { notification_read_at: notificationReadAt }),

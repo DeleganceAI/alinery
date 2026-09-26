@@ -1334,6 +1334,8 @@ fn previous_owner_is_stale_and_an_independent_owner_is_not() {
     };
     fs::write(session_meta_path(&repo, "task", &other.id), serde_json::to_vec(&other).unwrap()).unwrap();
     assert_eq!(crate::project_session_execution(&other.id, &other, Ok(&saved), None).status, Status::Unknown);
+    let mut reader = crate::SessionExecutionReader::default();
+    assert!(reader.observe(&repo, "task", &replacement.id, &replacement, None).unwrap().final_completion);
     let key = task_activity_key(&repo.display().to_string(), "task");
     assert_eq!(
         crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[])[&key].status,

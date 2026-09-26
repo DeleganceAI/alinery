@@ -568,7 +568,7 @@ describe("execution-owned attention", () => {
     expect(observationDisplayKind(failure)).toBe("launch_failed");
     expect(sessionNoticeRows([{ ...cleared[0], status_revision: 500, exit_code: 143, ended_at: 100 }], observations)).toEqual([]);
     const interrupted = executionObservation({ lifecycle: "interrupted", status: "interrupted", error: null, failure_occurrence: "execution:session:interrupted" });
-    expect(sessionNoticeRows(cleared, { [key]: interrupted }).map((row) => row.notice)).toEqual(["failure"]);
+    expect(sessionNoticeRows(cleared, { [key]: interrupted }).map((row) => row.notice)).toEqual(["interrupted"]);
     expect(observationDisplayKind(interrupted)).toBe("interrupted");
   });
 

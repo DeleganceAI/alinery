@@ -34,7 +34,7 @@ it("keeps execution status authoritative over legacy completion and exit props",
     checkpoint: { phase_completed_at: 100 },
     execution: { lifecycle: "finishing", status: "finishing", error: null, failure_occurrence: null },
   };
-  const props = { id: "session", observation, unreadCompletion: true, exitCode: 143, exitAcknowledged: true, superseded: true, notifyTransitions: false };
+  const props = { id: "session", observation, unreadCompletion: true, exitCode: 143, exitAcknowledged: true, superseded: true };
   const view = render(createElement(StatusDot, props));
   expect(view.getByText("Finishing")).toBeDefined();
   expect(view.queryByText("Completed")).toBeNull();

@@ -1912,7 +1912,7 @@ export function SessionView({
         )}
         {(executionStep || phase) && <span className="pill">{executionStep?.title ?? phase}</span>}
         <span className="pill">{harnessDisplayName(harness) + (model ? ` · ${model}` : "")}</span>
-        <StatusDot id={id} slug={taskSlug} repoPath={repoPath} observation={observation} />
+        <StatusDot id={id} slug={taskSlug} observation={observation} />
         <span className="session-path dim mono">
           {id} · {cwd}
         </span>

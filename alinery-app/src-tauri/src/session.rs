@@ -156,6 +156,7 @@ pub(crate) struct SessionExecutionObservation {
     pub(crate) status: SessionExecutionStatus,
     pub(crate) error: Option<String>,
     pub(crate) failure_occurrence: Option<String>,
+    pub(crate) final_completion: bool,
 }
 
 #[derive(Default)]
@@ -174,7 +175,15 @@ impl SessionExecutionReader {
         if meta.execution_id.is_empty() {
             return None;
         }
-        Some(project_session_execution(id, meta, self.read(repo, slug).as_ref().map_err(String::as_str), live))
+        let mut observation = project_session_execution(id, meta, self.read(repo, slug).as_ref().map_err(String::as_str), live);
+        if observation.status == SessionExecutionStatus::Completed {
+            if let Ok(state) = self.read(repo, slug) {
+                if let Some(record) = state.executions.get(&meta.execution_id) {
+                    observation.final_completion = execution_completion_is_final(repo, slug, state, record);
+                }
+            }
+        }
+        Some(observation)
     }
 }
 
@@ -207,6 +216,7 @@ pub(crate) fn project_session_execution(
         status: waiting.unwrap_or(Status::Unknown),
         error: Some(error),
         failure_occurrence: None,
+        final_completion: false,
     };
     let state = match saved {
         Ok(state) => state,
@@ -229,6 +239,7 @@ pub(crate) fn project_session_execution(
                 status: Status::Superseded,
                 error: None,
                 failure_occurrence: None,
+                final_completion: false,
             }
         } else {
             unknown("execution/session owner or lane identity mismatch".into())
@@ -265,7 +276,26 @@ pub(crate) fn project_session_execution(
             .clone()
             .or_else(|| (status == Status::Unknown).then(|| "execution has no observable live activity".into())),
         failure_occurrence,
+        final_completion: false,
     }
+}
+
+fn execution_completion_is_final(repo: &Path, slug: &str, state: &alinery_core::execution::TaskExecutionState, record: &alinery_core::execution::ExecutionRecord) -> bool {
+    if record.lifecycle != alinery_core::execution::ExecutionLifecycle::Completed {
+        return false;
+    }
+    let Ok(definition) = alinery_core::execution::read_task_playbook(repo, slug, state) else {
+        return false;
+    };
+    let Some(step) = definition.step.iter().find(|step| step.key == record.candidate.step_key) else {
+        return false;
+    };
+    let advances = state.enabled_steps.contains(&step.key)
+        && definition
+            .step
+            .iter()
+            .any(|other| other.key != step.key && other.inputs.iter().any(|input| step.outputs.iter().any(|output| output.path == input.path)));
+    !advances
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]

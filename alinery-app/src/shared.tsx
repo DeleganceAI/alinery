@@ -1037,15 +1037,6 @@ function obsTooltip(kind: ObservationDisplayKind): string {
   }
 }
 
-// Attention reason to pass to notify_session_attention, or null if no notification.
-// Unsupported/unknown never notify.
-function attentionReason(kind: ObservationDisplayKind): "idle" | "waiting_for_input" | "waiting_for_approval" | null {
-  if (kind === "idle") return "idle";
-  if (kind === "waiting_for_input") return "waiting_for_input";
-  if (kind === "waiting_for_approval") return "waiting_for_approval";
-  return null;
-}
-
 // Whether this kind should suppress the dot in minimal mode (only show for notable states).
 function obsMinimalHide(kind: ObservationDisplayKind): boolean {
   return kind === "exited" || kind === "unknown";
@@ -1054,31 +1045,25 @@ function obsMinimalHide(kind: ObservationDisplayKind): boolean {
 export function StatusDot({
   id,
   slug,
-  repoPath,
   minimal,
   observation,
   superseded = false,
   unreadCompletion = false,
   exitCode = null,
   exitAcknowledged = false,
-  notifyTransitions = true,
 }: {
   id: string;
   slug?: string;
-  repoPath?: string;
   minimal?: boolean;
-  // When provided by a parent that already polls, the dot is fully controlled.
-  // When absent, the dot polls session_status itself.
   observation?: SessionObservation | null;
   superseded?: boolean;
   unreadCompletion?: boolean;
   exitCode?: number | null;
   exitAcknowledged?: boolean;
-  notifyTransitions?: boolean;
 }) {
   const pollKey = `${slug ?? ""}\u0000${id}`;
   const [polledObs, setPolledObs] = useState<{ key: string; observation: SessionObservation } | null>(null);
-  const prevKind = useRef<{ key: string; kind: ObservationDisplayKind } | null>(null);
+
   const controlled = observation !== undefined;
 
   // Self-polling path: used by standalone dots that don't have a parent batcher.
@@ -1115,19 +1100,6 @@ export function StatusDot({
         : observedKind;
   const label = obsLabel(kind);
   const title = obs?.execution?.status === "superseded" ? "This session no longer owns the execution" : (obs?.execution?.error ?? obsTooltip(kind));
-
-  // Attention notifications: fire on transitions into idle/waiting states.
-  // Never notify for unsupported/unknown; artifact presence never triggers.
-  useEffect(() => {
-    const prev = prevKind.current?.key === pollKey ? prevKind.current.kind : null;
-    prevKind.current = { key: pollKey, kind: observedKind };
-    if (!notifyTransitions || !slug || !repoPath || prev === null || prev === observedKind) return;
-    const wasBusy = prev === "busy";
-    const reason = attentionReason(observedKind);
-    if (wasBusy && reason !== null) {
-      ipc.notifySessionAttention(repoPath, slug, reason).catch(() => {});
-    }
-  }, [observedKind, notifyTransitions, pollKey, repoPath, slug]);
 
   if (
     !obs?.execution &&
