@@ -191,6 +191,17 @@ const { ipcMocks, ipcModule } = vi.hoisted(() => {
     subtaskState: vi.fn(),
     listSessions: vi.fn(),
     getTaskExecution: vi.fn(),
+    observeTaskExecutions: vi.fn(async (tasks: { repoPath: string; taskSlug: string }[]) =>
+      Promise.all(
+        tasks.map(async (task) => {
+          try {
+            return { repo_path: task.repoPath, task_slug: task.taskSlug, execution: await ipcMocks.getTaskExecution(task.taskSlug, task.repoPath) };
+          } catch (error) {
+            return { repo_path: task.repoPath, task_slug: task.taskSlug, error: String(error) };
+          }
+        }),
+      ),
+    ),
     listArtifactsWithMetadata: vi.fn(),
     listTaskArtifactTree: vi.fn(),
     listArtifactCommentDraftsForRepo: vi.fn(),

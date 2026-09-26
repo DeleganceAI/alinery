@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import * as ipc from "../ipc";
 import { InlineStatus, ModelInput, ompDefaultModel, repoName, taskKey } from "../shared";
 import type { BoardTask, NormalizedStep, ReviewHandoffResult, ReviewHandoffSource } from "../types";
+import { readTaskExecution } from "../useExecutionObservation";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 export function ReviewHandoffPage({
@@ -60,7 +61,7 @@ export function ReviewHandoffPage({
     setModel("");
     setErr("");
     if (!selectedTask) return;
-    Promise.all([ipc.getTaskExecution(selectedTask.slug, selectedTask.repo_path), ipc.readScopedSettingsForRepo(selectedTask.repo_path)])
+    Promise.all([readTaskExecution(selectedTask.repo_path, selectedTask.slug), ipc.readScopedSettingsForRepo(selectedTask.repo_path)])
       .then(([execution, settings]) => {
         if (!alive) return;
         setSteps(execution.definition.step);

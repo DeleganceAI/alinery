@@ -1238,3 +1238,261 @@ fn task_execution_rejects_bad_saved_data_before_contacting_owner() {
     assert!(requests.lock().unwrap_or_else(|error| error.into_inner()).is_empty());
     fs::remove_dir_all(repo).unwrap();
 }
+
+fn short_git_repo(name: &str) -> PathBuf {
+    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_nanos()).unwrap_or(0);
+    let repo = PathBuf::from(format!("/tmp/ao-{name}-{n}"));
+    fs::create_dir_all(&repo).unwrap();
+    let run = |args: &[&str]| {
+        let out = git_cmd(&repo).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "test@alinery.local"]);
+    run(&["config", "user.name", "alinery Test"]);
+    run(&["commit", "--allow-empty", "-q", "-m", "init"]);
+    repo
+}
+fn observation_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|error| error.into_inner())
+}
+
+fn execution_ref(repo: &Path, slug: &str) -> crate::TaskExecutionRef {
+    crate::TaskExecutionRef {
+        repo_path: repo.display().to_string(),
+        task_slug: slug.into(),
+    }
+}
+
+fn count_ops(requests: &[String], op: &str) -> usize {
+    requests.iter().filter(|request| request.as_str() == op).count()
+}
+
+#[test]
+fn batch_observation_cuts_repeated_git_hash_and_handshake_work() {
+    let _lock = observation_test_lock();
+    crate::OBSERVE_REQUIRE_WORKER.store(false, std::sync::atomic::Ordering::SeqCst);
+    let repo_a = short_git_repo("batch-a");
+    let repo_b = short_git_repo("batch-b");
+    write_retained_discovery_task(&repo_a, "one", "lane-a", false);
+    write_retained_discovery_task(&repo_a, "two", "lane-a", false);
+    write_retained_discovery_task(&repo_b, "one", "lane-b", false);
+    let config = repo_a.join("app.toml");
+    let known = vec![repo_a.display().to_string(), repo_b.display().to_string()];
+    let saved_a = crate::saved_task_execution_for(&repo_a, "one").unwrap();
+    let saved_b = crate::saved_task_execution_for(&repo_b, "one").unwrap();
+    let (requests_a, server_a) = recording_lane_with_response(alinery_core::alineryd_socket_path(&repo_a, Some("lane-a")), {
+        let identity = alinery_core::app_config_identity(&config);
+        move |op| match op {
+            "version" => serde_json::json!({"protocol": PROTOCOL_VERSION, "build_id": "fixture", "app_config_identity": identity}).to_string(),
+            "get_task_execution" => serde_json::to_string(&saved_a).unwrap(),
+            other => panic!("unexpected owner operation: {other}"),
+        }
+    });
+    let (requests_b, server_b) = recording_lane_with_response(alinery_core::alineryd_socket_path(&repo_b, Some("lane-b")), {
+        let identity = alinery_core::app_config_identity(&config);
+        move |op| match op {
+            "version" => serde_json::json!({"protocol": PROTOCOL_VERSION, "build_id": "fixture", "app_config_identity": identity}).to_string(),
+            "get_task_execution" => serde_json::to_string(&saved_b).unwrap(),
+            other => panic!("unexpected owner operation: {other}"),
+        }
+    });
+    let tasks = [execution_ref(&repo_a, "one"), execution_ref(&repo_a, "two"), execution_ref(&repo_b, "one")];
+    crate::reset_observe_counts();
+    for task in &tasks {
+        let repo = crate::authorize_observation_repo(&known, &task.repo_path).unwrap();
+        crate::task_execution_for(&repo, &task.task_slug, &config).unwrap();
+    }
+    let before_auth = crate::OBSERVE_AUTH_CALLS.load(std::sync::atomic::Ordering::Relaxed);
+    let before_hash = crate::OBSERVE_HASH_CALLS.load(std::sync::atomic::Ordering::Relaxed);
+    let before_requests = {
+        let mut all = requests_a.lock().unwrap_or_else(|error| error.into_inner()).clone();
+        all.extend(requests_b.lock().unwrap_or_else(|error| error.into_inner()).clone());
+        all
+    };
+    requests_a.lock().unwrap_or_else(|error| error.into_inner()).clear();
+    requests_b.lock().unwrap_or_else(|error| error.into_inner()).clear();
+
+    crate::reset_observe_counts();
+    let outcomes = crate::observe_task_executions_in(&config, &known, tasks.to_vec()).unwrap();
+    let after_auth = crate::OBSERVE_AUTH_CALLS.load(std::sync::atomic::Ordering::Relaxed);
+    let after_hash = crate::OBSERVE_HASH_CALLS.load(std::sync::atomic::Ordering::Relaxed);
+    let after_requests = {
+        let mut all = requests_a.lock().unwrap_or_else(|error| error.into_inner()).clone();
+        all.extend(requests_b.lock().unwrap_or_else(|error| error.into_inner()).clone());
+        all
+    };
+    assert_eq!(before_auth, 3, "per-task Git authorization");
+    assert_eq!(after_auth, 2, "batch Git authorization; before {before_auth}");
+    assert_eq!(before_hash, 3, "per-task binary hash");
+    assert_eq!(after_hash, 1, "batch binary hash; before {before_hash}");
+    assert_eq!(count_ops(&before_requests, "version"), 3);
+    assert_eq!(
+        count_ops(&after_requests, "version"),
+        2,
+        "version handshakes before {}, after {}",
+        count_ops(&before_requests, "version"),
+        count_ops(&after_requests, "version")
+    );
+    assert_eq!(count_ops(&before_requests, "get_task_execution"), 3);
+    assert_eq!(count_ops(&after_requests, "get_task_execution"), 3);
+    assert_eq!(outcomes.len(), 3);
+    assert!(outcomes.iter().all(|outcome| outcome.error.is_none()
+        && outcome
+            .execution
+            .as_ref()
+            .is_some_and(|execution| matches!(execution.live, crate::ExecutionAvailability::Available))));
+    assert_eq!(outcomes[0].task_slug, "one");
+    assert_eq!(outcomes[2].task_slug, "one");
+    assert_ne!(outcomes[0].repo_path, outcomes[2].repo_path);
+
+    let bad = execution_ref(&repo_a, "bad");
+    fs::create_dir_all(alinery_core::execution::execution_state_path(&repo_a, "bad").unwrap().parent().unwrap()).unwrap();
+    fs::write(alinery_core::execution::execution_state_path(&repo_a, "bad").unwrap(), "not json").unwrap();
+    let unknown = short_git_repo("batch-unknown");
+    let mixed = crate::observe_task_executions_in(
+        &config,
+        &known,
+        vec![execution_ref(&repo_a, "one"), bad, execution_ref(&unknown, "one"), execution_ref(&repo_a, "one")],
+    )
+    .unwrap();
+    assert_eq!(mixed.len(), 3, "duplicate references share one outcome");
+    assert!(mixed[0].execution.is_some());
+    assert!(mixed[1].error.as_deref().is_some());
+    assert!(mixed[2].error.as_deref().unwrap_or("").contains("not in the known repository set"));
+    assert!(!alinery_core::execution::execution_state_path(&unknown, "one").unwrap().exists());
+    server_a.join().unwrap();
+    server_b.join().unwrap();
+    fs::remove_dir_all(repo_a).unwrap();
+    fs::remove_dir_all(repo_b).unwrap();
+    fs::remove_dir_all(unknown).unwrap();
+}
+
+#[test]
+fn observation_workers_stay_at_four() {
+    let _lock = observation_test_lock();
+    crate::OBSERVE_REQUIRE_WORKER.store(false, std::sync::atomic::Ordering::SeqCst);
+    let repo = short_git_repo("workers");
+    for lane in 0..5 {
+        write_retained_discovery_task(&repo, &format!("task-{lane}"), &format!("lane-{lane}"), false);
+        let socket = alinery_core::alineryd_socket_path(&repo, Some(&format!("lane-{lane}")));
+        fs::create_dir_all(socket.parent().unwrap()).unwrap();
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < deadline {
+                if listener.accept().is_ok() {
+                    std::thread::sleep(Duration::from_millis(400));
+                } else {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+        });
+    }
+    crate::reset_observe_counts();
+    let tasks = (0..5).map(|lane| execution_ref(&repo, &format!("task-{lane}"))).collect();
+    let outcomes = crate::observe_task_executions_in(&repo.join("app.toml"), &[repo.display().to_string()], tasks).unwrap();
+    assert_eq!(outcomes.len(), 5);
+    assert!(outcomes.iter().all(|outcome| outcome.execution.is_some()));
+    let max_workers = crate::OBSERVE_WORKERS_MAX.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(max_workers <= 4, "observation workers {max_workers}");
+    assert!(max_workers >= 2, "bounded fan-out did not overlap, max {max_workers}");
+    fs::remove_dir_all(repo).unwrap();
+}
+
+#[test]
+fn pending_observation_dispatch_handles_ping_first() {
+    use tauri::ipc::InvokeBody;
+    use tauri::webview::InvokeRequest;
+
+    let _lock = observation_test_lock();
+    let repo = short_git_repo("dispatch");
+    write_retained_discovery_task(&repo, "task", "owner", false);
+    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+    context.config_mut().identifier = format!("test.alinery.observe.{}", uuid::Uuid::new_v4());
+    let app = crate::observation_dispatch_builder(tauri::test::mock_builder().manage(AppState::default()))
+        .build(context)
+        .unwrap();
+    let config_path = crate::app_config_path(app.handle()).unwrap();
+    crate::write_app_config_at(
+        &config_path,
+        &AppConfig {
+            known_repos: vec![repo.display().to_string()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let identity = alinery_core::app_config_identity(&config_path);
+    let saved = crate::saved_task_execution_for(&repo, "task").unwrap();
+    let (_requests, server) = recording_lane_with_response(alinery_core::alineryd_socket_path(&repo, Some("owner")), move |op| match op {
+        "version" => serde_json::json!({"protocol": PROTOCOL_VERSION, "build_id": "fixture", "app_config_identity": identity}).to_string(),
+        "get_task_execution" => serde_json::to_string(&saved).unwrap(),
+        other => panic!("unexpected owner operation: {other}"),
+    });
+    let hold = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    *crate::OBSERVE_AUTH_HOLD.lock().unwrap_or_else(|error| error.into_inner()) = Some(hold.clone());
+    crate::OBSERVE_REQUIRE_WORKER.store(true, std::sync::atomic::Ordering::SeqCst);
+    crate::OBSERVE_AUTH_ENTERED.store(false, std::sync::atomic::Ordering::SeqCst);
+    struct ClearHold;
+    impl Drop for ClearHold {
+        fn drop(&mut self) {
+            *crate::OBSERVE_AUTH_HOLD.lock().unwrap_or_else(|error| error.into_inner()) = None;
+            crate::OBSERVE_REQUIRE_WORKER.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let _clear = ClearHold;
+    let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
+    let request = |cmd: &str, body: serde_json::Value| InvokeRequest {
+        cmd: cmd.into(),
+        callback: tauri::ipc::CallbackFn(0),
+        error: tauri::ipc::CallbackFn(1),
+        url: "tauri://localhost".parse().unwrap(),
+        body: InvokeBody::Json(body),
+        headers: Default::default(),
+        invoke_key: tauri::test::INVOKE_KEY.to_string(),
+    };
+    let (observe_tx, observe_rx) = std::sync::mpsc::sync_channel(1);
+    window.clone().on_message(
+        request(
+            "observe_task_executions",
+            serde_json::json!({"tasks":[{"repoPath": repo.display().to_string(), "taskSlug": "task"}]}),
+        ),
+        Box::new(move |_, _, response, _, _| {
+            let _ = observe_tx.send(response);
+        }),
+    );
+    let started = Instant::now();
+    while !crate::OBSERVE_AUTH_ENTERED.load(std::sync::atomic::Ordering::SeqCst) {
+        assert!(started.elapsed() < Duration::from_secs(5), "authorization never entered the observation worker");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let (ping_tx, ping_rx) = std::sync::mpsc::sync_channel(1);
+    window.clone().on_message(
+        request("ping", serde_json::json!({"name": "grid"})),
+        Box::new(move |_, _, response, _, _| {
+            let _ = ping_tx.send(response);
+        }),
+    );
+    let ping = ping_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("unrelated command handled while observation is pending");
+    assert!(observe_rx.try_recv().is_err(), "observation must still be pending when ping is handled");
+    {
+        let (lock, cv) = &*hold;
+        *lock.lock().unwrap_or_else(|error| error.into_inner()) = true;
+        cv.notify_all();
+    }
+    let observed = observe_rx.recv_timeout(Duration::from_secs(5)).expect("observation finishes after the worker is released");
+    match ping {
+        tauri::ipc::InvokeResponse::Ok(body) => assert_eq!(body.deserialize::<String>().unwrap(), "pong: grid"),
+        tauri::ipc::InvokeResponse::Err(error) => panic!("ping failed: {error:?}"),
+    }
+    match observed {
+        tauri::ipc::InvokeResponse::Ok(_) => {}
+        tauri::ipc::InvokeResponse::Err(error) => panic!("observation failed after release: {error:?}"),
+    }
+    server.join().unwrap();
+    fs::remove_dir_all(repo).unwrap();
+}
