@@ -1,14 +1,16 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { collectLiveSubagents } from "./chat/subagents";
 import {
   appendHarnessNotice,
+  appendOptimisticAbort,
   appendOptimisticUser,
   applyFilePage,
   applyRpcLine,
   applyRpcLines,
+  type ChatTranscriptState,
   emptyTranscript,
   flattenWouldFail,
   mapHydratedMessage,
@@ -806,5 +808,418 @@ describe("chat attachments", () => {
     });
     const entry = live.entries[0];
     expect(entry && "attachments" in entry && entry.attachments).toEqual([{ kind: "image", name: "image", mimeType: "image/png", src: "data:image/png;base64,aa" }]);
+  });
+});
+
+describe("DEL-722 block-local streaming", () => {
+  beforeEach(() => {
+    // Advance the clock on every read so replacing a retained timestamp cannot pass by chance.
+    let now = Date.parse("2026-09-25T12:00:00Z");
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now++);
+    return () => clock.mockRestore();
+  });
+
+  const update = (content: unknown, type: string, contentIndex?: unknown, stopReason?: string) => ({
+    type: "message_update",
+    message: { role: "assistant", content, stopReason },
+    assistantMessageEvent: { type, ...(contentIndex === undefined ? {} : { contentIndex }) },
+  });
+  const activity = (state: ChatTranscriptState) => ({
+    message: state.messages[state.messages.length - 1]?.content
+      .filter((part) => part.type === "thinking" || part.type === "text" || part.type === "toolCall")
+      .map((part) => Boolean("streaming" in part && part.streaming)),
+    rows: state.entries
+      .filter((entry) => !entry.id.startsWith("f:") && (entry.type === "thinking" || entry.type === "text" || entry.type === "tool_call"))
+      .map((entry) => (entry.type === "tool_call" ? entry.status === "running" : Boolean("streaming" in entry && entry.streaming))),
+  });
+  const expectActivity = (state: ChatTranscriptState, expected: boolean[], label?: string) => {
+    expect.soft(activity(state), label).toEqual({ message: expected, rows: expected });
+  };
+  const content = [
+    { type: "thinking", thinking: "Working it out" },
+    { type: "text", text: "The answer" },
+    { type: "toolCall", id: "call-1", name: "read", arguments: { path: "source.ts" } },
+  ];
+  const streamAll = (state = emptyTranscript()) =>
+    applyRpcLine(applyRpcLine(applyRpcLine(state, update(content, "toolcall_delta", 2)), update(content, "thinking_start", 0)), update(content, "text_start", 1));
+
+  it("keeps completed thinking closed through every recorded answer transition", () => {
+    let state = emptyTranscript();
+    const trace = [];
+    const identities = new Map<string, number | undefined>();
+    for (const name of ["thinking_start", "thinking_end", "text_start", "text_delta", "text_end"]) {
+      state = applyRpcLine(state, load(`live-${name}.json`));
+      trace.push(activity(state));
+      for (const entry of state.entries) {
+        if (identities.has(entry.id)) expect.soft(entry.at, name).toBe(identities.get(entry.id));
+        else identities.set(entry.id, entry.at);
+      }
+      expect
+        .soft(
+          state.entries.filter((entry) => entry.type === "thinking" || entry.type === "text").map((entry) => entry.text),
+          name,
+        )
+        .toEqual(state.messages[0].content.map((part) => (part.type === "thinking" ? part.thinking : part.type === "text" ? part.text : undefined)));
+    }
+    expect.soft(trace).toEqual([
+      { message: [true], rows: [true] },
+      { message: [false, false], rows: [false, false] },
+      { message: [false, true], rows: [false, true] },
+      { message: [false, true], rows: [false, true] },
+      { message: [false, false], rows: [false, false] },
+    ]);
+    const completed = applyRpcLines([load("live-thinking_start.json"), load("live-thinking_end.json")]);
+    let replayed = completed;
+    for (const name of ["text_start", "text_delta", "text_end", "text_end"]) {
+      replayed = applyRpcLine(replayed, load(`live-${name}.json`));
+      expect.soft(replayed.entries.map(({ id, at }) => ({ id, at }))).toEqual(completed.entries.map(({ id, at }) => ({ id, at })));
+      expect.soft(replayed.messages[0].content).toMatchObject([
+        { type: "thinking", thinking: "The user wants me to reply with ONLY the integer result of 17*19.\n\n\n" },
+        { type: "text", text: "323" },
+      ]);
+      expect.soft(replayed.entries.filter((entry) => entry.type === "text")).toHaveLength(1);
+    }
+  });
+
+  it("keeps the first text complete while the second text starts, grows and ends", () => {
+    const first = { type: "text", text: "## Finished" };
+    const second = { type: "text", text: "Second" };
+    let state = applyRpcLine(emptyTranscript(), update([first], "text_start", 0));
+    expectActivity(state, [true]);
+    const firstRow = state.entries[0];
+    state = applyRpcLine(state, update([first], "text_end", 0));
+    expectActivity(state, [false]);
+    state = applyRpcLine(state, update([first, second], "text_start", 1));
+    expectActivity(state, [false, true]);
+    const identities = state.entries.map(({ id, at }) => ({ id, at }));
+    for (const [event, live] of [
+      ["text_delta", true],
+      ["text_end", false],
+    ] as const) {
+      state = applyRpcLine(state, update([first, { ...second, text: "Second answer" }], event, 1));
+      expectActivity(state, [false, live], event);
+      expect.soft(state.entries.map(({ id, at }) => ({ id, at }))).toEqual(identities);
+      expect.soft(state.entries[0]).toMatchObject({ id: firstRow.id, at: firstRow.at, type: "text", text: first.text });
+      expect.soft(state.messages[0].content).toMatchObject([first, { type: "text", text: "Second answer" }]);
+      expect.soft(state.entries[1]).toMatchObject({ type: "text", text: "Second answer" });
+    }
+  });
+
+  it("preserves overlapping thinking, text and tool arguments in both end orders", () => {
+    let state = emptyTranscript();
+    const transitions: [string, number, boolean[]][] = [
+      ["thinking_start", 0, [true, false, false]],
+      ["text_start", 1, [true, true, false]],
+      ["toolcall_start", 2, [true, true, true]],
+      ["thinking_end", 0, [false, true, true]],
+      ["toolcall_delta", 2, [false, true, true]],
+      ["text_end", 1, [false, false, true]],
+      ["toolcall_end", 2, [false, false, false]],
+      ["thinking_delta", 0, [true, false, false]],
+      ["text_delta", 1, [true, true, false]],
+      ["toolcall_delta", 2, [true, true, true]],
+      ["toolcall_end", 2, [true, true, false]],
+      ["text_end", 1, [true, false, false]],
+      ["thinking_end", 0, [false, false, false]],
+    ];
+    for (const [event, index, expected] of transitions) {
+      state = applyRpcLine(state, update(content, event, index));
+      expectActivity(state, expected, event);
+    }
+    expect.soft(state.entries.find((entry) => entry.type === "tool_call")).toMatchObject({
+      toolId: "call-1",
+      args: '{"path":"source.ts"}',
+      status: "ok",
+    });
+    const alias = content.map((part) => (part.type === "toolCall" ? { ...part, type: "tool_call" } : part));
+    state = applyRpcLine(state, update(alias, "toolcall_delta", 2));
+    expectActivity(state, [false, false, true], "tool_call alias");
+  });
+
+  it("addresses raw indices across filtered, redacted and image blocks", () => {
+    const raw = [
+      { type: "producer_metadata", value: "not displayed" },
+      { type: "redactedThinking" },
+      content[0],
+      { type: "image", mimeType: "image/png", data: "aW1hZ2U=" },
+      content[1],
+    ];
+    let state = applyRpcLine(emptyTranscript(), update(raw, "text_start", 4));
+    expectActivity(state, [false, true]);
+    const identities = state.entries.map(({ id, at }) => ({ id, at }));
+    state = applyRpcLine(state, update(raw, "thinking_start", 2));
+    expectActivity(state, [true, true]);
+    state = applyRpcLine(state, update(raw, "thinking_end", 2));
+    expectActivity(state, [false, true]);
+    state = applyRpcLine(state, update(raw, "text_end", 4));
+    expectActivity(state, [false, false]);
+    expect
+      .soft(state.messages[0].content)
+      .toEqual([
+        { type: "redactedThinking" },
+        expect.objectContaining(content[0]),
+        { type: "image", mimeType: "image/png", data: "aW1hZ2U=" },
+        expect.objectContaining(content[1]),
+      ]);
+    expect.soft(state.entries.map(({ type }) => type)).toEqual(["redacted_thinking", "thinking", "text"]);
+    expect.soft(state.entries.map(({ id, at }) => ({ id, at }))).toEqual(identities);
+    for (const index of [0, 1, 3]) {
+      state = applyRpcLine(state, update(raw, "thinking_start", index));
+      expectActivity(state, [false, false], `non-streamable raw index ${index}`);
+    }
+  });
+
+  it("prunes removed and changed-kind active indices before later snapshots reuse them", () => {
+    let state = applyRpcLine(emptyTranscript(), update(content.slice(0, 2), "text_start", 1));
+    state = applyRpcLine(state, update([content[0]], "unknown_event"));
+    expectActivity(state, [false], "removed active index");
+    state = applyRpcLine(state, update(content.slice(0, 2), "unknown_event"));
+    expectActivity(state, [false, false], "reintroduced index");
+    state = applyRpcLine(state, update(content.slice(0, 2), "thinking_start", 0));
+    state = applyRpcLine(state, update([{ type: "text", text: "Replacement kind" }, content[1]], "thinking_end", 0));
+    expectActivity(state, [false, false], "mismatched end still reconciles changed kind");
+    state = applyRpcLine(state, update(content.slice(0, 2), "unknown_event"));
+    expectActivity(state, [false, false], "original kind returns without activity");
+  });
+
+  it("rejects distinct invalid indices without reviving or ending valid siblings", () => {
+    let state = applyRpcLine(emptyTranscript(), update(content.slice(0, 2), "text_start", 1));
+    state = applyRpcLine(state, update(content.slice(0, 2), "text_end", 1));
+    state = applyRpcLine(state, update(content.slice(0, 2), "thinking_start", 0));
+    const indices = [
+      ["missing", undefined],
+      ["string", "1"],
+      ["fractional", 0.5],
+      ["negative", -1],
+      ["out of range", 2],
+    ] as const;
+    for (const [label, index] of indices) {
+      state = applyRpcLine(state, update(content.slice(0, 2), "text_start", index));
+      expectActivity(state, [true, false], `${label} start`);
+      state = applyRpcLine(state, update(content.slice(0, 2), "thinking_end", index));
+      expectActivity(state, [true, false], `${label} end`);
+    }
+    for (const [event, index] of [
+      ["text_start", 0],
+      ["thinking_end", 1],
+    ] as const) {
+      state = applyRpcLine(state, update(content.slice(0, 2), event, index));
+      expectActivity(state, [true, false], `kind-mismatched ${event}`);
+    }
+  });
+
+  it("retains activity through unknown, image and non-array frames without inferring a target", () => {
+    const raw = [...content.slice(0, 2), { type: "image", mimeType: "image/png", data: "aW1hZ2U=" }];
+    let state = applyRpcLine(emptyTranscript(), update(raw, "thinking_delta", 0));
+    for (const event of ["unknown_event", "image_end"]) {
+      state = applyRpcLine(state, update(raw, event, 2));
+      expectActivity(state, [true, false], event);
+    }
+    state = applyRpcLine(state, update(raw, "thinking_end\n", 0));
+    expectActivity(state, [true, false], "event names must match exactly");
+    for (const missing of [undefined, { type: "text", text: "not an array" }]) {
+      state = applyRpcLine(state, update(missing, "thinking_end", 0));
+      expect.soft(state.messages[state.messages.length - 1]?.content).toEqual([]);
+      expect.soft(activity(state).rows).toEqual([]);
+      state = applyRpcLine(state, update(raw, "unknown_event"));
+      expectActivity(state, [true, false], "valid snapshot after non-array content");
+    }
+  });
+
+  it("accepts an indexed delta without start despite a partial stop reason", () => {
+    const state = applyRpcLine(emptyTranscript(), update(content.slice(0, 2), "text_delta", 1, "stop"));
+    expectActivity(state, [false, true]);
+    expect.soft(state.messages[0]).toMatchObject({ stopReason: "stop", content: content.slice(0, 2) });
+  });
+
+  it("retains activity across initial and older hydration without mutating retained states or inputs", () => {
+    const input = update(content.slice(0, 2), "thinking_start", 0);
+    const inputBefore = structuredClone(input);
+    const first = applyRpcLine(emptyTranscript(), input);
+    const retained = structuredClone({ messages: first.messages, entries: first.entries });
+    const overlap = applyRpcLine(first, update(content.slice(0, 2), "text_start", 1));
+    const page = { start: 100, messages: [{ rowId: "history", role: "assistant" as const, content: [{ type: "text" as const, text: "Earlier answer" }] }] };
+    const pageBefore = structuredClone(page);
+    const hydrated = applyFilePage(overlap, page, "initial");
+    const historyRows = hydrated.entries.filter((entry) => entry.id.startsWith("f:"));
+    const olderPage = { start: 0, messages: [{ rowId: "older", role: "user" as const, content: [{ type: "text" as const, text: "Older question" }] }] };
+    const paged = applyFilePage(hydrated, olderPage, "older");
+    const pagedBefore = structuredClone({ messages: paged.messages, entries: paged.entries });
+    let state = applyRpcLine(paged, update(content.slice(0, 2), "text_end", 1));
+    expectActivity(state, [true, false], "sibling end after both page modes");
+    state = applyRpcLine(state, update(content.slice(0, 2), "thinking_end", 0));
+    expectActivity(state, [false, false]);
+    expect.soft(state.entries.filter((entry) => entry.id.startsWith("f:history"))).toEqual(historyRows);
+    expect.soft(state.messages.filter((message) => message.rowId)).toEqual([...olderPage.messages, ...page.messages]);
+    expect.soft({ messages: first.messages, entries: first.entries }).toEqual(retained);
+    expect.soft({ messages: paged.messages, entries: paged.entries }).toEqual(pagedBefore);
+    expect.soft(input).toEqual(inputBefore);
+    expect.soft(page).toEqual(pageBefore);
+    const forked = applyRpcLine(first, update(content.slice(0, 2), "unknown_event"));
+    expectActivity(forked, [true, false], "later reductions cannot change an earlier state's activity");
+  });
+
+  it("resets reused indices on message starts but keeps repeated open notifications idempotent", () => {
+    const opened = applyRpcLine(emptyTranscript(), { type: "turn_start" });
+    const live = applyRpcLine(opened, update(content.slice(0, 2), "thinking_start", 0));
+    let repeated = live;
+    for (const type of ["agent_start", "turn_start"]) {
+      repeated = applyRpcLine(repeated, { type });
+      expectActivity(repeated, [true, false], type);
+      expect.soft(repeated.entries.filter((entry) => entry.type === "turn_marker")).toEqual(live.entries.filter((entry) => entry.type === "turn_marker"));
+    }
+    for (const reset of [{ type: "message_start", message: { role: "assistant", content: content.slice(0, 2) } }, update(content.slice(0, 2), "start")]) {
+      const restarted = applyRpcLine(repeated, reset);
+      expectActivity(restarted, [false, false], "replacement snapshot is not live");
+      expectActivity(applyRpcLine(restarted, update(content.slice(0, 2), "text_delta", 1)), [false, true], "old thinking activity stays cleared");
+    }
+    expectActivity(applyRpcLine(emptyTranscript(), update(content.slice(0, 2), "unknown_event")), [false, false], "fresh session");
+    const provisional = applyRpcLine(emptyTranscript(), update(content.slice(0, 2), "thinking_start", 0));
+    const newTurn = applyRpcLine(provisional, { type: "turn_start" });
+    expectActivity(applyRpcLine(newTurn, update(content.slice(0, 2), "text_delta", 1)), [false, true], "genuine new turn");
+    const ended = applyRpcLine(repeated, { type: "turn_end" });
+    const history = structuredClone(ended.entries);
+    let next = applyRpcLine(ended, { type: "turn_start" });
+    next = applyRpcLine(next, update([{ type: "text", text: "Distinct next turn" }], "text_delta", 0));
+    expect.soft(next.entries.slice(0, history.length)).toEqual(history);
+    expect.soft(activity(next).message).toEqual([true]);
+    expect.soft(activity(next).rows).toEqual([false, false, true]);
+    expect.soft(next.entries[next.entries.length - 1]).toMatchObject({ type: "text", text: "Distinct next turn" });
+  });
+
+  it.each([
+    ["message_end stop", "message_end", "stop"],
+    ["message_end aborted", "message_end", "aborted"],
+    ["message_end error", "message_end", "error"],
+    ["nested done", "done", "stop"],
+    ["nested error", "error", "error"],
+  ])("finalizes all active kinds on %s", (_label, event, stopReason) => {
+    const live = streamAll();
+    const identities = live.entries.map(({ id, at }) => ({ id, at }));
+    const terminal = event === "message_end" ? { type: event, message: { role: "assistant", content, stopReason } } : update(content, event, undefined, stopReason);
+    const state = applyRpcLine(live, terminal);
+    expectActivity(state, [false, false, false]);
+    expect.soft(state.entries.map(({ id, at }) => ({ id, at }))).toEqual(identities);
+    expect.soft(state.entries).toMatchObject([
+      { type: "thinking", text: "Working it out" },
+      { type: "text", text: "The answer" },
+      { type: "tool_call", toolId: "call-1", args: '{"path":"source.ts"}', status: "ok" },
+    ]);
+    expect.soft(state.messages[0].content).toMatchObject([content[0], content[1], { type: "toolCall", id: "call-1", args: { path: "source.ts" } }]);
+    const thinking = state.entries.find((entry) => entry.type === "thinking");
+    expect.soft(Boolean(thinking?.type === "thinking" && thinking.aborted)).toBe(stopReason === "aborted");
+    expectActivity(applyRpcLine(state, update(content, "unknown_event")), [false, false, false], "completion clears retained activity");
+  });
+
+  it("drops an unfinished tool on confirmed abort but does not finalize on abort or error notices", () => {
+    const live = streamAll();
+    let noticed = appendOptimisticAbort(live);
+    noticed = applyRpcLine(noticed, { type: "error", message: "Temporary transport problem" });
+    expectActivity(noticed, [true, true, true], "notices are not completion");
+    expect.soft(noticed.entries.some((entry) => entry.type === "abort")).toBe(true);
+    expect.soft(noticed.entries.some((entry) => entry.type === "error")).toBe(true);
+    noticed = applyRpcLine(noticed, update(content, "unknown_event"));
+    expectActivity(noticed, [true, true, true], "notice did not clear retained activity");
+    const aborted = applyRpcLine(noticed, { type: "message_end", message: { role: "assistant", content: content.slice(0, 2), stopReason: "aborted" } });
+    expectActivity(aborted, [false, false]);
+    expect.soft(aborted.entries.find((entry) => entry.type === "thinking")).toMatchObject({ aborted: true, text: "Working it out" });
+    expect.soft(aborted.entries.some((entry) => entry.type === "tool_call")).toBe(false);
+    expectActivity(applyRpcLine(aborted, update(content, "unknown_event")), [false, false, false], "removed tool activity cannot return");
+  });
+
+  it.each([
+    ["turn_end", "stop"],
+    ["agent_end", "aborted"],
+  ])("finalizes missing message_end on %s and ignores repeated terminal notifications", (type, stopReason) => {
+    const live = streamAll(applyRpcLine(emptyTranscript(), { type: "turn_start" }));
+    const retained = structuredClone({ messages: live.messages, entries: live.entries });
+    const identities = live.entries.map(({ id, at }) => ({ id, at }));
+    const state = applyRpcLine(live, { type, stopReason });
+    expectActivity(state, [false, false, false]);
+    expect.soft(state.entries.slice(0, live.entries.length).map(({ id, at }) => ({ id, at }))).toEqual(identities);
+    expect.soft(state.entries.find((entry) => entry.type === "thinking")).toMatchObject({ text: "Working it out" });
+    expect.soft(state.entries.find((entry) => entry.type === "tool_call")).toMatchObject({ args: '{"path":"source.ts"}', status: "ok" });
+    const thinking = state.entries.find((entry) => entry.type === "thinking");
+    expect.soft(Boolean(thinking?.type === "thinking" && thinking.aborted)).toBe(stopReason === "aborted");
+    const repeated = applyRpcLine(state, { type, stopReason });
+    expect.soft(repeated.entries).toEqual(state.entries);
+    expect.soft(repeated.entries.filter((entry) => entry.type === "turn_marker" && entry.phase === "end")).toHaveLength(1);
+    expect.soft({ messages: live.messages, entries: live.entries }).toEqual(retained);
+  });
+
+  it("drops provisional rows without an open turn while clearing retained message activity", () => {
+    const live = streamAll();
+    const closed = applyRpcLine(live, { type: "agent_end" });
+    expect.soft(activity(closed)).toEqual({ message: [false, false, false], rows: [] });
+    expect.soft(closed.messages[0].content).toMatchObject([content[0], content[1], { type: "toolCall", id: "call-1" }]);
+    expect.soft(closed.entries.some((entry) => entry.type === "turn_marker")).toBe(false);
+    expectActivity(applyRpcLine(closed, update(content, "unknown_event")), [false, false, false], "next snapshot cannot restore old activity");
+  });
+
+  it("finalizes hydrated live rows in place without rewriting history or unrelated rows", () => {
+    let live = streamAll(applyRpcLine(emptyTranscript(), { type: "turn_start" }));
+    live = appendHarnessNotice(live, "notice", "Keep this notice");
+    live = applyRpcLine(live, load("live-subagent_lifecycle.json"));
+    const withResult = [...content, { type: "toolResult", text: "Independent result" }];
+    live = applyRpcLine(live, update(withResult, "text_delta", 1));
+    const rowsBefore = structuredClone(live.entries);
+    const page = {
+      start: 0,
+      messages: [
+        { rowId: "result", role: "toolResult" as const, toolName: "bash", isError: true, content: [{ type: "text" as const, text: "Older failed result" }] },
+        { rowId: "other-answer", role: "assistant" as const, content: [{ type: "text" as const, text: "Different hydrated answer" }] },
+      ],
+    };
+    const hydrated = applyFilePage(live, page, "initial");
+    const messagesBefore = structuredClone(hydrated.messages);
+    const history = structuredClone(hydrated.entries.filter((entry) => entry.id.startsWith("f:")));
+    const state = applyRpcLine(hydrated, { type: "turn_end", stopReason: "aborted" });
+    expect.soft(state.messages).toEqual(messagesBefore);
+    expect.soft(state.entries.filter((entry) => entry.id.startsWith("f:"))).toEqual(history);
+    for (const row of rowsBefore) {
+      const after = state.entries.find((entry) => entry.id === row.id);
+      if (row.type === "thinking" || row.type === "text") {
+        expect.soft(after).toMatchObject({ id: row.id, at: row.at, type: row.type, text: row.text });
+        expect.soft(Boolean(after && "streaming" in after && after.streaming)).toBe(false);
+        if (row.type === "thinking") expect.soft(after).toMatchObject({ aborted: true });
+      } else if (row.type === "tool_call") {
+        expect.soft(after).toEqual({ ...row, status: "ok" });
+      } else {
+        expect.soft(after).toEqual(row);
+      }
+    }
+    expect.soft(state.entries.filter((entry) => entry.type === "text").map((entry) => entry.text)).toEqual(["Different hydrated answer", "The answer"]);
+    expect.soft(hydrated.messages).toEqual(messagesBefore);
+    expect.soft(hydrated.entries.filter((entry) => !entry.id.startsWith("f:"))).toEqual(rowsBefore);
+  });
+
+  it("clears terminal activity even when journal ownership suppresses every live row", () => {
+    const journal = applyFilePage(
+      emptyTranscript(),
+      {
+        start: 0,
+        messages: [
+          {
+            rowId: "same",
+            role: "assistant",
+            content: [
+              { type: "thinking", thinking: "Working it out" },
+              { type: "text", text: "The answer" },
+            ],
+          },
+        ],
+      },
+      "initial",
+    );
+    const suppressed = applyRpcLine(journal, update(content.slice(0, 2), "thinking_start", 0));
+    expect.soft(suppressed.entries).toEqual(journal.entries);
+    expect.soft(activity(suppressed).message).toEqual([true, false]);
+    const closed = applyRpcLine(suppressed, { type: "turn_end" });
+    expect.soft(closed.entries).toEqual(journal.entries);
+    expect.soft(activity(closed).message).toEqual([false, false]);
+    const later = applyRpcLine(closed, update([{ type: "thinking", thinking: "Different later thinking" }, content[1]], "text_delta", 1));
+    expectActivity(later, [false, true]);
+    expect.soft(later.entries.filter((entry) => entry.id.startsWith("f:"))).toEqual(journal.entries);
+    expect.soft(later.entries.filter((entry) => entry.type === "thinking")).toHaveLength(2);
   });
 });
