@@ -1144,3 +1144,82 @@ describe("session work names", () => {
     expect(ipcMocks.renameTask).toHaveBeenCalledWith("/repo", "task", "Renamed child");
   });
 });
+
+describe("repository switch keeps the current page", () => {
+  const repos = { ...appConfig, known_repos: ["/repo", "/other"] };
+
+  beforeEach(() => {
+    ipcMocks.readAppConfig.mockResolvedValue(repos);
+    ipcMocks.setActiveRepo.mockImplementation(async (path: string) => ({ ...repos, active_repo: path }));
+  });
+
+  async function chooseRepo(path: string) {
+    fireEvent.click(screen.getByRole("button", { name: "Repository" }));
+    fireEvent.click(screen.getByTitle(path));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Repository" })).toHaveProperty("title", path));
+  }
+
+  async function chooseAllRepos() {
+    fireEvent.click(screen.getByRole("button", { name: "Repository" }));
+    fireEvent.click(screen.getByRole("button", { name: "All repos" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Repository" })).toHaveProperty("title", "All repos"));
+  }
+
+  it("stays on kanban, settings, and notifications instead of bouncing to the task list", async () => {
+    await renderApp();
+
+    fireEvent.click(screen.getByRole("button", { name: "Kanban3" }));
+    expect(await screen.findByRole("button", { name: "open active card session" })).toBeTruthy();
+    await chooseRepo("/other");
+    expect(screen.getByRole("button", { name: "open active card session" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "open list task" })).toBeNull();
+    await chooseAllRepos();
+    expect(screen.getByRole("button", { name: "open active card session" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Account" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Settings" }));
+    expect(await screen.findByRole("button", { name: "save notification settings" })).toBeTruthy();
+    await chooseRepo("/repo");
+    expect(screen.getByRole("button", { name: "save notification settings" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+    expect((await screen.findByRole("button", { name: "clear shared notifications" })).closest("[data-scope]")?.getAttribute("data-scope")).toBe("/repo");
+    await chooseAllRepos();
+    expect(screen.getByRole("button", { name: "clear shared notifications" }).closest("[data-scope]")?.getAttribute("data-scope")).toBe("all");
+  });
+
+  it("zooms a task or session out to the task list", async () => {
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "open list task" }));
+    expect(await screen.findByText(/task detail:/)).toBeTruthy();
+
+    await chooseRepo("/other");
+    expect(screen.getByRole("button", { name: "open list task" })).toBeTruthy();
+    expect(screen.queryByText(/task detail:/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "open list task" }));
+    fireEvent.click(await screen.findByRole("button", { name: "open detail session" }));
+    expect(await screen.findByText(/session:/)).toBeTruthy();
+    await chooseAllRepos();
+    expect(screen.getByRole("button", { name: "open list task" })).toBeTruthy();
+    expect(screen.queryByText(/session:/)).toBeNull();
+  });
+
+  it("keeps one grid workspace across repositories and all-repos", async () => {
+    const legacy = JSON.stringify({ config: { tileWidth: 480 } });
+    window.localStorage.setItem("alinery:grid:/repo:view:default-kanban-plus", legacy);
+    window.localStorage.setItem("alinery:grid:all-repositories:view:default-kanban-plus", JSON.stringify({ config: { tileWidth: 96 } }));
+    await renderApp();
+
+    const grid = () => screen.getByTestId("grid:view:default-kanban-plus");
+    expect(grid()).toBeTruthy();
+    expect(window.localStorage.getItem("alinery:grid:view:default-kanban-plus")).toBe(legacy);
+
+    await chooseRepo("/other");
+    expect(grid()).toBeTruthy();
+    await chooseAllRepos();
+    expect(grid()).toBeTruthy();
+    expect(window.localStorage.getItem("alinery:grid:view:default-kanban-plus")).toBe(legacy);
+  });
+});
