@@ -269,6 +269,97 @@ fn bundled_deleted(roots: &PlaybookRoots, key: &str) -> Result<bool, String> {
     check_leaf(&path.join(format!(".deleted-bundled-{key}")))
 }
 
+fn committed_playbook_root(repo: &Path) -> PathBuf {
+    repo.join("alinery").join("playbooks")
+}
+
+// Maintainer-owned v2 files. The declared key is the identity; the filename is not.
+// Symlinks are skipped so a link cannot escape the directory or claim a key twice.
+fn committed_claims(repo: &Path) -> Result<Vec<(String, PathBuf)>, String> {
+    if repo.as_os_str().is_empty() {
+        return Ok(Vec::new());
+    }
+    let root = committed_playbook_root(repo);
+    let metadata = match fs::symlink_metadata(&root) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("read {}: {error}", root.display())),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!("{} is not a regular directory", root.display()));
+    }
+    let mut found = Vec::new();
+    let mut pending = vec![root];
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(&dir).map_err(|error| format!("read {}: {error}", dir.display()))? {
+            let entry = entry.map_err(|error| format!("read {}: {error}", dir.display()))?;
+            let file_type = entry.file_type().map_err(|error| format!("read {}: {error}", entry.path().display()))?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
+                pending.push(entry.path());
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            let Ok(text) = fs::read_to_string(entry.path()) else {
+                continue;
+            };
+            let Ok(definition) = parse_playbook_md(&text) else {
+                continue;
+            };
+            if valid_playbook_key(&definition.key) {
+                found.push((definition.key, entry.path()));
+            }
+        }
+    }
+    found.sort();
+    Ok(found)
+}
+
+fn duplicate_key_diagnostic(key: &str, paths: &[PathBuf]) -> PlaybookValidationError {
+    let listed = paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join("; ");
+    PlaybookValidationError::new("duplicate_key", format!("repo/{key} is declared by {listed}; not selecting one"), None, Some("key".into()))
+}
+
+enum RepoClaim {
+    Missing,
+    Library,
+    Committed(PathBuf),
+    Duplicate(Vec<PathBuf>),
+}
+
+fn repo_claim(roots: &PlaybookRoots, key: &str) -> Result<RepoClaim, String> {
+    let library = root(roots, PlaybookScope::Repo).expect("repo root").join(key).join("playbook.md");
+    let mut paths = Vec::new();
+    if check_leaf(&library)? {
+        paths.push(library.clone());
+    }
+    for (found, path) in committed_claims(&roots.repo_dir)? {
+        if found == key {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(match paths.len() {
+        0 => RepoClaim::Missing,
+        1 if paths[0] == library => RepoClaim::Library,
+        1 => RepoClaim::Committed(paths.remove(0)),
+        _ => RepoClaim::Duplicate(paths),
+    })
+}
+
+fn read_regular_file(path: &Path) -> Result<(String, Option<u64>), String> {
+    if !check_leaf(path)? {
+        return Err(format!("{} is not a regular file", path.display()));
+    }
+    let text = fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    Ok((text, modification_time(path)))
+}
+
 pub fn resolve_playbook(roots: &PlaybookRoots, reference: &PlaybookRef) -> Result<ScopedPlaybook, PlaybookLoadError> {
     let source = source_for(roots, reference);
     if !valid_playbook_key(&reference.key) {
@@ -282,6 +373,33 @@ pub fn resolve_playbook(roots: &PlaybookRoots, reference: &PlaybookRef) -> Resul
             source,
             message: "repo-scoped playbooks require an active repository".into(),
         });
+    }
+    if reference.scope == PlaybookScope::Repo {
+        match repo_claim(roots, &reference.key).map_err(|message| PlaybookLoadError::Io { source: source.clone(), message })? {
+            RepoClaim::Duplicate(paths) => {
+                return Err(PlaybookLoadError::Invalid {
+                    source,
+                    diagnostics: vec![duplicate_key_diagnostic(&reference.key, &paths)],
+                });
+            }
+            RepoClaim::Committed(path) => {
+                let (source_text, modified_at_ms) = read_regular_file(&path).map_err(|message| PlaybookLoadError::Io { source: source.clone(), message })?;
+                let definition = validate_playbook_for_storage(&reference.key, &source_text).map_err(|diagnostics| PlaybookLoadError::Invalid {
+                    source: source.clone(),
+                    diagnostics,
+                })?;
+                return Ok(ScopedPlaybook {
+                    source: PlaybookSource {
+                        reference: reference.clone(),
+                        path: Some(path),
+                    },
+                    definition,
+                    source_text,
+                    modified_at_ms,
+                });
+            }
+            RepoClaim::Library | RepoClaim::Missing => {}
+        }
     }
     let (source_text, modified_at_ms) = if reference.scope == PlaybookScope::Bundled {
         let Some((_, text)) = BUNDLED_PLAYBOOKS.iter().find(|(key, _)| *key == reference.key) else {
@@ -387,6 +505,19 @@ pub fn load_playbook_catalog(roots: &PlaybookRoots) -> PlaybookCatalog {
             diagnostics.push(PlaybookValidationError::new("library_io", message, None, None));
         }
     }
+    if !roots.repo_dir.as_os_str().is_empty() {
+        match committed_claims(&roots.repo_dir) {
+            Ok(claims) => {
+                let mut seen: HashSet<String> = references.iter().filter(|item| item.scope == PlaybookScope::Repo).map(|item| item.key.clone()).collect();
+                for (key, _) in claims {
+                    if seen.insert(key.clone()) {
+                        references.push(PlaybookRef { scope: PlaybookScope::Repo, key });
+                    }
+                }
+            }
+            Err(message) => diagnostics.push(PlaybookValidationError::new("library_io", message, None, None)),
+        }
+    }
     references.sort();
     let candidates = references
         .into_iter()
@@ -394,7 +525,7 @@ pub fn load_playbook_catalog(roots: &PlaybookRoots) -> PlaybookCatalog {
             let source = source_for(roots, &reference);
             Some(match resolve_playbook(roots, &reference) {
                 Ok(playbook) => PlaybookCandidate {
-                    source,
+                    source: playbook.source,
                     title: Some(playbook.definition.title),
                     description: Some(playbook.definition.description),
                     modified_at_ms: playbook.modified_at_ms,
@@ -454,9 +585,18 @@ pub fn save_playbook(roots: &PlaybookRoots, request: SavePlaybookRequest) -> Res
     let source = source_for(roots, &request.target);
     with_library_lock(roots, request.target.scope, |root| {
         let directory = root.join(&request.target.key);
-        checked_directory(&directory, true).map_err(io_save)?;
         let path = directory.join("playbook.md");
         let exists = check_leaf(&path).map_err(io_save)?;
+        if request.target.scope == PlaybookScope::Repo && !exists {
+            let claimed = committed_claims(&roots.repo_dir).map_err(io_save)?;
+            let paths: Vec<_> = claimed.into_iter().filter(|(key, _)| key == &request.target.key).map(|(_, path)| path).collect();
+            if !paths.is_empty() {
+                return Err(PlaybookSaveError::Invalid {
+                    diagnostics: vec![duplicate_key_diagnostic(&request.target.key, &paths)],
+                });
+            }
+        }
+        checked_directory(&directory, true).map_err(io_save)?;
         if exists && !request.overwrite {
             return Err(PlaybookSaveError::Conflict { source: source.clone() });
         }
@@ -1067,6 +1207,82 @@ mod tests {
         assert!(matches!(resolve_playbook(&roots, &reference(PlaybookScope::Repo)), Err(PlaybookLoadError::Io { .. })));
         assert!(matches!(save(&roots, PlaybookScope::Repo, "No repository", false), Err(PlaybookSaveError::Io { .. })));
         assert!(matches!(delete_playbook(&roots, &reference(PlaybookScope::Repo)), Err(PlaybookSaveError::Io { .. })));
+    }
+    fn playbook_with_key(key: &str, title: &str) -> String {
+        let mut definition = parse_playbook_md(BUNDLED_PLAYBOOKS.iter().find(|(found, _)| *found == "superdevelop").unwrap().1).unwrap();
+        definition.key = key.into();
+        definition.title = title.into();
+        render_playbook_md(&definition)
+    }
+
+    #[test]
+    fn committed_playbooks_use_declared_key_and_leave_duplicates_unresolved() {
+        let sandbox = Sandbox::new();
+        let nested = sandbox.roots.repo_dir.join("alinery/playbooks/reviews");
+        fs::create_dir_all(&nested).unwrap();
+        let notes = nested.join("notes.md");
+        fs::write(&notes, playbook_with_key("alinery-review", "Alinery Review")).unwrap();
+        fs::write(sandbox.roots.repo_dir.join("alinery/playbooks/readme.md"), "not a playbook").unwrap();
+        fs::write(sandbox.roots.repo_dir.join("alinery/playbooks/local-review.md"), playbook_with_key("review", "Repo review")).unwrap();
+
+        let reference = PlaybookRef {
+            scope: PlaybookScope::Repo,
+            key: "alinery-review".into(),
+        };
+        let resolved = resolve_playbook(&sandbox.roots, &reference).unwrap();
+        assert_eq!(resolved.definition.title, "Alinery Review");
+        assert_eq!(resolved.source.path.as_deref(), Some(notes.as_path()));
+
+        let catalog = load_playbook_catalog(&sandbox.roots);
+        let found: Vec<_> = catalog.candidates.iter().filter(|candidate| candidate.source.reference == reference).collect();
+        assert_eq!(found.len(), 1);
+        assert!(found[0].diagnostics.is_empty());
+        assert_eq!(found[0].source.path.as_deref(), Some(notes.as_path()));
+        let bundled_review = PlaybookRef {
+            scope: PlaybookScope::Bundled,
+            key: "review".into(),
+        };
+        let repo_review = PlaybookRef {
+            scope: PlaybookScope::Repo,
+            key: "review".into(),
+        };
+        assert!(catalog
+            .candidates
+            .iter()
+            .any(|candidate| candidate.source.reference == bundled_review && candidate.diagnostics.is_empty()));
+        assert!(catalog
+            .candidates
+            .iter()
+            .any(|candidate| candidate.source.reference == repo_review && candidate.diagnostics.is_empty()));
+        assert!(!catalog.candidates.iter().any(|candidate| candidate.source.reference.key == "readme"));
+
+        let other = sandbox.roots.repo_dir.join("alinery/playbooks/playbook.md");
+        fs::write(&other, playbook_with_key("alinery-review", "Other")).unwrap();
+        let error = resolve_playbook(&sandbox.roots, &reference).unwrap_err();
+        let PlaybookLoadError::Invalid { diagnostics, .. } = error else {
+            panic!("duplicate key must stay unresolved");
+        };
+        assert_eq!(diagnostics[0].code, "duplicate_key");
+        assert!(diagnostics[0].message.contains(notes.to_str().unwrap()));
+        assert!(diagnostics[0].message.contains(other.to_str().unwrap()));
+        let catalog = load_playbook_catalog(&sandbox.roots);
+        let found: Vec<_> = catalog.candidates.iter().filter(|candidate| candidate.source.reference == reference).collect();
+        assert_eq!(found.len(), 1);
+        assert!(found[0].title.is_none());
+        assert_eq!(found[0].diagnostics[0].code, "duplicate_key");
+        assert!(resolve_playbook(&sandbox.roots, &bundled_review).is_ok());
+
+        let save_error = save_playbook(
+            &sandbox.roots,
+            SavePlaybookRequest {
+                target: reference,
+                source: playbook_with_key("alinery-review", "Nope"),
+                overwrite: false,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(save_error, PlaybookSaveError::Invalid { .. }));
+        assert!(!sandbox.roots.repo_dir.join(".alinery/playbooks/alinery-review/playbook.md").exists());
     }
 
     // APFS rejects non-UTF-8 filenames at creation. Exercise this filesystem
