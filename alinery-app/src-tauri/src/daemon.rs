@@ -1,5 +1,11 @@
 //! daemon: extracted from lib.rs. See AGENTS.md for the module map.
 use crate::*;
+use std::cell::Cell;
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::Condvar;
 
 pub(crate) static EFFECTIVE_APP_IDENTIFIER: OnceLock<String> = OnceLock::new();
 
@@ -35,13 +41,48 @@ pub(crate) fn saved_task_execution_for(repo: &Path, task_slug: &str) -> Result<a
     Ok(alinery_core::task_creation::TaskExecutionReply { state, definition })
 }
 
+fn availability_from_client_error(error: daemon_client::DaemonClientError) -> ExecutionAvailability {
+    let detail = error.to_string();
+    match error {
+        daemon_client::DaemonClientError::Unreachable { .. } => ExecutionAvailability::Offline { detail },
+        daemon_client::DaemonClientError::AppConfigMismatch { .. } => ExecutionAvailability::ForeignOwner { detail },
+        daemon_client::DaemonClientError::ProtocolMismatch { .. } => ExecutionAvailability::Incompatible { detail },
+        daemon_client::DaemonClientError::Malformed(_) | daemon_client::DaemonClientError::Launch(_) => ExecutionAvailability::Unavailable { detail },
+    }
+}
+
+fn observation_build_id() -> String {
+    #[cfg(test)]
+    OBSERVE_HASH_CALLS.fetch_add(1, Ordering::Relaxed);
+    daemon_client::daemon_binary_build_id()
+}
+
+pub(crate) fn authorize_observation_repo(known_repos: &[String], requested: &str) -> Result<PathBuf, String> {
+    #[cfg(test)]
+    {
+        OBSERVE_AUTH_CALLS.fetch_add(1, Ordering::Relaxed);
+        if OBSERVE_REQUIRE_WORKER.load(Ordering::SeqCst) && !OBSERVE_WORKER.with(Cell::get) {
+            return Err("authorization left the observation worker".into());
+        }
+        OBSERVE_AUTH_ENTERED.store(true, Ordering::SeqCst);
+        if let Some(hold) = OBSERVE_AUTH_HOLD.lock().unwrap_or_else(|error| error.into_inner()).clone() {
+            let (lock, cv) = &*hold;
+            let mut release = lock.lock().unwrap_or_else(|error| error.into_inner());
+            while !*release {
+                release = cv.wait(release).unwrap_or_else(|error| error.into_inner());
+            }
+        }
+    }
+    validate_known_target_repo(known_repos, requested)
+}
+#[cfg(test)]
 pub(crate) fn task_execution_for(repo: &Path, task_slug: &str, app_config: &Path) -> Result<AppTaskExecutionReply, String> {
     // Validate durable data before observing its owner. Browsing never starts or adopts a lane.
     let saved = saved_task_execution_for(repo, task_slug)?;
-    let lane = saved.state.owning_lane.as_str();
-    let socket = alinery_core::alineryd_socket_path(repo, (!lane.is_empty()).then_some(lane));
-    let live = match daemon_client::connect_compatible(socket, app_config) {
-        Ok((client, _)) => match client.get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug: task_slug.into() }) {
+    let socket = owner_socket(repo, &saved);
+    let identity = alinery_core::app_config_identity(app_config);
+    let live = match daemon_client::observe_compatible(&socket, &observation_build_id(), &identity) {
+        Ok(_) => match daemon_client::observe_task_execution(&socket, task_slug) {
             Ok(execution) => {
                 return Ok(AppTaskExecutionReply {
                     execution,
@@ -50,26 +91,256 @@ pub(crate) fn task_execution_for(repo: &Path, task_slug: &str, app_config: &Path
             }
             Err(detail) => ExecutionAvailability::Unavailable { detail },
         },
-        Err(error) => {
-            let detail = error.to_string();
-            match error {
-                daemon_client::DaemonClientError::Unreachable { .. } => ExecutionAvailability::Offline { detail },
-                daemon_client::DaemonClientError::AppConfigMismatch { .. } => ExecutionAvailability::ForeignOwner { detail },
-                daemon_client::DaemonClientError::ProtocolMismatch { .. } => ExecutionAvailability::Incompatible { detail },
-                daemon_client::DaemonClientError::Malformed(_) | daemon_client::DaemonClientError::Launch(_) => ExecutionAvailability::Unavailable { detail },
-            }
-        }
+        Err(error) => availability_from_client_error(error),
     };
     Ok(AppTaskExecutionReply { execution: saved, live })
 }
 
+fn owner_socket(repo: &Path, saved: &alinery_core::task_creation::TaskExecutionReply) -> PathBuf {
+    let lane = saved.state.owning_lane.as_str();
+    alinery_core::alineryd_socket_path(repo, (!lane.is_empty()).then_some(lane))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TaskExecutionRef {
+    pub repo_path: String,
+    pub task_slug: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct TaskExecutionOutcome {
+    pub repo_path: String,
+    pub task_slug: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution: Option<AppTaskExecutionReply>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[cfg(test)]
+pub(crate) static OBSERVE_AUTH_CALLS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+pub(crate) static OBSERVE_HASH_CALLS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+pub(crate) static OBSERVE_WORKERS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+pub(crate) static OBSERVE_WORKERS_MAX: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+pub(crate) static OBSERVE_AUTH_ENTERED: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
+pub(crate) static OBSERVE_REQUIRE_WORKER: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
+type AuthHold = Arc<(std::sync::Mutex<bool>, Condvar)>;
+#[cfg(test)]
+pub(crate) static OBSERVE_AUTH_HOLD: std::sync::Mutex<Option<AuthHold>> = std::sync::Mutex::new(None);
+
+thread_local! {
+    static OBSERVE_WORKER: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn enter_observe_worker() {
+    OBSERVE_WORKER.with(|flag| flag.set(true));
+}
+
+#[cfg(test)]
+pub(crate) fn reset_observe_counts() {
+    OBSERVE_AUTH_CALLS.store(0, Ordering::Relaxed);
+    OBSERVE_HASH_CALLS.store(0, Ordering::Relaxed);
+    OBSERVE_WORKERS.store(0, Ordering::Relaxed);
+    OBSERVE_WORKERS_MAX.store(0, Ordering::Relaxed);
+    OBSERVE_AUTH_ENTERED.store(false, Ordering::SeqCst);
+}
+
+struct ObserveWorkerGuard;
+impl ObserveWorkerGuard {
+    fn enter() -> Self {
+        #[cfg(test)]
+        {
+            let current = OBSERVE_WORKERS.fetch_add(1, Ordering::SeqCst) + 1;
+            OBSERVE_WORKERS_MAX.fetch_max(current, Ordering::SeqCst);
+        }
+        Self
+    }
+}
+impl Drop for ObserveWorkerGuard {
+    fn drop(&mut self) {
+        #[cfg(test)]
+        {
+            OBSERVE_WORKERS.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+}
+
+fn fan_out<T, R>(jobs: Vec<T>, work: impl Fn(T) -> R + Sync + Send) -> Vec<R>
+where
+    T: Send,
+    R: Send,
+{
+    if jobs.is_empty() {
+        return Vec::new();
+    }
+    let workers = jobs.len().min(4);
+    let (job_tx, job_rx) = std::sync::mpsc::channel();
+    let job_rx = Arc::new(std::sync::Mutex::new(job_rx));
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let work = &work;
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let job_rx = Arc::clone(&job_rx);
+            let result_tx = result_tx.clone();
+
+            scope.spawn(move || loop {
+                let job = job_rx.lock().unwrap_or_else(|error| error.into_inner()).recv();
+                let Ok(job) = job else { break };
+                let _guard = ObserveWorkerGuard::enter();
+                let _ = result_tx.send(work(job));
+            });
+        }
+        for job in jobs {
+            let _ = job_tx.send(job);
+        }
+        drop(job_tx);
+        drop(result_tx);
+    });
+    result_rx.into_iter().collect()
+}
+
+pub(crate) fn observe_task_executions_in(config_path: &Path, known_repos: &[String], tasks: Vec<TaskExecutionRef>) -> Result<Vec<TaskExecutionOutcome>, String> {
+    if tasks.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut order = Vec::new();
+    let mut seen = HashSet::new();
+    for task in tasks {
+        let key = (task.repo_path, task.task_slug);
+        if seen.insert(key.clone()) {
+            order.push(key);
+        }
+    }
+    let mut authorized: HashMap<String, Result<PathBuf, String>> = HashMap::new();
+    for (repo_path, _) in &order {
+        authorized.entry(repo_path.clone()).or_insert_with(|| authorize_observation_repo(known_repos, repo_path));
+    }
+    let mut outcomes = HashMap::new();
+    let mut eligible = Vec::new();
+    for (repo_path, task_slug) in &order {
+        let key = (repo_path.clone(), task_slug.clone());
+        match authorized.get(repo_path).expect("every requested repository is authorized once") {
+            Err(error) => {
+                outcomes.insert(
+                    key,
+                    TaskExecutionOutcome {
+                        repo_path: repo_path.clone(),
+                        task_slug: task_slug.clone(),
+                        execution: None,
+                        error: Some(error.clone()),
+                    },
+                );
+            }
+            Ok(repo) => match saved_task_execution_for(repo, task_slug) {
+                Err(error) => {
+                    outcomes.insert(
+                        key,
+                        TaskExecutionOutcome {
+                            repo_path: repo_path.clone(),
+                            task_slug: task_slug.clone(),
+                            execution: None,
+                            error: Some(error),
+                        },
+                    );
+                }
+                Ok(saved) => eligible.push((key, repo.clone(), owner_socket(repo, &saved), saved)),
+            },
+        }
+    }
+    if !eligible.is_empty() {
+        let build_id = observation_build_id();
+        let identity = alinery_core::app_config_identity(config_path);
+        let mut sockets = Vec::new();
+        let mut seen_sockets = HashSet::new();
+        for (_, _, socket, _) in &eligible {
+            if seen_sockets.insert(socket.clone()) {
+                sockets.push(socket.clone());
+            }
+        }
+        let compatible: HashMap<PathBuf, Result<alinery_core::DaemonCompat, daemon_client::DaemonClientError>> = fan_out(sockets, {
+            let build_id = build_id.clone();
+            let identity = identity.clone();
+            move |socket| {
+                let result = daemon_client::observe_compatible(&socket, &build_id, &identity);
+                (socket, result)
+            }
+        })
+        .into_iter()
+        .collect();
+        let mut queries = Vec::new();
+        for (key, _, socket, saved) in eligible {
+            match compatible.get(&socket) {
+                Some(Ok(_)) => queries.push((key, socket, saved)),
+                Some(Err(error)) => {
+                    outcomes.insert(
+                        key.clone(),
+                        TaskExecutionOutcome {
+                            repo_path: key.0.clone(),
+                            task_slug: key.1.clone(),
+                            execution: Some(AppTaskExecutionReply {
+                                execution: saved,
+                                live: availability_from_client_error(error.clone()),
+                            }),
+                            error: None,
+                        },
+                    );
+                }
+                None => return Err("observation worker did not return a compatibility result".into()),
+            }
+        }
+        for (key, result, saved) in fan_out(queries, |(key, socket, saved)| {
+            let slug = key.1.clone();
+            (key, daemon_client::observe_task_execution(&socket, &slug), saved)
+        }) {
+            let reply = match result {
+                Ok(execution) => AppTaskExecutionReply {
+                    execution,
+                    live: ExecutionAvailability::Available,
+                },
+                Err(detail) => AppTaskExecutionReply {
+                    execution: saved,
+                    live: ExecutionAvailability::Unavailable { detail },
+                },
+            };
+            outcomes.insert(
+                key.clone(),
+                TaskExecutionOutcome {
+                    repo_path: key.0,
+                    task_slug: key.1,
+                    execution: Some(reply),
+                    error: None,
+                },
+            );
+        }
+    }
+    Ok(order
+        .into_iter()
+        .map(|key| outcomes.remove(&key).expect("every requested reference has one outcome"))
+        .collect())
+}
+
 #[tauri::command]
-pub(crate) fn get_task_execution(app: AppHandle, repo_path: Option<String>, task_slug: String) -> Result<AppTaskExecutionReply, String> {
-    let repo = match repo_path {
-        Some(path) => target_repo_for_app(&app, &path)?,
-        None => active_repo()?,
-    };
-    task_execution_for(&repo, &task_slug, &app_config_path(&app)?)
+pub(crate) async fn observe_task_executions<R: tauri::Runtime>(app: AppHandle<R>, tasks: Vec<TaskExecutionRef>) -> Result<Vec<TaskExecutionOutcome>, String> {
+    if tasks.is_empty() {
+        return Ok(Vec::new());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(test)]
+        enter_observe_worker();
+        let config_path = app_config_path(&app)?;
+        let known = load_app_config(&app).known_repos;
+        observe_task_executions_in(&config_path, &known, tasks)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

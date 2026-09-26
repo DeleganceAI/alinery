@@ -38,7 +38,6 @@ import {
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import { NameEditor, restoreNameFocus } from "../NameEditor";
-
 import {
   abortAndPromptCommand,
   abortCommand,
@@ -60,7 +59,6 @@ import {
   setModelCommand,
   setSubagentSubscriptionCommand,
 } from "../ompRpc";
-
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
 import { appendGeneratedText, canAbortChatSession, isTurnActive, OMP_INTERRUPT_DATA, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
 import type { ContextAction } from "../shared";
@@ -94,6 +92,7 @@ import type {
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
+import { readTaskExecution } from "../useExecutionObservation";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatModelDialog } from "./ChatModelDialog";
@@ -627,22 +626,24 @@ export function SessionView({
     setExecutionView(null);
     setExecutionError("");
     if (!taskSlug) return;
+    let timer = 0;
     const refresh = async () => {
       try {
-        const next = await ipc.getTaskExecution(taskSlug, repoPath);
+        const next = await readTaskExecution(repoPath, taskSlug);
         if (alive) {
           setExecutionView(next);
           setExecutionError("");
         }
       } catch (error) {
         if (alive) setExecutionError(String(error));
+      } finally {
+        if (alive) timer = window.setTimeout(refresh, 1500);
       }
     };
     void refresh();
-    const timer = window.setInterval(refresh, 1500);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
     };
   }, [taskSlug, repoPath, id]);
 
@@ -1779,7 +1780,7 @@ export function SessionView({
         if (allow && grantedCompletionRequestId !== requestId) {
           await ipc.allowExecutionCompletion(taskSlug, execution.id, id, repoPath);
           setCompletionGrant({ sessionId: id, requestId });
-          setExecutionView(await ipc.getTaskExecution(taskSlug, repoPath));
+          setExecutionView(await readTaskExecution(repoPath, taskSlug));
         }
         // Do not release the waiting tool until the grant is durably acknowledged.
         await ipc.rpcWriteSession(id, extensionUiConfirm(requestId, allow));
@@ -1944,7 +1945,7 @@ export function SessionView({
                 await ipc.startSession(taskSlug, id, repoPath);
                 setObservation(await ipc.sessionStatus(id, taskSlug));
                 setReclassifyTick((tick) => tick + 1);
-                setExecutionView(await ipc.getTaskExecution(taskSlug, repoPath));
+                setExecutionView(await readTaskExecution(repoPath, taskSlug));
                 setExecutionError("");
               } catch (error) {
                 setExecutionError(String(error));

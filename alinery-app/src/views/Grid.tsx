@@ -16,6 +16,7 @@ import {
   useBoardTaskActivity,
 } from "../shared";
 import type { BoardNav, BoardTask, KanbanColumn, TaskActivityStatus, TaskExecutionReply } from "../types";
+import { readTaskExecutions } from "../useExecutionObservation";
 import { usePointerDrag } from "../usePointerDrag";
 import { useTaskPullRequests } from "../useTaskPullRequests";
 
@@ -776,6 +777,17 @@ function VisibilityIcon({ hidden }: { hidden: boolean }) {
   );
 }
 
+type BoardSnapshot = { tasks: BoardTask[]; columns: KanbanColumn[] };
+const boardSnapshots = new Map<string, BoardSnapshot>();
+
+function boardScope(allRepos: boolean): string {
+  return allRepos ? "all" : "current";
+}
+
+export function resetGridBoardSnapshots(): void {
+  boardSnapshots.clear();
+}
+
 export function Grid({
   active = true,
   allRepos,
@@ -795,12 +807,13 @@ export function Grid({
 }) {
   const settingsId = useId();
   const initialWorkspace = useMemo(() => loadGridWorkspace(storageKey, initialPreset), [storageKey, initialPreset]);
-  const [tasks, setTasks] = useState<BoardTask[]>([]);
-  const [columns, setColumns] = useState<KanbanColumn[]>([]);
+  const cachedBoard = boardSnapshots.get(boardScope(allRepos));
+  const [tasks, setTasks] = useState<BoardTask[]>(() => cachedBoard?.tasks ?? []);
+  const [columns, setColumns] = useState<KanbanColumn[]>(() => cachedBoard?.columns ?? []);
   const [executions, setExecutions] = useState<Record<string, TaskExecutionReply>>({});
   const [librarySteps, setLibrarySteps] = useState<Record<string, BoardTask["playbook_steps"]>>({});
   const [definitionErr, setDefinitionErr] = useState("");
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(cachedBoard !== undefined);
   const [err, setErr] = useState("");
   const [executionErrors, setExecutionErrors] = useState<{ ref: ExecutionRef; error: string }[]>([]);
   const [dismissedAvailability, setDismissedAvailability] = useState<string | null>(null);
@@ -861,6 +874,7 @@ export function Grid({
   const load = useCallback(async () => {
     try {
       const [nextColumns, nextTasks] = await Promise.all([ipc.listKanbanColumns(allRepos), ipc.listBoardTasks(allRepos)]);
+      boardSnapshots.set(boardScope(allRepos), { tasks: nextTasks, columns: nextColumns });
       setColumns((current) => (sameKanbanColumns(current, nextColumns) ? current : nextColumns));
       setTasks((current) => (sameBoardTasks(current, nextTasks) ? current : nextTasks));
       setErr("");
@@ -942,29 +956,24 @@ export function Grid({
   useEffect(() => {
     if (!active) return;
     let alive = true;
-    let loading = false;
+    let timer = 0;
     const loadExecutions = async () => {
-      if (loading) return;
-      loading = true;
-      const entries = await Promise.all(
-        executionRefs.map(async (ref) => {
-          try {
-            return { ref, execution: await ipc.getTaskExecution(ref.slug, ref.repoPath), error: "" };
-          } catch (error) {
-            return { ref, execution: null, error: String(error) };
-          }
-        }),
-      );
-      loading = false;
-      if (!alive) return;
-      setExecutions(Object.fromEntries(entries.flatMap(({ ref, execution }) => (execution ? [[ref.key, execution]] : []))));
-      setExecutionErrors(entries.filter((entry) => entry.execution === null));
+      try {
+        const entries = await readTaskExecutions(executionRefs.map((ref) => ({ repoPath: ref.repoPath, taskSlug: ref.slug })));
+        if (!alive) return;
+        setExecutions(Object.fromEntries(entries.flatMap((entry, index) => (entry.execution ? [[executionRefs[index].key, entry.execution]] : []))));
+        setExecutionErrors(entries.flatMap((entry, index) => (entry.execution ? [] : [{ ref: executionRefs[index], error: entry.error }])));
+      } catch (error) {
+        if (!alive) return;
+        setExecutionErrors(executionRefs.map((ref) => ({ ref, error: String(error) })));
+      } finally {
+        if (alive) timer = window.setTimeout(loadExecutions, 3000);
+      }
     };
     void loadExecutions();
-    const timer = window.setInterval(loadExecutions, 3000);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
     };
   }, [active, executionRefs]);
 
