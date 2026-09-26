@@ -299,14 +299,15 @@ pub(crate) fn select_branch_pull_request(value: &Value, owner: &str, repo: &str,
 fn github_pull_request_json(_repo: &Path, endpoint: &str, fields: &[(&str, &str)]) -> Result<Value, String> {
     let mut url = format!("https://api.github.com/{endpoint}");
     if !fields.is_empty() {
-        let query = fields.iter().map(|(key, value)| format!("{}={}", percent_encode(key), percent_encode(value))).collect::<Vec<_>>().join("&");
+        let query = fields
+            .iter()
+            .map(|(key, value)| format!("{}={}", percent_encode(key), percent_encode(value)))
+            .collect::<Vec<_>>()
+            .join("&");
         url.push('?');
         url.push_str(&query);
     }
-    let mut headers = vec![
-        "Accept: application/vnd.github+json".to_string(),
-        "User-Agent: alinery".to_string(),
-    ];
+    let mut headers = vec!["Accept: application/vnd.github+json".to_string(), "User-Agent: alinery".to_string()];
     if let Some(credential) = alinery_core::git_credential_fill(alinery_core::GITHUB_CREDENTIAL_FILL).map_err(|error| format!("GitHub PR lookup: {error}"))? {
         headers.push(format!("Authorization: Bearer {}", credential.secret));
     }

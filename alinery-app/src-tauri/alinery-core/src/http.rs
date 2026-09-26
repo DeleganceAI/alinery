@@ -203,7 +203,14 @@ mod tests {
         let dest = std::env::temp_dir().join(format!("alinery-http-stall-{}", std::process::id()));
         let _ = std::fs::remove_file(&dest);
         let started = Instant::now();
-        let error = download(&format!("http://{address}/stall"), &dest, Duration::from_millis(200), Duration::from_millis(400), Some(1000)).unwrap_err();
+        let error = download(
+            &format!("http://{address}/stall"),
+            &dest,
+            Duration::from_millis(200),
+            Duration::from_millis(400),
+            Some(1000),
+        )
+        .unwrap_err();
         let elapsed = started.elapsed();
         let _ = release_tx.send(());
         server.join().unwrap();

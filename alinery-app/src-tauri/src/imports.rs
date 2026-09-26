@@ -248,7 +248,10 @@ pub(crate) fn github_error(v: &serde_json::Value) -> Option<String> {
 }
 
 pub(crate) fn gh_auth_token() -> Option<String> {
-    alinery_core::git_credential_fill(alinery_core::GITHUB_CREDENTIAL_FILL).ok().flatten().map(|credential| credential.secret)
+    alinery_core::git_credential_fill(alinery_core::GITHUB_CREDENTIAL_FILL)
+        .ok()
+        .flatten()
+        .map(|credential| credential.secret)
 }
 
 fn github_json_request(url: &str, token: Option<&str>) -> Result<serde_json::Value, String> {

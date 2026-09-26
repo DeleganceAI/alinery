@@ -909,7 +909,10 @@ fn bundled_spec_loop_stays_inside_slices() {
     let plan = trace.one("plan-slices");
     assert_eq!(trace.state.executions[&plan].permission, CompletionPermission::Locked);
     trace.finish_handoff(&plan, 1);
-    assert!(trace.artifacts().join(&trace.state.occurrences[&trace.output(&plan, "slice-member-0.md")].relative_path).is_file());
+    assert!(trace
+        .artifacts()
+        .join(&trace.state.occurrences[&trace.output(&plan, "slice-member-0.md")].relative_path)
+        .is_file());
 
     let next = trace.one("next-slice");
     assert_eq!(trace.state.executions[&next].permission, CompletionPermission::Automatic);

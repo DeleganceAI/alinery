@@ -625,10 +625,7 @@ mod tests {
 
     #[test]
     fn git_alongside_dir_custom_macos_dir() {
-        assert_eq!(
-            git_alongside_dir(Path::new("/tmp/apps/Alinery.app")),
-            PathBuf::from("/tmp/apps/Alinery.git")
-        );
+        assert_eq!(git_alongside_dir(Path::new("/tmp/apps/Alinery.app")), PathBuf::from("/tmp/apps/Alinery.git"));
     }
 
     #[test]
@@ -641,10 +638,7 @@ mod tests {
 
     #[test]
     fn git_binary_path_joins_bin_git() {
-        assert_eq!(
-            git_binary_path(Path::new("/Applications/Alinery.git")),
-            PathBuf::from("/Applications/Alinery.git/bin/git")
-        );
+        assert_eq!(git_binary_path(Path::new("/Applications/Alinery.git")), PathBuf::from("/Applications/Alinery.git/bin/git"));
     }
 
     #[test]

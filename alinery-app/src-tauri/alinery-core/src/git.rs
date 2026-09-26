@@ -94,7 +94,9 @@ pub fn git_credential_fill(input: &str) -> Result<Option<GitCredential>, String>
     }
     scrub_git_env(&mut cmd);
     cmd.env("GIT_TERMINAL_PROMPT", "0");
-    cmd.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    cmd.stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("git credential fill: {e}"))?;
     {
         use std::io::Write;
@@ -143,7 +145,15 @@ pub fn git_credential_fill(input: &str) -> Result<Option<GitCredential>, String>
 }
 
 fn scrub_git_env(cmd: &mut Command) {
-    for var in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE"] {
+    for var in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_PREFIX",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_NAMESPACE",
+    ] {
         cmd.env_remove(var);
     }
 }
@@ -159,7 +169,10 @@ fn parse_git_credential(text: &str) -> Option<GitCredential> {
         }
     }
     let secret = secret.filter(|value| !value.is_empty())?;
-    Some(GitCredential { username: username.unwrap_or_default(), secret })
+    Some(GitCredential {
+        username: username.unwrap_or_default(),
+        secret,
+    })
 }
 
 fn resolve_git_program() -> GitProgram {
@@ -172,18 +185,30 @@ fn resolve_git_program() -> GitProgram {
 fn select_git_program(override_path: Option<&Path>, path_candidates: &[PathBuf], alongside: Option<&Path>) -> GitProgram {
     if let Some(path) = override_path {
         if path.is_file() {
-            return GitProgram { program: path.to_path_buf(), bundled: git_tree_exec_path(path).is_some() };
+            return GitProgram {
+                program: path.to_path_buf(),
+                bundled: git_tree_exec_path(path).is_some(),
+            };
         }
     }
     if let Some(path) = path_candidates.first() {
-        return GitProgram { program: path.clone(), bundled: false };
+        return GitProgram {
+            program: path.clone(),
+            bundled: false,
+        };
     }
     if let Some(path) = alongside {
         if path.is_file() {
-            return GitProgram { program: path.to_path_buf(), bundled: true };
+            return GitProgram {
+                program: path.to_path_buf(),
+                bundled: true,
+            };
         }
     }
-    GitProgram { program: PathBuf::from("git"), bundled: false }
+    GitProgram {
+        program: PathBuf::from("git"),
+        bundled: false,
+    }
 }
 
 /// `…/bin/git` → `…/libexec/git-core`, when that directory exists.
@@ -500,7 +525,10 @@ mod tests {
 
     #[test]
     fn system_git_sets_neither_exec_path_nor_credential_helper() {
-        let selected = GitProgram { program: PathBuf::from("/usr/bin/git"), bundled: false };
+        let selected = GitProgram {
+            program: PathBuf::from("/usr/bin/git"),
+            bundled: false,
+        };
         let cmd = git_command(Path::new("/tmp/repo"), &selected);
         assert!(env_value(&cmd, "GIT_EXEC_PATH").is_none());
         let args: Vec<String> = cmd.get_args().map(|arg| arg.to_string_lossy().into_owned()).collect();

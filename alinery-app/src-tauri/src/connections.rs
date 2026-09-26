@@ -721,7 +721,10 @@ fn header_pairs(headers: &[String]) -> Result<Vec<(&str, &str)>, String> {
 fn curl_request_with_method(url: &str, method: &str, headers: &[String], body: Option<&str>, connect_timeout: Duration, total_timeout: Duration) -> Result<CurlResponse, String> {
     let pairs = header_pairs(headers)?;
     let response = alinery_core::http::request(method, url, &pairs, body.map(str::as_bytes), connect_timeout, total_timeout)?;
-    Ok(CurlResponse { status: response.status, body: response.body })
+    Ok(CurlResponse {
+        status: response.status,
+        body: response.body,
+    })
 }
 
 fn linear_oauth_post(fields: &[(&str, &str)]) -> Result<Value, String> {
