@@ -248,6 +248,19 @@ describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
     expect(state.sessionMeta.dumpTools?.[0]?.name).toBe("read");
   });
 
+  it("keeps accumulated tokens when the context window is unknown", () => {
+    const state = applyRpcLine(emptyTranscript(), {
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: {
+        model: { provider: "xai-oauth", id: "grok-4.7" },
+        contextUsage: { tokens: 48200, contextWindow: 0, percent: 0 },
+      },
+    });
+    expect(state.sessionMeta.contextUsage).toEqual({ tokens: 48200, contextWindow: 0, percent: 0 });
+  });
+
   it("records get_state autoCompactionEnabled", () => {
     const state = applyRpcLine(emptyTranscript(), {
       type: "response",
