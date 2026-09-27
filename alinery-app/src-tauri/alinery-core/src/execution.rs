@@ -305,7 +305,10 @@ pub fn mutate_execution_state<T>(
     operation: &str,
     mutate: impl FnOnce(&NormalizedPlaybook, &mut TaskExecutionState) -> Result<T, String>,
 ) -> Result<T, String> {
-    crate::with_task_mutation_lock(repo, operation, || {
+    // Reconcile, launch, reap, and a UI grant all commit this record. The lock
+    // stays fail-fast so a re-entry cannot deadlock; this wait is what keeps a
+    // grant from losing that race and surfacing as a failed gesture.
+    crate::with_task_mutation_lock_waiting(repo, operation, crate::TASK_MUTATION_CONTENTION_WAIT, || {
         let mut state = read_execution_state(repo, slug)?;
         if state.owning_lane != lane || state.owning_app_config_identity != app_config_identity {
             return Err("task execution belongs to another daemon lane or app configuration".into());

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::lockfile::with_task_mutation_lock;
+use crate::lockfile::with_task_mutation_lock_waiting;
 use crate::paths::{alinery_dir, tasks_dir, worktrees_dir};
 use crate::shared::read_session_meta_full;
 use crate::task::{read_task, task_dir};
@@ -52,7 +52,7 @@ pub fn storage_stats(repo: &Path) -> StorageStats {
 /// Delete the archived bucket. `kill(task_slug, session_id)` is invoked once per session id that
 /// is about to disappear, before any unlink; it is best effort and its failures are not recorded.
 pub fn purge_archived_storage(repo: &Path, kill: &dyn Fn(&str, &str)) -> Result<PurgeArchivedResult, String> {
-    with_task_mutation_lock(repo, "purge archived storage", || {
+    with_task_mutation_lock_waiting(repo, "purge archived storage", crate::TASK_MUTATION_CONTENTION_WAIT, || {
         let targets = scan(repo);
         let mut res = PurgeArchivedResult::default();
 

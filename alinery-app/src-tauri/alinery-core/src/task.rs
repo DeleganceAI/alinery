@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::lockfile::with_task_mutation_lock;
+use crate::lockfile::with_task_mutation_lock_waiting;
 use crate::paths::{artifacts_dir, safe_component, sessions_dir, tasks_dir, worktrees_dir};
 use crate::types::{RelatedTaskRef, Task};
 use crate::write_bytes_atomic;
@@ -157,7 +157,7 @@ pub fn read_task(repo: &Path, slug: &str) -> Option<Task> {
 }
 
 pub fn write_task(repo: &Path, task: &Task) -> Result<(), String> {
-    with_task_mutation_lock(repo, "write task", || write_task_unlocked(repo, task))
+    with_task_mutation_lock_waiting(repo, "write task", crate::TASK_MUTATION_CONTENTION_WAIT, || write_task_unlocked(repo, task))
 }
 
 pub(crate) fn write_task_unlocked(repo: &Path, task: &Task) -> Result<(), String> {
@@ -167,7 +167,7 @@ pub(crate) fn write_task_unlocked(repo: &Path, task: &Task) -> Result<(), String
 }
 
 pub fn mutate_task<T>(repo: &Path, slug: &str, operation: &str, mutate: impl FnOnce(&mut Task) -> Result<T, String>) -> Result<T, String> {
-    with_task_mutation_lock(repo, operation, || {
+    with_task_mutation_lock_waiting(repo, operation, crate::TASK_MUTATION_CONTENTION_WAIT, || {
         let mut task = read_task(repo, slug).ok_or_else(|| format!("no such task: {slug}"))?;
         let result = mutate(&mut task)?;
         write_task_unlocked(repo, &task)?;
@@ -201,7 +201,7 @@ pub fn rename_task(repo: &Path, task_slug: &str, name: &str) -> Result<Task, Str
 }
 
 pub fn restore_task(repo: &Path, slug: &str) -> Result<(), String> {
-    with_task_mutation_lock(repo, "restore task", || {
+    with_task_mutation_lock_waiting(repo, "restore task", crate::TASK_MUTATION_CONTENTION_WAIT, || {
         let mut task = read_task(repo, slug).ok_or_else(|| format!("no such task: {slug}"))?;
         if !task.parent_task.is_empty() {
             return Err(format!("cannot restore child task: {slug}"));

@@ -583,7 +583,7 @@ pub(crate) fn write_draft_in_with_slug(
     branch_name: String,
     worktree_name: String,
 ) -> Result<Task, String> {
-    alinery_core::with_task_mutation_lock(repo, "write draft", || {
+    alinery_core::with_task_mutation_lock_waiting(repo, "write draft", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
         write_draft_in_with_slug_unlocked(
             repo,
             app_config,
@@ -805,7 +805,7 @@ pub(crate) fn delete_draft_in(repo: &Path, app_config: Option<&Path>, slug: &str
     // Eager on purpose: the read must happen before the directory is removed below, so this one
     // cannot be deferred into the emit closure the way the other id lookups are.
     let telemetry_id = alinery_core::telemetry_id_for_task(repo, slug);
-    alinery_core::with_task_mutation_lock(repo, "delete draft", || {
+    alinery_core::with_task_mutation_lock_waiting(repo, "delete draft", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
         let task = read_task(repo, slug)?;
         if !task.draft {
             return Err("not a draft".into());
@@ -1071,7 +1071,7 @@ pub(crate) fn set_related_tasks_in(repo: &Path, slug: String, related: Vec<aline
         }
         cleaned.push(tag);
     }
-    alinery_core::with_task_mutation_lock(repo, "set related tasks", || {
+    alinery_core::with_task_mutation_lock_waiting(repo, "set related tasks", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
         let mut task = read_task(repo, &slug)?;
         if task.archived {
             return Err("task is archived — read-only".into());

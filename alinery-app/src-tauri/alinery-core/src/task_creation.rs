@@ -263,7 +263,7 @@ pub fn provision_task_with_reservation(
         return Err("invalid branch name".into());
     }
     let mut reservation_error = None;
-    let task = crate::with_task_mutation_lock(repo, "reserve task provisioning", || {
+    let task = crate::with_task_mutation_lock_waiting(repo, "reserve task provisioning", crate::TASK_MUTATION_CONTENTION_WAIT, || {
         before_reserve()?;
         let reserved_tasks = crate::list_tasks_for_repo(repo);
         let refs = crate::git_cmd(repo)

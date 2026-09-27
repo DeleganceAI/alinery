@@ -12,6 +12,7 @@ use std::io;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, TryLockError};
+use std::time::{Duration, Instant};
 
 /// Holds an exclusive `flock` for the process lifetime (or until drop).
 pub struct LockFile(File);
@@ -97,19 +98,79 @@ impl Drop for LockFile {
         let _ = unsafe { libc::flock(fd, libc::LOCK_UN) };
     }
 }
+struct TaskMutationSlot {
+    mutex: Mutex<()>,
+    owner: Mutex<Option<std::thread::ThreadId>>,
+}
 
-static TASK_MUTATION_LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+struct ClearOwner<'a>(&'a Mutex<Option<std::thread::ThreadId>>);
+impl Drop for ClearOwner<'_> {
+    fn drop(&mut self) {
+        *self.0.lock().unwrap_or_else(|error| error.into_inner()) = None;
+    }
+}
+
+static TASK_MUTATION_LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<TaskMutationSlot>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// How long an execution commit waits for another thread to finish its critical
+/// section. Longer than a JSON rewrite under CI load; shorter than the control
+/// socket and fixture timeouts. Fail-fast callers do not use this.
+pub const TASK_MUTATION_CONTENTION_WAIT: Duration = Duration::from_secs(2);
 
 /// Run one task-record transaction under both a process-local nonblocking mutex and a
 /// repository flock. `flock` alone is insufficient because separate descriptors in one process
 /// do not exclude one another on every supported Unix.
+///
+/// This rejects immediately when the lock is held. That is required: a same-thread re-entry
+/// must not deadlock, and a caller proving "busy rejects rather than blocks" must not be
+/// waited out. Execution commits that race the reconciler use [`with_task_mutation_lock_waiting`].
 pub fn with_task_mutation_lock<T>(repo: &Path, operation: &str, mutate: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let mut mutate = Some(mutate);
+    run_task_mutation(repo, operation, &mut || mutate.take().expect("task mutation runs once")())
+}
+
+/// Same transaction as [`with_task_mutation_lock`], but another thread's brief hold is waited
+/// out. A same-thread re-entry still fails immediately: waiting cannot succeed until this
+/// thread drops the lock it already holds.
+pub fn with_task_mutation_lock_waiting<T>(repo: &Path, operation: &str, wait: Duration, mutate: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let deadline = Instant::now() + wait;
+    let mut mutate = Some(mutate);
+    loop {
+        match run_task_mutation(repo, operation, &mut || mutate.take().expect("task mutation runs once")()) {
+            Err(error) if task_mutation_busy(&error) && !task_mutation_owned_by_current_thread(repo) && Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            other => return other,
+        }
+    }
+}
+
+fn task_mutation_busy(error: &str) -> bool {
+    error.starts_with("task mutation busy during ")
+}
+
+fn task_mutation_slot(repo: &Path) -> Result<Arc<TaskMutationSlot>, String> {
     let key = repo.canonicalize().unwrap_or_else(|_| repo.to_path_buf());
-    let process_lock = {
-        let mut locks = TASK_MUTATION_LOCKS.lock().map_err(|_| format!("task mutation lock registry poisoned during {operation}"))?;
-        Arc::clone(locks.entry(key).or_insert_with(|| Arc::new(Mutex::new(()))))
+    let mut locks = TASK_MUTATION_LOCKS.lock().map_err(|_| "task mutation lock registry poisoned".to_string())?;
+    Ok(Arc::clone(locks.entry(key).or_insert_with(|| {
+        Arc::new(TaskMutationSlot {
+            mutex: Mutex::new(()),
+            owner: Mutex::new(None),
+        })
+    })))
+}
+
+fn task_mutation_owned_by_current_thread(repo: &Path) -> bool {
+    let Ok(slot) = task_mutation_slot(repo) else {
+        return false;
     };
-    let _process_guard = match process_lock.try_lock() {
+    let owned = slot.owner.lock().unwrap_or_else(|error| error.into_inner()).as_ref() == Some(&std::thread::current().id());
+    owned
+}
+
+fn run_task_mutation<T>(repo: &Path, operation: &str, mutate: &mut dyn FnMut() -> Result<T, String>) -> Result<T, String> {
+    let slot = task_mutation_slot(repo).map_err(|error| format!("{error} during {operation}"))?;
+    let _process_guard = match slot.mutex.try_lock() {
         Ok(guard) => guard,
         Err(TryLockError::WouldBlock) => {
             return Err(format!("task mutation busy during {operation}"));
@@ -118,6 +179,9 @@ pub fn with_task_mutation_lock<T>(repo: &Path, operation: &str, mutate: impl FnO
             return Err(format!("task mutation lock poisoned during {operation}"));
         }
     };
+    *slot.owner.lock().unwrap_or_else(|error| error.into_inner()) = Some(std::thread::current().id());
+    // Declared after the process guard so the owner is cleared before the mutex drops.
+    let _clear_owner = ClearOwner(&slot.owner);
 
     let path = crate::paths::task_mutation_lock_path(repo);
     if let Some(parent) = path.parent() {
@@ -243,6 +307,48 @@ mod tests {
         release_tx.send(()).unwrap();
         worker.join().unwrap().unwrap();
         with_task_mutation_lock(&repo, "retry mutation", || Ok(())).unwrap();
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn waiting_mutation_outlasts_a_brief_holder_and_still_fails_if_it_stays() {
+        let repo = tmp_path("task-mutation-wait");
+        std::fs::create_dir_all(repo.join(".alinery")).unwrap();
+        let worker_repo = repo.clone();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            with_task_mutation_lock(&worker_repo, "holder", || {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Ok(())
+            })
+        });
+        entered_rx.recv().unwrap();
+
+        let started = Instant::now();
+        let stuck = with_task_mutation_lock_waiting(&repo, "stuck", Duration::from_millis(80), || Ok(())).unwrap_err();
+        assert_eq!(stuck, "task mutation busy during stuck");
+        assert!(started.elapsed() >= Duration::from_millis(80));
+        assert!(started.elapsed() < Duration::from_millis(500), "a timed-out wait must not sit on the holder");
+
+        let waiter_repo = repo.clone();
+        let waiter = std::thread::spawn(move || with_task_mutation_lock_waiting(&waiter_repo, "waiter", Duration::from_secs(2), || Ok("done")));
+        std::thread::sleep(Duration::from_millis(40));
+        release_tx.send(()).unwrap();
+        assert_eq!(waiter.join().unwrap().unwrap(), "done");
+        worker.join().unwrap().unwrap();
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn waiting_mutation_rejects_same_thread_reentry_without_waiting() {
+        let repo = tmp_path("task-mutation-reentry");
+        std::fs::create_dir_all(repo.join(".alinery")).unwrap();
+        let started = Instant::now();
+        let error = with_task_mutation_lock(&repo, "outer", || with_task_mutation_lock_waiting(&repo, "inner", Duration::from_secs(2), || Ok(()))).unwrap_err();
+        assert_eq!(error, "task mutation busy during inner");
+        assert!(started.elapsed() < Duration::from_millis(200), "same-thread re-entry must not wait out itself");
         let _ = std::fs::remove_dir_all(repo);
     }
 

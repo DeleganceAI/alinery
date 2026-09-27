@@ -367,7 +367,7 @@ pub(super) fn create_session(
         }
         return session_reply(repo, slug, session, request.start);
     }
-    let mut session = alinery_core::with_task_mutation_lock(repo, "create auxiliary session", || {
+    let mut session = alinery_core::with_task_mutation_lock_waiting(repo, "create auxiliary session", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
         let task = task_for_owner(repo, slug, lane)?;
         let (harness, model, prompt, manager, child) = match &request.target {
             ExecutionSessionTarget::Auxiliary { harness, model, prompt } => (harness.clone(), model.clone().unwrap_or_default(), prompt.clone(), false, String::new()),

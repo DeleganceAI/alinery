@@ -1,4 +1,4 @@
-use crate::{safe_component, session_meta_path, session_name_path, task_dir, with_task_mutation_lock, SessionMeta};
+use crate::{safe_component, session_meta_path, session_name_path, task_dir, with_task_mutation_lock_waiting, SessionMeta};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Read;
@@ -103,7 +103,7 @@ pub fn set_session_name(repo: &Path, task_slug: &str, session_id: &str, name: &s
     let name = validate_session_name(name)?;
     // Validate before the lock helper can create its directory, then again inside the transaction.
     validate_target(repo, task_slug, session_id)?;
-    with_task_mutation_lock(repo, "rename session", || {
+    with_task_mutation_lock_waiting(repo, "rename session", crate::TASK_MUTATION_CONTENTION_WAIT, || {
         let meta = validate_target(repo, task_slug, session_id)?;
         if source == SessionNameSource::Auto && !meta.execution_id.is_empty() {
             let path = crate::execution_state_path(repo, task_slug)?;
