@@ -98,6 +98,79 @@ fn transport_error(error: &ureq::Error) -> String {
     }
 }
 
+const MAX_TEST_REQUEST: usize = 64 * 1024;
+
+/// Read one HTTP/1 request. A single `read` is not a request: Linux often delivers
+/// the headers and a `Content-Length` body as separate packets, and a test that
+/// asserts or replies on the first packet fails or resets the client.
+pub fn read_http_request(stream: &mut impl Read) -> std::io::Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        if let Some(len) = request_ready_len(&buf) {
+            if buf.len() >= len {
+                buf.truncate(len);
+                return Ok(buf);
+            }
+        }
+        if buf.len() >= MAX_TEST_REQUEST {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "http request exceeded 64KiB"));
+        }
+        let n = match stream.read(&mut chunk) {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            other => other?,
+        };
+        if n == 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "incomplete http request"));
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+}
+
+/// Length of one complete request, or `None` while `buf` is still short.
+/// No `Content-Length` and no chunked body means the request ends at the headers.
+fn request_ready_len(buf: &[u8]) -> Option<usize> {
+    if let Some(len) = crate::telemetry::complete_http_request_len(buf) {
+        return Some(len);
+    }
+    let header_end = buf.windows(4).position(|window| window == b"\r\n\r\n")?;
+    let headers = std::str::from_utf8(&buf[..header_end]).ok()?;
+    if headers
+        .lines()
+        .any(|line| line.split_once(':').is_some_and(|(name, _)| name.eq_ignore_ascii_case("content-length")))
+    {
+        return None;
+    }
+    if headers.lines().any(|line| {
+        line.split_once(':')
+            .is_some_and(|(name, value)| name.eq_ignore_ascii_case("transfer-encoding") && value.to_ascii_lowercase().contains("chunked"))
+    }) {
+        return chunked_ready_len(buf, header_end + 4);
+    }
+    Some(header_end + 4)
+}
+
+fn chunked_ready_len(buf: &[u8], mut index: usize) -> Option<usize> {
+    loop {
+        let line_end = buf.get(index..)?.windows(2).position(|window| window == b"\r\n")? + index;
+        let line = std::str::from_utf8(buf.get(index..line_end)?).ok()?;
+        let size = usize::from_str_radix(line.split(';').next()?.trim(), 16).ok()?;
+        let data_at = line_end + 2;
+        if size == 0 {
+            if buf.get(data_at..data_at + 2) == Some(b"\r\n") {
+                return Some(data_at + 2);
+            }
+            let end = buf.get(data_at..)?.windows(4).position(|window| window == b"\r\n\r\n")?;
+            return Some(data_at + end + 4);
+        }
+        let next = data_at.checked_add(size)?.checked_add(2)?;
+        if buf.len() < next {
+            return None;
+        }
+        index = next;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,9 +184,8 @@ mod tests {
         let server = std::thread::spawn(move || {
             let Ok((mut stream, _)) = listener.accept() else { return };
             stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-            let mut buf = [0u8; 4096];
-            let Ok(n) = stream.read(&mut buf) else { return };
-            let req = String::from_utf8_lossy(&buf[..n]).into_owned();
+            let req = read_http_request(&mut stream).unwrap_or_else(|error| panic!("http request: {error}"));
+            let req = String::from_utf8_lossy(&req).into_owned();
             let _ = stream.write_all(handler(&req).as_bytes());
         });
         (format!("http://{address}"), server)
@@ -147,9 +219,9 @@ mod tests {
         let server = std::thread::spawn(move || {
             for _ in 0..2 {
                 let (mut stream, _) = listener.accept().unwrap();
-                let mut buf = [0u8; 2048];
-                let n = stream.read(&mut buf).unwrap();
-                let req = String::from_utf8_lossy(&buf[..n]);
+                stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                let req = read_http_request(&mut stream).unwrap();
+                let req = String::from_utf8_lossy(&req);
                 let resp = if req.contains("GET /start ") {
                     format!("HTTP/1.1 302 Found\r\nLocation: http://{address}/file\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                 } else {
@@ -195,8 +267,8 @@ mod tests {
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut buf = [0u8; 1024];
-            let _ = stream.read(&mut buf);
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+            let _ = read_http_request(&mut stream);
             stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nx").unwrap();
             let _ = release_rx.recv_timeout(Duration::from_secs(2));
         });
@@ -217,5 +289,48 @@ mod tests {
         assert!(error.to_ascii_lowercase().contains("timed out"), "{error}");
         assert!(elapsed < Duration::from_secs(2), "download ignored its timeout: {elapsed:?}");
         assert!(!dest.exists(), "a timed-out download must not leave a file");
+    }
+
+    /// One byte per `read`, so a reader that stops at the first packet cannot see the body.
+    struct OneByte<'a> {
+        data: &'a [u8],
+        pos: usize,
+    }
+
+    impl Read for OneByte<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.pos >= self.data.len() || buf.is_empty() {
+                return Ok(0);
+            }
+            buf[0] = self.data[self.pos];
+            self.pos += 1;
+            Ok(1)
+        }
+    }
+
+    #[test]
+    fn read_http_request_keeps_reading_until_the_body_arrives() {
+        let raw = b"POST /token HTTP/1.1\r\nContent-Length: 19\r\nAuthorization: Bearer secret-token\r\n\r\ncode=secret%2Bvalue";
+        let req = read_http_request(&mut OneByte { data: raw, pos: 0 }).unwrap();
+        let req = String::from_utf8(req).unwrap();
+        assert!(req.contains("Authorization: Bearer secret-token"), "{req}");
+        assert!(req.ends_with("code=secret%2Bvalue"), "{req}");
+    }
+
+    #[test]
+    fn read_http_request_completes_a_get_without_reading_past_the_headers() {
+        let raw = b"GET /start HTTP/1.1\r\nHost: x\r\n\r\nNOT-A-REQUEST";
+        let mut reader = OneByte { data: raw, pos: 0 };
+        let req = read_http_request(&mut reader).unwrap();
+        let headers_len = raw.len() - b"NOT-A-REQUEST".len();
+        assert_eq!(req, &raw[..headers_len]);
+        assert_eq!(reader.pos, headers_len);
+    }
+
+    #[test]
+    fn read_http_request_waits_for_a_chunked_body() {
+        let raw = b"POST /x HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+        let req = read_http_request(&mut OneByte { data: raw, pos: 0 }).unwrap();
+        assert_eq!(req, raw);
     }
 }

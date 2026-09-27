@@ -48,14 +48,14 @@ fn curl_request_times_out_after_server_accepts_without_responding() {
 
 #[test]
 fn the_curl_http_returns_status_and_body_for_http_401() {
-    use std::io::{Read, Write};
+    use std::io::Write;
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let server = std::thread::spawn(move || {
         for _ in 0..2 {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut buf = [0u8; 1024];
-            let _ = stream.read(&mut buf);
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+            let _ = alinery_core::http::read_http_request(&mut stream);
             let body = b"nope";
             let resp = format!("HTTP/1.1 401 Unauthorized\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
             stream.write_all(resp.as_bytes()).unwrap();

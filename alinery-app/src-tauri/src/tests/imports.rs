@@ -8,7 +8,7 @@ use crate::imports::{
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::{cell::RefCell, rc::Rc};
 
@@ -177,11 +177,10 @@ fn curl_config_sends_secrets_over_stdin() {
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-        let mut request = [0; 4096];
-        let count = stream.read(&mut request).unwrap();
-        let request = String::from_utf8_lossy(&request[..count]);
-        assert!(request.contains("Authorization: Bearer secret-token"));
-        assert!(request.ends_with("code=secret%2Bvalue"));
+        let request = alinery_core::http::read_http_request(&mut stream).unwrap();
+        let request = String::from_utf8_lossy(&request);
+        assert!(request.contains("Authorization: Bearer secret-token"), "{request}");
+        assert!(request.ends_with("code=secret%2Bvalue"), "{request}");
         stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").unwrap();
     });
     let response = curl_request(

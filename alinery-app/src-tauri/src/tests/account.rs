@@ -202,6 +202,12 @@ fn write_tokens(path: &Path, access: &str, refresh: &str, expires_at: u64) {
 /// spurious failure.
 const SERVE_TIMEOUT: Duration = Duration::from_secs(20);
 
+fn read_request(stream: &mut TcpStream) -> String {
+    let _ = stream.set_read_timeout(Some(SERVE_TIMEOUT));
+    let bytes = alinery_core::http::read_http_request(stream).unwrap_or_else(|error| panic!("http request: {error}"));
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 fn serve_routes(routes: Vec<(String, u16, &'static str)>) -> (String, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -226,10 +232,7 @@ fn serve_routes(routes: Vec<(String, u16, &'static str)>) -> (String, std::threa
             if stream.set_nonblocking(false).is_err() {
                 return;
             }
-            let _ = stream.set_read_timeout(Some(SERVE_TIMEOUT));
-            let mut buf = [0u8; 4096];
-            let n = stream.read(&mut buf).unwrap_or(0);
-            let req = String::from_utf8_lossy(&buf[..n]);
+            let req = read_request(&mut stream);
             let path = req.lines().next().and_then(|line| line.split_whitespace().nth(1)).unwrap_or("");
             assert!(path.contains(&want_path), "expected {want_path} got {path}");
             let resp = format!("HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
@@ -373,8 +376,7 @@ fn refresh_does_not_rewrite_auth_json_after_sign_out() {
     let victim = path.clone();
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
-        let mut buf = [0u8; 4096];
-        let _ = stream.read(&mut buf);
+        let _ = read_request(&mut stream);
         let _ = fs::remove_file(&victim);
         let body = r#"{"access_token":"new","refresh_token":"r2","expires_in":3600}"#;
         let resp = format!("HTTP/1.1 200 X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
@@ -396,8 +398,7 @@ fn terminal_refresh_does_not_delete_a_newer_session() {
     let victim = path.clone();
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
-        let mut buf = [0u8; 4096];
-        let _ = stream.read(&mut buf);
+        let _ = read_request(&mut stream);
         write_tokens(&victim, "access-new", "refresh-new", 4_000_000_000);
         let body = r#"{"error":"invalid_grant"}"#;
         let resp = format!("HTTP/1.1 400 X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
@@ -483,17 +484,14 @@ fn refresh_persists_rotated_token_before_entitlement() {
     let victim = path.clone();
     let token_server = std::thread::spawn(move || {
         let (mut stream, _) = token_listener.accept().unwrap();
-        let mut buf = [0u8; 4096];
-        let _ = stream.read(&mut buf);
+        let _ = read_request(&mut stream);
         let body = r#"{"access_token":"new-access","refresh_token":"rotated","expires_in":3600}"#;
         let resp = format!("HTTP/1.1 200 X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
         let _ = stream.write_all(resp.as_bytes());
     });
     let plan_server = std::thread::spawn(move || {
         let (mut stream, _) = plan_listener.accept().unwrap();
-        let mut buf = [0u8; 4096];
-        let n = stream.read(&mut buf).unwrap_or(0);
-        let req = String::from_utf8_lossy(&buf[..n]).into_owned();
+        let req = read_request(&mut stream);
         persisted_tx.send(fs::read_to_string(&victim).unwrap_or_default()).unwrap();
         assert!(req.contains("Authorization: Bearer new-access"), "{req}");
         let body = r#"[{"plan":"founders"}]"#;
@@ -521,8 +519,7 @@ fn refresh_write_failure_is_unavailable_not_success() {
     let parent = path.parent().unwrap().to_path_buf();
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
-        let mut buf = [0u8; 4096];
-        let _ = stream.read(&mut buf);
+        let _ = read_request(&mut stream);
         fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).unwrap();
         let body = r#"{"access_token":"new","refresh_token":"rotated","expires_in":3600}"#;
         let resp = format!("HTTP/1.1 200 X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
@@ -819,8 +816,7 @@ fn sign_in_cancelled_during_the_exchange_keeps_the_previous_session() {
     let flag = attempt.clone();
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
-        let mut buf = [0u8; 4096];
-        let _ = stream.read(&mut buf);
+        let _ = read_request(&mut stream);
         flag.cancel();
         let resp = format!("HTTP/1.1 200 X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{EXCHANGE_OK}", EXCHANGE_OK.len());
         let _ = stream.write_all(resp.as_bytes());

@@ -216,10 +216,24 @@ fn path_is_under_rejects_sibling_prefix() {
 
 fn serve_once(listener: TcpListener, status_line: &'static str, headers_and_body: Vec<u8>) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-        let mut buf = [0u8; 4096];
-        let _ = stream.read(&mut buf);
+        // A missed client must fail the test, not block join until the job timeout.
+        listener.set_nonblocking(true).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let (mut stream, _) = loop {
+            match listener.accept() {
+                Ok(pair) => break pair,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if std::time::Instant::now() >= deadline {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => return,
+            }
+        };
+        let _ = stream.set_nonblocking(false);
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+        let _ = alinery_core::http::read_http_request(&mut stream);
         let _ = stream.write_all(status_line.as_bytes());
         let _ = stream.write_all(&headers_and_body);
     })
@@ -233,12 +247,11 @@ fn loopback_manifest_fetch_offers_a_newer_release() {
     let response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), HAPPY_MANIFEST);
     let server = serve_once(listener, "", response.into_bytes());
 
-    std::env::set_var("ALINERY_UPDATE_MANIFEST_URL", format!("http://{address}/latest.json"));
-    let url = std::env::var("ALINERY_UPDATE_MANIFEST_URL").unwrap();
+    let url = format!("http://{address}/latest.json");
     let fetched = curl_request_with_timeouts(&url, &[], None, Duration::from_secs(5), Duration::from_secs(10))
         .map(|r| r.body)
         .unwrap_or_default();
-    std::env::remove_var("ALINERY_UPDATE_MANIFEST_URL");
+
     server.join().unwrap();
 
     let status = evaluate_update("0.10.0", "aarch64-apple-darwin", &fetched, 42, true);
@@ -256,12 +269,11 @@ fn loopback_manifest_fetch_500_offers_nothing() {
     payload.extend_from_slice(&body);
     let server = serve_once(listener, "", payload);
 
-    std::env::set_var("ALINERY_UPDATE_MANIFEST_URL", format!("http://{address}/latest.json"));
-    let url = std::env::var("ALINERY_UPDATE_MANIFEST_URL").unwrap();
+    let url = format!("http://{address}/latest.json");
     let fetched = curl_request_with_timeouts(&url, &[], None, Duration::from_secs(5), Duration::from_secs(10))
         .map(|r| r.body)
         .unwrap_or_default();
-    std::env::remove_var("ALINERY_UPDATE_MANIFEST_URL");
+
     server.join().unwrap();
 
     let status = evaluate_update("0.10.0", "aarch64-apple-darwin", &fetched, 42, true);
@@ -276,12 +288,11 @@ fn loopback_manifest_fetch_truncated_offers_nothing() {
     let response = b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nConnection: close\r\n\r\n{\"schema\":".to_vec();
     let server = serve_once(listener, "", response);
 
-    std::env::set_var("ALINERY_UPDATE_MANIFEST_URL", format!("http://{address}/latest.json"));
-    let url = std::env::var("ALINERY_UPDATE_MANIFEST_URL").unwrap();
+    let url = format!("http://{address}/latest.json");
     let fetched = curl_request_with_timeouts(&url, &[], None, Duration::from_secs(5), Duration::from_secs(10))
         .map(|r| r.body)
         .unwrap_or_default();
-    std::env::remove_var("ALINERY_UPDATE_MANIFEST_URL");
+
     server.join().unwrap();
 
     let status = evaluate_update("0.10.0", "aarch64-apple-darwin", &fetched, 42, true);

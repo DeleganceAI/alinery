@@ -594,7 +594,7 @@ pub fn record_event_with(app_config: &Path, build: impl FnOnce() -> TelemetryEve
 mod tests {
     use super::*;
     use crate::types::TelemetryPrefs;
-    use std::io::{Read, Write};
+    use std::io::Write;
     use std::net::{TcpListener, TcpStream};
     use std::time::{Duration, SystemTime};
 
@@ -719,18 +719,7 @@ endpoint = "{endpoint}"
                 Err(_) => return Vec::new(),
             };
             let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
-            let mut buf = Vec::new();
-            let mut chunk = [0u8; 8192];
-            while buf.len() < 64 * 1024 {
-                let n = match stream.read(&mut chunk) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => n,
-                };
-                buf.extend_from_slice(&chunk[..n]);
-                if crate::complete_http_request_len(&buf).is_some_and(|len| buf.len() >= len) {
-                    break;
-                }
-            }
+            let buf = crate::http::read_http_request(&mut stream).unwrap_or_default();
             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}");
             buf
         })
