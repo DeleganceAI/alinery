@@ -4126,9 +4126,8 @@ endpoint = "{endpoint}"
 
     fn serve_one(listener: TcpListener) -> std::thread::JoinHandle<Vec<u8>> {
         std::thread::spawn(move || {
-            let (mut stream, _) = match listener.accept() {
-                Ok(pair) => pair,
-                Err(_) => return Vec::new(),
+            let Ok(mut stream) = alinery_core::http::accept_for_test(&listener, Duration::from_secs(2)) else {
+                return Vec::new();
             };
             let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
             let buf = alinery_core::http::read_http_request(&mut stream).unwrap_or_default();

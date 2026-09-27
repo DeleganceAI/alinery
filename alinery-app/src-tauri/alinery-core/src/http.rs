@@ -127,6 +127,28 @@ pub fn read_http_request(stream: &mut impl Read) -> std::io::Result<Vec<u8>> {
     }
 }
 
+/// Accept one connection, or time out. A blocking `accept` with no client hangs
+/// `join` until the job timeout on a slow or failed connect.
+pub fn accept_for_test(listener: &std::net::TcpListener, timeout: Duration) -> std::io::Result<std::net::TcpStream> {
+    listener.set_nonblocking(true)?;
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                stream.set_nonblocking(false)?;
+                return Ok(stream);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "test server accept timed out"));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 /// Length of one complete request, or `None` while `buf` is still short.
 /// No `Content-Length` and no chunked body means the request ends at the headers.
 fn request_ready_len(buf: &[u8]) -> Option<usize> {
@@ -182,7 +204,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
-            let Ok((mut stream, _)) = listener.accept() else { return };
+            let Ok(mut stream) = accept_for_test(&listener, Duration::from_secs(2)) else { return };
             stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
             let req = read_http_request(&mut stream).unwrap_or_else(|error| panic!("http request: {error}"));
             let req = String::from_utf8_lossy(&req).into_owned();
@@ -218,7 +240,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
             for _ in 0..2 {
-                let (mut stream, _) = listener.accept().unwrap();
+                let mut stream = accept_for_test(&listener, Duration::from_secs(2)).unwrap();
                 stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
                 let req = read_http_request(&mut stream).unwrap();
                 let req = String::from_utf8_lossy(&req);
@@ -266,7 +288,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
+            let mut stream = accept_for_test(&listener, Duration::from_secs(2)).unwrap();
             let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
             let _ = read_http_request(&mut stream);
             stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nx").unwrap();

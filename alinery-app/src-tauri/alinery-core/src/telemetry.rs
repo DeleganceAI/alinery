@@ -714,9 +714,8 @@ endpoint = "{endpoint}"
         std::thread::spawn(move || {
             listener.set_nonblocking(false).unwrap();
             let _ = listener.set_ttl(1);
-            let (mut stream, _) = match listener.accept() {
-                Ok(pair) => pair,
-                Err(_) => return Vec::new(),
+            let Ok(mut stream) = crate::http::accept_for_test(&listener, Duration::from_secs(2)) else {
+                return Vec::new();
             };
             let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
             let buf = crate::http::read_http_request(&mut stream).unwrap_or_default();

@@ -645,15 +645,13 @@ fn default_models_cmd_uses_binary_placeholder() {
     assert!(!omp.models_cmd.contains("omp models"));
 }
 
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 struct OmpPathGuard {
     prev: Option<std::ffi::OsString>,
     _lock: std::sync::MutexGuard<'static, ()>,
 }
 impl OmpPathGuard {
     fn set(value: Option<&str>) -> Self {
-        let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let lock = super::OMP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prev = std::env::var_os("ALINERY_OMP_PATH");
         match value {
             Some(v) => std::env::set_var("ALINERY_OMP_PATH", v),

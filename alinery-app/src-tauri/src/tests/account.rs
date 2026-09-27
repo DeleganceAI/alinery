@@ -375,7 +375,7 @@ fn refresh_does_not_rewrite_auth_json_after_sign_out() {
     let addr = listener.local_addr().unwrap();
     let victim = path.clone();
     let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
+        let mut stream = accept_for_test(&listener, SERVE_TIMEOUT).expect("test server accept timed out");
         let _ = read_request(&mut stream);
         let _ = fs::remove_file(&victim);
         let body = r#"{"access_token":"new","refresh_token":"r2","expires_in":3600}"#;
@@ -397,7 +397,7 @@ fn terminal_refresh_does_not_delete_a_newer_session() {
     let addr = listener.local_addr().unwrap();
     let victim = path.clone();
     let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
+        let mut stream = accept_for_test(&listener, SERVE_TIMEOUT).expect("test server accept timed out");
         let _ = read_request(&mut stream);
         write_tokens(&victim, "access-new", "refresh-new", 4_000_000_000);
         let body = r#"{"error":"invalid_grant"}"#;
@@ -483,14 +483,14 @@ fn refresh_persists_rotated_token_before_entitlement() {
     let (persisted_tx, persisted_rx) = std::sync::mpsc::channel::<String>();
     let victim = path.clone();
     let token_server = std::thread::spawn(move || {
-        let (mut stream, _) = token_listener.accept().unwrap();
+        let mut stream = accept_for_test(&token_listener, SERVE_TIMEOUT).expect("test server accept timed out");
         let _ = read_request(&mut stream);
         let body = r#"{"access_token":"new-access","refresh_token":"rotated","expires_in":3600}"#;
         let resp = format!("HTTP/1.1 200 X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
         let _ = stream.write_all(resp.as_bytes());
     });
     let plan_server = std::thread::spawn(move || {
-        let (mut stream, _) = plan_listener.accept().unwrap();
+        let mut stream = accept_for_test(&plan_listener, SERVE_TIMEOUT).expect("test server accept timed out");
         let req = read_request(&mut stream);
         persisted_tx.send(fs::read_to_string(&victim).unwrap_or_default()).unwrap();
         assert!(req.contains("Authorization: Bearer new-access"), "{req}");
@@ -518,7 +518,7 @@ fn refresh_write_failure_is_unavailable_not_success() {
     let addr = listener.local_addr().unwrap();
     let parent = path.parent().unwrap().to_path_buf();
     let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
+        let mut stream = accept_for_test(&listener, SERVE_TIMEOUT).expect("test server accept timed out");
         let _ = read_request(&mut stream);
         fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).unwrap();
         let body = r#"{"access_token":"new","refresh_token":"rotated","expires_in":3600}"#;
@@ -815,7 +815,7 @@ fn sign_in_cancelled_during_the_exchange_keeps_the_previous_session() {
     let addr = listener.local_addr().unwrap();
     let flag = attempt.clone();
     let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
+        let mut stream = accept_for_test(&listener, SERVE_TIMEOUT).expect("test server accept timed out");
         let _ = read_request(&mut stream);
         flag.cancel();
         let resp = format!("HTTP/1.1 200 X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{EXCHANGE_OK}", EXCHANGE_OK.len());

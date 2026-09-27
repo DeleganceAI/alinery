@@ -1,7 +1,7 @@
 //! Browser-backed GitHub and Linear connections used by Settings and issue imports.
 use crate::*;
 use std::collections::HashMap;
-use std::io::{ErrorKind, Read, Write};
+use std::io::{ErrorKind, Write};
 use std::net::TcpListener;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -647,10 +647,16 @@ pub(crate) fn wait_for_linear_callback(listener: TcpListener, expected_state: &s
     loop {
         match listener.accept() {
             Ok((mut stream, _)) => {
-                stream.set_read_timeout(Some(Duration::from_secs(3))).map_err(|e| e.to_string())?;
-                let mut buf = [0; 8192];
-                let count = stream.read(&mut buf).map_err(|e| e.to_string())?;
-                let parsed = parse_oauth_callback(&String::from_utf8_lossy(&buf[..count]));
+                // Accepted sockets inherit O_NONBLOCK on the BSDs. A WouldBlock read
+                // would abort the login, and a single read can miss a split request line.
+                if stream.set_nonblocking(false).is_err() || stream.set_read_timeout(Some(Duration::from_secs(3))).is_err() {
+                    continue;
+                }
+                let bytes = match alinery_core::http::read_http_request(&mut stream) {
+                    Ok(bytes) => bytes,
+                    Err(_) => continue,
+                };
+                let parsed = parse_oauth_callback(&String::from_utf8_lossy(&bytes));
                 let ok = parsed
                     .as_ref()
                     .is_ok_and(|callback| matches!(callback, OAuthCallback::Code { state, .. } if state == expected_state));
