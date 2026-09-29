@@ -599,7 +599,27 @@ export default function App() {
     setRepoErr("");
     try {
       const path = await ipc.pickRepoDialog();
-      if (path) await setRepo(path);
+      if (!path) return;
+      const classified = await ipc.classifyPickedFolder(path);
+      if (classified.kind === "checkout") {
+        await setRepo(classified.root);
+        return;
+      }
+      if (classified.kind === "refused") {
+        setRepoErr(classified.message);
+        return;
+      }
+      const choice = await askConfirm({
+        title: "Initialize Git?",
+        body: `${classified.path} is not a Git repository. Initialize Git in this folder before opening it? Cancel leaves the folder unchanged.`,
+        choices: [
+          { key: "init", label: "Initialize Git" },
+          { key: "cancel", label: "Cancel", tone: "ghost" },
+        ],
+      });
+      if (choice !== "init") return;
+      const initialized = await ipc.initPickedFolder(classified.path);
+      await setRepo(initialized.root);
     } catch (e) {
       setRepoErr(String(e));
     }

@@ -146,6 +146,8 @@ pub fn run() {
             set_active_repo,
             remove_repo,
             pick_repo_dialog,
+            classify_picked_folder,
+            init_picked_folder,
             pick_attachment_files_dialog,
             create_task,
             create_task_for_repo,

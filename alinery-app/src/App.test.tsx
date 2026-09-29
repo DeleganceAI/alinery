@@ -199,6 +199,9 @@ const { ipcMocks, ipcModule } = vi.hoisted(() => {
     setDockBadgeCount: vi.fn(),
     readAppConfig: vi.fn(),
     setActiveRepo: vi.fn(),
+    pickRepoDialog: vi.fn(),
+    classifyPickedFolder: vi.fn(),
+    initPickedFolder: vi.fn(),
     accountStatus: vi.fn(async () => ({ signedIn: false, email: null, plan: null, paid: false, unavailable: false })),
     accountRefresh: vi.fn(async () => ({ signedIn: false, email: null, plan: null, paid: false, unavailable: false })),
   };
@@ -1221,5 +1224,95 @@ describe("repository switch keeps the current page", () => {
     await chooseAllRepos();
     expect(grid()).toBeTruthy();
     expect(window.localStorage.getItem("alinery:grid:view:default-kanban-plus")).toBe(legacy);
+  });
+});
+
+describe("addRepo", () => {
+  async function openPicker() {
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "" });
+    render(<App />);
+    return screen.findByRole("button", { name: "Add a repository" });
+  }
+
+  beforeEach(() => {
+    ipcMocks.pickRepoDialog.mockReset();
+    ipcMocks.classifyPickedFolder.mockReset();
+    ipcMocks.initPickedFolder.mockReset();
+    ipcMocks.setActiveRepo.mockReset().mockImplementation(async (path: string) => ({ ...appConfig, active_repo: path, known_repos: [path] }));
+  });
+
+  it("stops when the folder picker is cancelled", async () => {
+    const add = await openPicker();
+    ipcMocks.pickRepoDialog.mockResolvedValue(null);
+    fireEvent.click(add);
+    await waitFor(() => expect(ipcMocks.pickRepoDialog).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(ipcMocks.classifyPickedFolder).not.toHaveBeenCalled();
+    expect(ipcMocks.initPickedFolder).not.toHaveBeenCalled();
+    expect(ipcMocks.setActiveRepo).not.toHaveBeenCalled();
+  });
+
+  it("opens a checkout without asking or initializing", async () => {
+    const add = await openPicker();
+    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "checkout", root: "/canonical" });
+    fireEvent.click(add);
+    await waitFor(() => expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/canonical", null));
+    expect(ipcMocks.initPickedFolder).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog", { name: "Initialize Git?" })).toBeNull();
+  });
+
+  it("leaves an absent folder unchanged when initialize is cancelled", async () => {
+    const add = await openPicker();
+    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "absent", path: "/canon" });
+    fireEvent.click(add);
+    const dialog = await screen.findByRole("alertdialog", { name: "Initialize Git?" });
+    const focused = dialog.querySelector("[data-autofocus]");
+    expect(focused?.textContent).toBe("Cancel");
+    fireEvent.click(focused as HTMLElement);
+    await waitFor(() => expect(screen.queryByRole("alertdialog", { name: "Initialize Git?" })).toBeNull());
+    expect(ipcMocks.initPickedFolder).not.toHaveBeenCalled();
+    expect(ipcMocks.setActiveRepo).not.toHaveBeenCalled();
+  });
+
+  it("initializes an absent folder and opens the returned root", async () => {
+    const add = await openPicker();
+    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "absent", path: "/canon" });
+    ipcMocks.initPickedFolder.mockResolvedValue({ kind: "initialized", root: "/inited" });
+    fireEvent.click(add);
+    const dialog = await screen.findByRole("alertdialog", { name: "Initialize Git?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Initialize Git" }));
+    await waitFor(() => expect(ipcMocks.initPickedFolder).toHaveBeenCalledWith("/canon"));
+    await waitFor(() => expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/inited", null));
+    expect(ipcMocks.initPickedFolder.mock.invocationCallOrder[0]).toBeLessThan(ipcMocks.setActiveRepo.mock.invocationCallOrder[0]);
+  });
+
+  it("shows a named refusal without opening", async () => {
+    const add = await openPicker();
+    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    ipcMocks.classifyPickedFolder.mockResolvedValue({
+      kind: "refused",
+      message: "This folder is a Git repository, but not a working tree. Alinery will not initialize a new repository here.\nfatal: this operation must be run in a work tree",
+    });
+    fireEvent.click(add);
+    expect(await screen.findByText(/fatal: this operation must be run in a work tree/)).toBeTruthy();
+    expect(screen.queryByRole("alertdialog", { name: "Initialize Git?" })).toBeNull();
+    expect(ipcMocks.initPickedFolder).not.toHaveBeenCalled();
+    expect(ipcMocks.setActiveRepo).not.toHaveBeenCalled();
+  });
+
+  it("shows an init failure without opening", async () => {
+    const add = await openPicker();
+    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "absent", path: "/canon" });
+    ipcMocks.initPickedFolder.mockRejectedValue("Couldn't initialize Git in /canon.\nPermission denied");
+    fireEvent.click(add);
+    fireEvent.click(await screen.findByRole("button", { name: "Initialize Git" }));
+    expect(await screen.findByText(/Permission denied/)).toBeTruthy();
+    expect(ipcMocks.setActiveRepo).not.toHaveBeenCalled();
   });
 });

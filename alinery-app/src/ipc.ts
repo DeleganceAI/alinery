@@ -105,8 +105,14 @@ export { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 export { Channel };
 
 // ── app_config.rs ─────────────────────────────────────────────────────
+export type PickedFolder = { kind: "checkout"; root: string } | { kind: "absent"; path: string } | { kind: "refused"; message: string };
+
+export type InitializedFolder = { kind: "initialized"; root: string } | { kind: "already_checkout"; root: string };
+
 export const pickAttachmentFilesDialog = () => invoke<string[]>("pick_attachment_files_dialog");
 export const pickRepoDialog = () => invoke<string | null>("pick_repo_dialog");
+export const classifyPickedFolder = (path: string) => invoke<PickedFolder>("classify_picked_folder", { path });
+export const initPickedFolder = (path: string) => invoke<InitializedFolder>("init_picked_folder", { path });
 export const readAppConfig = () => invoke<AppConfig>("read_app_config");
 export const removeRepo = (path: string) => invoke<AppConfig>("remove_repo", { path });
 export const setActiveRepo = (path: string, drawerSessionId: string | null) => invoke<AppConfig>("set_active_repo", { path, drawerSessionId });

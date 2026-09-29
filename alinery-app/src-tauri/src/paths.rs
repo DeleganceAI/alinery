@@ -74,10 +74,6 @@ pub(crate) fn app_config_path<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<P
     Ok(app_config_path_for(&app_config_dir, &app.config().identifier, launch_root.as_deref()))
 }
 
-pub(crate) fn git_top_level(path: &Path) -> Result<PathBuf, String> {
-    alinery_core::git_top_level(path)
-}
-
 // Targeted create-form operations may inspect or modify only a repository already chosen by
 // the user. Canonicalize both sides so spelling/symlink differences cannot fall back to the
 // process-wide active repository.

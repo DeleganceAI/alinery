@@ -303,7 +303,7 @@ pub(crate) fn write_app_config_at(path: &Path, cfg: &AppConfig) -> Result<(), St
     Ok(())
 }
 
-pub(crate) fn write_app_config(app: &AppHandle, cfg: &AppConfig) -> Result<(), String> {
+pub(crate) fn write_app_config<R: tauri::Runtime>(app: &AppHandle<R>, cfg: &AppConfig) -> Result<(), String> {
     write_app_config_at(&app_config_path(app)?, cfg)
 }
 
@@ -341,8 +341,8 @@ pub(crate) fn read_app_config(app: AppHandle) -> Result<AppConfig, String> {
 }
 
 #[tauri::command]
-pub(crate) fn set_active_repo(app: AppHandle, state: State<'_, AppState>, path: String, drawer_session_id: Option<String>) -> Result<AppConfig, String> {
-    let repo = git_top_level(Path::new(path.trim()))?;
+pub(crate) fn set_active_repo<R: tauri::Runtime>(app: AppHandle<R>, state: State<'_, AppState>, path: String, drawer_session_id: Option<String>) -> Result<AppConfig, String> {
+    let repo = alinery_core::require_working_tree(Path::new(path.trim()))?;
     let reservation = state.reserve_repo(&repo)?.ok_or_else(|| {
         let name = repo
             .file_name()
@@ -471,11 +471,21 @@ pub(crate) fn write_appearance(app: AppHandle, appearance: AppearancePrefs) -> R
 
 #[tauri::command]
 pub(crate) async fn pick_repo_dialog(app: AppHandle) -> Result<Option<String>, String> {
-    let Some(folder) = app.dialog().file().set_title("Choose a git repository").blocking_pick_folder() else {
+    let Some(folder) = app.dialog().file().set_title("Choose a folder").blocking_pick_folder() else {
         return Ok(None);
     };
     let path = folder.into_path().map_err(|e| e.to_string())?;
     Ok(Some(path.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
+pub(crate) fn classify_picked_folder(path: String) -> Result<alinery_core::FolderClass, String> {
+    alinery_core::classify_folder(Path::new(path.trim()))
+}
+
+#[tauri::command]
+pub(crate) fn init_picked_folder(path: String) -> Result<alinery_core::InitFolder, String> {
+    alinery_core::init_absent_folder(Path::new(path.trim()))
 }
 
 #[tauri::command]
