@@ -33,6 +33,7 @@
 // `-c credential.helper=osxkeychain` when that helper was built into it; a GUI push has
 // no tty to ask for a password.
 
+use serde::Serialize;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -316,18 +317,230 @@ pub fn registered_worktree_paths(repo: &Path) -> Result<Vec<PathBuf>, String> {
 /// Git checkout, and canonicalizing the result means spelling/symlink differences never
 /// produce two "different" identities for the same repo.
 pub fn git_top_level(path: &Path) -> Result<PathBuf, String> {
-    if path.as_os_str().is_empty() {
-        return Err("repo path is empty".into());
+    match rev_parse_show_toplevel(path) {
+        ToplevelProbe::Root(root) => Ok(root),
+        // Keep the historical prefix so existing callers and tests still match it, and
+        // keep Git's own stderr — a bare "not a git repo" hid the reason.
+        ToplevelProbe::Rejected { detail } => Err(format!("not a git repo: {}\n{detail}", path.display())),
+        ToplevelProbe::Failed { detail } => Err(detail),
     }
-    let out = git_cmd(path).args(["rev-parse", "--show-toplevel"]).output().map_err(|e| format!("git rev-parse: {e}"))?;
+}
+
+/// The same probe as `git_top_level`, worded for an open that must not offer `git init`.
+/// `Err` is the user-facing sentence plus the probe detail. It does not parse the
+/// `not a git repo` prefix.
+pub fn require_working_tree(path: &Path) -> Result<PathBuf, String> {
+    match rev_parse_show_toplevel(path) {
+        ToplevelProbe::Root(root) => Ok(root),
+        ToplevelProbe::Rejected { detail } | ToplevelProbe::Failed { detail } => Err(couldnt_open(&path.display().to_string(), &detail)),
+    }
+}
+
+enum ToplevelProbe {
+    Root(PathBuf),
+    /// Git ran and rejected this path as a working tree.
+    Rejected {
+        detail: String,
+    },
+    /// Empty path, spawn failure, empty stdout, or a canonicalize failure.
+    Failed {
+        detail: String,
+    },
+}
+
+fn rev_parse_show_toplevel(path: &Path) -> ToplevelProbe {
+    if path.as_os_str().is_empty() {
+        return ToplevelProbe::Failed {
+            detail: "repo path is empty".into(),
+        };
+    }
+    let out = match git_cmd(path).args(["rev-parse", "--show-toplevel"]).output() {
+        Ok(out) => out,
+        Err(e) => {
+            return ToplevelProbe::Failed {
+                detail: format!("git rev-parse: {e}"),
+            }
+        }
+    };
     if !out.status.success() {
-        return Err(format!("not a git repo: {}", path.display()));
+        return ToplevelProbe::Rejected { detail: git_detail(&out.stderr) };
     }
     let root = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if root.is_empty() {
-        return Err(format!("git returned an empty repo root for {}", path.display()));
+        return ToplevelProbe::Failed {
+            detail: format!("git returned an empty repo root for {}", path.display()),
+        };
     }
-    std::fs::canonicalize(&root).map_err(|e| format!("canonicalize {root}: {e}"))
+    match std::fs::canonicalize(&root) {
+        Ok(root) => ToplevelProbe::Root(root),
+        Err(e) => ToplevelProbe::Failed {
+            detail: format!("canonicalize {root}: {e}"),
+        },
+    }
+}
+
+enum GitDirProbe {
+    Found,
+    /// Git ran and did not report a git dir.
+    Rejected {
+        detail: String,
+    },
+    Failed {
+        detail: String,
+    },
+}
+
+fn rev_parse_git_dir(path: &Path) -> GitDirProbe {
+    let out = match git_cmd(path).args(["rev-parse", "--git-dir"]).output() {
+        Ok(out) => out,
+        Err(e) => {
+            return GitDirProbe::Failed {
+                detail: format!("git rev-parse: {e}"),
+            }
+        }
+    };
+    if !out.status.success() {
+        return GitDirProbe::Rejected { detail: git_detail(&out.stderr) };
+    }
+    let dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if dir.is_empty() {
+        return GitDirProbe::Failed {
+            detail: "git returned an empty git dir".into(),
+        };
+    }
+    GitDirProbe::Found
+}
+
+fn git_detail(stderr: &[u8]) -> String {
+    spoken_detail(&String::from_utf8_lossy(stderr))
+}
+
+fn spoken_detail(detail: &str) -> String {
+    let trimmed = detail.trim();
+    if trimmed.is_empty() {
+        "Git did not say why.".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn with_detail(sentence: &str, detail: &str) -> String {
+    format!("{sentence}\n{}", spoken_detail(detail))
+}
+
+fn couldnt_initialize(path: &Path, detail: &str) -> String {
+    format!("Couldn't initialize Git in {}.\n{}", path.display(), spoken_detail(detail))
+}
+
+fn couldnt_open(path: &str, detail: &str) -> String {
+    format!("Couldn't open {path}: it is not a Git working tree.\n{}", spoken_detail(detail))
+}
+
+const NOT_A_WORK_TREE: &str = "This folder is a Git repository, but not a working tree. Alinery will not initialize a new repository here.";
+const HAS_GIT_ENTRY: &str = "This folder already has a Git entry that is not a usable checkout. Alinery will not initialize over it.";
+
+/// What a picked folder is, before any init or open.
+///
+/// A failed `git_top_level` is not safe to init. A bare repo and a checkout's `.git`
+/// directory both fail `--show-toplevel`, and `git init` there nests another repository.
+/// Only `Absent` may be initialized.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FolderClass {
+    Checkout { root: PathBuf },
+    Absent { path: PathBuf },
+    Refused { message: String },
+}
+
+/// Result of trying to init a folder that was classified `Absent`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InitFolder {
+    Initialized { root: PathBuf },
+    AlreadyCheckout { root: PathBuf },
+}
+
+pub fn classify_folder(path: &Path) -> Result<FolderClass, String> {
+    if path.as_os_str().is_empty() {
+        return Err(couldnt_initialize(path, "repo path is empty"));
+    }
+    // `is_dir` follows symlinks, so a symlink to a directory is classified as that
+    // directory. A broken symlink is missing.
+    if !path.exists() {
+        return Err(couldnt_initialize(path, "folder does not exist"));
+    }
+    if !path.is_dir() {
+        return Err(couldnt_initialize(path, "path is not a directory"));
+    }
+
+    let toplevel_detail = match rev_parse_show_toplevel(path) {
+        ToplevelProbe::Root(root) => return Ok(FolderClass::Checkout { root }),
+        ToplevelProbe::Failed { detail } => return Err(couldnt_initialize(path, &detail)),
+        ToplevelProbe::Rejected { detail } => detail,
+    };
+
+    // `--git-dir` before the filesystem `.git` check. A bare repo and a picked `.git`
+    // directory have no `.git` child, so the filesystem check alone would call them absent.
+    match rev_parse_git_dir(path) {
+        GitDirProbe::Found => Ok(FolderClass::Refused {
+            message: with_detail(NOT_A_WORK_TREE, &toplevel_detail),
+        }),
+        GitDirProbe::Failed { detail } => Err(couldnt_initialize(path, &detail)),
+        GitDirProbe::Rejected { detail } => {
+            if git_entry_exists(path) {
+                Ok(FolderClass::Refused {
+                    message: with_detail(HAS_GIT_ENTRY, &prefer_probe_detail(&toplevel_detail, &detail)),
+                })
+            } else {
+                match std::fs::canonicalize(path) {
+                    Ok(canonical) => Ok(FolderClass::Absent { path: canonical }),
+                    Err(e) => Err(couldnt_initialize(path, &format!("canonicalize {}: {e}", path.display()))),
+                }
+            }
+        }
+    }
+}
+
+/// `symlink_metadata` so a broken `.git` symlink still counts as an entry.
+fn git_entry_exists(path: &Path) -> bool {
+    path.join(".git").symlink_metadata().is_ok()
+}
+
+fn prefer_probe_detail(toplevel: &str, git_dir: &str) -> String {
+    if toplevel != "Git did not say why." {
+        toplevel.to_string()
+    } else {
+        git_dir.to_string()
+    }
+}
+
+/// Re-classifies immediately before writing. A folder that became a working tree while
+/// the confirm was open is returned as `AlreadyCheckout` and is not re-initialized.
+/// A root that does not match the canonical directory is not opened and is not deleted.
+pub fn init_absent_folder(path: &Path) -> Result<InitFolder, String> {
+    match classify_folder(path)? {
+        FolderClass::Checkout { root } => Ok(InitFolder::AlreadyCheckout { root }),
+        FolderClass::Refused { message } => Err(message),
+        FolderClass::Absent { path: canonical } => init_canonical(&canonical),
+    }
+}
+
+fn init_canonical(canonical: &Path) -> Result<InitFolder, String> {
+    let init = match git_cmd(canonical).args(["init"]).output() {
+        Ok(out) => out,
+        Err(e) => return Err(couldnt_initialize(canonical, &format!("git init: {e}"))),
+    };
+    if !init.status.success() {
+        return Err(couldnt_initialize(canonical, &git_detail(&init.stderr)));
+    }
+    match rev_parse_show_toplevel(canonical) {
+        ToplevelProbe::Root(root) if root == canonical => Ok(InitFolder::Initialized { root }),
+        ToplevelProbe::Root(root) => Err(couldnt_initialize(
+            canonical,
+            &format!("working tree root is {}, not {}", root.display(), canonical.display()),
+        )),
+        ToplevelProbe::Rejected { detail } | ToplevelProbe::Failed { detail } => Err(couldnt_initialize(canonical, &detail)),
+    }
 }
 
 /// Resolve a caller-requested repo path to its canonical Git top level, accepted only when
@@ -385,8 +598,197 @@ mod tests {
     #[test]
     fn git_top_level_rejects_non_git_dir() {
         let dir = unique_repo_dir_only("not-a-repo");
-        assert!(git_top_level(&dir).is_err());
+        let err = git_top_level(&dir).unwrap_err();
         let _ = std::fs::remove_dir_all(&dir);
+        assert!(err.contains("not a git repo"), "{err}");
+        assert!(err.contains("not a git repository"), "{err}");
+    }
+
+    struct RestoreEnv {
+        key: &'static str,
+        prev: Option<std::ffi::OsString>,
+    }
+
+    impl RestoreEnv {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let prev = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for RestoreEnv {
+        fn drop(&mut self) {
+            match self.prev.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    fn assert_absent(path: &Path) -> PathBuf {
+        match classify_folder(path).unwrap() {
+            FolderClass::Absent { path } => path,
+            other => panic!("expected Absent, got {other:?}"),
+        }
+    }
+
+    fn assert_checkout(path: &Path) -> PathBuf {
+        match classify_folder(path).unwrap() {
+            FolderClass::Checkout { root } => root,
+            other => panic!("expected Checkout, got {other:?}"),
+        }
+    }
+
+    fn assert_refused(path: &Path) -> String {
+        match classify_folder(path).unwrap() {
+            FolderClass::Refused { message } => message,
+            other => panic!("expected Refused, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plain_directory_and_directory_with_a_file_are_absent() {
+        let plain = unique_repo_dir_only("plain");
+        let with_file = unique_repo_dir_only("with-file");
+        std::fs::write(with_file.join("note.txt"), b"hello").unwrap();
+        let plain_class = assert_absent(&plain);
+        let file_class = assert_absent(&with_file);
+        assert_eq!(plain_class, std::fs::canonicalize(&plain).unwrap());
+        assert_eq!(file_class, std::fs::canonicalize(&with_file).unwrap());
+        let _ = std::fs::remove_dir_all(plain);
+        let _ = std::fs::remove_dir_all(with_file);
+    }
+
+    #[test]
+    fn child_symlink_and_linked_worktree_are_the_toplevel_checkout() {
+        let repo = unique_repo("parent");
+        let child = repo.join("nested");
+        std::fs::create_dir(&child).unwrap();
+        let parent_root = git_top_level(&repo).unwrap();
+        assert_eq!(assert_checkout(&child), parent_root);
+
+        let link_parent = unique_repo_dir_only("link-parent");
+        let link = link_parent.join("link");
+        std::os::unix::fs::symlink(&repo, &link).unwrap();
+        assert_eq!(assert_checkout(&link), parent_root);
+
+        let linked = unique_repo_dir_only("linked-worktree");
+        let _ = std::fs::remove_dir_all(&linked);
+        let added = git_cmd(&repo).args(["worktree", "add", "-b", "feature"]).arg(&linked).output().unwrap();
+        assert!(added.status.success(), "{}", String::from_utf8_lossy(&added.stderr));
+        let linked_root = git_top_level(&linked).unwrap();
+        assert_eq!(assert_checkout(&linked), linked_root);
+        assert_ne!(linked_root, parent_root);
+
+        let _ = std::fs::remove_dir_all(&linked);
+        let _ = std::fs::remove_dir_all(link_parent);
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn bare_repo_and_git_directory_are_refused_and_not_nested() {
+        let parent = unique_repo_dir_only("bare-parent");
+        let bare = parent.join("bare.git");
+        let init = git_cmd(&parent).args(["init", "--bare"]).arg(&bare).output().unwrap();
+        assert!(init.status.success(), "{}", String::from_utf8_lossy(&init.stderr));
+        let bare_message = assert_refused(&bare);
+        assert!(bare_message.contains(NOT_A_WORK_TREE), "{bare_message}");
+        let bare_init = init_absent_folder(&bare).unwrap_err();
+        assert!(bare_init.contains(NOT_A_WORK_TREE), "{bare_init}");
+        assert!(!bare.join(".git").exists(), "init must not nest a .git inside a bare repo");
+
+        let repo = unique_repo("dot-git");
+        let git_dir = repo.join(".git");
+        let git_message = assert_refused(&git_dir);
+        assert!(git_message.contains(NOT_A_WORK_TREE), "{git_message}");
+        let git_init = init_absent_folder(&git_dir).unwrap_err();
+        assert!(git_init.contains(NOT_A_WORK_TREE), "{git_init}");
+        assert!(!git_dir.join(".git").exists(), "init must not nest .git/.git");
+
+        let _ = std::fs::remove_dir_all(parent);
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn broken_git_entries_are_refused_and_unchanged() {
+        let empty = unique_repo_dir_only("empty-git");
+        std::fs::create_dir(empty.join(".git")).unwrap();
+        let empty_message = assert_refused(&empty);
+        assert!(empty_message.contains(HAS_GIT_ENTRY), "{empty_message}");
+        let empty_init = init_absent_folder(&empty).unwrap_err();
+        assert!(empty_init.contains(HAS_GIT_ENTRY), "{empty_init}");
+        assert!(std::fs::read_dir(empty.join(".git")).unwrap().next().is_none());
+
+        let missing_head = unique_repo("missing-head");
+        std::fs::remove_file(missing_head.join(".git/HEAD")).unwrap();
+        let config_before = std::fs::read(missing_head.join(".git/config")).unwrap();
+        let head_message = assert_refused(&missing_head);
+        assert!(head_message.contains("will not initialize"), "{head_message}");
+        let head_init = init_absent_folder(&missing_head).unwrap_err();
+        assert!(head_init.contains("will not initialize"), "{head_init}");
+        assert!(!missing_head.join(".git/HEAD").exists());
+        assert_eq!(std::fs::read(missing_head.join(".git/config")).unwrap(), config_before);
+
+        let garbage = unique_repo_dir_only("garbage-git");
+        std::fs::write(garbage.join(".git"), b"not-a-gitfile").unwrap();
+        let garbage_message = assert_refused(&garbage);
+        assert!(garbage_message.contains(HAS_GIT_ENTRY), "{garbage_message}");
+        let garbage_init = init_absent_folder(&garbage).unwrap_err();
+        assert!(garbage_init.contains(HAS_GIT_ENTRY), "{garbage_init}");
+        assert_eq!(std::fs::read(garbage.join(".git")).unwrap(), b"not-a-gitfile");
+
+        let _ = std::fs::remove_dir_all(empty);
+        let _ = std::fs::remove_dir_all(missing_head);
+        let _ = std::fs::remove_dir_all(garbage);
+    }
+
+    #[test]
+    fn inherited_git_dir_does_not_classify_or_init_the_other_repo() {
+        let other = unique_repo("inherited-target");
+        let plain = unique_repo_dir_only("inherited-plain");
+        let other_config = std::fs::read(other.join(".git/config")).unwrap();
+        let _guard = RestoreEnv::set("GIT_DIR", other.join(".git"));
+        let class = assert_absent(&plain);
+        assert_eq!(class, std::fs::canonicalize(&plain).unwrap());
+        match init_absent_folder(&plain).unwrap() {
+            InitFolder::Initialized { root } => assert_eq!(root, std::fs::canonicalize(&plain).unwrap()),
+            other => panic!("expected Initialized, got {other:?}"),
+        }
+        drop(_guard);
+        assert!(plain.join(".git").is_dir());
+        assert!(!other.join(".git").join(".git").exists());
+        assert_eq!(std::fs::read(other.join(".git/config")).unwrap(), other_config);
+        let _ = std::fs::remove_dir_all(other);
+        let _ = std::fs::remove_dir_all(plain);
+    }
+
+    #[test]
+    fn init_absent_folder_inits_without_user_name() {
+        let dir = unique_repo_dir_only("init-plain");
+        let canonical = std::fs::canonicalize(&dir).unwrap();
+        match init_absent_folder(&dir).unwrap() {
+            InitFolder::Initialized { root } => assert_eq!(root, canonical),
+            other => panic!("expected Initialized, got {other:?}"),
+        }
+        assert_eq!(git_top_level(&dir).unwrap(), canonical);
+        let config = std::fs::read_to_string(dir.join(".git/config")).unwrap();
+        assert!(!config.contains("user.name"), "{config}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn init_absent_folder_does_not_reinit_an_existing_checkout() {
+        let repo = unique_repo("already");
+        let config = std::fs::read(repo.join(".git/config")).unwrap();
+        let head = std::fs::read(repo.join(".git/HEAD")).unwrap();
+        match init_absent_folder(&repo).unwrap() {
+            InitFolder::AlreadyCheckout { root } => assert_eq!(root, git_top_level(&repo).unwrap()),
+            other => panic!("expected AlreadyCheckout, got {other:?}"),
+        }
+        assert_eq!(std::fs::read(repo.join(".git/config")).unwrap(), config);
+        assert_eq!(std::fs::read(repo.join(".git/HEAD")).unwrap(), head);
+        let _ = std::fs::remove_dir_all(repo);
     }
 
     // A plain (non-git-init'd) directory — distinct from `unique_repo`, which does init.

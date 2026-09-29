@@ -80,3 +80,22 @@ fn legacy_playbook_default_keeps_repositories_and_appearance_on_save() {
     assert_eq!(value["global"]["defaults"]["playbook"]["scope"].as_str(), Some("bundled"));
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn set_active_repo_rejects_a_deleted_git_dir_without_creating_alinery() {
+    use tauri::Manager;
+    let repo = init_git_test_repo("deleted-git");
+    fs::remove_dir_all(repo.join(".git")).unwrap();
+    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+    context.config_mut().identifier = format!("test.alinery.open-git.{}", uuid::Uuid::new_v4());
+    let app = tauri::test::mock_builder().manage(AppState::default()).build(context).unwrap();
+    let err = match crate::set_active_repo(app.handle().clone(), app.state(), repo.display().to_string(), None) {
+        Ok(_) => panic!("deleted .git must not open"),
+        Err(err) => err,
+    };
+    assert!(err.contains("Couldn't open"), "{err}");
+    assert!(err.contains("not a git repository"), "{err}");
+    assert!(!repo.join(".alinery").exists());
+    drop(app);
+    let _ = fs::remove_dir_all(repo);
+}

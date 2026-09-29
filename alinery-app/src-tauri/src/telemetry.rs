@@ -2,7 +2,7 @@
 //! app-config path or talk HTTP. Failures are discarded in alinery-core.
 use crate::*;
 
-pub(crate) fn emit(app: &AppHandle, event: alinery_core::TelemetryEvent) {
+pub(crate) fn emit<R: tauri::Runtime>(app: &AppHandle<R>, event: alinery_core::TelemetryEvent) {
     let Ok(path) = app_config_path(app) else { return };
     alinery_core::record_event(&path, event);
 }
