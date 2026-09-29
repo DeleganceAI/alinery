@@ -31,7 +31,7 @@ auto_advance_default = false
 
 # Build a New Playbook
 
-Define → Draft & Refine. Design a useful workflow with the human, then save it globally through MCP or in the intended repository under `alinery/playbooks/`. Testing is optional.
+Define → Draft & Refine. Design a useful playbook with the human, then save it globally through MCP or in the intended repository under `alinery/playbooks/`. Testing is optional.
 
 <!-- alinery:step define -->
 
@@ -46,7 +46,7 @@ Additional user instructions:
 
 {{PROMPT_EXTRA}}
 
-## Define the smallest useful workflow
+## Define the smallest useful playbook
 
 Help the human articulate a reusable outcome. Start from decisions already supplied and ask only questions whose answers affect the design. These are guides, not a mandatory questionnaire:
 
@@ -55,7 +55,7 @@ Help the human articulate a reusable outcome. Start from decisions already suppl
 - Why would a single session not suffice? Which handoffs, fresh context or decisions justify separate sessions?
 - What information starts the work, what must each step deliver, and where would human review or direction help?
 
-A reusable one-step playbook is valid. This authoring workflow's two sessions do not dictate the generated playbook's length. Settle the minimum useful graph, inputs, outputs and scope. Use a concrete example when helpful; stop questioning once the design is clear.
+A reusable one-step playbook is valid. This authoring playbook's two sessions do not dictate the generated playbook's length. Settle the minimum useful graph, inputs, outputs and scope. Use a concrete example when helpful; stop questioning once the design is clear.
 
 Summarize the specification and resolve material disagreements. The user's explicit request or agreement is sufficient; no separate approval dialog is required.
 
@@ -96,7 +96,7 @@ Apply the relevant guidance below. Focus on useful outcomes and supported engine
 
 The runtime supplies artifact assignments, execution ownership and completion instructions. Do not duplicate that protocol or invent extra approval policy in generated prompts. Focus each prompt on its job, inputs, outputs and useful decisions.
 
-### Design useful workflows
+### Design useful playbooks
 
 - Start from the recurring outcome and the human's domain expertise. A step earns its place through a useful handoff, fresh context, distinct responsibility or necessary decision.
 - Make progress, uncertainty and any needed human decision visible.
@@ -327,7 +327,7 @@ Walk through the cases relevant to the user's requirements. Record substantive f
 3. **Inputs and ownership:** Is every input seeded or produced by a reachable step, with non-overlapping output roles?
 4. **Collection completeness:** What happens when a worker is paused, failed or missing, or the required set is empty?
 5. **Second-pass freshness:** Does every loop-dependent join wait for all fresh work from that pass?
-6. **Loop stopping:** When no useful next ticket exists, does the workflow pause without fabricating a required output? Is that limitation acceptable?
+6. **Loop stopping:** When no useful next ticket exists, does the playbook pause without fabricating a required output? Is that limitation acceptable?
 7. **Human input:** Where is a real decision needed, and what evidence supports it?
 8. **Mutation and capacity:** Are mutating steps coding with exact inputs, and does the design work while sessions are queued?
 9. **Portability:** Are prompts self-contained, with supported fields/tokens and no hardcoded task paths or unavailable tools?
