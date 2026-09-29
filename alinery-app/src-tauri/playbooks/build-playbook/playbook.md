@@ -96,7 +96,7 @@ Write the complete v2 playbook to the assigned `candidate-playbook.md`, includin
 
 ## Authoring guide
 
-Use the guidance below to express the chosen process through agent responsibilities, handoffs, dependencies and human checkpoints, within the behavior the engine supports. Apply the relevant sections without turning the guide into a questionnaire.
+Use the guidance and examples below to represent the chosen process through agent responsibilities, prompts, artifacts, dependencies and human checkpoints. Apply the relevant sections without turning the guide into a questionnaire.
 
 The runtime tells each execution which artifacts to use, which files it owns, and how to report completion. The prompts in the playbook should describe each agent's responsibility, the process it follows, its handoffs, and the human checkpoints required by the process. Leave tool authorization and execution-completion procedures to the harness and runtime.
 
@@ -108,7 +108,7 @@ Independent non-coding steps can run in parallel. Steps that change repository s
 
 Discussion and revision can happen within one agent session. Use a graph loop when another execution needs to act on a newly accepted output, such as a revised request for another pass.
 
-If the supported graph cannot express a requirement, explain the limitation and discuss the design with the human. Prompt wording cannot add missing schema fields or engine behavior.
+Work out how to represent each requirement using agent responsibilities, artifact contents, dependencies and human decisions. The examples below show how these pieces fit together. When a requirement does not map directly to one field or step, use a combination of steps and handoffs, or describe the decision within the responsible agent's prompt.
 
 ### Place human checkpoints before work depends on a decision
 
@@ -124,28 +124,34 @@ A prompt should give the agent a clear responsibility and method. State what evi
 
 Write outputs so the next step can use them without reconstructing the conversation. Include the evidence, assumptions and limitations that affect its work. If an input is missing or contradictory, explain the consequence and the decision needed to proceed. Keep the user's instructions distinct from the documents and other material being examined.
 
-### Understand what the engine runs
+### Tasks, state and agent sessions
 
 | Concept | Meaning |
 | --- | --- |
 | Playbook | A preconfigured team of agents with a chosen process, defined through responsibilities, prompts, handoffs and human checkpoints. |
-| Task | A particular use of a playbook. It retains the selected definition, one worktree and a record of its executions. |
-| Step | A defined agent responsibility and prompt that may run more than once. |
-| Execution | One run of a step with particular assigned inputs and outputs, such as one review worker or one loop pass. |
-| Session | The agent process and conversation carrying out an execution. Its ID is separate from the step key. |
-| Artifact occurrence | A particular accepted output, identified by its logical role, concrete path and the execution that produced it. |
+| Task | A human-steered unit of work: a group of agent sessions with its own context space made up of artifacts. A task has at most one assigned playbook. |
+| State | The task's artifacts and their contents at a particular moment in time. |
+| Agent session | One agent's process and conversation within a task. It can carry out a playbook step or additional work directed by the human. |
+| Step | An agent responsibility in the playbook, with a prompt and declared inputs and outputs. A step can run many times. |
+| Execution | One run of a playbook step with particular assigned inputs and outputs. |
+| Artifact | A file in the task's context that records information, work or decisions for the human and agent sessions. |
+| Artifact occurrence | A specific artifact used in a playbook run: the initial ticket or an accepted output, identified by its logical name, concrete path and, for outputs, the execution that wrote it. |
+
+The assigned playbook starts the work. The human can add agent sessions within the same task context as the work develops. There is no fixed total number of agent sessions a task can contain; the live-session setting described below controls how many playbook sessions can run at once.
 
 The step definitions establish the process; they do not fix how many agent sessions a task will need. As the task develops, the engine starts executions whose declared dependencies are ready. For example, three discovered requests can produce three executions of one review step, and a loop can call for another review pass. Repeated work uses the same step definition, with distinct paths assigned to the resulting artifacts.
 
-The engine handles input assignments, reservations, scheduling, completion permission and process lifetime. Prompts describe the assigned work. Creating successor sessions and repairing execution records are engine responsibilities.
+Agents interpret artifact contents to decide how to carry out their responsibilities. The declared dependencies determine when a playbook step is ready to run. Each execution uses its assigned artifacts, so a later change elsewhere in the task's state does not silently replace those inputs.
+
+The engine handles input assignments, reservations, scheduling, completion permission and process lifetime for playbook executions. Prompts describe the assigned work.
 
 ### Understand where playbooks are saved
 
-Tasks retain the validated playbook definition selected when they were created. Editing a library entry changes what future tasks can select; existing tasks continue using their retained definition. The current library entry cannot replace a missing retained definition.
+A task with an assigned playbook retains the validated definition selected when the task was created. Editing a library entry changes what future tasks can select; existing tasks continue using their retained definition. The current library entry cannot replace a missing retained definition.
 
 The three scopes, `bundled/<key>`, `global/<key>` and `repo/<key>`, are separate. Entries with the same key in different scopes do not shadow one another. Bundled entries are read-only. Repository playbooks live under `alinery/playbooks/`, and the catalog identifies them by the key declared inside the file. If two files in that repository tree declare the same key, the catalog cannot resolve the entry.
 
-An auxiliary session does not change the task's playbook graph.
+An additional agent session can contribute to the task's context without changing its assigned playbook graph.
 
 ### Write the document and its prompts
 
@@ -183,27 +189,40 @@ A preamble is not passed to every step as shared instructions. Put guidance need
 
 ### Connect steps through their inputs and outputs
 
-The engine derives dependencies from the declared input and output roles. Reordering steps, numbering filenames or writing “run after analysis” in a prompt does not create a dependency. Task creation supplies the initial `ticket.md`. Every other input needs a producer that can run before the step needs that input. Put external information in the ticket or attachments, or add a step that gathers it.
+The engine derives dependencies from the declared input and output roles. Reordering steps, numbering filenames or writing “run after analysis” in a prompt does not create a dependency. Task creation supplies the initial `ticket.md`. Every other input needs a step that creates it before the step that reads it can run. Put external information in the ticket or attachments, or add a step that gathers it.
 
 | Input mode | Meaning | Correct use |
 | --- | --- | --- |
 | `single` | The intended exact occurrence in this execution's context. Multiple required inputs form an AND join. | A decision reads both `draft.md` and `analysis.md`; neither is optional. |
 | `each` | One execution per bound collection member, plus any exact inputs. | Each review worker processes only its assigned `request-*.md` member. |
-| `complete` | The full required accepted collection, accounting for all expected producers/workers. | A merge reads all `review-*.md` contributions in its engine-supplied collection. |
+| `complete` | The full required accepted collection, including every execution expected to contribute. | A merge reads all `review-*.md` contributions in its engine-supplied collection. |
 
 A `single` input names an exact logical path. An `each` or `complete` selector contains one wildcard in the filename, such as `review-*.md`. A step can have at most one collection input: one `each` or one `complete`, alongside any exact inputs.
 
 Paths must be relative `.md` paths. Subdirectories are supported, but absolute paths, parent-directory traversal, wildcard directories, recursive globs and multiple wildcards are invalid. The top-level output names `attachments` and `subtasks` are reserved regardless of case because they contain material from users or child tasks. Other logical roles are case-sensitive, but physical filenames that differ only by case can still collide.
 
-### Define required outputs and their producers
+### Define which step writes each output
 
-Every declared output must contain a meaningful result before its producer can complete. A wildcard output requires a finite, nonempty set of files. If a report is optional, declaring it as a required output creates a step that cannot finish without the report.
+Every declared output must contain a meaningful result before the execution responsible for writing it can complete. A wildcard output requires a finite, nonempty set of files. If a report is optional, declaring it as a required output creates a step that cannot finish without the report.
 
-Each logical output role belongs to one producer step, and roles from different producers must not overlap. For example, two steps cannot both produce `result-*.md`. A step producing `result-*.md` also conflicts with a different step producing `result-summary.md`. Give the producers distinct roles, such as review workers producing `review-*.md` and a merge step producing `decision.md`.
+Each logical output name or pattern belongs to one step. Output declarations from different steps must not overlap. For example, two steps cannot both produce `result-*.md`. A step producing `result-*.md` also conflicts with a different step producing `result-summary.md`. Give those steps distinct output names or patterns, such as review workers writing `review-*.md` and a merge step writing `decision.md`.
 
-Repeated executions of the same producer can use the same declared role. The engine gives each output a distinct path and records which execution produced it. Filename suffixes and “latest producer wins” rules cannot resolve overlapping declarations from different steps.
+Repeated runs of the same step use the step's declared output names or patterns. Each run receives distinct file paths for its outputs, and the engine records which run wrote each artifact. Different steps still need distinct output declarations; choosing whichever file was written last does not resolve an overlap.
 
 A wildcard output lets one execution choose how many files to produce, including a single file when that is the complete result. With an `each` input, the engine instead runs a separate worker for each member of an existing collection. Each execution writes within its assigned output family. A downstream `complete` input receives the whole assigned collection, rather than one selected member or files from other executions.
+
+### Represent decisions and optional work in artifacts
+
+An agent can record a decision in an artifact, and the next agent can read that decision to determine its work. For example:
+
+| Step | Inputs | Outputs |
+| --- | --- | --- |
+| Assess | `single(ticket.md)` | `decision.md` |
+| Carry out the decision | `single(decision.md)` | `action-report.md` |
+
+The assessment records the selected action, its reasons and the evidence the next agent needs. The next prompt describes how to carry out each possible action. If the decision is that no change is needed, `action-report.md` records that conclusion and its evidence. The report remains a meaningful handoff even when no implementation work was necessary.
+
+The agent interprets the decision's contents; the dependency ensures that the decision is available before the agent starts. If several different steps all read `decision.md`, all of them can become eligible. To have one agent carry out the selected action, use one step with a prompt that explains how to act on that decision. Mark that step as coding if any of its possible actions changes repository state.
 
 ### Split work across workers and collect all their results
 
@@ -217,9 +236,21 @@ A non-coding step can split a request into a collection, with one review executi
 
 The table uses `single(...)`, `each(...)` and `complete(...)` as shorthand. In TOML, write input records as `{ path = "...", mode = "..." }`. Each review execution reads its assigned request and writes within its own reserved output family. The merge receives the complete collection from the engine.
 
-Counting files in a directory cannot establish that every review has finished. Three matching files may exist while a fourth worker is queued, waiting for human input, running, finishing or failed. A `complete` dependency lets the engine account for the expected producers and worker assignments. Their completion must be accepted and their shutdown confirmed before the merge becomes eligible.
+Counting files in a directory cannot establish that every review has finished. Three matching files may exist while a fourth worker is queued, waiting for human input, running, finishing or failed. A `complete` dependency lets the engine account for every execution expected to contribute. Each execution must complete successfully and its agent session must shut down before the merge becomes eligible.
 
 A paused or failed worker still belongs to the required collection and blocks the merge. An empty required collection also needs human attention; it does not count as a successful merge. When splitting work into nested collections, each merge receives its own assigned collection rather than a mixture of files from several levels.
+
+### Combine information from two collections
+
+When a decision needs two collections, give each collection its own summary step, then pass both summaries to the decision step:
+
+| Step | Inputs | Outputs |
+| --- | --- | --- |
+| Summarize research | `complete(research-*.md)` | `research-summary.md` |
+| Summarize reviews | `complete(review-*.md)` | `review-summary.md` |
+| Decide | `single(research-summary.md)`, `single(review-summary.md)` | `decision.md` |
+
+Earlier steps supply the research and review collections. Each summary preserves the evidence needed for the decision. The decision step waits for both summaries, while each summary step reads only one collection.
 
 ### Include all work that must repeat in a loop
 
@@ -237,7 +268,7 @@ A: Draft -> B: Request another pass -> A
 D consumes both A's draft and C's analysis.
 ```
 
-Only A and B belong to the loop's strongly connected component, the set of steps connected back to one another through directed paths. The current scheduler blocks inheritance of old results from producers inside that component, but can inherit results from producers outside it. C and D are outside the component.
+Only A and B belong to the loop's strongly connected component, the set of steps connected back to one another through directed paths. The current scheduler blocks inheritance of old results from steps inside that component, but can inherit results from steps outside it. C and D are outside the component.
 
 After the second draft A2 finishes, D can therefore receive A2 together with the first analysis C1, even while C2 is queued or running. When C2 finishes, another execution of D may become eligible, but the earlier decision has already used stale analysis.
 
@@ -267,7 +298,7 @@ The corrected graph can use these logical inputs and outputs:
 
 Task creation supplies the initial ticket, and B produces later tickets. In the problematic graph, B reads `draft.md` instead of `decision.md`, allowing another pass before C and D finish. Declare the corrected dependencies through the input and output records; their order in the document does not establish the connections.
 
-Fixed requirements or policy can remain outside a loop when the same content applies to every pass and a valid input or producer supplies it. Analysis of a changing draft must be renewed even if its producer sits outside the drawn cycle. Check the freshness requirements of every step that combines inputs.
+Fixed requirements or policy can remain outside a loop when the same content applies to every pass and is supplied through a declared input from task creation or another step. Analysis of a changing draft must be renewed even if the step performing the analysis sits outside the drawn cycle. Check the freshness requirements of every step that combines inputs.
 
 The current parser accepts the problematic graph. Parsing therefore cannot verify that a decision will receive matching results from the same pass. Walk through the second pass and check the dependencies. The engine still chooses the concrete artifact occurrences; prompts should use those assignments rather than choose versions from filenames or modification times. Coding restrictions also apply inside loops.
 
@@ -286,9 +317,9 @@ Initial ticket, ancestry depth 0
   -> A Draft, depth 5: consumes that new ticket occurrence
 ```
 
-The next pass becomes eligible after the engine accepts the new occurrence and confirms its producer's shutdown. Changing a file's bytes, adding a larger filename prefix or observing the same assigned input again does not create another pass.
+The next pass becomes eligible after the engine accepts the new artifact occurrence and confirms that the agent session completing that execution has shut down. Changing a file's bytes, adding a larger filename prefix or observing the same assigned input again does not create another pass.
 
-The initial ticket is supplied by task creation and does not count as an authored producer. One step can produce subsequent tickets. Two authored steps producing the same trigger role would conflict and need a different design.
+Task creation supplies the initial ticket; no step needs to write it. One step can produce subsequent tickets. Two authored steps producing the same trigger role would conflict and need a different design.
 
 Loop-entry prompts must read the ticket assigned to the current execution. A hardcoded `00-ticket.md`, a search for the newest ticket, or a token that always points to the original ticket can send later passes back to the wrong request.
 
@@ -298,7 +329,9 @@ Describe the evidence that warrants another pass and how the continuation step s
 
 When the continuation step cannot identify useful further work, leave the session available and ask the human how to proceed. A meaningless ticket would start unnecessary work just to satisfy the output requirement.
 
-In the example, B requires a `ticket.md` output. If B pauses without writing a new ticket, B cannot successfully complete. The result is a visible pause. The example does not provide optional outputs, mutually exclusive output groups or conditional routing. If the human needs automatic termination or alternative branches, determine whether the supported graph can express the requested behavior.
+In the example, B requires a `ticket.md` output. If B pauses without writing a new ticket, B remains open for human direction. That is the stopping behavior of this particular design.
+
+Choose the representation that matches the process. When the same agent can revise the work and decide when it is finished, keep that revision within one agent session and write the final required output when the work is ready. Use a graph loop when the next pass needs a fresh agent session. Define what the human should review when that loop reaches a stopping point. For a process that hands a final decision to another agent, declare the decision-to-action handoff shown above instead of a required continuation ticket.
 
 ### Use assigned artifact paths
 
@@ -320,13 +353,13 @@ Coding steps accept only exact `single` inputs. To implement a change based on s
 
 The engine holds a coding execution's exclusive claim until its shutdown is confirmed. Marking a mutating step as non-coding does not make concurrent writes valid. Additional session capacity does not allow two coding executions to share the worktree concurrently.
 
-Task creation offers **Maximum live sessions**, with a default of 10. The setting is separate from the playbook definition; there is no playbook or per-step concurrency field. Sessions occupy capacity while starting, running, waiting for human input or finishing. Capacity is released after shutdown or failure to start is confirmed, and other eligible work waits in the queue. Queued and paused workers still belong to the collections that require their results.
+Task creation offers **Maximum live sessions**, with a default of 10. This limits concurrent playbook executions, not the total number of agent sessions that can belong to a task. The setting is separate from the playbook definition; there is no playbook or per-step concurrency field. Playbook executions occupy capacity while starting, running, waiting for human input or finishing. Capacity is released after shutdown or failure to start is confirmed, and other eligible work waits in the queue. Queued and paused workers still belong to the collections that require their results.
 
 ### Account for failures and uncertain results
 
 Consider how missing inputs, rejected outputs and failed workers affect the design. Preserve partial results. If a tool reply is lost, check whether the action happened before repeating it.
 
-The engine handles execution recovery and ownership. Fields such as `on_failure` and `human_approval` are unsupported; adding them to a playbook cannot provide recovery or approval behavior.
+Describe how the responsible agent should handle recoverable problems within its session and what it should record for the next agent. Express human review through the checkpoints in the process. Use the existing inputs, outputs, prompts and auto-advance settings to represent that behavior; execution recovery and ownership remain engine responsibilities.
 
 ### Use runtime tokens and escape literal examples
 
@@ -342,7 +375,7 @@ Walk through the chosen process, including discoveries and decisions that could 
 
 1. **Process:** Does the playbook encode the process the human chose? Does each agent have one clear responsibility, with the required handoffs and decisions in place?
 2. **Information:** Can each step work from its assigned artifacts without reconstructing earlier conversations?
-3. **Dependencies:** Does every input come from task creation or a reachable producer? Are output roles from different producers distinct and non-overlapping?
+3. **Dependencies:** Does every input come from task creation or a step that can run before it is needed? Are output names and patterns from different steps distinct and non-overlapping?
 4. **Collections:** What happens if a required worker is queued, paused, failed or missing, or if a required collection is empty?
 5. **Freshness:** On a second loop pass, does each step receive all the new results it needs from that pass?
 6. **Continuation:** What happens when there is no useful next ticket? Is a pause acceptable to the human?
@@ -350,7 +383,7 @@ Walk through the chosen process, including discoveries and decisions that could 
 8. **Coding and capacity:** Are repository-changing steps marked coding with exact inputs? Does the design still work while sessions wait for capacity?
 9. **Reuse:** Do prompts contain the instructions they need, use supported fields and tokens, and avoid paths or tools unavailable to the task?
 
-Correct defects before saving. Where the engine cannot meet a requirement, explain the specific limitation and discuss the design with the human.
+Correct defects before saving. For each requirement, show which agent responsibility, prompt, artifact, dependency or human checkpoint represents it. Walk through the normal case and relevant alternatives with the human, and revise the representation wherever that walkthrough exposes a gap.
 
 ## Review and save
 
