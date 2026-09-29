@@ -88,6 +88,7 @@ function PlaybookIdentity({ playbookKey, name }: { playbookKey: string; name: st
 function RowIcon({
   label,
   hint,
+  caption,
   disabled,
   ghost,
   onClick,
@@ -95,14 +96,16 @@ function RowIcon({
 }: {
   label: string;
   hint?: string;
+  caption?: string;
   disabled?: boolean;
   ghost?: boolean;
   onClick?: () => void;
   children: ReactNode;
 }) {
   return (
-    <button type="button" className={`btn small icon${ghost ? " ghost" : ""}`} aria-label={label} title={hint || label} disabled={disabled} onClick={onClick}>
+    <button type="button" className={`btn small${caption ? "" : " icon"}${ghost ? " ghost" : ""}`} aria-label={label} title={hint || label} disabled={disabled} onClick={onClick}>
       {children}
+      {caption}
     </button>
   );
 }
@@ -199,6 +202,8 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   const [communitySignedIn, setCommunitySignedIn] = useState<boolean | null>(null);
   const [myLabel, setMyLabel] = useState<string | null>(null);
   const [downloadRows, setDownloadRows] = useState<DownloadStatusRow[]>([]);
+  const [downloadsReady, setDownloadsReady] = useState(false);
+  const [publishGuideOpen, setPublishGuideOpen] = useState(false);
   const [signupOpen, setSignupOpen] = useState(false);
   // True only while this dialog has a pairing in flight, so Cancel knows what to cancel.
   const [signupPairing, setSignupPairing] = useState(false);
@@ -316,13 +321,18 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   useEffect(() => {
     if (libraryTab !== "community" || communityFilter !== "downloaded" || !repoPath) return;
     let live = true;
+    setDownloadsReady(false);
     ipc
       .communityDownloadStatus({ repoPath })
       .then((value) => {
-        if (live) setDownloadRows(value.rows);
+        if (!live) return;
+        setDownloadRows(value.rows);
+        setDownloadsReady(true);
       })
       .catch((error) => {
-        if (live) setCommunityError(errorText(error));
+        if (!live) return;
+        setCommunityError(errorText(error));
+        setDownloadsReady(true);
       });
     return () => {
       live = false;
@@ -528,6 +538,14 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     setShowImport(false);
   };
   const showLocal = () => setLibraryTab("local");
+  // The header action lands on My Playbooks and explains that publish lives on each row.
+  const openPublishLibrary = () => {
+    setShowImport(false);
+    setLibraryTab("community");
+    setCommunityQuery("");
+    setCommunityFilter("published");
+    setPublishGuideOpen(true);
+  };
   const openSignup = (action: () => Promise<void>) => {
     pendingSignup.current = action;
     setSignupOpen(true);
@@ -826,7 +844,11 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   // slug the request would come back rejected, so Confirm stays off and the rule shows.
   const labelValid = labelPattern.test(publishLabel);
   const mineByKey = new Map(minePlaybooks.map((item) => [item.playbookKey, item]));
-  const publishedNeedle = communityQuery.trim().toLowerCase();
+  const communityNeedle = communityQuery.trim().toLowerCase();
+  const visibleDownloads = downloadRows.filter((row) => {
+    if (!communityNeedle) return true;
+    return [row.title, row.description, row.label, row.playbookKey].some((value) => (value || "").toLowerCase().includes(communityNeedle));
+  });
   const publishedRows = [
     ...ownPlaybooks.map((candidate) => {
       const key = candidate.source.reference.key;
@@ -869,7 +891,13 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
         pushTitle: "No local copy to publish.",
         pushName: `Update ${item.label}/${item.playbookKey}`,
       })),
-  ].filter((row) => !publishedNeedle || [row.name, row.title, row.author, row.status, row.local].some((value) => value.toLowerCase().includes(publishedNeedle)));
+  ].filter((row) => !communityNeedle || [row.name, row.title, row.author, row.status, row.local].some((value) => value.toLowerCase().includes(communityNeedle)));
+  const communityListReady =
+    (communityFilter === "all" && communityReady) ||
+    (communityFilter === "downloaded" && (!repoPath || downloadsReady)) ||
+    (communityFilter === "published" && (communitySignedIn === false || mineReady));
+  const communityRowsEmpty =
+    communityFilter === "all" ? communityPlaybooks.length === 0 : communityFilter === "downloaded" ? visibleDownloads.length === 0 : publishedRows.length === 0;
 
   return (
     <main className="playbooks-page">
@@ -900,14 +928,25 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
             </div>
           )}
           <div role="tablist" aria-label="Playbook libraries">
-            <button className="tab" type="button" role="tab" aria-selected={libraryTab === "local"} onClick={showLocal}>
+            <button className={`tab${libraryTab === "local" ? " on" : ""}`} type="button" role="tab" aria-selected={libraryTab === "local"} onClick={showLocal}>
               Local
             </button>
-            <button className="tab" type="button" role="tab" aria-selected={libraryTab === "community"} onClick={() => void showCommunity()}>
+            <button
+              className={`tab${libraryTab === "community" ? " on" : ""}`}
+              type="button"
+              role="tab"
+              aria-selected={libraryTab === "community"}
+              onClick={() => void showCommunity()}
+            >
               Community
             </button>
           </div>
           <div className="playbooks-primary-actions" role="group" aria-label="Playbook actions">
+            {!open && libraryTab === "community" && (
+              <button className="btn" type="button" onClick={openPublishLibrary}>
+                Publish playbook
+              </button>
+            )}
             {libraryTab === "local" && (
               <>
                 <button className="btn" type="button" disabled={busy} onClick={() => void begin("new")}>
@@ -1159,7 +1198,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                   setCommunityFilter("published");
                 }}
               >
-                Published
+                My Playbooks
               </button>
             </div>
             <label>
@@ -1226,52 +1265,46 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                         );
                       })
                     : communityFilter === "downloaded"
-                      ? downloadRows
-                          .filter((row) => {
-                            const needle = communityQuery.trim().toLowerCase();
-                            if (!needle) return true;
-                            return [row.title, row.description, row.label, row.playbookKey].some((value) => (value || "").toLowerCase().includes(needle));
-                          })
-                          .map((row) => {
-                            const name = `${row.label}/${row.playbookKey}`;
-                            const status = row.remoteMissing
-                              ? "No longer published"
-                              : row.error
-                                ? row.error
-                                : row.updateAvailable
-                                  ? `Update available${row.localMissing ? " Local copy missing" : ""}`
-                                  : row.remoteVersion != null && row.remoteVersion < row.importedVersion
-                                    ? `${row.importedVersion} ${row.remoteVersion}`
-                                    : `Up to date${row.localMissing ? " Local copy missing" : ""}`;
-                            return (
-                              <tr key={row.id}>
-                                <td>
-                                  <PlaybookIdentity playbookKey={row.playbookKey} name={row.title || row.playbookKey} />
-                                </td>
-                                <td>{row.title}</td>
-                                <td>{row.importedVersion}</td>
-                                <td>{row.remoteVersion ?? ""}</td>
-                                <td>{status}</td>
-                                <td>
-                                  <span className="playbooks-row-actions">
-                                    {row.updateAvailable && !row.remoteMissing && (
-                                      <RowIcon ghost label={`Preview ${name}`} onClick={() => void withAccount(() => previewPublication(row.id, name))}>
-                                        <Eye size={16} aria-hidden="true" />
-                                      </RowIcon>
-                                    )}
-                                    <CatalogDownload
-                                      name={name}
-                                      missing={row.remoteMissing}
-                                      imported={{ importedVersion: row.importedVersion }}
-                                      remoteVersion={row.remoteVersion}
-                                      onDownload={() => void withAccount(() => importPublication(repoPath, row.id, false))}
-                                      onUpdate={() => void withAccount(() => updatePublication(repoPath, row.id, false))}
-                                    />
-                                  </span>
-                                </td>
-                              </tr>
-                            );
-                          })
+                      ? visibleDownloads.map((row) => {
+                          const name = `${row.label}/${row.playbookKey}`;
+                          const status = row.remoteMissing
+                            ? "No longer published"
+                            : row.error
+                              ? row.error
+                              : row.updateAvailable
+                                ? `Update available${row.localMissing ? " Local copy missing" : ""}`
+                                : row.remoteVersion != null && row.remoteVersion < row.importedVersion
+                                  ? `${row.importedVersion} ${row.remoteVersion}`
+                                  : `Up to date${row.localMissing ? " Local copy missing" : ""}`;
+                          return (
+                            <tr key={row.id}>
+                              <td>
+                                <PlaybookIdentity playbookKey={row.playbookKey} name={row.title || row.playbookKey} />
+                              </td>
+                              <td>{row.title}</td>
+                              <td>{row.importedVersion}</td>
+                              <td>{row.remoteVersion ?? ""}</td>
+                              <td>{status}</td>
+                              <td>
+                                <span className="playbooks-row-actions">
+                                  {row.updateAvailable && !row.remoteMissing && (
+                                    <RowIcon ghost label={`Preview ${name}`} onClick={() => void withAccount(() => previewPublication(row.id, name))}>
+                                      <Eye size={16} aria-hidden="true" />
+                                    </RowIcon>
+                                  )}
+                                  <CatalogDownload
+                                    name={name}
+                                    missing={row.remoteMissing}
+                                    imported={{ importedVersion: row.importedVersion }}
+                                    remoteVersion={row.remoteVersion}
+                                    onDownload={() => void withAccount(() => importPublication(repoPath, row.id, false))}
+                                    onUpdate={() => void withAccount(() => updatePublication(repoPath, row.id, false))}
+                                  />
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })
                       : publishedRows.map((row) => {
                           const publicationId = row.publicationId;
                           return (
@@ -1297,6 +1330,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                                   <RowIcon
                                     label={row.pushName}
                                     hint={row.pushTitle}
+                                    caption={row.pushName.startsWith("Publish") ? "Publish" : undefined}
                                     disabled={!row.canPush || !row.reference}
                                     onClick={() => {
                                       const reference = row.reference;
@@ -1316,11 +1350,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                 </tbody>
               </table>
             )}
-            {communityFilter === "published" && communitySignedIn === true && mineReady && publishedRows.length === 0 && (
-              <p className="playbook-empty">
-                {publishedNeedle ? `No playbooks match "${communityQuery.trim()}".` : "You haven't published a playbook, and none of your local playbooks are listed."}
-              </p>
-            )}
+            {communityListReady && communityRowsEmpty && <p className="playbook-empty">No playbooks found</p>}
             {communityFilter === "all" && communityPage.cursor && communityPage.query === communityQuery.trim() && communityQuery.trim().length <= 80 && (
               <button
                 type="button"
@@ -1346,6 +1376,24 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
               </button>
             )}
           </section>
+        )}
+        {publishGuideOpen && (
+          <Dialog onClose={() => setPublishGuideOpen(false)} role="dialog" ariaLabel="Publish a playbook">
+            <div className="mh">
+              <span className="mt">Publish a playbook</span>
+              <button type="button" className="x" aria-label="Close" title="Close" onClick={() => setPublishGuideOpen(false)}>
+                <X size={14} strokeWidth={1.5} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="mb">
+              <p className="dim">You can publish any playbook you've made here.</p>
+            </div>
+            <div className="mfoot">
+              <button type="button" className="btn ghost small" data-autofocus onClick={() => setPublishGuideOpen(false)}>
+                Close
+              </button>
+            </div>
+          </Dialog>
         )}
         {preview && (
           <Dialog onClose={() => setPreview(null)} role="dialog" ariaLabel={`Preview ${preview.name}`}>

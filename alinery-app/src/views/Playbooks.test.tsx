@@ -790,7 +790,7 @@ async function openCommunity() {
 
 async function openRowPublish(buttonName: string) {
   await openCommunity();
-  fireEvent.click(screen.getByRole("button", { name: "Published" }));
+  fireEvent.click(screen.getByRole("button", { name: "My Playbooks" }));
   fireEvent.click(await screen.findByRole("button", { name: buttonName }));
   return screen.findByRole("dialog", { name: "Publish playbook" });
 }
@@ -817,7 +817,9 @@ describe("community playbooks", () => {
     await screen.findByRole("button", { name: "Review Repository" });
     const tabs = screen.getByRole("tablist", { name: "Playbook libraries" });
     expect(within(tabs).getByRole("tab", { name: "Local" }).getAttribute("aria-selected")).toBe("true");
+    expect(within(tabs).getByRole("tab", { name: "Local" }).classList.contains("on")).toBe(true);
     expect(within(tabs).getByRole("tab", { name: "Community" }).getAttribute("aria-selected")).toBe("false");
+    expect(within(tabs).getByRole("tab", { name: "Community" }).classList.contains("on")).toBe(false);
     expect(screen.getByRole("button", { name: "New playbook" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Import" })).toBeTruthy();
   });
@@ -990,6 +992,8 @@ describe("community playbooks", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
     await waitFor(() => expect(screen.queryByRole("region", { name: "Playbook details" })).toBeNull());
     expect(screen.getByRole("tab", { name: "Community" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "Community" }).classList.contains("on")).toBe(true);
+    expect(screen.getByRole("tab", { name: "Local" }).classList.contains("on")).toBe(false);
     expect(screen.queryByRole("region", { name: "Playbook details" })).toBeNull();
   });
 
@@ -1043,13 +1047,13 @@ describe("community playbooks", () => {
     renderLibrary();
     await screen.findByRole("button", { name: "Review Repository" });
     await openCommunity();
-    fireEvent.click(screen.getByRole("button", { name: "Published" }));
+    fireEvent.click(screen.getByRole("button", { name: "My Playbooks" }));
     fireEvent.click(await screen.findByRole("button", { name: "Publish Repository review" }));
     const dialog = await screen.findByRole("dialog", { name: "Sign up" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(community.accountSignIn).not.toHaveBeenCalled();
     expect(community.publishCommunityPlaybook).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: "Publish playbook" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Publish playbook" })).toBeNull();
   });
 
   it("keeps publish confirm disabled until the share box is checked", async () => {
@@ -1352,7 +1356,7 @@ describe("community playbooks", () => {
     renderLibrary();
     await screen.findByRole("button", { name: "Review Repository" });
     await openCommunity();
-    fireEvent.click(screen.getByRole("button", { name: "Published" }));
+    fireEvent.click(screen.getByRole("button", { name: "My Playbooks" }));
     expect(await screen.findByText("Sign in to see playbooks you published.")).toBeTruthy();
     expect(community.listMyCommunityPlaybooks).not.toHaveBeenCalled();
   });
@@ -1403,11 +1407,12 @@ describe("community playbooks", () => {
     renderLibrary();
     await screen.findByRole("button", { name: "Review Repository" });
     await openCommunity();
-    fireEvent.click(screen.getByRole("button", { name: "Published" }));
+    fireEvent.click(screen.getByRole("button", { name: "My Playbooks" }));
     const table = await screen.findByRole("table", { name: "Community playbooks" });
     expect(within(table).getByRole("columnheader", { name: "Local" })).toBeTruthy();
     expect(within(table).getByText("Not published")).toBeTruthy();
-    expect(within(table).getByRole("button", { name: "Publish Repository notes" })).toBeTruthy();
+    const publishNotes = within(table).getByRole("button", { name: "Publish Repository notes" });
+    expect(publishNotes.textContent).toBe("Publish");
     expect(within(table).queryByRole("button", { name: "Update Bundled review" })).toBeNull();
     fireEvent.click(within(table).getByRole("button", { name: "Update Repository review" }));
     const dialog = await screen.findByRole("dialog", { name: "Publish playbook" });
@@ -1416,5 +1421,31 @@ describe("community playbooks", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(community.publishCommunityPlaybook).toHaveBeenCalledTimes(1));
     expect(community.publishCommunityPlaybook).toHaveBeenCalledWith({ reference: { scope: "repo", key: "review" }, repoPath: "/repo" });
+  });
+
+  it("shows a placeholder when a community list has no rows", async () => {
+    community.listCommunityPlaybooks.mockResolvedValue({ playbooks: [], nextCursor: null });
+    community.communityDownloadStatus.mockResolvedValue({ rows: [] });
+    renderLibrary();
+    await screen.findByRole("button", { name: "Review Repository" });
+    await openCommunity();
+    expect(await screen.findByText("No playbooks found")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Downloaded" }));
+    expect(await screen.findByText("No playbooks found")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "My Playbooks" }));
+    expect(screen.queryByText("No playbooks found")).toBeNull();
+  });
+
+  it("opens My Playbooks and explains that publish is on this list", async () => {
+    renderLibrary();
+    await screen.findByRole("button", { name: "Review Repository" });
+    await openCommunity();
+    fireEvent.click(screen.getByRole("button", { name: "Publish playbook" }));
+    expect(screen.getByRole("button", { name: "My Playbooks" }).getAttribute("aria-pressed")).toBe("true");
+    const dialog = await screen.findByRole("dialog", { name: "Publish a playbook" });
+    expect(within(dialog).getByText("You can publish any playbook you've made here.")).toBeTruthy();
+    fireEvent.click(dialog.querySelector("button.btn") as HTMLButtonElement);
+    expect(screen.queryByRole("dialog", { name: "Publish a playbook" })).toBeNull();
+    expect(screen.getByRole("button", { name: "My Playbooks" }).getAttribute("aria-pressed")).toBe("true");
   });
 });
