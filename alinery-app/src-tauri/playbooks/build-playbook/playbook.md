@@ -98,7 +98,7 @@ Write the complete v2 playbook to the assigned `candidate-playbook.md`, includin
 
 Use the guidance below to express the chosen process through agent responsibilities, handoffs, dependencies and human checkpoints, within the behavior the engine supports. Apply the relevant sections without turning the guide into a questionnaire.
 
-The runtime tells each execution which artifacts to use, which files it owns, and how to report completion. Generated prompts should describe each agent's responsibility, the process it follows, its handoffs, and the human checkpoints required by the process. Leave tool authorization and execution-completion procedures to the harness and runtime.
+The runtime tells each execution which artifacts to use, which files it owns, and how to report completion. The prompts in the playbook should describe each agent's responsibility, the process it follows, its handoffs, and the human checkpoints required by the process. Leave tool authorization and execution-completion procedures to the harness and runtime.
 
 ### Define responsibilities and handoffs
 
@@ -304,7 +304,7 @@ In the example, B requires a `ticket.md` output. If B pauses without writing a n
 
 The engine gives each execution concrete input occurrences and output paths. For example, the logical role `square.md` may have the physical filename `4-square-2.md`. Steps declare the logical role and receive the appropriate accepted occurrence.
 
-Filename prefixes and suffixes do not establish chronology, loop counts or relationships between inputs. Generated prompts should use the engine's assignments when reading and writing artifacts.
+Filename prefixes and suffixes do not establish chronology, loop counts or relationships between inputs. The prompts in the playbook should use the engine's assignments when reading and writing artifacts.
 
 ### Pause at the human checkpoints defined by the process
 
@@ -334,7 +334,7 @@ The supported tokens are exactly `\{{ARTIFACTS_DIR}}`, `\{{ARTIFACT_FILE}}`, `\{
 
 Use unescaped tokens in the candidate wherever the candidate's runtime values should be inserted. For example, a prompt can name `\{{TASK_NAME}}` and refer to `\{{ARTIFACTS_DIR}}`. Use the engine's assignment block for the exact paths to read and write. `\{{ARTIFACT_FILE}}` identifies only the first exact output, so it cannot address every output of a step that produces several files. `\{{TICKET_FILE}}` does not take precedence over the ticket assigned to the current execution. Include `\{{PROMPT_EXTRA}}` once where additional user instructions belong.
 
-When a token should remain a literal example as the candidate runs, put one backslash before it in the candidate source. Each substitution pass consumes one level of escaping, and inserted values are not expanded recursively. Keep operational tokens unescaped so they receive the candidate's own runtime values. Do not copy paths already expanded for this authoring task into the generated playbook. Code fences do not prevent token expansion, and unknown unescaped tokens are invalid.
+When a token should remain a literal example as the candidate runs, put one backslash before it in the candidate source. Each substitution pass consumes one level of escaping, and inserted values are not expanded recursively. Keep operational tokens unescaped so they receive the candidate's own runtime values. Do not copy paths already expanded for this authoring task into the playbook you are writing. Code fences do not prevent token expansion, and unknown unescaped tokens are invalid.
 
 ### Walk through the playbook before saving
 
