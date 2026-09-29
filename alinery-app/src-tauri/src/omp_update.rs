@@ -172,13 +172,25 @@ pub(crate) fn omp_update_status_now() -> OmpUpdateStatus {
 }
 
 #[tauri::command]
-pub(crate) fn check_omp_update(app: AppHandle) -> OmpUpdateStatus {
-    let mut status = omp_update_status_now();
-    if let Ok(app_config) = app_config_path(&app) {
-        let (agent_dir, _) = alinery_core::omp_home_dirs(&app_config);
-        status.config_dir = agent_dir.display().to_string();
-    }
-    status
+pub(crate) async fn check_omp_update(app: AppHandle) -> OmpUpdateStatus {
+    // `omp --version` plus the GitHub request. A sync command runs both on the main
+    // thread, so the launch poll and Settings freeze the window.
+    let joined = tauri::async_runtime::spawn_blocking(move || {
+        let mut status = omp_update_status_now();
+        if let Ok(app_config) = app_config_path(&app) {
+            let (agent_dir, _) = alinery_core::omp_home_dirs(&app_config);
+            status.config_dir = agent_dir.display().to_string();
+        }
+        status
+    })
+    .await;
+    joined.unwrap_or_else(|_| OmpUpdateStatus {
+        installed: String::new(),
+        available: None,
+        checked_at: now_unix(),
+        binary_path: String::new(),
+        config_dir: String::new(),
+    })
 }
 
 fn curl_download_to(url: &str, dest: &Path) -> Result<(), String> {
@@ -191,7 +203,13 @@ fn sums_url_for_asset(asset_url: &str) -> Option<String> {
 }
 
 #[tauri::command]
-pub(crate) fn update_omp(_app: AppHandle) -> Result<String, String> {
+pub(crate) async fn update_omp(_app: AppHandle) -> Result<String, String> {
+    // The asset download is allowed to take minutes. Keep it off the main thread.
+    let joined = tauri::async_runtime::spawn_blocking(update_omp_blocking).await;
+    joined.map_err(|e| format!("update omp task: {e}"))?
+}
+
+fn update_omp_blocking() -> Result<String, String> {
     let dest = alinery_core::resolve_packaged_omp_path()?;
     let asset_name = omp_github_asset_name().ok_or_else(|| "this host is not a shipped OMP triple".to_string())?;
     let body = fetch_github_latest()?;

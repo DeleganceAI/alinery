@@ -258,20 +258,30 @@ fn update_check_enabled(app: &AppHandle) -> bool {
 
 /// Never `Err`: a network or parse failure must not be representable to the frontend, so it
 /// degrades to "no update" the same way `useDaemonStatus` degrades to `OFFLINE`.
+/// The fetch runs on the blocking pool. A sync command would hold the main thread for the
+/// whole timeout, including the background poll that fires without a click.
 #[tauri::command]
-pub(crate) fn check_update(app: AppHandle) -> UpdateStatus {
-    let current = env!("CARGO_PKG_VERSION");
-    let now = now_unix();
-    let allowed = is_production_identity() && update_check_enabled(&app);
-    if !allowed {
-        return UpdateStatus {
-            current: current.to_string(),
-            available: None,
-            checked_at: now,
-        };
-    }
-    let body = fetch_manifest(&manifest_url()).unwrap_or_default();
-    evaluate_update(current, HOST_TRIPLE, &body, now, true)
+pub(crate) async fn check_update(app: AppHandle) -> UpdateStatus {
+    let joined = tauri::async_runtime::spawn_blocking(move || {
+        let current = env!("CARGO_PKG_VERSION");
+        let now = now_unix();
+        let allowed = is_production_identity() && update_check_enabled(&app);
+        if !allowed {
+            return UpdateStatus {
+                current: current.to_string(),
+                available: None,
+                checked_at: now,
+            };
+        }
+        let body = fetch_manifest(&manifest_url()).unwrap_or_default();
+        evaluate_update(current, HOST_TRIPLE, &body, now, true)
+    })
+    .await;
+    joined.unwrap_or_else(|_| UpdateStatus {
+        current: env!("CARGO_PKG_VERSION").to_string(),
+        available: None,
+        checked_at: now_unix(),
+    })
 }
 
 fn curl_download_file(url: &str, dest: &Path, max_bytes: u64) -> Result<(), String> {
@@ -361,16 +371,22 @@ fn download_and_stage(release: &UpdateRelease, scratch_dir: &Path) -> Result<Sta
 }
 
 #[tauri::command]
-pub(crate) fn download_update(version: String) -> Result<StagedUpdate, String> {
-    require_production()?;
-    let release = offered_release(&version)?;
-    let scratch_dir = process_scratch_dir();
-    fs::create_dir_all(&scratch_dir).map_err(|e| format!("create scratch dir: {e}"))?;
-    let staged = download_and_stage(&release, &scratch_dir);
-    if staged.is_err() {
-        let _ = fs::remove_dir_all(&scratch_dir);
-    }
-    staged
+pub(crate) async fn download_update(version: String) -> Result<StagedUpdate, String> {
+    // Download, checksum, and ditto take minutes. On the main thread that is a frozen
+    // window, not a busy button.
+    let joined = tauri::async_runtime::spawn_blocking(move || {
+        require_production()?;
+        let release = offered_release(&version)?;
+        let scratch_dir = process_scratch_dir();
+        fs::create_dir_all(&scratch_dir).map_err(|e| format!("create scratch dir: {e}"))?;
+        let staged = download_and_stage(&release, &scratch_dir);
+        if staged.is_err() {
+            let _ = fs::remove_dir_all(&scratch_dir);
+        }
+        staged
+    })
+    .await;
+    joined.map_err(|e| format!("download update task: {e}"))?
 }
 
 /// Probe writability by actually creating and removing a marker file — a `readonly()`
@@ -404,7 +420,14 @@ fn write_executable_script(path: &Path, contents: &str) -> Result<(), String> {
 /// `preflight_gate`. Returns as soon as the helper is spawned; the window's own destroy
 /// is the frontend's job, not this command's.
 #[tauri::command]
-pub(crate) fn apply_update(version: String) -> Result<(), String> {
+pub(crate) async fn apply_update(version: String) -> Result<(), String> {
+    // Re-fetches the manifest and may download and extract again. Same main-thread
+    // freeze as `download_update` if this stays synchronous.
+    let joined = tauri::async_runtime::spawn_blocking(move || apply_update_blocking(version)).await;
+    joined.map_err(|e| format!("apply update task: {e}"))?
+}
+
+fn apply_update_blocking(version: String) -> Result<(), String> {
     require_production()?;
     let release = offered_release(&version)?;
     let scratch_dir = process_scratch_dir();
