@@ -14,8 +14,8 @@ pub(crate) fn shell_quote(s: &str) -> String {
 // Model suggestions for a harness's picker: its static `models` plus, if the harness
 // defines a `models_cmd`, whatever that command prints (one model per line). Never fails
 // — a missing repo, unknown harness, or a failing/hanging command just yields the statics.
-// ponytail: no timeout on models_cmd; a hung list command blocks this call. Add a timeout
-// if a real harness ever ships a slow one.
+// ponytail: no timeout on models_cmd; a hung list command blocks this worker. The Tauri
+// commands below run it off the webview thread. Add a timeout if that hang needs a bound.
 pub(crate) fn list_harness_models_in(app_config: &Path, repo: &Path, harness: &str) -> Vec<String> {
     if !alinery_core::is_allowed_launch_harness(harness) || harness == alinery_core::NO_HARNESS_KEY {
         return vec![];
@@ -54,16 +54,21 @@ pub(crate) fn list_harness_models_in(app_config: &Path, repo: &Path, harness: &s
 }
 
 #[tauri::command]
-pub(crate) fn list_harness_models(app: AppHandle, harness: String) -> Vec<String> {
-    match (active_repo(), app_config_path(&app)) {
+pub(crate) async fn list_harness_models(app: AppHandle, harness: String) -> Vec<String> {
+    // `models_cmd` is a login shell plus `omp models`. Never run that on the webview thread.
+    tauri::async_runtime::spawn_blocking(move || match (active_repo(), app_config_path(&app)) {
         (Ok(repo), Ok(app_config)) => list_harness_models_in(&app_config, &repo, &harness),
         _ => vec![],
-    }
+    })
+    .await
+    .unwrap_or_default()
 }
 
 #[tauri::command]
-pub(crate) fn list_harness_models_for_repo(app: AppHandle, repo_path: String, harness: String) -> Result<Vec<String>, String> {
-    Ok(list_harness_models_in(&app_config_path(&app)?, &target_repo_for_app(&app, &repo_path)?, &harness))
+pub(crate) async fn list_harness_models_for_repo(app: AppHandle, repo_path: String, harness: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || Ok(list_harness_models_in(&app_config_path(&app)?, &target_repo_for_app(&app, &repo_path)?, &harness)))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 // ---- Scoped settings ----------------------------------------------------------
