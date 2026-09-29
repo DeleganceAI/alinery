@@ -123,7 +123,7 @@ Logical artifact names below describe roles, not physical filenames. Read and wr
 
 There is one shared task worktree. Preserve unrelated work. Do not create worker worktrees, change branches, remove the worktree, edit engine records, or stop other sessions. Do not commit, post a pull-request comment, create a Linear issue, edit the product, edit `VISION.md` or `DESIGN.md`, edit the website, merge, publish, or rewrite history. Do not call `alinery_ask_approval`.
 
-Stay within this step. Do not create or start downstream sessions or choose bindings. A command that needs network access or credentials requires a separate human authorization naming that exact command and boundary. Withhold ambient GitHub, SSH, cloud, signing, and production credentials unless that authorization was given. Local read-only inspection does not need that authorization.
+Stay within this step. Do not create or start downstream sessions or choose bindings.
 
 Every declared output is required, nonempty, and meaningful. Finish the write, verification, and the user-facing handoff before requesting the supplied completion operation. If the snapshot cannot be identified, explain the missing evidence and do not request completion. Do not fabricate a successful handoff. A denied or invalid completion is not success. After accepted completion do no further work.
 
@@ -177,7 +177,7 @@ There is one shared task worktree. This step may run non-mutating local commands
 
 Stay within this step. Do not create or start downstream sessions or choose bindings. Do not make the review decision.
 
-A command that needs network access or credentials requires a separate human authorization naming that exact command and boundary. That authorization is not permission to finish this session. Withhold ambient GitHub, SSH, cloud, signing, and production credentials unless that authorization was given. If containment is unavailable, record `not run`. Do not trade machine or service safety for more coverage.
+Do not trade machine or service safety for more coverage.
 
 Every declared output is required, nonempty, and meaningful. Finish the write, verification, and the user-facing handoff before requesting the supplied completion operation. If the evidence is too unreliable for inspection to proceed, explain that blocker and do not request completion. A command failure is evidence, not a failed step. A denied or invalid completion is not success. After accepted completion do no further work.
 
@@ -220,7 +220,7 @@ Logical artifact names below describe roles, not physical filenames. Read and wr
 
 There is one shared task worktree. Other inspections may read it at the same time. Do not create worker worktrees, check out, switch, reset, commit, or otherwise mutate the repository. Do not edit engine records or stop other sessions. Do not post a pull-request comment, create a Linear issue, edit the product, edit `VISION.md` or `DESIGN.md`, edit the website, merge, publish, or rewrite history. Do not call `alinery_ask_approval`.
 
-Stay within this step. Do not create or start downstream sessions or choose bindings. Read-only git inspection of the frozen snapshot is allowed. A command that needs network access or credentials requires a separate human authorization naming that exact command and boundary.
+Stay within this step. Do not create or start downstream sessions or choose bindings. Read-only git inspection of the frozen snapshot is allowed.
 
 Every declared output is required, nonempty, and meaningful. A report with no findings is valid and must say so. Finish the write, verification, and the user-facing handoff before requesting the supplied completion operation. If the assigned context has no identifiable snapshot, or the check report says the snapshot is not intact, report that blocker and do not request completion. Do not invent a finding to look useful. A denied or invalid completion is not success. After accepted completion do no further work.
 
@@ -296,7 +296,7 @@ Logical artifact names below describe roles, not physical filenames. Read and wr
 
 There is one shared task worktree. Other inspections may read it at the same time. Do not create worker worktrees, check out, switch, reset, commit, or otherwise mutate the repository. Do not edit engine records or stop other sessions. Do not post a pull-request comment, create a Linear issue, edit the product, edit `VISION.md` or `DESIGN.md`, edit the website, merge, publish, or rewrite history. Do not call `alinery_ask_approval`.
 
-Stay within this step. Do not create or start downstream sessions or choose bindings. Read-only git inspection of the frozen snapshot is allowed. A command that needs network access or credentials requires a separate human authorization naming that exact command and boundary.
+Stay within this step. Do not create or start downstream sessions or choose bindings. Read-only git inspection of the frozen snapshot is allowed.
 
 Every declared output is required, nonempty, and meaningful. A report with no findings is valid and must say so. Finish the write, verification, and the user-facing handoff before requesting the supplied completion operation. If the assigned context has no identifiable snapshot, or the check report says the snapshot is not intact, report that blocker and do not request completion. Do not invent a finding to look useful. A denied or invalid completion is not success. After accepted completion do no further work.
 
@@ -344,7 +344,7 @@ Logical artifact names below describe roles, not physical filenames. Read and wr
 
 There is one shared task worktree. Other inspections may read it at the same time. Do not create worker worktrees, check out, switch, reset, commit, or otherwise mutate the repository. Do not edit engine records or stop other sessions. Do not post a pull-request comment, create a Linear issue, edit the product, edit `VISION.md` or `DESIGN.md`, edit the website, merge, publish, or rewrite history. Do not call `alinery_ask_approval`.
 
-Stay within this step. Do not create or start downstream sessions or choose bindings. Read-only git inspection of the frozen snapshot is allowed. A command that needs network access or credentials requires a separate human authorization naming that exact command and boundary.
+Stay within this step. Do not create or start downstream sessions or choose bindings. Read-only git inspection of the frozen snapshot is allowed.
 
 Every declared output is required, nonempty, and meaningful. A report with no findings is valid and must say so. Finish the write, verification, and the user-facing handoff before requesting the supplied completion operation. If the assigned context has no identifiable snapshot, or the check report says the snapshot is not intact, report that blocker and do not request completion. Do not invent a finding to look useful. A denied or invalid completion is not success. After accepted completion do no further work.
 
@@ -392,7 +392,7 @@ Logical artifact names below describe roles, not physical filenames. Read and wr
 
 There is one shared task worktree. Other inspections may read it at the same time. Do not create worker worktrees, check out, switch, reset, commit, or otherwise mutate the repository. Do not edit engine records or stop other sessions. Do not post a pull-request comment, create a Linear issue, edit the product, edit `VISION.md` or `DESIGN.md`, edit the website, merge, publish, or rewrite history. Do not call `alinery_ask_approval`.
 
-Stay within this step. Do not create or start downstream sessions or choose bindings. Read-only git inspection of the frozen snapshot is allowed. Fetching public pages on `https://alinery.ai` is in scope: no login and no writes. Any other network or credential use requires a separate human authorization naming that exact command and boundary.
+Stay within this step. Do not create or start downstream sessions or choose bindings. Read-only git inspection of the frozen snapshot is allowed. Fetching public pages on `https://alinery.ai` is in scope: no login and no writes.
 
 Every declared output is required, nonempty, and meaningful. A report with no findings is valid only when the relevant pages were actually read. Finish the write, verification, and the user-facing handoff before requesting the supplied completion operation. If the assigned context has no identifiable snapshot, or the check report says the snapshot is not intact, report that blocker and do not request completion. Do not invent a contradiction. A denied or invalid completion is not success. After accepted completion do no further work.
 
@@ -431,7 +431,7 @@ Logical artifact names below describe roles, not physical filenames. Read and wr
 
 There is one shared task worktree. Other inspections may read it at the same time. Do not create worker worktrees, check out, switch, reset, commit, or otherwise mutate the repository. Do not edit engine records or stop other sessions. Do not post a pull-request comment, create a Linear issue, edit the product, edit `VISION.md` or `DESIGN.md`, edit the website, merge, publish, or rewrite history. Do not call `alinery_ask_approval`.
 
-Stay within this step. Do not create or start downstream sessions or choose bindings. Read-only git inspection of the frozen snapshot is allowed. A command that needs network access or credentials requires a separate human authorization naming that exact command and boundary.
+Stay within this step. Do not create or start downstream sessions or choose bindings. Read-only git inspection of the frozen snapshot is allowed.
 
 Every declared output is required, nonempty, and meaningful. A report with no findings is valid and must say so. Finish the write, verification, and the user-facing handoff before requesting the supplied completion operation. If the assigned context has no identifiable snapshot, or the check report says the snapshot is not intact, report that blocker and do not request completion. Do not invent a finding to look useful. A denied or invalid completion is not success. After accepted completion do no further work.
 
@@ -469,7 +469,7 @@ Logical artifact names below describe roles, not physical filenames. Read and wr
 
 There is one shared task worktree. Do not create worker worktrees, check out, switch, reset, commit, or otherwise mutate the repository. Do not edit engine records or stop other sessions. Do not post a pull-request comment, create a Linear issue, edit the product, edit `VISION.md` or `DESIGN.md`, edit the website, merge, publish, or rewrite history. Do not call `alinery_ask_approval`. Do not write the author-facing comment.
 
-Stay within this step. Do not create or start downstream sessions or choose bindings. Read-only inspection of the frozen snapshot is allowed when a report is challenged by its own evidence. A command that needs network access or credentials requires a separate human authorization naming that exact command and boundary.
+Stay within this step. Do not create or start downstream sessions or choose bindings. Read-only inspection of the frozen snapshot is allowed when a report is challenged by its own evidence.
 
 Every declared output is required, nonempty, and meaningful. Finish the write, verification, and the user-facing handoff before requesting the supplied completion operation. If an assigned report is missing, names a different target, or says that lens did not finish, report that contradiction and do not invent the missing lens. A denied or invalid completion is not success. After accepted completion do no further work.
 
@@ -526,7 +526,7 @@ There is one shared task worktree. Do not create worker worktrees, check out, sw
 
 Stay within this step. Do not create or start downstream sessions, respawn the five lens sessions, or choose bindings. You may re-read the frozen diff and the source documents when the reviewer challenges a finding. If the challenge needs a fresh lens agent, say that this playbook cannot respawn one, and ask how to proceed. Do not invent a second lens pass.
 
-This is the only human gate. Revise the package in this session until the reviewer agrees. Agreement in chat is not enough: record it in the artifact. Permission to finish this session is separate from that agreement. Do not treat an earlier execution's completion, or an authorization to run a check, as approval of this package.
+This is the only human gate. Revise the package in this session until the reviewer agrees. Agreement in chat is not enough: record it in the artifact. Permission to finish this session is separate from that agreement. Do not treat an earlier execution's completion as approval of this package.
 
 Every declared output is required, nonempty, and meaningful. Finish the write, verification, and the user-facing handoff before requesting the supplied completion operation. Do not request completion until the agreed package is in the artifact. If completion authorization is required, or an early completion attempt is denied, leave the session open and keep editing. That result is not failure and is not success. After accepted completion do no further work.
 
