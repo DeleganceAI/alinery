@@ -177,8 +177,6 @@ There is one shared task worktree. This step may run non-mutating local commands
 
 Stay within this step. Do not create or start downstream sessions or choose bindings. Do not make the review decision.
 
-Do not trade machine or service safety for more coverage.
-
 Every declared output is required, nonempty, and meaningful. Finish the write, verification, and the user-facing handoff before requesting the supplied completion operation. If the evidence is too unreliable for inspection to proceed, explain that blocker and do not request completion. A command failure is evidence, not a failed step. A denied or invalid completion is not success. After accepted completion do no further work.
 
 Additional user instructions:
