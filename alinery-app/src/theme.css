@@ -5672,7 +5672,7 @@ dialog.modal::backdrop {
   justify-content: center;
   gap: 8px;
 }
-/* Icon actions, so the community table does not grow a horizontal scroller for button labels. */
+/* Row actions stay icon-sized except Publish, which keeps its label. */
 .playbooks-community-table {
   min-width: 0;
 }
@@ -5682,13 +5682,16 @@ dialog.modal::backdrop {
 }
 .playbooks-community-table th:last-child,
 .playbooks-community-table td:last-child {
-  width: 96px;
+  width: 132px;
   text-align: right;
 }
 .playbooks-row-actions .btn.icon {
   width: 28px;
   min-width: 28px;
   padding: 0;
+}
+.playbooks-row-actions .btn:not(.icon) {
+  gap: 6px;
 }
 .playbooks-identity {
   display: flex;
