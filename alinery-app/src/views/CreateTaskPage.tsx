@@ -135,7 +135,6 @@ export function CreateTaskPage({
   const draftIdentities = useRef(new Map(initialDraft ? [[initialDraft.repo_path, initialDraft.slug]] : []));
   const draftWriteGeneration = useRef(0);
   const targetRequest = useRef(0);
-  const modelRequest = useRef(0);
   const initialTargetLoaded = useRef(false);
   const repoRef = useRef(repoPath);
   const ticketLoaded = useRef(false);
@@ -218,6 +217,11 @@ export function CreateTaskPage({
     return () => window.clearTimeout(t);
   }, []);
 
+  // The opening toast clears on the first frame. Catalog and settings fill in after that.
+  useEffect(() => {
+    onOpenedRef.current();
+  }, []);
+
   useEffect(() => {
     repoRef.current = repoPath;
   }, [repoPath]);
@@ -281,36 +285,11 @@ export function CreateTaskPage({
           setPlaybookNeedsReselection(true);
           setErr({ msg: "Couldn't load repository settings.", detail: String(e) });
         }
-      })
-      .finally(() => {
-        if (alive && request === targetRequest.current) onOpenedRef.current();
       });
     return () => {
       alive = false;
     };
   }, [repoPath, catalogRevision]);
-
-  useEffect(() => {
-    let alive = true;
-    const request = ++modelRequest.current;
-    ipc
-      .listHarnessModelsForRepo(repoPath, harness)
-      .then((models) => {
-        if (!alive || request !== modelRequest.current) return;
-        if (model && models.length && !models.includes(model)) {
-          setModel("");
-          setModelNeedsReselection(true);
-        } else {
-          setModelNeedsReselection(false);
-        }
-      })
-      .catch(() => {
-        if (alive && request === modelRequest.current) setModelNeedsReselection(false);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [repoPath, harness]);
 
   useEffect(() => {
     let alive = true;

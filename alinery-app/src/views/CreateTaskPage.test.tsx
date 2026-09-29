@@ -173,7 +173,7 @@ describe("provider imports", () => {
     await screen.findByRole("radiogroup", { name: "Choose playbook" });
 
     expect(ipc.connectionStatuses).not.toHaveBeenCalled();
-    await waitFor(() => expect(ipc.listHarnessModelsForRepo).toHaveBeenCalledWith("/repo", "omp"));
+    expect(ipc.listHarnessModelsForRepo).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("Initial harness")).toBeNull();
     expect(screen.queryByLabelText("Harness")).toBeNull();
     expect(screen.getByRole("button", { name: "GitHub" })).toBeDefined();
@@ -725,7 +725,7 @@ describe("v2 task creation", () => {
 });
 
 describe("task creation feedback", () => {
-  it("signals opened only after repository settings settle", async () => {
+  it("signals opened before repository settings settle", async () => {
     let finishConfig!: (config: Config) => void;
     readConfigForRepo.mockReturnValue(
       new Promise<Config>((resolve) => {
@@ -734,10 +734,8 @@ describe("task creation feedback", () => {
     );
     const onOpened = vi.fn();
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} onOpened={onOpened} />);
-    expect(onOpened).not.toHaveBeenCalled();
-
-    finishConfig({ defaults: { harness: "claude", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true } } as Config);
     await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(1));
+    finishConfig({ defaults: { harness: "claude", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true } } as Config);
   });
 
   const startCreate = async (onCreated: (result: TargetedCreateResult) => void) => {

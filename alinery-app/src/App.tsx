@@ -855,8 +855,8 @@ export default function App() {
   const openCreate = (initialPlaybook?: PlaybookRef) => {
     setSearchOpen(false);
     if (taskMutationGuard.refuseIfBusy()) return;
-    // Every task-creation entrypoint lands here. Paint the opening toast before the
-    // form mounts — its settings IPC is what freezes the window.
+    // Every task-creation entrypoint lands here. Paint the opening toast, then the
+    // form. The form clears the toast on its first frame; catalog loading follows.
     const from = view;
     flushSync(() => setBusy("open-create"));
     void afterPaint().then(() => setView({ kind: "create", from, initialPlaybook }));

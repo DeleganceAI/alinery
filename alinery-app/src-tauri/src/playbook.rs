@@ -16,20 +16,34 @@ pub(crate) fn library_roots(app: &AppHandle, repo_path: Option<&str>) -> Result<
 }
 
 #[tauri::command]
-pub(crate) fn list_playbook_catalog(app: AppHandle, repo_path: Option<String>) -> Result<PlaybookCatalog, String> {
-    Ok(library::load_playbook_catalog(&library_roots(&app, repo_path.as_deref())?))
+pub(crate) async fn list_playbook_catalog(app: AppHandle, repo_path: Option<String>) -> Result<PlaybookCatalog, String> {
+    // Parsing every playbook is disk work. Keep it off the webview thread so New Task can paint.
+    tauri::async_runtime::spawn_blocking(move || Ok(library::load_playbook_catalog(&library_roots(&app, repo_path.as_deref())?)))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn read_playbook(app: AppHandle, reference: PlaybookRef, repo_path: Option<String>) -> Result<ScopedPlaybook, PlaybookLoadError> {
-    let roots = library_roots(&app, repo_path.as_deref()).map_err(|message| PlaybookLoadError::Io {
+pub(crate) async fn read_playbook(app: AppHandle, reference: PlaybookRef, repo_path: Option<String>) -> Result<ScopedPlaybook, PlaybookLoadError> {
+    let reference_for_join = reference.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let roots = library_roots(&app, repo_path.as_deref()).map_err(|message| PlaybookLoadError::Io {
+            source: library::PlaybookSource {
+                reference: reference.clone(),
+                path: None,
+            },
+            message,
+        })?;
+        library::resolve_playbook(&roots, &reference)
+    })
+    .await
+    .map_err(|error| PlaybookLoadError::Io {
         source: library::PlaybookSource {
-            reference: reference.clone(),
+            reference: reference_for_join,
             path: None,
         },
-        message,
-    })?;
-    library::resolve_playbook(&roots, &reference)
+        message: error.to_string(),
+    })?
 }
 
 #[derive(Serialize)]
