@@ -14,6 +14,16 @@ function subscribe(listener: () => void) {
 }
 const getRevision = () => revision;
 const isVisible = () => document.visibilityState !== "hidden";
+const RATE_LIMIT_FALLBACK_MS = 15 * 60_000;
+
+function nextRefreshAt(entry: CacheEntry | undefined): number {
+  if (!entry?.snapshot) return 0;
+  return Math.max(entry.updatedAt + FRESH_MS, entry.snapshot.retry_at_ms ?? 0);
+}
+
+function rateLimited(snapshot: PullRequestSnapshot): boolean {
+  return snapshot.retry_at_ms != null || /rate limit/i.test(snapshot.error ?? "");
+}
 
 async function refresh(tasks: TaskActivityRef[]) {
   const pending = new Set<Promise<void>>();
@@ -22,7 +32,7 @@ async function refresh(tasks: TaskActivityRef[]) {
     const key = `${task.repoPath}:${task.taskSlug}`;
     const entry = cache.get(key);
     if (entry?.inFlight) pending.add(entry.inFlight);
-    else if (!entry?.snapshot || Date.now() - entry.updatedAt >= FRESH_MS) missing.set(key, task);
+    else if (Date.now() >= nextRefreshAt(entry)) missing.set(key, task);
   }
   if (missing.size) {
     // Defer IPC until every entry is marked pending so overlapping consumers share it.
@@ -36,8 +46,13 @@ async function refresh(tasks: TaskActivityRef[]) {
         for (const key of missing.keys()) {
           const previous = cache.get(key)?.snapshot;
           const next = snapshots[key] ?? { pr: null, error: "Pull request status was not returned" };
+          const limited = rateLimited(next);
           cache.set(key, {
-            snapshot: next.error ? { pr: next.pr ?? previous?.pr ?? null, error: next.error } : next,
+            snapshot: limited
+              ? { pr: next.pr ?? previous?.pr ?? null, error: null, retry_at_ms: next.retry_at_ms ?? Date.now() + RATE_LIMIT_FALLBACK_MS }
+              : next.error
+                ? { pr: next.pr ?? previous?.pr ?? null, error: next.error }
+                : next,
             updatedAt: Date.now(),
           });
         }
@@ -72,7 +87,7 @@ export function useTaskPullRequests(tasks: readonly TaskActivityRef[]): Record<s
       } finally {
         running = false;
         if (alive && isVisible()) {
-          const nextRefresh = Math.min(...refs.map((ref) => (cache.get(`${ref.repoPath}:${ref.taskSlug}`)?.updatedAt ?? 0) + FRESH_MS));
+          const nextRefresh = Math.min(...refs.map((ref) => nextRefreshAt(cache.get(`${ref.repoPath}:${ref.taskSlug}`))));
           timer = window.setTimeout(() => void load(), Math.max(0, nextRefresh - Date.now()));
         }
       }

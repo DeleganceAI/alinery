@@ -5,8 +5,11 @@ import { toast } from "./toast";
 import type { PullRequestSnapshot } from "./types";
 
 export function PullRequestIndicator({ snapshot, compact = false }: { snapshot?: PullRequestSnapshot; compact?: boolean }) {
-  if (!snapshot || (!snapshot.pr && !snapshot.error)) return null;
-  const { pr, error } = snapshot;
+  if (!snapshot) return null;
+  const rateLimited = snapshot.retry_at_ms != null || /rate limit/i.test(snapshot.error ?? "");
+  const pr = snapshot.pr;
+  const error = rateLimited ? null : snapshot.error;
+  if (!pr && !error) return null;
   if (!pr) {
     const label = `Pull request status unavailable: ${error}`;
     return (

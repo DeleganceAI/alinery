@@ -10,6 +10,7 @@ use std::time::Duration;
 pub struct HttpResponse {
     pub status: u16,
     pub body: Vec<u8>,
+    pub headers: Vec<(String, String)>,
 }
 
 const DEFAULT_MAX_BODY: u64 = 16 * 1024 * 1024;
@@ -80,12 +81,16 @@ fn agent(url: &str, connect_timeout: Duration, total_timeout: Duration) -> ureq:
 
 fn read_limited(resp: ureq::Response, max: u64) -> Result<HttpResponse, String> {
     let status = resp.status();
+    let headers = ["retry-after", "x-ratelimit-reset", "x-ratelimit-remaining"]
+        .into_iter()
+        .filter_map(|name| resp.header(name).map(|value| (name.to_string(), value.to_string())))
+        .collect();
     let mut body = Vec::new();
     resp.into_reader().take(max.saturating_add(1)).read_to_end(&mut body).map_err(|e| e.to_string())?;
     if body.len() as u64 > max {
         return Err(format!("response exceeded {max} bytes"));
     }
-    Ok(HttpResponse { status, body })
+    Ok(HttpResponse { status, body, headers })
 }
 
 fn transport_error(error: &ureq::Error) -> String {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
+import { PullRequestIndicator } from "../PullRequestIndicator";
 import {
   ArchiveTaskModal,
   Checkbox,
@@ -17,7 +18,8 @@ import {
   taskKey,
   useBoardTaskActivity,
 } from "../shared";
-import type { BoardNav, BoardTask, TaskActivitySession } from "../types";
+import type { BoardNav, BoardTask, PullRequestSnapshot, TaskActivitySession } from "../types";
+import { useTaskPullRequests } from "../useTaskPullRequests";
 
 export type TaskListRow = {
   task: BoardTask;
@@ -65,6 +67,22 @@ export function flattenTaskRows(tasks: BoardTask[]): TaskListRow[] {
   return rows;
 }
 
+const PULL_REQUEST_RANK = { open: 0, merged: 1, closed: 2 } as const;
+type TaskListPrSort = "tree" | "open-first" | "none-first";
+
+function orderTaskListRowsByPullRequest(rows: TaskListRow[], snapshots: Record<string, PullRequestSnapshot>, sort: Exclude<TaskListPrSort, "tree">): TaskListRow[] {
+  const direction = sort === "open-first" ? 1 : -1;
+  return rows
+    .map((row) => ({ ...row, depth: 0 }))
+    .sort((left, right) => {
+      const leftState = snapshots[taskKey(left.task)]?.pr?.state;
+      const rightState = snapshots[taskKey(right.task)]?.pr?.state;
+      const leftRank = leftState ? PULL_REQUEST_RANK[leftState] : 3;
+      const rightRank = rightState ? PULL_REQUEST_RANK[rightState] : 3;
+      return direction * (leftRank - rightRank) || compareTaskRows(left.task, right.task);
+    });
+}
+
 type ErrState = { msg: string; detail: string } | null;
 export function TaskList({
   allRepos,
@@ -87,7 +105,10 @@ export function TaskList({
   const [err, setErr] = useState<ErrState>(null);
   const [pendingArchive, setPendingArchive] = useState<BoardTask | null>(null);
   const [showArchived, setShowArchived] = useState(false);
-  const rows = flattenTaskRows(tasks);
+  const [prSort, setPrSort] = useState<TaskListPrSort>("tree");
+  const treeRows = flattenTaskRows(tasks);
+  const pullRequests = useTaskPullRequests(treeRows.filter((row) => !row.task.draft).map((row) => ({ repoPath: row.task.repo_path, taskSlug: row.task.slug })));
+  const rows = prSort === "tree" ? treeRows : orderTaskListRowsByPullRequest(treeRows, pullRequests, prSort);
   const activity = useBoardTaskActivity(rows.map((row) => row.task));
   const bodyRef = useRef<HTMLTableSectionElement | null>(null);
 
@@ -199,6 +220,22 @@ export function TaskList({
                 <th className="num-col">Sessions</th>
                 <th className="age-col">Created</th>
                 <th className="age-col">Updated</th>
+                <th className="pr-col" aria-sort={prSort === "open-first" ? "descending" : prSort === "none-first" ? "ascending" : undefined}>
+                  <button
+                    type="button"
+                    className={`task-sort-header${prSort === "tree" ? "" : " active"}`}
+                    aria-label={
+                      prSort === "open-first"
+                        ? "PR, open first. Activate to sort with no pull request first"
+                        : prSort === "none-first"
+                          ? "PR, no pull request first. Activate to restore task order"
+                          : "Sort by PR status, open first"
+                    }
+                    onClick={() => setPrSort((sort) => (sort === "tree" ? "open-first" : sort === "open-first" ? "none-first" : "tree"))}
+                  >
+                    PR{prSort === "tree" ? "" : prSort === "open-first" ? " ↓" : " ↑"}
+                  </button>
+                </th>
               </tr>
             </thead>
             <tbody ref={bodyRef}>
@@ -264,6 +301,9 @@ export function TaskList({
                     </td>
                     <td className="age-cell age-col" title={formatAbsolute(updated)}>
                       {formatAge(updated)}
+                    </td>
+                    <td className="pr-col">
+                      <PullRequestIndicator snapshot={pullRequests[taskKey(t)]} compact />
                     </td>
                   </tr>
                 );

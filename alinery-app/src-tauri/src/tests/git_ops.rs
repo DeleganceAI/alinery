@@ -255,6 +255,26 @@ fn pull_request_batch_bounds_concurrency_deduplicates_and_isolates_errors() {
     assert!(crate::task_pull_request_snapshots_with(vec![], |_| panic!("empty batch must not look up a task")).is_empty());
 }
 
+#[test]
+fn github_rate_limit_waits_for_reset_and_does_not_surface_the_error() {
+    let now = 1_700_000_000;
+    assert_eq!(
+        crate::github_rate_limit_wait(403, &[("x-ratelimit-reset", "1700000900")], "API rate limit exceeded", now),
+        Some(Duration::from_secs(900))
+    );
+    assert_eq!(crate::github_rate_limit_wait(429, &[("retry-after", "30")], "", now), Some(Duration::from_secs(30)));
+    assert_eq!(crate::github_rate_limit_wait(403, &[], "Requires authentication", now), None);
+    assert_eq!(crate::github_rate_limit_wait(403, &[], "API rate limit exceeded", now), Some(Duration::from_secs(15 * 60)));
+
+    let hidden = crate::snapshot_from_lookup(Err("GitHub rate limit; retry at 1700000900000".into()));
+    assert!(hidden.pr.is_none());
+    assert!(hidden.error.is_none());
+    assert_eq!(hidden.retry_at_ms, Some(1_700_000_900_000));
+    let failed = crate::snapshot_from_lookup(Err("lookup failed".into()));
+    assert_eq!(failed.error.as_deref(), Some("lookup failed"));
+    assert!(failed.retry_at_ms.is_none());
+}
+
 fn github_pull_fixture(number: u64, owner: &str, branch: &str, state: &str, merged: bool) -> serde_json::Value {
     serde_json::json!({
         "number": number,

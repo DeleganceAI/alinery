@@ -55,6 +55,18 @@ describe("PullRequestIndicator", () => {
     expect(screen.queryByRole("link")).toBeNull();
   });
 
+  it("shows nothing for a rate limit and keeps a known pull request without the failure text", () => {
+    const { container, rerender } = render(
+      <PullRequestIndicator snapshot={{ pr: null, error: "GitHub PR lookup failed: HTTP 403 rate limit exceeded", retry_at_ms: 1 }} compact />,
+    );
+    expect(container.textContent).toBe("");
+    expect(screen.queryByRole("img")).toBeNull();
+    rerender(<PullRequestIndicator snapshot={{ ...snapshot, error: "GitHub rate limit; retry at 1", retry_at_ms: 1 }} compact />);
+    const link = screen.getByRole("link", { name: /PR #42.*Open/i });
+    expect(link.textContent).toBe("");
+    expect(link.className).not.toContain("stale");
+  });
+
   it("shows updated PR states in detail text and compact accessible labels", () => {
     const { rerender } = render(<PullRequestIndicator snapshot={snapshot} />);
     expect(screen.getByRole("link").textContent).toMatch(/PR #42.*Open/);

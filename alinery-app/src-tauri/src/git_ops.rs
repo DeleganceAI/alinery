@@ -237,7 +237,87 @@ pub(crate) struct PullRequest {
 #[derive(Serialize)]
 pub(crate) struct PullRequestSnapshot {
     pub(crate) pr: Option<PullRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) retry_at_ms: Option<u64>,
+}
+
+struct GitHubPrBackoff {
+    until: Instant,
+    retry_at_ms: u64,
+}
+
+static GITHUB_PR_BACKOFF: Mutex<Option<GitHubPrBackoff>> = Mutex::new(None);
+const RATE_LIMIT_FALLBACK: Duration = Duration::from_secs(15 * 60);
+const RATE_LIMIT_MAX: Duration = Duration::from_secs(60 * 60);
+
+pub(crate) fn github_rate_limit_wait(status: u16, headers: &[(&str, &str)], body: &str, now_secs: u64) -> Option<Duration> {
+    let limited = status == 429 || (status == 403 && body.to_ascii_lowercase().contains("rate limit"));
+    if !limited {
+        return None;
+    }
+    let header = |name: &str| headers.iter().find(|(key, _)| key.eq_ignore_ascii_case(name)).map(|(_, value)| value.trim());
+    if let Some(seconds) = header("retry-after").and_then(|value| value.parse::<u64>().ok()) {
+        return Some(Duration::from_secs(seconds.max(1)).min(RATE_LIMIT_MAX));
+    }
+    if let Some(reset) = header("x-ratelimit-reset").and_then(|value| value.parse::<u64>().ok()) {
+        return Some(Duration::from_secs(reset.saturating_sub(now_secs).max(1)).min(RATE_LIMIT_MAX));
+    }
+    Some(RATE_LIMIT_FALLBACK)
+}
+
+fn rate_limit_error(retry_at_ms: u64) -> String {
+    format!("GitHub rate limit; retry at {retry_at_ms}")
+}
+
+pub(crate) fn rate_limit_retry_at_from_error(error: &str) -> Option<u64> {
+    error.strip_prefix("GitHub rate limit; retry at ")?.parse().ok()
+}
+
+fn record_github_pr_backoff(wait: Duration) -> u64 {
+    let wait = wait.clamp(Duration::from_secs(1), RATE_LIMIT_MAX);
+    let retry_at_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64 + wait.as_millis() as u64;
+    let until = Instant::now() + wait;
+    let mut guard = GITHUB_PR_BACKOFF.lock().unwrap_or_else(|error| error.into_inner());
+    if guard.as_ref().map(|existing| existing.until < until).unwrap_or(true) {
+        *guard = Some(GitHubPrBackoff { until, retry_at_ms });
+    }
+    guard.as_ref().map(|backoff| backoff.retry_at_ms).unwrap_or(retry_at_ms)
+}
+
+fn active_github_pr_backoff() -> Option<u64> {
+    let mut guard = GITHUB_PR_BACKOFF.lock().unwrap_or_else(|error| error.into_inner());
+    match guard.as_ref() {
+        Some(backoff) if backoff.until > Instant::now() => Some(backoff.retry_at_ms),
+        Some(_) => {
+            *guard = None;
+            None
+        }
+        None => None,
+    }
+}
+
+pub(crate) fn snapshot_from_lookup(result: Result<Option<PullRequest>, String>) -> PullRequestSnapshot {
+    match result {
+        Ok(pr) => PullRequestSnapshot {
+            pr,
+            error: None,
+            retry_at_ms: None,
+        },
+        Err(error) => match rate_limit_retry_at_from_error(&error) {
+            Some(retry_at_ms) => PullRequestSnapshot {
+                pr: None,
+                error: None,
+                retry_at_ms: Some(retry_at_ms),
+            },
+            None => PullRequestSnapshot {
+                pr: None,
+                error: Some(error),
+                retry_at_ms: None,
+            },
+        },
+    }
 }
 
 pub(crate) fn github_pull_request_ref(url: &str) -> Option<GitHubIssueRef> {
@@ -297,6 +377,9 @@ pub(crate) fn select_branch_pull_request(value: &Value, owner: &str, repo: &str,
 }
 
 fn github_pull_request_json(_repo: &Path, endpoint: &str, fields: &[(&str, &str)]) -> Result<Value, String> {
+    if let Some(retry_at_ms) = active_github_pr_backoff() {
+        return Err(rate_limit_error(retry_at_ms));
+    }
     let mut url = format!("https://api.github.com/{endpoint}");
     if !fields.is_empty() {
         let query = fields
@@ -312,9 +395,14 @@ fn github_pull_request_json(_repo: &Path, endpoint: &str, fields: &[(&str, &str)
         headers.push(format!("Authorization: Bearer {}", credential.secret));
     }
     let response = curl_request_with_timeouts(&url, &headers, None, Duration::from_secs(5), Duration::from_secs(15))?;
+    let detail = String::from_utf8_lossy(&response.body);
+    let detail = detail.trim();
+    let now_secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let header_refs: Vec<(&str, &str)> = response.headers.iter().map(|(key, value)| (key.as_str(), value.as_str())).collect();
+    if let Some(wait) = github_rate_limit_wait(response.status, &header_refs, detail, now_secs) {
+        return Err(rate_limit_error(record_github_pr_backoff(wait)));
+    }
     if !(200..300).contains(&response.status) {
-        let detail = String::from_utf8_lossy(&response.body);
-        let detail = detail.trim();
         return Err(if detail.is_empty() {
             format!("GitHub PR lookup failed: HTTP {}", response.status)
         } else {
@@ -439,11 +527,7 @@ pub(crate) fn task_pull_request_snapshots_with(
                 let Ok((key, reference)) = job else {
                     break;
                 };
-                let snapshot = match lookup(&reference) {
-                    Ok(pr) => PullRequestSnapshot { pr, error: None },
-                    Err(error) => PullRequestSnapshot { pr: None, error: Some(error) },
-                };
-                let _ = result_tx.send((key, snapshot));
+                let _ = result_tx.send((key, snapshot_from_lookup(lookup(&reference))));
             });
         }
         drop(result_tx);
