@@ -267,8 +267,7 @@ pub(crate) struct PreparedTaskAttachments {
     attachment_errors: Vec<String>,
 }
 
-#[tauri::command]
-pub(crate) fn prepare_task_attachments(entries: Vec<String>) -> PreparedTaskAttachments {
+pub(crate) fn prepare_task_attachments_in(entries: Vec<String>) -> PreparedTaskAttachments {
     let mut result = PreparedTaskAttachments::default();
     let mut bytes = 0u64;
     for entry in entries {
@@ -323,6 +322,19 @@ pub(crate) fn prepare_task_attachments(entries: Vec<String>) -> PreparedTaskAtta
         }
     }
     result
+}
+
+#[tauri::command]
+pub(crate) async fn prepare_task_attachments(entries: Vec<String>) -> PreparedTaskAttachments {
+    // Dropped files are read in full (up to 100 MB) before Create task continues.
+    // A sync command does that read on the main thread.
+    tauri::async_runtime::spawn_blocking(move || prepare_task_attachments_in(entries))
+        .await
+        .unwrap_or_else(|_| {
+            let mut result = PreparedTaskAttachments::default();
+            result.attachment_errors.push("could not read attachments".into());
+            result
+        })
 }
 
 pub(crate) const MAX_CHAT_IMAGE_BYTES: u64 = 5 * 1024 * 1024;

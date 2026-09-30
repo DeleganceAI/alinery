@@ -2191,7 +2191,7 @@ impl Drop for PreparedAttachmentRepo {
 fn prepared_attachment_request(entries: Vec<String>) -> alinery_core::CreateTaskRequest {
     // Use preparation's public serialized reply rather than exposing its private fields.
     // Consume each representation before decoding the next; never build JSON byte arrays.
-    let mut package = serde_json::to_value(crate::prepare_task_attachments(entries)).unwrap();
+    let mut package = serde_json::to_value(crate::prepare_task_attachments_in(entries)).unwrap();
     package["name"] = serde_json::json!("Prepared and pasted evidence");
     package["playbook"] = serde_json::json!({
         "reference": { "scope": "bundled", "key": "one-shot" },
