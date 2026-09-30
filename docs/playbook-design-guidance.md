@@ -259,7 +259,9 @@ The ancestry value 0 is not permission to rename existing physical `00-ticket.md
 
 - **Enabled:** the harness can request completion without human unlock.
 - **Disabled:** completion is locked and the session stays interactive. A premature call returns a nonfatal authorization-required result, not a failed execution or accepted checkpoint.
-- The UI offers **Allow this session to complete**, not Complete immediately.
+- The chat completion prompt names the following step with **Move to <step>**, or offers **Finish step** when there is no automatic successor. **Continue working in this session** leaves the session open for another message. These actions grant or decline permission; they do not complete the execution immediately.
+  - Destinations come from the retained artifact-dependency graph, not definition order. Branches list their following steps; successor sessions still wait for required inputs, confirmed source shutdown and launch capacity.
+  - After permission is granted but reply delivery fails, **Retry handoff** resends the reply without granting again. The stay-in-session choice is disabled because it can no longer revoke that grant.
 - Permission applies only to that execution. It does not enable future auto-advance, authorize a replacement execution, or expose agent/MCP self-approval.
 - The human tells the harness to wrap up. The harness finishes its writes, verification and user-facing handoff, then calls completion.
 - The daemon checks ownership, permission and current outputs before accepting. Invalid outputs leave the session open for correction.

@@ -4377,8 +4377,17 @@ dialog.modal::backdrop {
 }
 .chat-msg-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
+}
+.chat-msg-actions .btn {
+  max-width: 100%;
+  min-height: 26px;
+  height: auto;
+  padding: 4px 10px;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .chat-msg-copy-row {
   position: absolute;
