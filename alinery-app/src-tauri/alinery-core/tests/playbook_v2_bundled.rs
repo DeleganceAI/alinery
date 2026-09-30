@@ -369,11 +369,8 @@ fn bundled_superdevelop_trace() {
 fn bundled_one_shot_trace() {
     linear_trace(
         "one-shot",
-        &[
-            ("implementation", &["ticket.md"], &["implementation-report.md"]),
-            ("pr", &["ticket.md", "implementation-report.md"], &["pr-note.md"]),
-        ],
-        &["implementation", "pr"],
+        &[("implementation", &["ticket.md"], &["implementation-report.md", "pr-note.md"])],
+        &["implementation"],
     );
 }
 
