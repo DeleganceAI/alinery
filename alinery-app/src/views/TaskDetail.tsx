@@ -13,7 +13,7 @@ import { classifyAttachment } from "../chat/attachments";
 import { CopyArtifactButton, CopyTextButton, copyTextToClipboard } from "../chat/CopyMessage";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
-import { NameEditor, restoreNameFocus } from "../NameEditor";
+import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PullRequestIndicator } from "../PullRequestIndicator";
 import {
@@ -826,7 +826,7 @@ export function TaskDetail({
     flushSync(() => setEditingName(null));
     restoreNameFocus(nameTrigger.current);
   };
-  const renameControl = (kind: "session" | "task", owner: string, value: string, sessionId?: string) => {
+  const renameControl = (kind: "session" | "task", owner: string, value: string, sessionId?: string, awaiting = false) => {
     const key = `${repoPath}:${slug}:${kind}:${owner}:${sessionId ?? ""}`;
     return (
       <>
@@ -838,8 +838,8 @@ export function TaskDetail({
           hidden={editingName === key}
         >
           {kind === "session" && (
-            <span className="editable-name-text" title={value}>
-              {value || "—"}
+            <span className="editable-name-text" title={value || (awaiting ? "Waiting for session name" : undefined)}>
+              {value || (awaiting ? <PendingSessionName /> : "—")}
             </span>
           )}
           <button
@@ -1310,7 +1310,7 @@ export function TaskDetail({
                           />
                         </td>
                         <td className="session-name-cell editable-name">
-                          {renameControl("session", row.owner_task_slug, s.name ?? "", s.id)}
+                          {renameControl("session", row.owner_task_slug, s.name ?? "", s.id, awaitingSessionName(s, obs))}
                           {s.name_error && <span className="name-error">{s.name_error}</span>}
                         </td>
                         <td>
@@ -1432,7 +1432,7 @@ export function TaskDetail({
                         />
                       </td>
                       <td className="session-name-cell editable-name">
-                        {renameControl("session", slug, s.name ?? "", s.id)}
+                        {renameControl("session", slug, s.name ?? "", s.id, awaitingSessionName(s, obs))}
                         {s.name_error && <span className="name-error">{s.name_error}</span>}
                       </td>
                       <td>

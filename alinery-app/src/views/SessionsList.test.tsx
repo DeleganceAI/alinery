@@ -221,7 +221,7 @@ describe("SessionsList attention order", () => {
     const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
 
     await waitFor(() => {
-      expect(renderedNames(container)).toEqual(["Older task", "Newer task"]);
+      expect(renderedNames(container)).toEqual(["...", "Newer task"]);
     });
     expect(sessionItems.map((row) => row.id)).toEqual(originalIds);
     expect(mocks.sessionListStatuses).toHaveBeenCalledTimes(1);
@@ -280,12 +280,12 @@ describe("SessionsList attention order", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
-    expect(renderedNames(container)).toEqual(["Active task", "Selected task"]);
+    expect(renderedNames(container)).toEqual(["...", "Selected task"]);
     expect(container.querySelector(".row.sel .rtt")?.textContent).toBe("Selected task");
 
     await navReady(() => currentNav);
     act(() => requireNav(currentNav).moveRow(-1));
-    expect(container.querySelector(".row.sel .rtt")?.textContent).toBe("Active task");
+    expect(container.querySelector(".row.sel .rtt")?.textContent).toBe("...");
     vi.useRealTimers();
   });
 });
@@ -300,25 +300,25 @@ describe("SessionsList time sorting and presentation", () => {
     ];
     observations = { "/r:a-task:older-busy": busyObservation };
     const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
-    await waitFor(() => expect(renderedNames(container)).toEqual(["Busy task", "Newer task", "Untimed task", "Archived task"]));
+    await waitFor(() => expect(renderedNames(container)).toEqual(["...", "Newer task", "Untimed task", "Archived task"]));
     expect(screen.getByRole("button", { name: "Priority" }).getAttribute("aria-pressed")).toBe("true");
 
     const started = screen.getByRole("button", { name: /^Started:/ });
     fireEvent.click(started);
-    expect(renderedNames(container)).toEqual(["Archived task", "Newer task", "Busy task", "Untimed task"]);
+    expect(renderedNames(container)).toEqual(["Archived task", "Newer task", "...", "Untimed task"]);
     expect(started.getAttribute("aria-label")).toContain("newest first");
     fireEvent.click(started);
-    expect(renderedNames(container)).toEqual(["Busy task", "Newer task", "Archived task", "Untimed task"]);
+    expect(renderedNames(container)).toEqual(["...", "Newer task", "Archived task", "Untimed task"]);
     expect(started.getAttribute("aria-label")).toContain("oldest first");
 
     const updated = screen.getByRole("button", { name: /^Updated:/ });
     fireEvent.click(updated);
-    expect(renderedNames(container)).toEqual(["Archived task", "Newer task", "Busy task", "Untimed task"]);
+    expect(renderedNames(container)).toEqual(["Archived task", "Newer task", "...", "Untimed task"]);
     fireEvent.click(updated);
-    expect(renderedNames(container)).toEqual(["Busy task", "Newer task", "Archived task", "Untimed task"]);
+    expect(renderedNames(container)).toEqual(["...", "Newer task", "Archived task", "Untimed task"]);
 
     fireEvent.click(screen.getByRole("button", { name: "Priority" }));
-    expect(renderedNames(container)).toEqual(["Busy task", "Newer task", "Untimed task", "Archived task"]);
+    expect(renderedNames(container)).toEqual(["...", "Newer task", "Untimed task", "Archived task"]);
   });
 
   it("accepts StaleSource failure-class transitions without leaving Updated sort", async () => {
@@ -343,19 +343,19 @@ describe("SessionsList time sorting and presentation", () => {
     mocks.sessionListStatuses.mockImplementation(async () => ({ [targetKey]: targetObservation }));
 
     const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
-    await vi.waitFor(() => expect(renderedNames(container)).toEqual(["Other task", "Target task"]));
+    await vi.waitFor(() => expect(renderedNames(container)).toEqual(["Other task", "..."]));
     expect(screen.getByText("Stale")).toBeDefined();
 
     targetObservation = failedObservation("boom");
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
-    await vi.waitFor(() => expect(renderedNames(container)).toEqual(["Target task", "Other task"]));
+    await vi.waitFor(() => expect(renderedNames(container)).toEqual(["...", "Other task"]));
     expect(screen.getByText("Failed")).toBeDefined();
 
     const updated = screen.getByRole("button", { name: /^Updated:/ });
     fireEvent.click(updated);
-    expect(renderedNames(container)).toEqual(["Other task", "Target task"]);
+    expect(renderedNames(container)).toEqual(["Other task", "..."]);
 
     targetObservation = failedObservation("StaleSource");
     await act(async () => {
@@ -363,7 +363,7 @@ describe("SessionsList time sorting and presentation", () => {
     });
     await vi.waitFor(() => expect(screen.getByText("Stale")).toBeDefined());
     expect(screen.queryByText("Failed")).toBeNull();
-    expect(renderedNames(container)).toEqual(["Other task", "Target task"]);
+    expect(renderedNames(container)).toEqual(["Other task", "..."]);
     expect(updated.getAttribute("aria-pressed")).toBe("true");
     expect(updated.getAttribute("aria-label")).toContain("newest first");
   });
@@ -429,6 +429,22 @@ describe("SessionsList time sorting and presentation", () => {
 });
 
 describe("session work names", () => {
+  it("shows a waiting ellipsis for a live unnamed OMP session and keeps the task name", async () => {
+    sessionItems = [session({ id: "waiting", task_name: "Waiting task" }), session({ id: "terminal", harness: "no-harness", task_name: "Terminal task" })];
+    observations = {
+      "/r:a-task:waiting": busyObservation,
+      "/r:a-task:terminal": busyObservation,
+    };
+    const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    expect(await screen.findByRole("status", { name: "Waiting for session name" })).toBeDefined();
+    const waiting = screen.getByText("Waiting task").closest(".row") as HTMLElement;
+    expect(waiting.querySelector(".rtt")?.textContent).toBe("...");
+    expect(screen.getByText("Terminal task").closest(".rtt")?.textContent).toBe("Terminal task");
+    expect(renderedNames(container)).toEqual(["...", "Terminal task"]);
+    fireEvent.click(within(waiting).getByRole("button", { name: "Rename session" }));
+    expect(screen.getByRole("textbox", { name: "Session name" })).toBeDefined();
+  });
+
   it("rename_keeps_repo_qualified_selection_and_ignores_stale_item_reads", async () => {
     vi.useFakeTimers();
     const original = session({ name: "Original name", subtask_manager: true, subtask_slug: "child", subtask_name: "Current child" });

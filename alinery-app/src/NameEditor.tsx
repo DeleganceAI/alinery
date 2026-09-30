@@ -119,3 +119,16 @@ export function NameEditor({
     </div>
   );
 }
+
+export function awaitingSessionName(
+  session: { name?: string | null; name_error?: string | null; archived?: boolean; harness?: string },
+  observation: { lifecycle: { state: string }; state?: { process: { state: string } } | null } | null | undefined,
+): boolean {
+  if (session.name || session.name_error || session.archived || session.harness !== "omp") return false;
+  return observation?.lifecycle.state === "live" && observation.state?.process.state !== "exited";
+}
+
+export function PendingSessionName() {
+  // biome-ignore format: surrounding whitespace becomes the session title
+  return <span className="pending-session-name" role="status" title="Waiting for session name" aria-label="Waiting for session name"><span className="pending-session-name-dots" aria-hidden="true">...</span></span>;
+}
