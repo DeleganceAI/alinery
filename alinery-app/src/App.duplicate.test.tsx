@@ -109,6 +109,11 @@ vi.mock("./ipc", () =>
     getCurrentWindow: (() => ({ onCloseRequested: mocks.onCloseRequested, destroy: vi.fn() })) as never,
     getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) as unknown as ReturnType<typeof import("./ipc").getCurrentWebview>,
     readConfigForRepo: mocks.readConfigForRepo,
+    taskSourceBranchesForRepo: async () => ({
+      branches: [{ full_ref: "refs/heads/main", name: "main" }],
+      head: { kind: "branch", full_ref: "refs/heads/main", name: "main" },
+      selected: null,
+    }),
     listPlaybookCatalog: async () => ({ candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [] }),
     listHarnessModelsForRepo: async () => [],
     connectionStatuses: async () => [],
@@ -348,7 +353,7 @@ describe("App duplicate coordinator", () => {
     await screen.findByText("task:source-2");
   });
 
-  it("shows opening toast until the create form is ready, then hides it", async () => {
+  it("shows an opening toast and clears it when the form opens without waiting for settings", async () => {
     let resolveConfig: (config: Config) => void = () => {};
     const config = await mocks.readConfigForRepo();
     mocks.readConfigForRepo.mockReturnValue(
@@ -365,8 +370,7 @@ describe("App duplicate coordinator", () => {
     expect(notifications.querySelector(".toast.loading")).not.toBeNull();
 
     await screen.findByPlaceholderText("New task name…");
-    expect(notifications.querySelector(".toast.loading")).not.toBeNull();
-    resolveConfig(config);
     await waitFor(() => expect(notifications.querySelector(".toast.loading")).toBeNull());
+    resolveConfig(config);
   });
 });

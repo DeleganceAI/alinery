@@ -1768,6 +1768,28 @@ main {
   width: min(880px, 100%);
   gap: 16px;
 }
+.create-repository-source {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
+  gap: 12px;
+}
+.create-repository-source .create-field,
+.create-repository-source .field-input,
+.create-source-field {
+  min-width: 0;
+}
+.create-source-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.create-source-field > button {
+  align-self: flex-end;
+}
+.create-source-hint {
+  overflow-wrap: anywhere;
+}
 .createpage-with-preview {
   gap: 16px;
   justify-content: center;
@@ -2024,6 +2046,9 @@ main {
   overflow-wrap: anywhere;
 }
 @media (max-width: 980px) {
+  .create-repository-source {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .createpage-with-preview {
     flex-direction: column;
     align-items: stretch;

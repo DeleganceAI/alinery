@@ -3,6 +3,288 @@
 //! `use super::*` reaches the shared imports and fixtures in tests/mod.rs.
 use super::*;
 
+use crate::git_ops::{task_source_branches_in, TaskSourceHead};
+
+fn source_git(repo: &Path, args: &[&str]) -> String {
+    let output = git_cmd(repo).args(args).output().unwrap();
+    assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+    String::from_utf8(output.stdout).unwrap().trim_end_matches('\n').to_owned()
+}
+
+#[test]
+fn task_sources_report_local_heads_for_the_selected_checkout() {
+    let repo = init_git_test_repo("task-sources-checkout");
+    source_git(&repo, &["branch", "-m", "current"]);
+    fs::write(repo.join("tracked"), "committed\n").unwrap();
+    source_git(&repo, &["add", "tracked"]);
+    source_git(&repo, &["commit", "-qm", "tracked"]);
+    source_git(&repo, &["branch", "chosen"]);
+    source_git(&repo, &["tag", "chosen"]);
+    source_git(&repo, &["update-ref", "refs/remotes/origin/remote-only", "HEAD"]);
+    let linked = repo.join("linked");
+    source_git(&repo, &["worktree", "add", "-q", linked.to_str().unwrap(), "chosen"]);
+    fs::write(repo.join("tracked"), "staged\n").unwrap();
+    source_git(&repo, &["add", "tracked"]);
+    fs::write(repo.join("tracked"), "unstaged\n").unwrap();
+    fs::write(repo.join("untracked"), "untracked\n").unwrap();
+    fs::write(linked.join("tracked"), "linked dirty\n").unwrap();
+    let head = fs::read(repo.join(".git/HEAD")).unwrap();
+    let oid = source_git(&repo, &["rev-parse", "HEAD"]);
+    let index = fs::read(repo.join(".git/index")).unwrap();
+    let linked_head_path = source_git(&linked, &["rev-parse", "--git-path", "HEAD"]);
+    let linked_index_path = source_git(&linked, &["rev-parse", "--git-path", "index"]);
+    let linked_head = fs::read(&linked_head_path).unwrap();
+    let linked_index = fs::read(&linked_index_path).unwrap();
+
+    let sources = task_source_branches_in(&repo, Some("refs/heads/chosen")).unwrap();
+    assert_eq!(
+        sources.branches.iter().map(|branch| (branch.full_ref.as_str(), branch.name.as_str())).collect::<Vec<_>>(),
+        [("refs/heads/chosen", "chosen"), ("refs/heads/current", "current")]
+    );
+    assert_eq!(
+        sources.head,
+        TaskSourceHead::Branch {
+            full_ref: "refs/heads/current".into(),
+            name: "current".into()
+        }
+    );
+    assert!(sources.selected.unwrap().available);
+    let linked_sources = task_source_branches_in(&linked, None).unwrap();
+    assert_eq!(
+        linked_sources.head,
+        TaskSourceHead::Branch {
+            full_ref: "refs/heads/chosen".into(),
+            name: "chosen".into()
+        }
+    );
+    assert_eq!(linked_sources.branches, sources.branches);
+    assert!(linked_sources.selected.is_none());
+    assert_eq!(fs::read(repo.join(".git/HEAD")).unwrap(), head);
+    assert_eq!(source_git(&repo, &["rev-parse", "HEAD"]), oid);
+    assert_eq!(fs::read(repo.join(".git/index")).unwrap(), index);
+    assert_eq!(fs::read(repo.join("tracked")).unwrap(), b"unstaged\n");
+    assert_eq!(fs::read(repo.join("untracked")).unwrap(), b"untracked\n");
+    assert_eq!(fs::read(&linked_head_path).unwrap(), linked_head);
+    assert_eq!(fs::read(&linked_index_path).unwrap(), linked_index);
+    assert_eq!(fs::read(linked.join("tracked")).unwrap(), b"linked dirty\n");
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn task_sources_preserve_a_captured_detached_commit() {
+    let repo = init_git_test_repo("task-sources-detached");
+    let first = source_git(&repo, &["rev-parse", "HEAD"]);
+    source_git(&repo, &["checkout", "-q", "--detach"]);
+    let sources = task_source_branches_in(&repo, None).unwrap();
+    assert_eq!(sources.head, TaskSourceHead::Detached { oid: first.clone() });
+    source_git(&repo, &["commit", "--allow-empty", "-qm", "later"]);
+    let later = source_git(&repo, &["rev-parse", "HEAD"]);
+    assert_ne!(first, later);
+    let sources = task_source_branches_in(&repo, Some(&first)).unwrap();
+    assert_eq!(sources.head, TaskSourceHead::Detached { oid: later });
+    let selected = sources.selected.unwrap();
+    assert_eq!(selected.base_ref, first);
+    assert!(selected.available);
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn task_sources_distinguish_unborn_from_broken_head() {
+    let repo = init_git_test_repo("task-sources-unborn");
+    let empty_repo = repo.join("empty");
+    fs::create_dir(&empty_repo).unwrap();
+    source_git(&empty_repo, &["init", "-q"]);
+    source_git(&empty_repo, &["symbolic-ref", "HEAD", "refs/heads/new"]);
+    let empty = task_source_branches_in(&empty_repo, None).unwrap();
+    assert!(empty.branches.is_empty());
+    assert_eq!(
+        empty.head,
+        TaskSourceHead::Unborn {
+            full_ref: "refs/heads/new".into(),
+            name: "new".into()
+        }
+    );
+    source_git(&repo, &["branch", "-m", "committed"]);
+    source_git(&repo, &["checkout", "-q", "--orphan", "new"]);
+    let sources = task_source_branches_in(&repo, Some("refs/heads/new")).unwrap();
+    assert_eq!(
+        sources.head,
+        TaskSourceHead::Unborn {
+            full_ref: "refs/heads/new".into(),
+            name: "new".into()
+        }
+    );
+    assert_eq!(sources.branches.iter().map(|branch| branch.full_ref.as_str()).collect::<Vec<_>>(), ["refs/heads/committed"]);
+    assert!(!sources.selected.unwrap().available);
+    source_git(&repo, &["branch", "-D", "committed"]);
+    let empty = task_source_branches_in(&repo, None).unwrap();
+    assert!(empty.branches.is_empty());
+    assert_eq!(empty.head, sources.head);
+    fs::write(repo.join(".git/refs/heads/new"), format!("{}\n", "1".repeat(40))).unwrap();
+    assert!(task_source_branches_in(&repo, None).is_err(), "present broken HEAD must not be unborn");
+    fs::write(repo.join(".git/HEAD"), "invalid HEAD\n").unwrap();
+    assert!(task_source_branches_in(&repo, None).is_err());
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn task_sources_reject_invalid_selection_without_substitution() {
+    let repo = init_git_test_repo("task-sources-selection");
+    source_git(&repo, &["branch", "chosen"]);
+    source_git(&repo, &["tag", "chosen"]);
+    source_git(&repo, &["branch", "-D", "chosen"]);
+    fs::write(repo.join("blob"), "not a commit").unwrap();
+    let blob = source_git(&repo, &["hash-object", "-w", "blob"]);
+    let tree = source_git(&repo, &["rev-parse", "HEAD^{tree}"]);
+    let missing = "1".repeat(40);
+    let missing_sha256 = "1".repeat(64);
+    for invalid in [
+        "refs/heads/chosen",
+        missing.as_str(),
+        missing_sha256.as_str(),
+        blob.as_str(),
+        tree.as_str(),
+        "",
+        "chosen",
+        "HEAD",
+        "HEAD~0",
+        "refs/tags/chosen",
+        "refs/remotes/origin/main",
+        "--help",
+        " refs/heads/chosen",
+        "refs/heads/chosen ",
+        "refs/heads/chosen\n",
+        "refs/heads/../chosen",
+        "refs/heads/bad\0ref",
+        &blob[..12],
+    ] {
+        let selected = task_source_branches_in(&repo, Some(invalid)).unwrap().selected.unwrap();
+        assert_eq!(selected.base_ref, invalid);
+        assert!(!selected.available, "accepted invalid selection {invalid:?}");
+    }
+    let oid = source_git(&repo, &["rev-parse", "HEAD"]);
+    assert!(task_source_branches_in(&repo, Some(&oid)).unwrap().selected.unwrap().available);
+    let sha256 = repo.join("sha256");
+    fs::create_dir(&sha256).unwrap();
+    let initialized = git_cmd(&sha256).args(["init", "-q", "--object-format=sha256"]).output().unwrap();
+    if initialized.status.success() {
+        source_git(&sha256, &["config", "user.email", "test@alinery.local"]);
+        source_git(&sha256, &["config", "user.name", "alinery Test"]);
+        source_git(&sha256, &["commit", "--allow-empty", "-qm", "sha256"]);
+        let oid = source_git(&sha256, &["rev-parse", "HEAD"]);
+        assert_eq!(oid.len(), 64);
+        source_git(&sha256, &["checkout", "-q", "--detach"]);
+        let sources = task_source_branches_in(&sha256, Some(&oid)).unwrap();
+        assert_eq!(sources.head, TaskSourceHead::Detached { oid: oid.clone() });
+        assert_eq!(sources.selected.as_ref().unwrap().base_ref, oid);
+        assert!(sources.selected.unwrap().available);
+        let abbreviated = &oid[..40];
+        let sources = task_source_branches_in(&sha256, Some(abbreviated)).unwrap();
+        let selected = sources.selected.unwrap();
+        assert_eq!(selected.base_ref, abbreviated);
+        assert!(!selected.available, "a SHA-256 abbreviation is not a full saved commit identity");
+        assert!(!sources.branches.is_empty(), "invalid saved identity must not block replacement");
+    } else {
+        let error = String::from_utf8_lossy(&initialized.stderr);
+        assert!(error.contains("unknown hash algorithm") || error.contains("unknown option"), "{error}");
+        eprintln!("SHA-256 Git fixture unsupported: {error}");
+    }
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn task_sources_surface_read_failures_instead_of_empty_success() {
+    for damage in ["packed-ref", "loose-ref", "missing-object", "corrupt-object", "noncommit-ref", "invalid-repo"] {
+        let repo = init_git_test_repo(&format!("task-sources-{damage}"));
+        let oid = source_git(&repo, &["rev-parse", "HEAD"]);
+        match damage {
+            "packed-ref" => fs::write(repo.join(".git/packed-refs"), "not a packed ref\n").unwrap(),
+            "loose-ref" => fs::write(repo.join(".git/refs/heads/broken"), "not an oid\n").unwrap(),
+            "missing-object" => fs::remove_file(repo.join(".git/objects").join(&oid[..2]).join(&oid[2..])).unwrap(),
+            "corrupt-object" => {
+                let object = repo.join(".git/objects").join(&oid[..2]).join(&oid[2..]);
+                fs::remove_file(&object).unwrap();
+                fs::write(object, "corrupt").unwrap();
+            }
+            "noncommit-ref" => {
+                let tree = source_git(&repo, &["rev-parse", "HEAD^{tree}"]);
+                fs::write(repo.join(".git/refs/heads/broken"), format!("{tree}\n")).unwrap();
+            }
+            "invalid-repo" => fs::remove_dir_all(repo.join(".git")).unwrap(),
+            _ => unreachable!(),
+        }
+        assert!(task_source_branches_in(&repo, None).is_err(), "accepted {damage}");
+        let _ = fs::remove_dir_all(repo);
+    }
+    let repo = init_git_test_repo("task-sources-corrupt-selection");
+    let saved = source_git(&repo, &["rev-parse", "HEAD"]);
+    source_git(&repo, &["commit", "--allow-empty", "-qm", "new tip"]);
+    let object = repo.join(".git/objects").join(&saved[..2]).join(&saved[2..]);
+    fs::remove_file(&object).unwrap();
+    fs::write(object, "corrupt").unwrap();
+    assert!(task_source_branches_in(&repo, Some(&saved)).is_err(), "corrupt saved object must not become missing");
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[cfg(unix)]
+#[test]
+fn task_sources_surface_git_execution_and_output_failures() {
+    use std::os::unix::fs::PermissionsExt;
+    const CHILD_REPO: &str = "ALINERY_TEST_SOURCE_BOUNDARY_REPO";
+    if let Some(repo) = std::env::var_os(CHILD_REPO) {
+        let result = task_source_branches_in(Path::new(&repo), Some(&"1".repeat(40)));
+        assert!(result.is_err(), "invalid Git boundary became a successful source snapshot: {result:?}");
+        return;
+    }
+    let repo = init_git_test_repo("task-sources-boundary");
+    let executable = std::env::current_exe().unwrap();
+    let real_git = git_cmd(&repo).get_program().to_string_lossy().replace('\'', "'\\''");
+    let wrapper = repo.join("boundary-git");
+    for (command, failure) in [
+        ("for-each-ref", "printf '\\377\\n'"),
+        ("for-each-ref", "printf 'malformed output\\n'"),
+        ("for-each-ref", "printf 'warning: ignoring broken ref\\n' >&2"),
+        ("symbolic-ref", "exit 2"),
+        ("symbolic-ref", "printf 'HEAD\\n'"),
+        ("cat-file", "printf 'malformed object output\\n'"),
+        ("cat-file", "exit 2"),
+    ] {
+        fs::write(
+            &wrapper,
+            format!("#!/bin/sh\nfor arg do\n  if [ \"$arg\" = '{command}' ]; then\n    {failure}\n    exit 0\n  fi\ndone\nexec '{real_git}' \"$@\"\n"),
+        )
+        .unwrap();
+        fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+        let child = std::process::Command::new(&executable)
+            .args(["--exact", "tests::git_ops::task_sources_surface_git_execution_and_output_failures", "--nocapture"])
+            .env(CHILD_REPO, &repo)
+            .env("ALINERY_GIT_PATH", &wrapper)
+            .output()
+            .unwrap();
+        assert!(
+            child.status.success(),
+            "{command} / {failure}: {}{}",
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr)
+        );
+    }
+    // An existing but non-executable override must fail spawning, not select PATH Git.
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o644)).unwrap();
+    let child = std::process::Command::new(executable)
+        .args(["--exact", "tests::git_ops::task_sources_surface_git_execution_and_output_failures", "--nocapture"])
+        .env(CHILD_REPO, &repo)
+        .env("ALINERY_GIT_PATH", &wrapper)
+        .output()
+        .unwrap();
+    assert!(
+        child.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&child.stdout),
+        String::from_utf8_lossy(&child.stderr)
+    );
+    let _ = fs::remove_dir_all(repo);
+}
+
 #[test]
 fn git_top_level_rejects_non_git_dir() {
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);

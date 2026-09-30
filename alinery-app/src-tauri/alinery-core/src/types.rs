@@ -250,6 +250,8 @@ pub struct Task {
     // M6: partial create-form entry; false for real tasks.
     #[serde(default)]
     pub draft: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_base_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub related_tasks: Vec<RelatedTaskRef>,
     // Anonymous telemetry correlation id; rationale at new_telemetry_id() above.

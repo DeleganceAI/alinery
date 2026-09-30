@@ -69,6 +69,13 @@ export type AppearancePrefs = {
 
 // Mirrors the Rust structs.
 export type RelatedTaskRef = { repo_path: string; slug: string; name: string };
+export type TaskSourceBranch = { full_ref: string; name: string };
+export type TaskSourceHead = { kind: "branch"; full_ref: string; name: string } | { kind: "detached"; oid: string } | { kind: "unborn"; full_ref: string; name: string };
+export type TaskSourceBranches = {
+  branches: TaskSourceBranch[];
+  head: TaskSourceHead;
+  selected: { base_ref: string; available: boolean } | null;
+};
 export type Task = {
   name: string;
   slug: string;
@@ -92,6 +99,7 @@ export type Task = {
   auto_advance: string[];
   /** M6: true while still being drafted on CreateTaskPage. */
   draft: boolean;
+  draft_base_ref?: string | null;
   related_tasks?: RelatedTaskRef[];
 };
 export type BoardTask = Task & {

@@ -236,6 +236,76 @@ fn list_tasks_for_repo_returns_draft_flag() {
 }
 
 #[test]
+fn draft_source_roundtrips_independently_of_destination() {
+    let repo = init_git_test_repo("draft-source-roundtrip");
+    let oid = alinery_core::git_cmd(&repo).args(["rev-parse", "HEAD"]).output().unwrap();
+    assert!(oid.status.success());
+    let oid = String::from_utf8(oid.stdout).unwrap();
+    let mut slug = String::new();
+    for source in [
+        Some("refs/heads/release/next"),
+        Some(oid.trim()),
+        Some("refs/heads/deleted"),
+        Some("  HEAD~1  "),
+        Some(""),
+        None,
+    ] {
+        let task = write_draft_in_with_slug(
+            &repo,
+            None,
+            &slug,
+            "",
+            "Source Roundtrip".into(),
+            "composition survives unavailable sources".into(),
+            String::new(),
+            String::new(),
+            String::new(),
+            alinery_core::playbook::PlaybookRef {
+                scope: alinery_core::playbook::PlaybookScope::Bundled,
+                key: default_playbook_key(),
+            },
+            "claude".into(),
+            String::new(),
+            None,
+            10,
+            "destination-branch".into(),
+            "destination-worktree".into(),
+            source.map(str::to_owned),
+        )
+        .unwrap();
+        if !slug.is_empty() {
+            assert_eq!(task.slug, slug);
+        }
+        slug = task.slug;
+        let persisted = read_task(&repo, &slug).unwrap();
+        assert_eq!(persisted.draft_base_ref.as_deref(), source);
+        assert_eq!(persisted.branch, "destination-branch");
+        assert_eq!(persisted.worktree, "destination-worktree");
+        let stored = fs::read_to_string(task_dir(&repo, &slug).join("task.md")).unwrap();
+        let stored: toml::Value = toml::from_str(&stored).unwrap();
+        assert_eq!(stored.get("draft_base_ref").and_then(toml::Value::as_str), source);
+        let ticket = fs::read_to_string(artifacts_dir(&repo, &slug).join("00-ticket.md")).unwrap();
+        assert!(ticket.contains("composition survives unavailable sources"));
+    }
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn old_draft_without_source_remains_readable() {
+    let repo = init_git_test_repo("old-draft-source");
+    let dir = task_dir(&repo, "old-draft");
+    fs::create_dir_all(&dir).unwrap();
+    let old = "name = \"Old Draft\"\nslug = \"old-draft\"\nbranch = \"destination\"\nworktree = \"\"\ncreated = 42\ndraft = true\n";
+    fs::write(dir.join("task.md"), old).unwrap();
+    let draft = read_task(&repo, "old-draft").unwrap();
+    assert!(draft.draft);
+    assert_eq!(draft.branch, "destination");
+    assert_eq!(draft.draft_base_ref, None);
+    assert_eq!(fs::read_to_string(dir.join("task.md")).unwrap(), old);
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
 fn write_draft_in_rejects_empty_name() {
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let repo = std::env::temp_dir().join(format!("alinery-write-draft-empty-{n}"));
@@ -261,6 +331,7 @@ fn write_draft_in_rejects_empty_name() {
         10,
         "".into(),
         "".into(),
+        None,
     )
     .unwrap_err();
     assert!(err.contains("empty"), "unexpected error: {err}");
@@ -293,6 +364,7 @@ fn write_draft_in_writes_task_md_with_draft_true() {
         10,
         "feat/x".into(),
         "wt-x".into(),
+        None,
     )
     .expect("write draft");
 
@@ -332,6 +404,7 @@ fn write_draft_in_updates_same_slug() {
         10,
         "".into(),
         "".into(),
+        None,
     )
     .unwrap();
     let second = write_draft_in_with_slug(
@@ -354,6 +427,7 @@ fn write_draft_in_updates_same_slug() {
         10,
         "".into(),
         "".into(),
+        None,
     )
     .unwrap();
 
@@ -389,6 +463,7 @@ fn archived_draft_is_not_reused_by_same_name_autosave() {
         10,
         "".into(),
         "".into(),
+        None,
     )
     .unwrap();
     alinery_core::mutate_task(&repo, &archived.slug, "archive test draft", |task| {
@@ -417,6 +492,7 @@ fn archived_draft_is_not_reused_by_same_name_autosave() {
         10,
         "".into(),
         "".into(),
+        None,
     )
     .unwrap();
 
@@ -460,6 +536,7 @@ fn draft_duplicate_regression_write_draft_reuses_suffixed_draft_when_base_slug_i
         10,
         "".into(),
         "".into(),
+        None,
     )
     .unwrap();
     let second = write_draft_in_with_slug(
@@ -482,6 +559,7 @@ fn draft_duplicate_regression_write_draft_reuses_suffixed_draft_when_base_slug_i
         10,
         "".into(),
         "".into(),
+        None,
     )
     .unwrap();
 
@@ -524,6 +602,7 @@ fn draft_duplicate_regression_supplied_draft_slug_updates_in_place_when_base_slu
         10,
         "".into(),
         "".into(),
+        None,
     )
     .unwrap();
     assert_eq!(draft.slug, "supplied-draft-2");
@@ -548,6 +627,7 @@ fn draft_duplicate_regression_supplied_draft_slug_updates_in_place_when_base_slu
         10,
         "updated-branch".into(),
         "".into(),
+        None,
     )
     .unwrap();
 
@@ -852,6 +932,7 @@ fn draft_ticket_carries_evidence_and_never_attachments() {
         10,
         String::new(),
         String::new(),
+        None,
     )
     .unwrap();
 
@@ -887,6 +968,7 @@ fn delete_draft_in_removes_task_dir() {
         10,
         "".into(),
         "".into(),
+        None,
     )
     .unwrap();
     assert!(task_dir(&repo, &task.slug).exists());
@@ -920,6 +1002,7 @@ fn delete_draft_respects_the_task_mutation_lock() {
         10,
         String::new(),
         String::new(),
+        None,
     )
     .unwrap();
 
@@ -1027,10 +1110,13 @@ fn targeted_draft_writes_land_only_in_selected_repo() {
         10,
         "".into(),
         "".into(),
+        Some("refs/heads/source-in-b".into()),
     )
     .unwrap();
 
     assert!(task_dir(&repo_b, &draft.slug).join("task.md").exists());
+    let persisted = read_task(&repo_b, &draft.slug).unwrap();
+    assert_eq!(persisted.draft_base_ref.as_deref(), Some("refs/heads/source-in-b"));
     assert!(!task_dir(&repo_a, &draft.slug).exists());
     assert!(!crate::sessions_dir(&repo_a, &draft.slug).exists());
     assert!(!crate::worktrees_dir(&repo_a).exists());
@@ -1065,6 +1151,7 @@ fn targeted_draft_cleanup_deletes_only_still_drafts() {
         10,
         "".into(),
         "".into(),
+        None,
     )
     .unwrap();
     let promoted = create_task_for_test(&repo, "Promoted Origin", true, "", "");
@@ -2079,6 +2166,7 @@ fn autosave_cannot_recreate_promoted_storage_slug_after_restore() {
         10,
         String::new(),
         String::new(),
+        None,
     )
     .unwrap();
     let request: alinery_core::CreateTaskRequest = serde_json::from_value(serde_json::json!({
@@ -2118,6 +2206,7 @@ fn autosave_cannot_recreate_promoted_storage_slug_after_restore() {
         10,
         String::new(),
         String::new(),
+        None,
     );
     let resurrected = task_dir(&restored, &draft.slug).exists();
     let final_ticket = fs::read_to_string(artifacts_dir(&restored, "final-name").join("00-ticket.md")).unwrap();

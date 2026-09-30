@@ -230,6 +230,7 @@ export function sameTask(left: Task, right: Task): boolean {
     left.launch_defaults?.harness === right.launch_defaults?.harness &&
     left.launch_defaults?.model === right.launch_defaults?.model &&
     left.draft === right.draft &&
+    left.draft_base_ref === right.draft_base_ref &&
     left.auto_advance.length === right.auto_advance.length &&
     left.auto_advance.every((edge, index) => edge === right.auto_advance[index]) &&
     (left.related_tasks ?? []).length === (right.related_tasks ?? []).length &&
@@ -269,6 +270,7 @@ export function sameBoardTasks(left: BoardTask[], right: BoardTask[]) {
         task.launch_defaults?.harness === other.launch_defaults?.harness &&
         task.launch_defaults?.model === other.launch_defaults?.model &&
         task.draft === other.draft &&
+        task.draft_base_ref === other.draft_base_ref &&
         task.auto_advance.length === other.auto_advance.length &&
         task.auto_advance.every((value, i) => value === other.auto_advance[i]) &&
         task.repo_path === other.repo_path &&

@@ -700,6 +700,11 @@ describe("Playbooks navigation", () => {
       return source;
     });
     vi.mocked(ipc.readConfigForRepo).mockResolvedValue({ defaults: { playbook: sources[0].source.reference, draft_autosave: false } } as Config);
+    vi.mocked(ipc.taskSourceBranchesForRepo).mockResolvedValue({
+      branches: [{ full_ref: "refs/heads/main", name: "main" }],
+      head: { kind: "branch", full_ref: "refs/heads/main", name: "main" },
+      selected: null,
+    });
     vi.mocked(ipc.listHarnessModelsForRepo).mockResolvedValue([]);
     vi.mocked(ipc.getCurrentWebview, { partial: true }).mockReturnValue({ onDragDropEvent: async () => () => {} });
     await renderApp();
