@@ -8,7 +8,7 @@ default_harness = "omp"
 
 [[step]]
 key = "review-context"
-title = "Bind the Review Target"
+title = "Confirm Review Scope"
 short = "review-context"
 inputs = [{ path = "ticket.md", mode = "single" }]
 outputs = [{ path = "review-context.md" }]
@@ -74,7 +74,7 @@ Additional user instructions:
 
 {{PROMPT_EXTRA}}
 
-## Bind the Review Target
+## Confirm Review Scope
 
 Read the exact bound `ticket.md`, its attachments, and any inbound review
 handoff identified by the task. Determine precisely what is being reviewed and

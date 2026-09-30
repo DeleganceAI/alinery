@@ -8,7 +8,7 @@ default_harness = "omp"
 
 [[step]]
 key = "bind"
-title = "Bind the Review Target"
+title = "Confirm Review Scope"
 short = "bind"
 inputs = [{ path = "ticket.md", mode = "single" }]
 outputs = [{ path = "review-context.md" }]
@@ -112,7 +112,7 @@ Bind one frozen Alinery change, run checks, inspect it through five lenses, and 
 
 <!-- alinery:step bind -->
 
-## Bind the review target
+## Confirm Review Scope
 
 You are reviewing **{{TASK_NAME}}** in `{{WORKTREE}}`. Read applicable repository instructions.
 
