@@ -1121,6 +1121,7 @@ fn host_guard_warning_is_repo_scoped_replaced_and_cleared() {
 
 #[test]
 fn task_execution_offline_preserves_saved_progress_without_taking_ownership() {
+    let _lock = observation_test_lock();
     let repo = activity_repo("exec-off");
     write_retained_discovery_task(&repo, "task", "owner", false);
     let config = repo.join("app.toml");
@@ -1148,6 +1149,7 @@ fn task_execution_offline_preserves_saved_progress_without_taking_ownership() {
 
 #[test]
 fn task_execution_classifies_owner_failures_and_uses_healthy_live_reply() {
+    let _lock = observation_test_lock();
     for status in ["foreign_owner", "incompatible", "unavailable", "query_failure", "available"] {
         let repo = activity_repo("exec-live");
         write_retained_discovery_task(&repo, "task", "owner", false);
@@ -1203,6 +1205,7 @@ fn task_execution_classifies_owner_failures_and_uses_healthy_live_reply() {
 
 #[test]
 fn task_execution_rejects_bad_saved_data_before_contacting_owner() {
+    let _lock = observation_test_lock();
     let repo = activity_repo("exec-bad");
     write_retained_discovery_task(&repo, "task", "owner", false);
     let config = repo.join("app.toml");
@@ -1253,6 +1256,7 @@ fn short_git_repo(name: &str) -> PathBuf {
     run(&["commit", "--allow-empty", "-q", "-m", "init"]);
     repo
 }
+// All tests entering observation share its process-global counters and worker controls.
 fn observation_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     LOCK.lock().unwrap_or_else(|error| error.into_inner())

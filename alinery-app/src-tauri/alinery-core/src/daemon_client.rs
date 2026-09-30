@@ -395,6 +395,8 @@ fn connect_until(path: &Path, deadline: &ObservationDeadline) -> std::io::Result
     if fd < 0 {
         return Err(std::io::Error::last_os_error());
     }
+    // SAFETY: socket() returned an owned descriptor that no other owner has.
+    let owned = unsafe { OwnedFd::from_raw_fd(fd) };
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
     if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
         return Err(std::io::Error::last_os_error());
@@ -403,8 +405,6 @@ fn connect_until(path: &Path, deadline: &ObservationDeadline) -> std::io::Result
     if descriptor_flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, descriptor_flags | libc::FD_CLOEXEC) } < 0 {
         return Err(std::io::Error::last_os_error());
     }
-    // SAFETY: socket() returned an owned descriptor that no other owner has.
-    let owned = unsafe { OwnedFd::from_raw_fd(fd) };
     let bytes = std::os::unix::ffi::OsStrExt::as_bytes(path.as_os_str());
     let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
     if bytes.len() + 1 > address.sun_path.len() {
@@ -447,8 +447,9 @@ fn connect_until(path: &Path, deadline: &ObservationDeadline) -> std::io::Result
     Ok(UnixStream::from(owned))
 }
 
-fn write_until(stream: &mut UnixStream, mut bytes: &[u8], deadline: &ObservationDeadline) -> std::io::Result<()> {
+fn write_until(stream: &mut (impl Write + AsRawFd), mut bytes: &[u8], deadline: &ObservationDeadline) -> std::io::Result<()> {
     while !bytes.is_empty() {
+        deadline.remaining()?;
         match stream.write(bytes) {
             Ok(0) => return Err(std::io::Error::new(std::io::ErrorKind::WriteZero, "observation write")),
             Ok(count) => bytes = &bytes[count..],
@@ -457,13 +458,15 @@ fn write_until(stream: &mut UnixStream, mut bytes: &[u8], deadline: &Observation
             Err(error) => return Err(error),
         }
     }
+    deadline.remaining()?;
     Ok(())
 }
 
-fn read_line_until(stream: &mut UnixStream, deadline: &ObservationDeadline) -> std::io::Result<Vec<u8>> {
+fn read_line_until(stream: &mut (impl Read + AsRawFd), deadline: &ObservationDeadline) -> std::io::Result<Vec<u8>> {
     let mut line = Vec::new();
     let mut chunk = [0u8; 8 * 1024];
     loop {
+        deadline.remaining()?;
         match stream.read(&mut chunk) {
             Ok(0) => return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "observation socket closed")),
             Ok(count) => {
@@ -472,6 +475,7 @@ fn read_line_until(stream: &mut UnixStream, deadline: &ObservationDeadline) -> s
                     if line.is_empty() {
                         return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "empty observation reply"));
                     }
+                    deadline.remaining()?;
                     return Ok(line);
                 }
                 line.extend_from_slice(&chunk[..count]);
@@ -1173,6 +1177,139 @@ mod tests {
         assert_eq!(mismatch_server.join().unwrap(), version_request());
         let _ = fs::remove_file(mismatch_path);
     }
+    struct DeadlineCrossingIo<'a> {
+        stream: UnixStream,
+        deadline: &'a ObservationDeadline,
+        operations_before_expiry: usize,
+        interrupt_on_expiry: bool,
+    }
+
+    impl DeadlineCrossingIo<'_> {
+        fn before_io(&mut self) -> std::io::Result<()> {
+            if self.operations_before_expiry > 0 {
+                self.operations_before_expiry -= 1;
+                if self.operations_before_expiry == 0 {
+                    // Cross expiry deliberately, rather than racing a peer or assuming
+                    // a sleep lands inside a narrow interval before the deadline.
+                    while let Ok(remaining) = self.deadline.remaining() {
+                        thread::sleep(remaining);
+                    }
+                    if self.interrupt_on_expiry {
+                        return Err(std::io::ErrorKind::Interrupted.into());
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+
+    impl AsRawFd for DeadlineCrossingIo<'_> {
+        fn as_raw_fd(&self) -> std::os::fd::RawFd {
+            self.stream.as_raw_fd()
+        }
+    }
+
+    impl Read for DeadlineCrossingIo<'_> {
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+            self.before_io()?;
+            let length = bytes.len().min(1);
+            self.stream.read(&mut bytes[..length])
+        }
+    }
+
+    impl Write for DeadlineCrossingIo<'_> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.before_io()?;
+            self.stream.write(&bytes[..bytes.len().min(1)])
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.stream.flush()
+        }
+    }
+
+    #[test]
+    fn observation_expired_deadline_rejects_buffered_complete_reply() {
+        let (mut stream, mut peer) = UnixStream::pair().unwrap();
+        stream.set_nonblocking(true).unwrap();
+        peer.write_all(b"{}\n").unwrap();
+        let deadline = ObservationDeadline::start(Duration::ZERO);
+
+        assert_eq!(read_line_until(&mut stream, &deadline).unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        let mut buffered = [0; 3];
+        stream.read_exact(&mut buffered).unwrap();
+        assert_eq!(&buffered, b"{}\n", "an expired exchange must not consume buffered bytes");
+    }
+
+    #[test]
+    fn observation_deadline_stops_successful_reads_at_expiry() {
+        // Cover both continued progress and a complete reply returned by the
+        // operation that crosses expiry.
+        for reply in [b"xy\n".as_slice(), b"x\n".as_slice()] {
+            let (stream, mut peer) = UnixStream::pair().unwrap();
+            stream.set_nonblocking(true).unwrap();
+            peer.write_all(reply).unwrap();
+            peer.shutdown(std::net::Shutdown::Write).unwrap();
+            let deadline = ObservationDeadline::start(DAEMON_OBSERVATION_TIMEOUT);
+            let mut stream = DeadlineCrossingIo {
+                stream,
+                deadline: &deadline,
+                operations_before_expiry: 2,
+                interrupt_on_expiry: false,
+            };
+
+            assert_eq!(read_line_until(&mut stream, &deadline).unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+            let mut unread = Vec::new();
+            stream.stream.read_to_end(&mut unread).unwrap();
+            assert_eq!(unread, reply[2..], "no further read may run after successful progress crosses expiry");
+        }
+    }
+
+    #[test]
+    fn observation_deadline_stops_successful_writes_at_expiry() {
+        // Cover a partial write and the final write completing after expiry.
+        for payload in [b"xyz".as_slice(), b"xy".as_slice()] {
+            let (stream, mut peer) = UnixStream::pair().unwrap();
+            stream.set_nonblocking(true).unwrap();
+            let deadline = ObservationDeadline::start(DAEMON_OBSERVATION_TIMEOUT);
+            let mut stream = DeadlineCrossingIo {
+                stream,
+                deadline: &deadline,
+                operations_before_expiry: 2,
+                interrupt_on_expiry: false,
+            };
+
+            assert_eq!(write_until(&mut stream, payload, &deadline).unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+            drop(stream);
+            let mut written = Vec::new();
+            peer.read_to_end(&mut written).unwrap();
+            assert_eq!(written, b"xy", "no further write may run after successful progress crosses expiry");
+        }
+    }
+
+    #[test]
+    fn observation_deadline_stops_interrupted_read_and_write_retries() {
+        for reading in [true, false] {
+            let (stream, mut peer) = UnixStream::pair().unwrap();
+            stream.set_nonblocking(true).unwrap();
+            peer.write_all(b"{}\n").unwrap();
+            let deadline = ObservationDeadline::start(DAEMON_OBSERVATION_TIMEOUT);
+            let mut stream = DeadlineCrossingIo {
+                stream,
+                deadline: &deadline,
+                operations_before_expiry: 1,
+                interrupt_on_expiry: true,
+            };
+
+            let error = if reading {
+                read_line_until(&mut stream, &deadline).unwrap_err()
+            } else {
+                write_until(&mut stream, b"{}\n", &deadline).unwrap_err()
+            };
+            assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        }
+    }
+
     fn assert_deadline(started: Instant, error: DaemonClientError) {
         let elapsed = started.elapsed();
         assert!(matches!(error, DaemonClientError::Malformed(_)), "{error:?}");
