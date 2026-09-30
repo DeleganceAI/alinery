@@ -1,5 +1,5 @@
-import { harnessDisplayName, isAllowedLaunchHarness, KillButton } from "../shared";
-import type { LifecycleState } from "../types";
+import { harnessDisplayName, isAllowedLaunchHarness, KillButton, StatusDot } from "../shared";
+import type { LifecycleState, SessionObservation } from "../types";
 
 // Shown instead of a live terminal for a session the running daemon does NOT own
 // (orphaned / interrupted / exited), or a leftover non-OMP harness (including live
@@ -38,6 +38,7 @@ export function SessionActionPanel({
   harness,
   model,
   state,
+  observation,
   artifactReady = false,
   repoPath,
   taskSlug,
@@ -52,6 +53,7 @@ export function SessionActionPanel({
   harness: string;
   model: string;
   state: LifecycleState;
+  observation?: SessionObservation | null;
   artifactReady?: boolean;
   repoPath: string;
   taskSlug: string;
@@ -67,12 +69,12 @@ export function SessionActionPanel({
   return (
     <div className="session-action-panel">
       <div className="sap-meta">
-        <span className={`pill sap-state ${state.state}`}>{label}</span>
+        {observation?.execution ? <StatusDot id={id} slug={taskSlug} observation={observation} /> : <span className={`pill sap-state ${state.state}`}>{label}</span>}
         {phase && <span className="pill">{phase}</span>}
         <span className="pill">{harnessName + (model ? ` · ${model}` : "")}</span>
         <span className="dim mono sap-id">{id}</span>
       </div>
-      {hint ? <p className="sap-hint dim">{hint}</p> : null}
+      {!observation?.execution && hint ? <p className="sap-hint dim">{hint}</p> : null}
       <div className="sap-actions">
         {!unsupported && (
           <button type="button" className="btn" disabled={archiveBusy} onClick={onStartFresh}>

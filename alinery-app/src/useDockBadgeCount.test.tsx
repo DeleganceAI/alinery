@@ -18,6 +18,12 @@ const prefs = (over: Partial<NotificationPrefs> = {}): NotificationPrefs => ({
   dock_badge_approval_waits: true,
   dock_badge_failures: true,
   dock_badge_completions: true,
+  dock_badge_interruptions: true,
+  native_input_waits: true,
+  native_approval_waits: true,
+  native_failures: true,
+  native_interruptions: true,
+  native_final_completions: true,
   ...over,
 });
 

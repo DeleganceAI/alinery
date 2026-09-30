@@ -120,7 +120,17 @@ export type TaskActivitySession = {
   generic: boolean;
   step_title: string;
 };
-export type TaskActivityStatus = "running" | "waiting_for_input" | "waiting_for_approval" | "failed" | "completed";
+export type TaskActivityStatus =
+  | "queued"
+  | "running"
+  | "waiting_for_input"
+  | "waiting_for_approval"
+  | "finishing"
+  | "launch_failed"
+  | "failed"
+  | "interrupted"
+  | "unknown"
+  | "completed";
 export type TaskActivitySummary = {
   status: TaskActivityStatus | null;
   active_session: TaskActivitySession | null;
@@ -138,6 +148,12 @@ export type NotificationPrefs = {
   dock_badge_approval_waits: boolean;
   dock_badge_failures: boolean;
   dock_badge_completions: boolean;
+  dock_badge_interruptions: boolean;
+  native_input_waits: boolean;
+  native_approval_waits: boolean;
+  native_failures: boolean;
+  native_interruptions: boolean;
+  native_final_completions: boolean;
 };
 export type NotificationSuppressionKind = "waiting_for_input" | "waiting_for_approval" | "failure";
 export type NotificationSuppression = {
@@ -511,11 +527,35 @@ export type SemanticCheckpoint = {
 // `checkpoint` comes from meta and survives daemon restarts.
 export type SessionTransport = "pty" | "rpc";
 
+export type SessionExecutionStatus =
+  | "queued"
+  | "starting"
+  | "busy"
+  | "idle"
+  | "waiting_for_input"
+  | "waiting_for_approval"
+  | "finishing"
+  | "completed"
+  | "launch_failed"
+  | "failed"
+  | "interrupted"
+  | "superseded"
+  | "unknown";
+
+export type SessionExecutionObservation = {
+  lifecycle: ExecutionLifecycle | null;
+  status: SessionExecutionStatus;
+  error: string | null;
+  failure_occurrence: string | null;
+  final_completion?: boolean;
+};
+
 export type SessionObservation = {
   lifecycle: LifecycleState;
   state: SessionState | null;
   checkpoint: SemanticCheckpoint;
   transport?: SessionTransport | null;
+  execution?: SessionExecutionObservation;
 };
 
 export type ChatPart =

@@ -78,6 +78,9 @@ pub(crate) fn session_attention_body(repo: &Path, slug: Option<String>, reason: 
         "idle" => "idle, needs you",
         "waiting_for_input" => "waiting for your input",
         "waiting_for_approval" => "waiting for your approval",
+        "failure" => "failed",
+        "interrupted" => "interrupted and needs recovery",
+        "completed" => "completed",
         _ => return Err(format!("unsupported attention reason: {reason}")),
     };
     let label = slug

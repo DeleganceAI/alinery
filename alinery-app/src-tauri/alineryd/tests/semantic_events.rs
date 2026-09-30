@@ -1041,6 +1041,7 @@ fn invalid_artifact_is_nonfatal_and_can_be_fixed_before_completion() {
     let source = fixture.create_task(true);
     fixture.start("task", &source);
     let token = fixture.token_for(&source.id);
+    fixture.event(&source, &token, json!({"type":"busy"}));
     for content in [None, Some("")] {
         if let Some(content) = content {
             fs::write(fixture.output_path(&source), content).unwrap();
@@ -1054,10 +1055,17 @@ fn invalid_artifact_is_nonfatal_and_can_be_fixed_before_completion() {
         assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Running);
         assert_eq!(fixture.rpc(json!({"op":"status", "id":source.id}))["playbook"]["state"], "in_progress");
         assert_eq!(fixture.state().state.executions.len(), 1);
+        assert_eq!(fixture.rpc(json!({"op":"status", "id":source.id}))["agent"]["state"], "busy");
+        fixture.event(&source, &token, json!({"type":"idle"}));
+        assert_eq!(fixture.rpc(json!({"op":"status", "id":source.id}))["agent"]["state"], "idle");
+        fixture.event(&source, &token, json!({"type":"busy"}));
     }
     fs::write(fixture.output_path(&source), "complete").unwrap();
     accepted_receipt(&fixture.complete(&source, &token));
     assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Finishing);
+    assert_eq!(fixture.rpc(json!({"op":"status", "id":source.id}))["agent"]["state"], "busy");
+    fixture.event(&source, &token, json!({"type":"idle"}));
+    assert_eq!(fixture.rpc(json!({"op":"status", "id":source.id}))["agent"]["state"], "idle");
     fixture.release(&source);
     fixture.target();
 }
@@ -1081,6 +1089,25 @@ fn human_locked_completion_is_nonfatal_and_cannot_be_granted_by_runner_socket() 
     assert!(fixture.execution(&source).receipt_id.is_none());
     assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Running);
     assert_eq!(fixture.complete(&source, &token)["completion"]["status"], "human_authorization_required");
+}
+
+#[test]
+fn completion_refusals_preserve_pending_human_interactions() {
+    for automatic in [false, true] {
+        let fixture = Fixture::new();
+        let source = fixture.create_task(automatic);
+        fixture.start("task", &source);
+        let token = fixture.token_for(&source.id);
+        for kind in ["waiting_for_input", "waiting_for_approval"] {
+            fixture.event(&source, &token, json!({"type":kind,"correlation_id":"pending-interaction"}));
+            let response = fixture.complete(&source, &token);
+            assert_eq!(response["completion"]["status"], if automatic { "invalid_outputs" } else { "human_authorization_required" });
+            assert_eq!(
+                fixture.rpc(json!({"op":"status","id":source.id}))["agent"],
+                json!({"state":kind,"correlation_id":"pending-interaction"})
+            );
+        }
+    }
 }
 
 #[test]

@@ -574,6 +574,18 @@ pub struct NotificationPrefs {
     pub dock_badge_failures: bool,
     #[serde(default = "default_enabled")]
     pub dock_badge_completions: bool,
+    #[serde(default = "default_enabled")]
+    pub dock_badge_interruptions: bool,
+    #[serde(default = "default_enabled")]
+    pub native_input_waits: bool,
+    #[serde(default = "default_enabled")]
+    pub native_approval_waits: bool,
+    #[serde(default = "default_enabled")]
+    pub native_failures: bool,
+    #[serde(default = "default_enabled")]
+    pub native_interruptions: bool,
+    #[serde(default = "default_enabled")]
+    pub native_final_completions: bool,
 }
 
 fn default_enabled() -> bool {
@@ -592,6 +604,12 @@ impl Default for NotificationPrefs {
             dock_badge_approval_waits: true,
             dock_badge_failures: true,
             dock_badge_completions: true,
+            dock_badge_interruptions: true,
+            native_input_waits: true,
+            native_approval_waits: true,
+            native_failures: true,
+            native_interruptions: true,
+            native_final_completions: true,
         }
     }
 }

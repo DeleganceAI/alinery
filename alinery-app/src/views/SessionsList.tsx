@@ -325,7 +325,7 @@ export function SessionsList({
             const isLive = obs ? obs.lifecycle.state === "live" : false;
             const awaitingName = awaitingSessionName(item, obs);
             const scope = `${item.repo_path}\u0000${item.task_slug}\u0000${item.playbook}\u0000${item.phase}`;
-            const superseded = !item.archived && !!item.phase && latestSessionByScope[scope]?.id !== item.id;
+            const superseded = !item.execution_id && !item.archived && !!item.phase && latestSessionByScope[scope]?.id !== item.id;
             const sessionType = item.subtask_manager
               ? "Sub-task manager"
               : item.is_playbook_step
@@ -379,7 +379,6 @@ export function SessionsList({
                       <StatusDot
                         id={item.id}
                         slug={item.task_slug}
-                        repoPath={item.repo_path}
                         observation={obs ?? null}
                         superseded={superseded}
                         exitCode={item.exit_code}
