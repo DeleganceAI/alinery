@@ -1228,7 +1228,7 @@ export default function App() {
             </div>
           )}
           {view.kind === "create" && (
-            <div className="view scroll">
+            <div className="view nopad">
               <CreateTaskPage
                 initialDraft={view.kind === "create" ? view.draft : undefined}
                 initialPlaybook={view.initialPlaybook}
