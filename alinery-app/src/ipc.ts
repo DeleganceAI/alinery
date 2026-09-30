@@ -302,8 +302,7 @@ export const openSession = (a: {
 }) => invoke<void>("open_session", a);
 // Raw bytes, not number[]: a Vec<u8> return would cross IPC as a JSON array of numbers (3.4x on
 // the wire, and a per-byte JS array before a single row can be parsed).
-export const readSessionHistory = (a: { id: string; taskSlug?: string | null; offset?: number | null; limit?: number | null }) =>
-  invoke<ArrayBuffer>("read_session_history", a);
+export const readSessionHistory = (a: { id: string; taskSlug?: string | null; offset?: number | null; limit?: number | null }) => invoke<ArrayBuffer>("read_session_history", a);
 export const readSessionOmp = (a: { id: string; taskSlug?: string | null; end?: number | null; want?: number | null }) => invoke<ArrayBuffer>("read_session_omp", a);
 export const resizeSession = (id: string, cols: number, rows: number) => invoke<void>("resize_session", { id, cols, rows });
 export const sessionArtifactReady = (id: string, taskSlug: string) => invoke<boolean>("session_artifact_ready", { id, taskSlug });
