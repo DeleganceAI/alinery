@@ -88,7 +88,8 @@ fn durable_board_discovery_keeps_offline_and_archived_owners_and_retained_titles
 fn offline_board_lists_all_retained_steps_in_declaration_order_and_keeps_legacy_tasks() {
     let repo = activity_repo("offline-board-steps");
     let task = write_retained_discovery_task(&repo, "offline", "offline", false);
-    let source = include_str!("../../playbooks/one-shot/playbook.md")
+    let source = include_str!("../../playbooks/bug-hunting/playbook.md")
+        .replace("key = \"bug-hunting\"", "key = \"one-shot\"")
         .replace("implementation", "z-implementation")
         .replace("Implement and Verify", "Zebra implementation");
     fs::write(alinery_core::execution::task_playbook_path(&repo, &task.slug).unwrap(), &source).unwrap();
@@ -104,6 +105,9 @@ fn offline_board_lists_all_retained_steps_in_declaration_order_and_keeps_legacy_
     assert_eq!(
         serde_json::to_value(offline).unwrap()["playbook_steps"],
         serde_json::json!([
+            {"key": "rca", "title": "Root Cause Analysis"},
+            {"key": "solutions", "title": "Evaluate Resolutions"},
+            {"key": "design", "title": "Design the Fix"},
             {"key": "z-implementation", "title": "Zebra implementation"},
             {"key": "pr", "title": "Prepare PR Note"}
         ])
