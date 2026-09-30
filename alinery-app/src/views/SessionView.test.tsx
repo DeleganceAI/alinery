@@ -1658,12 +1658,11 @@ describe("session-scoped completion permission", () => {
     allowExecutionCompletion.mockReturnValue(grant.promise);
     renderSession();
     await flushPromises();
-    expect(screen.queryByRole("button", { name: /Allow/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Finish step" })).toBeNull();
     await requestCompletion();
     const pane = within(screen.getByTestId("chat-pane"));
-    const allow = pane.getByRole("button", { name: "Allow" });
-    expect(pane.getByRole("button", { name: "Deny" })).toBeDefined();
-    expect(pane.getByText(/Deny keeps the session open/)).toBeDefined();
+    const allow = pane.getByRole("button", { name: "Finish step" });
+    expect(pane.getByRole("button", { name: "Continue working in this session" })).toBeDefined();
     expect(pane.queryByText("Extension-supplied description")).toBeNull();
     fireEvent.click(allow);
     fireEvent.click(allow);
@@ -1671,17 +1670,34 @@ describe("session-scoped completion permission", () => {
     expect(responses()).toEqual([]);
     await act(async () => grant.resolve());
     await waitFor(() => expect(responses()).toEqual([{ type: "extension_ui_response", id: "completion-ask", confirmed: true }]));
-    expect(pane.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(pane.queryByRole("button", { name: "Finish step" })).toBeNull();
     expect(screen.getByLabelText("Message or /command")).toBeDefined();
+  });
+
+  it("names the dependent step and grants only the current execution when moving on", async () => {
+    const saved = executionReply([executionRecord({ owner_session_id: "session" })]);
+    saved.definition.step.unshift({
+      ...saved.definition.step[0],
+      key: "review",
+      title: "Review changes",
+      inputs: [{ path: "result.md", mode: "single" }],
+      outputs: [{ path: "review.md" }],
+    });
+    getTaskExecution.mockResolvedValue(saved);
+    renderSession();
+    await requestCompletion();
+    fireEvent.click(screen.getByRole("button", { name: "Move to Review changes" }));
+    await waitFor(() => expect(responses()).toEqual([{ type: "extension_ui_response", id: "completion-ask", confirmed: true }]));
+    expect(allowExecutionCompletion).toHaveBeenCalledExactlyOnceWith("task", "execution-a", "session", "/repo");
   });
 
   it("denies completion without granting permission or closing the composer", async () => {
     renderSession();
     await requestCompletion();
-    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue working in this session" }));
     await waitFor(() => expect(responses()).toEqual([{ type: "extension_ui_response", id: "completion-ask", confirmed: false }]));
     expect(allowExecutionCompletion).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Finish step" })).toBeNull();
     expect(screen.getByLabelText("Message or /command")).toBeDefined();
   });
 
@@ -1697,7 +1713,7 @@ describe("session-scoped completion permission", () => {
     getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "replacement", previous_session_ids: ["session"] })]));
     renderSession();
     await requestCompletion();
-    const allow = screen.getByRole("button", { name: "Allow" });
+    const allow = screen.getByRole("button", { name: "Finish step" });
     expect(allow).toHaveProperty("disabled", true);
     fireEvent.click(allow);
     expect(allowExecutionCompletion).not.toHaveBeenCalled();
@@ -1711,7 +1727,7 @@ describe("session-scoped completion permission", () => {
     getTaskExecution.mockResolvedValue({ ...saved, live: status ? { status, detail: "Owner cannot be queried" } : undefined });
     renderSession();
     await requestCompletion();
-    const allow = screen.getByRole("button", { name: "Allow" });
+    const allow = screen.getByRole("button", { name: "Finish step" });
     expect(allow).toHaveProperty("disabled", true);
     fireEvent.click(allow);
     fireEvent.click(screen.getByText(/Retained worker · running · Owner session/));
@@ -1725,7 +1741,7 @@ describe("session-scoped completion permission", () => {
     vi.useFakeTimers();
     renderSession();
     await requestCompletion();
-    const allow = screen.getByRole("button", { name: "Allow" }) as HTMLButtonElement;
+    const allow = screen.getByRole("button", { name: "Finish step" }) as HTMLButtonElement;
     expect(allow.disabled).toBe(false);
 
     getTaskExecution.mockRejectedValue(new Error("Execution query failed"));
@@ -1743,14 +1759,14 @@ describe("session-scoped completion permission", () => {
     allowExecutionCompletion.mockRejectedValueOnce(new Error("grant failed"));
     renderSession();
     await requestCompletion();
-    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    fireEvent.click(screen.getByRole("button", { name: "Finish step" }));
     await flushPromises();
     expect(responses()).toEqual([]);
-    expect(screen.getByRole("button", { name: "Allow" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Finish step" })).toHaveProperty("disabled", true);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
-    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    fireEvent.click(screen.getByRole("button", { name: "Finish step" }));
     await flushPromises();
     expect(responses()).toEqual([{ type: "extension_ui_response", id: "completion-ask", confirmed: true }]);
     expect(allowExecutionCompletion).toHaveBeenCalledTimes(2);
@@ -1763,19 +1779,19 @@ describe("session-scoped completion permission", () => {
     });
     renderSession();
     await requestCompletion();
-    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    fireEvent.click(screen.getByRole("button", { name: "Finish step" }));
     await flushPromises();
     expect(allowExecutionCompletion).toHaveBeenCalledTimes(1);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
-    expect(screen.getByRole("button", { name: "Deny" })).toHaveProperty("disabled", true);
-    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+    expect(screen.getByRole("button", { name: "Continue working in this session" })).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("button", { name: "Continue working in this session" }));
     expect(responses().some((response) => response.confirmed === false)).toBe(false);
     rpcWriteSession.mockResolvedValue(undefined);
-    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry handoff" }));
     await flushPromises();
-    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry handoff" })).toBeNull();
     expect(allowExecutionCompletion).toHaveBeenCalledTimes(1);
     expect(responses().map((response) => response.confirmed)).toEqual([true, true]);
   });

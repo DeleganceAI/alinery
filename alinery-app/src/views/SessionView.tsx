@@ -35,6 +35,7 @@ import {
   needsUiReply,
   removeOptimisticSend,
 } from "../chatTranscript";
+import { completionPrompt } from "../completionPrompt";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import { NameEditor, restoreNameFocus } from "../NameEditor";
@@ -1700,6 +1701,7 @@ export function SessionView({
     () => new Set(chat.pendingUi.filter((request) => request.method === "confirm" && request.title === "Allow this session to complete").map((request) => request.id)),
     [chat.pendingUi],
   );
+  const completionCopy = useMemo(() => completionPrompt(executionView?.definition, execution), [executionView?.definition, execution]);
   const chatEntries = useMemo(
     () =>
       chat.entries.map(
@@ -1707,17 +1709,18 @@ export function SessionView({
           entry.type === "approval" && completionRequestIds.has(entry.requestId)
             ? {
                 ...entry,
+                ...completionCopy,
                 detail:
                   grantedCompletionRequestId === entry.requestId
-                    ? "Completion permission was granted, but the reply could not be delivered. Allow retries the reply; it does not grant new permission."
-                    : "Allow this session to finish its current playbook step? Alinery will validate its required outputs before accepting completion. Deny keeps the session open.",
-                scope: `Session ${id}`,
+                    ? "You already chose to finish this step, but the reply did not reach the agent. Retry the handoff to let the agent finish; this does not grant permission again."
+                    : completionCopy.detail,
+                allowLabel: grantedCompletionRequestId === entry.requestId ? "Retry handoff" : completionCopy.allowLabel,
                 disabled: !liveRpc || navHistory || !completionAvailable || completionBusy,
                 denyDisabled: grantedCompletionRequestId === entry.requestId,
               }
             : entry,
       ),
-    [chat.entries, completionRequestIds, id, liveRpc, navHistory, completionAvailable, completionBusy, grantedCompletionRequestId],
+    [chat.entries, completionRequestIds, completionCopy, liveRpc, navHistory, completionAvailable, completionBusy, grantedCompletionRequestId],
   );
   const turnActive = isTurnActive({
     pendingTurn: chat.pendingTurn,

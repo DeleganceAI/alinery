@@ -71,7 +71,18 @@ export type ChatEntry =
       durationMs?: number;
       tools?: number;
     })
-  | (Base & { type: "approval"; requestId: string; action: string; detail: string; scope?: string; options?: string[]; disabled?: boolean; denyDisabled?: boolean })
+  | (Base & {
+      type: "approval";
+      requestId: string;
+      action: string;
+      detail: string;
+      scope?: string;
+      options?: string[];
+      disabled?: boolean;
+      denyDisabled?: boolean;
+      allowLabel?: string;
+      denyLabel?: string;
+    })
   | (Base & { type: "turn_marker"; turn: number; phase: "start" | "end"; stopReason?: string })
   | (Base & { type: "error"; text: string })
   | (Base & { type: "abort"; text: string })
