@@ -296,6 +296,40 @@ When a decision needs two collections, give each collection its own summary step
 
 Earlier steps supply the research and review collections. Each summary preserves the evidence needed for the decision. The decision step waits for both summaries, while each summary step reads only one collection.
 
+### Keep sequential discovery distinct from fan-out
+
+Use `each` when the process calls for a separate execution for every member of a collection. It does not mean “run this step again later” or “start a fresh session for the next loop pass”. Sequential repetition uses a new accepted occurrence of an exact input, consumed through `single`. The loop examples below show how that works.
+
+#### Concrete mistake: Solution Exploration
+
+The human requested one discovery loop: design a candidate, independently trace its implementation, then assess whether another attempt is useful. The gate could continue directly or send the accumulated findings to a human discussion. Discussion could also request another pass. Each candidate was supposed to benefit from discoveries made while tracing the previous one.
+
+```text
+Frame -> Design -> Trace -> Gate
+           ^                |
+           +-- continue ----+
+           |                |
+           |             discuss
+           |                v
+           +-- continue -- Discuss -> Conclude
+```
+
+An attempted definition used wildcard routing files to select the next agent. For example, the gate declared `routes/gate-*.md`, then its prompt instructed it to write exactly one of `routes/gate-design.md` or `routes/gate-discuss.md`. Design consumed `each(routes/*-design.md)`. Tracing and assessment also used `each` inputs to bind fresh sessions to successive handoffs.
+
+This encoded collection-driven fan-out, even though the prompts called it sequential dispatch. A wildcard output permits multiple members, and `each` creates an execution for every matching member. “Write exactly one” was a prompt instruction, not a cardinality constraint enforced by the definition. A one-member collection exercised only the one-worker case of that fan-out. It did not turn the graph into the requested exact-input loop.
+
+The Flow viewer showed several illustrative “Example” boxes for each affected step. Those boxes did not report actual concurrent sessions or prescribe a fixed count, but they exposed the collection multiplicity in the authored definition. Explaining them as merely a visual quirk missed the mismatch between the requested process and its representation.
+
+A scheduler check then supplied one routing file at each handoff. It correctly verified that this particular run proceeded sequentially and used matching candidate and trace results. It did not verify that the definition excluded additional workers. Parser acceptance and a successful one-member run were therefore insufficient evidence that the requested process had been encoded.
+
+#### What to do instead
+
+Before choosing selectors, distinguish sequential discovery from independent work that can be split across a collection. For a sequential loop, use exact `single` handoffs and a fresh accepted trigger occurrence for another pass. Include all work that must be renewed inside the loop, as described below.
+
+Work out conditional continuation separately. Replacing `each` with `single` mechanically does not resolve competing output producers, required outputs on an unselected path, or the need for a meaningful conclusion. If the available fields cannot express the agreed gate and stopping behavior, explain the specific limitation and discuss a process adjustment with the human. Do not silently substitute wildcard routing, extra pass-through sessions or a permanently waiting final step.
+
+In the walkthrough, ask what the declared graph permits if a wildcard producer supplies two matching files. If that creates two workers where the process requires one sequential pass, the representation does not meet the requirement. Lowering Maximum live sessions only queues those workers; it does not change fan-out into a loop. Reserve collection inputs for intentional per-member work, and distinguish properties enforced by dependencies from conventions that prompts ask agents to follow.
+
 ### Include all work that must repeat in a loop
 
 A loop must include every step whose result needs to be fresh on each pass. An input can remain outside the loop when the same unchanged result is valid across passes.
@@ -417,10 +451,10 @@ When a token should remain a literal example as the candidate runs, put one back
 
 Walk through the chosen process, including discoveries and decisions that could change which agent sessions are needed. Record important findings in the handoff. A design walkthrough does not require a separate testing step.
 
-1. **Process:** Does the playbook encode the process the human chose? Does each agent have one clear responsibility, with the required handoffs and decisions in place?
+1. **Process:** Does the playbook encode the process the human chose? Does each agent have one clear responsibility, with the required handoffs and decisions in place? Is sequential repetition represented as a loop rather than collection-driven fan-out?
 2. **Information:** Can each step work from its assigned artifacts without reconstructing earlier conversations?
 3. **Dependencies:** Does every input come from task creation or a step that can run before it is needed? Are output names and patterns from different steps distinct and non-overlapping?
-4. **Collections:** What happens if a required worker is queued, paused, failed or missing, or if a required collection is empty?
+4. **Collections:** Is every `each` input intentional per-member work? What happens with two matching members, or if a required worker is queued, paused, failed or missing, or a required collection is empty? Do not use a one-member example or a prompt-only file-count restriction as proof of a sequential graph.
 5. **Freshness:** On a second loop pass, does each step receive all the new results it needs from that pass?
 6. **Continuation:** What happens when there is no useful next ticket? Is a pause acceptable to the human?
 7. **Human checkpoints:** What does the human review or contribute at each checkpoint, and which work waits until they have checked the direction or made the decision?
