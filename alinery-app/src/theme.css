@@ -3683,6 +3683,33 @@ dialog.modal::backdrop {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.pending-session-name {
+  display: inline-block;
+  width: 3ch;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  vertical-align: bottom;
+}
+.pending-session-name-dots {
+  display: inline-block;
+  width: 1ch;
+  overflow: hidden;
+  white-space: nowrap;
+  /* 500ms per step. 0.5ms, as worded, would be invisible. */
+  animation: pending-session-name 1.5s steps(3, end) infinite;
+}
+@keyframes pending-session-name {
+  0% { width: 1ch; }
+  33.333% { width: 2ch; }
+  66.666% { width: 3ch; }
+  100% { width: 1ch; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pending-session-name-dots {
+    animation: none;
+    width: 3ch;
+  }
+}
 .name-edit-button {
   display: inline-flex;
   align-items: center;

@@ -37,7 +37,7 @@ import {
 } from "../chatTranscript";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
-import { NameEditor, restoreNameFocus } from "../NameEditor";
+import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 
 import {
   abortAndPromptCommand,
@@ -1865,6 +1865,7 @@ export function SessionView({
   };
 
   const finalizedNotice = task ? finalizedSubtaskNotice(task, parentTask) : "";
+  const awaitingName = display != null && awaitingSessionName({ ...display.session, harness: display.session.harness || harness }, observation);
 
   return (
     <div className="sessionview">
@@ -1876,8 +1877,8 @@ export function SessionView({
           <div className="session-identity">
             <div className="editable-name">
               <span className="editable-name-display" role="group" aria-label="Session name" tabIndex={-1} hidden={editingName}>
-                <strong className="editable-name-text" title={display?.session.name || "Unnamed session"}>
-                  {display?.session.name || "Unnamed session"}
+                <strong className="editable-name-text" title={display?.session.name || (awaitingName ? "Waiting for session name" : "Unnamed session")}>
+                  {display?.session.name || (awaitingName ? <PendingSessionName /> : "Unnamed session")}
                 </strong>
                 <button ref={nameTrigger} type="button" className="name-edit-button" aria-label="Rename session" title="Rename session" onClick={() => setEditingName(true)}>
                   <Pencil size={14} aria-hidden="true" />
