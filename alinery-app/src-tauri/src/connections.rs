@@ -694,6 +694,7 @@ pub(crate) fn wait_for_linear_callback(listener: TcpListener, expected_state: &s
 pub(crate) struct CurlResponse {
     pub status: u16,
     pub body: Vec<u8>,
+    pub headers: Vec<(String, String)>,
 }
 
 const CURL_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -734,6 +735,7 @@ fn curl_request_with_method(url: &str, method: &str, headers: &[String], body: O
     Ok(CurlResponse {
         status: response.status,
         body: response.body,
+        headers: response.headers,
     })
 }
 

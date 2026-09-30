@@ -1012,7 +1012,7 @@ export function TaskDetail({
               <span className="k">PR URL</span>
               <span className="v mono">
                 <PullRequestIndicator snapshot={pullRequest} />
-                {!pullRequest?.pr && (task?.pr_url ? task.pr_url : <span className="dim">not available</span>)}
+                {!pullRequest?.pr && !pullRequest?.retry_at_ms && (task?.pr_url ? task.pr_url : <span className="dim">not available</span>)}
               </span>
               <CopyTextButton text={pullRequest?.pr?.url ?? task?.pr_url ?? ""} label="PR URL" />
               <button

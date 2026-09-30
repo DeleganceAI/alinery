@@ -109,7 +109,7 @@ export type BoardTask = Task & {
 };
 export type TaskActivityRef = { repoPath: string; taskSlug: string };
 export type PullRequest = { number: number; url: string; state: "open" | "merged" | "closed" };
-export type PullRequestSnapshot = { pr: PullRequest | null; error: string | null };
+export type PullRequestSnapshot = { pr: PullRequest | null; error: string | null; retry_at_ms?: number | null };
 export type TaskActivitySession = {
   id: string;
   worktree: string;

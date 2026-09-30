@@ -135,6 +135,27 @@ describe("useTaskPullRequests", () => {
     expect(result.current[key]).toEqual({ pr: null, error: null });
   });
 
+  it("keeps a known pull request blank of errors and does not refetch until the rate-limit reset", async () => {
+    const refs = [{ repoPath, taskSlug: "one" }];
+    const key = `${repoPath}:one`;
+    const retryAt = Date.parse("2026-09-17T00:20:00Z");
+    listTaskPullRequests
+      .mockResolvedValueOnce({ [key]: pr })
+      .mockResolvedValueOnce({ [key]: { pr: null, error: null, retry_at_ms: retryAt } })
+      .mockResolvedValue({ [key]: pr });
+    const { result } = renderHook(() => useTaskPullRequests(refs));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(result.current[key]).toEqual(pr);
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(result.current[key]).toEqual({ ...pr, retry_at_ms: retryAt });
+    expect(listTaskPullRequests).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(18 * 60_000));
+    expect(listTaskPullRequests).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(listTaskPullRequests).toHaveBeenCalledTimes(3);
+    expect(result.current[key]).toEqual(pr);
+  });
+
   it("pauses hidden polling, refreshes expired data on visibility, and stops polling after unmount", async () => {
     visibility = "hidden";
     const key = `${repoPath}:one`;
