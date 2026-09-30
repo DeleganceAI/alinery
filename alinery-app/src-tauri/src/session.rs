@@ -259,17 +259,21 @@ pub(crate) fn session_list_items_for_repo(repo: &Path, repo_path: &str, include_
 }
 
 #[tauri::command]
-pub(crate) fn create_session(
+pub(crate) async fn create_session(
     app: AppHandle,
     state: State<'_, AppState>,
     request: alinery_core::task_creation::CreateExecutionSessionRequest,
 ) -> Result<alinery_core::task_creation::CreateExecutionSessionReply, String> {
+    // Daemon control waits up to DAEMON_CONTROL_TIMEOUT. A sync command runs that on the main thread.
     let repo = require_owned_active_repo(&state)?;
-    task_daemon_for(&repo, &request.task_slug, &app_config_path(&app)?)?.create_execution_session(&request)
+    let app_config = app_config_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || task_daemon_for(&repo, &request.task_slug, &app_config)?.create_execution_session(&request))
+        .await
+        .map_err(|error| format!("create session task: {error}"))?
 }
 
 #[tauri::command]
-pub(crate) fn create_session_for_repo(
+pub(crate) async fn create_session_for_repo(
     app: AppHandle,
     state: State<'_, AppState>,
     repo_path: String,
@@ -277,7 +281,10 @@ pub(crate) fn create_session_for_repo(
 ) -> Result<alinery_core::task_creation::CreateExecutionSessionReply, String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
-    task_daemon_for(&repo, &request.task_slug, &app_config_path(&app)?)?.create_execution_session(&request)
+    let app_config = app_config_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || task_daemon_for(&repo, &request.task_slug, &app_config)?.create_execution_session(&request))
+        .await
+        .map_err(|error| format!("create session task: {error}"))?
 }
 
 fn completion_notification_checkpoint(value: &serde_json::Value) -> Option<u64> {
@@ -1084,7 +1091,7 @@ pub(crate) fn rpc_attach_session(state: State<'_, AppState>, app: AppHandle, id:
 }
 
 #[tauri::command]
-pub(crate) fn start_session(
+pub(crate) async fn start_session(
     app: AppHandle,
     state: State<'_, AppState>,
     repo_path: Option<String>,
@@ -1096,34 +1103,51 @@ pub(crate) fn start_session(
         None => require_owned_active_repo(&state)?,
     };
     require_repo_owned(&state, &repo)?;
-    task_daemon_for(&repo, &task_slug, &app_config_path(&app)?)?.start_session(&alinery_core::task_creation::StartSessionRequest { task_slug, session_id })
+    let app_config = app_config_path(&app)?;
+    // Daemon control waits up to DAEMON_CONTROL_TIMEOUT. A sync command runs that on the main thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        task_daemon_for(&repo, &task_slug, &app_config)?.start_session(&alinery_core::task_creation::StartSessionRequest { task_slug, session_id })
+    })
+    .await
+    .map_err(|error| format!("start session task: {error}"))?
 }
 
 // Terminate a live daemon-owned session's harness process group and reap it (issue #24 P6).
 // The daemon awaits its own reap, so on return the meta is stamped and the id is dropped.
+// That wait runs on the main thread if the command stays synchronous.
 #[tauri::command]
-pub(crate) fn kill_session(app: AppHandle, state: State<'_, AppState>, id: String, task_slug: String) -> Result<(), String> {
+pub(crate) async fn kill_session(app: AppHandle, state: State<'_, AppState>, id: String, task_slug: String) -> Result<(), String> {
     let repo = require_owned_active_repo(&state)?;
-    with_session_client(&state, &repo, &task_slug, &id, |d| d.kill_session(&id))?;
-    state.clear_session_route(&id);
-    emit_with(&app, || {
-        let ids = alinery_core::telemetry_ids_for_session(&repo, &task_slug, &id);
-        alinery_core::TelemetryEvent::SessionKill {
-            source: alinery_core::TelemetrySource::App,
-            session_id: ids.session,
-            task_id: ids.task,
-        }
-    });
-    Ok(())
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        with_session_client(&state, &repo, &task_slug, &id, |d| d.kill_session(&id))?;
+        state.clear_session_route(&id);
+        emit_with(&app, || {
+            let ids = alinery_core::telemetry_ids_for_session(&repo, &task_slug, &id);
+            alinery_core::TelemetryEvent::SessionKill {
+                source: alinery_core::TelemetrySource::App,
+                session_id: ids.session,
+                task_id: ids.task,
+            }
+        });
+        Ok(())
+    })
+    .await;
+    result.map_err(|error| format!("kill session task: {error}"))?
 }
 
 #[tauri::command]
-pub(crate) fn kill_session_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, task_slug: String) -> Result<(), String> {
+pub(crate) async fn kill_session_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, task_slug: String) -> Result<(), String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
-    with_session_client(&state, &repo, &task_slug, &id, |d| d.kill_session(&id))?;
-    state.clear_session_route(&id);
-    Ok(())
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        with_session_client(&state, &repo, &task_slug, &id, |d| d.kill_session(&id))?;
+        state.clear_session_route(&id);
+        Ok(())
+    })
+    .await;
+    result.map_err(|error| format!("kill session task: {error}"))?
 }
 
 /// True when the phase artifact for this session exists and is non-empty.
@@ -1169,8 +1193,13 @@ pub(crate) async fn read_session_omp(id: String, task_slug: Option<String>, end:
 }
 
 #[tauri::command]
-pub(crate) fn read_session_history(id: String, task_slug: Option<String>, offset: Option<u64>, limit: Option<u64>) -> Result<Vec<u8>, String> {
+pub(crate) async fn read_session_history(id: String, task_slug: Option<String>, offset: Option<u64>, limit: Option<u64>) -> Result<tauri::ipc::Response, String> {
+    // Replay reads up to 8 MB. Returning `Vec<u8>` would JSON-encode that as a number array
+    // on the main thread — the same cost `read_session_omp` already avoids with `Response`.
     let repo = active_repo()?;
     let slug = task_slug.unwrap_or_default();
-    alinery_core::read_session_history(&repo, &slug, &id, offset, limit).map(|result| result.data)
+    let data = tauri::async_runtime::spawn_blocking(move || alinery_core::read_session_history(&repo, &slug, &id, offset, limit).map(|result| result.data))
+        .await
+        .map_err(|error| error.to_string())??;
+    Ok(tauri::ipc::Response::new(data))
 }

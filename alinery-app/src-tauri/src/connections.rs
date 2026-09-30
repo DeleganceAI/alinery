@@ -509,8 +509,12 @@ fn linear_connection_status(app: &AppHandle) -> ConnectionStatus {
 }
 
 #[tauri::command]
-pub(crate) fn connection_statuses(app: AppHandle) -> Vec<ConnectionStatus> {
-    vec![github_connection_status(), linear_connection_status(&app)]
+pub(crate) async fn connection_statuses(app: AppHandle) -> Vec<ConnectionStatus> {
+    // `git credential fill` (capped at 5s) plus the GitHub user lookup. Opening
+    // Settings → Connections runs both; a sync command does that on the main thread.
+    tauri::async_runtime::spawn_blocking(move || vec![github_connection_status(), linear_connection_status(&app)])
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]

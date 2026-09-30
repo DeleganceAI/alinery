@@ -64,16 +64,21 @@ pub(crate) fn task_execution_for(repo: &Path, task_slug: &str, app_config: &Path
 }
 
 #[tauri::command]
-pub(crate) fn get_task_execution(app: AppHandle, repo_path: Option<String>, task_slug: String) -> Result<AppTaskExecutionReply, String> {
+pub(crate) async fn get_task_execution(app: AppHandle, repo_path: Option<String>, task_slug: String) -> Result<AppTaskExecutionReply, String> {
+    // Grid, Task detail, and Session view poll this. The daemon call waits up to
+    // DAEMON_CONTROL_TIMEOUT (100s); a sync command runs that wait on the main thread.
     let repo = match repo_path {
         Some(path) => target_repo_for_app(&app, &path)?,
         None => active_repo()?,
     };
-    task_execution_for(&repo, &task_slug, &app_config_path(&app)?)
+    let app_config = app_config_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || task_execution_for(&repo, &task_slug, &app_config))
+        .await
+        .map_err(|error| format!("get task execution task: {error}"))?
 }
 
 #[tauri::command]
-pub(crate) fn allow_execution_completion(
+pub(crate) async fn allow_execution_completion(
     app: AppHandle,
     state: State<'_, AppState>,
     repo_path: Option<String>,
@@ -86,12 +91,18 @@ pub(crate) fn allow_execution_completion(
         None => require_owned_active_repo(&state)?,
     };
     require_repo_owned(&state, &repo)?;
-    let daemon = task_daemon_for(&repo, &task_slug, &app_config_path(&app)?)?;
-    daemon_client::UiControlConnection::connect(&daemon)?.allow_execution_completion(&alinery_core::task_creation::AllowExecutionCompletionRequest {
-        task_slug,
-        execution_id,
-        session_id,
+    let app_config = app_config_path(&app)?;
+    // Daemon control waits up to DAEMON_CONTROL_TIMEOUT. Keep that off the main thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        let daemon = task_daemon_for(&repo, &task_slug, &app_config)?;
+        daemon_client::UiControlConnection::connect(&daemon)?.allow_execution_completion(&alinery_core::task_creation::AllowExecutionCompletionRequest {
+            task_slug,
+            execution_id,
+            session_id,
+        })
     })
+    .await
+    .map_err(|error| format!("allow execution completion task: {error}"))?
 }
 
 #[allow(clippy::too_many_arguments)]
