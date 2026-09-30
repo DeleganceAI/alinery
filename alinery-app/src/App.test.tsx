@@ -934,27 +934,41 @@ describe("session navigation acknowledgment", () => {
 });
 
 describe("session sort lifetime", () => {
-  it("keeps independent Task Detail and Sessions sorts across navigation for the current launch", async () => {
+  it("defaults Task Detail to updated descending and remembers that choice across launches", async () => {
     await renderApp();
 
     fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
     expect(await screen.findByText("global sort:priority")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "choose global updated" }));
     expect(await screen.findByText("global sort:updated")).toBeDefined();
+    expect(window.localStorage.getItem("alinery.taskSessionSort")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
     fireEvent.click(await screen.findByRole("button", { name: "open list task" }));
-    expect(await screen.findByText("task sort:priority")).toBeDefined();
+    expect(await screen.findByText("task sort:updated")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "choose task started" }));
     expect(await screen.findByText("task sort:started")).toBeDefined();
+    expect(window.localStorage.getItem("alinery.taskSessionSort")).toBe("started:desc");
 
     fireEvent.click(screen.getByRole("button", { name: "back from task" }));
     fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
     expect(await screen.findByText("global sort:updated")).toBeDefined();
 
+    cleanup();
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
+    expect(await screen.findByText("global sort:priority")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
     fireEvent.click(await screen.findByRole("button", { name: "open list task" }));
     expect(await screen.findByText("task sort:started")).toBeDefined();
+  });
+
+  it("ignores a corrupt remembered task sort", async () => {
+    window.localStorage.setItem("alinery.taskSessionSort", "nope");
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "open list task" }));
+    expect(await screen.findByText("task sort:updated")).toBeDefined();
   });
 });
 

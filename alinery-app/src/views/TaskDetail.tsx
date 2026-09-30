@@ -18,6 +18,7 @@ import { PlaybookGraph } from "../PlaybookGraph";
 import { PullRequestIndicator } from "../PullRequestIndicator";
 import {
   classifySessionNotice,
+  DEFAULT_TASK_SESSION_SORT,
   hasAcknowledgedExit,
   hasUnacknowledgedExit,
   orderTaskPanelRows,
@@ -218,6 +219,7 @@ export function TaskDetail({
   const [showArchived, setShowArchived] = useState(false);
   const [sessionSort, setSessionSort] = useSessionSort(
     controlledSessionSort !== undefined && onSessionSortChange !== undefined ? { sort: controlledSessionSort, onChange: onSessionSortChange } : undefined,
+    DEFAULT_TASK_SESSION_SORT,
   );
   const sessionNow = useMinuteNow();
   const [artifactItems, setArtifactItems] = useState<ArtifactListItem[]>([]);

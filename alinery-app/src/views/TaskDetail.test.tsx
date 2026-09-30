@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
+import { PRIORITY_SESSION_SORT } from "../sessionAttention";
 import { mockIpc } from "../test/mockIpc";
 import { navReady, requireNav } from "../test/nav";
 import type {
@@ -1556,8 +1557,7 @@ describe("attention-first session order", () => {
       "older-design": observation("busy"),
       "newer-tdd": { ...observation("idle"), lifecycle: { state: "exited", code: 0 }, state: null },
     });
-
-    const { container } = renderSeededDetail({ initialTask: fixture });
+    const { container } = renderSeededDetail({ initialTask: fixture, sessionSort: PRIORITY_SESSION_SORT, onSessionSortChange: noop });
 
     await waitFor(() => {
       expect(renderedSessionSteps(container)).toEqual([...backendRows].reverse().map((row) => `${row.playbook} · ${row.phase}`));
@@ -1652,12 +1652,15 @@ describe("session time columns and sorting", () => {
     mocks.listSessions.mockResolvedValue(backendRows);
     mocks.sessionStatuses.mockResolvedValue({});
     const { container } = renderSeededDetail({ initialTask: fixture });
-    await waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · clarify", "superdevelop · design", "superdevelop · build"]));
+    await waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design", "superdevelop · clarify"]));
+    const updated = screen.getByText(/^Updated/, { selector: ".session-sort-header" });
+    expect(updated.closest("th")?.getAttribute("aria-sort")).toBe("descending");
+    expect(updated.textContent?.trim()).toBe("Updated ↓");
 
     const started = screen.getByText("Started", { selector: ".session-sort-header" });
     fireEvent.click(started);
-    await waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design", "superdevelop · clarify"]));
-    expect(started.closest("th")?.getAttribute("aria-sort")).toBe("descending");
+    await waitFor(() => expect(started.closest("th")?.getAttribute("aria-sort")).toBe("descending"));
+    expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design", "superdevelop · clarify"]);
     expect(started.textContent?.trim()).toBe("Started ↓");
     expect(container.querySelectorAll(".task-session-table tbody tr")[0].querySelector('[title^="Started "]')).not.toBeNull();
 
@@ -1682,10 +1685,11 @@ describe("session time columns and sorting", () => {
     mocks.listSessions.mockImplementation(async () => rows);
     mocks.sessionStatuses.mockResolvedValue({});
     const { container } = renderSeededDetail({ initialTask: fixture });
-    await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · design", "superdevelop · build"]));
-    const updated = screen.getByText("Updated", { selector: ".session-sort-header" });
-    fireEvent.click(updated);
-    expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]);
+    await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]));
+    const updated = screen.getByText(/^Updated/, { selector: ".session-sort-header" });
+    expect(updated.closest("th")?.getAttribute("aria-sort")).toBe("descending");
+    expect(updated.textContent?.trim()).toBe("Updated ↓");
+    expect(screen.getByRole("button", { name: "Priority" }).getAttribute("aria-pressed")).toBe("false");
 
     rows = [{ ...rows[0], status_changed_at: 300 }, rows[1]];
     await act(async () => {
@@ -1693,7 +1697,6 @@ describe("session time columns and sorting", () => {
     });
     await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · design", "superdevelop · build"]));
     expect(updated.closest("th")?.getAttribute("aria-sort")).toBe("descending");
-    expect(updated.textContent?.trim()).toBe("Updated ↓");
     expect(screen.getByRole("button", { name: "Priority" }).getAttribute("aria-pressed")).toBe("false");
 
     fireEvent.click(updated);
@@ -1732,12 +1735,11 @@ describe("session time columns and sorting", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
-    await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · design", "superdevelop · build"]));
-    expect(screen.getByText("Failed")).toBeDefined();
-
-    const updated = screen.getByText("Updated", { selector: ".session-sort-header" });
-    fireEvent.click(updated);
+    await vi.waitFor(() => expect(screen.getByText("Failed")).toBeDefined());
     expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]);
+    const updated = screen.getByText(/^Updated/, { selector: ".session-sort-header" });
+    expect(updated.closest("th")?.getAttribute("aria-sort")).toBe("descending");
+    expect(screen.getByRole("button", { name: "Priority" }).getAttribute("aria-pressed")).toBe("false");
 
     targetObservation = failedObservation("StaleSource");
     await act(async () => {
