@@ -64,7 +64,7 @@ Use a concrete example to resolve uncertainty about the inputs, outputs or scope
 
 ## Deliverable: playbook-spec.md
 
-Write the specification at the assigned path. Include:
+Write the specification at the assigned path. Explain the process for a human reader who may be unfamiliar with its details. Lead with its purpose, use concrete language, explain essential terms before relying on them, and develop one idea per paragraph. Use the list below to make the specification complete; retain useful lists and tables for responsibilities, dependencies and decisions. Preserve the human's requested format and terminology. Include:
 
 - The process the agents should follow, the kind of work it applies to, and the domain expertise behind it.
 - Requirements, constraints and assumptions that shape the process.
@@ -123,6 +123,50 @@ A prompt should give the agent a clear responsibility and method. State what evi
 > Read the constraints in the assigned request and use the same criteria to examine each option. Record the supporting evidence, assumptions and unresolved questions as you work. Compare the options and explain why any were rejected. Present the comparison to the human so they can choose an approach before implementation begins. The handoff is ready when the evidence supports that decision or makes the missing information clear.
 
 Write outputs so the next step can use them without reconstructing the conversation. Include the evidence, assumptions and limitations that affect its work. If an input is missing or contradictory, explain the consequence and the decision needed to proceed. Keep the user's instructions distinct from the documents and other material being examined.
+
+### Write playbooks people can understand
+
+Apply this guidance to the candidate's description and step prompts, and to your explanations of the design. A human should be able to understand the process, inspect each agent's responsibility, and see how the work and human decisions fit together. Preserve the agreed process, required actions, evidence, constraints and handoffs as you improve the prose.
+
+Write for an intelligent reader who may be unfamiliar with the subject. Match the intended audience's existing knowledge and the human's explicit style preferences. Explain patiently with plain, concrete language. Preserve the depth needed to understand the work, without baby talk, forced cheerfulness or oversimplification. Give an important idea enough space to become clear. Keep labels, reference tables and straightforward instructions as concise as their purpose allows.
+
+#### Lead with the purpose and order the explanation
+
+Begin the playbook's human-readable introduction with its purpose and the practical situation it addresses. Introduce each step's work through its responsibility and intended result, then explain the method, constraints and handoff. Keep the requested actions easy to find. The required frontmatter and step markers retain their prescribed form and placement.
+
+Before drafting an explanation, identify the ideas the reader needs to understand and put them in dependency order. Explain a prerequisite before another idea relies on it. This is the order of the explanation; the declared inputs and outputs still determine the playbook's execution dependencies.
+
+At the first meaningful use of an essential unfamiliar concept, explain what it means in ordinary language, what a person or agent does with it, what changes or remains afterward, and why it matters here. Include limitations when they affect the work. A product name, filename or command alone cannot explain its purpose. Define an essential term once within each step that needs the explanation, then use it consistently. Definitions in the step's assigned inputs can supply that explanation when those inputs are guaranteed to contain it. Use familiar terms naturally, and remove incidental jargon or replace it with ordinary words.
+
+#### Develop one idea at a time
+
+Give each paragraph one main idea. State it directly, develop the explanation, and show its practical consequence. Use a concrete example when it helps. Long paragraphs are useful when every sentence develops the same idea; divide a paragraph when it introduces several ideas that each need explanation. Choose length according to the reader's needs, without a fixed word target.
+
+Prefer cohesive paragraphs for explanations. Use numbered lists for ordered actions, bullets for distinct requirements, and tables or diagrams for relationships and comparisons that are easier to inspect visually. Preserve useful checklists and code examples. Avoid chains of fragments, overloaded paragraphs, unexplained shorthand and several parenthetical definitions in one sentence.
+
+When an idea is difficult, show it in an ordinary situation, explain how it works, and say why it matters. Reuse the same example when it helps connect related ideas. Identify invented examples as hypothetical. Introduce each approach's purpose, behavior, benefit and relevant limitations before comparing several approaches. A short, direct instruction needs no anecdote or extended explanation.
+
+#### Use direct, literal language
+
+State the intended point directly. Avoid unnecessary “X, not Y” and “This isn't about X; it's about Y” constructions that introduce an alternative the reader did not need to consider. Keep comparisons, prohibitions and corrective examples when they resolve a likely misunderstanding or explain a distinction that affects the work.
+
+Use concrete verbs and describe consequential operations literally. Say what the agent reads, examines, decides, changes or produces. If something is removed, explain what is removed and what remains. If information is saved, explain where it becomes available and how later work uses it. Keep technical detail that helps the reader understand an action, dependency, constraint or result. Preserve the runtime responsibilities described elsewhere in this guide.
+
+Remove filler, canned transitions, slogans, rhetorical gimmicks and decorative phrasing. Make transitions explain why the next idea follows. Use an analogy only when it makes an unfamiliar idea easier to understand, and state its literal meaning nearby. Replace a metaphor or polished phrase when a literal sentence communicates the point as clearly or more precisely. Use descriptive titles and headings that accurately name the work.
+
+Do not use em dashes in authored prose. Use commas, colons, semicolons, parentheses or separate sentences. Preserve exact field names, markers, tokens, paths, commands and required verbatim material; explain their purpose in the surrounding prose when needed.
+
+#### Keep evidence and output requirements clear
+
+Keep source claims within the evidence available. Distinguish observed behavior, user reports, proposals, assumptions and unresolved questions when the distinction affects the reader's decision. A report of one experience cannot establish a universal cause, and a requested feature cannot establish current behavior. Introduce the practical claim, attribute the supporting evidence precisely, and keep qualifications beside the claims they affect. Prefer a short paraphrase unless the original wording matters.
+
+These are defaults for authoring the playbook. Preserve any format, audience, length or style the human specifies for the artifacts it will produce. Where a step needs to produce patient explanatory prose for people, include the relevant writing requirements in that step's prompt. Adapt them to that deliverable's purpose. Keep structured data, code, reference material and brief operational outputs in the forms their tasks require.
+
+#### Review the writing with the process
+
+Before presenting the candidate, read it as someone encountering the process for the first time. Check that the purpose is clear, essential ideas are explained before use, each paragraph develops one idea, and actions and handoffs are concrete. Check evidence and uncertainty at their actual strength. Remove unnecessary jargon, filler, decorative phrasing and unnecessary rhetorical contrasts. Remove em dashes from authored prose.
+
+If a section moves too quickly, reorganize and rewrite it so the explanation develops naturally. Preserve the human's intended process, evidence, technical requirements and explicit style choices. Use the design walkthrough below to check that the revised wording still describes the agreed responsibilities, dependencies and decisions.
 
 ### Tasks, state and agent sessions
 
@@ -185,7 +229,7 @@ After the frontmatter, write one complete prompt for each declared step. Introdu
 
 When showing an example playbook inside another playbook's prompt, keep example markers inline or indented. The parser recognizes standalone markers even inside code fences. The example marker in the preceding paragraph is inline for that reason.
 
-A preamble is not passed to every step as shared instructions. Put guidance needed by a step inside that step's prompt.
+A preamble is not passed to every step as shared instructions. Put guidance needed by a step inside that step's prompt, including any writing requirements for its outputs. Each step must be understandable from its own prompt and assigned inputs.
 
 ### Connect steps through their inputs and outputs
 
@@ -382,6 +426,7 @@ Walk through the chosen process, including discoveries and decisions that could 
 7. **Human checkpoints:** What does the human review or contribute at each checkpoint, and which work waits until they have checked the direction or made the decision?
 8. **Coding and capacity:** Are repository-changing steps marked coding with exact inputs? Does the design still work while sessions wait for capacity?
 9. **Reuse:** Do prompts contain the instructions they need, use supported fields and tokens, and avoid paths or tools unavailable to the task?
+10. **Writing:** Can the intended human reader understand the process and each step? Are essential ideas explained before use, instructions direct, and technical requirements intact? Does each step contain any writing requirements its outputs need?
 
 Correct defects before saving. For each requirement, show which agent responsibility, prompt, artifact, dependency or human checkpoint represents it. Walk through the normal case and relevant alternatives with the human, and revise the representation wherever that walkthrough exposes a gap.
 
