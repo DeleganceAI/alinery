@@ -1637,6 +1637,11 @@ main {
 .task-table .age-col {
   width: 10ch;
 }
+.task-table .pr-col {
+  width: 11ch;
+  text-align: center;
+  white-space: nowrap;
+}
 .task-table .task-name-cell {
   min-width: 0;
   position: relative;
@@ -3867,7 +3872,8 @@ dialog.modal::backdrop {
   width: 24%;
 }
 .playbooks-sort-header,
-.session-sort-header {
+.session-sort-header,
+.task-sort-header {
   border: 0;
   background: transparent;
   color: inherit;
@@ -3879,11 +3885,14 @@ dialog.modal::backdrop {
 .playbooks-sort-header.active,
 .session-sort-header:hover,
 .session-sort-header.active,
+.task-sort-header:hover,
+.task-sort-header.active,
 .session-sort-control.active {
   color: var(--accent);
 }
 .playbooks-sort-header:focus-visible,
 .session-sort-header:focus-visible,
+.task-sort-header:focus-visible,
 .session-sort-control:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;

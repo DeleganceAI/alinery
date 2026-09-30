@@ -3,12 +3,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EMPTY_STATE_ART } from "../emptyStateArt";
 import { mockIpc } from "../test/mockIpc";
 import { navReady, requireNav } from "../test/nav";
-import type { BoardNav, BoardTask, TaskActivityMap, TaskActivitySummary } from "../types";
+import type { BoardNav, BoardTask, PullRequestSnapshot, TaskActivityMap, TaskActivityRef, TaskActivitySummary } from "../types";
 import { flattenTaskRows, TaskList } from "./TaskList";
 
 const scenario = vi.hoisted(() => ({
   tasks: [] as BoardTask[],
   error: "",
+}));
+const pullRequests = vi.hoisted(() => ({
+  listTaskPullRequests: vi.fn(
+    async (tasks: TaskActivityRef[]): Promise<Record<string, PullRequestSnapshot>> =>
+      Object.fromEntries(tasks.map((task) => [`${task.repoPath}:${task.taskSlug}`, { pr: null, error: null }])),
+  ),
+  openUrl: vi.fn(async (_url: string | URL) => {}),
 }));
 let activity: TaskActivityMap = {};
 
@@ -19,6 +26,8 @@ vi.mock("../ipc", () =>
       return scenario.tasks;
     },
     listTaskActivity: async () => activity,
+    listTaskPullRequests: pullRequests.listTaskPullRequests,
+    openUrl: pullRequests.openUrl,
   }),
 );
 
@@ -76,6 +85,12 @@ beforeEach(() => {
   scenario.tasks = [];
   scenario.error = "";
   activity = {};
+  pullRequests.listTaskPullRequests.mockReset();
+  pullRequests.listTaskPullRequests.mockImplementation(async (tasks: TaskActivityRef[]) =>
+    Object.fromEntries(tasks.map((task) => [`${task.repoPath}:${task.taskSlug}`, { pr: null, error: null }])),
+  );
+  pullRequests.openUrl.mockReset();
+  pullRequests.openUrl.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -253,5 +268,103 @@ describe("TaskList empty", () => {
     const { container } = render(<TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
     await screen.findByText("A task");
     expect(container.querySelector("tbody tr td:nth-child(3)")?.textContent).toBe("—");
+  });
+});
+
+function names() {
+  return [...document.querySelectorAll(".task-name-text")].map((node) => node.textContent);
+}
+
+describe("Task list pull requests", () => {
+  const props = {
+    allRepos: false,
+    onDuplicate: () => {},
+    onOpenActiveSession: () => {},
+    registerNav: () => {},
+    onCreate: () => {},
+  };
+
+  it("shows an icon-only PR column and opens the pull request without opening the task", async () => {
+    const openUrl = "https://github.com/example/project/pull/42";
+    const mergedUrl = "https://github.com/example/project/pull/8";
+    const closedUrl = "https://github.com/example/project/pull/7";
+    scenario.tasks = [
+      task("open-pr", { name: "Open PR", repo_path: "/pr-icons", created: 1 }),
+      task("merged-pr", { name: "Merged PR", repo_path: "/pr-icons", created: 2 }),
+      task("closed-pr", { name: "Closed PR", repo_path: "/pr-icons", created: 3 }),
+      task("none-pr", { name: "No PR", repo_path: "/pr-icons", created: 4 }),
+      task("draft-pr", { name: "Draft PR", repo_path: "/pr-icons", created: 5, draft: true }),
+    ];
+    pullRequests.listTaskPullRequests.mockResolvedValue({
+      "/pr-icons:open-pr": { pr: { number: 42, url: openUrl, state: "open" }, error: null },
+      "/pr-icons:merged-pr": { pr: { number: 8, url: mergedUrl, state: "merged" }, error: null },
+      "/pr-icons:closed-pr": { pr: { number: 7, url: closedUrl, state: "closed" }, error: null },
+      "/pr-icons:none-pr": { pr: null, error: null },
+    });
+    const onOpen = vi.fn();
+    render(<TaskList {...props} onOpen={onOpen} />);
+
+    const headers = await screen.findAllByRole("columnheader");
+    expect(headers[headers.length - 1]?.textContent?.trim()).toBe("PR");
+    const open = await screen.findByRole("link", { name: /PR #42.*Open/i });
+    expect(open.className).toContain("open");
+    expect(open.className).toContain("compact");
+    expect(open.textContent).toBe("");
+    const merged = screen.getByRole("link", { name: /PR #8.*Merged/i });
+    expect(merged.className).toContain("merged");
+    expect(merged.textContent).toBe("");
+    const closed = screen.getByRole("link", { name: /PR #7.*Closed/i });
+    expect(closed.className).toContain("closed");
+    expect(closed.textContent).toBe("");
+    const none = screen.getByText("No PR").closest("tr");
+    expect(none?.querySelector(".pr-col")?.textContent).toBe("");
+    expect(none?.querySelector("a, [role='img']")).toBeNull();
+    expect(screen.getByText("Draft PR").closest("tr")?.querySelector(".pr-col")?.textContent).toBe("");
+    expect(pullRequests.listTaskPullRequests).toHaveBeenCalledWith([
+      { repoPath: "/pr-icons", taskSlug: "open-pr" },
+      { repoPath: "/pr-icons", taskSlug: "merged-pr" },
+      { repoPath: "/pr-icons", taskSlug: "closed-pr" },
+      { repoPath: "/pr-icons", taskSlug: "none-pr" },
+    ]);
+
+    fireEvent.click(open);
+    await waitFor(() => expect(pullRequests.openUrl).toHaveBeenCalledWith(openUrl));
+    expect(onOpen).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Open PR"));
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ slug: "open-pr" }));
+  });
+
+  it("sorts by pull request status and restores the task tree", async () => {
+    scenario.tasks = [
+      task("parent", { name: "Parent", repo_path: "/pr-sort", created: 1 }),
+      task("child", { name: "Child", repo_path: "/pr-sort", parent_task: "parent", created: 2 }),
+      task("closed", { name: "Closed", repo_path: "/pr-sort", created: 3 }),
+      task("merged", { name: "Merged", repo_path: "/pr-sort", created: 4 }),
+    ];
+    pullRequests.listTaskPullRequests.mockResolvedValue({
+      "/pr-sort:parent": { pr: null, error: null },
+      "/pr-sort:child": { pr: { number: 42, url: "https://github.com/example/project/pull/42", state: "open" }, error: null },
+      "/pr-sort:closed": { pr: { number: 7, url: "https://github.com/example/project/pull/7", state: "closed" }, error: null },
+      "/pr-sort:merged": { pr: { number: 8, url: "https://github.com/example/project/pull/8", state: "merged" }, error: null },
+    });
+    render(<TaskList {...props} onOpen={() => {}} />);
+
+    await screen.findByRole("link", { name: /PR #42.*Open/i });
+    expect(names()).toEqual(["Parent", "Child", "Closed", "Merged"]);
+    expect(document.querySelectorAll(".task-name-cell.nested")).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Sort by PR status, open first" }));
+    expect(names()).toEqual(["Child", "Merged", "Closed", "Parent"]);
+    expect(document.querySelectorAll(".task-name-cell.nested")).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "PR, open first. Activate to sort with no pull request first" }).closest("th")?.getAttribute("aria-sort")).toBe("descending");
+
+    fireEvent.click(screen.getByRole("button", { name: "PR, open first. Activate to sort with no pull request first" }));
+    expect(names()).toEqual(["Parent", "Closed", "Merged", "Child"]);
+    expect(screen.getByRole("button", { name: "PR, no pull request first. Activate to restore task order" }).closest("th")?.getAttribute("aria-sort")).toBe("ascending");
+
+    fireEvent.click(screen.getByRole("button", { name: "PR, no pull request first. Activate to restore task order" }));
+    expect(names()).toEqual(["Parent", "Child", "Closed", "Merged"]);
+    expect(document.querySelectorAll(".task-name-cell.nested")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Sort by PR status, open first" }).closest("th")?.getAttribute("aria-sort")).toBeNull();
   });
 });
