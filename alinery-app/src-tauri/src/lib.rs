@@ -20,8 +20,8 @@
 //     from the banner so sound/banner/bounce toggle independently (no new dep). (2) REMOVE-WORKTREE:
 //     end the task's live sessions, `git worktree remove --force`, clear task.worktree.
 //     (3) PR LINK: compare URL generation and background GitHub PR discovery live in
-//     git_ops.rs. (4) TICKET IMPORT: one-way Linear/GitHub imports via curl (zero
-//     new deps, mirrors the git shell-out pattern). config.toml mirrors harnesses.toml
+//     git_ops.rs. (4) TICKET IMPORT: one-way Linear/GitHub imports via ureq.
+//     GitHub auth is `git credential fill`, not the gh CLI. config.toml mirrors harnesses.toml
 //     (bundled default via include_str!, degrades to defaults on a bad edit).
 // Deferred (do NOT add here): Linear status write-back,
 //     PRD track, SQLite, session resurrection, stream-json/rich adapters, auto-advance,
@@ -79,6 +79,7 @@ mod account;
 mod app_config;
 mod artifacts;
 mod backup;
+mod community_playbooks;
 mod connections;
 mod daemon;
 mod git_ops;
@@ -101,6 +102,7 @@ use account::*;
 use app_config::*;
 use artifacts::*;
 use backup::*;
+use community_playbooks::*;
 use connections::*;
 use daemon::*;
 use git_ops::*;
@@ -144,6 +146,8 @@ pub fn run() {
             set_active_repo,
             remove_repo,
             pick_repo_dialog,
+            classify_picked_folder,
+            init_picked_folder,
             pick_attachment_files_dialog,
             create_task,
             create_task_for_repo,
@@ -183,6 +187,14 @@ pub fn run() {
             recover_subtask_manager,
             discard_subtask,
             list_playbook_catalog,
+            list_community_playbooks,
+            list_community_imports,
+            community_download_status,
+            import_community_playbook,
+            update_community_import,
+            preview_community_playbook,
+            list_my_community_playbooks,
+            publish_community_playbook,
             read_playbook,
             validate_playbook_source,
             render_playbook_source,

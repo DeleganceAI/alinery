@@ -1,6 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, assert, describe, expect, it, vi } from "vitest";
 import { ACTOR, type ChatEntry, TYPE_LABEL } from "../chat/types";
+import { applyRpcLine, emptyTranscript } from "../chatTranscript";
 import { ChatEntryRow } from "./ChatEntryRow";
 
 vi.mock("../WindowChrome", () => ({ WindowControls: () => null }));
@@ -144,5 +148,122 @@ describe("ChatEntryRow markdown + copy", () => {
     const { container } = render(<ChatEntryRow entry={{ id: "t4", at: Date.now(), actor: ACTOR.agent, type: "text", text: "Copy me" }} showCopyButton={false} />);
     expect(container.querySelector("button[title='Copy message']")).toBeNull();
     expect(container.querySelector(".chat-msg-body")?.textContent).toBe("Copy me");
+  });
+});
+
+describe("DEL-722 block-local streaming", () => {
+  const fixtures = join(dirname(fileURLToPath(import.meta.url)), "../chat/fixtures");
+  const rows = (entries: ChatEntry[]) => (
+    <ol>
+      {entries.map((entry) => (
+        <li key={entry.id} data-entry-id={entry.id}>
+          <ChatEntryRow entry={entry} defaultExpanded={false} autoCollapseThinking />
+        </li>
+      ))}
+    </ol>
+  );
+
+  it("keeps completed thinking collapsed while the recorded answer streams in the same mounted list", () => {
+    let state = emptyTranscript();
+    const view = render(rows(state.entries));
+    const events = ["thinking_start", "thinking_end", "text_start", "text_delta", "text_end"];
+    const expanded: boolean[] = [];
+    let originalRail: Element | null = null;
+
+    for (const [index, event] of events.entries()) {
+      const frame: unknown = JSON.parse(readFileSync(join(fixtures, `live-${event}.json`), "utf8"));
+      state = applyRpcLine(state, frame);
+      view.rerender(rows(state.entries));
+      const thinking = state.entries.find((entry) => entry.type === "thinking");
+      expect(thinking).toBeTruthy();
+      const row = view.container.querySelector<HTMLElement>(`[data-entry-id="${thinking?.id}"]`);
+      expect(row).not.toBeNull();
+      const rail = row?.querySelector(".chat-rail");
+      expect(rail).toBeTruthy();
+      if (index === 0) originalRail = rail ?? null;
+      expect.soft(rail, event).toBe(originalRail);
+      expanded.push(row?.querySelector(".chat-rail-line")?.getAttribute("aria-expanded") === "true");
+      if (index === 0) {
+        expect.soft(row?.querySelector(".chat-work-pre")?.textContent, event).toBe("The user wants me to reply");
+      } else {
+        expect.soft(row?.querySelector(".chat-work-pre"), event).toBeNull();
+        expect.soft(row?.querySelector(".chat-rail-panel")?.textContent, event).toBe("");
+      }
+
+      if (index >= 1) {
+        const answer = state.entries.find((entry) => entry.type === "text");
+        expect(answer).toBeTruthy();
+        const answerRow = view.container.querySelector<HTMLElement>(`[data-entry-id="${answer?.id}"]`);
+        assert(answerRow, "Missing answer row");
+        expect.soft(answerRow?.querySelector(".chat-msg-body")?.textContent, event).toContain("323");
+        const live = event === "text_start" || event === "text_delta";
+        expect.soft(Boolean(answerRow?.querySelector(".chat-caret")), event).toBe(live);
+        if (live) {
+          expect.soft(answerRow?.querySelector(".chat-text-body")?.textContent, event).toBe("323");
+          expect.soft(within(answerRow).queryByRole("button", { name: "Copy message" }), event).toBeNull();
+        }
+      }
+    }
+
+    expect(expanded).toEqual([true, false, false, false, false]);
+    view.unmount();
+  });
+
+  it("preserves an earlier text row's Markdown and copy controls while a second indexed text block streams", () => {
+    const events = [
+      { type: "text_start", contentIndex: 0, texts: ["## Finished"] },
+      { type: "text_end", contentIndex: 0, texts: ["## Finished"] },
+      { type: "text_start", contentIndex: 1, texts: ["## Finished", "## Later"] },
+      { type: "text_delta", contentIndex: 1, texts: ["## Finished", "## Later answer"], delta: " answer" },
+      { type: "text_end", contentIndex: 1, texts: ["## Finished", "## Later answer"] },
+    ];
+    let state = emptyTranscript();
+    const view = render(rows(state.entries));
+    let firstMessage: Element | null = null;
+    let secondMessage: Element | null = null;
+
+    for (const [index, event] of events.entries()) {
+      state = applyRpcLine(state, {
+        type: "message_update",
+        assistantMessageEvent: { type: event.type, contentIndex: event.contentIndex, delta: event.delta },
+        message: { role: "assistant", content: event.texts.map((text) => ({ type: "text", text })), stopReason: "stop" },
+      });
+      view.rerender(rows(state.entries));
+      const texts = state.entries.filter((entry) => entry.type === "text");
+      const first = view.container.querySelector<HTMLElement>(`[data-entry-id="${texts[0]?.id}"]`);
+      assert(first, "Missing first text row");
+      const message = first?.querySelector(".chat-msg");
+      expect(message).toBeTruthy();
+      if (index === 0) firstMessage = message ?? null;
+      expect.soft(message, event.type).toBe(firstMessage);
+      if (index >= 1) {
+        expect.soft(within(first).queryByRole("heading", { level: 2, name: "Finished" }), event.type).not.toBeNull();
+        expect.soft(within(first).queryByRole("button", { name: "Copy message" }), event.type).not.toBeNull();
+        expect.soft(first?.querySelector(".chat-caret"), event.type).toBeNull();
+        expect.soft(first?.querySelector(".chat-text-body"), event.type).toBeNull();
+      }
+
+      if (index >= 2) {
+        const second = view.container.querySelector<HTMLElement>(`[data-entry-id="${texts[1]?.id}"]`);
+        assert(second, "Missing second text row");
+        const siblingMessage = second?.querySelector(".chat-msg");
+        expect(siblingMessage).toBeTruthy();
+        if (index === 2) secondMessage = siblingMessage ?? null;
+        expect.soft(siblingMessage, event.type).toBe(secondMessage);
+        if (event.type !== "text_end") {
+          expect.soft(second?.querySelector(".chat-text-body")?.textContent, event.type).toBe(event.texts[1]);
+          expect.soft(second?.querySelector(".chat-caret"), event.type).not.toBeNull();
+          expect.soft(within(second).queryByRole("heading"), event.type).toBeNull();
+          expect.soft(within(second).queryByRole("button", { name: "Copy message" }), event.type).toBeNull();
+        } else {
+          expect.soft(within(second).queryByRole("heading", { level: 2, name: "Later answer" }), event.type).not.toBeNull();
+          expect.soft(within(second).queryByRole("button", { name: "Copy message" }), event.type).not.toBeNull();
+          expect.soft(second?.querySelector(".chat-caret"), event.type).toBeNull();
+          expect.soft(second?.querySelector(".chat-text-body"), event.type).toBeNull();
+        }
+      }
+    }
+
+    view.unmount();
   });
 });

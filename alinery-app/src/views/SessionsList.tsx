@@ -2,7 +2,7 @@ import { ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
-import { NameEditor } from "../NameEditor";
+import { awaitingSessionName, NameEditor, PendingSessionName } from "../NameEditor";
 import {
   hasAcknowledgedExit,
   orderSessionListItems,
@@ -323,6 +323,7 @@ export function SessionsList({
             const key = rowKey(item);
             const obs = observations[key];
             const isLive = obs ? obs.lifecycle.state === "live" : false;
+            const awaitingName = awaitingSessionName(item, obs);
             const scope = `${item.repo_path}\u0000${item.task_slug}\u0000${item.playbook}\u0000${item.phase}`;
             const superseded = !item.archived && !!item.phase && latestSessionByScope[scope]?.id !== item.id;
             const sessionType = item.subtask_manager
@@ -353,11 +354,11 @@ export function SessionsList({
               >
                 <span className="idx">{String(i + 1).padStart(2, "0")}</span>
                 <div className="rt">
-                  <div className="rtt" title={item.name || item.task_name}>
-                    {item.name || item.task_name}
+                  <div className="rtt" title={item.name || (awaitingName ? "Waiting for session name" : item.task_name)}>
+                    {item.name || (awaitingName ? <PendingSessionName /> : item.task_name)}
                   </div>
                   <div className="meta">
-                    {item.name && <span>{item.task_name}</span>}
+                    {(item.name || awaitingName) && <span>{item.task_name}</span>}
                     {item.subtask_manager && <span>{item.subtask_name || item.subtask_slug || "Sub-task setup"}</span>}
                     {item.archived && <span className="pill task-archived">Archived</span>}
                     {sessionType === "No step" ? (

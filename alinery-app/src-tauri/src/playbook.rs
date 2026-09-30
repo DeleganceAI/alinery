@@ -5,7 +5,7 @@ use alinery_core::playbook_library::{
     self as library, PickerPreferences, PlaybookCatalog, PlaybookLoadError, PlaybookRoots, PlaybookSaveError, SavePlaybookRequest, ScopedPlaybook,
 };
 
-fn library_roots(app: &AppHandle, repo_path: Option<&str>) -> Result<PlaybookRoots, String> {
+pub(crate) fn library_roots(app: &AppHandle, repo_path: Option<&str>) -> Result<PlaybookRoots, String> {
     let repo_dir = match repo_path {
         Some(path) => target_repo_for_app(app, path)?,
         None => active_repo().unwrap_or_default(),
@@ -16,20 +16,34 @@ fn library_roots(app: &AppHandle, repo_path: Option<&str>) -> Result<PlaybookRoo
 }
 
 #[tauri::command]
-pub(crate) fn list_playbook_catalog(app: AppHandle, repo_path: Option<String>) -> Result<PlaybookCatalog, String> {
-    Ok(library::load_playbook_catalog(&library_roots(&app, repo_path.as_deref())?))
+pub(crate) async fn list_playbook_catalog(app: AppHandle, repo_path: Option<String>) -> Result<PlaybookCatalog, String> {
+    // Parsing every playbook is disk work. Keep it off the webview thread so New Task can paint.
+    tauri::async_runtime::spawn_blocking(move || Ok(library::load_playbook_catalog(&library_roots(&app, repo_path.as_deref())?)))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn read_playbook(app: AppHandle, reference: PlaybookRef, repo_path: Option<String>) -> Result<ScopedPlaybook, PlaybookLoadError> {
-    let roots = library_roots(&app, repo_path.as_deref()).map_err(|message| PlaybookLoadError::Io {
+pub(crate) async fn read_playbook(app: AppHandle, reference: PlaybookRef, repo_path: Option<String>) -> Result<ScopedPlaybook, PlaybookLoadError> {
+    let reference_for_join = reference.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let roots = library_roots(&app, repo_path.as_deref()).map_err(|message| PlaybookLoadError::Io {
+            source: library::PlaybookSource {
+                reference: reference.clone(),
+                path: None,
+            },
+            message,
+        })?;
+        library::resolve_playbook(&roots, &reference)
+    })
+    .await
+    .map_err(|error| PlaybookLoadError::Io {
         source: library::PlaybookSource {
-            reference: reference.clone(),
+            reference: reference_for_join,
             path: None,
         },
-        message,
-    })?;
-    library::resolve_playbook(&roots, &reference)
+        message: error.to_string(),
+    })?
 }
 
 #[derive(Serialize)]
@@ -79,7 +93,7 @@ pub(crate) fn delete_playbook_source(app: AppHandle, reference: PlaybookRef, rep
         }
         require_repo_owned(&app.state::<AppState>(), &roots.repo_dir).map_err(|message| PlaybookSaveError::Io { message })?;
     }
-    library::delete_playbook(&roots, &reference)
+    delete_playbook_keeping_imports(&roots, &reference)
 }
 
 #[tauri::command]

@@ -20,7 +20,53 @@
 #      creates DEST before failing), move the old one back, and reopen it
 #   5. open the new bundle (relaunch); on failure, restore the old bundle the same way
 #   6. remove the old bundle, only after open succeeded
+#   7. if the extracted archive has a sibling git/ tree and this machine's GUI PATH has
+#      no working git, copy it to Alinery.git next to the app. A failure here is logged
+#      and does not roll the app swap back. A machine that already has git is left alone
+#      — including any previously installed Alinery.git (a background update must not
+#      delete the fallback). install.sh is what removes it on an explicit reinstall.
 set -u
+
+# git.sh is written next to this script by apply_update (include_str of
+# scripts/lib/git.sh). Tests point GIT_LIB at the repo copy. The probe and the
+# copy live there so install.sh and this helper cannot drift.
+_swap_git_lib=""
+if [ -n "${GIT_LIB:-}" ] && [ -f "${GIT_LIB}" ]; then
+  _swap_git_lib="$GIT_LIB"
+else
+  _swap_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
+  if [ -n "$_swap_dir" ] && [ -f "$_swap_dir/git.sh" ]; then
+    _swap_git_lib="$_swap_dir/git.sh"
+  fi
+fi
+if [ -n "$_swap_git_lib" ]; then
+  # shellcheck source=/dev/null
+  . "$_swap_git_lib"
+fi
+unset _swap_git_lib _swap_dir
+
+# After a successful app swap. Missing git.sh (no probe) does nothing rather than
+# guessing — apply_update always writes the sibling, and the test harness sets GIT_LIB.
+git_swap_fallback() {
+  dest_app="$1"
+  staged_app="$2"
+  src="$(dirname "$staged_app")/git"
+  [ -x "$src/bin/git" ] || return 0
+  if type git_app_visible >/dev/null 2>&1 && git_app_visible; then
+    return 0
+  fi
+  dest_dir="$(dirname "$dest_app")/Alinery.git"
+  if ! type git_place_alongside >/dev/null 2>&1; then
+    swap_log "git fallback skipped; git_place_alongside is not defined"
+    return 0
+  fi
+  if ! git_place_alongside "$src" "$dest_dir"; then
+    swap_log "git fallback place failed; app swap stands"
+    return 0
+  fi
+  swap_log "installed git fallback at $dest_dir"
+  return 0
+}
 
 # `SWAP_LOG` is unset until the main dispatch below sets it, so `swap_apply` (which
 # `scripts/tests/updater_swap_test.sh` calls directly, after sourcing this file with
@@ -81,6 +127,8 @@ swap_apply() {
     swap_log "removing old bundle: $old"
     rm -rf "$old"
   fi
+
+  git_swap_fallback "$dest" "$staged" || swap_log "git fallback place failed; app swap stands"
 
   swap_log "done"
   return 0

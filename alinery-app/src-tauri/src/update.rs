@@ -6,8 +6,9 @@
 //! `download_update` re-verifies the offer, streams the zip to a process-scoped scratch
 //! dir, checks origin/size/sha256, and extracts it with `ditto`. `apply_update` takes a
 //! version (not a caller-supplied tree), re-verifies that scratch against a fresh
-//! manifest, writes an embedded swap script (`assets/swap.sh`) plus a compile-time copy
-//! of `scripts/lib/preflight.sh`, and spawns `/bin/bash` on it, detached — the helper owns
+//! manifest, writes an embedded swap script (`assets/swap.sh`) plus compile-time copies
+//! of `scripts/lib/preflight.sh` and `scripts/lib/git.sh`, and spawns `/bin/bash` on it,
+//! detached — the helper owns
 //! teardown via `preflight_gate`, so this module never asks the daemon to end sessions.
 use crate::*;
 use std::process::Stdio;
@@ -24,6 +25,7 @@ const HOST_TRIPLE: &str = "unsupported";
 // src/update.rs -> src -> src-tauri -> alinery-app -> repo root. The shipped copy IS the
 // repo's copy, at build time, so the two cannot drift.
 const PREFLIGHT_SH: &str = include_str!("../../../scripts/lib/preflight.sh");
+const GIT_SH: &str = include_str!("../../../scripts/lib/git.sh");
 const SWAP_SH: &str = include_str!("../assets/swap.sh");
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -256,52 +258,35 @@ fn update_check_enabled(app: &AppHandle) -> bool {
 
 /// Never `Err`: a network or parse failure must not be representable to the frontend, so it
 /// degrades to "no update" the same way `useDaemonStatus` degrades to `OFFLINE`.
+/// The fetch runs on the blocking pool. A sync command would hold the main thread for the
+/// whole timeout, including the background poll that fires without a click.
 #[tauri::command]
-pub(crate) fn check_update(app: AppHandle) -> UpdateStatus {
-    let current = env!("CARGO_PKG_VERSION");
-    let now = now_unix();
-    let allowed = is_production_identity() && update_check_enabled(&app);
-    if !allowed {
-        return UpdateStatus {
-            current: current.to_string(),
-            available: None,
-            checked_at: now,
-        };
-    }
-    let body = fetch_manifest(&manifest_url()).unwrap_or_default();
-    evaluate_update(current, HOST_TRIPLE, &body, now, true)
+pub(crate) async fn check_update(app: AppHandle) -> UpdateStatus {
+    let joined = tauri::async_runtime::spawn_blocking(move || {
+        let current = env!("CARGO_PKG_VERSION");
+        let now = now_unix();
+        let allowed = is_production_identity() && update_check_enabled(&app);
+        if !allowed {
+            return UpdateStatus {
+                current: current.to_string(),
+                available: None,
+                checked_at: now,
+            };
+        }
+        let body = fetch_manifest(&manifest_url()).unwrap_or_default();
+        evaluate_update(current, HOST_TRIPLE, &body, now, true)
+    })
+    .await;
+    joined.unwrap_or_else(|_| UpdateStatus {
+        current: env!("CARGO_PKG_VERSION").to_string(),
+        available: None,
+        checked_at: now_unix(),
+    })
 }
 
 fn curl_download_file(url: &str, dest: &Path, max_bytes: u64) -> Result<(), String> {
-    let https_only = url.starts_with("https://");
-    let mut config = format!(
-        "url = \"{}\"\nsilent\nshow-error\nlocation\nconnect-timeout = 5.000\nmax-time = {:.3}\nmax-filesize = {}\noutput = \"{}\"\n",
-        curl_config_quote(url),
-        DOWNLOAD_TIMEOUT.as_secs_f64(),
-        max_bytes,
-        curl_config_quote(&dest.display().to_string()),
-    );
-    if https_only {
-        config.push_str("proto = \"=https\"\nproto-redir = \"=https\"\n");
-    }
-    let mut child = Command::new("curl")
-        .args(["--config", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("start curl: {e}"))?;
-    child
-        .stdin
-        .take()
-        .ok_or_else(|| "curl stdin unavailable".to_string())?
-        .write_all(config.as_bytes())
-        .map_err(|e| format!("write curl request: {e}"))?;
-    let out = child.wait_with_output().map_err(|e| format!("finish curl: {e}"))?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-    }
-    Ok(())
+    let max_bytes = (max_bytes > 0).then_some(max_bytes);
+    alinery_core::http::download(url, dest, Duration::from_secs(5), DOWNLOAD_TIMEOUT, max_bytes)
 }
 
 fn offered_release(version: &str) -> Result<UpdateRelease, String> {
@@ -386,16 +371,22 @@ fn download_and_stage(release: &UpdateRelease, scratch_dir: &Path) -> Result<Sta
 }
 
 #[tauri::command]
-pub(crate) fn download_update(version: String) -> Result<StagedUpdate, String> {
-    require_production()?;
-    let release = offered_release(&version)?;
-    let scratch_dir = process_scratch_dir();
-    fs::create_dir_all(&scratch_dir).map_err(|e| format!("create scratch dir: {e}"))?;
-    let staged = download_and_stage(&release, &scratch_dir);
-    if staged.is_err() {
-        let _ = fs::remove_dir_all(&scratch_dir);
-    }
-    staged
+pub(crate) async fn download_update(version: String) -> Result<StagedUpdate, String> {
+    // Download, checksum, and ditto take minutes. On the main thread that is a frozen
+    // window, not a busy button.
+    let joined = tauri::async_runtime::spawn_blocking(move || {
+        require_production()?;
+        let release = offered_release(&version)?;
+        let scratch_dir = process_scratch_dir();
+        fs::create_dir_all(&scratch_dir).map_err(|e| format!("create scratch dir: {e}"))?;
+        let staged = download_and_stage(&release, &scratch_dir);
+        if staged.is_err() {
+            let _ = fs::remove_dir_all(&scratch_dir);
+        }
+        staged
+    })
+    .await;
+    joined.map_err(|e| format!("download update task: {e}"))?
 }
 
 /// Probe writability by actually creating and removing a marker file — a `readonly()`
@@ -429,7 +420,14 @@ fn write_executable_script(path: &Path, contents: &str) -> Result<(), String> {
 /// `preflight_gate`. Returns as soon as the helper is spawned; the window's own destroy
 /// is the frontend's job, not this command's.
 #[tauri::command]
-pub(crate) fn apply_update(version: String) -> Result<(), String> {
+pub(crate) async fn apply_update(version: String) -> Result<(), String> {
+    // Re-fetches the manifest and may download and extract again. Same main-thread
+    // freeze as `download_update` if this stays synchronous.
+    let joined = tauri::async_runtime::spawn_blocking(move || apply_update_blocking(version)).await;
+    joined.map_err(|e| format!("apply update task: {e}"))?
+}
+
+fn apply_update_blocking(version: String) -> Result<(), String> {
     require_production()?;
     let release = offered_release(&version)?;
     let scratch_dir = process_scratch_dir();
@@ -461,6 +459,7 @@ pub(crate) fn apply_update(version: String) -> Result<(), String> {
     require_free_space(parent, release.size.saturating_mul(3))?;
 
     write_executable_script(&scratch_dir.join("preflight.sh"), PREFLIGHT_SH)?;
+    write_executable_script(&scratch_dir.join("git.sh"), GIT_SH)?;
     let swap_path = scratch_dir.join("swap.sh");
     write_executable_script(&swap_path, SWAP_SH)?;
 

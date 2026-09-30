@@ -8,7 +8,7 @@ use crate::imports::{
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::{cell::RefCell, rc::Rc};
 
@@ -175,13 +175,12 @@ fn curl_config_sends_secrets_over_stdin() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
+        let mut stream = accept_for_test(&listener, Duration::from_secs(5)).expect("test server accept timed out");
         stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-        let mut request = [0; 4096];
-        let count = stream.read(&mut request).unwrap();
-        let request = String::from_utf8_lossy(&request[..count]);
-        assert!(request.contains("Authorization: Bearer secret-token"));
-        assert!(request.ends_with("code=secret%2Bvalue"));
+        let request = alinery_core::http::read_http_request(&mut stream).unwrap();
+        let request = String::from_utf8_lossy(&request);
+        assert!(request.contains("Authorization: Bearer secret-token"), "{request}");
+        assert!(request.ends_with("code=secret%2Bvalue"), "{request}");
         stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").unwrap();
     });
     let response = curl_request(
@@ -261,10 +260,10 @@ fn parse_github_pull_refs() {
 
 #[test]
 fn github_token_lookup_pins_github_dot_com() {
-    let command = crate::gh_auth_token_command();
-    let args = command.get_args().map(|arg| arg.to_string_lossy().into_owned()).collect::<Vec<_>>();
-
-    assert_eq!(args, vec!["auth".to_string(), "token".to_string(), "--hostname".to_string(), "github.com".to_string(),]);
+    let input = alinery_core::GITHUB_CREDENTIAL_FILL;
+    assert!(input.contains("protocol=https\n"), "{input}");
+    assert!(input.contains("host=github.com\n"), "{input}");
+    assert!(input.ends_with("\n\n"), "credential fill must end with a blank line");
 }
 
 #[test]

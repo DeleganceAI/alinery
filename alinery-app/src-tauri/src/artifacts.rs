@@ -526,7 +526,7 @@ pub(crate) async fn list_artifacts_with_metadata(task_slug: String) -> Result<Ve
 }
 
 #[tauri::command]
-pub(crate) fn send_review_handoff(
+pub(crate) async fn send_review_handoff(
     app: AppHandle,
     state: State<'_, AppState>,
     source_repo_path: String,
@@ -544,23 +544,29 @@ pub(crate) fn send_review_handoff(
     let target_repo = target_repo_for_app(&app, &target_repo_path)?;
     require_repo_owned(&state, &source_repo)?;
     require_repo_owned(&state, &target_repo)?;
-    let daemon = task_daemon_for(&target_repo, &target_slug, &app_config_path(&app)?)?;
-    let result = alinery_core::send_review_handoff_for_repos(
-        &daemon,
-        &source_repo,
-        &target_repo,
-        alinery_core::ReviewHandoffRequest {
-            source_slug,
-            source_session,
-            source_artifact,
-            target_slug,
-            target_phase,
-            harness,
-            model,
-            prompt_extra,
-            start: true,
-        },
-    )?;
+    let app_config = app_config_path(&app)?;
+    // Copies the artifact and waits on the daemon to start the target session.
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let daemon = task_daemon_for(&target_repo, &target_slug, &app_config)?;
+        alinery_core::send_review_handoff_for_repos(
+            &daemon,
+            &source_repo,
+            &target_repo,
+            alinery_core::ReviewHandoffRequest {
+                source_slug,
+                source_session,
+                source_artifact,
+                target_slug,
+                target_phase,
+                harness,
+                model,
+                prompt_extra,
+                start: true,
+            },
+        )
+    })
+    .await
+    .map_err(|error| format!("send review handoff task: {error}"))??;
     emit(
         &app,
         alinery_core::TelemetryEvent::ArtifactReviewHandoff {

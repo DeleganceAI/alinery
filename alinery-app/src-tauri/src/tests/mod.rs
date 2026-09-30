@@ -13,7 +13,7 @@ pub(crate) use super::{
     clear_curated_alinery_data, clear_linear_account_in, commit_worktree_in, compare_url, configure_detached_process, copy_task_attachments, credits_view_from, curl_http,
     curl_request, curl_request_with_timeouts, current_alineryd_socket_path, delete_artifact_comment_draft_for, delete_draft_in, discard_subtask_with, display_label,
     end_sign_in_attempt, entitlement_url, fetch_desktop_credits_at, file_content_id, finalize_session_message_actions_for, finish_sign_in, frame_session_channel_bytes, git_cmd,
-    git_top_level, github_repo_from_remote, gui_lock_held_elsewhere, hold_lock_after_compare_then_clear, hosted_refresh_needed, inference_path, is_hosted_model, is_paid_plan,
+    github_repo_from_remote, gui_lock_held_elsewhere, hold_lock_after_compare_then_clear, hosted_refresh_needed, inference_path, is_hosted_model, is_paid_plan,
     linear_account_path_in, list_artifact_comment_drafts_for, list_artifacts_for, list_tasks_for_repo, load_artifact_comment_drafts_for, load_artifact_comments_for, loopback_html,
     next_artifact_review_markdown_path, paid_from_stored_plan, parse_desktop_credits_body, parse_desktop_login_callback, parse_entitlement_plan, parse_github_ref,
     parse_hosted_catalog_body, parse_hosted_error, parse_linear_oauth_tokens, parse_linear_ref, parse_oauth_callback, percent_encode, pkce_challenge, plan_label,
@@ -22,11 +22,12 @@ pub(crate) use super::{
     resolve_hosted_catalog, restore_backup_into, root_sessions_dir, route_socket_path, sanitize_app_config, sanitize_appearance, save_artifact_comment_draft_for,
     session_list_items_for_repo, session_meta_path, sessions_dir, set_active_repo_global, set_model_favorite_in, sign_out_at, store_credits_snapshot, subtask_state_in,
     sync_hosted_inference, task_dir, validate_known_target_repo, wait_for_daemon_gone, wait_for_desktop_login_callback, wait_for_desktop_login_callback_until,
-    wait_for_linear_callback, worktree_exists, worktrees_dir, write_draft_in_with_slug, write_global_settings_in, write_task, AccountAuthError, AccountUser, AppConfig, AppState,
-    AppearancePrefs, ArtifactCommentDraftsFile, ArtifactCommentsFile, BackupSlot, Command, DesktopCreditsView, EnsureDaemonError, LinearTokenError, OAuthCallback,
-    SessionMessageActionProvenance, SessionMeta, SignInAttempt, SignInGuard, Task, DEFAULT_CONFIG_TOML, HOSTED_MODEL_UNAVAILABLE, PROTOCOL_VERSION, SESSION_CHANNEL_BATCH_BYTES,
-    TAURI_RAW_FETCH_MIN_BYTES,
+    wait_for_linear_callback, with_access_token_retry, worktree_exists, worktrees_dir, write_draft_in_with_slug, write_global_settings_in, write_task, AccountAuthError,
+    AccountUser, AppConfig, AppState, AppearancePrefs, ArtifactCommentDraftsFile, ArtifactCommentsFile, AuthAttempt, AuthRetryError, BackupSlot, Command, DesktopCreditsView,
+    EnsureDaemonError, LinearTokenError, OAuthCallback, SessionMessageActionProvenance, SessionMeta, SignInAttempt, SignInGuard, Task, DEFAULT_CONFIG_TOML,
+    HOSTED_MODEL_UNAVAILABLE, PROTOCOL_VERSION, SESSION_CHANNEL_BATCH_BYTES, TAURI_RAW_FETCH_MIN_BYTES,
 };
+pub(crate) use alinery_core::git_top_level;
 pub(crate) use alinery_core::task_creation::{unique_attachment_name, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_SET_BYTES};
 pub(crate) use alinery_core::{
     alinery_app_lock_path, hosted_models_yml_unavailable, models_yml_path, parse_inference_session_body, render_models_yml, strip_terminal_queries, subst, wipe_hosted_files,
@@ -40,6 +41,7 @@ mod account;
 mod app_config;
 mod artifacts;
 mod backup;
+mod community_playbooks;
 mod connections;
 mod daemon;
 mod git_ops;
@@ -59,6 +61,12 @@ mod update;
 // ACTIVE_REPO; serialize the handful of tests that mutate it so parallel test threads
 // never stomp on each other's active repo.
 static ACTIVE_REPO_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+// settings and omp_update both mutate ALINERY_OMP_PATH. Separate mutexes do not
+// serialize each other, so parallel lib tests were clobbering the path.
+pub(crate) static OMP_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+pub(crate) use alinery_core::http::accept_for_test;
 
 // Real `git init` + one empty commit so `git checkout -b` has a HEAD to fork from.
 fn init_git_test_repo(name: &str) -> std::path::PathBuf {

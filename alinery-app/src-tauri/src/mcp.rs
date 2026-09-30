@@ -3,7 +3,7 @@ use crate::*;
 
 // R2: spawn (or reuse) a managed alinery-mcp child in --serve mode for the active repo.
 // The child lives only as long as the app (or until repo switch). It is killed on app exit.
-pub(crate) fn ensure_mcp_server(app: &AppHandle, repo: &Path) {
+pub(crate) fn ensure_mcp_server<R: tauri::Runtime>(app: &AppHandle<R>, repo: &Path) {
     let Some(state) = app.try_state::<AppState>() else {
         return;
     };

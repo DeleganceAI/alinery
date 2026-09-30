@@ -459,7 +459,7 @@ pub fn send_review_handoff_for_repos(
     let source_artifact = validate_artifact_filename(request.source_artifact.trim())?;
     let source_path = artifact_file_path(source_repo, source_slug, &source_artifact)?;
     let source_text = fs::read_to_string(&source_path).map_err(|error| format!("read {}: {error}", source_path.display()))?;
-    let target_artifact = crate::with_task_mutation_lock(target_repo, "install review evidence", || {
+    let target_artifact = crate::with_task_mutation_lock_waiting(target_repo, "install review evidence", crate::TASK_MUTATION_CONTENTION_WAIT, || {
         let artifact = next_review_handoff_artifact_name(target_repo, target_slug)?;
         let target_path = artifact_file_path(target_repo, target_slug, &artifact)?;
         let markdown = format!(
@@ -522,7 +522,7 @@ pub fn send_review_handoff_for_repos(
             &serde_json::to_vec_pretty(&target_record).map_err(|error| error.to_string())?,
         )
     })();
-    let outbound = crate::with_task_mutation_lock(source_repo, "record outbound review handoff", || {
+    let outbound = crate::with_task_mutation_lock_waiting(source_repo, "record outbound review handoff", crate::TASK_MUTATION_CONTENTION_WAIT, || {
         let outbound_name = next_outbound_handoff_sidecar_name(source_repo, source_slug, &source_artifact)?;
         write_bytes_atomic(
             &artifact_file_path(source_repo, source_slug, &outbound_name)?,

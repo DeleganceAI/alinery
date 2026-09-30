@@ -403,6 +403,28 @@ describe("session work names", () => {
     fireEvent.click(within(row).getByRole("button", { name: "Open manager session" }));
     expect(onOpenSession.mock.lastCall?.[1]).toBe(rawManager.id);
   });
+
+  it("shows a waiting ellipsis for a live unnamed OMP session and still opens rename", async () => {
+    scenario.sessions = [session({ id: "waiting", harness: "omp" })];
+    mocks.sessionStatuses.mockResolvedValue({ waiting: observation("busy") });
+    await renderDetail();
+    expect(await screen.findByRole("status", { name: "Waiting for session name" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
+    expect(screen.queryByRole("status", { name: "Waiting for session name" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Session name" })).toBeDefined();
+  });
+
+  it("keeps a static placeholder when an unnamed session is not waiting for a name", async () => {
+    scenario.sessions = [session({ id: "terminal", harness: "no-harness" }), session({ id: "stopped", harness: "omp" })];
+    mocks.sessionStatuses.mockResolvedValue({
+      terminal: observation("busy"),
+      stopped: { lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} },
+    });
+    await renderDetail();
+    await screen.findAllByRole("button", { name: "Rename session" });
+    expect([...document.querySelectorAll(".session-name-cell .editable-name-text")].map((cell) => cell.textContent)).toEqual(["—", "—"]);
+    expect(screen.queryByRole("status", { name: "Waiting for session name" })).toBeNull();
+  });
 });
 
 describe("retained name editing", () => {

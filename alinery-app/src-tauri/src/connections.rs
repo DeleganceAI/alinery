@@ -1,7 +1,7 @@
 //! Browser-backed GitHub and Linear connections used by Settings and issue imports.
 use crate::*;
 use std::collections::HashMap;
-use std::io::{ErrorKind, Read, Write};
+use std::io::{ErrorKind, Write};
 use std::net::TcpListener;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -368,41 +368,96 @@ pub(crate) fn output_with_timeout(mut cmd: Command, timeout: Duration) -> std::i
 }
 
 fn github_connection_status() -> ConnectionStatus {
-    let mut cmd = Command::new("gh");
-    cmd.args(["auth", "status", "--hostname", "github.com", "--active", "--json", "hosts"])
-        .env("PATH", login_shell_path());
-    let out = output_with_timeout(cmd, Duration::from_secs(3));
-    let Ok(out) = out else {
+    let credential = match alinery_core::git_credential_fill(alinery_core::GITHUB_CREDENTIAL_FILL) {
+        Ok(credential) => credential,
+        Err(error) => {
+            return ConnectionStatus {
+                provider: "github".into(),
+                name: "GitHub".into(),
+                kind: "Web".into(),
+                connected: false,
+                reconnect: false,
+                available: false,
+                removable: false,
+                account: String::new(),
+                detail: error,
+            };
+        }
+    };
+    let Some(credential) = credential else {
         return ConnectionStatus {
             provider: "github".into(),
             name: "GitHub".into(),
             kind: "Web".into(),
             connected: false,
             reconnect: false,
-            available: false,
+            available: true,
             removable: false,
             account: String::new(),
-            detail: "GitHub CLI is not installed".into(),
+            detail: "Not connected".into(),
         };
     };
-    let value: Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
-    let active = value
-        .get("hosts")
-        .and_then(|hosts| hosts.get("github.com"))
-        .and_then(Value::as_array)
-        .and_then(|accounts| accounts.iter().find(|account| account.get("active") == Some(&Value::Bool(true))));
-    let connected = active.and_then(|account| account.get("state")).and_then(Value::as_str) == Some("success");
-    let account = active.and_then(|account| account.get("login")).and_then(Value::as_str).unwrap_or("").to_string();
-    ConnectionStatus {
-        provider: "github".into(),
-        name: "GitHub".into(),
-        kind: "Web".into(),
-        connected,
-        reconnect: active.is_some() && !connected,
-        available: true,
-        removable: false,
-        detail: if connected { "Connected" } else { "Not connected" }.into(),
-        account,
+    // The password from `git credential fill` is a PAT or OAuth token. Ask GitHub who it is.
+    let response = curl_request_with_timeouts(
+        "https://api.github.com/user",
+        &[
+            "Accept: application/vnd.github+json".into(),
+            "User-Agent: alinery".into(),
+            format!("Authorization: Bearer {}", credential.secret),
+        ],
+        None,
+        Duration::from_secs(2),
+        Duration::from_secs(5),
+    );
+    match response {
+        Ok(http) if http.status == 200 => {
+            let value: Value = serde_json::from_slice(&http.body).unwrap_or_default();
+            let account = value.get("login").and_then(Value::as_str).unwrap_or(&credential.username).to_string();
+            ConnectionStatus {
+                provider: "github".into(),
+                name: "GitHub".into(),
+                kind: "Web".into(),
+                connected: true,
+                reconnect: false,
+                available: true,
+                removable: false,
+                account,
+                detail: "Connected".into(),
+            }
+        }
+        Ok(http) if http.status == 401 || http.status == 403 => ConnectionStatus {
+            provider: "github".into(),
+            name: "GitHub".into(),
+            kind: "Web".into(),
+            connected: false,
+            reconnect: true,
+            available: true,
+            removable: false,
+            account: credential.username,
+            detail: "GitHub rejected the saved git credential".into(),
+        },
+        Ok(http) => ConnectionStatus {
+            provider: "github".into(),
+            name: "GitHub".into(),
+            kind: "Web".into(),
+            connected: false,
+            reconnect: false,
+            available: true,
+            removable: false,
+            account: String::new(),
+            detail: format!("GitHub returned HTTP {}", http.status),
+        },
+        Err(error) => ConnectionStatus {
+            provider: "github".into(),
+            name: "GitHub".into(),
+            kind: "Web".into(),
+            connected: false,
+            reconnect: false,
+            available: true,
+            removable: false,
+            account: String::new(),
+            detail: error,
+        },
     }
 }
 
@@ -454,46 +509,28 @@ fn linear_connection_status(app: &AppHandle) -> ConnectionStatus {
 }
 
 #[tauri::command]
-pub(crate) fn connection_statuses(app: AppHandle) -> Vec<ConnectionStatus> {
-    vec![github_connection_status(), linear_connection_status(&app)]
+pub(crate) async fn connection_statuses(app: AppHandle) -> Vec<ConnectionStatus> {
+    // `git credential fill` (capped at 5s) plus the GitHub user lookup. Opening
+    // Settings → Connections runs both; a sync command does that on the main thread.
+    tauri::async_runtime::spawn_blocking(move || vec![github_connection_status(), linear_connection_status(&app)])
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
 pub(crate) async fn connect_github() -> Result<ConnectionStatus, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let protocol = Command::new("gh")
-            .args(["config", "get", "git_protocol", "--host", "github.com"])
-            .env("PATH", login_shell_path())
-            .output()
-            .ok()
-            .filter(|out| out.status.success())
-            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
-            .filter(|value| value == "ssh" || value == "https")
-            .unwrap_or_else(|| "https".into());
-        let out = Command::new("gh")
-            .args([
-                "auth",
-                "login",
-                "--hostname",
-                "github.com",
-                "--git-protocol",
-                &protocol,
-                "--web",
-                "--clipboard",
-                "--skip-ssh-key",
-            ])
-            .env("PATH", login_shell_path())
-            .output()
-            .map_err(|e| format!("start GitHub browser login: {e}"))?;
-        if !out.status.success() {
-            let error = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            return Err(if error.is_empty() { "GitHub login failed".into() } else { error });
-        }
+        // No browser login. GitHub auth is whatever `git credential fill` already
+        // has for https://github.com (osxkeychain, store, manager, …).
         let status = github_connection_status();
         if status.connected {
             Ok(status)
+        } else if status.detail == "Not connected" {
+            Err("No git credential for https://github.com. Sign in with your git credential helper, then try again.".into())
+        } else if status.detail.is_empty() {
+            Err("GitHub is not connected".into())
         } else {
-            Err("GitHub login completed without an active account".into())
+            Err(status.detail)
         }
     })
     .await
@@ -614,10 +651,16 @@ pub(crate) fn wait_for_linear_callback(listener: TcpListener, expected_state: &s
     loop {
         match listener.accept() {
             Ok((mut stream, _)) => {
-                stream.set_read_timeout(Some(Duration::from_secs(3))).map_err(|e| e.to_string())?;
-                let mut buf = [0; 8192];
-                let count = stream.read(&mut buf).map_err(|e| e.to_string())?;
-                let parsed = parse_oauth_callback(&String::from_utf8_lossy(&buf[..count]));
+                // Accepted sockets inherit O_NONBLOCK on the BSDs. A WouldBlock read
+                // would abort the login, and a single read can miss a split request line.
+                if stream.set_nonblocking(false).is_err() || stream.set_read_timeout(Some(Duration::from_secs(3))).is_err() {
+                    continue;
+                }
+                let bytes = match alinery_core::http::read_http_request(&mut stream) {
+                    Ok(bytes) => bytes,
+                    Err(_) => continue,
+                };
+                let parsed = parse_oauth_callback(&String::from_utf8_lossy(&bytes));
                 let ok = parsed
                     .as_ref()
                     .is_ok_and(|callback| matches!(callback, OAuthCallback::Code { state, .. } if state == expected_state));
@@ -647,17 +690,11 @@ pub(crate) fn wait_for_linear_callback(listener: TcpListener, expected_state: &s
     }
 }
 
-pub(crate) fn curl_config_quote(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r")
-}
-
 #[derive(Debug)]
 pub(crate) struct CurlResponse {
     pub status: u16,
     pub body: Vec<u8>,
 }
-
-const CURL_STATUS_MARK: &[u8] = b"\n__ALINERY_HTTP_STATUS__:";
 
 const CURL_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const CURL_TOTAL_TIMEOUT: Duration = Duration::from_secs(15);
@@ -680,55 +717,23 @@ pub(crate) fn curl_request_with_timeouts(url: &str, headers: &[String], body: Op
     curl_request_with_method(url, method, headers, body, connect_timeout, total_timeout)
 }
 
-fn curl_request_with_method(url: &str, method: &str, headers: &[String], body: Option<&str>, connect_timeout: Duration, total_timeout: Duration) -> Result<CurlResponse, String> {
-    let mut config = format!(
-        "url = \"{}\"\nsilent\nshow-error\nlocation\nconnect-timeout = {:.3}\nmax-time = {:.3}\nwrite-out = \"\\n__ALINERY_HTTP_STATUS__:%{{http_code}}\"\n",
-        curl_config_quote(url),
-        connect_timeout.as_secs_f64(),
-        total_timeout.as_secs_f64(),
-    );
+fn header_pairs(headers: &[String]) -> Result<Vec<(&str, &str)>, String> {
+    let mut pairs = Vec::with_capacity(headers.len());
     for header in headers {
-        config.push_str(&format!("header = \"{}\"\n", curl_config_quote(header)));
+        let Some((name, value)) = header.split_once(':') else {
+            return Err(format!("malformed HTTP header: {header}"));
+        };
+        pairs.push((name.trim(), value.trim()));
     }
-    if method != "GET" {
-        config.push_str(&format!("request = \"{}\"\n", curl_config_quote(method)));
-    }
-    if let Some(body) = body {
-        config.push_str(&format!("data-binary = \"{}\"\n", curl_config_quote(body)));
-    }
-    let mut child = Command::new("curl")
-        .args(["--config", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("start curl: {e}"))?;
-    child
-        .stdin
-        .take()
-        .ok_or_else(|| "curl stdin unavailable".to_string())?
-        .write_all(config.as_bytes())
-        .map_err(|e| format!("write curl request: {e}"))?;
-    let out = child.wait_with_output().map_err(|e| format!("finish curl: {e}"))?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-    }
-    split_curl_status(&out.stdout)
+    Ok(pairs)
 }
 
-fn split_curl_status(stdout: &[u8]) -> Result<CurlResponse, String> {
-    let pos = stdout
-        .windows(CURL_STATUS_MARK.len())
-        .rposition(|window| window == CURL_STATUS_MARK)
-        .ok_or_else(|| "curl response missing HTTP status".to_string())?;
-    let status = std::str::from_utf8(&stdout[pos + CURL_STATUS_MARK.len()..])
-        .map_err(|_| "curl response missing HTTP status".to_string())?
-        .trim()
-        .parse::<u16>()
-        .map_err(|_| "curl response missing HTTP status".to_string())?;
+fn curl_request_with_method(url: &str, method: &str, headers: &[String], body: Option<&str>, connect_timeout: Duration, total_timeout: Duration) -> Result<CurlResponse, String> {
+    let pairs = header_pairs(headers)?;
+    let response = alinery_core::http::request(method, url, &pairs, body.map(str::as_bytes), connect_timeout, total_timeout)?;
     Ok(CurlResponse {
-        status,
-        body: stdout[..pos].to_vec(),
+        status: response.status,
+        body: response.body,
     })
 }
 
@@ -842,10 +847,9 @@ pub(crate) async fn connect_linear(app: AppHandle) -> Result<ConnectionStatus, S
         .map_err(|e| e.to_string())?
 }
 
-// There is deliberately no disconnect_github. Alinery holds no GitHub credential of its own --
-// it reads whatever the gh CLI has -- so the only way to "remove" that connection is
-// `gh auth logout`, which signs the user out in their terminal and every other gh caller.
-// Reaching that far outside the app is not this row's business: GitHub offers Reconnect only.
+// There is deliberately no disconnect_github. Alinery holds no GitHub credential of its own.
+// Connect reads `git credential fill` for https://github.com, which is the user's helper
+// (osxkeychain, store, manager), not a secret this app can delete. GitHub offers Reconnect only.
 
 /// Remove the OAuth tokens and the current account label.
 #[tauri::command]

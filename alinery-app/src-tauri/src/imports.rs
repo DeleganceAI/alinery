@@ -78,15 +78,23 @@ pub(crate) fn import_linear_in(app_config: &Path, _repo: &Path, reference: &str)
 }
 
 #[tauri::command]
-pub(crate) fn import_linear(app: AppHandle, state: State<'_, AppState>, reference: String) -> Result<LinearTicket, String> {
-    import_linear_in(&app_config_path(&app)?, &require_owned_active_repo(&state)?, &reference)
+pub(crate) async fn import_linear(app: AppHandle, state: State<'_, AppState>, reference: String) -> Result<LinearTicket, String> {
+    // Linear's HTTP call waits up to 15s. A sync command runs that on the main thread.
+    let app_config = app_config_path(&app)?;
+    let repo = require_owned_active_repo(&state)?;
+    tauri::async_runtime::spawn_blocking(move || import_linear_in(&app_config, &repo, &reference))
+        .await
+        .map_err(|error| format!("import linear task: {error}"))?
 }
 
 #[tauri::command]
-pub(crate) fn import_linear_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, reference: String) -> Result<LinearTicket, String> {
+pub(crate) async fn import_linear_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, reference: String) -> Result<LinearTicket, String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
-    import_linear_in(&app_config_path(&app)?, &repo, &reference)
+    let app_config = app_config_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || import_linear_in(&app_config, &repo, &reference))
+        .await
+        .map_err(|error| format!("import linear task: {error}"))?
 }
 
 // ---- GitHub issue and pull-request import ------------------------------------
@@ -247,19 +255,11 @@ pub(crate) fn github_error(v: &serde_json::Value) -> Option<String> {
     })
 }
 
-pub(crate) fn gh_auth_token_command() -> Command {
-    let mut command = Command::new("gh");
-    command.args(["auth", "token", "--hostname", "github.com"]).env("PATH", login_shell_path());
-    command
-}
-
 pub(crate) fn gh_auth_token() -> Option<String> {
-    let out = gh_auth_token_command().output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let token = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (!token.is_empty()).then_some(token)
+    alinery_core::git_credential_fill(alinery_core::GITHUB_CREDENTIAL_FILL)
+        .ok()
+        .flatten()
+        .map(|credential| credential.secret)
 }
 
 fn github_json_request(url: &str, token: Option<&str>) -> Result<serde_json::Value, String> {
@@ -515,13 +515,21 @@ pub(crate) fn import_github_in(app_config: &Path, repo_root: &Path, reference: &
 }
 
 #[tauri::command]
-pub(crate) fn import_github(app: AppHandle, state: State<'_, AppState>, reference: String) -> Result<GitHubIssue, String> {
-    import_github_in(&app_config_path(&app)?, &require_owned_active_repo(&state)?, &reference)
+pub(crate) async fn import_github(app: AppHandle, state: State<'_, AppState>, reference: String) -> Result<GitHubIssue, String> {
+    // The issue fetch and the comment thread are separate HTTP calls, 15s each.
+    let app_config = app_config_path(&app)?;
+    let repo = require_owned_active_repo(&state)?;
+    tauri::async_runtime::spawn_blocking(move || import_github_in(&app_config, &repo, &reference))
+        .await
+        .map_err(|error| format!("import github task: {error}"))?
 }
 
 #[tauri::command]
-pub(crate) fn import_github_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, reference: String) -> Result<GitHubIssue, String> {
+pub(crate) async fn import_github_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, reference: String) -> Result<GitHubIssue, String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
-    import_github_in(&app_config_path(&app)?, &repo, &reference)
+    let app_config = app_config_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || import_github_in(&app_config, &repo, &reference))
+        .await
+        .map_err(|error| format!("import github task: {error}"))?
 }

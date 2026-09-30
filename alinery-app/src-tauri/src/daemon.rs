@@ -344,7 +344,7 @@ pub(crate) async fn observe_task_executions<R: tauri::Runtime>(app: AppHandle<R>
 }
 
 #[tauri::command]
-pub(crate) fn allow_execution_completion(
+pub(crate) async fn allow_execution_completion(
     app: AppHandle,
     state: State<'_, AppState>,
     repo_path: Option<String>,
@@ -357,12 +357,18 @@ pub(crate) fn allow_execution_completion(
         None => require_owned_active_repo(&state)?,
     };
     require_repo_owned(&state, &repo)?;
-    let daemon = task_daemon_for(&repo, &task_slug, &app_config_path(&app)?)?;
-    daemon_client::UiControlConnection::connect(&daemon)?.allow_execution_completion(&alinery_core::task_creation::AllowExecutionCompletionRequest {
-        task_slug,
-        execution_id,
-        session_id,
+    let app_config = app_config_path(&app)?;
+    // Daemon control waits up to DAEMON_CONTROL_TIMEOUT. Keep that off the main thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        let daemon = task_daemon_for(&repo, &task_slug, &app_config)?;
+        daemon_client::UiControlConnection::connect(&daemon)?.allow_execution_completion(&alinery_core::task_creation::AllowExecutionCompletionRequest {
+            task_slug,
+            execution_id,
+            session_id,
+        })
     })
+    .await
+    .map_err(|error| format!("allow execution completion task: {error}"))?
 }
 
 #[allow(clippy::too_many_arguments)]

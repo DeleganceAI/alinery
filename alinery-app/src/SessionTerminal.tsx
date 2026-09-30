@@ -116,7 +116,7 @@ export function SessionTerminal({
         .readSessionHistory({ id: sessionId, taskSlug: taskSlug || null })
         .then((bytes) => {
           if (disposed) return;
-          if (bytes.length) term.write(new Uint8Array(bytes));
+          if (bytes.byteLength) term.write(new Uint8Array(bytes));
           else term.writeln("\r\n[no recorded activity for this session]");
         })
         .catch((e) => {

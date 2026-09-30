@@ -1,5 +1,5 @@
 use super::*;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::net::TcpListener;
 
 const CATALOG: &str = r#"{
@@ -220,9 +220,8 @@ fn serve_routes(routes: Vec<(String, u16, &'static str)>) -> (String, std::threa
                 return;
             }
             let _ = stream.set_read_timeout(Some(SERVE_TIMEOUT));
-            let mut buf = [0u8; 4096];
-            let n = stream.read(&mut buf).unwrap_or(0);
-            let req = String::from_utf8_lossy(&buf[..n]);
+            let req = alinery_core::http::read_http_request(&mut stream).unwrap_or_else(|error| panic!("http request: {error}"));
+            let req = String::from_utf8_lossy(&req);
             let path = req.lines().next().and_then(|line| line.split_whitespace().nth(1)).unwrap_or("");
             assert!(path.contains(&want_path), "expected {want_path} got {path}");
             let resp = format!("HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());

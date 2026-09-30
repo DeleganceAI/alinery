@@ -1,6 +1,6 @@
 //! Draft telemetry remains app-owned; executable provisioning telemetry is daemon-owned.
 use super::*;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::net::TcpListener;
 use std::time::{Duration, SystemTime};
 
@@ -36,19 +36,8 @@ fn serve_many(listener: TcpListener) -> std::thread::JoinHandle<Vec<serde_json::
             match listener.accept() {
                 Ok((mut stream, _)) => {
                     stream.set_nonblocking(false).unwrap();
-                    let mut buf = Vec::new();
-                    let mut chunk = [0u8; 8192];
                     let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
-                    while buf.len() < 64 * 1024 {
-                        let n = match stream.read(&mut chunk) {
-                            Ok(0) | Err(_) => break,
-                            Ok(n) => n,
-                        };
-                        buf.extend_from_slice(&chunk[..n]);
-                        if alinery_core::complete_http_request_len(&buf).is_some_and(|len| buf.len() >= len) {
-                            break;
-                        }
-                    }
+                    let buf = alinery_core::http::read_http_request(&mut stream).unwrap_or_default();
                     let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}");
                     let text = String::from_utf8_lossy(&buf);
                     let body = text.rsplit("\r\n\r\n").next().unwrap_or("");

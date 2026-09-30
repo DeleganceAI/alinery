@@ -880,6 +880,11 @@ main {
   min-width: 0;
   flex: 1;
 }
+/* A validation result is several diagnostics; the message carries one per line.
+   pre-line keeps the breaks while still collapsing incidental indentation. */
+.inline-status-msg {
+  white-space: pre-line;
+}
 .inline-status-detail {
   margin: 6px 0 0;
   font-family: var(--font-mono);
@@ -1808,6 +1813,13 @@ main {
 .playbook-picker {
   display: grid;
   gap: 6px;
+}
+/* Publish dialog (Playbooks.tsx): a long local library scrolls inside the modal
+   instead of growing it past the window. */
+.publish-picker {
+  max-height: 42vh;
+  overflow: auto;
+  margin-bottom: 8px;
 }
 .playbook-picker-card {
   min-width: 0;
@@ -3671,6 +3683,33 @@ dialog.modal::backdrop {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.pending-session-name {
+  display: inline-block;
+  width: 3ch;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  vertical-align: bottom;
+}
+.pending-session-name-dots {
+  display: inline-block;
+  width: 1ch;
+  overflow: hidden;
+  white-space: nowrap;
+  /* 500ms per step. 0.5ms, as worded, would be invisible. */
+  animation: pending-session-name 1.5s steps(3, end) infinite;
+}
+@keyframes pending-session-name {
+  0% { width: 1ch; }
+  33.333% { width: 2ch; }
+  66.666% { width: 3ch; }
+  100% { width: 1ch; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pending-session-name-dots {
+    animation: none;
+    width: 3ch;
+  }
+}
 .name-edit-button {
   display: inline-flex;
   align-items: center;
@@ -3742,7 +3781,7 @@ dialog.modal::backdrop {
 .session-name-cell .name-editor-actions {
   justify-content: flex-end;
 }
-.session-actions > .name-editor {
+.session-actions-inner > .name-editor {
   flex-basis: 100%;
   width: 100%;
 }
@@ -3904,7 +3943,9 @@ dialog.modal::backdrop {
   color: var(--success);
   border-color: var(--success);
 }
-.session-actions {
+/* Flex on the td drops the cell out of the table, so its border-bottom
+   no longer shares the row edge. Keep the layout on the inner wrapper. */
+.session-actions-inner {
   display: flex;
   align-items: center;
   align-content: center;
@@ -3913,7 +3954,7 @@ dialog.modal::backdrop {
   flex-wrap: wrap;
   white-space: normal;
 }
-.session-actions > .btn {
+.session-actions-inner > .btn {
   flex: 0 0 auto;
   max-width: 100%;
   white-space: normal;
@@ -5633,7 +5674,9 @@ dialog.modal::backdrop {
   padding-left: 20px;
 }
 .playbooks-table th:nth-child(2) {
-  width: 112px;
+  /* Wide enough for the import provenance line to wrap to a few lines rather
+     than a tall ribbon; a row without one still hugs its short scope chip. */
+  width: 200px;
 }
 .playbooks-table th:nth-child(3) {
   width: 164px;
@@ -5655,6 +5698,63 @@ dialog.modal::backdrop {
 .playbooks-table .opt {
   justify-content: center;
   gap: 8px;
+}
+/* Row actions stay icon-sized except Publish, which keeps its label. */
+.playbooks-community-table {
+  min-width: 0;
+}
+.playbooks-community-table th:nth-child(2),
+.playbooks-community-table th:nth-child(3) {
+  width: auto;
+}
+.playbooks-community-table th:last-child,
+.playbooks-community-table td:last-child {
+  width: 132px;
+  text-align: right;
+}
+.playbooks-row-actions .btn.icon {
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+}
+.playbooks-row-actions .btn:not(.icon) {
+  gap: 6px;
+}
+.playbooks-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.playbooks-identity small {
+  color: var(--text-muted);
+  font-size: calc(11px * var(--ui-scale));
+  line-height: 1.2;
+}
+/* Preview sits beside the download and publish actions. */
+.playbooks-row-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+/* Community preview dialog (Playbooks.tsx): the published document in full. */
+.playbook-preview {
+  margin: 0;
+  max-height: 52vh;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 .playbooks-library-row {
   display: flex;
@@ -5698,13 +5798,21 @@ dialog.modal::backdrop {
 }
 .playbooks-library-source {
   display: inline-flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  max-width: 100%;
   padding: 3px 7px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-subtle);
   color: var(--text-muted);
   font-size: calc(11px * var(--ui-scale));
+  /* An imported row adds a provenance line ("Imported from community label/key")
+     far longer than the scope word. Stacked and wrapped it stays inside the
+     column; as one inline run it was 174px wide in a 112px cell and painted over
+     the Last modified date. */
+  overflow-wrap: anywhere;
 }
 .playbooks-library-row small,
 .playbooks-context,

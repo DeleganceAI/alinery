@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::git_cmd;
-use crate::lockfile::with_task_mutation_lock;
+use crate::lockfile::with_task_mutation_lock_waiting;
 use crate::paths::{
     alinery_dir, artifacts_dir, safe_component, session_meta_path, session_scrollback_path, sessions_dir, subtask_snapshot_dir, subtask_snapshot_staging_dir, tasks_dir,
     worktrees_dir,
@@ -294,7 +294,9 @@ fn validate_subtask_creation(repo: &Path, input: &CreateSubtaskInput) -> Result<
 /// lock; Git and input installation use the same retained, partial-outcome saga as
 /// ordinary tasks. The daemon schedules every eligible root only after readiness.
 pub fn create_subtask(repo: &Path, lane: &str, app_config_identity: &str, input: CreateSubtaskInput) -> Result<CreateSubtaskResult, String> {
-    let manager = with_task_mutation_lock(repo, "inspect sub-task creation", || validate_subtask_creation(repo, &input))?;
+    let manager = with_task_mutation_lock_waiting(repo, "inspect sub-task creation", crate::TASK_MUTATION_CONTENTION_WAIT, || {
+        validate_subtask_creation(repo, &input)
+    })?;
     let state = crate::execution::read_execution_state(repo, &manager.owner_slug)?;
     if state.owning_lane != lane || state.owning_app_config_identity != app_config_identity {
         return Err("sub-task parent belongs to another daemon lane or app configuration".into());
@@ -617,7 +619,7 @@ pub fn inspect_subtask_finish(repo: &Path, manager_session_id: &str, observed_li
 }
 
 pub fn finalize_subtask(repo: &Path, manager_session_id: &str, mode: FinalizeMode) -> Result<FinalizeSubtaskResult, String> {
-    with_task_mutation_lock(repo, "finalize sub-task", || {
+    with_task_mutation_lock_waiting(repo, "finalize sub-task", crate::TASK_MUTATION_CONTENTION_WAIT, || {
         let inspection = inspect_subtask_finish(repo, manager_session_id, Vec::new())?;
         let mode_blockers = inspection.blockers.get(mode_key(mode)).cloned().unwrap_or_else(|| vec!["unknown finish mode".into()]);
         if !mode_blockers.is_empty() {
@@ -789,7 +791,7 @@ fn move_if_present(source: PathBuf, destination: PathBuf, moved: &mut Vec<(PathB
 }
 
 pub fn discard_subtask(repo: &Path, owner_task_slug: &str, manager_session_id: &str) -> Result<(), String> {
-    with_task_mutation_lock(repo, "discard or kill sub-task", || {
+    with_task_mutation_lock_waiting(repo, "discard or kill sub-task", crate::TASK_MUTATION_CONTENTION_WAIT, || {
         let DiscardContext { manager, descendants, sessions } = discard_context(repo, owner_task_slug, manager_session_id)?;
         if !manager.meta.subtask_slug.is_empty() {
             return archive_killed_lineage(repo, &manager, &descendants);
@@ -853,7 +855,7 @@ fn now_secs() -> u64 {
 }
 
 pub fn archive_task_guarded(repo: &Path, slug: &str) -> Result<(), String> {
-    with_task_mutation_lock(repo, "archive task", || {
+    with_task_mutation_lock_waiting(repo, "archive task", crate::TASK_MUTATION_CONTENTION_WAIT, || {
         ensure_task_can_archive(repo, slug)?;
         let mut task = read_task(repo, slug).ok_or_else(|| format!("no such task: {slug}"))?;
         task.archived = true;

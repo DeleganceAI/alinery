@@ -332,6 +332,46 @@ pub fn omp_binary_path(omp_dir: &Path) -> PathBuf {
     omp_dir.join("omp")
 }
 
+/// Alongside directory for the fallback Git tree. Path-shape, not cfg:
+/// `.app` → sibling `<stem>.git`; otherwise sibling `git`.
+pub fn git_alongside_dir(install_root: &Path) -> PathBuf {
+    let parent = install_root.parent().unwrap_or(install_root);
+    if install_root.extension().is_some_and(|ext| ext == "app") {
+        let stem = install_root.file_stem().unwrap_or_default().to_string_lossy();
+        parent.join(format!("{stem}.git"))
+    } else {
+        parent.join("git")
+    }
+}
+
+pub fn git_binary_path(git_dir: &Path) -> PathBuf {
+    git_dir.join("bin").join("git")
+}
+
+/// One Alinery-global alongside dir used when `containing_install_root` is None
+/// (`tauri dev`, cargo test). Matches install.sh's default dest formula.
+pub fn default_git_alongside_dir() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        git_alongside_dir(Path::new("/Applications/Alinery.app"))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/root"));
+        git_alongside_dir(&home.join(".local/share/alinery/Alinery"))
+    }
+}
+
+pub(crate) fn installed_git_binary() -> PathBuf {
+    match std::env::current_exe() {
+        Ok(exe) => match containing_install_root(&exe) {
+            Some(root) => git_binary_path(&git_alongside_dir(&root)),
+            None => git_binary_path(&default_git_alongside_dir()),
+        },
+        Err(_) => git_binary_path(&default_git_alongside_dir()),
+    }
+}
+
 /// One Alinery-global alongside dir used when `containing_install_root` is None
 /// (`tauri dev`, cargo test). Matches install.sh's default dest formula.
 pub fn default_omp_alongside_dir() -> PathBuf {
@@ -576,6 +616,40 @@ mod tests {
     #[test]
     fn omp_binary_path_joins_omp() {
         assert_eq!(omp_binary_path(Path::new("/Applications/Alinery.omp")), PathBuf::from("/Applications/Alinery.omp/omp"));
+    }
+
+    #[test]
+    fn git_alongside_dir_macos_app() {
+        assert_eq!(git_alongside_dir(Path::new("/Applications/Alinery.app")), PathBuf::from("/Applications/Alinery.git"));
+    }
+
+    #[test]
+    fn git_alongside_dir_custom_macos_dir() {
+        assert_eq!(git_alongside_dir(Path::new("/tmp/apps/Alinery.app")), PathBuf::from("/tmp/apps/Alinery.git"));
+    }
+
+    #[test]
+    fn git_alongside_dir_linux_prefix() {
+        assert_eq!(
+            git_alongside_dir(Path::new("/home/u/.local/share/alinery/Alinery")),
+            PathBuf::from("/home/u/.local/share/alinery/git")
+        );
+    }
+
+    #[test]
+    fn git_binary_path_joins_bin_git() {
+        assert_eq!(git_binary_path(Path::new("/Applications/Alinery.git")), PathBuf::from("/Applications/Alinery.git/bin/git"));
+    }
+
+    #[test]
+    fn default_git_alongside_dir_matches_install_default() {
+        #[cfg(target_os = "macos")]
+        assert_eq!(default_git_alongside_dir(), PathBuf::from("/Applications/Alinery.git"));
+        #[cfg(not(target_os = "macos"))]
+        {
+            let home = dirs::home_dir().expect("HOME");
+            assert_eq!(default_git_alongside_dir(), home.join(".local/share/alinery/git"));
+        }
     }
 
     #[test]

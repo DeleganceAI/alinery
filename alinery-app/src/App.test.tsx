@@ -210,6 +210,9 @@ const { ipcMocks, ipcModule } = vi.hoisted(() => {
     setDockBadgeCount: vi.fn(),
     readAppConfig: vi.fn(),
     setActiveRepo: vi.fn(),
+    pickRepoDialog: vi.fn(),
+    classifyPickedFolder: vi.fn(),
+    initPickedFolder: vi.fn(),
     accountStatus: vi.fn(async () => ({ signedIn: false, email: null, plan: null, paid: false, unavailable: false })),
     accountRefresh: vi.fn(async () => ({ signedIn: false, email: null, plan: null, paid: false, unavailable: false })),
   };
@@ -1153,5 +1156,174 @@ describe("session work names", () => {
     expect(within(screen.getByRole("listbox")).getByText("Renamed child")).toBeDefined();
     expect(within(screen.getByRole("listbox")).getByText("Coordinate work")).toBeDefined();
     expect(ipcMocks.renameTask).toHaveBeenCalledWith("/repo", "task", "Renamed child");
+  });
+});
+
+describe("repository switch keeps the current page", () => {
+  const repos = { ...appConfig, known_repos: ["/repo", "/other"] };
+
+  beforeEach(() => {
+    ipcMocks.readAppConfig.mockResolvedValue(repos);
+    ipcMocks.setActiveRepo.mockImplementation(async (path: string) => ({ ...repos, active_repo: path }));
+  });
+
+  async function chooseRepo(path: string) {
+    fireEvent.click(screen.getByRole("button", { name: "Repository" }));
+    fireEvent.click(screen.getByTitle(path));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Repository" })).toHaveProperty("title", path));
+  }
+
+  async function chooseAllRepos() {
+    fireEvent.click(screen.getByRole("button", { name: "Repository" }));
+    fireEvent.click(screen.getByRole("button", { name: "All repos" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Repository" })).toHaveProperty("title", "All repos"));
+  }
+
+  it("stays on kanban, settings, and notifications instead of bouncing to the task list", async () => {
+    await renderApp();
+
+    fireEvent.click(screen.getByRole("button", { name: "Kanban3" }));
+    expect(await screen.findByRole("button", { name: "open active card session" })).toBeTruthy();
+    await chooseRepo("/other");
+    expect(screen.getByRole("button", { name: "open active card session" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "open list task" })).toBeNull();
+    await chooseAllRepos();
+    expect(screen.getByRole("button", { name: "open active card session" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Account" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Settings" }));
+    expect(await screen.findByRole("button", { name: "save notification settings" })).toBeTruthy();
+    await chooseRepo("/repo");
+    expect(screen.getByRole("button", { name: "save notification settings" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+    expect((await screen.findByRole("button", { name: "clear shared notifications" })).closest("[data-scope]")?.getAttribute("data-scope")).toBe("/repo");
+    await chooseAllRepos();
+    expect(screen.getByRole("button", { name: "clear shared notifications" }).closest("[data-scope]")?.getAttribute("data-scope")).toBe("all");
+  });
+
+  it("zooms a task or session out to the task list", async () => {
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "open list task" }));
+    expect(await screen.findByText(/task detail:/)).toBeTruthy();
+
+    await chooseRepo("/other");
+    expect(screen.getByRole("button", { name: "open list task" })).toBeTruthy();
+    expect(screen.queryByText(/task detail:/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "open list task" }));
+    fireEvent.click(await screen.findByRole("button", { name: "open detail session" }));
+    expect(await screen.findByText(/session:/)).toBeTruthy();
+    await chooseAllRepos();
+    expect(screen.getByRole("button", { name: "open list task" })).toBeTruthy();
+    expect(screen.queryByText(/session:/)).toBeNull();
+  });
+
+  it("keeps one grid workspace across repositories and all-repos", async () => {
+    const legacy = JSON.stringify({ config: { tileWidth: 480 } });
+    window.localStorage.setItem("alinery:grid:/repo:view:default-kanban-plus", legacy);
+    window.localStorage.setItem("alinery:grid:all-repositories:view:default-kanban-plus", JSON.stringify({ config: { tileWidth: 96 } }));
+    await renderApp();
+
+    const grid = () => screen.getByTestId("grid:view:default-kanban-plus");
+    expect(grid()).toBeTruthy();
+    expect(window.localStorage.getItem("alinery:grid:view:default-kanban-plus")).toBe(legacy);
+
+    await chooseRepo("/other");
+    expect(grid()).toBeTruthy();
+    await chooseAllRepos();
+    expect(grid()).toBeTruthy();
+    expect(window.localStorage.getItem("alinery:grid:view:default-kanban-plus")).toBe(legacy);
+  });
+});
+
+describe("addRepo", () => {
+  async function openPicker() {
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "" });
+    render(<App />);
+    return screen.findByRole("button", { name: "Add a repository" });
+  }
+
+  beforeEach(() => {
+    ipcMocks.pickRepoDialog.mockReset();
+    ipcMocks.classifyPickedFolder.mockReset();
+    ipcMocks.initPickedFolder.mockReset();
+    ipcMocks.setActiveRepo.mockReset().mockImplementation(async (path: string) => ({ ...appConfig, active_repo: path, known_repos: [path] }));
+  });
+
+  it("stops when the folder picker is cancelled", async () => {
+    const add = await openPicker();
+    ipcMocks.pickRepoDialog.mockResolvedValue(null);
+    fireEvent.click(add);
+    await waitFor(() => expect(ipcMocks.pickRepoDialog).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(ipcMocks.classifyPickedFolder).not.toHaveBeenCalled();
+    expect(ipcMocks.initPickedFolder).not.toHaveBeenCalled();
+    expect(ipcMocks.setActiveRepo).not.toHaveBeenCalled();
+  });
+
+  it("opens a checkout without asking or initializing", async () => {
+    const add = await openPicker();
+    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "checkout", root: "/canonical" });
+    fireEvent.click(add);
+    await waitFor(() => expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/canonical", null));
+    expect(ipcMocks.initPickedFolder).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog", { name: "Initialize Git?" })).toBeNull();
+  });
+
+  it("leaves an absent folder unchanged when initialize is cancelled", async () => {
+    const add = await openPicker();
+    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "absent", path: "/canon" });
+    fireEvent.click(add);
+    const dialog = await screen.findByRole("alertdialog", { name: "Initialize Git?" });
+    const focused = dialog.querySelector("[data-autofocus]");
+    expect(focused?.textContent).toBe("Cancel");
+    fireEvent.click(focused as HTMLElement);
+    await waitFor(() => expect(screen.queryByRole("alertdialog", { name: "Initialize Git?" })).toBeNull());
+    expect(ipcMocks.initPickedFolder).not.toHaveBeenCalled();
+    expect(ipcMocks.setActiveRepo).not.toHaveBeenCalled();
+  });
+
+  it("initializes an absent folder and opens the returned root", async () => {
+    const add = await openPicker();
+    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "absent", path: "/canon" });
+    ipcMocks.initPickedFolder.mockResolvedValue({ kind: "initialized", root: "/inited" });
+    fireEvent.click(add);
+    const dialog = await screen.findByRole("alertdialog", { name: "Initialize Git?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Initialize Git" }));
+    await waitFor(() => expect(ipcMocks.initPickedFolder).toHaveBeenCalledWith("/canon"));
+    await waitFor(() => expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/inited", null));
+    expect(ipcMocks.initPickedFolder.mock.invocationCallOrder[0]).toBeLessThan(ipcMocks.setActiveRepo.mock.invocationCallOrder[0]);
+  });
+
+  it("shows a named refusal without opening", async () => {
+    const add = await openPicker();
+    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    ipcMocks.classifyPickedFolder.mockResolvedValue({
+      kind: "refused",
+      message: "This folder is a Git repository, but not a working tree. Alinery will not initialize a new repository here.\nfatal: this operation must be run in a work tree",
+    });
+    fireEvent.click(add);
+    expect(await screen.findByText(/fatal: this operation must be run in a work tree/)).toBeTruthy();
+    expect(screen.queryByRole("alertdialog", { name: "Initialize Git?" })).toBeNull();
+    expect(ipcMocks.initPickedFolder).not.toHaveBeenCalled();
+    expect(ipcMocks.setActiveRepo).not.toHaveBeenCalled();
+  });
+
+  it("shows an init failure without opening", async () => {
+    const add = await openPicker();
+    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "absent", path: "/canon" });
+    ipcMocks.initPickedFolder.mockRejectedValue("Couldn't initialize Git in /canon.\nPermission denied");
+    fireEvent.click(add);
+    fireEvent.click(await screen.findByRole("button", { name: "Initialize Git" }));
+    expect(await screen.findByText(/Permission denied/)).toBeTruthy();
+    expect(ipcMocks.setActiveRepo).not.toHaveBeenCalled();
   });
 });

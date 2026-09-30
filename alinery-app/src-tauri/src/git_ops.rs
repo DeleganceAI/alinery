@@ -296,24 +296,32 @@ pub(crate) fn select_branch_pull_request(value: &Value, owner: &str, repo: &str,
     Ok(selected)
 }
 
-fn github_pull_request_json(repo: &Path, endpoint: &str, fields: &[(&str, &str)]) -> Result<Value, String> {
-    let mut command = Command::new("gh");
-    command
-        .current_dir(repo)
-        .args(["api", "--hostname", "github.com", "--method", "GET", endpoint])
-        .env("PATH", login_shell_path())
-        .env("GH_PROMPT_DISABLED", "1")
-        .env("GH_PAGER", "cat")
-        .env_remove("GH_DEBUG")
-        .stdin(std::process::Stdio::null());
-    for (key, value) in fields {
-        command.arg("-f").arg(format!("{key}={value}"));
+fn github_pull_request_json(_repo: &Path, endpoint: &str, fields: &[(&str, &str)]) -> Result<Value, String> {
+    let mut url = format!("https://api.github.com/{endpoint}");
+    if !fields.is_empty() {
+        let query = fields
+            .iter()
+            .map(|(key, value)| format!("{}={}", percent_encode(key), percent_encode(value)))
+            .collect::<Vec<_>>()
+            .join("&");
+        url.push('?');
+        url.push_str(&query);
     }
-    let output = output_with_timeout(command, Duration::from_secs(15)).map_err(|error| format!("GitHub PR lookup: {error}"))?;
-    if !output.status.success() {
-        return Err(format!("GitHub PR lookup failed: {}", String::from_utf8_lossy(&output.stderr).trim()));
+    let mut headers = vec!["Accept: application/vnd.github+json".to_string(), "User-Agent: alinery".to_string()];
+    if let Some(credential) = alinery_core::git_credential_fill(alinery_core::GITHUB_CREDENTIAL_FILL).map_err(|error| format!("GitHub PR lookup: {error}"))? {
+        headers.push(format!("Authorization: Bearer {}", credential.secret));
     }
-    serde_json::from_slice(&output.stdout).map_err(|error| format!("invalid GitHub PR response: {error}"))
+    let response = curl_request_with_timeouts(&url, &headers, None, Duration::from_secs(5), Duration::from_secs(15))?;
+    if !(200..300).contains(&response.status) {
+        let detail = String::from_utf8_lossy(&response.body);
+        let detail = detail.trim();
+        return Err(if detail.is_empty() {
+            format!("GitHub PR lookup failed: HTTP {}", response.status)
+        } else {
+            format!("GitHub PR lookup failed: HTTP {} {detail}", response.status)
+        });
+    }
+    serde_json::from_slice(&response.body).map_err(|error| format!("invalid GitHub PR response: {error}"))
 }
 
 pub(crate) fn record_discovered_pull_request_in(repo: &Path, slug: &str, branch: &str, previous_url: &str, url: &str) -> Result<(), String> {

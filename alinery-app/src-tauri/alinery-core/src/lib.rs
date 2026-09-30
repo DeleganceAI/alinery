@@ -9,6 +9,7 @@ pub mod fs_atomic;
 pub mod git;
 pub mod history;
 pub mod hosted_inference;
+pub mod http;
 pub mod lockfile;
 pub mod log;
 pub mod message;

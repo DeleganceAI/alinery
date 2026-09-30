@@ -35,6 +35,9 @@ import type {
   BackupListItem,
   BackupMeta,
   BoardTask,
+  CommunityImportRow,
+  CommunityMineResult,
+  CommunityPlaybookPage,
   Config,
   ConnectionStatus,
   CreateExecutionSessionReply,
@@ -43,9 +46,11 @@ import type {
   CreateTaskResult,
   DaemonStatus,
   DesktopCreditsView,
+  DownloadStatusRow,
   GitHubIssue,
   GlobalSettings,
   HostedCatalogView,
+  ImportResult,
   KanbanColumn,
   LinearTicket,
   McpStatus,
@@ -57,6 +62,8 @@ import type {
   PlaybookValidation,
   PreparedSessionMessageAction,
   PreparedTaskAttachments,
+  PreviewResult,
+  PublishResult,
   PullRequestSnapshot,
   PurgeArchivedResult,
   RelatedTaskRef,
@@ -81,6 +88,7 @@ import type {
   TaskActivityRef,
   TaskActivitySummary,
   TaskExecutionReply,
+  UpdateResult,
   UpdateStatus,
 } from "./types";
 
@@ -97,8 +105,14 @@ export { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 export { Channel };
 
 // ── app_config.rs ─────────────────────────────────────────────────────
+export type PickedFolder = { kind: "checkout"; root: string } | { kind: "absent"; path: string } | { kind: "refused"; message: string };
+
+export type InitializedFolder = { kind: "initialized"; root: string } | { kind: "already_checkout"; root: string };
+
 export const pickAttachmentFilesDialog = () => invoke<string[]>("pick_attachment_files_dialog");
 export const pickRepoDialog = () => invoke<string | null>("pick_repo_dialog");
+export const classifyPickedFolder = (path: string) => invoke<PickedFolder>("classify_picked_folder", { path });
+export const initPickedFolder = (path: string) => invoke<InitializedFolder>("init_picked_folder", { path });
 export const readAppConfig = () => invoke<AppConfig>("read_app_config");
 export const removeRepo = (path: string) => invoke<AppConfig>("remove_repo", { path });
 export const setActiveRepo = (path: string, drawerSessionId: string | null) => invoke<AppConfig>("set_active_repo", { path, drawerSessionId });
@@ -287,9 +301,9 @@ export const openSession = (a: {
   rows?: number | null;
   onBytes: Channel<ArrayBuffer>;
 }) => invoke<void>("open_session", a);
-export const readSessionHistory = (a: { id: string; taskSlug?: string | null; offset?: number | null; limit?: number | null }) => invoke<number[]>("read_session_history", a);
 // Raw bytes, not number[]: a Vec<u8> return would cross IPC as a JSON array of numbers (3.4x on
 // the wire, and a per-byte JS array before a single row can be parsed).
+export const readSessionHistory = (a: { id: string; taskSlug?: string | null; offset?: number | null; limit?: number | null }) => invoke<ArrayBuffer>("read_session_history", a);
 export const readSessionOmp = (a: { id: string; taskSlug?: string | null; end?: number | null; want?: number | null }) => invoke<ArrayBuffer>("read_session_omp", a);
 export const resizeSession = (id: string, cols: number, rows: number) => invoke<void>("resize_session", { id, cols, rows });
 export const sessionArtifactReady = (id: string, taskSlug: string) => invoke<boolean>("session_artifact_ready", { id, taskSlug });
@@ -376,8 +390,14 @@ export const savePlaybookSource = (request: SavePlaybookRequest, repoPath?: stri
 export const deletePlaybookSource = (reference: PlaybookRef, repoPath?: string) => invoke<void>("delete_playbook_source", { reference, repoPath });
 export const readPlaybookPickerPreferences = (repoPath?: string) => invoke<PickerPreferences>("read_playbook_picker_preferences", { repoPath });
 export const savePlaybookPickerPreferences = (preferences: PickerPreferences, repoPath?: string) => invoke<void>("save_playbook_picker_preferences", { preferences, repoPath });
-
-// ── update.rs ─────────────────────────────────────────────────────────
+export const listCommunityPlaybooks = (args: { q?: string; cursor?: string }) => invoke<CommunityPlaybookPage>("list_community_playbooks", args);
+export const listMyCommunityPlaybooks = () => invoke<CommunityMineResult>("list_my_community_playbooks");
+export const listCommunityImports = (args: { repoPath: string }) => invoke<{ imports: CommunityImportRow[] }>("list_community_imports", args);
+export const communityDownloadStatus = (args: { repoPath: string }) => invoke<{ rows: DownloadStatusRow[] }>("community_download_status", args);
+export const importCommunityPlaybook = (args: { id: string; repoPath: string; overwrite: boolean }) => invoke<ImportResult>("import_community_playbook", args);
+export const updateCommunityImport = (args: { id: string; repoPath: string; overwriteEdited: boolean }) => invoke<UpdateResult>("update_community_import", args);
+export const previewCommunityPlaybook = (args: { id: string }) => invoke<PreviewResult>("preview_community_playbook", args);
+export const publishCommunityPlaybook = (args: { reference: PlaybookRef; repoPath: string; label?: string }) => invoke<PublishResult>("publish_community_playbook", args);
 export const checkUpdate = () => invoke<UpdateStatus>("check_update");
 export const downloadUpdate = (version: string) => invoke<StagedUpdate>("download_update", { version });
 export const applyUpdate = (version: string) => invoke<void>("apply_update", { version });

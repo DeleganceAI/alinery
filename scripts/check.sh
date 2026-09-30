@@ -3,14 +3,11 @@
 # returns a single verdict.
 #
 #   ./scripts/check.sh            everything
-#   ./scripts/check.sh --quick    skips the slow behavioural suites (what the
-#                                 pre-push hook runs)
+#   ./scripts/check.sh --quick    skips the slow behavioural suites
 #
 # --quick drops the suites that spawn a real alineryd over a real socket, drive a pty with
 # expect(1), or build throwaway git repos. Everything that can catch a bad code change
 # (lint, typecheck, both test suites, clippy, and the source gates) runs either way.
-#
-# Escape hatch: ALINERY_SKIP_CHECK=1 git push
 set -euo pipefail
 
 trap 'status=$?; [ "$status" -eq 0 ] || printf "\n\033[1mFAILED: check aborted (exit %s)\033[0m\n" "$status" >&2; exit "$status"' EXIT
@@ -65,6 +62,7 @@ step "rust: tests (--workspace)"
 # ---------- source-invariant gates ----------
 step "source gates"
 "$ROOT/scripts/tests/check-git-env-scrub.sh"
+"$ROOT/scripts/tests/check-no-curl.sh"
 "$ROOT/scripts/tests/check-no-auto-session-kill.sh"
 "$ROOT/scripts/tests/check-omp-no-path-fallback.sh"
 "$ROOT/scripts/tests/check-no-window-confirm.sh"
@@ -76,6 +74,7 @@ step "source gates"
 "$ROOT/scripts/tests/check-telemetry-privacy.sh"
 "$ROOT/scripts/tests/check-connection-status-never-decrypts.sh"
 "$ROOT/scripts/tests/omp_lib_test.sh"
+"$ROOT/scripts/tests/git_lib_test.sh"
 "$ROOT/scripts/tests/dev_fetch_omp_test.sh"
 "$ROOT/scripts/tests/install_omp_place_test.sh"
 

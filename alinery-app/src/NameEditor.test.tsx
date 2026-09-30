@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { NameEditor } from "./NameEditor";
+import { awaitingSessionName, NameEditor, PendingSessionName } from "./NameEditor";
 
 afterEach(cleanup);
 
@@ -117,5 +117,27 @@ describe("work name editor", () => {
     fireEvent.change(screen.getByRole("textbox"), { target: { value: `  ${"x".repeat(80)}  ` } });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Save" })));
     expect(save).toHaveBeenCalledWith("x".repeat(80));
+  });
+});
+
+describe("pending session name", () => {
+  const live = { lifecycle: { state: "live" }, state: { process: { state: "alive" } } };
+
+  it("waits only while a live OMP session has no name", () => {
+    expect(awaitingSessionName({ harness: "omp" }, live)).toBe(true);
+    expect(awaitingSessionName({ harness: "omp" }, { lifecycle: { state: "live" }, state: { process: { state: "starting" } } })).toBe(true);
+    expect(awaitingSessionName({ harness: "omp", name: "Repair cache" }, live)).toBe(false);
+    expect(awaitingSessionName({ harness: "omp", name_error: "unreadable" }, live)).toBe(false);
+    expect(awaitingSessionName({ harness: "omp", archived: true }, live)).toBe(false);
+    expect(awaitingSessionName({ harness: "no-harness" }, live)).toBe(false);
+    expect(awaitingSessionName({ harness: "omp" }, { lifecycle: { state: "exited" }, state: null })).toBe(false);
+    expect(awaitingSessionName({ harness: "omp" }, { lifecycle: { state: "live" }, state: { process: { state: "exited" } } })).toBe(false);
+    expect(awaitingSessionName({ harness: "omp" }, null)).toBe(false);
+  });
+
+  it("names the wait without replacing the rename affordance's text", () => {
+    render(<PendingSessionName />);
+    const status = screen.getByRole("status", { name: "Waiting for session name" });
+    expect(status.querySelector(".pending-session-name-dots")?.textContent).toBe("...");
   });
 });

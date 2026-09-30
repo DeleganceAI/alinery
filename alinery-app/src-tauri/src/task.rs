@@ -267,8 +267,7 @@ pub(crate) struct PreparedTaskAttachments {
     attachment_errors: Vec<String>,
 }
 
-#[tauri::command]
-pub(crate) fn prepare_task_attachments(entries: Vec<String>) -> PreparedTaskAttachments {
+pub(crate) fn prepare_task_attachments_in(entries: Vec<String>) -> PreparedTaskAttachments {
     let mut result = PreparedTaskAttachments::default();
     let mut bytes = 0u64;
     for entry in entries {
@@ -323,6 +322,19 @@ pub(crate) fn prepare_task_attachments(entries: Vec<String>) -> PreparedTaskAtta
         }
     }
     result
+}
+
+#[tauri::command]
+pub(crate) async fn prepare_task_attachments(entries: Vec<String>) -> PreparedTaskAttachments {
+    // Dropped files are read in full (up to 100 MB) before Create task continues.
+    // A sync command does that read on the main thread.
+    tauri::async_runtime::spawn_blocking(move || prepare_task_attachments_in(entries))
+        .await
+        .unwrap_or_else(|_| {
+            let mut result = PreparedTaskAttachments::default();
+            result.attachment_errors.push("could not read attachments".into());
+            result
+        })
 }
 
 pub(crate) const MAX_CHAT_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
@@ -583,7 +595,7 @@ pub(crate) fn write_draft_in_with_slug(
     branch_name: String,
     worktree_name: String,
 ) -> Result<Task, String> {
-    alinery_core::with_task_mutation_lock(repo, "write draft", || {
+    alinery_core::with_task_mutation_lock_waiting(repo, "write draft", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
         write_draft_in_with_slug_unlocked(
             repo,
             app_config,
@@ -805,7 +817,7 @@ pub(crate) fn delete_draft_in(repo: &Path, app_config: Option<&Path>, slug: &str
     // Eager on purpose: the read must happen before the directory is removed below, so this one
     // cannot be deferred into the emit closure the way the other id lookups are.
     let telemetry_id = alinery_core::telemetry_id_for_task(repo, slug);
-    alinery_core::with_task_mutation_lock(repo, "delete draft", || {
+    alinery_core::with_task_mutation_lock_waiting(repo, "delete draft", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
         let task = read_task(repo, slug)?;
         if !task.draft {
             return Err("not a draft".into());
@@ -1071,7 +1083,7 @@ pub(crate) fn set_related_tasks_in(repo: &Path, slug: String, related: Vec<aline
         }
         cleaned.push(tag);
     }
-    alinery_core::with_task_mutation_lock(repo, "set related tasks", || {
+    alinery_core::with_task_mutation_lock_waiting(repo, "set related tasks", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
         let mut task = read_task(repo, &slug)?;
         if task.archived {
             return Err("task is archived — read-only".into());

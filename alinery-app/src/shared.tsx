@@ -1349,7 +1349,9 @@ export function RepoPicker({
       </div>
       <p className="picker-eyebrow">Welcome to Alinery</p>
       <h2>Bring a repository into focus</h2>
-      <p className="picker-lede">Choose a local Git repository to organize tasks, sessions, and project context in one place.</p>
+      <p className="picker-lede">
+        Choose a local folder to organize tasks, sessions, and project context in one place. If it is not a Git repository, Alinery asks before initializing one.
+      </p>
       {appConfig.known_repos.length > 0 && (
         <div className="picker-repos">
           <p className="picker-label">Your repositories</p>
@@ -1381,7 +1383,7 @@ export function RepoPicker({
         <FolderPlus size={16} strokeWidth={1.6} aria-hidden="true" />
         Add a repository
       </button>
-      <p className="picker-footnote">Your repository stays on this Mac. Alinery only adds it to your workspace.</p>
+      <p className="picker-footnote">Your files stay on this Mac. A folder that is not a Git repository is initialized only after you confirm.</p>
       {error && (
         <InlineStatus tone="error" detail={error}>
           Couldn't open the repository. Pick another, or add one below.

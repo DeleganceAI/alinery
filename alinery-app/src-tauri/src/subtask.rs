@@ -133,17 +133,36 @@ pub(crate) fn subtask_state(app: AppHandle, state: State<'_, AppState>, task_slu
 }
 
 #[tauri::command]
-pub(crate) fn start_subtask_manager(app: AppHandle, state: State<'_, AppState>, task_slug: String) -> Result<alinery_core::task_creation::CreateExecutionSessionReply, String> {
+pub(crate) async fn start_subtask_manager(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_slug: String,
+) -> Result<alinery_core::task_creation::CreateExecutionSessionReply, String> {
     let repo = require_owned_active_repo(&state)?;
-    let request = subtask_manager_request_in(&repo, task_slug, false)?;
-    task_daemon_for(&repo, &request.task_slug, &app_config_path(&app)?)?.create_execution_session(&request)
+    let app_config = app_config_path(&app)?;
+    // Creating the manager session waits on the daemon. Keep that off the main thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        let request = subtask_manager_request_in(&repo, task_slug, false)?;
+        task_daemon_for(&repo, &request.task_slug, &app_config)?.create_execution_session(&request)
+    })
+    .await
+    .map_err(|error| format!("start subtask manager task: {error}"))?
 }
 
 #[tauri::command]
-pub(crate) fn recover_subtask_manager(app: AppHandle, state: State<'_, AppState>, task_slug: String) -> Result<alinery_core::task_creation::CreateExecutionSessionReply, String> {
+pub(crate) async fn recover_subtask_manager(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_slug: String,
+) -> Result<alinery_core::task_creation::CreateExecutionSessionReply, String> {
     let repo = require_owned_active_repo(&state)?;
-    let request = subtask_manager_request_in(&repo, task_slug, true)?;
-    task_daemon_for(&repo, &request.task_slug, &app_config_path(&app)?)?.create_execution_session(&request)
+    let app_config = app_config_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let request = subtask_manager_request_in(&repo, task_slug, true)?;
+        task_daemon_for(&repo, &request.task_slug, &app_config)?.create_execution_session(&request)
+    })
+    .await
+    .map_err(|error| format!("recover subtask manager task: {error}"))?
 }
 
 #[tauri::command]

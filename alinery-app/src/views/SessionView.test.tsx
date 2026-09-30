@@ -383,6 +383,26 @@ describe("session work names", () => {
     expect(screen.getByRole("textbox", { name: "Session name" })).toHaveProperty("value", "Keep this draft");
     expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Session name" }));
   });
+
+  it("shows a waiting ellipsis for a live unnamed OMP session and hides it while renaming", async () => {
+    getSessionDisplay.mockResolvedValue({ session: { id: "session", harness: "omp" }, task_name: "Task", subtask_name: null } as never);
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    renderSession();
+    await flushPromises();
+    expect(screen.getByRole("status", { name: "Waiting for session name" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
+    expect(screen.queryByRole("status", { name: "Waiting for session name" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Session name" })).toBeDefined();
+  });
+
+  it("does not animate a terminal session that will not name itself", async () => {
+    getSessionDisplay.mockResolvedValue({ session: { id: "session", harness: "no-harness" }, task_name: "Task", subtask_name: null } as never);
+    sessionStatus.mockResolvedValue(liveObservation("pty"));
+    renderSession({ harness: "no-harness" });
+    await flushPromises();
+    expect(screen.getByText("Unnamed session")).toBeDefined();
+    expect(screen.queryByRole("status", { name: "Waiting for session name" })).toBeNull();
+  });
 });
 
 describe("session archive pending feedback", () => {

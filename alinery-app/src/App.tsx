@@ -110,6 +110,23 @@ function initialView(): View {
   return { kind: "grid", gridViewId: DEFAULT_GRID_VIEW_ID };
 }
 
+// Grid layout is one workspace per view, not per repository. The first time a
+// shared key is missing, adopt the scope the user is already looking at so the
+// switch does not reset tile size, preset, or column order.
+function sharedGridStorageKey(gridViewId: string, legacyScopeKey: string): string {
+  const storageKey = `view:${gridViewId}`;
+  try {
+    const next = `alinery:grid:${storageKey}`;
+    if (!window.localStorage.getItem(next)) {
+      const legacy = window.localStorage.getItem(`alinery:grid:${legacyScopeKey}:view:${gridViewId}`);
+      if (legacy) window.localStorage.setItem(next, legacy);
+    }
+  } catch {
+    // A storage failure should never make the Grid unusable.
+  }
+  return storageKey;
+}
+
 export default function App() {
   const [view, setView] = useState<View>(initialView);
   const [navInstant, setNavInstant] = useState(true);
@@ -370,9 +387,14 @@ export default function App() {
     return { ...cfg, appearance: applyAppearance(cfg.appearance) };
   };
 
+  // A repository or all-repos switch keeps the page. A page bound to one task
+  // or session cannot follow, so it zooms out to the task list.
   const viewAfterScopeChange = (current: View): View => {
-    const gridViewId = gridViewIdOf(current);
-    return gridViewId && gridViews.some((gridView) => gridView.id === gridViewId) ? { kind: "grid", gridViewId } : { kind: "list" };
+    if (!isPrimaryTab(current.kind)) return { kind: "list" };
+    if (current.kind === "grid" && gridViews.some((gridView) => gridView.id === current.gridViewId) === false) {
+      return { kind: "grid", gridViewId: gridViews[0]?.id ?? DEFAULT_GRID_VIEW_ID };
+    }
+    return current;
   };
 
   const setRepo = async (path: string) => {
@@ -577,7 +599,27 @@ export default function App() {
     setRepoErr("");
     try {
       const path = await ipc.pickRepoDialog();
-      if (path) await setRepo(path);
+      if (!path) return;
+      const classified = await ipc.classifyPickedFolder(path);
+      if (classified.kind === "checkout") {
+        await setRepo(classified.root);
+        return;
+      }
+      if (classified.kind === "refused") {
+        setRepoErr(classified.message);
+        return;
+      }
+      const choice = await askConfirm({
+        title: "Initialize Git?",
+        body: `${classified.path} is not a Git repository. Initialize Git in this folder before opening it? Cancel leaves the folder unchanged.`,
+        choices: [
+          { key: "init", label: "Initialize Git" },
+          { key: "cancel", label: "Cancel", tone: "ghost" },
+        ],
+      });
+      if (choice !== "init") return;
+      const initialized = await ipc.initPickedFolder(classified.path);
+      await setRepo(initialized.root);
     } catch (e) {
       setRepoErr(String(e));
     }
@@ -813,8 +855,8 @@ export default function App() {
   const openCreate = (initialPlaybook?: PlaybookRef) => {
     setSearchOpen(false);
     if (taskMutationGuard.refuseIfBusy()) return;
-    // Every task-creation entrypoint lands here. Paint the opening toast before the
-    // form mounts — its settings IPC is what freezes the window.
+    // Every task-creation entrypoint lands here. Paint the opening toast, then the
+    // form. The form clears the toast on its first frame; catalog loading follows.
     const from = view;
     flushSync(() => setBusy("open-create"));
     void afterPaint().then(() => setView({ kind: "create", from, initialPlaybook }));
@@ -1140,7 +1182,7 @@ export default function App() {
       minimalHeader,
     );
 
-  const gridStorageScopeKey = scope === "all" ? "all-repositories" : appConfig.active_repo;
+  const legacyGridScopeKey = scope === "all" ? "all-repositories" : appConfig.active_repo;
 
   const header = (
     <TopBar
@@ -1429,7 +1471,7 @@ export default function App() {
               onOpen={openBoardTask}
               onDuplicate={(task) => duplicateTask({ repoPath: task.repo_path, sourceSlug: task.slug })}
               registerNav={registerNav}
-              storageKey={`${gridStorageScopeKey}:view:${gridView.id}`}
+              storageKey={sharedGridStorageKey(gridView.id, legacyGridScopeKey)}
               initialPreset={gridView.id === DEFAULT_GRID_VIEW_ID ? "progress" : "steps"}
             />
           </div>
