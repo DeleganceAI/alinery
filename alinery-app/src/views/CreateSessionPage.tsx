@@ -3,6 +3,7 @@ import { askConfirm } from "../confirm";
 import * as ipc from "../ipc";
 import { ExecutionAvailabilityNotice, InlineStatus, ModelInput, repoName, taskKey } from "../shared";
 import type { BoardTask, SessionTypeChoice, TaskExecutionReply } from "../types";
+import { readTaskExecution } from "../useExecutionObservation";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 export function CreateSessionPage({
@@ -72,8 +73,7 @@ export function CreateSessionPage({
     setSelection("auxiliary");
     setModel("");
     if (!task) return;
-    ipc
-      .getTaskExecution(task.slug, task.repo_path)
+    readTaskExecution(task.repo_path, task.slug)
       .then((value) => {
         if (!alive) return;
         setExecutionView(value);
