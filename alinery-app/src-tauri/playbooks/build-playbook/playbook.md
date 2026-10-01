@@ -75,6 +75,8 @@ Write the specification at the assigned path. Explain the process for a human re
 
 The specification is ready when the responsibilities, handoffs and human checkpoints describe a consistent process that the human has agreed to. Hand off its path and explain any remaining limitations.
 
+The declared output is a possible publication, and every successful execution must leave at least one valid assigned artifact overall. Here the agreed specification is the substantive deliverable and the sole assignment; publish it at its assigned path. Invalid present output or inspection errors reject completion. Resolve required human decisions, finish the user-facing handoff, then use the runtime's completion gate. Permission to finish is separate from agreement on the process, and eligible successors wait for accepted completion and confirmed exit.
+
 <!-- alinery:step draft-refine -->
 
 ## Context
@@ -193,6 +195,8 @@ The engine handles input assignments, reservations, scheduling, completion permi
 
 A task with an assigned playbook retains the validated definition selected when the task was created. Editing a library entry changes what future tasks can select; existing tasks continue using their retained definition. The current library entry cannot replace a missing retained definition.
 
+Retained definitions are not migrated when publication semantics or bundled declarations change. A fresh launch receives the current authoritative assignment after retained prose, overriding older blanket all-output or zero-evidence guidance without waiving substantive work. An old continuation-only definition does not gain an undeclared stopping report. The corrected owning daemon must be running for the corrected behavior; already-running and resumed conversations are not retroactively rewritten. Do not replace a live daemon, edit retained bytes or manipulate sessions to make an authoring change take effect.
+
 The three scopes, `bundled/<key>`, `global/<key>` and `repo/<key>`, are separate. Entries with the same key in different scopes do not shadow one another. Bundled entries are read-only. Repository playbooks live under `<repository-root>/alinery/playbooks/`, and the catalog identifies them by the key declared inside the file. If two files in that repository tree declare the same key, the catalog cannot resolve the entry.
 
 An additional agent session can contribute to the task's context without changing its assigned playbook graph.
@@ -239,7 +243,7 @@ The engine derives dependencies from the declared input and output roles. Reorde
 | --- | --- | --- |
 | `single` | The intended exact occurrence in this execution's context. Multiple required inputs form an AND join. | A decision reads both `draft.md` and `analysis.md`; neither is optional. |
 | `each` | One execution per bound collection member, plus any exact inputs. | Each review worker processes only its assigned `request-*.md` member. |
-| `complete` | The full required accepted collection, including every execution expected to contribute. | A merge reads all `review-*.md` contributions in its engine-supplied collection. |
+| `complete` | The nonempty selector-matching accepted collection, after every expected producer and source obligation is complete. | A merge reads actual `review-*.md` contributions from its engine-supplied collection, not unrelated reports. |
 
 A `single` input names an exact logical path. An `each` or `complete` selector contains one wildcard in the filename, such as `review-*.md`. A step can have at most one collection input: one `each` or one `complete`, alongside any exact inputs.
 
@@ -247,19 +251,21 @@ Paths must be relative `.md` paths. Subdirectories are supported, but absolute p
 
 ### Define which step writes each output
 
-Every declared output must contain a meaningful result before the execution responsible for writing it can complete. A wildcard output requires a finite, nonempty set of files. If a report is optional, declaring it as a required output creates a step that cannot finish without the report.
+An output declaration reserves an artifact that an execution may publish. Individual declarations are possible publications, not mandatory files. Successful completion requires **at least one valid assigned artifact overall**. An exact output may be omitted; a wildcard may contain zero or finitely many members, provided another assignment supplies the minimum. A wildcard-only execution therefore needs at least one real member. Every present assigned output is inspected: invalid files and genuine inspection errors reject the whole attempt, even when another artifact is valid.
+
+The declaration list does not certify that the agent did its job. Prompts still require the actual deliverables, verification and human decisions appropriate to each outcome. Every truthful successful outcome needs declared evidence: reuse an existing report where it suffices, or declare a separate stopping/disposition report. Do not invent a study, fix, shortlist or continuation merely to satisfy the minimum. Unfinished substantive work stays interactive. If a process expects only one alternative, say so in the prompt; the engine accepts both when both are valid and does not enforce XOR.
 
 Each logical output name or pattern belongs to one step. Output declarations from different steps must not overlap. For example, two steps cannot both produce `result-*.md`. A step producing `result-*.md` also conflicts with a different step producing `result-summary.md`. Give those steps distinct output names or patterns, such as review workers writing `review-*.md` and a merge step writing `decision.md`.
 
 Repeated runs of the same step use the step's declared output names or patterns. Each run receives distinct file paths for its outputs, and the engine records which run wrote each artifact. Different steps still need distinct output declarations; choosing whichever file was written last does not resolve an overlap.
 
-A wildcard output lets one execution choose how many files to produce, including a single file when that is the complete result. With an `each` input, the engine instead runs a separate worker for each member of an existing collection. Each execution writes within its assigned output family. A downstream `complete` input receives the whole assigned collection, rather than one selected member or files from other executions.
+A wildcard output lets one execution choose how many files to publish. With an `each` input, the engine runs one worker per actual matching member after accepted completion and confirmed exit; zero matching members start zero workers. Each execution writes within its assigned family. A downstream `complete` input receives the actual selector-matching members of one closed nonempty collection, never reports outside that selector or files from other collections.
 
 ### Represent decisions and optional work in artifacts
 
 An agent can record a decision in an artifact, and the next agent can read that decision to determine its work. For example:
 
-| Step | Inputs | Outputs |
+| Step | Inputs | Possible outputs |
 | --- | --- | --- |
 | Assess | `single(ticket.md)` | `decision.md` |
 | Carry out the decision | `single(decision.md)` | `action-report.md` |
@@ -268,13 +274,25 @@ The assessment records the selected action, its reasons and the evidence the nex
 
 The agent interprets the decision's contents; the dependency ensures that the decision is available before the agent starts. If several different steps all read `decision.md`, all of them can become eligible. To have one agent carry out the selected action, use one step with a prompt that explains how to act on that decision. Mark that step as coding if any of its possible actions changes repository state.
 
+Alternatively, give the assessment distinct possible outputs for distinct routes. Publishing only the no-change report leaves a missing action trigger unsatisfied; publishing both triggers enables both eligible routes. Multiple inputs still form an AND dependency, not a choice among alternatives.
+
+### Choose no-result routing explicitly
+
+Consider a hypothetical search step declaring `search-summary.md` and `papers/*.md`:
+
+- **No item workers:** publish `search-summary.md` documenting a completed search with no results, and omit all `papers/*.md` members. The summary is outside that selector. After acceptance and exit, the paper collection closes empty and neither `each(papers/*.md)` workers nor an empty `complete(papers/*.md)` merge start.
+- **One deliberate disposition worker:** if the family contract admits no-result records, publish a meaningful `papers/no-results.md`. It matches `papers/*.md`, so exactly one `each(papers/*.md)` worker receives that accepted occurrence after exit. Its prompt must explicitly handle the disposition rather than pretend it is a paper. Prose saying “nothing found” does not suppress routing.
+- **One exact handler:** instead declare `no-results.md` on the search step and a handler with `single(no-results.md)`, producing `no-results-handled.md`. Publish that exact disposition only when the handler should run. This record is outside `papers/*.md`; it routes to its matching exact handler without creating paper workers.
+
+Inspect the actual selector matches. A report named `papers/summary.md` is a paper-family member, regardless of its intended purpose. A standalone summary outside the family is the usual choice when nothing downstream should run.
+
 ### Split work across workers and collect all their results
 
 A non-coding step can split a request into a collection, with one review execution for each member and a final step that combines the reviews:
 
-| Step | Inputs | Outputs |
+| Step | Inputs | Possible outputs |
 | --- | --- | --- |
-| Split | `single(ticket.md)` | `request-*.md` |
+| Split | `single(ticket.md)` | `split-summary.md`, `request-*.md` |
 | Review | `each(request-*.md)` | `review-*.md` |
 | Merge | `complete(review-*.md)` | `decision.md` |
 
@@ -282,13 +300,17 @@ The table uses `single(...)`, `each(...)` and `complete(...)` as shorthand. In T
 
 Counting files in a directory cannot establish that every review has finished. Three matching files may exist while a fourth worker is queued, waiting for human input, running, finishing or failed. A `complete` dependency lets the engine account for every execution expected to contribute. Each execution must complete successfully and its agent session must shut down before the merge becomes eligible.
 
-A paused or failed worker still belongs to the required collection and blocks the merge. An empty required collection also needs human attention; it does not count as a successful merge. When splitting work into nested collections, each merge receives its own assigned collection rather than a mixture of files from several levels.
+A paused, failed, interrupted or finishing worker still blocks closure. A successful producer can publish meaningful evidence outside a family and omit its members; the existing family closes empty only after all expected producers have accepted, exited successfully, and satisfied source obligations. An empty closed family is not eligible `complete` input, so no empty merge starts. With zero matching source members there are no workers and no manufactured worker-result family. The splitter's `split-summary.md` stays outside `request-*.md` and records a concluded zero-request outcome without creating a worker.
+
+Direct workers can publish a separate disposition instead of a result. Once every expected worker and source obligation is complete, a mixed result family closes and its merge receives only actual matching results, not dispositions. If all direct workers omit results, it closes empty and starts no merge. Nested collections retain their own source identities and do not flatten into a parent collection.
+
+**Unsupported conditional fan-in:** if worker A omits the intermediate needed to start worker B, A's other evidence does not mean B ran. An existing downstream family can remain incomplete because that source member is unrepresented. Likewise, a nested expander's successful empty child collection does not discharge an outer obligation that still needs its downstream result. Do not design a merge that assumes omission automatically prunes those branches. Route meaningful dispositions through the intended consumers when those obligations must be fulfilled.
 
 ### Combine information from two collections
 
 When a decision needs two collections, give each collection its own summary step, then pass both summaries to the decision step:
 
-| Step | Inputs | Outputs |
+| Step | Inputs | Possible outputs |
 | --- | --- | --- |
 | Summarize research | `complete(research-*.md)` | `research-summary.md` |
 | Summarize reviews | `complete(review-*.md)` | `review-summary.md` |
@@ -333,12 +355,12 @@ All four steps now belong to the same loop component. On the second pass, D requ
 
 The corrected graph can use these logical inputs and outputs:
 
-| Step | Exact `single` inputs | Required outputs |
+| Step | Exact `single` inputs | Possible outputs |
 | --- | --- | --- |
 | A: Draft | `ticket.md` | `draft.md` |
 | C: Analyze | `draft.md` | `analysis.md` |
 | D: Decide | `draft.md`, `analysis.md` | `decision.md` |
-| B: Request another pass | `decision.md` | `ticket.md` |
+| B: Continue or conclude | `decision.md` | `ticket.md`, `loop-stopping-report.md` |
 
 Task creation supplies the initial ticket, and B produces later tickets. In the problematic graph, B reads `draft.md` instead of `decision.md`, allowing another pass before C and D finish. Declare the corrected dependencies through the input and output records; their order in the document does not establish the connections.
 
@@ -371,11 +393,11 @@ Loop-entry prompts must read the ticket assigned to the current execution. A har
 
 Describe the evidence that warrants another pass and how the continuation step should recognize sufficient progress, stalled work or a need for human judgment. A new ticket should identify the remaining work and carry the evidence, constraints and context needed by the next execution.
 
-When the continuation step cannot identify useful further work, leave the session available and ask the human how to proceed. A meaningless ticket would start unnecessary work just to satisfy the output requirement.
+When the continuation step cannot identify useful further work, report the evidence and ask the human how to proceed. Stay interactive while required direction or work is unresolved. When the process legitimately concludes, record that concluded outcome instead of manufacturing a meaningless ticket.
 
-In the example, B requires a `ticket.md` output. If B pauses without writing a new ticket, B remains open for human direction. That is the stopping behavior of this particular design.
+In the example, B declares `ticket.md` and `loop-stopping-report.md`. Continuing publishes a fresh actionable ticket at its assigned path; stopping publishes the meaningful report with the decision, evidence and limitations, omitting the ticket. Both outcomes leave at least one valid assigned artifact. Only the accepted fresh ticket can trigger another pass after confirmed exit and satisfaction of all AND inputs. A report-only stop creates no new pass and does not cancel unrelated eligible work.
 
-Choose the representation that matches the process. When the same agent can revise the work and decide when it is finished, keep that revision within one agent session and write the final required output when the work is ready. Use a graph loop when the next pass needs a fresh agent session. Define what the human should review when that loop reaches a stopping point. For a process that hands a final decision to another agent, declare the decision-to-action handoff shown above instead of a required continuation ticket.
+A loop need not predetermine its number of passes. Use the existing automatic-completion setting for steps intended to proceed without a human unlock each pass; deliberately human-gated steps still pause. Exercise multiple fresh continuations and then a stopping report: each new pass must obtain its own changing design, analysis, plan and check evidence, while explicitly declared invariant inputs may be reused. No iteration cap, filename recency rule or implicit inheritance of old internal results is added. When the same agent can revise and conclude within one session, keep the work there instead of adding a graph loop.
 
 ### Use assigned artifact paths
 
@@ -387,7 +409,7 @@ Filename prefixes and suffixes do not establish chronology, loop counts or relat
 
 Set `auto_advance_default = false` at checkpoints where the process requires the human to review the work, check direction or make a decision before dependent work proceeds. The field initializes the task's choice; it does not prevent the human from changing that choice. Completion permission applies to an execution, and the runtime supplies the completion operation and its permission gate.
 
-An execution must finish its required work and outputs before completing. Downstream work becomes eligible after the engine accepts completion and confirms shutdown. A written file or an idle session alone does not establish completion.
+An execution must finish its substantive work, selected publications and handoff before completing, with at least one valid assigned artifact overall. The human decision, permission to finish, valid publication, and confirmed shutdown are separate gates. Completion does not promise that every declared successor will run: only those with satisfied inputs become eligible after confirmed exit.
 
 ### Separate coding access from session capacity
 
@@ -420,13 +442,15 @@ Walk through the chosen process, including discoveries and decisions that could 
 1. **Process:** Does the playbook encode the process the human chose? Does each agent have one clear responsibility, with the required handoffs and decisions in place?
 2. **Information:** Can each step work from its assigned artifacts without reconstructing earlier conversations?
 3. **Dependencies:** Does every input come from task creation or a step that can run before it is needed? Are output names and patterns from different steps distinct and non-overlapping?
-4. **Collections:** What happens if a required worker is queued, paused, failed or missing, or if a required collection is empty?
-5. **Freshness:** On a second loop pass, does each step receive all the new results it needs from that pass?
-6. **Continuation:** What happens when there is no useful next ticket? Is a pause acceptable to the human?
+4. **Collections:** Are queued, paused, failed, interrupted and finishing workers still obligations? Does a legitimate zero-member outcome close only after successful producer exit, start no empty `complete` consumer and preserve chained/nested source coverage?
+5. **Freshness:** Across repeated loop passes, does each step receive the fresh changing results it needs rather than an old internal sibling? Is reused prior evidence carried explicitly, with historical bytes preserved?
+6. **Continuation and stopping:** Walk through at least two fresh continuation publications, then a meaningful stopping report. Does each continuation create exactly one next activation after exit, and the stop none? Does every successful outcome have truthful declared evidence without a fabricated trigger?
 7. **Human checkpoints:** What does the human review or contribute at each checkpoint, and which work waits until they have checked the direction or made the decision?
 8. **Coding and capacity:** Are repository-changing steps marked coding with exact inputs? Does the design still work while sessions wait for capacity?
 9. **Reuse:** Do prompts contain the instructions they need, use supported fields and tokens, and avoid paths or tools unavailable to the task?
 10. **Writing:** Can the intended human reader understand the process and each step? Are essential ideas explained before use, instructions direct, and technical requirements intact? Does each step contain any writing requirements its outputs need?
+11. **No-result routing:** Test summary-outside-family success with zero item workers, an intentionally matching `papers/no-results.md` with one supported disposition worker, and an exact `no-results.md` with its matching handler. Inspect actual selector matches and confirm reports meant to stop do not accidentally enter item wildcards.
+12. **Substantive and completion gates:** Do alternative publications preserve real deliverables and human decisions? Does a denied/invalid completion stay interactive? Do successor claims depend on actual accepted inputs and confirmed exit rather than mere permission or file presence?
 
 Correct defects before saving. For each requirement, show which agent responsibility, prompt, artifact, dependency or human checkpoint represents it. Walk through the normal case and relevant alternatives with the human, and revise the representation wherever that walkthrough exposes a gap.
 

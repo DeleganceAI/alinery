@@ -174,7 +174,8 @@ fn held_roots_and_coding_capacity_are_durable_and_individual_start_isolated() {
 #[test]
 fn only_retained_authenticated_ui_channel_grants_the_current_owner() {
     let fixture = Fixture::new();
-    let created = fixture.create(false, false);
+    let source = definition().replace("outputs=[{path='one.md'}]", "outputs=[{path='one.md'},{path='summary.md'}]");
+    let created = fixture.client.create_task(&serde_json::from_value(json!({"name":"Fixture","requested_slug":"fixture","description":"ticket","playbook":{"reference":{"scope":"bundled","key":"fixture"},"source":source},"max_live_sessions":1,"auto_advance_steps":["second","join"],"start":false})).unwrap()).unwrap();
     let first = created.executions.iter().find(|r| r.candidate.step_key == "first").unwrap();
     fixture
         .client
@@ -202,6 +203,7 @@ fn only_retained_authenticated_ui_channel_grants_the_current_owner() {
     stale.session_id = "retired-owner".into();
     assert!(ui.allow_execution_completion(&stale).is_err());
     ui.allow_execution_completion(&grant).unwrap();
+    let granted = fixture.state().state;
     // Invalid outputs do not consume the grant; the same source can repair and accept.
     fs::write(fixture.root.join(".alinery/tasks/fixture/artifacts").join(&first.outputs[0].relative_path), "").unwrap();
     assert_eq!(fixture.event(&first.owner_session_id)["completion"]["status"], "invalid_outputs");
@@ -210,16 +212,42 @@ fn only_retained_authenticated_ui_channel_grants_the_current_owner() {
     let invalid_state = fixture.state();
     assert_eq!(invalid_state.state.executions[&first.id].lifecycle, ExecutionLifecycle::Running);
     assert!(invalid_state.state.executions[&first.id].error.is_some());
+    assert_eq!(invalid_state.state.executions[&first.id].permission, granted.executions[&first.id].permission);
+    assert_eq!(invalid_state.state.executions[&first.id].outputs, first.outputs);
+    assert!(invalid_state.state.executions[&first.id].receipt_id.is_none());
+    assert_eq!(invalid_state.state.occurrences, granted.occurrences);
+    assert_eq!(invalid_state.state.executions.len(), granted.executions.len());
     assert_eq!(fixture.event(&first.owner_session_id)["completion"]["status"], "invalid_outputs");
     assert_eq!(
         fixture.client.call(&json!({"op":"status","id":first.owner_session_id})).unwrap()["agent"],
         invalid_status["agent"]
     );
     fixture.outputs(first);
-    assert_eq!(fixture.event(&first.owner_session_id)["completion"]["status"], "accepted");
+    let accepted: CompletionOutcome = serde_json::from_value(fixture.event(&first.owner_session_id)["completion"].clone()).unwrap();
+    assert!(matches!(&accepted, CompletionOutcome::Accepted { receipt_id } if !receipt_id.is_empty()));
+    let finishing = fixture.state().state;
+    assert_eq!(finishing.executions[&first.id].lifecycle, ExecutionLifecycle::Finishing);
+    assert!(!finishing.executions[&first.id].shutdown_confirmed);
+    assert_eq!(finishing.executions.len(), granted.executions.len());
+    assert_eq!(
+        finishing
+            .occurrences
+            .values()
+            .filter(|o| o.producer_execution_id.as_deref() == Some(first.id.as_str()))
+            .count(),
+        2
+    );
+    assert_eq!(
+        serde_json::from_value::<CompletionOutcome>(fixture.event(&first.owner_session_id)["completion"].clone()).unwrap(),
+        accepted
+    );
     assert!(fixture.state().state.executions[&first.id].error.is_none());
     assert!(ui.allow_execution_completion(&grant).is_err());
     drop(ui);
+    fixture.release(&first.owner_session_id);
+    wait(|| fixture.state().state.executions[&first.id].lifecycle == ExecutionLifecycle::Completed);
+    assert!(fixture.state().state.executions[&first.id].shutdown_confirmed);
+    assert!(!fixture.state().state.executions.values().any(|record| record.candidate.step_key == "join"));
 }
 
 #[test]
