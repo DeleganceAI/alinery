@@ -72,6 +72,7 @@ import type {
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
+import { readTaskExecution } from "../useExecutionObservation";
 import { useSessionSort } from "../useSessionSort";
 import { useTaskPullRequests } from "../useTaskPullRequests";
 
@@ -348,7 +349,7 @@ export function TaskDetail({
     const request = ++executionRequest.current;
     const capturedScope = scope;
     try {
-      const value = await ipc.getTaskExecution(slug, repoPath);
+      const value = await readTaskExecution(repoPath, slug);
       if (!capturedScope.alive || scopeRef.current !== capturedScope || request !== executionRequest.current) return;
       setExecutionView(value);
       setExecutionError("");
