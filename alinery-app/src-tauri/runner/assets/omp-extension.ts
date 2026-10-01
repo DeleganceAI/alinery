@@ -591,7 +591,8 @@ export function registerCallbacks(
     label: "Complete Alinery Phase",
     description:
       "Request completion of the current engine-assigned Alinery Playbook execution. " +
-      "When its work, outputs, checks, and substantive decisions are ready, send the user-facing handoff, then call this tool in the same assistant turn before ending it. " +
+      "When its work, checks, substantive decisions, and at least one valid assigned artifact are ready, send the user-facing handoff, then call this tool in the same assistant turn before ending it. " +
+      "Each declared output is a possible publication, not a requirement to create every file; missing substantive deliverables or human decisions still require work. " +
       "For ready work, call it even when completion permission is locked; this tool handles that separate gate. " +
       "If accepted, do no further work because ordinary OMP shutdown is requested. " +
       "Otherwise keep the session open and resolve the reported requirement.",
@@ -617,7 +618,7 @@ export function registerCallbacks(
             toolCallId,
             context,
             "Allow this session to complete",
-            "Allow this session to finish its current playbook step? Alinery will validate its required outputs before accepting completion. Deny keeps the session open.",
+            "Allow this session to finish its current playbook step? Alinery will validate all present assigned outputs and require at least one valid assigned artifact overall; individual outputs may be omitted. This permission does not waive the step's substantive work or decisions. Deny keeps the session open.",
           );
           if (!approval.details.approved) {
             return completionToolResult(outcome.status, `${approval.content[0].text} Keep this session open.`);
@@ -646,7 +647,7 @@ export function registerCallbacks(
       if (outcome.status === "invalid_outputs") {
         return completionToolResult(
           outcome.status,
-          `Required outputs need correction:\n${outcome.diagnostics.join("\n")}\nCorrect them before calling alinery_phase_complete again.`,
+          `Assigned publications need correction:\n${outcome.diagnostics.join("\n")}\nCompletion requires at least one valid assigned artifact overall and no invalid present outputs. Resolve these diagnostics before calling alinery_phase_complete again; individual outputs may be omitted.`,
           {
             diagnostics: outcome.diagnostics,
           },

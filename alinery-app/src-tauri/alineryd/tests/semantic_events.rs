@@ -289,10 +289,21 @@ Write the assigned source output.
 <!-- alinery:step target -->
 Read the assigned input and write the assigned target output.
 "#;
+        self.create_task_from(source, automatic)
+    }
+
+    fn create_task_from(&self, source: &str, automatic: bool) -> SessionMeta {
+        let automatic_steps: Vec<_> = alinery_core::playbook::parse_playbook_md(source)
+            .unwrap()
+            .step
+            .into_iter()
+            .filter(|step| automatic || step.key != "source")
+            .map(|step| step.key)
+            .collect();
         let request: CreateTaskRequest = serde_json::from_value(json!({
             "name": "task", "requested_slug": "task",
             "playbook": {"reference": {"scope": "repo", "key": "semantic"}, "source": source},
-            "auto_advance_steps": if automatic { vec!["source", "target"] } else { vec!["target"] },
+            "auto_advance_steps": automatic_steps,
             "start": false
         }))
         .unwrap();
@@ -357,6 +368,12 @@ Read the assigned input and write the assigned target output.
 
     fn output_path(&self, session: &SessionMeta) -> PathBuf {
         self.root.join(".alinery/tasks/task/artifacts").join(&self.execution(session).outputs[0].relative_path)
+    }
+
+    fn assigned_path(&self, session: &SessionMeta, selector: &str) -> PathBuf {
+        let record = self.execution(session);
+        let assignment = record.outputs.iter().find(|output| output.selector == selector).unwrap();
+        self.root.join(".alinery/tasks/task/artifacts").join(&assignment.relative_path)
     }
 
     fn event(&self, session: &SessionMeta, token: &str, event: Value) -> Value {
@@ -497,6 +514,139 @@ fn accepted_receipt(response: &Value) -> String {
         }
         other => panic!("expected accepted completion: {other:?}"),
     }
+}
+
+fn subset_definition(omitted: &str) -> String {
+    let mut source = "+++\nversion=2\nkey='semantic'\ntitle='Possible outputs'\ndescription=''\ndefault_model=''\ndefault_harness='omp'\n".to_string();
+    for (key, inputs, outputs) in [
+        (
+            "source",
+            "[{path='ticket.md',mode='single'}]".to_string(),
+            format!("[{{path='source.md'}},{{path='{omitted}'}}]"),
+        ),
+        ("target", "[{path='source.md',mode='single'}]".to_string(), "[{path='target.md'}]".to_string()),
+        (
+            "omitted",
+            format!("[{{path='{omitted}',mode='{}'}}]", if omitted.contains('*') { "each" } else { "single" }),
+            "[{path='omitted-result.md'}]".to_string(),
+        ),
+    ] {
+        source.push_str(&format!(
+            "[[step]]\nkey='{key}'\ntitle='{key}'\nshort=''\nis_coding_step=false\nauto_advance_default=true\ninputs={inputs}\noutputs={outputs}\nmodel=''\nharness=''\n"
+        ));
+    }
+    source.push_str("+++\n<!-- alinery:step source -->\nEvery declared output is required. Write every assigned output before completing.\n<!-- alinery:step target -->\nRead the assigned source.\n<!-- alinery:step omitted -->\nRead the alternative input.\n");
+    source
+}
+
+fn assert_subset_handoff(fixture: &Fixture, source: &SessionMeta, token: &str, omitted: &str, late: bool) {
+    fs::write(fixture.assigned_path(source, "source.md"), "Concluded with the source outcome.").unwrap();
+    let receipt = accepted_receipt(&fixture.complete(source, token));
+    let accepted = fixture.state().state;
+    let publications: Vec<_> = accepted
+        .occurrences
+        .values()
+        .filter(|o| o.producer_execution_id.as_deref() == Some(&source.execution_id))
+        .collect();
+    assert_eq!(publications.len(), 1);
+    assert_eq!(publications[0].logical_path, "source.md");
+    let occurrence_id = publications[0].id.clone();
+    let owner = &accepted.executions[&source.execution_id];
+    assert_eq!(owner.lifecycle, ExecutionLifecycle::Finishing);
+    assert!(!owner.shutdown_confirmed);
+    assert_eq!(fixture.rpc(json!({"op":"status", "id":source.id}))["process"]["state"], "alive");
+    assert_eq!(accepted.executions.len(), 1);
+    if late {
+        let path = fixture.assigned_path(source, omitted);
+        let path = PathBuf::from(path.to_string_lossy().replace('*', "late"));
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "Too late to join the accepted receipt.").unwrap();
+    }
+    assert_eq!(accepted_receipt(&fixture.complete(source, token)), receipt);
+    let replay = fixture.state().state;
+    assert_eq!(replay.occurrences, accepted.occurrences);
+    assert_eq!(replay.executions[&source.execution_id].outputs, owner.outputs);
+    assert_eq!(replay.executions.len(), 1);
+    fixture.release(source);
+    let target = fixture.target();
+    assert_eq!(target.candidate.inputs["source.md"], vec![occurrence_id]);
+    let released = fixture.state().state;
+    assert_eq!(released.executions.len(), 2);
+    assert!(!released.executions.values().any(|e| e.candidate.step_key == "omitted"));
+    assert_eq!(released.occurrences, accepted.occurrences);
+    assert_eq!(released.executions[&source.execution_id].lifecycle, ExecutionLifecycle::Completed);
+    assert!(released.executions[&source.execution_id].shutdown_confirmed);
+}
+
+#[test]
+fn subset_completion_waits_for_exit_and_only_releases_present_output_consumers() {
+    let fixture = Fixture::new();
+    let source = fixture.create_task_from(&subset_definition("alternative.md"), true);
+    fixture.start("task", &source);
+    let token = fixture.token_for(&source.id);
+    assert_subset_handoff(&fixture, &source, &token, "alternative.md", false);
+}
+
+#[test]
+fn accepted_subset_receipt_does_not_grow_when_an_omitted_output_appears() {
+    for omitted in ["alternative.md", "papers/*.md"] {
+        let fixture = Fixture::new();
+        let source = fixture.create_task_from(&subset_definition(omitted), true);
+        fixture.start("task", &source);
+        let token = fixture.token_for(&source.id);
+        assert_subset_handoff(&fixture, &source, &token, omitted, true);
+    }
+}
+
+#[test]
+fn fresh_graph_launch_delivers_possible_output_contract_after_retained_required_prose() {
+    let fixture = Fixture::new();
+    let definition = subset_definition("papers/*.md");
+    let source = fixture.create_task_from(&definition, true);
+    let retained_path = alinery_core::execution::task_playbook_path(&fixture.root, "task").unwrap();
+    let retained = fs::read(&retained_path).unwrap();
+    let identity = fixture.state().state.definition_identity;
+    overlay_omp(
+        &fixture.root,
+        r#"[[harness]]
+key = "omp"
+name = "Graph seed fixture"
+binary = "sh"
+args = ["-c", '''printf '%s\n' '{"type":"ready"}'; for message in 1 2; do IFS= read -r line; printf '%s\n' "$line" >> "$ALINERY_REPO/seed.$ALINERY_SESSION_ID"; done; while [ ! -f "$ALINERY_REPO/release.$ALINERY_SESSION_ID" ]; do sleep 0.02; done''']
+model_arg = []
+prompt_injection = "arg"
+adapter = "omp"
+"#,
+    );
+    fixture.start("task", &source);
+    let capture = fixture.root.join(format!("seed.{}", source.id));
+    wait_until(Duration::from_secs(5), || {
+        fs::read_to_string(&capture).is_ok_and(|text| {
+            text.lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .any(|message| message["type"] == "prompt")
+        })
+    });
+    let captured = fs::read_to_string(&capture).unwrap();
+    let messages: Vec<Value> = captured.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(messages[0]["type"], "negotiate_protocol");
+    let message = messages.iter().find(|message| message["type"] == "prompt").unwrap();
+    assert_eq!(message["type"], "prompt");
+    let prompt = message["message"].as_str().unwrap();
+    let retained_step = fixture.state().definition.step.into_iter().find(|step| step.key == "source").unwrap().prompt;
+    let retained_end = prompt.find(&retained_step).unwrap() + retained_step.len();
+    for assignment in fixture.execution(&source).outputs {
+        let absolute = fixture.root.join(".alinery/tasks/task/artifacts").join(assignment.relative_path);
+        assert!(prompt[retained_end..].contains(absolute.to_str().unwrap()), "assigned path must follow retained step text");
+    }
+    // --nocapture supplies the actual RPC message for bounded semantic readback,
+    // without turning the current English contract into a permanent snapshot.
+    eprintln!("FRESH_GRAPH_RPC_PROMPT={message}");
+    let token = fixture.token_for(&source.id);
+    assert_subset_handoff(&fixture, &source, &token, "papers/*.md", false);
+    assert_eq!(fs::read(retained_path).unwrap(), retained);
+    assert_eq!(retained, definition.as_bytes());
+    assert_eq!(fixture.state().state.definition_identity, identity);
 }
 
 #[test]
@@ -1035,31 +1185,40 @@ fn oversized_runner_event_is_rejected_before_state_mutation() {
     assert_eq!(status["playbook"]["state"], "in_progress");
 }
 
-#[test]
-fn invalid_artifact_is_nonfatal_and_can_be_fixed_before_completion() {
+fn rejected_publication_can_be_repaired(content: Option<&str>) {
     let fixture = Fixture::new();
     let source = fixture.create_task(true);
     fixture.start("task", &source);
     let token = fixture.token_for(&source.id);
-    for content in [None, Some("")] {
-        if let Some(content) = content {
-            fs::write(fixture.output_path(&source), content).unwrap();
-        }
-        let response = fixture.complete(&source, &token);
-        assert_eq!(response["ok"], true, "{response}");
-        assert!(
-            matches!(serde_json::from_value::<CompletionOutcome>(response["completion"].clone()).unwrap(), CompletionOutcome::InvalidOutputs { diagnostics } if !diagnostics.is_empty())
-        );
-        assert!(fixture.execution(&source).receipt_id.is_none());
-        assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Running);
-        assert_eq!(fixture.rpc(json!({"op":"status", "id":source.id}))["playbook"]["state"], "in_progress");
-        assert_eq!(fixture.state().state.executions.len(), 1);
+    if let Some(content) = content {
+        fs::write(fixture.output_path(&source), content).unwrap();
     }
+    let before = fixture.state().state;
+    let response = fixture.complete(&source, &token);
+    assert_eq!(response["ok"], true, "{response}");
+    assert!(
+        matches!(serde_json::from_value::<CompletionOutcome>(response["completion"].clone()).unwrap(), CompletionOutcome::InvalidOutputs { diagnostics } if !diagnostics.is_empty())
+    );
+    assert!(fixture.execution(&source).receipt_id.is_none());
+    assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Running);
+    assert_eq!(fixture.rpc(json!({"op":"status", "id":source.id}))["playbook"]["state"], "in_progress");
+    assert_eq!(fixture.state().state.executions.len(), 1);
+    assert_eq!(fixture.state().state.occurrences, before.occurrences);
     fs::write(fixture.output_path(&source), "complete").unwrap();
     accepted_receipt(&fixture.complete(&source, &token));
     assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Finishing);
     fixture.release(&source);
     fixture.target();
+}
+
+#[test]
+fn zero_publications_are_nonfatal_and_can_be_fixed_before_completion() {
+    rejected_publication_can_be_repaired(None);
+}
+
+#[test]
+fn invalid_artifact_is_nonfatal_and_can_be_fixed_before_completion() {
+    rejected_publication_can_be_repaired(Some(""));
 }
 
 #[test]
