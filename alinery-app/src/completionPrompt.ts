@@ -21,12 +21,11 @@ export function completionPrompt(
         )
       : [];
   const next = definition?.step.filter((candidate) => connections.some((edge) => edge.from === step?.key && edge.to === candidate.key)) ?? [];
-  const destination = next.length === 1 ? next[0].title : "the next steps";
   return {
-    action: next.length ? `Ready to move on to ${destination}?` : `Ready to finish ${step?.title ?? "this step"}?`,
+    action: "Ready to finish this step?",
     detail: `Allowing completion lets Alinery validate the assigned publications, requiring at least one valid artifact overall and rejecting invalid present outputs; individual outputs may be omitted. Accepted completion ends this session.${next.length ? " Only following steps whose inputs are satisfied by accepted publications can start, after this session exits." : ""} This permission does not waive the step's work or substantive decisions. To make changes first, continue working here and send the agent a message.`,
-    scope: step ? `Current step: ${step.title}${next.length ? ` · Following: ${next.map((candidate) => candidate.title).join(", ")}` : ""}` : undefined,
-    allowLabel: next.length ? `Move to ${next.length === 1 ? next[0].title : "next steps"}` : "Finish step",
+    scope: step ? `Current step: ${step.title}${next.length ? ` · Possible following steps: ${next.map((candidate) => candidate.title).join(", ")}` : ""}` : undefined,
+    allowLabel: "Finish step",
     denyLabel: "Continue working in this session",
   };
 }

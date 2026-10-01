@@ -69,6 +69,7 @@ import {
   ArtifactProvenanceBadges,
   ContextActionBar,
   ExecutionAvailabilityNotice,
+  ExecutionOutputs,
   finalizedSubtaskNotice,
   findOwnedArtifactNode,
   harnessDisplayName,
@@ -1990,20 +1991,7 @@ export function SessionView({
                 }),
               )}
             </ul>
-            <ul aria-label="Execution outputs">
-              {execution.outputs.map((output) => (
-                <li key={output.relative_path}>
-                  <code>{output.selector}</code> → <code>{output.relative_path}</code> · {execution.receipt_id ? "accepted" : "pending"}
-                </li>
-              ))}
-              {Object.values(executionView.state.occurrences)
-                .filter((occurrence) => occurrence.producer_execution_id === execution.id && occurrence.selector.includes("*"))
-                .map((occurrence) => (
-                  <li key={occurrence.id}>
-                    Accepted member <code>{occurrence.relative_path}</code> · occurrence {occurrence.id}
-                  </li>
-                ))}
-            </ul>
+            <ExecutionOutputs execution={execution} occurrences={executionView.state.occurrences} />
             <p>
               Completion permission: {execution.permission.kind}
               {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
