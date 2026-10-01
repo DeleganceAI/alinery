@@ -497,9 +497,14 @@ fn bundled_build_playbook_is_discoverable_and_runs() {
         "build-playbook",
         &[
             ("define", &["ticket.md"], &["playbook-spec.md"]),
-            ("draft-refine", &["ticket.md", "playbook-spec.md"], &["candidate-playbook.md", "save-handoff.md"]),
+            ("draft-refine", &["ticket.md", "playbook-spec.md"], &["candidate-playbook.md", "draft-handoff.md"]),
+            (
+                "verify-save",
+                &["ticket.md", "playbook-spec.md", "candidate-playbook.md", "draft-handoff.md"],
+                &["verified-playbook.md", "save-handoff.md"],
+            ),
         ],
-        &["define", "draft-refine"],
+        &["define", "draft-refine", "verify-save"],
     );
 }
 
