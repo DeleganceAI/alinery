@@ -653,6 +653,14 @@ impl Default for UpdatePrefs {
     }
 }
 
+/// Global-only. Each alineryd re-reads this from the app config to decide whether to hold an
+/// idle-sleep inhibit (`alineryd/src/idle_inhibit.rs`); a missing or unreadable file is off.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct PowerPrefs {
+    #[serde(default)]
+    pub keep_awake: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ExperimentalFeatures {
@@ -815,6 +823,8 @@ pub struct GlobalSettings {
     #[serde(default)]
     pub updates: UpdatePrefs,
     #[serde(default)]
+    pub power: PowerPrefs,
+    #[serde(default)]
     pub experiments: ExperimentalFeatures,
     #[serde(default = "default_grid_views")]
     pub grid_views: Vec<GridViewDefinition>,
@@ -831,6 +841,7 @@ impl Default for GlobalSettings {
             model_favorites: BTreeMap::new(),
             telemetry: TelemetryPrefs::default(),
             updates: UpdatePrefs::default(),
+            power: PowerPrefs::default(),
             experiments: ExperimentalFeatures::default(),
             grid_views: default_grid_views(),
         }

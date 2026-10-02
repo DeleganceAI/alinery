@@ -144,6 +144,7 @@ function ConnectionMenu({ label, busy, onReconnect, onRemove }: { label: string;
 export const SECTIONS: { key: SettingsSectionKey; label: string }[] = [
   { key: "connections", label: "Connections" },
   { key: "notifications", label: "Notifications" },
+  { key: "power", label: "Power" },
   { key: "playbooks", label: "Playbooks" },
   { key: "telemetry", label: "Telemetry" },
   { key: "updates", label: "Updates" },
@@ -658,6 +659,11 @@ export function Settings({
     if (!global) return;
     if (!value) onClearUpdateOffer?.();
     saveGlobal({ ...global, updates: { ...global.updates, check_enabled: value } });
+  };
+
+  const setKeepAwake = (value: boolean) => {
+    if (!global) return;
+    saveGlobal({ ...global, power: { ...global.power, keep_awake: value } });
   };
 
   const setShowOriginalKanban = (value: boolean) => {
@@ -1705,6 +1711,28 @@ export function Settings({
             >
               Send test notification
             </button>
+          </>
+        );
+      case "power":
+        // Each repository's daemon reads this pref and holds the idle-sleep inhibit
+        // (alineryd/src/idle_inhibit.rs); the note states the same rule it enforces.
+        return (
+          <>
+            {!isGlobal && globalOnly("Power")}
+            <Checkbox
+              checked={global.power?.keep_awake ?? false}
+              disabled={!isGlobal}
+              onChange={setKeepAwake}
+              label={
+                <div>
+                  <div>Keep this computer awake</div>
+                  <div className="dsc">
+                    This keeps this computer from idling. It will not prevent closing the display from putting it to sleep. The screen can still turn off. It only does this while
+                    at least one session is not Idle.
+                  </div>
+                </div>
+              }
+            />
           </>
         );
       case "telemetry":
