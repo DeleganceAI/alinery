@@ -26,7 +26,7 @@ import { GlobalSearch, type SearchItem } from "./CommandPalette";
 import type { QueuedFollowUp } from "./chat/queue";
 import { askConfirm, ConfirmHost, confirmDanger } from "./confirm";
 import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner } from "./DaemonConflictBanner";
-import { ACTIVE_GRID_VIEW_STORAGE_KEY, DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute } from "./gridViews";
+import { ACTIVE_GRID_VIEW_STORAGE_KEY, DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute, trailingTabDigit } from "./gridViews";
 import { HotkeyBar } from "./HotkeyBar";
 import { ORB_SPEED } from "./Indicators";
 import * as ipc from "./ipc";
@@ -940,6 +940,8 @@ export default function App() {
     openCreate: () => {
       if (hasRepo) openCreate();
     },
+    gridCount: gridViews.length,
+    showKanban: showOriginalKanban,
     goList: () => {
       if (hasRepo) switchTop("list", { instant: true });
     },
@@ -995,12 +997,14 @@ export default function App() {
       ? [
           action("run", pi(Play), "Run session on selected", "⌘↵", () => navRef.current?.openSelected()),
           action("new-task", pi(Plus), "New task", "⌘N", openCreate),
-          action("tasks", pi(List), "Go to Tasks", "⌘1", () => switchTop("list", { instant: true })),
           ...gridViews.map((gridView, index) =>
             action(`grid-${gridView.id}`, pi(Grid3X3), `Go to ${gridView.name}`, gridViewShortcut(index), () => switchTop("grid", { instant: true, gridViewId: gridView.id })),
           ),
-          ...(showOriginalKanban ? [action("kanban", pi(SquareKanban), "Go to Kanban", "⌘3", () => switchTop("kanban", { instant: true }))] : []),
-          action("sessions", pi(SquareTerminal), "Go to Sessions", "⌘7", () => switchTop("sessions", { instant: true })),
+          action("tasks", pi(List), "Go to Tasks", `⌘${trailingTabDigit(gridViews.length, "tasks")}`, () => switchTop("list", { instant: true })),
+          action("sessions", pi(SquareTerminal), "Go to Sessions", `⌘${trailingTabDigit(gridViews.length, "sessions")}`, () => switchTop("sessions", { instant: true })),
+          ...(showOriginalKanban
+            ? [action("kanban", pi(SquareKanban), "Go to Kanban", `⌘${trailingTabDigit(gridViews.length, "kanban")}`, () => switchTop("kanban", { instant: true }))]
+            : []),
           action("notifications", pi(Bell), "Go to Notifications", "⌘8", () => switchTop("notifications", { instant: true })),
           action("settings", pi(SettingsIcon), "Open Settings", "⌘9", () => openSettings(undefined, { instant: true })),
           ...SETTINGS_SECTIONS.map((section) =>

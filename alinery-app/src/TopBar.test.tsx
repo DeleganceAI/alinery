@@ -64,6 +64,8 @@ describe("TopBar navigation", () => {
       />,
     );
     expect(tabLabels()).toEqual(["Planning", "Triage", "Tasks", "Sessions", "Kanban", "Playbooks"]);
+    // Two Grid views push everything else right: ⌘1 and ⌘2 are the grids, ⌘5 is Kanban.
+    expect(Array.from(document.querySelectorAll("nav.tabs .k")).map((badge) => badge.textContent)).toEqual(["1", "2", "3", "4", "5"]);
     expect(screen.queryByRole("button", { name: /^Notifications/ })).toBeNull();
   });
 

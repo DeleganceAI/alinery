@@ -203,7 +203,7 @@ export type TelemetryPrefs = { enabled: boolean; prompted: boolean; install_id: 
 export type UpdatePrefs = { check_enabled: boolean };
 export type PowerPrefs = { keep_awake: boolean };
 export type ExperimentalFeatures = {
-  /** Classic Kanban tab (⌘3). Absent = enabled; false hides the tab. */
+  /** Classic Kanban tab, shown after Sessions. Absent = enabled; false hides the tab. */
   show_original_kanban?: boolean;
 };
 export type GridViewDefinition = { id: string; name: string; slot: number };

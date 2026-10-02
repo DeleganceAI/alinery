@@ -2171,7 +2171,7 @@ export function Settings({
             {isGlobal === false && globalOnly("Grid-based views")}
             <div className="grid-view-settings-intro">
               <h2>Grid-based views</h2>
-              <p>Configure up to three named Grid views. Their order assigns the fixed shortcuts ⌘2, ⌘4, and ⌘5 (⌘3 is reserved for classic Kanban).</p>
+              <p>Configure up to three named Grid views. Their order assigns the shortcuts ⌘1, ⌘2, and ⌘3. Tasks, Sessions, and classic Kanban take the numbers after them.</p>
             </div>
             <ol className="grid-view-settings-list">
               {gridViews.map((view, index) => {
@@ -2295,7 +2295,7 @@ export function Settings({
               label={
                 <div>
                   <div>Original Kanban</div>
-                  <div className="hint">Show the classic Kanban board in the top bar as ⌘3.</div>
+                  <div className="hint">Show the classic Kanban board in the top bar, after Sessions.</div>
                 </div>
               }
             />

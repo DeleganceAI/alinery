@@ -773,7 +773,7 @@ describe("session navigation acknowledgment", () => {
       global: { ...appConfig.global, experiments: { show_original_kanban: true } },
     });
     await renderApp();
-    fireEvent.click(screen.getByRole("button", { name: "Kanban3" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kanban4" }));
     fireEvent.click(await screen.findByRole("button", { name: "open active card session" }));
     await screen.findByText("session:active-design");
     expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "active-design");
@@ -908,10 +908,11 @@ describe("session navigation acknowledgment", () => {
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
 
-    expect((await screen.findByText("Go to Tasks")).closest(".pitem")?.textContent).toContain("⌘1");
-    expect(screen.getByText("Go to Kanban+").closest(".pitem")?.textContent).toContain("⌘2");
-    expect(screen.getByText("Go to Kanban").closest(".pitem")?.textContent).toContain("⌘3");
-    expect(screen.getByText("Go to Sessions").closest(".pitem")?.textContent).toContain("⌘7");
+    // One Grid view by default, so the bar reads ⌘1 Kanban+, ⌘2 Tasks, ⌘3 Sessions, ⌘4 Kanban.
+    expect(screen.getByText("Go to Kanban+").closest(".pitem")?.textContent).toContain("⌘1");
+    expect((await screen.findByText("Go to Tasks")).closest(".pitem")?.textContent).toContain("⌘2");
+    expect(screen.getByText("Go to Sessions").closest(".pitem")?.textContent).toContain("⌘3");
+    expect(screen.getByText("Go to Kanban").closest(".pitem")?.textContent).toContain("⌘4");
     expect(screen.getByText("Go to Notifications").closest(".pitem")?.textContent).toContain("⌘8");
     expect(screen.queryByText("Go to Wiki")).toBeNull();
     expect(screen.getByText("Open Settings").closest(".pitem")?.textContent).toContain("⌘9");
@@ -921,7 +922,7 @@ describe("session navigation acknowledgment", () => {
     await renderApp();
 
     expect(screen.getByRole("button", { name: /Kanban\+/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Kanban3" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kanban4" }));
     expect(await screen.findByRole("button", { name: "open active card session" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByText("Go to Kanban+")).toBeTruthy();
@@ -935,7 +936,7 @@ describe("session navigation acknowledgment", () => {
     });
     await renderApp();
 
-    expect(screen.queryByRole("button", { name: "Kanban3" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Kanban4" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByText("Go to Kanban+")).toBeTruthy();
     expect(screen.queryByText("Go to Kanban")).toBeNull();
@@ -1207,7 +1208,7 @@ describe("repository switch keeps the current page", () => {
   it("stays on kanban, settings, and notifications instead of bouncing to the task list", async () => {
     await renderApp();
 
-    fireEvent.click(screen.getByRole("button", { name: "Kanban3" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kanban4" }));
     expect(await screen.findByRole("button", { name: "open active card session" })).toBeTruthy();
     await chooseRepo("/other");
     expect(screen.getByRole("button", { name: "open active card session" })).toBeTruthy();

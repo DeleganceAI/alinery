@@ -19,6 +19,10 @@ const handlers = (overrides: Partial<Handlers> = {}): Handlers => ({
   overlayOpen: false,
   isFullscreen: false,
   board: "list",
+  // The product default: one Grid view and classic Kanban on, so the bar reads
+  // ⌘1 Grid, ⌘2 Tasks, ⌘3 Sessions, ⌘4 Kanban.
+  gridCount: 1,
+  showKanban: true,
   toggleSearch: vi.fn(),
   openCreate: vi.fn(),
   goList: vi.fn(),
@@ -133,9 +137,9 @@ describe("useHotkeys", () => {
   });
 
   it.each([
-    ["1", "goList"],
-    ["3", "goKanban"],
-    ["7", "goSessions"],
+    ["2", "goList"],
+    ["3", "goSessions"],
+    ["4", "goKanban"],
     ["8", "goNotifications"],
     ["9", "goSettings"],
     [",", "goSettings"],
@@ -151,24 +155,28 @@ describe("useHotkeys", () => {
     }
   });
 
-  it.each([
-    ["2", 0],
-    ["4", 1],
-    ["5", 2],
-  ] as const)("maps Command-%s to Grid slot %s", (key, slot) => {
-    const active = handlers();
+  it("shifts every later shortcut right as Grid views are added", () => {
+    const active = handlers({ gridCount: 3 });
     render(<Probe handlers={active} />);
 
-    fireEvent.keyDown(document.body, { key, metaKey: true });
+    fireEvent.keyDown(document.body, { key: "2", metaKey: true });
+    fireEvent.keyDown(document.body, { key: "4", metaKey: true });
+    fireEvent.keyDown(document.body, { key: "5", metaKey: true });
+    fireEvent.keyDown(document.body, { key: "6", metaKey: true });
 
-    expect(active.goGrid).toHaveBeenCalledWith(slot);
+    expect(active.goGrid).toHaveBeenCalledTimes(1);
+    expect(active.goGrid).toHaveBeenCalledWith(1);
+    expect(active.goList).toHaveBeenCalledOnce();
+    expect(active.goSessions).toHaveBeenCalledOnce();
+    expect(active.goKanban).toHaveBeenCalledOnce();
   });
 
-  it("leaves Command-6 unassigned", () => {
-    const active = handlers();
+  it("leaves Command-7 unassigned, and Kanban's digit dead while Kanban is hidden", () => {
+    const active = handlers({ showKanban: false });
     render(<Probe handlers={active} />);
 
-    fireEvent.keyDown(document.body, { key: "6", metaKey: true });
+    fireEvent.keyDown(document.body, { key: "7", metaKey: true });
+    fireEvent.keyDown(document.body, { key: "4", metaKey: true });
 
     for (const callback of commandCallbacks(active)) expect(callback).not.toHaveBeenCalled();
   });
