@@ -149,7 +149,7 @@ struct MessageBody {
 
 fn reserve_message_bytes(budget: &MessageBudget, bytes: usize) -> Result<MessageBudgetReservation, String> {
     budget
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             current.checked_add(bytes).filter(|next| *next <= MAX_IN_FLIGHT_MESSAGE_BYTES)
         })
         .map_err(|_| "message-in-flight-budget-exceeded".to_string())?;
@@ -158,7 +158,7 @@ fn reserve_message_bytes(budget: &MessageBudget, bytes: usize) -> Result<Message
 
 fn reserve_control_body_bytes(budget: &MessageBudget, bytes: usize) -> Result<MessageBudgetReservation, String> {
     budget
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             current.checked_add(bytes).filter(|next| *next <= MAX_IN_FLIGHT_CONTROL_BODY_BYTES)
         })
         .map_err(|_| "control-body-in-flight-budget-exceeded".to_string())?;
