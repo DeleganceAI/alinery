@@ -353,7 +353,7 @@ describe("App duplicate coordinator", () => {
     await screen.findByText("task:source-2");
   });
 
-  it("shows an opening toast and clears it when the form opens without waiting for settings", async () => {
+  it("hides the opening toast when the form appears, without waiting for configuration", async () => {
     let resolveConfig: (config: Config) => void = () => {};
     const config = await mocks.readConfigForRepo();
     mocks.readConfigForRepo.mockReturnValue(

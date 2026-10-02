@@ -298,7 +298,7 @@ fn configure_collections(definition: &NormalizedPlaybook, state: &mut TaskExecut
     loop {
         let mut closable = Vec::new();
         for collection in state.collections.values() {
-            if collection.membership_closed || collection.member_occurrence_ids.is_empty() {
+            if collection.membership_closed {
                 continue;
             }
             if !collection.expected_execution_ids.iter().all(|id| {
@@ -917,10 +917,7 @@ mod tests {
         let ids = f.tick();
         let continuation = f.named(&ids, "continue");
         f.start(&continuation);
-        f.write(&continuation, &[("ticket.md", "next")]);
-        assert!(matches!(f.accept(&continuation), CompletionOutcome::InvalidOutputs { .. }));
-        assert!(f.ready().is_empty());
-        f.write(&continuation, &[("request.md", "next")]);
+        f.write(&continuation, &[("ticket.md", "next"), ("request.md", "next")]);
         assert!(matches!(f.accept(&continuation), CompletionOutcome::Accepted { .. }));
         assert!(f.ready().is_empty());
         f.exit(&continuation);
@@ -1062,5 +1059,568 @@ mod tests {
         assert_eq!(exact.len(), 1, "a synthetic Member context cannot fork an unchanged exact binding");
         assert_eq!(exact[0].context_id, "root");
         assert_eq!(candidates.iter().filter(|candidate| candidate.step_key == "each").count(), 1);
+    }
+
+    #[test]
+    fn possible_output_routes_only_satisfied_exact_dependencies() {
+        use InputMode::Single;
+        for outputs in [vec![("a.md", "A")], vec![("b.md", "B")], vec![("a.md", "A"), ("b.md", "B")]] {
+            let mut f = Fixture::new(vec![
+                step("source", &[("ticket.md", Single)], &["a.md", "b.md"]),
+                step("a", &[("a.md", Single)], &["a-result.md"]),
+                step("b", &[("b.md", Single)], &["b-result.md"]),
+                step("join", &[("a.md", Single), ("b.md", Single)], &["joined.md"]),
+            ]);
+            let ids = f.tick();
+            let source = f.named(&ids, "source");
+            f.start(&source);
+            f.write(&source, &outputs);
+            let receipt = f.accept(&source);
+            assert!(matches!(receipt, CompletionOutcome::Accepted { .. }));
+            assert!(f.ready().is_empty());
+            f.exit(&source);
+            let ids = f.tick();
+            let mut expected = BTreeSet::new();
+            if outputs.iter().any(|(path, _)| *path == "a.md") {
+                expected.insert("a");
+            }
+            if outputs.iter().any(|(path, _)| *path == "b.md") {
+                expected.insert("b");
+            }
+            if outputs.len() == 2 {
+                expected.insert("join");
+            }
+            assert_eq!(ids.iter().map(|id| f.state.executions[id].candidate.step_key.as_str()).collect::<BTreeSet<_>>(), expected);
+            for id in &ids {
+                for (path, bound) in &f.state.executions[id].candidate.inputs {
+                    let occurrence = f
+                        .state
+                        .occurrences
+                        .values()
+                        .find(|o| o.producer_execution_id.as_deref() == Some(&source) && &o.logical_path == path)
+                        .unwrap();
+                    assert_eq!(bound, std::slice::from_ref(&occurrence.id));
+                }
+            }
+            let accepted = f.output_ids(&source);
+            assert_eq!(accepted.len(), outputs.len());
+            f.restart();
+            assert_eq!(f.accept(&source), receipt);
+            assert!(f.tick().is_empty());
+            assert_eq!(f.output_ids(&source), accepted);
+        }
+    }
+
+    #[test]
+    fn summary_only_closes_empty_family_after_exit_without_consumers() {
+        use InputMode::{Complete, Each, Single};
+        let mut f = Fixture::new(vec![
+            step("source", &[("ticket.md", Single)], &["summary.md", "papers/*.md"]),
+            step("worker", &[("papers/*.md", Each)], &["results/*.md"]),
+            step("collect", &[("papers/*.md", Complete)], &["collection.md"]),
+        ]);
+        let ids = f.tick();
+        let source = f.named(&ids, "source");
+        let collection_id = f.state.collections.values().find(|c| c.selector == "papers/*.md").unwrap().id.clone();
+        f.start(&source);
+        f.write(&source, &[("summary.md", "Search concluded without any papers.")]);
+        let receipt = f.accept(&source);
+        assert!(matches!(receipt, CompletionOutcome::Accepted { .. }));
+        let accepted = f.output_ids(&source);
+        assert!(f.ready().is_empty());
+        assert!(!f.state.collections[&collection_id].membership_closed);
+        f.exit(&source);
+        assert!(f.tick().is_empty());
+        let collection = &f.state.collections[&collection_id];
+        assert!(collection.membership_closed);
+        assert!(collection.member_occurrence_ids.is_empty());
+        assert_eq!(collection.expected_execution_ids, BTreeSet::from([source.clone()]));
+        assert_eq!(f.state.executions.len(), 1);
+        assert_eq!(f.state.collections.len(), 1, "no worker exists to own a result family");
+        f.write(&source, &[("papers/late.md", "Not part of the accepted handoff.")]);
+        f.restart();
+        assert_eq!(f.accept(&source), receipt);
+        assert!(f.tick().is_empty());
+        assert_eq!(f.output_ids(&source), accepted);
+        assert!(f.state.collections[&collection_id].membership_closed);
+        assert!(f.state.collections[&collection_id].member_occurrence_ids.is_empty());
+    }
+
+    #[test]
+    fn direct_worker_dispositions_close_empty_or_mixed_result_families() {
+        use InputMode::{Complete, Each, Single};
+        for mixed in [false, true] {
+            let mut f = Fixture::new(vec![
+                step("source", &[("ticket.md", Single)], &["request-*.md"]),
+                step("worker", &[("request-*.md", Each)], &["result-*.md", "worker-disposition.md"]),
+                step("collect", &[("result-*.md", Complete)], &["answer.md"]),
+            ]);
+            let ids = f.tick();
+            let source = f.named(&ids, "source");
+            f.finish(&source, &[("request-a.md", "2"), ("request-b.md", "3")]);
+            let workers = f.tick();
+            assert_eq!(workers.len(), 2);
+            let first = &workers[0];
+            let last = &workers[1];
+            f.finish(
+                first,
+                if mixed {
+                    &[("result-value.md", "4")]
+                } else {
+                    &[("worker-disposition.md", "No result warranted.")]
+                },
+            );
+            f.start(last);
+            f.write(last, &[("worker-disposition.md", "No result warranted.")]);
+            assert!(matches!(f.accept(last), CompletionOutcome::Accepted { .. }));
+            assert!(f.ready().is_empty());
+            let family_id = f
+                .state
+                .collections
+                .values()
+                .find(|c| c.selector == "result-*.md" && c.source_collection_id.is_some())
+                .unwrap()
+                .id
+                .clone();
+            let family = &f.state.collections[&family_id];
+            assert_eq!(family.expected_execution_ids, workers.iter().cloned().collect());
+            assert!(!family.membership_closed);
+            assert!(f.state.collections[family.source_collection_id.as_ref().unwrap()].membership_closed);
+            let locals: Vec<_> = f
+                .state
+                .collections
+                .values()
+                .filter(|c| c.selector == "result-*.md" && c.source_collection_id.is_none())
+                .collect();
+            assert_eq!(locals.len(), 2);
+            for local in locals {
+                assert_eq!(local.expected_execution_ids.len(), 1);
+                assert_eq!(local.membership_closed, local.expected_execution_ids.contains(first));
+            }
+            f.exit(last);
+            let ids = f.tick();
+            let result_ids = if mixed { f.output_ids(first) } else { BTreeSet::new() };
+            let family = &f.state.collections[&family_id];
+            assert!(family.membership_closed);
+            assert_eq!(family.member_occurrence_ids, result_ids);
+            assert!(f.state.collections.values().filter(|c| c.selector == "result-*.md").all(|c| c.membership_closed));
+            if mixed {
+                assert_eq!(ids.len(), 1);
+                let collect = f.named(&ids, "collect");
+                assert_eq!(
+                    f.state.executions[&collect].candidate.inputs["result-*.md"].iter().cloned().collect::<BTreeSet<_>>(),
+                    result_ids
+                );
+                assert!(f.output_ids(last).is_disjoint(&result_ids));
+            } else {
+                assert!(ids.is_empty());
+            }
+            let collections = f.state.collections.clone();
+            f.restart();
+            assert!(f.tick().is_empty());
+            assert_eq!(f.state.collections, collections);
+        }
+    }
+
+    #[test]
+    fn narrowed_empty_selectors_do_not_manufacture_consumers() {
+        use InputMode::{Complete, Each, Single};
+        let mut f = Fixture::new(vec![
+            step("source", &[("ticket.md", Single)], &["papers/*.md"]),
+            step("worker", &[("papers/selected-*.md", Each)], &["results/*.md"]),
+            step("collect", &[("papers/selected-*.md", Complete)], &["answer.md"]),
+        ]);
+        let ids = f.tick();
+        let source = f.named(&ids, "source");
+        f.finish(&source, &[("papers/unselected.md", "A real but out-of-scope paper.")]);
+        assert!(f.tick().is_empty());
+        assert_eq!(f.state.executions.len(), 1);
+        assert_eq!(f.state.collections.len(), 1);
+        let collection = f.state.collections.values().next().unwrap();
+        assert!(collection.membership_closed);
+        assert_eq!(collection.member_occurrence_ids, f.output_ids(&source));
+        f.restart();
+        assert!(f.tick().is_empty());
+    }
+
+    #[test]
+    fn interrupted_disposition_worker_does_not_close_its_family() {
+        use InputMode::{Complete, Each, Single};
+        let mut f = Fixture::new(vec![
+            step("source", &[("ticket.md", Single)], &["request-*.md"]),
+            step("worker", &[("request-*.md", Each)], &["result-*.md", "worker-disposition.md"]),
+            step("collect", &[("result-*.md", Complete)], &["answer.md"]),
+        ]);
+        let ids = f.tick();
+        let source = f.named(&ids, "source");
+        f.start(&source);
+        f.write(&source, &[("request-a.md", "2"), ("request-b.md", "3")]);
+        assert!(matches!(f.accept(&source), CompletionOutcome::Accepted { .. }));
+        assert!(f.tick().is_empty(), "an open source cannot release workers");
+        f.exit(&source);
+        let workers = f.tick();
+        let first = &workers[0];
+        let last = &workers[1];
+        f.finish(first, &[("result-value.md", "4")]);
+        assert!(f.ready().is_empty(), "queued worker remains an obligation");
+        f.start(last);
+        f.write(last, &[("worker-disposition.md", "Concluded without a result.")]);
+        assert!(f.ready().is_empty(), "Running includes a session awaiting human input");
+        crate::execution::interrupt_unproven_owners(&mut f.state, &BTreeSet::new());
+        assert_eq!(f.state.executions[last].lifecycle, ExecutionLifecycle::Interrupted);
+        f.restart();
+        assert!(f.ready().is_empty());
+        assert!(f
+            .state
+            .collections
+            .values()
+            .filter(|c| c.expected_execution_ids.contains(last))
+            .all(|c| !c.membership_closed));
+        assert!(f.output_ids(last).is_empty(), "unaccepted on-disk disposition is not evidence");
+        f.exit(last);
+        assert_eq!(f.state.executions[last].lifecycle, ExecutionLifecycle::Failed);
+        assert!(f.ready().is_empty());
+        let owner = recover_execution_owner(&mut f.state, last).unwrap();
+        request_execution_start(&mut f.state, last).unwrap();
+        f.start(last);
+        grant_execution_completion(&mut f.state, last, &owner).unwrap();
+        assert!(matches!(f.accept(last), CompletionOutcome::Accepted { .. }));
+        assert!(f.ready().is_empty());
+        f.exit(last);
+        let ids = f.tick();
+        let collect = f.named(&ids, "collect");
+        assert_eq!(
+            f.state.executions[&collect].candidate.inputs["result-*.md"].iter().cloned().collect::<BTreeSet<_>>(),
+            f.output_ids(first)
+        );
+    }
+
+    #[test]
+    fn chained_omission_preserves_unrepresented_source_obligation() {
+        use InputMode::{Complete, Each, Single};
+        let mut f = Fixture::new(vec![
+            step("source", &[("ticket.md", Single)], &["request-*.md"]),
+            step("worker", &[("request-a*.md", Each)], &["work.md", "worker-disposition.md"]),
+            step("publish", &[("work.md", Single)], &["result-*.md"]),
+            step("collect", &[("result-*.md", Complete)], &["answer.md"]),
+        ]);
+        let ids = f.tick();
+        let source = f.named(&ids, "source");
+        f.finish(&source, &[("request-a1.md", "2"), ("request-a2.md", "3"), ("request-b.md", "999")]);
+        let workers = f.tick();
+        assert_eq!(workers.len(), 2);
+        f.finish(&workers[0], &[("worker-disposition.md", "No downstream work warranted.")]);
+        f.finish(&workers[1], &[("work.md", "3")]);
+        let ids = f.tick();
+        assert_eq!(ids.len(), 1);
+        let publisher = f.named(&ids, "publish");
+        assert_eq!(
+            f.state.executions[&publisher].candidate.inputs["work.md"].iter().cloned().collect::<BTreeSet<_>>(),
+            f.output_ids(&workers[1])
+        );
+        f.finish(&publisher, &[("result-value.md", "9")]);
+        assert!(f.tick().is_empty());
+        let family = f
+            .state
+            .collections
+            .values()
+            .find(|c| c.selector == "result-*.md" && c.source_collection_id.is_some())
+            .unwrap();
+        assert!(!family.membership_closed);
+        assert_eq!(family.expected_execution_ids, BTreeSet::from([publisher.clone()]));
+        assert_eq!(family.member_occurrence_ids, f.output_ids(&publisher));
+        assert!(f.state.collections[family.source_collection_id.as_ref().unwrap()].membership_closed);
+        let collections = f.state.collections.clone();
+        f.restart();
+        assert!(f.tick().is_empty());
+        assert_eq!(f.state.collections, collections);
+        assert_eq!(f.state.executions.values().filter(|e| e.candidate.step_key == "publish").count(), 1);
+        assert!(!f.state.executions.values().any(|e| e.candidate.step_key == "collect"));
+    }
+
+    #[test]
+    fn nested_empty_expansion_preserves_outer_obligations_after_restart() {
+        use InputMode::{Complete, Each, Single};
+        let mut f = Fixture::new(vec![
+            step("source", &[("ticket.md", Single)], &["outer-*.md"]),
+            step("expand", &[("outer-*.md", Each)], &["inner-request-*.md", "expansion-summary.md"]),
+            step("worker", &[("inner-request-*.md", Each)], &["inner-result-*.md"]),
+            step("local", &[("inner-result-*.md", Complete)], &["local-*.md"]),
+            step("parent", &[("local-*.md", Complete)], &["answer.md"]),
+        ]);
+        let ids = f.tick();
+        let source = f.named(&ids, "source");
+        f.finish(&source, &[("outer-a.md", "2"), ("outer-b.md", "3")]);
+        let expanders = f.tick();
+        assert_eq!(expanders.len(), 2);
+        let empty = &expanders[0];
+        let populated = &expanders[1];
+        f.start(empty);
+        f.write(empty, &[("expansion-summary.md", "No child requests warranted.")]);
+        assert!(matches!(f.accept(empty), CompletionOutcome::Accepted { .. }));
+        let empty_id = f
+            .state
+            .collections
+            .values()
+            .find(|c| c.selector == "inner-request-*.md" && c.source_collection_id.is_none() && c.expected_execution_ids.contains(empty))
+            .unwrap()
+            .id
+            .clone();
+        assert!(f.ready().is_empty());
+        assert!(!f.state.collections[&empty_id].membership_closed);
+        f.finish(populated, &[("inner-request-child.md", "7")]);
+        let ids = f.tick();
+        assert_eq!(ids.len(), 1);
+        let worker = f.named(&ids, "worker");
+        assert_eq!(
+            f.state.executions[&worker].candidate.inputs["inner-request-*.md"].iter().cloned().collect::<BTreeSet<_>>(),
+            f.output_ids(populated)
+        );
+        f.finish(&worker, &[("inner-result-value.md", "49")]);
+        let ids = f.tick();
+        let local = f.named(&ids, "local");
+        assert_eq!(
+            f.state.executions[&local].candidate.inputs["inner-result-*.md"].iter().cloned().collect::<BTreeSet<_>>(),
+            f.output_ids(&worker)
+        );
+        f.finish(&local, &[("local-total.md", "49")]);
+        assert!(f.tick().is_empty(), "the still-live empty expander has not discharged any obligation");
+        let requests = f
+            .state
+            .collections
+            .values()
+            .find(|c| c.selector == "inner-request-*.md" && c.source_collection_id.is_some())
+            .unwrap();
+        assert!(!requests.membership_closed, "all visible child workers finished, but the request source is still open");
+        assert_eq!(requests.expected_execution_ids, expanders.iter().cloned().collect());
+        assert_eq!(requests.member_occurrence_ids, f.output_ids(populated));
+        f.exit(empty);
+        assert!(f.tick().is_empty(), "empty expansion does not fabricate a missing local merge");
+        assert!(f.state.collections[&empty_id].membership_closed);
+        assert!(f.state.collections[&empty_id].member_occurrence_ids.is_empty());
+        let outer = f
+            .state
+            .collections
+            .values()
+            .find(|c| c.selector == "local-*.md" && c.source_collection_id.is_some())
+            .unwrap();
+        assert!(!outer.membership_closed);
+        assert_eq!(outer.expected_execution_ids, BTreeSet::from([local.clone()]));
+        assert_eq!(outer.member_occurrence_ids, f.output_ids(&local));
+        assert_eq!(
+            f.state.collections[outer.source_collection_id.as_ref().unwrap()].member_occurrence_ids,
+            f.output_ids(&source)
+        );
+        assert_eq!(f.state.executions.values().filter(|e| e.candidate.step_key == "worker").count(), 1);
+        assert_eq!(f.state.executions.values().filter(|e| e.candidate.step_key == "local").count(), 1);
+        let collections = f.state.collections.clone();
+        f.restart();
+        assert!(f.tick().is_empty());
+        assert_eq!(f.state.collections, collections);
+    }
+
+    #[test]
+    fn partial_and_entry_accepts_without_loop_activation() {
+        use InputMode::Single;
+        let mut f = Fixture::new(vec![
+            step("entry", &[("ticket.md", Single), ("request.md", Single)], &["result.md"]),
+            step("continue", &[("result.md", Single)], &["ticket.md", "request.md"]),
+        ]);
+        let initial_request = f.seed("request.md", "request.md", "initial");
+        let ids = f.tick();
+        let entry = f.named(&ids, "entry");
+        f.finish(&entry, &[("result.md", "done")]);
+        let ids = f.tick();
+        let continuation = f.named(&ids, "continue");
+        f.start(&continuation);
+        f.write(&continuation, &[("ticket.md", "new direction")]);
+        let receipt = f.accept(&continuation);
+        assert!(matches!(receipt, CompletionOutcome::Accepted { .. }));
+        let accepted = f.output_ids(&continuation);
+        assert_eq!(accepted.len(), 1);
+        assert!(f.tick().is_empty());
+        f.exit(&continuation);
+        assert!(f.tick().is_empty());
+        f.write(&continuation, &[("request.md", "too late")]);
+        f.restart();
+        assert_eq!(f.accept(&continuation), receipt);
+        assert!(f.tick().is_empty());
+        assert_eq!(f.output_ids(&continuation), accepted);
+        assert_eq!(f.state.executions[&entry].candidate.inputs["request.md"], [initial_request]);
+        assert_eq!(f.state.contexts.values().filter(|c| matches!(c.cause, ContextCause::Loop { .. })).count(), 0);
+        assert_eq!(f.state.executions.values().filter(|e| e.candidate.step_key == "entry").count(), 1);
+    }
+
+    #[test]
+    fn multiple_fresh_continuations_then_report_stop() {
+        use InputMode::Single;
+        // Both changing siblings are inside the repeated dependency component.
+        for omit_final_analysis in [false, true] {
+            let mut f = Fixture::new(vec![
+                step("design", &[("ticket.md", Single), ("policy.md", Single)], &["design.md"]),
+                step("analysis", &[("design.md", Single)], &["analysis.md", "analysis-disposition.md"]),
+                step("plan", &[("design.md", Single)], &["plan.md"]),
+                step("check", &[("design.md", Single), ("analysis.md", Single), ("plan.md", Single)], &["check.md"]),
+                step("compare", &[("check.md", Single)], &["ticket.md", "comparison.md"]),
+            ]);
+            let policy = f.seed("policy.md", "policy.md", "Governing policy");
+            let mut trigger = f.state.occurrences.values().find(|o| o.logical_path == "ticket.md").unwrap().id.clone();
+            let mut previous_inputs = BTreeSet::new();
+            for pass in 0..3 {
+                let ids = f.tick();
+                assert_eq!(ids.len(), 1);
+                let design = f.named(&ids, "design");
+                assert_eq!(f.state.executions[&design].candidate.inputs["ticket.md"], [trigger.clone()]);
+                assert_eq!(f.state.executions[&design].candidate.inputs["policy.md"], std::slice::from_ref(&policy));
+                f.finish(&design, &[("design.md", &format!("Design for pass {pass}"))]);
+                let branches = f.tick();
+                assert_eq!(branches.len(), 2);
+                let analysis = f.named(&branches, "analysis");
+                let plan = f.named(&branches, "plan");
+                for id in &branches {
+                    assert_eq!(
+                        f.state.executions[id].candidate.inputs["design.md"].iter().cloned().collect::<BTreeSet<_>>(),
+                        f.output_ids(&design)
+                    );
+                }
+                f.finish(&plan, &[("plan.md", &format!("Plan for pass {pass}"))]);
+                assert!(f.ready().is_empty(), "a previous analysis cannot satisfy the fresh join");
+                if pass == 2 && omit_final_analysis {
+                    f.finish(&analysis, &[("analysis-disposition.md", "Analysis deliberately concluded without a usable result.")]);
+                    f.restart();
+                    assert!(f.tick().is_empty());
+                    assert_eq!(f.state.executions.values().filter(|e| e.candidate.step_key == "check").count(), 2);
+                    break;
+                }
+                f.finish(&analysis, &[("analysis.md", &format!("Analysis for pass {pass}"))]);
+                let ids = f.tick();
+                assert_eq!(ids.len(), 1);
+                let check = f.named(&ids, "check");
+                let expected: BTreeSet<_> = [&design, &analysis, &plan].into_iter().flat_map(|id| f.output_ids(id)).collect();
+                let bound = f.state.executions[&check].candidate.inputs.values().flatten().cloned().collect::<BTreeSet<_>>();
+                assert_eq!(bound, expected);
+                assert!(bound.is_disjoint(&previous_inputs));
+                previous_inputs = bound;
+                f.finish(&check, &[("check.md", &format!("Checked pass {pass}"))]);
+                let ids = f.tick();
+                let compare = f.named(&ids, "compare");
+                f.start(&compare);
+                if pass < 2 {
+                    f.write(&compare, &[("ticket.md", &format!("Fresh direction for pass {}", pass + 1))]);
+                } else {
+                    f.write(&compare, &[("comparison.md", "Concluded comparison; no further pass warranted.")]);
+                }
+                let receipt = f.accept(&compare);
+                assert!(matches!(receipt, CompletionOutcome::Accepted { .. }));
+                assert!(f.ready().is_empty());
+                f.exit(&compare);
+                f.restart();
+                assert_eq!(f.accept(&compare), receipt);
+                if pass < 2 {
+                    trigger = f.output_ids(&compare).into_iter().next().unwrap();
+                    let ready = f.ready();
+                    assert_eq!(ready.len(), 1);
+                    assert_eq!(ready[0].step_key, "design");
+                    assert_eq!(ready[0].inputs["ticket.md"], [trigger.clone()]);
+                } else {
+                    assert!(f.tick().is_empty());
+                    assert_eq!(f.state.executions.values().filter(|e| e.candidate.step_key == "design").count(), 3);
+                    assert!(f.output_ids(&compare).iter().all(|id| f.state.occurrences[id].logical_path == "comparison.md"));
+                }
+            }
+            assert_eq!(f.state.contexts.values().filter(|c| matches!(c.cause, ContextCause::Loop { .. })).count(), 2);
+        }
+    }
+
+    #[test]
+    fn changed_direction_binds_fresh_trigger_and_explicit_prior_evidence() {
+        use InputMode::Single;
+        let mut f = Fixture::new(vec![
+            step("design", &[("ticket.md", Single), ("prior-evidence.md", Single)], &["design.md"]),
+            step("compare", &[("design.md", Single), ("prior-evidence.md", Single)], &["ticket.md", "comparison.md"]),
+        ]);
+        let evidence = f.seed("prior-evidence.md", "prior-evidence.md", "Prior evidence, retained unchanged.");
+        let original_ticket = f.state.occurrences.values().find(|o| o.logical_path == "ticket.md").unwrap().clone();
+        let evidence_occurrence = f.state.occurrences[&evidence].clone();
+        let ids = f.tick();
+        let design = f.named(&ids, "design");
+        f.finish(&design, &[("design.md", "Original design.")]);
+        let original_design = f.state.occurrences[&f.output_ids(&design).into_iter().next().unwrap()].clone();
+        let ids = f.tick();
+        let compare = f.named(&ids, "compare");
+        assert_eq!(f.state.executions[&compare].candidate.inputs["prior-evidence.md"], std::slice::from_ref(&evidence));
+        f.start(&compare);
+        f.write(&compare, &[("ticket.md", "Human changes direction: prioritize accessibility, retain prior evidence.")]);
+        assert!(matches!(f.accept(&compare), CompletionOutcome::Accepted { .. }));
+        assert!(f.ready().is_empty());
+        let fresh = f.output_ids(&compare).into_iter().next().unwrap();
+        f.exit(&compare);
+        let ids = f.tick();
+        assert_eq!(ids.len(), 1);
+        let next = f.named(&ids, "design");
+        assert_eq!(
+            f.state.executions[&next].candidate.inputs,
+            BTreeMap::from([("ticket.md".into(), vec![fresh.clone()]), ("prior-evidence.md".into(), vec![evidence.clone()]),])
+        );
+        assert_ne!(fresh, original_ticket.id);
+        assert_eq!(
+            std::fs::read_to_string(crate::artifacts_dir(&f.repo, "task").join(&f.state.occurrences[&fresh].relative_path)).unwrap(),
+            "Human changes direction: prioritize accessibility, retain prior evidence."
+        );
+        f.finish(&next, &[("design.md", "Revised accessible design using explicitly bound prior evidence.")]);
+        let ids = f.tick();
+        let comparison = f.named(&ids, "compare");
+        assert_eq!(
+            f.state.executions[&comparison].candidate.inputs["design.md"].iter().cloned().collect::<BTreeSet<_>>(),
+            f.output_ids(&next)
+        );
+        assert_eq!(f.state.executions[&comparison].candidate.inputs["prior-evidence.md"], [evidence]);
+        f.finish(&comparison, &[("comparison.md", "Human concludes the revised design.")]);
+        f.restart();
+        assert!(f.tick().is_empty());
+        for (occurrence, bytes) in [
+            (original_ticket, "2 3 5"),
+            (evidence_occurrence, "Prior evidence, retained unchanged."),
+            (original_design, "Original design."),
+        ] {
+            assert_eq!(f.state.occurrences[&occurrence.id], occurrence);
+            assert_eq!(
+                std::fs::read_to_string(crate::artifacts_dir(&f.repo, "task").join(&occurrence.relative_path)).unwrap(),
+                bytes
+            );
+        }
+    }
+
+    #[test]
+    fn no_results_member_routes_one_worker_and_exact_disposition_routes_handler() {
+        use InputMode::{Each, Single};
+        for (output, expected_step) in [("summary.md", None), ("papers/no-results.md", Some("worker")), ("no-results.md", Some("handler"))] {
+            let mut f = Fixture::new(vec![
+                step("source", &[("ticket.md", Single)], &["summary.md", "papers/*.md", "no-results.md"]),
+                step("worker", &[("papers/*.md", Each)], &["worker-report.md"]),
+                step("handler", &[("no-results.md", Single)], &["handled.md"]),
+            ]);
+            let ids = f.tick();
+            let source = f.named(&ids, "source");
+            f.start(&source);
+            f.write(&source, &[(output, "No results found; this is a truthful disposition, not a paper.")]);
+            assert!(matches!(f.accept(&source), CompletionOutcome::Accepted { .. }));
+            assert!(f.ready().is_empty());
+            f.exit(&source);
+            let ids = f.tick();
+            if let Some(key) = expected_step {
+                assert_eq!(ids.len(), 1);
+                let id = f.named(&ids, key);
+                assert_eq!(
+                    f.state.executions[&id].candidate.inputs.values().flatten().cloned().collect::<BTreeSet<_>>(),
+                    f.output_ids(&source)
+                );
+            } else {
+                assert!(ids.is_empty());
+                assert_eq!(f.state.executions.len(), 1);
+            }
+            f.restart();
+            assert!(f.tick().is_empty());
+        }
     }
 }

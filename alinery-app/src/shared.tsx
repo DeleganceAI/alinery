@@ -35,6 +35,7 @@ import type {
   ArtifactTreeNode,
   BoardTask,
   ExecutionAvailability,
+  ExecutionRecord,
   GridViewDefinition,
   KanbanColumn,
   LifecycleState,
@@ -51,6 +52,7 @@ import type {
   TaskActivityMap,
   TaskActivityRef,
   TaskActivitySummary,
+  TaskExecutionState,
   UpdateStatus,
 } from "./types";
 import { WindowControls } from "./WindowChrome";
@@ -476,6 +478,31 @@ export function ExecutionAvailabilityNotice({ live, controls = false }: { live: 
         <pre className="inline-status-detail">{live?.detail ?? "Owner availability could not be determined."}</pre>
       </details>
     </InlineStatus>
+  );
+}
+
+export function ExecutionOutputs({ execution, occurrences }: { execution: ExecutionRecord; occurrences: TaskExecutionState["occurrences"] }) {
+  const accepted = Object.values(occurrences).filter((occurrence) => occurrence.producer_execution_id === execution.id);
+  return (
+    <ul aria-label="Execution outputs">
+      {execution.outputs.map((output) => {
+        const wildcard = output.selector.includes("*");
+        const count = accepted.filter((occurrence) => occurrence.selector === output.selector && (wildcard || occurrence.relative_path === output.relative_path)).length;
+        const status = !execution.receipt_id ? "pending" : wildcard ? `${count} accepted` : count ? "accepted" : "not published";
+        return (
+          <li key={output.relative_path}>
+            <code>{output.selector}</code> → <code>{output.relative_path}</code> · {status}
+          </li>
+        );
+      })}
+      {accepted
+        .filter((occurrence) => occurrence.selector.includes("*"))
+        .map((occurrence) => (
+          <li key={occurrence.id}>
+            Accepted member <code>{occurrence.relative_path}</code> · occurrence {occurrence.id}
+          </li>
+        ))}
+    </ul>
   );
 }
 
