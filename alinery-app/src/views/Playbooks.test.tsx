@@ -551,6 +551,7 @@ describe("graph-first playbook management", () => {
     fireEvent.click(screen.getByRole("button", { name: "Graph" }));
     expect(screen.queryByRole("region", { name: "Review graph" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Save definition" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Keep Save key" }));
     await screen.findByText("Definition saved.");
     expect(stored.map((item) => identity(item.source.reference))).toEqual(["bundled/review", "global/review", "repo/review", "repo/review-copy"]);
     const create = screen.getByRole("button", { name: "Create task from this playbook" });
@@ -638,6 +639,386 @@ describe("graph-first playbook management", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Review Bundled" }));
     await screen.findByRole("button", { name: "Make a copy to edit" });
     expect(screen.getByRole("separator", { name: "Resize graph and description" }).getAttribute("aria-valuenow")).toBe(chosen);
+  });
+});
+
+describe("new playbook key choice", () => {
+  const source = `+++
+version = 2
+key = "solution-exploration"
+title = "Solution Exploration"
+description = ""
+default_model = ""
+default_harness = ""
+[[step]]
+key = "run"
+title = "Run"
+short = ""
+is_coding_step = false
+auto_advance_default = false
+inputs = [{path = "ticket.md", mode = "single"}]
+outputs = [{path = "result.md"}]
+model = ""
+harness = ""
++++
+Preamble
+<!-- alinery:step run -->
+Read {{TICKET_FILE}}.
+`;
+  const parsed: NormalizedPlaybook = {
+    version: 2,
+    key: "solution-exploration",
+    title: "Solution Exploration",
+    description: "",
+    default_model: "",
+    default_harness: "",
+    preamble: "Preamble\n",
+    section_order: ["run"],
+    step: [
+      {
+        key: "run",
+        title: "Run",
+        short: "",
+        is_coding_step: false,
+        auto_advance_default: false,
+        inputs: [{ path: "ticket.md", mode: "single" }],
+        outputs: [{ path: "result.md" }],
+        model: "",
+        harness: "",
+        prompt: "Read {{TICKET_FILE}}.\n",
+      },
+    ],
+  };
+  const destinationSource = source.replace('key = "solution-exploration"', 'key = "new-playbook"');
+  const fileSource = source.replace('key = "solution-exploration"', 'key = "imported-original"');
+  const fixtures = new Map([
+    [source, parsed],
+    [destinationSource, { ...parsed, key: "new-playbook" }],
+    [fileSource, { ...parsed, key: "imported-original" }],
+  ]);
+
+  beforeEach(() => {
+    // These explicit IPC responses are not a TOML parser. The same source is checked
+    // with the real core parser separately; unrelated suite fixtures remain JSON.
+    const validate = mocks.validatePlaybookSource.getMockImplementation();
+    const renderSource = mocks.renderPlaybookSource.getMockImplementation();
+    const save = mocks.savePlaybookSource.getMockImplementation();
+    if (!validate || !renderSource || !save) throw new Error("Missing base IPC fixtures");
+    mocks.validatePlaybookSource.mockImplementation(async (text: string) =>
+      fixtures.has(text) ? { definition: structuredClone(fixtures.get(text)), diagnostics: [] } : validate(text),
+    );
+    mocks.renderPlaybookSource.mockImplementation(async (value: NormalizedPlaybook) => {
+      for (const [text, fixture] of fixtures) {
+        if (JSON.stringify(value) === JSON.stringify(fixture)) return text;
+      }
+      return renderSource(value);
+    });
+    mocks.savePlaybookSource.mockImplementation(async (request: SavePlaybookRequest) => {
+      const fixture = fixtures.get(request.source);
+      if (!fixture) return save(request);
+      if (fixture.key !== request.target.key) throw new Error("Document and library key disagree");
+      const saved = await save({ ...request, source: JSON.stringify(fixture) });
+      saved.source_text = request.source;
+      return saved;
+    });
+  });
+
+  function mount(host = true) {
+    return render(
+      <>
+        <Playbooks repoPath="/repo" onCreateTask={onCreateTask} />
+        {host && <ConfirmHost />}
+      </>,
+    );
+  }
+  async function newDraft(host = true) {
+    mount(host);
+    fireEvent.click(screen.getByRole("button", { name: "New playbook" }));
+    await screen.findByLabelText("Save key");
+    await waitFor(() => expect(screen.getByLabelText("Playbook source")).toHaveProperty("disabled", false));
+    edit(source);
+  }
+  async function keyDialog() {
+    fireEvent.click(screen.getByRole("button", { name: "Save definition" }));
+    return screen.findByRole("alertdialog", { name: "Choose playbook key" });
+  }
+  async function retainedDraft(key = "new-playbook", scope = "repo") {
+    await waitFor(() => expect(screen.getByLabelText("Playbook source")).toHaveProperty("disabled", false));
+    expect(screen.getByLabelText("Playbook source")).toHaveProperty("value", source);
+    expect(screen.getByLabelText("Save key")).toHaveProperty("value", key);
+    expect(screen.getByLabelText("Save scope")).toHaveProperty("value", scope);
+  }
+  async function installed(scope: PlaybookRef["scope"], key: string, text: string) {
+    const create = await screen.findByRole("button", { name: "Create task from this playbook" });
+    await waitFor(() => expect(create).toHaveProperty("disabled", false));
+    expect(screen.getByLabelText("Playbook source")).toHaveProperty("value", text);
+    fireEvent.click(create);
+    expect(onCreateTask).toHaveBeenLastCalledWith({ scope, key });
+    expect(stored.find((item) => identity(item.source.reference) === `${scope}/${key}`)?.definition.key).toBe(key);
+  }
+
+  it("waits for an explicit choice, then installs the document identity", async () => {
+    await newDraft();
+    const dialog = await keyDialog();
+    expect(dialog.textContent).toContain("solution-exploration");
+    expect(dialog.textContent).toContain("new-playbook");
+    expect(dialog.textContent).toMatch(/repository/i);
+    expect(dialog.textContent).toContain("/repo");
+    await waitFor(() => expect(document.activeElement).toBe(within(dialog).getByText("Cancel", { selector: "button" })));
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Playbook source")).toHaveProperty("disabled", true);
+    expect(screen.getByLabelText("Save key").matches(":disabled")).toBe(true);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Use document key" }));
+    await installed("repo", "solution-exploration", source);
+  });
+
+  it("keeps an acknowledged Save key in Global scope", async () => {
+    await newDraft();
+    const originals = structuredClone(stored);
+    fireEvent.change(screen.getByLabelText("Save scope"), { target: { value: "global" } });
+    const dialog = await keyDialog();
+    expect(dialog.textContent).toMatch(/global/i);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Keep Save key" }));
+    await installed("global", "new-playbook", destinationSource);
+    expect(stored.slice(0, originals.length)).toEqual(originals);
+  });
+
+  it.each(["Cancel", "close", "cancel event"] as const)("retains the draft on %s and asks again on retry", async (dismissal) => {
+    await newDraft();
+    const dialog = await keyDialog();
+    if (dismissal === "Cancel") fireEvent.click(within(dialog).getByText("Cancel", { selector: "button" }));
+    else if (dismissal === "close") fireEvent.click(within(dialog).getByLabelText("Cancel"));
+    else fireEvent(dialog, new Event("cancel", { bubbles: false, cancelable: true }));
+    await retainedDraft();
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+    const retry = await keyDialog();
+    fireEvent.click(within(retry).getByText("Cancel", { selector: "button" }));
+    await retainedDraft();
+  });
+
+  it("does not save a mismatch without a confirmation host", async () => {
+    await newDraft(false);
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Save definition" })));
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+    await retainedDraft();
+  });
+
+  it("checks the chosen document target for overwrite and preserves a cancelled paste", async () => {
+    stored.push(entry("repo", { ...parsed, title: "Original target" }));
+    const before = structuredClone(stored);
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    fireEvent.click(screen.getByRole("button", { name: "Paste source" }));
+    await screen.findByLabelText("Save key");
+    edit(source);
+    const choice = await keyDialog();
+    expect(within(choice).getByRole("status").textContent).toContain("repo/solution-exploration");
+    fireEvent.click(within(choice).getByRole("button", { name: "Overwrite existing playbook" }));
+    const collision = await screen.findByRole("alertdialog", { name: "Overwrite repo/solution-exploration?" });
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+    fireEvent.click(within(collision).getByText("Cancel", { selector: "button" }));
+    await retainedDraft("imported-playbook");
+    expect(stored).toEqual(before);
+    fireEvent.click(within(await keyDialog()).getByRole("button", { name: "Overwrite existing playbook" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Overwrite" }));
+    await installed("repo", "solution-exploration", source);
+    expect(stored.filter((item) => item.definition.key !== parsed.key)).toEqual(before.filter((item) => item.definition.key !== parsed.key));
+  });
+
+  it("imports a file then saves a changed document key globally without overwriting its repository peer", async () => {
+    stored.push(entry("repo", parsed));
+    const original = structuredClone(stored);
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    const file = new File([fileSource], "playbook.md", { type: "text/markdown" });
+    // jsdom has no File.text(); the browser file-read boundary returns these bytes.
+    Object.defineProperty(file, "text", { value: async () => fileSource });
+    fireEvent.change(screen.getByLabelText("Import local file"), { target: { files: [file] } });
+    await screen.findByLabelText("Save key");
+    expect(screen.getByLabelText("Save key")).toHaveProperty("value", "imported-original");
+    edit(source);
+    fireEvent.change(screen.getByLabelText("Save scope"), { target: { value: "global" } });
+    const choice = await keyDialog();
+    expect(within(choice).queryByRole("status")).toBeNull();
+    fireEvent.click(within(choice).getByRole("button", { name: "Use document key" }));
+    await installed("global", "solution-exploration", source);
+    expect(stored.slice(0, original.length)).toEqual(original);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("warns about a conflicting Save key before choosing and still requires overwrite", async () => {
+    await newDraft();
+    stored.push(entry("global", { ...parsed, key: "new-playbook", title: "Existing destination" }), entry("repo", parsed));
+    const before = structuredClone(stored);
+    fireEvent.change(screen.getByLabelText("Save scope"), { target: { value: "global" } });
+    const choice = await keyDialog();
+    const warning = within(choice).getByRole("status");
+    expect(warning.textContent).toContain("global/new-playbook");
+    expect(warning.textContent).not.toContain("repo/solution-exploration");
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+    fireEvent.click(within(choice).getByRole("button", { name: "Overwrite existing playbook" }));
+    const collision = await screen.findByRole("alertdialog", { name: "Overwrite global/new-playbook?" });
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+    fireEvent.click(within(collision).getByText("Cancel", { selector: "button" }));
+    await retainedDraft("new-playbook", "global");
+    expect(stored).toEqual(before);
+    fireEvent.click(within(await keyDialog()).getByRole("button", { name: "Overwrite existing playbook" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Overwrite" }));
+    await installed("global", "new-playbook", destinationSource);
+    expect(stored.filter((item) => identity(item.source.reference) !== "global/new-playbook")).toEqual(
+      before.filter((item) => identity(item.source.reference) !== "global/new-playbook"),
+    );
+  });
+
+  it("rechecks for a conflict created while the key choice is open", async () => {
+    await newDraft();
+    const choice = await keyDialog();
+    expect(within(choice).queryByRole("status")).toBeNull();
+    stored.push(entry("repo", parsed));
+    fireEvent.click(within(choice).getByRole("button", { name: "Use document key" }));
+    const collision = await screen.findByRole("alertdialog", { name: "Overwrite repo/solution-exploration?" });
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+    fireEvent.click(within(collision).getByText("Cancel", { selector: "button" }));
+    await retainedDraft();
+  });
+
+  it("retains the draft when checking key conflicts fails", async () => {
+    await newDraft();
+    mocks.listPlaybookCatalog.mockRejectedValueOnce("Cannot check existing keys");
+    fireEvent.click(screen.getByRole("button", { name: "Save definition" }));
+    await screen.findByText("Cannot check existing keys");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+    await retainedDraft();
+  });
+
+  it("retains the draft after a chosen document key encounters a storage conflict", async () => {
+    await newDraft();
+    const before = structuredClone(stored);
+    mocks.savePlaybookSource.mockRejectedValueOnce({
+      kind: "conflict",
+      source: { reference: { scope: "repo", key: parsed.key }, path: `/repo/.alinery/playbooks/${parsed.key}/playbook.md` },
+    });
+    fireEvent.click(within(await keyDialog()).getByRole("button", { name: "Use document key" }));
+    await screen.findByText(/conflict/, { selector: ".inline-status-msg" });
+    await retainedDraft();
+    expect(stored).toEqual(before);
+    fireEvent.click(within(await keyDialog()).getByText("Cancel", { selector: "button" }));
+    await retainedDraft();
+  });
+
+  it("retains the draft when rendering the acknowledged destination fails", async () => {
+    await newDraft();
+    mocks.renderPlaybookSource.mockRejectedValueOnce("Cannot render definition");
+    fireEvent.click(within(await keyDialog()).getByRole("button", { name: "Keep Save key" }));
+    await screen.findByText("Cannot render definition");
+    await retainedDraft();
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+  });
+
+  it("saves matching new keys without asking for a key choice", async () => {
+    await newDraft();
+    fireEvent.change(screen.getByLabelText("Save key"), { target: { value: parsed.key } });
+    fireEvent.click(screen.getByRole("button", { name: "Save definition" }));
+    await installed("repo", parsed.key, source);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("keeps explicit validation separate and refuses invalid source before any choice", async () => {
+    await newDraft();
+    fireEvent.click(screen.getByRole("button", { name: "Validate" }));
+    await screen.findByText("Definition is valid. Not saved.");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+    edit("+++ invalid unfinished source");
+    fireEvent.click(screen.getByRole("button", { name: "Save definition" }));
+    await screen.findByRole("list", { name: "Validation diagnostics" });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Playbook source")).toHaveProperty("value", "+++ invalid unfinished source");
+  });
+
+  it("rejects a saved-entry rename rather than offering the new-draft key choice", async () => {
+    mount();
+    await openRepo();
+    const before = structuredClone(stored);
+    edit(source);
+    fireEvent.click(screen.getByRole("button", { name: "Save definition" }));
+    await screen.findByText(/Use Make a copy to save under another key/);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+    expect(stored).toEqual(before);
+    expect(screen.getByLabelText("Playbook source")).toHaveProperty("value", source);
+  });
+
+  it("still requires overwrite authorization when a saved copy chooses its original document key", async () => {
+    mount();
+    await openRepo();
+    const before = structuredClone(stored);
+    fireEvent.click(screen.getByRole("button", { name: "Make a copy" }));
+    await screen.findByLabelText("Save key");
+    expect(screen.getByLabelText("Save key")).toHaveProperty("value", "review-copy");
+    fireEvent.click(within(await keyDialog()).getByRole("button", { name: "Overwrite existing playbook" }));
+    const collision = await screen.findByRole("alertdialog", { name: "Overwrite repo/review?" });
+    expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
+    fireEvent.click(within(collision).getByText("Cancel", { selector: "button" }));
+    await waitFor(() => expect(screen.getByLabelText("Playbook source")).toHaveProperty("disabled", false));
+    expect(screen.getByLabelText("Save key")).toHaveProperty("value", "review-copy");
+    expect(stored).toEqual(before);
+  });
+
+  it("keeps an unsaved draft in its captured repository after the visible repository changes", async () => {
+    const libraries: Record<string, ScopedPlaybook[]> = {
+      "/repo-a": [entry("repo", { key: "only-a", title: "Only A" })],
+      "/repo-b": [entry("repo", { key: "only-b", title: "Only B" })],
+    };
+    mocks.listPlaybookCatalog.mockImplementation(async (owner: string) => ({
+      candidates: libraries[owner].map((item) => ({
+        source: item.source,
+        title: item.definition.title,
+        description: item.definition.description,
+        modified_at_ms: item.modified_at_ms,
+        diagnostics: [],
+      })),
+      picker_preferences: { order: [], entries: [] },
+      diagnostics: [],
+    }));
+    mocks.savePlaybookSource.mockImplementation(async (request: SavePlaybookRequest, owner: string) => {
+      const value = fixtures.get(request.source);
+      if (!value || value.key !== request.target.key || request.target.scope !== "repo") throw new Error("Unexpected save");
+      const saved = { ...entry("repo", value), source_text: request.source };
+      libraries[owner].push(saved);
+      return saved;
+    });
+    const view = render(
+      <>
+        <Playbooks repoPath="/repo-a" onCreateTask={onCreateTask} />
+        <ConfirmHost />
+      </>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "New playbook" }));
+    await screen.findByLabelText("Save key");
+    edit(source);
+    view.rerender(
+      <>
+        <Playbooks repoPath="/repo-b" onCreateTask={onCreateTask} />
+        <ConfirmHost />
+      </>,
+    );
+    const dialog = await keyDialog();
+    expect(dialog.textContent).toContain("/repo-a");
+    expect(dialog.textContent).not.toContain("/repo-b");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Use document key" }));
+    const create = await screen.findByRole("button", { name: "Create task from this playbook" });
+    expect(create).toHaveProperty("disabled", true);
+    await waitFor(() => expect(screen.getByLabelText("Playbook source")).toHaveProperty("disabled", false));
+    expect(libraries["/repo-a"].map((item) => item.definition.key)).toEqual(["only-a", "solution-exploration"]);
+    expect(libraries["/repo-b"].map((item) => item.definition.key)).toEqual(["only-b"]);
+    expect(screen.getByLabelText("Playbook source")).toHaveProperty("value", source);
+    fireEvent.click(screen.getByRole("button", { name: "Back to playbooks" }));
+    expect(await screen.findByRole("button", { name: "Only B Repository" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Solution Exploration Repository" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Only A Repository" })).toBeNull();
   });
 });
 
