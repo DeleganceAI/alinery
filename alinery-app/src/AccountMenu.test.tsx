@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   accountCredits: vi.fn<() => Promise<DesktopCreditsView>>(),
   toastError: vi.fn(),
   toastInfo: vi.fn(),
+  onOpenNotifications: vi.fn(),
   onOpenSettings: vi.fn(),
 }));
 
@@ -44,7 +45,7 @@ vi.mock("./toast", () => ({
 import { AccountMenu } from "./AccountMenu";
 
 function renderMenu() {
-  return render(<AccountMenu onOpenSettings={mocks.onOpenSettings} />);
+  return render(<AccountMenu onOpenNotifications={mocks.onOpenNotifications} onOpenSettings={mocks.onOpenSettings} />);
 }
 
 const creditsHidden: DesktopCreditsView = {
@@ -114,6 +115,18 @@ describe("signed out", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Account" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Settings" }));
     expect(mocks.onOpenSettings).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("lists Notifications directly above Settings and opens it", async () => {
+    mocks.accountStatus.mockResolvedValue(signedOut);
+    renderMenu();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Account" }));
+    expect(screen.getAllByRole("menuitem").map((el) => el.textContent)).toEqual(["Notifications8", "Settings9", "Sign in"]);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Notifications" }));
+    expect(mocks.onOpenNotifications).toHaveBeenCalledTimes(1);
+    expect(mocks.onOpenSettings).not.toHaveBeenCalled();
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
@@ -261,6 +274,8 @@ describe("signed in", () => {
     renderMenu();
 
     fireEvent.click(await screen.findByRole("button", { name: "Account" }));
+    const items = screen.getAllByRole("menuitem").map((el) => el.textContent);
+    expect(items.indexOf("Notifications8")).toBe(items.indexOf("Settings9") - 1);
     fireEvent.click(screen.getByRole("menuitem", { name: "Settings" }));
     expect(mocks.onOpenSettings).toHaveBeenCalledTimes(1);
   });

@@ -5,10 +5,15 @@ import type { AppConfig, OmpUpdateStatus, UpdateStatus } from "./types";
 
 vi.mock("./WindowChrome", () => ({ WindowControls: () => null }));
 vi.mock("./AccountMenu", () => ({
-  AccountMenu: ({ onOpenSettings }: { onOpenSettings: () => void }) => (
-    <button type="button" onClick={onOpenSettings}>
-      Account menu
-    </button>
+  AccountMenu: ({ onOpenNotifications, onOpenSettings }: { onOpenNotifications: () => void; onOpenSettings: () => void }) => (
+    <>
+      <button type="button" onClick={onOpenNotifications}>
+        Account menu notifications
+      </button>
+      <button type="button" onClick={onOpenSettings}>
+        Account menu
+      </button>
+    </>
   ),
 }));
 
@@ -41,6 +46,35 @@ afterEach(() => {
 });
 
 describe("TopBar navigation", () => {
+  const tabLabels = () => Array.from(document.querySelectorAll("nav.tabs .tab")).map((tab) => tab.firstChild?.textContent);
+
+  it("leads with every custom grid, then Tasks and Sessions, and has no Notifications tab", () => {
+    render(
+      <TopBar
+        active="list"
+        scope="active"
+        appConfig={appConfig}
+        isDev={false}
+        showOriginalKanban
+        gridViews={[
+          { id: "planning", name: "Planning", slot: 1 },
+          { id: "triage", name: "Triage", slot: 2 },
+        ]}
+        {...callbacks}
+      />,
+    );
+    expect(tabLabels()).toEqual(["Planning", "Triage", "Tasks", "Sessions", "Kanban", "Playbooks"]);
+    expect(screen.queryByRole("button", { name: /^Notifications/ })).toBeNull();
+  });
+
+  it("opens Notifications and Settings from the account menu", () => {
+    render(<TopBar active="list" scope="active" appConfig={appConfig} isDev={false} {...callbacks} />);
+    fireEvent.click(screen.getByRole("button", { name: "Account menu notifications" }));
+    expect(callbacks.onSwitch).toHaveBeenCalledWith("notifications");
+    fireEvent.click(screen.getByRole("button", { name: "Account menu" }));
+    expect(callbacks.onSwitch).toHaveBeenCalledWith("settings");
+  });
+
   it("opens the playbook library from a task destination", () => {
     render(<TopBar active="list" scope="active" appConfig={appConfig} isDev={false} {...callbacks} />);
     fireEvent.click(screen.getByRole("button", { name: "Playbooks" }));

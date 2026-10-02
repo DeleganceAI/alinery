@@ -612,6 +612,12 @@ async function renderApp() {
   await screen.findByRole("button", { name: "Search" });
 }
 
+// Notifications lives in the account menu, above Settings, not in the top-bar tabs.
+async function openNotifications() {
+  fireEvent.click(await screen.findByRole("button", { name: "Account" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Notifications" }));
+}
+
 async function openGlobalSession() {
   fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
   fireEvent.click(await screen.findByRole("button", { name: "open global session" }));
@@ -806,7 +812,7 @@ describe("session navigation acknowledgment", () => {
   });
   it("renders the scoped Notifications tab and routes its exact session through acknowledgment", async () => {
     await renderApp();
-    fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+    await openNotifications();
     const row = await screen.findByRole("button", { name: "open notification session" });
     expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
 
@@ -823,7 +829,7 @@ describe("session navigation acknowledgment", () => {
       known_repos: ["/repo", "/foreign"],
     });
     await renderApp();
-    fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+    await openNotifications();
     fireEvent.click(await screen.findByRole("button", { name: "open foreign notification" }));
     await screen.findByText("session:foreign-design");
 
@@ -995,7 +1001,7 @@ describe("global notification owner", () => {
     expect(ipcMocks.sessionListStatuses).toHaveBeenCalledWith([]);
     const calls = ipcMocks.listSessionItems.mock.calls.length;
 
-    fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+    await openNotifications();
     await screen.findByRole("button", { name: "open notification session" });
     expect(ipcMocks.listSessionItems).toHaveBeenCalledTimes(calls);
   });
@@ -1038,7 +1044,7 @@ describe("global notification owner", () => {
     await renderApp();
     await waitFor(() => expect(ipcMocks.setDockBadgeCount).toHaveBeenCalledWith(2));
 
-    fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+    await openNotifications();
     const notificationView = (await screen.findByRole("button", { name: "clear shared notifications" })).closest("[data-scope]");
     expect(notificationView?.getAttribute("data-scope")).toBe("/repo");
     expect(notificationView?.getAttribute("data-global-rows")).toBe("2");
@@ -1215,7 +1221,7 @@ describe("repository switch keeps the current page", () => {
     await chooseRepo("/repo");
     expect(screen.getByRole("button", { name: "save notification settings" })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+    await openNotifications();
     expect((await screen.findByRole("button", { name: "clear shared notifications" })).closest("[data-scope]")?.getAttribute("data-scope")).toBe("/repo");
     await chooseAllRepos();
     expect(screen.getByRole("button", { name: "clear shared notifications" }).closest("[data-scope]")?.getAttribute("data-scope")).toBe("all");
