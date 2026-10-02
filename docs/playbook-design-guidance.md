@@ -98,13 +98,13 @@ The approved v2 file is one `playbook.md`: TOML `+++` frontmatter, required meta
 - Unknown fields and unescaped unknown prompt tokens are errors. Do not invent a token in prompt code without updating the shared parser/runtime contract.
 - No YAML/v1 runtime fallback, step-kind enum, `human_approval`, retry/attempts or `on_failure` policy fields.
 
-### Conflicting producers are invalid playbooks
+### Exact roles may be shared; wildcard ownership is unique
 
-Two distinct producer steps claiming `result-*.md` are not a runtime arbitration problem. Reject ambiguous output ownership at authoring/import/save and validate again before execution. Check overlapping patterns, not just identical strings: `result-*.md` can overlap an exact `result-summary.md`.
+Different steps may declare the same exact logical output role, including directory-qualified paths. Every distinct eligible accepted occurrence enables its own continuation with separate physical assignments, even when the bytes are identical. Same-step duplicate declarations remain invalid.
 
-Use actionable diagnostics identifying the steps and selectors. Do not add “latest producer wins”, silently pick a file, or weaken validation to import an invalid legacy example.
+Any overlap involving a wildcard remains invalid at authoring/import/save and before execution. Two steps cannot both claim `result-*.md`; intersecting patterns and `result-*.md` versus `result-summary.md` also conflict. Diagnostics identify both owning steps and selectors, and an invalid replacement leaves the saved definition unchanged.
 
-**Repeated executions of one valid step are different.** Fan-out and loops intentionally reuse authored roles; the engine gives instances distinct concrete assignments and records lineage. Producer validation must not prohibit that supported behavior.
+Repeated executions and shared exact roles retain concrete occurrence and producer identity. Do not choose a “latest” or winning producer, merge requests by content, or rename alternative requests into separate required inputs: several listed inputs still form an AND join.
 
 ## Scheduling comes from execution records
 
@@ -117,6 +117,10 @@ The daemon binds concrete inputs before launching an execution and records the p
 | `complete` | Supply the nonempty selector-matching accepted collection, accounting for every expected producer/worker and source obligation. |
 
 Repeated reconciliation of the same ordinary binding must not create duplicate work. A new loop-pass occurrence is different input even if its logical name is unchanged.
+
+With requests R1 and R2 and one governing brief B, a consumer of `single(request.md)` AND `single(brief.md)` receives two bindings: R1+B and R2+B. Each runs as soon as its own inputs are deliverable, subject to capacity and coding exclusivity; it does not wait for hypothetical alternative publishers. A missing companion waits. Co-published or explicitly consumed companions and request-specific descendants stay paired by recorded provenance, not common root membership.
+
+Independent alternatives R1/R2 and B1/B2 with no determined pairing are an unsupported ambiguous join, reported as a playbook problem with the consumer, roles and occurrence/producer references. The engine does not form all combinations, zip by order or silently wait forever. Earlier unambiguous work is not rolled back if later publications expose that authoring error.
 
 A merge cannot silently omit a running, paused or failed worker. The engine knows which contributions are expected because it recorded the upstream set and worker assignments—not because three matching files exist or nothing has changed recently.
 
@@ -148,7 +152,7 @@ A: Draft -> B: Request another pass -> A
 D consumes both A's draft and C's analysis.
 ```
 
-Here A and B form the loop, but C and D are outside it. The current scheduler blocks inherited results from producers inside the loop's strongly connected component; it can still inherit results from producers outside it. After A2 finishes, D can therefore bind draft A2 with analysis C1 while C2 is still queued or running. When C2 finishes, another D binding can become eligible. A later correct execution does not undo the earlier decision based on stale evidence.
+Here A and B form the loop, but C and D are outside it. Legacy side-branch graphs have allowed D to inherit analysis C1 after draft A2 arrives while C2 is pending. A later correct execution does not undo an earlier stale decision. Shared-role scheduling now checks actual occurrence provenance and must not mix changing evidence from sibling requests or prior passes; this correction is not a general guarantee for every legacy side-branch shape.
 
 Instead, put the repeat decision after the work that must finish for this pass:
 
@@ -165,7 +169,7 @@ All four steps now belong to the same loop component. On the second pass, D need
 
 A fixed requirements artifact may remain outside the loop when it genuinely applies unchanged to every pass. An analysis of a changing draft is not such an invariant merely because its producer is drawn outside the cycle.
 
-This is an authoring constraint, not a new validator guarantee: the current validator accepts the problematic side-branch shape. Prefer the complete-loop pattern when designing playbooks; do not rely on the scheduler to infer freshness obligations for arbitrary downstream side branches. This does not move occurrence selection into prompts or filenames—the engine still owns concrete input bindings.
+The validator accepts the side-branch shape; parser acceptance alone does not prove freshness. Prefer the complete-loop pattern rather than relying on inferred freshness obligations for arbitrary downstream side branches. This warning does not waive branch/pass isolation on shared-request paths or move occurrence selection into prompts or filenames.
 
 ### Artifact-triggered loop entry
 
@@ -188,7 +192,7 @@ Initial task ticket (seed occurrence, ancestry depth 0)
 
 The prefix makes the pass understandable to people. The trigger is the daemon accepting and recording a fresh output occurrence and confirming its producer's shutdown—not a filesystem watcher noticing `4-ticket-1.md`, a higher number, or changed bytes. Repeated observation of an already-used binding does not create another execution.
 
-The initial task input is supplied by task creation, not by a competing authored step. A single designated loop-producing step can emit later ticket occurrences without introducing two ambiguous step producers. If multiple authored steps compete to produce the same trigger role, fix that playbook rather than adding runtime arbitration.
+Task creation supplies the initial ticket. Several authored steps may publish the same exact trigger role, and each distinct eligible occurrence requests an independent continuation. Compound loop entry still requires one complete, compatible set of fresh entry roles: partial publication cannot borrow a missing role from an older pass. Genuine invariants and explicitly carried unchanged outside-loop governing evidence may remain reusable; an outside producer declaration alone does not establish invariance.
 
 A loop-entry prompt reads its current assigned ticket, which may differ from the original task ticket. Do not hardcode the original physical filename or assume a token that historically meant the original ticket automatically refers to the current loop binding.
 
