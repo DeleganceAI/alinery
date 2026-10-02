@@ -4262,20 +4262,50 @@ dialog.modal::backdrop {
 .chat-main .chat-empty {
   min-width: min(100%, var(--chat-col-min));
 }
+/* Working… floats in the gutter left of the composer box instead of taking its own row, so it
+   shows and hides without moving anything. Its right edge sits just left of the box, which is
+   centered at min(--chat-col-max, width - 2 × the composer's 24px side padding). */
+.chat-main {
+  container-type: inline-size;
+}
+.chat-main .chat-pane {
+  position: relative;
+}
 .chat-main .chat-activity {
+  position: absolute;
+  z-index: 1;
+  top: calc(100% + 8px);
+  right: calc(50% + min(var(--chat-col-max), 100% - 48px) / 2 + 12px);
+  height: 44px;
+  padding: 0;
+  border: 0;
+  white-space: nowrap;
   background: transparent;
+}
+/* Too narrow for the label: keep only the orb, tucked into the 24px gutter. */
+@container (max-width: 1100px) {
+  .chat-main .chat-activity {
+    right: calc(50% + min(var(--chat-col-max), 100% - 48px) / 2 + 2px);
+  }
+  .chat-main .chat-activity > span {
+    display: none;
+  }
 }
 .chat-view .chat-composer {
   border-top: 0;
   padding: 8px 24px 16px;
   background: transparent;
 }
-.chat-view .chat-composer > *,
+.chat-view .chat-composer > :not(.chat-cmd-menu),
 .chat-banner {
   width: 100%;
   max-width: var(--chat-col-max);
   margin-inline: auto;
   box-sizing: border-box;
+}
+/* The `/` list floats above the box, so it lines up with the same centered column. */
+.chat-view .chat-cmd-menu {
+  inset-inline: max(24px, (100% - var(--chat-col-max)) / 2);
 }
 .chat-view .chat-composer-box {
   border-radius: var(--radius-lg);
@@ -4428,6 +4458,15 @@ dialog.modal::backdrop {
 }
 .chat-icon-btn.on {
   color: var(--accent);
+}
+.chat-icon-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+/* The terminal hatch fills the column edge to edge, like a task session's Terminal view. */
+.chat-terminal {
+  padding: 8px 0 0 8px;
+  background: var(--terminal-bg);
 }
 .chat-icon-btn:focus-visible,
 .chat-repo-toggle:focus-visible,
@@ -4631,7 +4670,24 @@ dialog.modal::backdrop {
 }
 .chat-thread-pin {
   flex: 0 0 auto;
+  margin-left: auto;
   color: var(--accent);
+}
+/* Fixed slot so names line up whether a row shows the orb, the idle dot, or nothing. */
+.chat-thread-state {
+  flex: 0 0 14px;
+  display: grid;
+  place-items: center;
+  height: 14px;
+}
+/* The orb only ships at 20px; scale it to the 14px slot rather than adding a size to the shared indicator. */
+.chat-thread-state .ind-orb {
+  transform: scale(0.7);
+}
+.chat-thread-state .ind-dot {
+  width: 7px;
+  height: 7px;
+  color: var(--success);
 }
 .chat-thread-resume {
   flex: 0 0 auto;

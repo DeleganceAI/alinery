@@ -1287,7 +1287,7 @@ export default function App() {
           )}
           {view.kind === "chat" && (
             <div className="view">
-              <ChatView knownRepos={appConfig.known_repos} />
+              <ChatView knownRepos={appConfig.known_repos} terminalFontSize={appearance.terminal_font_size} />
             </div>
           )}
           {view.kind === "sessions" && (

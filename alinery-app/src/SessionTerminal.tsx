@@ -6,6 +6,7 @@ import { APPEARANCE_EVENT } from "./appearance";
 import { decodeChannelFrame } from "./channelFrame";
 import * as ipc from "./ipc";
 import { attachGpuRenderer } from "./terminalRenderer";
+import type { SessionObservation } from "./types";
 import "@xterm/xterm/css/xterm.css";
 
 // xterm needs concrete colors; these tokens are plain hexes in both built-in
@@ -39,6 +40,15 @@ export type SessionTerminalConnectionState = "opening" | "open" | "recovering" |
 // M3: taskSlug + phase let a FRESH spawn seed OMP with the phase prompt. On
 // reattach the backend ignores them (OMP already has it), so passing them always
 // is safe.
+/** The daemon calls a terminal makes. Default: the active-repo session commands; a chat thread passes its own repo-scoped set. */
+export type SessionTerminalIo = {
+  open: (args: Parameters<typeof ipc.openSession>[0]) => Promise<void>;
+  write: (data: string) => Promise<void>;
+  resize: (cols: number, rows: number) => Promise<void>;
+  detach: (attachId: number) => Promise<void>;
+  status: () => Promise<SessionObservation>;
+};
+
 export function SessionTerminal({
   sessionId,
   cwd,
@@ -51,6 +61,7 @@ export function SessionTerminal({
   terminalFontSize,
   readOnly,
   onConnectionStateChange,
+  io,
 }: {
   sessionId: string;
   cwd: string;
@@ -65,6 +76,8 @@ export function SessionTerminal({
   // Read-only replay: mount the capped activity sidecar, no daemon session, no stdin (P7).
   readOnly?: boolean;
   onConnectionStateChange?: (state: SessionTerminalConnectionState) => void;
+  /** Must keep a stable identity: a new object tears down and reattaches the terminal. */
+  io?: SessionTerminalIo;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
 
@@ -72,6 +85,13 @@ export function SessionTerminal({
     const attachId = nextAttachId++;
     const host = hostRef.current;
     if (!host) return;
+    const sessionIo: SessionTerminalIo = io ?? {
+      open: (args) => ipc.openSession(args),
+      write: (data) => ipc.writeSession(sessionId, data),
+      resize: (cols, rows) => ipc.resizeSession(sessionId, cols, rows),
+      detach: (id) => ipc.detachSession(sessionId, id),
+      status: () => ipc.sessionStatus(sessionId, taskSlug || null),
+    };
     const term = new Terminal({
       convertEol: false,
       cursorBlink: true,
@@ -176,15 +196,15 @@ export function SessionTerminal({
       const rows = term.rows;
       term.resize(cols - 1, rows);
       lastResize = `${cols - 1}x${rows}`;
-      void ipc
-        .resizeSession(sessionId, cols - 1, rows)
+      void sessionIo
+        .resize(cols - 1, rows)
         .catch(() => {})
         .finally(() => {
           replayRestoreTimer = window.setTimeout(() => {
             if (disposed || currentStreamToken !== streamToken) return;
             term.resize(cols, rows);
             lastResize = `${cols}x${rows}`;
-            void ipc.resizeSession(sessionId, cols, rows).catch(() => {});
+            void sessionIo.resize(cols, rows).catch(() => {});
             requestAnimationFrame(syncViewport);
           }, 100);
         });
@@ -230,7 +250,7 @@ export function SessionTerminal({
         }
       };
       try {
-        await ipc.openSession({
+        await sessionIo.open({
           id: sessionId,
           cwd,
           attachId,
@@ -250,7 +270,7 @@ export function SessionTerminal({
         opened = true;
         onConnectionStateChange?.("open");
         if (geometryReady) {
-          await ipc.resizeSession(sessionId, term.cols, term.rows);
+          await sessionIo.resize(term.cols, term.rows);
           lastResize = `${term.cols}x${term.rows}`;
         }
         return true;
@@ -285,7 +305,7 @@ export function SessionTerminal({
             return;
           }
           try {
-            const obs = await ipc.sessionStatus(sessionId, taskSlug || null);
+            const obs = await sessionIo.status();
             if (disposed || streamToken !== currentStreamToken || (obs.lifecycle.state !== "live" && obs.lifecycle.state !== "live_exited")) {
               return;
             }
@@ -332,7 +352,7 @@ export function SessionTerminal({
     void startMonitoredStream();
 
     // Keystrokes -> pty. write_session no-ops in Rust until the session registers.
-    const dataSub = term.onData((d) => ipc.writeSession(sessionId, d).catch(() => {}));
+    const dataSub = term.onData((d) => sessionIo.write(d).catch(() => {}));
 
     const ro = new ResizeObserver(() => {
       cancelAnimationFrame(resizeFrame);
@@ -341,7 +361,7 @@ export function SessionTerminal({
         const size = `${term.cols}x${term.rows}`;
         if (size === lastResize) return;
         lastResize = size;
-        ipc.resizeSession(sessionId, term.cols, term.rows).catch(() => {});
+        sessionIo.resize(term.cols, term.rows).catch(() => {});
       });
     });
     ro.observe(host);
@@ -356,13 +376,13 @@ export function SessionTerminal({
       // Detach (don't kill): the pty keeps running in the background so reopening
       // this session reattaches to the same PTY instead of spawning a fresh one.
       // attachId-scoped so a stale detach can't clobber a newer attach's live sink.
-      ipc.detachSession(sessionId, attachId).catch(() => {});
+      sessionIo.detach(attachId).catch(() => {});
       ro.disconnect();
       cancelAnimationFrame(resizeFrame);
       dataSub.dispose();
       term.dispose();
     };
-  }, [sessionId, cwd, taskSlug, phase, harness, model, intent, resumeToken, readOnly, terminalFontSize, onConnectionStateChange]);
+  }, [sessionId, cwd, taskSlug, phase, harness, model, intent, resumeToken, readOnly, terminalFontSize, onConnectionStateChange, io]);
 
   return <div ref={hostRef} style={{ width: "100%", height: "100%" }} />;
 }

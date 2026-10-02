@@ -78,6 +78,13 @@ export function confirmDanger(title: string, body: ReactNode, acceptLabel = "Con
 }
 
 /** Mounted once at App level, next to <Toast/>. */
+/** Switching Chat <-> Terminal restarts OMP on the same journal, so a running turn is stopped first. */
+export function confirmStopAndSwitch(target: "pty" | "rpc"): Promise<boolean> {
+  return target === "pty"
+    ? confirmDanger("Switch to Terminal?", "Stop the agent’s current work and switch to Terminal?", "Stop and switch")
+    : confirmDanger("Switch to Chat?", "Stop the agent’s current work and switch to Chat?", "Stop and switch");
+}
+
 export function ConfirmHost() {
   const [pending, setPending] = useState<Pending | null>(null);
 

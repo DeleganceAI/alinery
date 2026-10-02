@@ -472,6 +472,62 @@ pub(crate) async fn chat_session_status(app: AppHandle, state: State<'_, AppStat
     .map_err(|error| format!("chat session status: {error}"))?
 }
 
+/// The chat's terminal hatch: respawn the thread's OMP on the same journal over the other transport
+/// (`pty` = the OMP TUI, `rpc` = back to chat). The generic restate is bound to the active repo;
+/// a chat thread can live in any known repo.
+#[tauri::command]
+pub(crate) async fn chat_restate(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, transport: String) -> Result<(), String> {
+    if transport != "pty" && transport != "rpc" {
+        return Err("missing transport".into());
+    }
+    let repo = owned_chat_repo(&app, &state, &repo_path)?;
+    let daemon = chat_daemon(&state, &repo)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        load_root_omp(&repo, &id)?;
+        daemon.restate_session(&id, &transport)
+    })
+    .await
+    .map_err(|error| format!("chat restate: {error}"))?
+}
+
+/// Attach the terminal view to a thread that is in its PTY transport. Attach only: it never spawns.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn chat_pty_attach(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_path: String,
+    id: String,
+    attach_id: u64,
+    stream_token: u64,
+    cols: Option<u16>,
+    rows: Option<u16>,
+    on_bytes: Channel<InvokeResponseBody>,
+) -> Result<(), String> {
+    let repo = owned_chat_repo(&app, &state, &repo_path)?;
+    let daemon = chat_daemon(&state, &repo)?;
+    let meta = load_root_omp(&repo, &id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        open_daemon_session(&daemon, &id, &meta.worktree, Some(""), None, None, attach_id, stream_token, daemon_client::ops::ATTACH, None, cols, rows, on_bytes, app)
+    })
+    .await
+    .map_err(|error| format!("chat terminal attach: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) fn chat_pty_write(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, data: String) -> Result<(), String> {
+    let repo = owned_chat_repo(&app, &state, &repo_path)?;
+    let _ = load_root_omp(&repo, &id)?;
+    chat_daemon(&state, &repo)?.write_session(&id, &data)
+}
+
+#[tauri::command]
+pub(crate) fn chat_pty_resize(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, cols: u16, rows: u16) -> Result<(), String> {
+    let repo = owned_chat_repo(&app, &state, &repo_path)?;
+    let _ = load_root_omp(&repo, &id)?;
+    chat_daemon(&state, &repo)?.resize_session(&id, cols, rows)
+}
+
 #[tauri::command]
 pub(crate) async fn read_chat_omp(
     app: AppHandle,

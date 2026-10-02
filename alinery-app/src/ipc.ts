@@ -282,6 +282,18 @@ export const chatBranchLabel = (repoPath: string, sessionId: string) => invoke<C
 export const chatRpcWrite = (repoPath: string, id: string, payload: unknown) => invoke<void>("chat_rpc_write", { repoPath, id, payload });
 export const chatDetach = (repoPath: string, id: string, attachId: number) => invoke<void>("chat_detach", { repoPath, id, attachId });
 export const chatSessionStatus = (repoPath: string, id: string) => invoke<SessionObservation>("chat_session_status", { repoPath, id });
+export const chatRestate = (repoPath: string, id: string, transport: "pty" | "rpc") => invoke<void>("chat_restate", { repoPath, id, transport });
+export const chatPtyAttach = (a: {
+  repoPath: string;
+  id: string;
+  attachId: number;
+  streamToken: number;
+  cols?: number | null;
+  rows?: number | null;
+  onBytes: Channel<ArrayBuffer>;
+}) => invoke<void>("chat_pty_attach", a);
+export const chatPtyWrite = (repoPath: string, id: string, data: string) => invoke<void>("chat_pty_write", { repoPath, id, data });
+export const chatPtyResize = (repoPath: string, id: string, cols: number, rows: number) => invoke<void>("chat_pty_resize", { repoPath, id, cols, rows });
 export const readChatOmp = (a: { repoPath: string; id: string; end?: number | null; want?: number | null }) => invoke<ArrayBuffer>("read_chat_omp", a);
 export const chatRpcAttach = (a: { repoPath: string; id: string; attachId: number; streamToken: number; onLine: (line: string) => void }) => {
   const onLine = new Channel<string>();

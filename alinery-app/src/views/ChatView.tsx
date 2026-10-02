@@ -1,13 +1,32 @@
-import { Archive, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquare, PanelLeftClose, PanelLeftOpen, Pencil, Pin, PinOff, Plus, Trash2, X } from "lucide-react";
+import {
+  Archive,
+  ChevronDown,
+  ChevronRight,
+  FolderGit2,
+  GitBranch,
+  MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pencil,
+  Pin,
+  PinOff,
+  Plus,
+  SquareTerminal,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChatComposer } from "../ChatComposer";
+import { applySendPlan, planChatSend } from "../chat/send";
 import type { SessionChatStatus } from "../chat/types";
 import { appendOptimisticAbort, appendOptimisticUser, type ChatTranscriptState, emptyTranscript } from "../chatTranscript";
-import { askConfirm, confirmDanger } from "../confirm";
+import { askConfirm, confirmDanger, confirmStopAndSwitch } from "../confirm";
+import { IdleDot, RunningIndicator } from "../Indicators";
 import * as ipc from "../ipc";
 import { NameEditor } from "../NameEditor";
+import { SessionTerminal } from "../SessionTerminal";
 import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
-import { isTurnActive } from "../sessionMessage";
+import { isTurnActive, OMP_INTERRUPT_DATA } from "../sessionMessage";
 import { Checkbox, Dialog, obsLabel } from "../shared";
 import type { ChatThread, SessionObservation } from "../types";
 import { ChatModelDialog } from "./ChatModelDialog";
@@ -18,6 +37,7 @@ import {
   applyModelCommand,
   applyPlainSend,
   attachHandshake,
+  chatTerminalIo,
   journalState,
   parseChatLine,
   queueRefreshCommand,
@@ -65,11 +85,23 @@ function chatActivity(observation: SessionObservation | null, transcript: ChatTr
   return { status, turnActive, kind };
 }
 
+/** `session_list_statuses` keys a root session as `repo::id` (empty task slug). */
+function railKey(thread: ChatThread): string {
+  return `${thread.repo_path}::${thread.session.id}`;
+}
+
+/** The rail shows the orb while a turn runs and a green dot while OMP is up and waiting; nothing once it has exited. */
+function railState(observation: SessionObservation | null | undefined, turnActive: boolean): "working" | "idle" | null {
+  const process = observation?.state?.process.state;
+  if (process !== "alive" && process !== "starting") return null;
+  return turnActive ? "working" : "idle";
+}
+
 function interruptedWithoutJournal(thread: ChatThread, transcript: ChatTranscriptState): boolean {
   return thread.session.ended_at != null && thread.session.harness_resume_token.length === 0 && transcript.entries.length === 0;
 }
 
-export function ChatView({ knownRepos }: { knownRepos: string[] }) {
+export function ChatView({ knownRepos, terminalFontSize }: { knownRepos: string[]; terminalFontSize: number }) {
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -84,7 +116,13 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
   const [renaming, setRenaming] = useState(false);
   const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(() => new Set());
   const [modelOpen, setModelOpen] = useState(false);
+  const [railObservations, setRailObservations] = useState<Record<string, SessionObservation>>({});
   const pendingPrompt = useRef<string | null>(null);
+  // A fresh attach id per run: a re-run for the same thread (back from Terminal) must not let the
+  // previous run's fire-and-forget detach drop the new attach, which shares the daemon's id space.
+  const attachSeq = useRef(0);
+  const [attachEpoch, setAttachEpoch] = useState(0);
+  const [hatchBusy, setHatchBusy] = useState(false);
   const dirs = knownRepos.filter((path) => path.length > 0);
 
   const reload = async (archived = showArchived) => {
@@ -108,6 +146,34 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
     };
   }, []);
 
+  // One batched read for every live thread in the rail, not a poller per row. The selected thread
+  // also has its own 1.5s poll and live transcript, which the rail prefers for that row.
+  const liveRefs = useMemo(
+    () =>
+      threads
+        .filter((thread) => !thread.session.archived && thread.session.ended_at == null)
+        .map((thread) => ({ repo_path: thread.repo_path, task_slug: "", id: thread.session.id })),
+    [threads],
+  );
+  useEffect(() => {
+    if (liveRefs.length === 0) return;
+    let cancelled = false;
+    const poll = () => {
+      ipc
+        .sessionListStatuses(liveRefs)
+        .then((next) => {
+          if (!cancelled) setRailObservations(next);
+        })
+        .catch(() => {});
+    };
+    poll();
+    const timer = window.setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [liveRefs]);
+
   const selected = useMemo(() => threads.find((thread) => `${thread.repo_path}:${thread.session.id}` === selectedKey) ?? null, [threads, selectedKey]);
 
   const selectedId = selected?.session.id;
@@ -120,7 +186,7 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
     }
     const repo = selectedRepo;
     const id = selectedId;
-    const attachId = 1;
+    const attachId = ++attachSeq.current;
     // A send that resumed this thread: its row and turn claim belong on the journal loaded below.
     const resumed = pendingPrompt.current;
     let cancelled = false;
@@ -139,34 +205,38 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
     };
     observe();
     const timer = window.setInterval(observe, 1500);
+    // Attach only once the journal is in, as task sessions do: the handshake replies (commands,
+    // state, models) must land on the journal-built transcript, not be replaced by it.
     ipc
       .readChatOmp({ repoPath: repo, id })
-      .then((buffer) => {
-        if (cancelled) return;
-        const next = journalState(buffer);
-        setTranscript(resumed ? applyPlainSend(next, resumed, false) : next);
-        if (interruptedWithoutJournal(selected, next)) setError("cannot continue");
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setTranscript(resumed ? applyPlainSend(emptyTranscript(), resumed, false) : emptyTranscript());
-        if (selected.session.ended_at != null && selected.session.harness_resume_token.length === 0) setError("cannot continue");
-      });
-    ipc
-      .chatRpcAttach({
-        repoPath: repo,
-        id,
-        attachId,
-        streamToken: 1,
-        onLine: (line) => {
+      .then(
+        (buffer) => {
           if (cancelled) return;
-          const value = parseChatLine(line);
-          setTranscript((current) => applyChatValue(current, value));
-          const refresh = queueRefreshCommand(value);
-          if (refresh) ipc.chatRpcWrite(repo, id, refresh).catch(() => {});
+          const next = journalState(buffer);
+          setTranscript(resumed ? applyPlainSend(next, resumed, false) : next);
+          if (interruptedWithoutJournal(selected, next)) setError("cannot continue");
         },
-      })
+        () => {
+          if (cancelled) return;
+          setTranscript(resumed ? applyPlainSend(emptyTranscript(), resumed, false) : emptyTranscript());
+          if (selected.session.ended_at != null && selected.session.harness_resume_token.length === 0) setError("cannot continue");
+        },
+      )
       .then(async () => {
+        if (cancelled) return;
+        await ipc.chatRpcAttach({
+          repoPath: repo,
+          id,
+          attachId,
+          streamToken: 1,
+          onLine: (line) => {
+            if (cancelled) return;
+            const value = parseChatLine(line);
+            setTranscript((current) => applyChatValue(current, value));
+            const refresh = queueRefreshCommand(value);
+            if (refresh) ipc.chatRpcWrite(repo, id, refresh).catch(() => {});
+          },
+        });
         if (cancelled) return;
         for (const command of attachHandshake()) {
           await ipc.chatRpcWrite(repo, id, command);
@@ -186,11 +256,41 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
       window.clearInterval(timer);
       ipc.chatDetach(repo, id, attachId).catch(() => {});
     };
-  }, [selectedId, selectedRepo]);
+  }, [selectedId, selectedRepo, attachEpoch]);
 
   const activity = chatActivity(observation, transcript);
   const statusKind = activity.kind;
   const sendNowEnabled = activity.status === "running" && observation?.state?.agent?.state !== "waiting_for_input" && body.trim().length > 0;
+  const processLive = observation?.state?.process.state === "alive";
+  const inTerminal = processLive && observation?.transport === "pty";
+  const terminalIo = useMemo(() => (selectedRepo && selectedId ? chatTerminalIo(selectedRepo, selectedId) : undefined), [selectedRepo, selectedId]);
+
+  /**
+   * The escape hatch: restart this thread's OMP on the same journal in its terminal UI, or back
+   * into chat. Click-only, never automatic — it replaces the live process.
+   */
+  async function hatch() {
+    if (!selected || hatchBusy) return;
+    const repo = selected.repo_path;
+    const id = selected.session.id;
+    const target = inTerminal ? "rpc" : "pty";
+    setError("");
+    try {
+      if (activity.turnActive) {
+        if (!(await confirmStopAndSwitch(target))) return;
+        await (inTerminal ? ipc.chatPtyWrite(repo, id, OMP_INTERRUPT_DATA) : ipc.chatRpcWrite(repo, id, abortTurnCommand())).catch(() => {});
+      }
+      setHatchBusy(true);
+      await ipc.chatRestate(repo, id, target);
+      setObservation(await ipc.chatSessionStatus(repo, id));
+      // Back in chat: re-read the journal (turns typed in the terminal) and reattach RPC.
+      if (target === "rpc") setAttachEpoch((epoch) => epoch + 1);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setHatchBusy(false);
+    }
+  }
 
   async function archiveSelected() {
     if (!selected) return;
@@ -295,7 +395,19 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
         }
       }
       const busy = activity.turnActive;
-      setTranscript((current) => applyPlainSend(current, text, busy));
+      const plan = planChatSend(text, transcript.commands, busy);
+      const dispatch = plan.dispatch;
+      if (dispatch.kind === "open-providers" && dispatch.tab === "models") {
+        setModelOpen(true);
+        return;
+      }
+      if (dispatch.kind === "hatch" || dispatch.kind === "open-providers") {
+        // Terminal-only in OMP: nothing to write over RPC. The notice points at the terminal button.
+        const notice = dispatch.kind === "hatch" ? dispatch.reason : `/${text.slice(1).split(/\s+/)[0]} runs in OMP's terminal. Use the terminal button in the title bar.`;
+        setTranscript((current) => applySendPlan(current, text, { ...plan, notice }).state);
+        return;
+      }
+      setTranscript((current) => applySendPlan(current, text, plan).state);
       await ipc.chatRpcWrite(repo, id, sendCommand(text, busy));
     } catch (cause) {
       setTranscript((current) => ({ ...current, pendingTurn: false }));
@@ -385,6 +497,11 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
                       {rows.length === 0 ? <li className="chat-thread-none">No threads</li> : null}
                       {rows.map((thread) => {
                         const key = `${thread.repo_path}:${thread.session.id}`;
+                        const polled = railObservations[railKey(thread)];
+                        const state =
+                          key === selectedKey
+                            ? railState(observation ?? polled, activity.turnActive)
+                            : railState(polled, isTurnActive({ agentState: polled?.state?.agent?.state }));
                         return (
                           <li key={key} className="chat-thread">
                             <button
@@ -392,10 +509,14 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
                               className="chat-thread-btn"
                               aria-current={key === selectedKey ? "true" : undefined}
                               data-archived={thread.session.archived ? "true" : undefined}
+                              title={state === "working" ? "Working" : state === "idle" ? "Idle" : undefined}
                               onClick={() => setSelectedKey(key)}
                             >
-                              {thread.session.pinned ? <Pin size={12} aria-hidden="true" className="chat-thread-pin" /> : null}
+                              <span className="chat-thread-state" aria-hidden="true">
+                                {state === "working" ? <RunningIndicator /> : state === "idle" ? <IdleDot /> : null}
+                              </span>
                               <span className="chat-thread-name">{threadLabel(thread)}</span>
+                              {thread.session.pinned ? <Pin size={12} aria-hidden="true" className="chat-thread-pin" /> : null}
                             </button>
                             {showArchived && thread.session.archived ? (
                               <button type="button" className="btn ghost small chat-thread-resume" onClick={() => resume(thread)}>
@@ -482,11 +603,15 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
           <div className="chat-titlebar-actions">
             {selected ? (
               <>
-                <button type="button" className="btn ghost small chat-model-btn" onClick={() => setModelOpen(true)} title="Change model">
-                  <span className="chat-model-label">{modelLabel}</span>
-                  <ChevronDown size={14} aria-hidden="true" />
-                </button>
-                <span className="chat-titlebar-sep" aria-hidden="true" />
+                {inTerminal ? null : (
+                  <>
+                    <button type="button" className="btn ghost small chat-model-btn" onClick={() => setModelOpen(true)} title="Change model">
+                      <span className="chat-model-label">{modelLabel}</span>
+                      <ChevronDown size={14} aria-hidden="true" />
+                    </button>
+                    <span className="chat-titlebar-sep" aria-hidden="true" />
+                  </>
+                )}
                 <button
                   type="button"
                   className={`chat-icon-btn${selected.session.pinned ? " on" : ""}`}
@@ -506,6 +631,19 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
                     <Trash2 size={16} aria-hidden="true" />
                   </button>
                 )}
+                {processLive || hatchBusy ? (
+                  <button
+                    type="button"
+                    className={`chat-icon-btn${inTerminal ? " on" : ""}`}
+                    aria-pressed={inTerminal}
+                    aria-label={inTerminal ? "Back to chat" : "Open in Terminal"}
+                    title={inTerminal ? "Back to chat" : "Open in OMP terminal"}
+                    disabled={hatchBusy}
+                    onClick={() => void hatch()}
+                  >
+                    {inTerminal ? <MessageSquare size={16} aria-hidden="true" /> : <SquareTerminal size={16} aria-hidden="true" />}
+                  </button>
+                ) : null}
                 <button type="button" className="chat-icon-btn" aria-label="Archive" title="Archive" onClick={archiveSelected}>
                   <Archive size={16} aria-hidden="true" />
                 </button>
@@ -513,7 +651,22 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
             ) : null}
           </div>
         </header>
-        {selected ? (
+        {selected && inTerminal ? (
+          <div className="terminal-frame chat-terminal">
+            <SessionTerminal
+              key={selected.session.id}
+              sessionId={selected.session.id}
+              cwd={selected.session.worktree}
+              taskSlug=""
+              phase=""
+              harness="omp"
+              model=""
+              intent="attach"
+              terminalFontSize={terminalFontSize}
+              io={terminalIo}
+            />
+          </div>
+        ) : selected ? (
           <ChatPane entries={transcript.entries} status={activity.status} />
         ) : (
           <div className="chat-blank">
@@ -532,20 +685,22 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
             ) : null}
           </div>
         ) : null}
-        <ChatComposer
-          body={body}
-          status={activity.status}
-          catalog={[]}
-          allowAttach={false}
-          onBodyChange={setBody}
-          onSend={() => {
-            void send();
-          }}
-          onAbort={abort}
-          onSendNow={sendNowEnabled ? () => void sendNow() : undefined}
-          sendNowEnabled={sendNowEnabled}
-          queuedCount={transcript.sessionMeta.queuedMessageCount}
-        />
+        {inTerminal ? null : (
+          <ChatComposer
+            body={body}
+            status={activity.status}
+            catalog={transcript.commands}
+            allowAttach={false}
+            onBodyChange={setBody}
+            onSend={() => {
+              void send();
+            }}
+            onAbort={abort}
+            onSendNow={sendNowEnabled ? () => void sendNow() : undefined}
+            sendNowEnabled={sendNowEnabled}
+            queuedCount={transcript.sessionMeta.queuedMessageCount}
+          />
+        )}
       </section>
       {creating ? (
         <Dialog onClose={() => setCreating(false)} ariaLabel="New thread" className="chat-new-dialog">
