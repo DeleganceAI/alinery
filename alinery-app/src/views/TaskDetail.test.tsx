@@ -415,6 +415,25 @@ describe("session work names", () => {
     expect(screen.getByRole("textbox", { name: "Session name" })).toBeDefined();
   });
 
+  it("replaces the name animation with a dash when a live agent becomes idle", async () => {
+    vi.useFakeTimers();
+    scenario.sessions = [session({ id: "waiting", harness: "omp" })];
+    mocks.sessionStatuses.mockResolvedValue({ waiting: observation("busy") });
+    const rendered = renderDetail();
+    await vi.waitFor(() => expect(screen.getByRole("status", { name: "Waiting for session name" })).toBeDefined());
+    await rendered;
+    expect(screen.getByRole("status", { name: "Waiting for session name" })).toBeDefined();
+
+    mocks.sessionStatuses.mockResolvedValue({ waiting: observation("idle") });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(screen.queryByRole("status", { name: "Waiting for session name" })).toBeNull();
+    expect(document.querySelector(".session-name-cell .editable-name-text")?.textContent).toBe("—");
+    fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
+    expect(screen.getByRole("textbox", { name: "Session name" })).toBeDefined();
+  });
+
   it("keeps a static placeholder when an unnamed session is not waiting for a name", async () => {
     scenario.sessions = [session({ id: "terminal", harness: "no-harness" }), session({ id: "stopped", harness: "omp" })];
     mocks.sessionStatuses.mockResolvedValue({
