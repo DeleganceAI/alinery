@@ -1,16 +1,29 @@
 import { Archive, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquare, PanelLeftClose, PanelLeftOpen, Pencil, Pin, PinOff, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChatComposer } from "../ChatComposer";
+import type { SessionChatStatus } from "../chat/types";
 import { appendOptimisticAbort, appendOptimisticUser, type ChatTranscriptState, emptyTranscript } from "../chatTranscript";
 import { askConfirm, confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import { NameEditor } from "../NameEditor";
-import { observationDisplayKind } from "../sessionAttention";
+import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
+import { isTurnActive } from "../sessionMessage";
 import { Checkbox, Dialog, obsLabel } from "../shared";
 import type { ChatThread, SessionObservation } from "../types";
 import { ChatModelDialog } from "./ChatModelDialog";
 import { ChatPane } from "./ChatPane";
-import { abortTurnCommand, applyChatLine, applyModelCommand, attachHandshake, journalState, sendCommand } from "./chatSession";
+import {
+  abortTurnCommand,
+  applyChatValue,
+  applyModelCommand,
+  applyPlainSend,
+  attachHandshake,
+  journalState,
+  parseChatLine,
+  queueRefreshCommand,
+  sendCommand,
+  sendNowCommand,
+} from "./chatSession";
 
 function threadLabel(thread: ChatThread): string {
   if (thread.name) return thread.name;
@@ -36,12 +49,20 @@ function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-function composerStatus(observation: SessionObservation | null): "idle" | "running" | "waiting_approval" {
-  if (!observation) return "idle";
-  const kind = observationDisplayKind(observation);
-  if (kind === "busy" || kind === "starting" || kind === "loading" || kind === "unsupported") return "running";
-  if (kind === "waiting_for_approval") return "waiting_approval";
-  return "idle";
+/**
+ * Busy comes from the turn itself (live transcript first, then the observation poll), the same
+ * predicate task sessions use. A booting OMP (process up, agent not yet `ready`) has no turn, so a
+ * new thread reads Idle rather than Loading/Working.
+ */
+function chatActivity(observation: SessionObservation | null, transcript: ChatTranscriptState): { status: SessionChatStatus; turnActive: boolean; kind: ObservationDisplayKind } {
+  const raw = observation ? observationDisplayKind(observation) : "idle";
+  // OMP that died mid-turn never sends turn_end, and the daemon keeps its last agent state: neither is a running turn.
+  const exited = observation?.state ? observation.state.process.state === "exited" : raw === "exited";
+  const turnActive = !exited && isTurnActive({ pendingTurn: transcript.pendingTurn, turnOpen: transcript.turnOpen, agentState: observation?.state?.agent?.state });
+  const status: SessionChatStatus = raw === "waiting_for_approval" ? "waiting_approval" : turnActive ? "running" : "idle";
+  const quiet = raw === "loading" || raw === "starting" || raw === "idle";
+  const kind: ObservationDisplayKind = quiet ? (turnActive ? "busy" : "idle") : raw;
+  return { status, turnActive, kind };
 }
 
 function interruptedWithoutJournal(thread: ChatThread, transcript: ChatTranscriptState): boolean {
@@ -92,6 +113,7 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
   const selectedId = selected?.session.id;
   const selectedRepo = selected?.repo_path;
   useEffect(() => {
+    setObservation(null);
     if (!selected || !selectedRepo || !selectedId) {
       setTranscript(emptyTranscript());
       return;
@@ -99,29 +121,35 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
     const repo = selectedRepo;
     const id = selectedId;
     const attachId = 1;
+    // A send that resumed this thread: its row and turn claim belong on the journal loaded below.
+    const resumed = pendingPrompt.current;
     let cancelled = false;
     setRenaming(false);
     setModelOpen(false);
     setError((current) => (current === "cannot continue" ? "" : current));
-    ipc
-      .chatSessionStatus(repo, id)
-      .then((next) => {
-        if (!cancelled) setObservation(next);
-      })
-      .catch(() => {
-        if (!cancelled) setObservation(null);
-      });
+    // Polled like a task session's status: OMP's `ready` and every turn end land after this runs.
+    // A failed read keeps the last observation; null would read Idle mid-turn.
+    const observe = () => {
+      ipc
+        .chatSessionStatus(repo, id)
+        .then((next) => {
+          if (!cancelled) setObservation(next);
+        })
+        .catch(() => {});
+    };
+    observe();
+    const timer = window.setInterval(observe, 1500);
     ipc
       .readChatOmp({ repoPath: repo, id })
       .then((buffer) => {
         if (cancelled) return;
         const next = journalState(buffer);
-        setTranscript(next);
+        setTranscript(resumed ? applyPlainSend(next, resumed, false) : next);
         if (interruptedWithoutJournal(selected, next)) setError("cannot continue");
       })
       .catch(() => {
         if (cancelled) return;
-        setTranscript(emptyTranscript());
+        setTranscript(resumed ? applyPlainSend(emptyTranscript(), resumed, false) : emptyTranscript());
         if (selected.session.ended_at != null && selected.session.harness_resume_token.length === 0) setError("cannot continue");
       });
     ipc
@@ -131,7 +159,11 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
         attachId,
         streamToken: 1,
         onLine: (line) => {
-          if (!cancelled) setTranscript((current) => applyChatLine(current, line));
+          if (cancelled) return;
+          const value = parseChatLine(line);
+          setTranscript((current) => applyChatValue(current, value));
+          const refresh = queueRefreshCommand(value);
+          if (refresh) ipc.chatRpcWrite(repo, id, refresh).catch(() => {});
         },
       })
       .then(async () => {
@@ -139,22 +171,26 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
         for (const command of attachHandshake()) {
           await ipc.chatRpcWrite(repo, id, command);
         }
-        const pending = pendingPrompt.current;
-        if (!pending || cancelled) return;
+        if (!resumed || cancelled) return;
         pendingPrompt.current = null;
-        await ipc.chatRpcWrite(repo, id, sendCommand(pending, false, false));
+        await ipc.chatRpcWrite(repo, id, sendCommand(resumed, false));
       })
-      .catch(() => {
-        if (pendingPrompt.current) {
-          pendingPrompt.current = null;
-          setError("daemon not connected");
-        }
+      .catch((cause: unknown) => {
+        if (!resumed || cancelled) return;
+        pendingPrompt.current = null;
+        setTranscript((current) => ({ ...current, pendingTurn: false }));
+        setError(errorMessage(cause));
       });
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
       ipc.chatDetach(repo, id, attachId).catch(() => {});
     };
   }, [selectedId, selectedRepo]);
+
+  const activity = chatActivity(observation, transcript);
+  const statusKind = activity.kind;
+  const sendNowEnabled = activity.status === "running" && observation?.state?.agent?.state !== "waiting_for_input" && body.trim().length > 0;
 
   async function archiveSelected() {
     if (!selected) return;
@@ -248,7 +284,6 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
         setShowArchived(false);
         setThreads(rows);
         pendingPrompt.current = text;
-        setTranscript((current) => appendOptimisticUser(current, text, "prompt"));
         setSelectedKey(`${repo}:${successor.id}`);
         return;
       }
@@ -259,11 +294,24 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
           return;
         }
       }
-      const running = composerStatus(observation) === "running";
-      const hasTurn = transcript.messages.length > 0 || selected.session.started_at != null;
-      const command = sendCommand(text, running, hasTurn);
-      setTranscript((current) => appendOptimisticUser(current, text, hasTurn || running ? "follow_up" : "prompt"));
-      await ipc.chatRpcWrite(repo, id, command);
+      const busy = activity.turnActive;
+      setTranscript((current) => applyPlainSend(current, text, busy));
+      await ipc.chatRpcWrite(repo, id, sendCommand(text, busy));
+    } catch (cause) {
+      setTranscript((current) => ({ ...current, pendingTurn: false }));
+      setError(errorMessage(cause));
+    }
+  }
+
+  async function sendNow() {
+    if (!selected || !body.trim()) return;
+    const text = body;
+    setError("");
+    try {
+      await ipc.chatRpcWrite(selected.repo_path, selected.session.id, sendNowCommand(text));
+      // Only after the write lands, as task sessions do: a failed Send now keeps the draft and adds no row.
+      setBody((current) => (current === text ? "" : current));
+      setTranscript((current) => appendOptimisticUser(current, text, "prompt"));
     } catch (cause) {
       setError(errorMessage(cause));
     }
@@ -275,7 +323,6 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
     ipc.chatRpcWrite(selected.repo_path, selected.session.id, abortTurnCommand()).catch((cause: unknown) => setError(String(cause)));
   }
 
-  const statusKind = observation ? observationDisplayKind(observation) : "idle";
   const modelLabel = transcript.sessionMeta.model || selected?.session.model || "Model";
   const blocked = error === "cannot continue";
   const groups = repoGroups(dirs, threads);
@@ -467,7 +514,7 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
           </div>
         </header>
         {selected ? (
-          <ChatPane entries={transcript.entries} status={composerStatus(observation)} />
+          <ChatPane entries={transcript.entries} status={activity.status} />
         ) : (
           <div className="chat-blank">
             <MessageSquare size={28} aria-hidden="true" />
@@ -487,7 +534,7 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
         ) : null}
         <ChatComposer
           body={body}
-          status={composerStatus(observation)}
+          status={activity.status}
           catalog={[]}
           allowAttach={false}
           onBodyChange={setBody}
@@ -495,6 +542,9 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
             void send();
           }}
           onAbort={abort}
+          onSendNow={sendNowEnabled ? () => void sendNow() : undefined}
+          sendNowEnabled={sendNowEnabled}
+          queuedCount={transcript.sessionMeta.queuedMessageCount}
         />
       </section>
       {creating ? (

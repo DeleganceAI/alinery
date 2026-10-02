@@ -454,17 +454,22 @@ pub(crate) fn chat_detach(app: AppHandle, state: State<'_, AppState>, repo_path:
 }
 
 #[tauri::command]
-pub(crate) fn chat_session_status(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String) -> Result<SessionObservation, String> {
+pub(crate) async fn chat_session_status(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String) -> Result<SessionObservation, String> {
     let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let meta = load_root_omp(&repo, &id)?;
     let daemon = state.daemon_for(&repo);
-    let live = daemon.as_ref().and_then(|daemon| daemon.session_status_observed(&id).ok().flatten());
-    Ok(SessionObservation {
-        lifecycle: lifecycle_from_structured(meta.started_at, meta.ended_at, meta.exit_code, live.as_ref().map(|live| &live.state)),
-        state: live.as_ref().map(|live| live.state.clone()),
-        checkpoint: meta.semantic,
-        transport: live.map(|live| live.transport),
+    // Chat polls this every 1.5s; a sync command would run the daemon round trip on the main thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        let meta = load_root_omp(&repo, &id)?;
+        let live = daemon.as_ref().and_then(|daemon| daemon.session_status_observed(&id).ok().flatten());
+        Ok(SessionObservation {
+            lifecycle: lifecycle_from_structured(meta.started_at, meta.ended_at, meta.exit_code, live.as_ref().map(|live| &live.state)),
+            state: live.as_ref().map(|live| live.state.clone()),
+            checkpoint: meta.semantic,
+            transport: live.map(|live| live.transport),
+        })
     })
+    .await
+    .map_err(|error| format!("chat session status: {error}"))?
 }
 
 #[tauri::command]

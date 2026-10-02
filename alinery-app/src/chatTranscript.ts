@@ -1038,7 +1038,9 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
   if (event.type === "advisor_cost_changed" || event.type === "prompt_result") {
     if (event.type === "prompt_result") {
       const data = asRecord(event.data) ?? event;
-      if (data.agentInvoked === false) return patchLastSlash(state, true);
+      // An extension command's `prompt` response carries no agentInvoked; this is the only "no turn
+      // is coming" signal, so it must release the pendingTurn claim or the session reads busy forever.
+      if (data.agentInvoked === false) return patchLastSlash({ ...state, pendingTurn: false }, true);
       if (data.agentInvoked === true) return patchLastSlash(state, false);
     }
     return state;
