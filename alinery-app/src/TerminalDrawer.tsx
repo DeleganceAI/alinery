@@ -1,12 +1,18 @@
+import { CornerDownRight, Plus, SquareX, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import * as ipc from "./ipc";
 import { SessionTerminal } from "./SessionTerminal";
-import { KillButton } from "./shared";
 import type { RepoScope, View } from "./types";
 
 export const DRAWER_MIN_WIDTH = 260;
 export const DRAWER_MAX_SCREEN_FRACTION = 0.6;
 export const DRAWER_DEFAULT_WIDTH = 360;
+
+export type DrawerTab = {
+  id: string;
+  ordinal: number;
+  cwd: string;
+};
 
 export function clampDrawerWidth(w: number): number {
   return Math.max(DRAWER_MIN_WIDTH, Math.min(Math.floor(window.innerWidth * DRAWER_MAX_SCREEN_FRACTION), w));
@@ -73,28 +79,26 @@ export async function resolveDrawerCdTarget(opts: { view: View; scope: RepoScope
   return activeRepo.trim();
 }
 
-function CdHereButton({ sessionId, target }: { sessionId: string; target: string }) {
+function CdHereButton({ sessionId, target }: { sessionId: string | null; target: string }) {
   const [busy, setBusy] = useState(false);
   const dest = target.trim();
-  const ready = Boolean(sessionId && dest);
+  const ready = Boolean(sessionId && dest && !busy);
   return (
     <button
       type="button"
-      className="btn small"
-      disabled={busy || !ready}
+      className="iconbtn"
+      disabled={!ready}
       title={dest || "Resolving path…"}
       aria-label={dest ? `cd here: ${dest}` : "cd here (resolving path)"}
-      onClick={(e) => {
-        e.stopPropagation();
-        if (!ready) return;
+      onClick={() => {
+        if (!sessionId || !dest) return;
         setBusy(true);
-        ipc
-          .writeSession(sessionId, shellCdCommand(dest))
+        void Promise.resolve(ipc.writeSession(sessionId, shellCdCommand(dest)))
           .catch(() => {})
           .finally(() => setBusy(false));
       }}
     >
-      cd here
+      <CornerDownRight size={16} strokeWidth={1.5} aria-hidden="true" />
     </button>
   );
 }
@@ -103,10 +107,14 @@ export function TerminalDrawer({
   open,
   width,
   onWidthChange,
-  session,
+  tabs,
+  activeId,
   terminalFontSize,
-  onKilled,
-  onExited,
+  onSelect,
+  onClose,
+  onNew,
+  onKillAll,
+  onTabExited,
   view,
   scope,
   activeRepo,
@@ -114,18 +122,23 @@ export function TerminalDrawer({
   open: boolean;
   width: number;
   onWidthChange: (w: number) => void;
-  session: { id: string; cwd: string } | null;
+  tabs: DrawerTab[];
+  activeId: string | null;
   terminalFontSize: number;
-  onKilled: () => void;
-  onExited: () => void;
+  onSelect: (id: string) => void;
+  onClose: (id: string) => void;
+  onNew: () => void;
+  onKillAll: () => void;
+  onTabExited: (id: string) => void;
   view: View;
   scope: RepoScope;
   activeRepo: string | undefined;
 }) {
-  const exitedRef = useRef(false);
-  // Empty until homeDir resolves — avoids cd '~' (quoted tilde does not expand).
   const [home, setHome] = useState("");
   const [cdTarget, setCdTarget] = useState("");
+  const activeTabRef = useRef<HTMLDivElement | null>(null);
+  const active = tabs.find((tab) => tab.id === activeId) ?? null;
+  const tabIds = tabs.map((tab) => tab.id).join("\n");
 
   useEffect(() => {
     let alive = true;
@@ -133,12 +146,10 @@ export function TerminalDrawer({
       .homeDir()
       .then((h) => {
         if (!alive) return;
-        // path API often returns a trailing slash; normalize for display/cd.
         const cleaned = h.replace(/\/+$/, "") || h;
         setHome(cleaned);
       })
       .catch(() => {
-        // Keep empty; resolve falls back to activeRepo when possible.
         if (alive) setHome("");
       });
     return () => {
@@ -156,52 +167,101 @@ export function TerminalDrawer({
     };
   }, [view, scope, activeRepo, home]);
 
-  // Reset the one-shot EOF guard when the session handle changes.
   useEffect(() => {
-    exitedRef.current = false;
-  }, [session?.id]);
+    activeTabRef.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [activeId]);
 
-  // Natural shell EOF → same path as Kill (design: close + clear; next open is fresh).
   useEffect(() => {
-    if (!session) return;
+    const ids = tabIds.split("\n").filter(Boolean);
+    if (ids.length === 0) return;
+    const reported = new Set<string>();
     let alive = true;
-    const tick = () =>
-      ipc
-        .sessionStatus(session.id, "")
-        .then((obs) => {
-          if (!alive || exitedRef.current) return;
-          const ls = obs.lifecycle;
-          if (ls.state !== "live" && ls.state !== "never_started") {
-            exitedRef.current = true;
-            onExited();
-          }
-        })
-        .catch(() => {});
+    const tick = () => {
+      for (const id of ids) {
+        if (reported.has(id)) continue;
+        ipc
+          .sessionStatus(id, "")
+          .then((obs) => {
+            if (!alive || reported.has(id)) return;
+            const state = obs.lifecycle.state;
+            if (state !== "live" && state !== "never_started") {
+              reported.add(id);
+              onTabExited(id);
+            }
+          })
+          .catch(() => {});
+      }
+    };
     tick();
-    const t = setInterval(tick, 1500);
+    const timer = setInterval(tick, 1500);
     return () => {
       alive = false;
-      clearInterval(t);
+      clearInterval(timer);
     };
-  }, [session, onExited]);
+  }, [tabIds, onTabExited]);
 
-  if (!session && !open) return null;
+  if (!open && tabs.length === 0) return null;
 
   return (
     <>
       <div className={open ? "terminal-drawer is-open" : "terminal-drawer is-hidden"} aria-hidden={!open}>
-        {open && session && (
+        {open && tabs.length > 0 && (
           <div className="terminal-drawer-chrome">
-            <CdHereButton sessionId={session.id} target={cdTarget} />
-            <KillButton id={session.id} slug="" onKilled={onKilled} danger={true} />
+            <div role="tablist" aria-label="Terminals" className="terminal-drawer-tabs">
+              {tabs.map((tab) => {
+                const selected = tab.id === activeId;
+                return (
+                  <div
+                    key={tab.id}
+                    ref={selected ? activeTabRef : undefined}
+                    role="tab"
+                    aria-selected={selected}
+                    aria-label={`Terminal ${tab.ordinal}`}
+                    title={`Terminal ${tab.ordinal}`}
+                    tabIndex={selected ? 0 : -1}
+                    className={selected ? "terminal-drawer-tab is-active" : "terminal-drawer-tab"}
+                    onClick={() => onSelect(tab.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onSelect(tab.id);
+                      }
+                    }}
+                  >
+                    <span aria-hidden="true">{tab.ordinal}</span>
+                    <button
+                      type="button"
+                      className="terminal-drawer-tab-x"
+                      aria-label={`Close terminal ${tab.ordinal}`}
+                      title={`Close terminal ${tab.ordinal}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onClose(tab.id);
+                      }}
+                    >
+                      <X size={14} strokeWidth={1.5} aria-hidden="true" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="terminal-drawer-actions">
+              <button type="button" className="iconbtn" aria-label="New terminal" title="New terminal" onClick={onNew}>
+                <Plus size={16} strokeWidth={1.5} aria-hidden="true" />
+              </button>
+              <button type="button" className="iconbtn terminal-drawer-killall" aria-label="Kill all terminals" title="Kill all terminals" onClick={onKillAll}>
+                <SquareX size={16} strokeWidth={1.5} aria-hidden="true" />
+              </button>
+              <CdHereButton sessionId={activeId} target={cdTarget} />
+            </div>
           </div>
         )}
-        {session && (
+        {active && (
           <div className="termhost">
             <SessionTerminal
-              key={session.id}
-              sessionId={session.id}
-              cwd={session.cwd}
+              key={active.id}
+              sessionId={active.id}
+              cwd={active.cwd}
               taskSlug=""
               phase=""
               harness="no-harness"

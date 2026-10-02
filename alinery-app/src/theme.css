@@ -229,7 +229,59 @@ select:focus-visible {
   align-items: center;
   gap: 8px;
   padding: 4px 8px;
+  min-width: 0;
   background: var(--surface);
+}
+.terminal-drawer-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+}
+.terminal-drawer-tab {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 2px 2px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.terminal-drawer-tab.is-active {
+  color: var(--text-strong);
+  background: var(--surface-subtle);
+}
+.terminal-drawer-tab-x {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1;
+}
+.terminal-drawer-tab-x:hover {
+  color: var(--danger);
+  background: var(--danger-subtle);
+}
+.terminal-drawer-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.terminal-drawer-killall:hover {
+  color: var(--danger);
+  background: var(--danger-subtle);
 }
 .terminal-drawer .termhost {
   flex: 1;
