@@ -25,6 +25,7 @@ import { askConfirm, confirmDanger, confirmStopAndSwitch } from "../confirm";
 import { IdleDot, RunningIndicator } from "../Indicators";
 import * as ipc from "../ipc";
 import { NameEditor } from "../NameEditor";
+import { setAutoCompactionCommand } from "../ompRpc";
 import { SessionTerminal } from "../SessionTerminal";
 import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
 import { isTurnActive, OMP_INTERRUPT_DATA } from "../sessionMessage";
@@ -187,6 +188,7 @@ export function ChatView({ knownRepos, terminalFontSize, visibility }: { knownRe
     }
     const repo = selectedRepo;
     const id = selectedId;
+    compactionPushed.current = `${repo}:${id}:${autoCompactionRef.current}`;
     const attachId = ++attachSeq.current;
     // A send that resumed this thread: its row and turn claim belong on the journal loaded below.
     const resumed = pendingPrompt.current;
@@ -239,7 +241,7 @@ export function ChatView({ knownRepos, terminalFontSize, visibility }: { knownRe
           },
         });
         if (cancelled) return;
-        for (const command of attachHandshake()) {
+        for (const command of attachHandshake(autoCompactionRef.current)) {
           await ipc.chatRpcWrite(repo, id, command);
         }
         if (!resumed || cancelled) return;
@@ -263,6 +265,20 @@ export function ChatView({ knownRepos, terminalFontSize, visibility }: { knownRe
   const statusKind = activity.kind;
   const sendNowEnabled = activity.status === "running" && observation?.state?.agent?.state !== "waiting_for_input" && body.trim().length > 0;
   const processLive = observation?.state?.process.state === "alive";
+  // The handshake pushes the setting on every attach; `compactionPushed` keeps the effect below to
+  // real toggles instead of repeating it when the poll first reports the process alive.
+  const autoCompactionRef = useRef(visibility.autoCompaction);
+  autoCompactionRef.current = visibility.autoCompaction;
+  const compactionPushed = useRef("");
+  const selectedRepoPath = selected?.repo_path;
+  const selectedSessionId = selected?.session.id;
+  useEffect(() => {
+    if (!processLive || !selectedRepoPath || !selectedSessionId) return;
+    const key = `${selectedRepoPath}:${selectedSessionId}:${visibility.autoCompaction}`;
+    if (compactionPushed.current === key) return;
+    compactionPushed.current = key;
+    ipc.chatRpcWrite(selectedRepoPath, selectedSessionId, setAutoCompactionCommand(visibility.autoCompaction)).catch(() => {});
+  }, [visibility.autoCompaction, processLive, selectedRepoPath, selectedSessionId]);
   const inTerminal = processLive && observation?.transport === "pty";
   const terminalIo = useMemo(() => (selectedRepo && selectedId ? chatTerminalIo(selectedRepo, selectedId) : undefined), [selectedRepo, selectedId]);
 

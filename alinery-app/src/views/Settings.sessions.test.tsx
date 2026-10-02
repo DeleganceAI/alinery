@@ -1,8 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_APPEARANCE } from "../appearance";
+import { DEFAULT_APPEARANCE, normalizeChatView } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
-import type { GlobalSettings } from "../types";
+import type { AppearancePrefs, GlobalSettings } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
 
 const baseGlobal: GlobalSettings = {
@@ -75,10 +75,24 @@ const mcp: McpStatusHandle = {
   refresh: () => {},
 };
 
-function renderHarnessSection() {
+function renderSection(initialSection: "harness" | "sessionsView" | "chat", appearance: AppearancePrefs = DEFAULT_APPEARANCE) {
   render(
-    <Settings mcp={mcp} activeRepo="/r" knownRepos={["/r"]} appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} onNotificationsChange={() => {}} initialSection="chat" />,
+    <Settings
+      mcp={mcp}
+      activeRepo="/r"
+      knownRepos={["/r"]}
+      appearance={appearance}
+      onAppearanceChange={() => {}}
+      onNotificationsChange={() => {}}
+      initialSection={initialSection}
+    />,
   );
+}
+
+const renderHarnessSection = () => renderSection("harness");
+
+function lastSavedAppearance(): AppearancePrefs {
+  return mocks.writeAppearance.mock.calls[mocks.writeAppearance.mock.calls.length - 1]?.[0];
 }
 
 beforeEach(() => {
@@ -123,14 +137,71 @@ describe("Harness settings model default", () => {
     expect(saved.defaults.harness).toBe("omp");
     expect(saved.defaults.model).toBe("gpt-5");
   });
+});
 
-  it("persists the chat copy button toggle", async () => {
-    renderHarnessSection();
+describe("Sessions view and Chat tabs", () => {
+  // Each tab edits its own copy: the Sessions view writes the flat chat_* fields, Chat writes ava_chat.
+  const avaChat = normalizeChatView({ chat_max_width: "600", chat_font_size: 18, chat_show_copy_buttons: true });
+  const split: AppearancePrefs = { ...DEFAULT_APPEARANCE, chat_max_width: "1200", chat_font_size: 12, chat_show_copy_buttons: true, ava_chat: avaChat };
+
+  it("Sessions view persists the copy button toggle into the flat chat_* fields and leaves ava_chat untouched", async () => {
+    renderSection("sessionsView", split);
     const toggle = await screen.findByLabelText(/Show copy buttons/);
     expect((toggle as HTMLInputElement).checked).toBe(true);
     fireEvent.click(toggle);
     await waitFor(() => expect(mocks.writeAppearance).toHaveBeenCalled());
-    expect(mocks.writeAppearance.mock.calls[mocks.writeAppearance.mock.calls.length - 1]?.[0]).toMatchObject({ chat_show_copy_buttons: false });
+    const saved = lastSavedAppearance();
+    expect(saved).toMatchObject({ chat_show_copy_buttons: false, chat_max_width: "1200", chat_font_size: 12 });
+    expect(saved.ava_chat).toEqual(avaChat);
+  });
+
+  it("Chat renders its own values, not the flat chat_* fields", async () => {
+    renderSection("chat", { ...split, chat_show_copy_buttons: false, chat_max_width: "none" });
+    expect(((await screen.findByLabelText(/Show copy buttons/)) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByRole("button", { name: "600px" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "None" }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("Chat persists a toggle into ava_chat and leaves the flat chat_* fields untouched", async () => {
+    renderSection("chat", split);
+    fireEvent.click(await screen.findByLabelText(/Show copy buttons/));
+    await waitFor(() => expect(mocks.writeAppearance).toHaveBeenCalled());
+    const saved = lastSavedAppearance();
+    expect(saved.ava_chat).toEqual({ ...avaChat, chat_show_copy_buttons: false });
+    expect(saved).toMatchObject({ chat_show_copy_buttons: true, chat_max_width: "1200", chat_font_size: 12 });
+  });
+
+  it("Chat persists a choice card into ava_chat only", async () => {
+    renderSection("chat", split);
+    fireEvent.click(await screen.findByRole("button", { name: "Dense" }));
+    await waitFor(() => expect(mocks.writeAppearance).toHaveBeenCalled());
+    const saved = lastSavedAppearance();
+    expect(saved.ava_chat?.chat_rail_density).toBe("dense");
+    expect(saved.chat_rail_density).toBe("normal");
+  });
+
+  it("Chat falls back to the defaults when ava_chat was never saved", async () => {
+    renderSection("chat", { ...DEFAULT_APPEARANCE, chat_show_copy_buttons: false });
+    expect(((await screen.findByLabelText(/Show copy buttons/)) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByRole("button", { name: "900px" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("Chat describes the meta strip and column width for Ava", async () => {
+    renderSection("chat");
+    expect(await screen.findByText("— repo · branch · status line under the thread title")).toBeTruthy();
+    expect(screen.getByText("Limits the width of the message thread, composer and notices.")).toBeTruthy();
+    expect(screen.getByText("Which journal rows appear in Chat. Global-only.")).toBeTruthy();
+    expect(screen.queryByText(/model · thinking · event count/)).toBeNull();
+    expect(screen.queryByText(/Limits journal thread width/)).toBeNull();
+  });
+
+  it("Sessions view keeps the journal descriptions for the session thread", async () => {
+    renderSection("sessionsView");
+    expect(await screen.findByText("— model · thinking · event count · context above Chat")).toBeTruthy();
+    expect(screen.getByText("Limits journal thread width; meta and composer stay full width.")).toBeTruthy();
+    expect(screen.getByText("Which journal rows appear in the Sessions view. Global-only.")).toBeTruthy();
+    expect(screen.queryByText(/status line under the thread title/)).toBeNull();
+    expect(screen.queryByText(/message thread, composer and notices/)).toBeNull();
   });
 });
 

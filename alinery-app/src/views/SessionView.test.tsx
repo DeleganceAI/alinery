@@ -32,6 +32,7 @@ const readOmpModelRoles = vi.hoisted(() => vi.fn(async () => ({}) as Record<stri
 const writeOmpModelRoles = vi.hoisted(() => vi.fn(async (roles: Record<string, string>) => roles));
 const openUrl = vi.hoisted(() => vi.fn(async (_url: string | URL, _openWith?: string): Promise<void> => undefined));
 const confirmDanger = vi.hoisted(() => vi.fn(async () => true));
+const confirmStopAndSwitch = vi.hoisted(() => vi.fn(async (_target: "pty" | "rpc") => true));
 const archiveSession = vi.hoisted(() => vi.fn());
 const pickAttachmentFilesDialog = vi.hoisted(() => vi.fn(async (): Promise<string[]> => []));
 const chatFileStat = vi.hoisted(() => vi.fn(async (path: string) => ({ name: path.split("/").pop() ?? path, bytes: 12 })));
@@ -88,7 +89,7 @@ const initialTree: ArtifactTreeNode[] = [
 ];
 
 vi.mock("../SessionTerminal", () => ({ SessionTerminal: () => <div data-testid="terminal" /> }));
-vi.mock("../confirm", () => ({ confirmDanger }));
+vi.mock("../confirm", () => ({ confirmDanger, confirmStopAndSwitch }));
 vi.mock("../ipc", () =>
   mockIpc({
     getSessionDisplay,
@@ -621,6 +622,8 @@ describe("session chat hatch", () => {
     restateSession.mockClear();
     confirmDanger.mockReset();
     confirmDanger.mockResolvedValue(true);
+    confirmStopAndSwitch.mockReset();
+    confirmStopAndSwitch.mockResolvedValue(true);
     rpcWriteSession.mockClear();
     rpcAttachSession.mockReset();
     rpcAttachSession.mockImplementation(async () => undefined);
@@ -642,7 +645,7 @@ describe("session chat hatch", () => {
     expect(screen.getByTestId("chat-pane")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
     await waitFor(() => expect(restateSession).toHaveBeenCalledWith("session", "pty"));
-    expect(confirmDanger).not.toHaveBeenCalled();
+    expect(confirmStopAndSwitch).not.toHaveBeenCalled();
   });
 
   it("restates live PTY to RPC from the Chat hatch", async () => {
@@ -656,20 +659,20 @@ describe("session chat hatch", () => {
 
   it("confirms before restating when a send is pending and the poll still reads idle", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
-    confirmDanger.mockResolvedValue(false);
+    confirmStopAndSwitch.mockResolvedValue(false);
     renderSession({ messageDraft: { body: "first", pendingActions: [], attachments: [] } });
     await flushPromises();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(rpcWriteSession.mock.calls.some(([, payload]) => (payload as { type?: string } | null)?.type === "prompt")).toBe(true));
 
     fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
-    await waitFor(() => expect(confirmDanger).toHaveBeenCalled());
+    await waitFor(() => expect(confirmStopAndSwitch).toHaveBeenCalledWith("pty"));
     expect(restateSession).not.toHaveBeenCalled();
   });
 
   it("confirms before restating when turn_start leads the idle observation poll", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
-    confirmDanger.mockResolvedValue(false);
+    confirmStopAndSwitch.mockResolvedValue(false);
     const onLine = { current: undefined as ((line: string) => void) | undefined };
     captureRpcOnLine(onLine);
     renderSession();
@@ -680,8 +683,25 @@ describe("session chat hatch", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
-    await waitFor(() => expect(confirmDanger).toHaveBeenCalled());
+    await waitFor(() => expect(confirmStopAndSwitch).toHaveBeenCalledWith("pty"));
     expect(restateSession).not.toHaveBeenCalled();
+  });
+
+  it("aborts the turn and restates once the user accepts stopping it", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    renderSession();
+    await flushPromises();
+    await waitFor(() => expect(onLine.current).toBeDefined());
+    act(() => {
+      onLine.current?.(JSON.stringify({ type: "turn_start" }));
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    await waitFor(() => expect(restateSession).toHaveBeenCalledWith("session", "pty"));
+    expect(confirmStopAndSwitch).toHaveBeenCalledWith("pty");
+    expect(rpcWriteSession.mock.calls.some(([, payload]) => (payload as { type?: string } | null)?.type === "abort")).toBe(true);
   });
 
   it("hides the hatch on leftover harnesses", async () => {

@@ -15,6 +15,7 @@ import {
   DEFAULT_ACCENT_COLOR,
   DEFAULT_APPEARANCE,
   normalizeAppearance,
+  normalizeChatView,
   resolvedTheme,
   TERMINAL_FONT_MAX,
   TERMINAL_FONT_MIN,
@@ -70,13 +71,101 @@ describe("normalizeAppearance", () => {
 
   it("drops legacy preset colors instead of reviving a third theme", () => {
     const legacy = { ...prefs({ mode: "light" }), colors: { primary: "#ff00ff" } } as AppearancePrefs;
-    expect(normalizeAppearance(legacy)).toEqual(prefs({ mode: "light" }));
+    expect(normalizeAppearance(legacy)).toEqual(prefs({ mode: "light", ava_chat: normalizeChatView({}) }));
     expect(normalizeAppearance(legacy)).not.toHaveProperty("colors");
+  });
+
+  it("gives an absent or null ava_chat the Chat defaults", () => {
+    expect(normalizeAppearance(prefs()).ava_chat).toEqual(normalizeChatView({}));
+    expect(normalizeAppearance({ ...prefs(), ava_chat: null } as unknown as AppearancePrefs).ava_chat).toEqual(normalizeChatView({}));
+  });
+
+  it("round-trips a saved ava_chat without touching the flat chat_* fields", () => {
+    const ava_chat = normalizeChatView({ chat_show_thinking: true, chat_show_meta: false, chat_rail_density: "dense", chat_max_width: "600", chat_font_size: 18 });
+    const normalized = normalizeAppearance(prefs({ chat_max_width: "1200", chat_font_size: 12, ava_chat }));
+    expect(normalized.ava_chat).toEqual(ava_chat);
+    expect(normalized.chat_max_width).toBe("1200");
+    expect(normalized.chat_font_size).toBe(12);
+    expect(normalized.chat_show_thinking).toBe(false);
+    expect(normalizeAppearance(normalized)).toEqual(normalized);
+  });
+
+  it("coerces junk inside ava_chat without letting it leak into the flat fields", () => {
+    const junk = { chat_show_thinking: "yes", chat_show_meta: "no", chat_rail_density: "huge", chat_max_width: "9999", chat_font_size: Number.NaN, chat_rail_font_size: 999 };
+    const normalized = normalizeAppearance(prefs({ ava_chat: junk as unknown as AppearancePrefs["ava_chat"] }));
+    expect(normalized.ava_chat).toEqual({ ...normalizeChatView({}), chat_rail_font_size: 22 });
+    expect(normalized.chat_show_meta).toBe(true);
+    expect(normalized.chat_rail_font_size).toBe(DEFAULT_APPEARANCE.chat_rail_font_size);
   });
 
   it("is idempotent", () => {
     const once = normalizeAppearance(prefs({ ui_scale: 1.1, terminal_font_size: 99 }));
     expect(normalizeAppearance(once)).toEqual(once);
+  });
+});
+
+describe("normalizeChatView", () => {
+  const chatKeys = (source: object) =>
+    Object.keys(source)
+      .filter((key) => key.startsWith("chat_"))
+      .sort();
+
+  it("defaults an empty object to the chat_* defaults and nothing else", () => {
+    const view = normalizeChatView({});
+    expect(chatKeys(view)).toEqual(chatKeys(DEFAULT_APPEARANCE));
+    expect(Object.keys(view).sort()).toEqual(chatKeys(view));
+    for (const key of chatKeys(view)) expect(view[key as keyof typeof view]).toBe(DEFAULT_APPEARANCE[key as keyof AppearancePrefs]);
+  });
+
+  it("keeps valid values", () => {
+    const valid = {
+      chat_show_thinking: true,
+      chat_expand_thinking: true,
+      chat_show_tools: true,
+      chat_expand_tools: true,
+      chat_show_harness: false,
+      chat_show_turn_markers: true,
+      chat_show_subagent_rows: false,
+      chat_show_subagent_drawer: false,
+      chat_auto_collapse_thinking: false,
+      chat_auto_compaction: false,
+      chat_auto_scroll: false,
+      chat_rail_density: "comfortable",
+      chat_font_size: 18,
+      chat_rail_font_size: 15,
+      chat_show_meta: false,
+      chat_show_composer_hints: false,
+      chat_max_width: "none",
+      chat_show_date: false,
+      chat_show_time: false,
+      chat_show_actor_labels: false,
+      chat_show_agent_bubbles: false,
+      chat_show_block_copy_buttons: false,
+      chat_show_copy_buttons: false,
+    } as const;
+    expect(normalizeChatView(valid)).toEqual(valid);
+  });
+
+  it("falls back to defaults for junk values", () => {
+    const junk = {
+      chat_show_thinking: "yes",
+      chat_show_harness: "no",
+      chat_rail_density: "huge",
+      chat_max_width: "9999",
+      chat_font_size: Number.NaN,
+      chat_rail_font_size: "big",
+    } as unknown as Partial<AppearancePrefs>;
+    expect(normalizeChatView(junk)).toEqual(normalizeChatView({}));
+  });
+
+  it("clamps out-of-range font sizes", () => {
+    expect(normalizeChatView({ chat_font_size: 2, chat_rail_font_size: 2 })).toMatchObject({ chat_font_size: 10, chat_rail_font_size: 10 });
+    expect(normalizeChatView({ chat_font_size: 99, chat_rail_font_size: 99 })).toMatchObject({ chat_font_size: 22, chat_rail_font_size: 22 });
+  });
+
+  it("drops non-chat fields when handed a whole AppearancePrefs", () => {
+    expect(chatKeys(normalizeChatView(prefs({ mode: "dark", ui_scale: 1.5 })))).toEqual(Object.keys(normalizeChatView({})).sort());
+    expect(normalizeChatView(prefs({ mode: "dark", ui_scale: 1.5 }))).not.toHaveProperty("mode");
   });
 });
 

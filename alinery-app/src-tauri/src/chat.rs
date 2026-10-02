@@ -508,7 +508,22 @@ pub(crate) async fn chat_pty_attach(
     let daemon = chat_daemon(&state, &repo)?;
     let meta = load_root_omp(&repo, &id)?;
     tauri::async_runtime::spawn_blocking(move || {
-        open_daemon_session(&daemon, &id, &meta.worktree, Some(""), None, None, attach_id, stream_token, daemon_client::ops::ATTACH, None, cols, rows, on_bytes, app)
+        open_daemon_session(
+            &daemon,
+            &id,
+            &meta.worktree,
+            Some(""),
+            None,
+            None,
+            attach_id,
+            stream_token,
+            daemon_client::ops::ATTACH,
+            None,
+            cols,
+            rows,
+            on_bytes,
+            app,
+        )
     })
     .await
     .map_err(|error| format!("chat terminal attach: {error}"))?
