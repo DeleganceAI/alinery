@@ -90,12 +90,12 @@ describe("Settings Grid-based views", () => {
     renderGridSettings();
 
     expect(await screen.findByDisplayValue("Kanban+")).toBeTruthy();
+    expect(screen.getByText("⌘1")).toBeTruthy();
     expect(screen.getByText("⌘2")).toBeTruthy();
-    expect(screen.getByText("⌘4")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Add Grid-based View" }));
 
     await waitFor(() => expect(ipc.writeGlobalSettings).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText("⌘5")).toBeTruthy();
+    expect(await screen.findByText("⌘3")).toBeTruthy();
     const saved = vi.mocked(ipc.writeGlobalSettings).mock.calls[0][0] as GlobalSettings;
     expect(saved.grid_views).toHaveLength(3);
     expect(saved.grid_views?.[2]).toMatchObject({ name: "Grid view 2", slot: 3 });
