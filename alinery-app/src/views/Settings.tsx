@@ -147,12 +147,9 @@ export const SECTIONS: { key: SettingsSectionKey; label: string }[] = [
   { key: "general", label: "General" },
   { key: "harness", label: "Harness" },
   { key: "connections", label: "Connections" },
-  { key: "playbooks", label: "Playbooks" },
-  { key: "updates", label: "Updates" },
   { key: "storage", label: "Storage" },
   { key: "sessionsView", label: "Sessions view" },
   { key: "chat", label: "Chat" },
-  { key: "experimental", label: "Experimental" },
   { key: "gridViews", label: "Grid views" },
   { key: "mcp", label: "MCP Server" },
   { key: "backup", label: "Backup" },
@@ -311,7 +308,7 @@ export function Settings({
   const effective = cfg;
 
   useEffect(() => {
-    if (activeSection !== "playbooks") return;
+    if (activeSection !== "general") return;
     let alive = true;
     setPlaybookCatalog(null);
     setPlaybookError("");
@@ -377,10 +374,10 @@ export function Settings({
       .finally(() => setLocalChecking(false));
   };
 
-  // Entering the section refreshes the shared hook so a hit also reveals the TopBar
+  // Opening General refreshes the shared hook so a hit also reveals the TopBar
   // button. Tests that do not pass onCheckNow keep the local ipc path.
   useEffect(() => {
-    if (activeSection !== "updates") return;
+    if (activeSection !== "general") return;
     if (onCheckNow) {
       onCheckNow().catch(() => {});
       return;
@@ -2006,18 +2003,27 @@ export function Settings({
 
   const renderSection = (key: string): ReactNode => {
     switch (key) {
-      case "playbooks":
-        return renderPlaybooks();
       case "connections":
         return connectionsSection();
-      case "general":
-        // Every control on this page is global-only, so one banner covers all three subsections.
+      case "general": {
+        // Playbooks follows the scope bar. The other subsections are global-only, so one banner covers them.
+        const lastCheck = updateCheckFailed
+          ? "Couldn't check"
+          : !displayedUpdate || displayedUpdate.checked_at === 0
+            ? "Not checked"
+            : displayedUpdate.available
+              ? `${displayedUpdate.available.version} available`
+              : "Up to date";
         return (
           <>
-            {!isGlobal && globalOnly("General settings")}
+            {!isGlobal && globalOnly("Appearance, notifications, updates, and misc")}
             <div className="settings-subsection">
               <h2>Appearance</h2>
               {renderAppearance()}
+            </div>
+            <div className="settings-subsection">
+              <h2>Playbooks</h2>
+              {renderPlaybooks()}
             </div>
             <div className="settings-subsection">
               <h2>Notifications</h2>
@@ -2047,6 +2053,32 @@ export function Settings({
               </button>
             </div>
             <div className="settings-subsection">
+              <h2>Updates</h2>
+              <div className="field">
+                <label>Current version</label>
+                <input className="field-input mono" type="text" value={appVersion} readOnly />
+              </div>
+              <div className="field" style={{ marginTop: 16 }}>
+                <label>Last check</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span className="dim">{checkingUpdates ? "Checking…" : lastCheck}</span>
+                  <button type="button" className="btn ghost small" disabled={checkingUpdates} onClick={checkForUpdatesNow}>
+                    Check now
+                  </button>
+                </div>
+              </div>
+              {displayedUpdate?.available && onUpgrade && (
+                <div className="field" style={{ marginTop: 16 }}>
+                  <button type="button" className="btn small" disabled={updating} onClick={onUpgrade}>
+                    Upgrade to {displayedUpdate.available.version}
+                  </button>
+                </div>
+              )}
+              <div className="field" style={{ marginTop: 16 }}>
+                {updatesCheck("Check for updates")}
+              </div>
+            </div>
+            <div className="settings-subsection">
               <h2>Misc</h2>
               {/* Each repository's daemon reads this pref and holds the idle-sleep inhibit
                 (alineryd/src/idle_inhibit.rs); the note states the same rule it enforces. */}
@@ -2065,42 +2097,20 @@ export function Settings({
                 }
               />
               {telemetryCheck("Share anonymous usage", "state changes only — no paths, prompts, or artifact text")}
-            </div>
-          </>
-        );
-      case "updates": {
-        const lastCheck = updateCheckFailed
-          ? "Couldn't check"
-          : !displayedUpdate || displayedUpdate.checked_at === 0
-            ? "Not checked"
-            : displayedUpdate.available
-              ? `${displayedUpdate.available.version} available`
-              : "Up to date";
-        return (
-          <>
-            {!isGlobal && globalOnly("Updates")}
-            <div className="field">
-              <label>Current version</label>
-              <input className="field-input mono" type="text" value={appVersion} readOnly />
-            </div>
-            <div className="field" style={{ marginTop: 16 }}>
-              <label>Last check</label>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span className="dim">{checkingUpdates ? "Checking…" : lastCheck}</span>
-                <button type="button" className="btn ghost small" disabled={checkingUpdates} onClick={checkForUpdatesNow}>
-                  Check now
-                </button>
-              </div>
-            </div>
-            {displayedUpdate?.available && onUpgrade && (
-              <div className="field" style={{ marginTop: 16 }}>
-                <button type="button" className="btn small" disabled={updating} onClick={onUpgrade}>
-                  Upgrade to {displayedUpdate.available.version}
-                </button>
-              </div>
-            )}
-            <div className="field" style={{ marginTop: 16 }}>
-              {updatesCheck("Check for updates")}
+              <section className="settings-nested" aria-labelledby="experimental-options-title">
+                <h3 id="experimental-options-title">Experimental options</h3>
+                <Checkbox
+                  checked={global.experiments?.show_original_kanban ?? true}
+                  disabled={!isGlobal}
+                  onChange={setShowOriginalKanban}
+                  label={
+                    <div>
+                      <div>Original Kanban</div>
+                      <div className="hint">Show the classic Kanban board in the top bar, after Sessions.</div>
+                    </div>
+                  }
+                />
+              </section>
             </div>
           </>
         );
@@ -2296,23 +2306,6 @@ export function Settings({
           </>
         );
       }
-      case "experimental":
-        return (
-          <>
-            {!isGlobal && globalOnly("Experimental settings")}
-            <Checkbox
-              checked={global.experiments?.show_original_kanban ?? true}
-              disabled={!isGlobal}
-              onChange={setShowOriginalKanban}
-              label={
-                <div>
-                  <div>Original Kanban</div>
-                  <div className="hint">Show the classic Kanban board in the top bar, after Sessions.</div>
-                </div>
-              }
-            />
-          </>
-        );
       case "mcp": {
         const installReady = mcpInstallReady(mcp);
         const hostConfigJson = stdioHostConfigJson(installReady ? mcp.binary_path : "/path/to/alinery-mcp");

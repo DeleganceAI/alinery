@@ -95,25 +95,31 @@ afterEach(() => {
 });
 
 describe("Settings General", () => {
-  it("is the first tab and absorbs Appearance, Notifications, and Telemetry", () => {
+  it("is the first tab and absorbs the pages folded into it", () => {
     const labels = SECTIONS.map((section) => section.label);
     expect(labels[0]).toBe("General");
-    for (const gone of ["Appearance", "Notifications", "Telemetry", "Power"]) expect(labels).not.toContain(gone);
+    for (const gone of ["Appearance", "Notifications", "Telemetry", "Power", "Playbooks", "Updates", "Experimental"]) expect(labels).not.toContain(gone);
   });
 
-  it("opens on General with Appearance, Notifications, then Misc", async () => {
+  it("opens on General with Playbooks above Notifications, Updates above Misc, and experimental options inside Misc", async () => {
     renderGeneral();
     await keepAwake();
     expect(screen.getByRole("button", { name: "General" }).classList.contains("on")).toBe(true);
-    expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent)).toEqual(["Appearance", "Notifications", "Misc"]);
+    expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent)).toEqual(["Appearance", "Playbooks", "Notifications", "Updates", "Misc"]);
     const subsection = (name: string) => within(screen.getByRole("heading", { name }).closest(".settings-subsection") as HTMLElement);
     expect(subsection("Appearance").getByRole("button", { name: "Light" })).toBeTruthy();
+    expect(subsection("Playbooks").getByLabelText("Default playbook")).toBeTruthy();
     expect(subsection("Notifications").getByRole("button", { name: "Send test notification" })).toBeTruthy();
     expect(subsection("Notifications").getByRole("group", { name: "Dock badge categories" })).toBeTruthy();
-    const misc = subsection("Misc").getAllByRole("checkbox");
-    expect(misc).toHaveLength(2);
-    expect(misc[0]).toBe(await keepAwake());
-    expect(misc[1]).toBe(telemetry());
+    expect(subsection("Updates").getByRole("button", { name: "Check now" })).toBeTruthy();
+    expect(subsection("Updates").getByRole("checkbox", { name: /Check for updates/ })).toBeTruthy();
+    const misc = subsection("Misc");
+    expect(misc.getByRole("heading", { level: 3, name: "Experimental options" })).toBeTruthy();
+    const boxes = misc.getAllByRole("checkbox");
+    expect(boxes).toHaveLength(3);
+    expect(boxes[0]).toBe(await keepAwake());
+    expect(boxes[1]).toBe(telemetry());
+    expect(boxes[2]).toBe(misc.getByRole("checkbox", { name: /Original Kanban/ }));
   });
 
   it("shows Keep awake off and editable, with the note under it", async () => {
@@ -155,7 +161,10 @@ describe("Settings General", () => {
     expect((screen.getByRole("checkbox", { name: /Enabled/ }) as HTMLInputElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "Light" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getAllByText(/are global-only\./)).toHaveLength(1);
-    expect(screen.getByText(/General settings are global-only\./)).toBeTruthy();
+    expect(screen.getByText(/Appearance, notifications, updates, and misc are global-only\./)).toBeTruthy();
+    expect((screen.getByRole("checkbox", { name: /Check for updates/ }) as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByRole("checkbox", { name: /Original Kanban/ }) as HTMLInputElement).disabled).toBe(true);
+    await waitFor(() => expect((screen.getByLabelText("Default playbook") as HTMLSelectElement).disabled).toBe(false));
     expect(screen.getByText(NOTE)).toBeTruthy();
     fireEvent.click(box);
     fireEvent.click(telemetry());
