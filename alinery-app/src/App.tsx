@@ -65,6 +65,7 @@ import { useHotkeys } from "./useHotkeys";
 import { useMcpStatus } from "./useMcpStatus";
 import { useOmpUpdateStatus } from "./useOmpUpdateStatus";
 import { useSessionNoticeSnapshot } from "./useSessionNoticeSnapshot";
+import { readStoredTaskSessionSort, writeStoredTaskSessionSort } from "./useSessionSort";
 import { useUpdateStatus } from "./useUpdateStatus";
 import { CreateSessionPage } from "./views/CreateSessionPage";
 import { CreateTaskPage } from "./views/CreateTaskPage";
@@ -170,10 +171,14 @@ export default function App() {
   const [appVersion, setAppVersion] = useState("");
   const [busy, setBusy] = useState<ToastBusy | null>(null);
   const [updating, setUpdating] = useState(false);
-  // Presentation preferences live for this app process only. Each surface keeps its own
-  // choice while navigation unmounts and remounts the list.
+  // Sessions list sort lives for this process only. Task Detail defaults to Updated
+  // descending and remembers one install-wide choice across launches.
   const [globalSessionSort, setGlobalSessionSort] = useState<SessionSort>(PRIORITY_SESSION_SORT);
-  const [taskSessionSort, setTaskSessionSort] = useState<SessionSort>(PRIORITY_SESSION_SORT);
+  const [taskSessionSort, setTaskSessionSort] = useState(readStoredTaskSessionSort);
+  const onTaskSessionSortChange = (sort: SessionSort) => {
+    setTaskSessionSort(sort);
+    writeStoredTaskSessionSort(sort);
+  };
   // Global left terminal drawer — ephemeral; not persisted.
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerWidth, setDrawerWidth] = useState(DRAWER_DEFAULT_WIDTH);
@@ -1347,7 +1352,7 @@ export default function App() {
                   repoPath={view.repoPath || appConfig.active_repo}
                   knownRepos={appConfig.known_repos}
                   sessionSort={taskSessionSort}
-                  onSessionSortChange={setTaskSessionSort}
+                  onSessionSortChange={onTaskSessionSortChange}
                   onNameCommitted={onNameCommitted}
                   onBack={goBack}
                   onOpenSession={(ownerTaskSlug, id, cwd, phase, harness, model, playbook, generic, intent) => {
