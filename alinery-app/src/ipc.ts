@@ -55,6 +55,7 @@ import type {
   LinearTicket,
   McpStatus,
   NormalizedPlaybook,
+  OmpCustomizations,
   OmpUpdateStatus,
   PickerPreferences,
   PlaybookCatalog,
@@ -408,3 +409,8 @@ export const updateOmp = () => invoke<string>("update_omp");
 export const ompAgentSessionsDir = () => invoke<string>("omp_agent_sessions_dir");
 export const readOmpModelRoles = () => invoke<Record<string, string>>("read_omp_model_roles");
 export const writeOmpModelRoles = (roles: Record<string, string>) => invoke<Record<string, string>>("write_omp_model_roles", { roles });
+export const openOmpConfigDir = () => invoke<void>("open_omp_config_dir");
+export const ompCustomizationPrompt = () => invoke<string>("omp_customization_prompt");
+
+// ── omp_customizations.rs ─────────────────────────────────────────────
+export const readOmpCustomizations = () => invoke<OmpCustomizations>("read_omp_customizations");

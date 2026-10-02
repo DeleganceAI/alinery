@@ -87,6 +87,7 @@ mod hosted;
 mod imports;
 mod mcp;
 mod notify;
+mod omp_customizations;
 mod omp_update;
 mod paths;
 mod playbook;
@@ -110,6 +111,7 @@ use hosted::*;
 use imports::*;
 use mcp::*;
 use notify::*;
+use omp_customizations::*;
 use omp_update::*;
 use paths::*;
 use playbook::*;
@@ -316,6 +318,9 @@ pub fn run() {
             omp_agent_sessions_dir,
             read_omp_model_roles,
             write_omp_model_roles,
+            open_omp_config_dir,
+            omp_customization_prompt,
+            read_omp_customizations,
         ])
         .build(context)
         .expect("error while building tauri application")
