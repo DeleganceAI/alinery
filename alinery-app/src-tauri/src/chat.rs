@@ -267,7 +267,7 @@ pub(crate) fn resume_chat_thread_in(repo: &Path, predecessor_id: &str, daemon: O
         return Err(error);
     }
     if let Ok(Some(name)) = alinery_core::read_session_name(repo, "", predecessor_id) {
-        if let Err(error) = alinery_core::set_session_name(repo, "", &successor_id, &name.name, alinery_core::SessionNameSource::User) {
+        if let Err(error) = alinery_core::set_session_name(repo, "", &successor_id, &name.name, name.source) {
             let _ = delete_chat_row(repo, &successor_id);
             return Err(error);
         }

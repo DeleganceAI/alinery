@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { appendOptimisticUser, emptyTranscript } from "../chatTranscript";
-import { abortTurnCommand, applyChatValue, attachHandshake, parseChatLine, queueRefreshCommand, sendCommand, sendNowCommand } from "./chatSession";
+import { abortTurnCommand, applyChatValue, attachHandshake, journalState, olderPageState, parseChatLine, queueRefreshCommand, sendCommand, sendNowCommand } from "./chatSession";
+
+/** A journal page as `read_chat_omp` returns it: a JSON header line, then one JSON row per line. */
+function journalPage(start: number, rows: [id: string, text: string][]): ArrayBuffer {
+  const body = rows.map(([id, text]) => JSON.stringify({ type: "message", id, message: { role: "user", content: [{ type: "text", text }] } })).join("\n");
+  const bytes = new TextEncoder().encode(`${JSON.stringify({ start, end: start + 100, length: 1000 })}\n${body}\n`);
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
 
 describe("chatSession", () => {
   it("prompts when idle, queues a follow-up when busy, and aborts-and-prompts on send now", () => {
@@ -51,5 +58,23 @@ describe("chatSession", () => {
     for (const enabled of [true, false]) {
       expect(attachHandshake(enabled).find((command) => command.type === "set_auto_compaction")).toMatchObject({ enabled });
     }
+  });
+
+  it("prepends an older journal page and moves fileStart back to its start", () => {
+    const loaded = journalState(journalPage(600, [["b1", "second"]]));
+    expect(loaded.fileStart).toBe(600);
+    const older = olderPageState(loaded, journalPage(200, [["a1", "first"]]));
+    expect(older.fileStart).toBe(200);
+    expect(older.messages.map((message) => message.rowId)).toEqual(["a1", "b1"]);
+    expect(older.entries.map((entry) => entry.id)).toEqual(["f:a1", "f:b1"]);
+  });
+
+  it("keeps live rows after an older page lands", () => {
+    const live = appendOptimisticUser(journalState(journalPage(600, [["b1", "second"]])), "typing now");
+    const liveRows = live.entries.filter((entry) => !entry.id.startsWith("f:"));
+    expect(liveRows.length).toBeGreaterThan(0);
+    const older = olderPageState(live, journalPage(200, [["a1", "first"]]));
+    expect(older.entries.map((entry) => entry.id).slice(0, 2)).toEqual(["f:a1", "f:b1"]);
+    expect(older.entries.slice(2)).toEqual(liveRows);
   });
 });

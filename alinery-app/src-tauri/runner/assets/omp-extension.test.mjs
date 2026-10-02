@@ -1103,3 +1103,359 @@ describe("production completion transport", () => {
     await assert.rejects(() => emitCompletion(event), { code: "ENOENT" });
   });
 });
+
+describe("chat thread titles", () => {
+  const runnerEnvironment = (naming) => ({
+    ALINERY_RUNNER_PATH: "/alinery/alinery-runner",
+    ALINERY_SESSION_ID: "alinery-session",
+    ALINERY_DAEMON_SOCKET: "/tmp/alineryd.sock",
+    ALINERY_DAEMON_NAMESPACE: "",
+    ALINERY_EVENT_PROTOCOL_VERSION: "3",
+    ALINERY_EVENT_TOKEN: "secret-token",
+    ...(naming === undefined ? {} : { ALINERY_SESSION_NAMING: naming }),
+  });
+
+  // The titler is fire-and-forget; once the event loop turns, every pending microtask has run.
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+  // A branch carries more than user messages; only role "user" messages count.
+  function branchWith(userMessages) {
+    const branch = [{ type: "model_change" }];
+    for (let index = 0; index < userMessages; index += 1) {
+      branch.push({ type: "message", message: { role: "user" } }, { type: "message", message: { role: "assistant" } }, { type: "message", message: { role: "toolResult" } });
+    }
+    return branch;
+  }
+
+  function makeChatContext(userMessages) {
+    const chat = {
+      userMessages,
+      reply: "Fix login bug",
+      turns: [],
+      context: {
+        ...makeContext("omp-chat"),
+        sessionManager: { getSessionId: () => "omp-chat", getBranch: () => branchWith(chat.userMessages) },
+        async runEphemeralTurn(options) {
+          chat.turns.push(options);
+          return { replyText: chat.reply };
+        },
+      },
+    };
+    return chat;
+  }
+
+  // `deliver` runs before a title counts as written, so a throwing one models a refused write.
+  function registerChatTitles(deliver = async () => {}) {
+    const api = makeFakeApi();
+    const emit = makeRecordingEmitter();
+    const titles = [];
+    const emitChatTitle = async (event) => {
+      await deliver(event);
+      titles.push(event);
+      return { status: "saved", value: { name: event.name, source: "auto" } };
+    };
+    registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined, undefined, undefined, emitChatTitle);
+    return { api, emit, titles };
+  }
+
+  async function endTurn(api, chat, payload = { type: "agent_end" }) {
+    await api.trigger("agent_end", payload, chat.context);
+    await flush();
+  }
+
+  test("ALINERY_SESSION_NAMING picks task or chat naming and is always scrubbed", () => {
+    for (const [mode, expected] of [
+      ["chat", { sessionNaming: false, chatNaming: true }],
+      ["1", { sessionNaming: true, chatNaming: false }],
+      ["0", { sessionNaming: false, chatNaming: false }],
+      [undefined, { sessionNaming: false, chatNaming: false }],
+    ]) {
+      const environment = runnerEnvironment(mode);
+      const config = ext.captureRunnerConfig(environment);
+      assert.equal(config?.sessionNaming, expected.sessionNaming, `sessionNaming for ${mode}`);
+      assert.equal(config?.chatNaming, expected.chatNaming, `chatNaming for ${mode}`);
+      assert.equal("ALINERY_SESSION_NAMING" in environment, false, `${mode} must be scrubbed`);
+    }
+  });
+
+  test("chatTitleBucket titles after the first message, then at every tenth", () => {
+    const buckets = [0, 1, 2, 9, 10, 19, 20, 31].map((count) => ext.chatTitleBucket(count));
+    assert.deepEqual(buckets, [0, 1, 1, 1, 10, 10, 20, 30]);
+  });
+
+  test("cleanChatTitle strips quoting, prefix, markdown, and trailing punctuation", () => {
+    for (const [reply, expected] of [
+      ['"Fix login bug"', "Fix login bug"],
+      ["'Fix login bug'", "Fix login bug"],
+      ["Title: Fix login bug", "Fix login bug"],
+      ["TITLE:   Fix login bug", "Fix login bug"],
+      ["**Fix login bug**", "Fix login bug"],
+      ["# Fix login bug", "Fix login bug"],
+      ["`Fix login bug`", "Fix login bug"],
+      ["Fix login bug.", "Fix login bug"],
+      ["  Fix   the\tlogin bug  ", "Fix the login bug"],
+    ]) {
+      assert.equal(ext.cleanChatTitle(reply), expected, JSON.stringify(reply));
+    }
+  });
+
+  test("cleanChatTitle keeps only the first non-empty line", () => {
+    assert.equal(ext.cleanChatTitle("\n  \nFix login bug\nThis thread is about a login bug."), "Fix login bug");
+  });
+
+  test("cleanChatTitle cuts a long title to 40 characters on a word edge", () => {
+    const title = ext.cleanChatTitle("Refactoring the authentication middleware for session tokens");
+    assert.equal(title, "Refactoring the authentication");
+    assert.ok(title.length <= 40);
+  });
+
+  test("cleanChatTitle keeps a word that ends exactly at the 40-character limit", () => {
+    assert.equal(ext.cleanChatTitle("Investigating the intermittent websocket crash"), "Investigating the intermittent websocket");
+  });
+
+  test("cleanChatTitle hard-cuts a long title that has no usable word edge", () => {
+    assert.equal(ext.cleanChatTitle("x".repeat(60)), "x".repeat(40));
+    assert.equal(ext.cleanChatTitle(`Hi ${"x".repeat(60)}`), `Hi ${"x".repeat(37)}`, "an early space is not a usable edge");
+  });
+
+  test("cleanChatTitle returns an empty string when nothing is left", () => {
+    for (const reply of ["", "   \n  ", '""', "Title:"]) {
+      assert.equal(ext.cleanChatTitle(reply), "", JSON.stringify(reply));
+    }
+  });
+
+  test("first turn end titles the thread through a tools-off side turn", async () => {
+    const { api, emit, titles } = registerChatTitles();
+    const chat = makeChatContext(1);
+    chat.reply = '"Fix login bug."';
+    await endTurn(api, chat);
+    assert.equal(chat.turns.length, 1);
+    assert.equal(chat.turns[0].tools, false);
+    assert.ok(chat.turns[0].promptText.length > 0);
+    assert.deepEqual(titles, [{ type: "session_name_suggested", name: "Fix login bug" }]);
+    assert.deepEqual(emit.emitted, [{ type: "idle" }], "the title goes to its own emitter, not the lifecycle one");
+  });
+
+  test("a turn end that will continue does not title and does not use up the bucket", async () => {
+    const { api, titles } = registerChatTitles();
+    const chat = makeChatContext(1);
+    await endTurn(api, chat, { type: "agent_end", willContinue: true });
+    assert.equal(chat.turns.length, 0);
+    assert.deepEqual(titles, []);
+    await endTurn(api, chat);
+    assert.equal(chat.turns.length, 1);
+  });
+
+  test("only user messages count toward a title", async () => {
+    const { api, titles } = registerChatTitles();
+    const chat = makeChatContext(0);
+    await endTurn(api, chat);
+    assert.equal(chat.turns.length, 0);
+    assert.deepEqual(titles, []);
+  });
+
+  test("another turn end in the same bucket does not title again", async () => {
+    const { api, titles } = registerChatTitles();
+    const chat = makeChatContext(1);
+    await endTurn(api, chat);
+    await endTurn(api, chat);
+    chat.userMessages = 2;
+    await endTurn(api, chat);
+    assert.equal(chat.turns.length, 1);
+    assert.equal(titles.length, 1);
+  });
+
+  test("the thread is titled again at the 10th user message and not before", async () => {
+    const { api, titles } = registerChatTitles();
+    const chat = makeChatContext(1);
+    await endTurn(api, chat);
+    for (let count = 2; count <= 9; count += 1) {
+      chat.userMessages = count;
+      await endTurn(api, chat);
+    }
+    assert.equal(chat.turns.length, 1, "messages 2 through 9 stay in the first bucket");
+    chat.userMessages = 10;
+    await endTurn(api, chat);
+    assert.equal(chat.turns.length, 2);
+    assert.equal(titles.length, 2);
+  });
+
+  test("a resumed thread is seeded from its history and titles at the next tenth", async () => {
+    const { api, titles } = registerChatTitles();
+    const chat = makeChatContext(15);
+    await api.trigger("session_start", { type: "session_start" }, chat.context);
+    await endTurn(api, chat);
+    chat.userMessages = 16;
+    await endTurn(api, chat);
+    assert.equal(chat.turns.length, 0, "15 and 16 messages were already covered by the 10 bucket");
+    chat.userMessages = 20;
+    await endTurn(api, chat);
+    assert.equal(chat.turns.length, 1);
+    assert.equal(titles.length, 1);
+  });
+
+  test("a missing runEphemeralTurn leaves the thread untitled without throwing", async () => {
+    const { api, titles } = registerChatTitles();
+    const chat = makeChatContext(1);
+    delete chat.context.runEphemeralTurn;
+    await endTurn(api, chat);
+    assert.deepEqual(titles, []);
+  });
+
+  test("a missing getBranch leaves the thread untitled without throwing", async () => {
+    const { api, titles } = registerChatTitles();
+    const chat = makeChatContext(1);
+    delete chat.context.sessionManager.getBranch;
+    await api.trigger("session_start", { type: "session_start" }, chat.context);
+    await endTurn(api, chat);
+    assert.equal(chat.turns.length, 0);
+    assert.deepEqual(titles, []);
+  });
+
+  test("a failed side turn is swallowed and retried at the next turn end", async () => {
+    const { api, titles } = registerChatTitles();
+    const chat = makeChatContext(1);
+    const sideTurn = chat.context.runEphemeralTurn;
+    let attempts = 0;
+    chat.context.runEphemeralTurn = async (options) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("model unavailable");
+      return sideTurn(options);
+    };
+    await endTurn(api, chat);
+    assert.deepEqual(titles, []);
+    await endTurn(api, chat);
+    assert.equal(attempts, 2);
+    assert.deepEqual(titles, [{ type: "session_name_suggested", name: "Fix login bug" }]);
+  });
+
+  test("a refused title write is swallowed and retried at the next turn end", async () => {
+    let writes = 0;
+    const { api, titles } = registerChatTitles(async () => {
+      writes += 1;
+      if (writes === 1) throw new Error("Session name rejected: stale owner");
+    });
+    const chat = makeChatContext(1);
+    await endTurn(api, chat);
+    assert.deepEqual(titles, []);
+    await endTurn(api, chat);
+    assert.equal(chat.turns.length, 2);
+    assert.deepEqual(titles, [{ type: "session_name_suggested", name: "Fix login bug" }]);
+  });
+
+  test("an empty reply writes nothing and is retried at the next turn end", async () => {
+    const { api, titles } = registerChatTitles();
+    const chat = makeChatContext(1);
+    chat.reply = '""';
+    await endTurn(api, chat);
+    assert.deepEqual(titles, []);
+    chat.reply = "Fix login bug";
+    await endTurn(api, chat);
+    assert.equal(chat.turns.length, 2);
+    assert.equal(titles.length, 1);
+  });
+
+  test("turn ends while a title is in flight do not start a second side turn", async () => {
+    const { api, titles } = registerChatTitles();
+    const chat = makeChatContext(1);
+    let release;
+    chat.context.runEphemeralTurn = (options) => {
+      chat.turns.push(options);
+      return new Promise((resolve) => {
+        release = () => resolve({ replyText: "Fix login bug" });
+      });
+    };
+    // Not awaited one by one: the first side turn stays pending until released.
+    const turnEnds = [];
+    for (let count = 0; count < 2; count += 1) {
+      turnEnds.push(api.trigger("agent_end", { type: "agent_end" }, chat.context));
+      await flush();
+    }
+    assert.equal(chat.turns.length, 1);
+    release();
+    await Promise.all(turnEnds);
+    await flush();
+    assert.equal(titles.length, 1);
+    await endTurn(api, chat);
+    assert.equal(chat.turns.length, 1, "the finished title recorded its bucket");
+  });
+
+  test("agent_end reports idle without waiting for the title", async () => {
+    const { api, emit, titles } = registerChatTitles();
+    const chat = makeChatContext(1);
+    chat.context.runEphemeralTurn = (options) => {
+      chat.turns.push(options);
+      return new Promise(() => {});
+    };
+    let timer;
+    const outcome = await Promise.race([
+      api.trigger("agent_end", { type: "agent_end" }, chat.context).then(() => "settled"),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve("blocked"), 1000);
+      }),
+    ]);
+    clearTimeout(timer);
+    assert.equal(outcome, "settled");
+    assert.deepEqual(emit.emitted, [{ type: "idle" }]);
+    assert.equal(chat.turns.length, 1, "the side turn did start");
+    assert.deepEqual(titles, []);
+  });
+
+  test("registering without emitChatTitle never starts a side turn", async () => {
+    const api = makeFakeApi();
+    const emit = makeRecordingEmitter();
+    registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
+    const chat = makeChatContext(1);
+    await endTurn(api, chat);
+    assert.equal(chat.turns.length, 0);
+    assert.deepEqual(emit.emitted, [{ type: "idle" }]);
+  });
+
+  test("a chat-naming launch wires the title emitter and not the task naming tool", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "alinery-chat-title-"));
+    const runner = path.join(root, "runner");
+    const log = path.join(root, "requests");
+    // agent_end sends idle and then the title through the same runner; one JSON line each.
+    writeFileSync(runner, `#!/bin/sh\nprintf '%s\\n' "$(/bin/cat)" >> '${log}'\nprintf '%s\\n' '{"status":"saved","value":{"name":"Fix login bug","source":"auto"}}'\n`, {
+      mode: 0o755,
+    });
+    const values = {
+      ...runnerEnvironment("chat"),
+      ALINERY_RUNNER_PATH: runner,
+      ALINERY_SESSION_ID: "own",
+      ALINERY_DAEMON_SOCKET: "/unused",
+    };
+    const previous = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
+    const api = makeFakeApi();
+    try {
+      Object.assign(process.env, values);
+      ext.default(api);
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+    try {
+      assert.ok(!api.getRegisteredTools().includes("alinery_set_session_name"));
+      assert.equal(await api.trigger("before_agent_start", { systemPrompt: ["ordinary"] }), undefined);
+      await api.trigger("agent_end", { type: "agent_end" }, makeChatContext(1).context);
+      const requests = () =>
+        existsSync(log)
+          ? readFileSync(log, "utf8")
+              .trim()
+              .split("\n")
+              .map((line) => JSON.parse(line))
+          : [];
+      for (let waited = 0; !requests().some((event) => event.type === "session_name_suggested") && waited < 5000; waited += 20) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assert.deepEqual(
+        requests().filter((event) => event.type === "session_name_suggested"),
+        [{ type: "session_name_suggested", name: "Fix login bug" }],
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

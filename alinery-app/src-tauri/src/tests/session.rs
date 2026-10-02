@@ -1328,6 +1328,55 @@ fn resume_chat_missing_worktree_opens_in_checkout_and_second_call_returns_succes
     let _ = fs::remove_dir_all(repo);
 }
 
+// Stands in for the daemon during a resume: `create_execution_session` mints the successor row,
+// `resume` is acked. Two connections, then it exits.
+fn resume_chat_with_predecessor_name(source: alinery_core::SessionNameSource) -> alinery_core::SessionName {
+    use std::os::unix::net::UnixListener;
+    let repo = init_git_test_repo("chat-resume-name");
+    plant_chat(&repo, "s-pred", "omp", 1, false, true, &repo.to_string_lossy(), "tok", Some(1), Some(2), None);
+    alinery_core::set_session_name(&repo, "", "s-pred", "Fix the importer", source).unwrap();
+    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    // Not under temp_dir(): a macOS socket path must stay under 104 bytes.
+    let socket = std::path::PathBuf::from(format!("/tmp/ao-chat-resume-{n}.sock"));
+    let listener = UnixListener::bind(&socket).unwrap();
+    let daemon_repo = repo.clone();
+    let daemon = std::thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request: serde_json::Value = serde_json::from_str(&crate::read_socket_line(&mut stream).unwrap()).unwrap();
+            let reply = if request["op"] == "create_execution_session" {
+                plant_chat(&daemon_repo, "s-succ", "omp", 2, false, false, "", "", None, None, None);
+                let session: serde_json::Value = serde_json::from_slice(&fs::read(session_meta_path(&daemon_repo, "", "s-succ")).unwrap()).unwrap();
+                serde_json::json!({"session": session, "execution": null, "start": "not_requested", "errors": []})
+            } else {
+                serde_json::json!({"ok": true})
+            };
+            writeln!(stream, "{reply}").unwrap();
+        }
+    });
+    let client = alinery_core::DaemonClient { socket_path: socket.clone() };
+    let successor = resume_chat_thread_in(&repo, "s-pred", Some(&client)).unwrap();
+    daemon.join().unwrap();
+    let name = alinery_core::read_session_name(&repo, "", &successor.id).unwrap().expect("successor keeps the thread name");
+    let _ = fs::remove_file(socket);
+    let _ = fs::remove_dir_all(repo);
+    name
+}
+
+#[test]
+fn resume_chat_keeps_an_auto_name_auto_so_it_can_still_be_retitled() {
+    let name = resume_chat_with_predecessor_name(alinery_core::SessionNameSource::Auto);
+    assert_eq!(name.name, "Fix the importer");
+    assert_eq!(name.source, alinery_core::SessionNameSource::Auto);
+}
+
+#[test]
+fn resume_chat_keeps_a_user_name_user_so_it_is_never_retitled() {
+    let name = resume_chat_with_predecessor_name(alinery_core::SessionNameSource::User);
+    assert_eq!(name.name, "Fix the importer");
+    assert_eq!(name.source, alinery_core::SessionNameSource::User);
+}
+
 #[test]
 fn read_chat_journal_uses_root_sessions_dir() {
     let repo = init_git_test_repo("chat-journal");

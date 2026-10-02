@@ -24,6 +24,12 @@ export function journalState(buffer: ArrayBuffer): ChatTranscriptState {
   return applyFilePage(emptyTranscript(), { start: page.start, messages: page.messages }, "initial");
 }
 
+/** An older page of the journal, prepended; the caller names the thread it asked for. */
+export function olderPageState(current: ChatTranscriptState, buffer: ArrayBuffer): ChatTranscriptState {
+  const page = decodeOmpPage(buffer);
+  return applyFilePage(current, { start: page.start, messages: page.messages }, "older");
+}
+
 export function parseChatLine(line: string): unknown {
   try {
     return JSON.parse(line) as unknown;

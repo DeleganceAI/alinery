@@ -491,6 +491,26 @@ fn session_name_survives_same_id_restate_and_does_not_consume_pending_pty_seed()
 }
 
 #[test]
+fn chat_thread_gets_chat_naming_while_task_session_keeps_tool_naming() {
+    let fixture = Fixture::new();
+    let task_id = fixture.spawn_omp().to_string();
+    let created = fixture.rpc(json!({"op": "create_execution_session", "request": {
+        "task_slug": "", "target": {"kind": "auxiliary", "harness": "omp"}, "start": false
+    }}));
+    assert_eq!(created["errors"], json!([]), "{created}");
+    let chat_id = created["session"]["id"].as_str().expect("chat thread row").to_string();
+    let started = fixture.rpc(json!({"op": "start_session", "request": {"task_slug": "", "session_id": chat_id}}));
+    assert_eq!(started["start"], "started", "start response: {started}");
+    // The overlay row sets ALINERY_SESSION_NAMING = "1"; the daemon's value must win for the chat thread.
+    for (id, mode) in [(&task_id, "1"), (&chat_id, "chat")] {
+        // The fixture publishes the token only after it has written the naming probe.
+        let token = fixture.root.join(format!("token.{id}"));
+        wait_until(Duration::from_secs(5), || token.is_file());
+        assert_eq!(fs::read_to_string(fixture.root.join(format!("naming.{id}"))).unwrap(), mode, "naming mode for {id}");
+    }
+}
+
+#[test]
 fn spawn_omp_is_rpc_and_restate_pty_keeps_id() {
     let fixture = Fixture::new();
     let id = fixture.spawn_omp();

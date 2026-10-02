@@ -115,9 +115,6 @@ pub fn set_session_name(repo: &Path, task_slug: &str, session_id: &str, name: &s
     let name = validate_session_name(name)?;
     // Validate before the lock helper can create its directory, then again inside the transaction.
     validate_target(repo, task_slug, session_id)?;
-    if task_slug.is_empty() && source == SessionNameSource::Auto {
-        return Err("root sessions are not auto-named".into());
-    }
     with_task_mutation_lock_waiting(repo, "rename session", crate::TASK_MUTATION_CONTENTION_WAIT, || {
         let meta = validate_target(repo, task_slug, session_id)?;
         if source == SessionNameSource::Auto && !meta.execution_id.is_empty() {
@@ -131,10 +128,15 @@ pub fn set_session_name(repo: &Path, task_slug: &str, session_id: &str, name: &s
         let path = session_name_path(repo, task_slug, session_id);
         if source == SessionNameSource::Auto {
             if let Some(bytes) = read_name_bytes(repo, task_slug, session_id)? {
-                return Ok(SessionNameOutcome {
-                    status: SessionNameWriteStatus::Unchanged,
-                    value: parse_name(&bytes)?,
-                });
+                let existing = parse_name(&bytes)?;
+                // A task session keeps its first name. A chat thread (taskless root) is retitled as
+                // the conversation grows, so a generated name yields only to a human one.
+                if !(task_slug.is_empty() && existing.source == SessionNameSource::Auto) {
+                    return Ok(SessionNameOutcome {
+                        status: SessionNameWriteStatus::Unchanged,
+                        value: existing,
+                    });
+                }
             }
         } else {
             match fs::symlink_metadata(&path) {
@@ -531,23 +533,7 @@ mod tests {
 
     #[test]
     fn user_rename_of_root_omp_does_not_require_task_md() {
-        let repo = std::env::temp_dir().join(format!("alinery-chat-name-{}", uuid::Uuid::new_v4()));
-        let id = "s01234567";
-        let meta_path = session_meta_path(&repo, "", id);
-        std::fs::create_dir_all(meta_path.parent().unwrap()).unwrap();
-        std::fs::write(
-            &meta_path,
-            serde_json::to_vec(&SessionMeta {
-                id: id.into(),
-                harness: crate::DEFAULT_HARNESS_KEY.into(),
-                generic: true,
-                worktree: repo.to_string_lossy().into_owned(),
-                created: 1,
-                ..SessionMeta::default()
-            })
-            .unwrap(),
-        )
-        .unwrap();
+        let (repo, id) = root_omp_fixture("alinery-chat-name");
         let outcome = set_session_name(&repo, "", id, "Thread title", SessionNameSource::User).expect("root omp rename");
         assert_eq!(outcome.value.name, "Thread title");
         assert_eq!(outcome.value.source, SessionNameSource::User);
@@ -558,9 +544,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&repo);
     }
 
-    #[test]
-    fn auto_rename_of_root_omp_writes_nothing() {
-        let repo = std::env::temp_dir().join(format!("alinery-chat-auto-{}", uuid::Uuid::new_v4()));
+    fn root_omp_fixture(prefix: &str) -> (std::path::PathBuf, &'static str) {
+        let repo = std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()));
         let id = "s01234567";
         let meta_path = session_meta_path(&repo, "", id);
         std::fs::create_dir_all(meta_path.parent().unwrap()).unwrap();
@@ -577,9 +562,39 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let err = set_session_name(&repo, "", id, "Auto title", SessionNameSource::Auto).expect_err("auto root rename");
-        assert_ne!(err, "invalid task slug or session id");
-        assert!(!root_sessions_dir(&repo).join(format!("{id}.name.json")).exists());
+        (repo, id)
+    }
+
+    #[test]
+    fn auto_rename_of_root_omp_saves_when_no_name_exists() {
+        let (repo, id) = root_omp_fixture("alinery-chat-auto");
+        let outcome = set_session_name(&repo, "", id, "Auto title", SessionNameSource::Auto).expect("auto root rename");
+        assert_eq!(outcome.status, SessionNameWriteStatus::Saved);
+        assert_eq!(read_session_name(&repo, "", id).unwrap(), Some(outcome.value));
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn auto_rename_of_root_omp_replaces_an_auto_name() {
+        let (repo, id) = root_omp_fixture("alinery-chat-retitle");
+        set_session_name(&repo, "", id, "First title", SessionNameSource::Auto).unwrap();
+        let outcome = set_session_name(&repo, "", id, "Second title", SessionNameSource::Auto).unwrap();
+        assert_eq!(outcome.status, SessionNameWriteStatus::Saved);
+        assert_eq!(outcome.value.name, "Second title");
+        assert_eq!(read_session_name(&repo, "", id).unwrap(), Some(outcome.value));
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn auto_rename_of_root_omp_yields_to_a_user_name_and_writes_nothing() {
+        let (repo, id) = root_omp_fixture("alinery-chat-user-wins");
+        let user = set_session_name(&repo, "", id, "Human title", SessionNameSource::User).unwrap();
+        let path = session_name_path(&repo, "", id);
+        let before = std::fs::read(&path).unwrap();
+        let outcome = set_session_name(&repo, "", id, "Auto title", SessionNameSource::Auto).unwrap();
+        assert_eq!(outcome.status, SessionNameWriteStatus::Unchanged);
+        assert_eq!(outcome.value, user.value);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
         let _ = std::fs::remove_dir_all(&repo);
     }
 

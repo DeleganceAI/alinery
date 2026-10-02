@@ -15,12 +15,12 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatComposer } from "../ChatComposer";
 import { applySendPlan, planChatSend } from "../chat/send";
 import type { SessionChatStatus } from "../chat/types";
 import type { ChatPrefs } from "../chat/visibility";
-import { appendOptimisticAbort, appendOptimisticUser, type ChatTranscriptState, emptyTranscript } from "../chatTranscript";
+import { appendOptimisticAbort, appendOptimisticUser, type ChatTranscriptState, emptyTranscript, needsUiReply } from "../chatTranscript";
 import { askConfirm, confirmDanger, confirmStopAndSwitch } from "../confirm";
 import { IdleDot, RunningIndicator } from "../Indicators";
 import * as ipc from "../ipc";
@@ -31,6 +31,7 @@ import { type ObservationDisplayKind, observationDisplayKind } from "../sessionA
 import { isTurnActive, OMP_INTERRUPT_DATA } from "../sessionMessage";
 import { Checkbox, Dialog, obsLabel } from "../shared";
 import type { ChatThread, SessionObservation } from "../types";
+import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatModelDialog } from "./ChatModelDialog";
 import { ChatPane } from "./ChatPane";
 import {
@@ -41,11 +42,13 @@ import {
   attachHandshake,
   chatTerminalIo,
   journalState,
+  olderPageState,
   parseChatLine,
   queueRefreshCommand,
   sendCommand,
   sendNowCommand,
 } from "./chatSession";
+import { useChatUiReplies } from "./useChatUiReplies";
 
 function threadLabel(thread: ChatThread): string {
   if (thread.name) return thread.name;
@@ -123,6 +126,7 @@ export function ChatView({ knownRepos, terminalFontSize, visibility }: { knownRe
   // A fresh attach id per run: a re-run for the same thread (back from Terminal) must not let the
   // previous run's fire-and-forget detach drop the new attach, which shares the daemon's id space.
   const attachSeq = useRef(0);
+  const selectionRef = useRef("");
   const [attachEpoch, setAttachEpoch] = useState(0);
   const [hatchBusy, setHatchBusy] = useState(false);
   const dirs = knownRepos.filter((path) => path.length > 0);
@@ -188,6 +192,7 @@ export function ChatView({ knownRepos, terminalFontSize, visibility }: { knownRe
     }
     const repo = selectedRepo;
     const id = selectedId;
+    selectionRef.current = `${repo}:${id}`;
     compactionPushed.current = `${repo}:${id}:${autoCompactionRef.current}`;
     const attachId = ++attachSeq.current;
     // A send that resumed this thread: its row and turn claim belong on the journal loaded below.
@@ -262,9 +267,58 @@ export function ChatView({ knownRepos, terminalFontSize, visibility }: { knownRe
   }, [selectedId, selectedRepo, attachEpoch]);
 
   const activity = chatActivity(observation, transcript);
+  // OMP titles a thread a few seconds after a turn ends (the first message, then every 10th), so the
+  // rail and title bar pick the new name up from the list once the turn has settled.
+  const turnWasActive = useRef(false);
+  useEffect(() => {
+    if (activity.turnActive) {
+      turnWasActive.current = true;
+      return;
+    }
+    if (!turnWasActive.current) return;
+    turnWasActive.current = false;
+    const timers = [3000, 9000].map((delay) => window.setTimeout(() => void reload().catch(() => {}), delay));
+    return () => {
+      for (const timer of timers) window.clearTimeout(timer);
+    };
+  }, [activity.turnActive]);
   const statusKind = activity.kind;
-  const sendNowEnabled = activity.status === "running" && observation?.state?.agent?.state !== "waiting_for_input" && body.trim().length > 0;
   const processLive = observation?.state?.process.state === "alive";
+  const uiReplies = useChatUiReplies({
+    repo: selectedRepo ?? null,
+    id: selectedId ?? null,
+    live: processLive,
+    transcript,
+    setTranscript,
+    onError: setError,
+  });
+  const uiPrompt = uiReplies.prompt;
+  const pendingUiReply = transcript.pendingUi.some((request) => needsUiReply(request.method));
+  const agentState = observation?.state?.agent?.state;
+  const sendNowEnabled = activity.status === "running" && agentState !== "waiting_for_input" && agentState !== "waiting_for_approval" && !pendingUiReply && body.trim().length > 0;
+
+  // Older rows come off the journal on demand, as in a task session. A page that lands after the
+  // reader moved to another thread is dropped.
+  const olderBusy = useRef(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const transcriptRef = useRef(transcript);
+  transcriptRef.current = transcript;
+  const loadOlder = useCallback(() => {
+    const from = transcriptRef.current.fileStart;
+    if (olderBusy.current || from == null || from === 0 || !selectedRepo || !selectedId) return;
+    olderBusy.current = true;
+    setLoadingOlder(true);
+    ipc
+      .readChatOmp({ repoPath: selectedRepo, id: selectedId, end: from })
+      .then((buffer) => {
+        if (selectionRef.current === `${selectedRepo}:${selectedId}`) setTranscript((current) => olderPageState(current, buffer));
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        olderBusy.current = false;
+        setLoadingOlder(false);
+      });
+  }, [selectedRepo, selectedId]);
   // The handshake pushes the setting on every attach; `compactionPushed` keeps the effect below to
   // real toggles instead of repeating it when the poll first reports the process alive.
   const autoCompactionRef = useRef(visibility.autoCompaction);
@@ -689,7 +743,15 @@ export function ChatView({ knownRepos, terminalFontSize, visibility }: { knownRe
             />
           </div>
         ) : selected ? (
-          <ChatPane entries={transcript.entries} status={activity.status} visibility={visibility} />
+          <ChatPane
+            entries={transcript.entries}
+            status={activity.status}
+            visibility={visibility}
+            onApprove={uiReplies.approve}
+            onLoadOlder={loadOlder}
+            loadingOlder={loadingOlder}
+            atStart={transcript.fileStart === 0}
+          />
         ) : (
           <div className="chat-blank">
             <MessageSquare size={28} aria-hidden="true" />
@@ -706,6 +768,9 @@ export function ChatView({ knownRepos, terminalFontSize, visibility }: { knownRe
               </button>
             ) : null}
           </div>
+        ) : null}
+        {!inTerminal && uiPrompt ? (
+          <ChatExtensionPrompt request={uiPrompt} onSubmit={(value) => void uiReplies.reply(uiPrompt.id, value)} onCancel={() => void uiReplies.cancel(uiPrompt.id)} />
         ) : null}
         {inTerminal ? null : (
           <ChatComposer

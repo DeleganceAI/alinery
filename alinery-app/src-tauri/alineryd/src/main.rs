@@ -1987,8 +1987,8 @@ fn spawn_session(
         cmd.env("ALINERY_DAEMON_NAMESPACE", daemon_namespace);
         cmd.env("ALINERY_EVENT_PROTOCOL_VERSION", RUNNER_EVENT_PROTOCOL_VERSION.to_string());
         cmd.env("ALINERY_EVENT_TOKEN", &event_token);
-        if !launch.task_slug.is_empty() {
-            cmd.env("ALINERY_SESSION_NAMING", "1");
+        if let Some(mode) = session_naming_mode(&launch.id, &launch.task_slug) {
+            cmd.env("ALINERY_SESSION_NAMING", mode);
         }
         if let Some(host) = protected_host.as_ref() {
             cmd.env("ALINERY_HOST_EXECUTABLE", host);
@@ -2673,6 +2673,19 @@ mod rpc_ring_tests {
     }
 }
 
+/// What the OMP extension may do about names. Task sessions name themselves through a tool; chat
+/// threads (taskless roots) get a model-written title at turn ends. The reserved setup session is
+/// neither: it has no metadata to name.
+fn session_naming_mode(session_id: &str, task_slug: &str) -> Option<&'static str> {
+    if !task_slug.is_empty() {
+        Some("1")
+    } else if session_id != OMP_SETUP_SESSION_ID {
+        Some("chat")
+    } else {
+        None
+    }
+}
+
 fn apply_rpc_command_env(
     cmd: &mut process::Command,
     harness: &Harness,
@@ -2704,8 +2717,8 @@ fn apply_rpc_command_env(
         cmd.env("ALINERY_DAEMON_NAMESPACE", daemon_namespace);
         cmd.env("ALINERY_EVENT_PROTOCOL_VERSION", RUNNER_EVENT_PROTOCOL_VERSION.to_string());
         cmd.env("ALINERY_EVENT_TOKEN", event_token);
-        if !launch.task_slug.is_empty() {
-            cmd.env("ALINERY_SESSION_NAMING", "1");
+        if let Some(mode) = session_naming_mode(&launch.id, &launch.task_slug) {
+            cmd.env("ALINERY_SESSION_NAMING", mode);
         }
         if let Some(host) = protected_host.as_ref() {
             cmd.env("ALINERY_HOST_EXECUTABLE", host);
@@ -3532,6 +3545,26 @@ mod status_transitions {
         let unchanged = value.clone();
         assert!(!stamp_status_transition(&mut value, &waiting, &waiting, 100));
         assert_eq!(value, unchanged);
+    }
+}
+
+#[cfg(test)]
+mod naming_mode {
+    use super::*;
+
+    #[test]
+    fn task_sessions_name_themselves_with_the_tool() {
+        assert_eq!(session_naming_mode("s01234567", "some-task"), Some("1"));
+    }
+
+    #[test]
+    fn taskless_root_sessions_are_chat_threads() {
+        assert_eq!(session_naming_mode("s01234567", ""), Some("chat"));
+    }
+
+    #[test]
+    fn the_reserved_setup_session_gets_no_naming_mode() {
+        assert_eq!(session_naming_mode(OMP_SETUP_SESSION_ID, ""), None);
     }
 }
 

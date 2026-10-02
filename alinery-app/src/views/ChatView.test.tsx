@@ -1,5 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import uiConfirm from "../chat/fixtures/live-extension_ui_confirm.json";
+import uiWidget from "../chat/fixtures/live-extension_ui_request.json";
 import subagentLifecycle from "../chat/fixtures/live-subagent_lifecycle.json";
 import { type ChatPrefs, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
 import { askConfirm, confirmDanger } from "../confirm";
@@ -23,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   chatDetach: vi.fn(),
   chatRpcWrite: vi.fn(),
   chatRestate: vi.fn(),
+  readChatOmp: vi.fn(),
+  openUrl: vi.fn(),
   sessionListStatuses: vi.fn(),
 }));
 
@@ -37,6 +41,8 @@ vi.mock("../ipc", () =>
     chatDetach: mocks.chatDetach,
     chatRpcWrite: mocks.chatRpcWrite,
     chatRestate: mocks.chatRestate,
+    readChatOmp: mocks.readChatOmp,
+    openUrl: mocks.openUrl,
     sessionListStatuses: mocks.sessionListStatuses,
   }),
 );
@@ -88,6 +94,13 @@ function observed(agent: "unknown" | "idle" | "busy", process: "alive" | "exited
   };
 }
 
+/** A journal page as `read_chat_omp` returns it: a JSON header line, then one JSON row per line. */
+function journalPage(start: number, rows: [id: string, text: string][]): ArrayBuffer {
+  const body = rows.map(([id, text]) => JSON.stringify({ type: "message", id, message: { role: "user", content: [{ type: "text", text }] } })).join("\n");
+  const bytes = new TextEncoder().encode(`${JSON.stringify({ start, end: start + 100, length: 1000 })}\n${body}\n`);
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -100,6 +113,8 @@ beforeEach(() => {
   mocks.chatDetach.mockResolvedValue(undefined);
   mocks.chatRpcWrite.mockResolvedValue(undefined);
   mocks.chatRestate.mockResolvedValue(undefined);
+  mocks.readChatOmp.mockRejectedValue(new Error("no journal"));
+  mocks.openUrl.mockResolvedValue(undefined);
   mocks.sessionListStatuses.mockResolvedValue({});
   mocks.archiveChatThread.mockResolvedValue(undefined);
   mocks.listChatThreads.mockResolvedValue([]);
@@ -380,5 +395,216 @@ describe("ChatView", () => {
     const { emit } = await openLive(observed("busy"));
     emit(subagentLifecycle);
     expect(await screen.findByText("Explore running")).toBeTruthy();
+  });
+
+  const liveMeta = { started_at: 1, ended_at: null, archived: false };
+
+  it("re-lists threads 3s after a turn ends so OMP's new title shows", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatThreads
+        .mockResolvedValueOnce([thread("s-live", { session: meta("s-live", liveMeta) })])
+        .mockResolvedValue([thread("s-live", { name: "Fix the build", session: meta("s-live", liveMeta) })]);
+      mocks.chatSessionStatus.mockResolvedValueOnce(observed("busy")).mockResolvedValue(observed("idle"));
+      render(chat());
+      fireEvent.click(await screen.findByRole("button", { name: "Chat s-live" }));
+      await screen.findByRole("button", { name: "Abort turn" });
+      await vi.advanceTimersByTimeAsync(1500);
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Abort turn" })).toBeNull());
+      expect(mocks.listChatThreads).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(mocks.listChatThreads).toHaveBeenCalledTimes(2);
+      expect(await screen.findByRole("heading", { name: "Fix the build" })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("lists once more at 9s for a title that lands late", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatThreads.mockResolvedValue([thread("s-live", { session: meta("s-live", liveMeta) })]);
+      mocks.chatSessionStatus.mockResolvedValueOnce(observed("busy")).mockResolvedValue(observed("idle"));
+      render(chat());
+      fireEvent.click(await screen.findByRole("button", { name: "Chat s-live" }));
+      await screen.findByRole("button", { name: "Abort turn" });
+      await vi.advanceTimersByTimeAsync(1500);
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Abort turn" })).toBeNull());
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(mocks.listChatThreads).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not re-list threads when no turn ran", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatThreads.mockResolvedValue([thread("s-live", { session: meta("s-live", liveMeta) })]);
+      mocks.chatSessionStatus.mockResolvedValue(observed("idle"));
+      render(chat());
+      fireEvent.click(await screen.findByRole("button", { name: "Chat s-live" }));
+      await screen.findByText("Idle");
+      await vi.advanceTimersByTimeAsync(12000);
+      expect(mocks.listChatThreads).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /** The extension UI answers the app wrote, in order. */
+  function uiResponses() {
+    return mocks.chatRpcWrite.mock.calls.map((call) => call[2] as { type?: string }).filter((payload) => payload.type === "extension_ui_response");
+  }
+
+  it("answers an Allow click with confirmed:true and clears the row", async () => {
+    const { emit } = await openLive(observed("idle"));
+    emit(uiConfirm);
+    fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", { type: "extension_ui_response", id: "ui-confirm-1", confirmed: true }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Allow" })).toBeNull());
+  });
+
+  it("answers a Deny click with confirmed:false", async () => {
+    const { emit } = await openLive(observed("idle"));
+    emit(uiConfirm);
+    fireEvent.click(await screen.findByRole("button", { name: "Deny" }));
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", { type: "extension_ui_response", id: "ui-confirm-1", confirmed: false }));
+  });
+
+  it("sends one answer for a double click while the first is in flight", async () => {
+    const { emit } = await openLive(observed("idle"));
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mocks.chatRpcWrite.mockImplementation((_repo: string, _id: string, payload: { type?: string }) => (payload.type === "extension_ui_response" ? gate : Promise.resolve()));
+    emit(uiConfirm);
+    const allow = await screen.findByRole("button", { name: "Allow" });
+    fireEvent.click(allow);
+    fireEvent.click(allow);
+    expect(uiResponses()).toHaveLength(1);
+    await act(async () => release());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Allow" })).toBeNull());
+    expect(uiResponses()).toHaveLength(1);
+  });
+
+  it("shows a failed answer's error and lets the same request be answered again", async () => {
+    const { emit } = await openLive(observed("idle"));
+    emit(uiConfirm);
+    mocks.chatRpcWrite.mockRejectedValueOnce(new Error("socket closed"));
+    fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
+    expect(await screen.findByText("Error: socket closed")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Allow" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    await waitFor(() => expect(uiResponses()).toHaveLength(2));
+    expect(uiResponses()[1]).toEqual({ type: "extension_ui_response", id: "ui-confirm-1", confirmed: true });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Allow" })).toBeNull());
+  });
+
+  it("opens an approved link in the browser before confirming it", async () => {
+    const { emit } = await openLive(observed("idle"));
+    emit({ type: "extension_ui_request", id: "ui-url", method: "open_url", url: "https://example.com/doc" });
+    fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", { type: "extension_ui_response", id: "ui-url", confirmed: true }));
+    expect(mocks.openUrl).toHaveBeenCalledWith("https://example.com/doc");
+  });
+
+  it("renders a select prompt above the composer and answers with the chosen option", async () => {
+    const { emit } = await openLive(observed("idle"));
+    emit({ type: "extension_ui_request", id: "ui-sel", method: "select", title: "Pick a branch", options: ["main", "dev"] });
+    const heading = await screen.findByText("Pick a branch");
+    const composer = screen.getByLabelText("Message or /command");
+    expect(heading.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "dev" }));
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", { type: "extension_ui_response", id: "ui-sel", value: "dev" }));
+    await waitFor(() => expect(screen.queryByText("Pick a branch")).toBeNull());
+  });
+
+  it("cancels a select prompt", async () => {
+    const { emit } = await openLive(observed("idle"));
+    emit({ type: "extension_ui_request", id: "ui-sel", method: "select", title: "Pick a branch", options: ["main", "dev"] });
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", { type: "extension_ui_response", id: "ui-sel", cancelled: true }));
+  });
+
+  it("answers an input prompt with the typed value", async () => {
+    const { emit } = await openLive(observed("idle"));
+    emit({ type: "extension_ui_request", id: "ui-in", method: "input", title: "Your name" });
+    const field = await screen.findByLabelText("Your name");
+    fireEvent.change(field, { target: { value: "Ada" } });
+    fireEvent.click(within(field.closest("form") as HTMLElement).getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", { type: "extension_ui_response", id: "ui-in", value: "Ada" }));
+  });
+
+  it("cancels each presentation-only request once, without showing any UI", async () => {
+    const { emit } = await openLive(observed("idle"));
+    emit(uiWidget);
+    await waitFor(() => expect(uiResponses()).toHaveLength(1));
+    // A later request re-runs the cancel pass over everything still pending; the first must not be answered twice.
+    emit({ type: "extension_ui_request", id: "ui-status", method: "setStatus" });
+    await waitFor(() => expect(uiResponses()).toHaveLength(2));
+    expect(uiResponses()).toEqual([
+      { type: "extension_ui_response", id: uiWidget.id, cancelled: true },
+      { type: "extension_ui_response", id: "ui-status", cancelled: true },
+    ]);
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+  });
+
+  it("withholds Send now while an approval is pending, and offers it again once answered", async () => {
+    const { emit } = await openLive(observed("busy"));
+    fireEvent.change(await screen.findByLabelText("Send after this turn…"), { target: { value: "now" } });
+    expect(screen.getByRole("button", { name: "Send now" })).toBeTruthy();
+    emit(uiConfirm);
+    const allow = await screen.findByRole("button", { name: "Allow" });
+    expect(screen.queryByRole("button", { name: "Send now" })).toBeNull();
+    fireEvent.click(allow);
+    expect(await screen.findByRole("button", { name: "Send now" })).toBeTruthy();
+  });
+
+  it("pages the journal back from the first page's start and prepends the older rows", async () => {
+    mocks.readChatOmp.mockImplementation(async (args: { end?: number }) =>
+      args.end == null ? journalPage(500, [["m2", "newer question"]]) : journalPage(0, [["m1", "older question"]]),
+    );
+    await openLive(observed("idle"));
+    await waitFor(() => expect(mocks.readChatOmp).toHaveBeenCalledWith({ repoPath: "/repo", id: "s-live", end: 500 }));
+    const older = await screen.findByText("older question");
+    expect(older.compareDocumentPosition(screen.getByText("newer question")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(await screen.findByText("Start of conversation")).toBeTruthy();
+    expect(mocks.readChatOmp.mock.calls.filter(([args]) => args.end != null)).toHaveLength(1);
+  });
+
+  it("does not page when the first page already starts the conversation", async () => {
+    mocks.readChatOmp.mockResolvedValue(journalPage(0, [["m1", "only question"]]));
+    await openLive(observed("idle"));
+    expect(await screen.findByText("only question")).toBeTruthy();
+    expect(screen.getByText("Start of conversation")).toBeTruthy();
+    expect(mocks.readChatOmp.mock.calls.filter(([args]) => args.end != null)).toHaveLength(0);
+  });
+
+  it("drops an older page that lands after switching threads", async () => {
+    const live = (id: string) => thread(id, { session: meta(id, liveMeta) });
+    mocks.listChatThreads.mockResolvedValue([live("s-a"), live("s-b")]);
+    mocks.chatSessionStatus.mockResolvedValue(observed("idle"));
+    let landStale: (buffer: ArrayBuffer) => void = () => {};
+    const stale = new Promise<ArrayBuffer>((resolve) => {
+      landStale = resolve;
+    });
+    mocks.readChatOmp.mockImplementation(async (args: { id: string; end?: number }) => {
+      if (args.id === "s-a") return args.end == null ? journalPage(500, [["a2", "a newer"]]) : stale;
+      return journalPage(0, [["b1", "b only"]]);
+    });
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: "Chat s-a" }));
+    await waitFor(() => expect(mocks.readChatOmp).toHaveBeenCalledWith({ repoPath: "/repo", id: "s-a", end: 500 }));
+    fireEvent.click(screen.getByRole("button", { name: "Chat s-b" }));
+    await screen.findByText("b only");
+    await act(async () => {
+      landStale(journalPage(0, [["a1", "a stale older"]]));
+      await stale;
+    });
+    expect(screen.queryByText("a stale older")).toBeNull();
+    expect(screen.getByText("b only")).toBeTruthy();
   });
 });

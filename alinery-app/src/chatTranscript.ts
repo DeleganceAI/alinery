@@ -551,7 +551,9 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
  */
 export function applyFilePage(state: ChatTranscriptState, page: { start: number; messages: ChatMessage[] }, position: "initial" | "older"): ChatTranscriptState {
   const messages = position === "older" ? [...page.messages, ...state.messages] : page.messages;
-  const hydrated = hydrateEntries(messages);
+  // Only journal rows carry an OMP row id. Messages the stream added since attach already have their
+  // live entries below, so hydrating them again would show each one twice.
+  const hydrated = hydrateEntries(position === "older" ? messages.filter((message) => message.rowId !== undefined) : messages);
   const live = state.entries.filter((entry) => !entry.id.startsWith("f:"));
   return {
     ...state,
