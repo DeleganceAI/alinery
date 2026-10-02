@@ -1228,7 +1228,7 @@ export default function App() {
             </div>
           )}
           {view.kind === "create" && (
-            <div className="view scroll">
+            <div className="view nopad">
               <CreateTaskPage
                 initialDraft={view.kind === "create" ? view.draft : undefined}
                 initialPlaybook={view.initialPlaybook}
@@ -1468,6 +1468,7 @@ export default function App() {
             <Grid
               active={active}
               allRepos={scope === "all"}
+              repoPaths={scope === "all" ? appConfig.known_repos : [appConfig.active_repo]}
               onOpen={openBoardTask}
               onDuplicate={(task) => duplicateTask({ repoPath: task.repo_path, sourceSlug: task.slug })}
               registerNav={registerNav}

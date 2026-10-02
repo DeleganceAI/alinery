@@ -698,327 +698,329 @@ export function CreateTaskPage({
 
   return (
     <div className="createpage createpage-with-preview" onKeyDown={onKey}>
-      <div className="createform createform-page">
-        <h1 className="create-title">New task</h1>
-        <label className="create-field">
-          <span>Repository</span>
-          <select className="field-input" value={repoPath} disabled={creating || clearing} onChange={(e) => selectRepo(e.target.value)}>
-            {knownRepos.map((repo) => (
-              <option key={repo} value={repo}>
-                {repo}
-              </option>
+      <div className="create-form-panel">
+        <div className="createform createform-page">
+          <h1 className="create-title">New task</h1>
+          <label className="create-field">
+            <span>Repository</span>
+            <select className="field-input" value={repoPath} disabled={creating || clearing} onChange={(e) => selectRepo(e.target.value)}>
+              {knownRepos.map((repo) => (
+                <option key={repo} value={repo}>
+                  {repo}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="modes">
+            {(["inline", "github", "linear"] as const).map((m) => (
+              <button
+                type="button"
+                key={m}
+                className={`tab${mode === m ? " on" : ""}`}
+                onClick={() => {
+                  setMode(m);
+                  if (m !== "linear") setLinearId("");
+                  if (m !== "github") setGithubIssue("");
+                }}
+              >
+                {m === "inline" ? "Inline" : m === "github" ? "GitHub" : "Linear"}
+              </button>
             ))}
-          </select>
-        </label>
-        <div className="modes">
-          {(["inline", "github", "linear"] as const).map((m) => (
-            <button
-              type="button"
-              key={m}
-              className={`tab${mode === m ? " on" : ""}`}
-              onClick={() => {
-                setMode(m);
-                if (m !== "linear") setLinearId("");
-                if (m !== "github") setGithubIssue("");
-              }}
-            >
-              {m === "inline" ? "Inline" : m === "github" ? "GitHub" : "Linear"}
-            </button>
-          ))}
-        </div>
-        {mode === "linear" && (
-          <div className="crow">
-            <input
-              className="field-input grow"
-              value={ref}
-              onChange={(e) => setRef(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && importLinear()}
-              placeholder="Linear ticket id or URL (e.g. ENG-123)…"
-            />
-            <button type="button" className="btn ghost small" disabled={importing} onClick={importLinear}>
-              {importing ? "Importing…" : "Import"}
-            </button>
           </div>
-        )}
-        {mode === "github" && (
-          <div className="crow">
-            <input
-              className="field-input grow"
-              value={ref}
-              onChange={(e) => {
-                setRef(e.target.value);
-                setGithubIssue("");
-              }}
-              onKeyDown={(e) => e.key === "Enter" && importGitHub()}
-              placeholder={importing ? "Importing GitHub issue or pull request…" : "GitHub issue or pull request URL, owner/repo#123, or #123…"}
-            />
-            <button type="button" className="btn ghost small" disabled={importing || !ref.trim()} onClick={() => importGitHub()}>
-              {importing ? "Importing…" : "Import"}
-            </button>
-          </div>
-        )}
-        <input
-          ref={titleRef}
-          className="field-input title"
-          value={name}
-          onChange={(e) => {
-            dirtyRef.current = true;
-            const next = e.target.value;
-            setName(next);
-            if (!slugEdited) setTaskSlug(slugifyTaskName(next));
-          }}
-          onKeyDown={(e) => e.key === "Enter" && create()}
-          placeholder="New task name…"
-        />
-        <label className="create-field">
-          <span>Task slug</span>
+          {mode === "linear" && (
+            <div className="crow">
+              <input
+                className="field-input grow"
+                value={ref}
+                onChange={(e) => setRef(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && importLinear()}
+                placeholder="Linear ticket id or URL (e.g. ENG-123)…"
+              />
+              <button type="button" className="btn ghost small" disabled={importing} onClick={importLinear}>
+                {importing ? "Importing…" : "Import"}
+              </button>
+            </div>
+          )}
+          {mode === "github" && (
+            <div className="crow">
+              <input
+                className="field-input grow"
+                value={ref}
+                onChange={(e) => {
+                  setRef(e.target.value);
+                  setGithubIssue("");
+                }}
+                onKeyDown={(e) => e.key === "Enter" && importGitHub()}
+                placeholder={importing ? "Importing GitHub issue or pull request…" : "GitHub issue or pull request URL, owner/repo#123, or #123…"}
+              />
+              <button type="button" className="btn ghost small" disabled={importing || !ref.trim()} onClick={() => importGitHub()}>
+                {importing ? "Importing…" : "Import"}
+              </button>
+            </div>
+          )}
           <input
-            className="field-input"
-            value={taskSlug}
+            ref={titleRef}
+            className="field-input title"
+            value={name}
             onChange={(e) => {
               dirtyRef.current = true;
-              const next = slugifyTaskName(e.target.value);
-              setTaskSlug(next);
-              setSlugEdited(next !== slugifyTaskName(name));
+              const next = e.target.value;
+              setName(next);
+              if (!slugEdited) setTaskSlug(slugifyTaskName(next));
             }}
-            placeholder="task-slug"
+            onKeyDown={(e) => e.key === "Enter" && create()}
+            placeholder="New task name…"
           />
-          <div className="hint">Task folder and automatic Git names. Edit to override.</div>
-        </label>
-        <textarea
-          className="field-input description"
-          rows={7}
-          value={desc}
-          onPaste={onPasteImage}
-          onChange={(e) => {
-            dirtyRef.current = true;
-            setDesc(e.target.value);
-          }}
-          placeholder="Describe the feature / ticket — the original impetus every phase session reads (optional)…"
-        />
-        <label className="create-field">
-          <span>Evidence / pointers</span>
+          <label className="create-field">
+            <span>Task slug</span>
+            <input
+              className="field-input"
+              value={taskSlug}
+              onChange={(e) => {
+                dirtyRef.current = true;
+                const next = slugifyTaskName(e.target.value);
+                setTaskSlug(next);
+                setSlugEdited(next !== slugifyTaskName(name));
+              }}
+              placeholder="task-slug"
+            />
+            <div className="hint">Task folder and automatic Git names. Edit to override.</div>
+          </label>
           <textarea
-            className="field-input"
-            rows={4}
-            value={evidence}
+            className="field-input description"
+            rows={7}
+            value={desc}
             onPaste={onPasteImage}
             onChange={(e) => {
               dirtyRef.current = true;
-              setEvidence(e.target.value);
+              setDesc(e.target.value);
             }}
-            placeholder="Logs, stack traces, repro steps, links — appended to the ticket every session reads (optional)…"
+            placeholder="Describe the feature / ticket — the original impetus every phase session reads (optional)…"
           />
-        </label>
-        <div className={`create-field attachments-field${dropping ? " dropping" : ""}`}>
-          <span>Attachments</span>
-          <div className="crow">
-            <input
-              className="field-input grow"
-              value={attachmentDraft}
-              disabled={creatingRef.current}
+          <label className="create-field">
+            <span>Evidence / pointers</span>
+            <textarea
+              className="field-input"
+              rows={4}
+              value={evidence}
               onPaste={onPasteImage}
               onChange={(e) => {
-                if (!creatingRef.current) setAttachmentDraft(e.target.value);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  addAttachmentEntries(attachmentDraft);
-                }
-              }}
-              placeholder="Paste file paths or http(s) URLs, comma-separated…"
-            />
-            <button className="btn ghost small" type="button" disabled={creatingRef.current} onClick={pickAttachments}>
-              Add files…
-            </button>
-          </div>
-          {attachments.map((entry) => (
-            <div key={entry} className="attachment-row">
-              <span className="attachment-row-name" title={entry}>
-                {entry}
-              </span>
-              <button
-                className="btn ghost small"
-                type="button"
-                disabled={creatingRef.current}
-                aria-label={`Remove ${entry}`}
-                onClick={() => {
-                  if (creatingRef.current) return;
-                  dirtyRef.current = true;
-                  setAttachments((cur) => cur.filter((x) => x !== entry));
-                }}
-              >
-                Remove
-              </button>
-            </div>
-          ))}
-          {images.map((image) => (
-            <div key={image.id} className="attachment-row">
-              {image.previewUnavailable ? (
-                <span className="hint">Preview unavailable</span>
-              ) : (
-                <img
-                  className="attachment-thumbnail"
-                  src={image.previewUrl}
-                  alt={`Preview of ${image.name}`}
-                  onError={() => updateImages(imagesRef.current.map((item) => (item.id === image.id ? { ...item, previewUnavailable: true } : item)))}
-                />
-              )}
-              <span className="attachment-row-name" title={image.name}>
-                {image.name}
-              </span>
-              <span>
-                {image.file.size >= 1024 * 1024
-                  ? `${(image.file.size / (1024 * 1024)).toFixed(1)} MiB`
-                  : image.file.size >= 1024
-                    ? `${(image.file.size / 1024).toFixed(1)} KiB`
-                    : `${image.file.size} B`}
-              </span>
-              <button
-                className="btn ghost small"
-                type="button"
-                disabled={creatingRef.current}
-                aria-label={`Remove ${image.name}`}
-                onClick={() => {
-                  if (creatingRef.current) return;
-                  URL.revokeObjectURL(image.previewUrl);
-                  updateImages(imagesRef.current.filter((item) => item.id !== image.id));
-                  dirtyRef.current = true;
-                }}
-              >
-                Remove
-              </button>
-            </div>
-          ))}
-          {pasteErrors.length > 0 && <InlineStatus tone="error">{pasteErrors.join("\n")}</InlineStatus>}
-          <div className="hint">Paste images in Description, Evidence / pointers, or Attachments. Images attach on Create and are not saved with the draft.</div>
-          <div className="hint">Local files are copied into the task. URLs are recorded, never fetched. Drop files anywhere on this form.</div>
-        </div>
-        {!!selectedSource?.definition.step.length && (
-          <div className="create-field">
-            <span>Automatic completion permission for future executions</span>
-            {selectedSource.definition.step.map((step) => (
-              <Checkbox
-                key={step.key}
-                checked={autoAdvance.includes(step.key)}
-                onChange={(checked) => {
-                  dirtyRef.current = true;
-                  setAutoAdvance((cur) => (checked ? [...cur, step.key] : cur.filter((key) => key !== step.key)));
-                }}
-                label={step.title}
-              />
-            ))}
-          </div>
-        )}
-        <label className="create-field">
-          <span>Model</span>
-          <ModelInput
-            harness="omp"
-            repoPath={repoPath}
-            value={model}
-            onChange={(v) => {
-              dirtyRef.current = true;
-              setModel(v);
-              setModelNeedsReselection(false);
-            }}
-            onOpenPicker={() => setPickModel(true)}
-          />
-          {pickModel && (
-            <ProviderSetupDialog
-              mode="manual"
-              initialTab="models"
-              unsignedOpensAccounts
-              onPick={(next) => {
                 dirtyRef.current = true;
-                setModel(next);
-                setModelNeedsReselection(false);
+                setEvidence(e.target.value);
               }}
-              onClose={() => setPickModel(false)}
+              placeholder="Logs, stack traces, repro steps, links — appended to the ticket every session reads (optional)…"
             />
-          )}
-          {modelNeedsReselection && <InlineStatus tone="error">Select a model available in this repository.</InlineStatus>}
-        </label>
-        <div className="crow worktree-row">
-          <span>Dedicated task worktree</span>
-          <input
-            className="field-input worktree-input"
-            value={branchName}
-            onChange={(e) => {
-              dirtyRef.current = true;
-              setBranchName(e.target.value);
-            }}
-            placeholder="Branch name (optional — auto if blank or taken)"
-          />
-          <input
-            className="field-input worktree-input"
-            value={worktreeName}
-            onChange={(e) => {
-              dirtyRef.current = true;
-              setWorktreeName(e.target.value);
-            }}
-            placeholder="Worktree folder name (optional — auto if blank or taken)"
-          />
-        </div>
-        <label className="create-field">
-          <span>Maximum live sessions</span>
-          <input className="field-input" type="number" min="1" max="4294967295" step="1" value={maxLiveSessions} onChange={(event) => setMaxLiveSessions(event.target.value)} />
-        </label>
-        <Checkbox checked={start} onChange={setStart} label="Start eligible sessions after creation" />
-        {created && (
-          <section aria-label="Creation result">
-            <InlineStatus tone={created.creation === "partial" || created.start === "failed" ? "warning" : "info"}>
-              Creation: {created.creation}. Start: {created.start}.
-            </InlineStatus>
-            {created.errors.map((error) => (
-              <InlineStatus key={`${error.stage}:${error.code}:${error.message}`} tone="error" detail={error.code}>
-                {error.stage}: {error.message}
-              </InlineStatus>
-            ))}
-            {created.attachment_errors?.map((error) => (
-              <InlineStatus key={error} tone="warning">
-                {error}
-              </InlineStatus>
-            ))}
-            {created.sessions.map((session) => (
-              <button className="btn ghost" type="button" key={session.id} disabled={!created.task} onClick={() => onCreated({ ...created, selectedSessionId: session.id })}>
-                Open session {session.id}
+          </label>
+          <div className={`create-field attachments-field${dropping ? " dropping" : ""}`}>
+            <span>Attachments</span>
+            <div className="crow">
+              <input
+                className="field-input grow"
+                value={attachmentDraft}
+                disabled={creatingRef.current}
+                onPaste={onPasteImage}
+                onChange={(e) => {
+                  if (!creatingRef.current) setAttachmentDraft(e.target.value);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addAttachmentEntries(attachmentDraft);
+                  }
+                }}
+                placeholder="Paste file paths or http(s) URLs, comma-separated…"
+              />
+              <button className="btn ghost small" type="button" disabled={creatingRef.current} onClick={pickAttachments}>
+                Add files…
               </button>
-            ))}
-            {created.executions.map((execution) => (
-              <div key={execution.id}>
-                {execution.candidate.step_key}: {execution.lifecycle}
-                {execution.error ? ` — ${execution.error}` : ""}
+            </div>
+            {attachments.map((entry) => (
+              <div key={entry} className="attachment-row">
+                <span className="attachment-row-name" title={entry}>
+                  {entry}
+                </span>
+                <button
+                  className="btn ghost small"
+                  type="button"
+                  disabled={creatingRef.current}
+                  aria-label={`Remove ${entry}`}
+                  onClick={() => {
+                    if (creatingRef.current) return;
+                    dirtyRef.current = true;
+                    setAttachments((cur) => cur.filter((x) => x !== entry));
+                  }}
+                >
+                  Remove
+                </button>
               </div>
             ))}
-            {!created.task && <InlineStatus tone="warning">No task identity was returned. Inspect the repository before trying again.</InlineStatus>}
-          </section>
-        )}
-        {creating && <InlineStatus tone="info">Creating New Task… You can keep using Alinery while the worktree is set up.</InlineStatus>}
-        {err && (
-          <InlineStatus tone="error" detail={err.detail}>
-            {err.msg}
-          </InlineStatus>
-        )}
-        <div className="create-actions">
-          {created ? (
-            <button className="btn" type="button" disabled={!created.task} onClick={() => onCreated(created)}>
-              Open task
-            </button>
-          ) : (
-            <button type="button" className="btn" disabled={creating || clearing || creatingRef.current || !!createBlockedReason || !taskSlug} onClick={create}>
-              {creating ? "Creating…" : "Create task"}
-            </button>
+            {images.map((image) => (
+              <div key={image.id} className="attachment-row">
+                {image.previewUnavailable ? (
+                  <span className="hint">Preview unavailable</span>
+                ) : (
+                  <img
+                    className="attachment-thumbnail"
+                    src={image.previewUrl}
+                    alt={`Preview of ${image.name}`}
+                    onError={() => updateImages(imagesRef.current.map((item) => (item.id === image.id ? { ...item, previewUnavailable: true } : item)))}
+                  />
+                )}
+                <span className="attachment-row-name" title={image.name}>
+                  {image.name}
+                </span>
+                <span>
+                  {image.file.size >= 1024 * 1024
+                    ? `${(image.file.size / (1024 * 1024)).toFixed(1)} MiB`
+                    : image.file.size >= 1024
+                      ? `${(image.file.size / 1024).toFixed(1)} KiB`
+                      : `${image.file.size} B`}
+                </span>
+                <button
+                  className="btn ghost small"
+                  type="button"
+                  disabled={creatingRef.current}
+                  aria-label={`Remove ${image.name}`}
+                  onClick={() => {
+                    if (creatingRef.current) return;
+                    URL.revokeObjectURL(image.previewUrl);
+                    updateImages(imagesRef.current.filter((item) => item.id !== image.id));
+                    dirtyRef.current = true;
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            {pasteErrors.length > 0 && <InlineStatus tone="error">{pasteErrors.join("\n")}</InlineStatus>}
+            <div className="hint">Paste images in Description, Evidence / pointers, or Attachments. Images attach on Create and are not saved with the draft.</div>
+            <div className="hint">Local files are copied into the task. URLs are recorded, never fetched. Drop files anywhere on this form.</div>
+          </div>
+          {!!selectedSource?.definition.step.length && (
+            <div className="create-field">
+              <span>Automatic completion permission for future executions</span>
+              {selectedSource.definition.step.map((step) => (
+                <Checkbox
+                  key={step.key}
+                  checked={autoAdvance.includes(step.key)}
+                  onChange={(checked) => {
+                    dirtyRef.current = true;
+                    setAutoAdvance((cur) => (checked ? [...cur, step.key] : cur.filter((key) => key !== step.key)));
+                  }}
+                  label={step.title}
+                />
+              ))}
+            </div>
           )}
-          {!created && createBlockedReason && !creating && <span className="hint">{createBlockedReason}</span>}
-          {draftSlug ? (
-            <button className="btn ghost" disabled={creating || clearing || creatingRef.current} onClick={clearDraft} type="button">
-              {clearing ? "Clearing draft…" : "Clear draft"}
+          <label className="create-field">
+            <span>Model</span>
+            <ModelInput
+              harness="omp"
+              repoPath={repoPath}
+              value={model}
+              onChange={(v) => {
+                dirtyRef.current = true;
+                setModel(v);
+                setModelNeedsReselection(false);
+              }}
+              onOpenPicker={() => setPickModel(true)}
+            />
+            {pickModel && (
+              <ProviderSetupDialog
+                mode="manual"
+                initialTab="models"
+                unsignedOpensAccounts
+                onPick={(next) => {
+                  dirtyRef.current = true;
+                  setModel(next);
+                  setModelNeedsReselection(false);
+                }}
+                onClose={() => setPickModel(false)}
+              />
+            )}
+            {modelNeedsReselection && <InlineStatus tone="error">Select a model available in this repository.</InlineStatus>}
+          </label>
+          <div className="crow worktree-row">
+            <span>Dedicated task worktree</span>
+            <input
+              className="field-input worktree-input"
+              value={branchName}
+              onChange={(e) => {
+                dirtyRef.current = true;
+                setBranchName(e.target.value);
+              }}
+              placeholder="Branch name (optional — auto if blank or taken)"
+            />
+            <input
+              className="field-input worktree-input"
+              value={worktreeName}
+              onChange={(e) => {
+                dirtyRef.current = true;
+                setWorktreeName(e.target.value);
+              }}
+              placeholder="Worktree folder name (optional — auto if blank or taken)"
+            />
+          </div>
+          <label className="create-field">
+            <span>Maximum live sessions</span>
+            <input className="field-input" type="number" min="1" max="4294967295" step="1" value={maxLiveSessions} onChange={(event) => setMaxLiveSessions(event.target.value)} />
+          </label>
+          <Checkbox checked={start} onChange={setStart} label="Start eligible sessions after creation" />
+          {created && (
+            <section aria-label="Creation result">
+              <InlineStatus tone={created.creation === "partial" || created.start === "failed" ? "warning" : "info"}>
+                Creation: {created.creation}. Start: {created.start}.
+              </InlineStatus>
+              {created.errors.map((error) => (
+                <InlineStatus key={`${error.stage}:${error.code}:${error.message}`} tone="error" detail={error.code}>
+                  {error.stage}: {error.message}
+                </InlineStatus>
+              ))}
+              {created.attachment_errors?.map((error) => (
+                <InlineStatus key={error} tone="warning">
+                  {error}
+                </InlineStatus>
+              ))}
+              {created.sessions.map((session) => (
+                <button className="btn ghost" type="button" key={session.id} disabled={!created.task} onClick={() => onCreated({ ...created, selectedSessionId: session.id })}>
+                  Open session {session.id}
+                </button>
+              ))}
+              {created.executions.map((execution) => (
+                <div key={execution.id}>
+                  {execution.candidate.step_key}: {execution.lifecycle}
+                  {execution.error ? ` — ${execution.error}` : ""}
+                </div>
+              ))}
+              {!created.task && <InlineStatus tone="warning">No task identity was returned. Inspect the repository before trying again.</InlineStatus>}
+            </section>
+          )}
+          {creating && <InlineStatus tone="info">Creating New Task… You can keep using Alinery while the worktree is set up.</InlineStatus>}
+          {err && (
+            <InlineStatus tone="error" detail={err.detail}>
+              {err.msg}
+            </InlineStatus>
+          )}
+          <div className="create-actions">
+            {created ? (
+              <button className="btn" type="button" disabled={!created.task} onClick={() => onCreated(created)}>
+                Open task
+              </button>
+            ) : (
+              <button type="button" className="btn" disabled={creating || clearing || creatingRef.current || !!createBlockedReason || !taskSlug} onClick={create}>
+                {creating ? "Creating…" : "Create task"}
+              </button>
+            )}
+            {!created && createBlockedReason && !creating && <span className="hint">{createBlockedReason}</span>}
+            {draftSlug ? (
+              <button className="btn ghost" disabled={creating || clearing || creatingRef.current} onClick={clearDraft} type="button">
+                {clearing ? "Clearing draft…" : "Clear draft"}
+              </button>
+            ) : null}
+            <button type="button" className="btn ghost" onClick={onCancel}>
+              Cancel
             </button>
-          ) : null}
-          <button type="button" className="btn ghost" onClick={onCancel}>
-            Cancel
-          </button>
+          </div>
         </div>
       </div>
       <aside className="create-preview-panel" aria-labelledby="create-playbook-title">

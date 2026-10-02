@@ -73,6 +73,177 @@ impl Drop for Fixture {
     }
 }
 
+fn assert_rejected_without_publication(f: &mut Fixture, id: &str, owner: &str) {
+    let before = f.state.executions[id].clone();
+    let outcome = accept_execution_completion(&f.repo, "task", &mut f.state, id, owner).unwrap();
+    assert!(matches!(outcome, CompletionOutcome::InvalidOutputs { .. }), "{outcome:?}");
+    assert!(f.state.occurrences.is_empty());
+    let after = &f.state.executions[id];
+    assert_eq!(after.lifecycle, ExecutionLifecycle::Running);
+    assert_eq!(after.receipt_id, None);
+    assert_eq!(after.permission, before.permission);
+    assert_eq!(after.outputs, before.outputs);
+    assert_eq!(after.owner_session_id, before.owner_session_id);
+}
+
+#[test]
+fn possible_outputs_zero_exact_publications_preserve_grant() {
+    let mut f = Fixture::new("{path=\"continue.md\"}, {path=\"stop.md\"}", true, false, 2);
+    let id = f.reserve(true);
+    let waiting = f.reserve(true);
+    let owner = f.run(&id);
+    grant_execution_completion(&mut f.state, &id, &owner).unwrap();
+    fs::write(crate::artifacts_dir(&f.repo, "task").join("auxiliary.md"), "not assigned").unwrap();
+    assert_rejected_without_publication(&mut f, &id, &owner);
+    assert!(!claim_execution_launch(&mut f.state, &waiting).unwrap());
+    f.write_output(&id, 1, None);
+    let outcome = accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap();
+    assert!(matches!(outcome, CompletionOutcome::Accepted { .. }), "{outcome:?}");
+    assert_eq!(f.state.occurrences.values().map(|o| o.logical_path.as_str()).collect::<Vec<_>>(), ["stop.md"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn invalid_present_optional_outputs_reject_atomically() {
+    use std::{
+        ffi::CString,
+        os::unix::{ffi::OsStrExt, fs::symlink},
+    };
+    for kind in ["empty", "directory", "fifo", "live-link", "dangling-link", "ancestor-link", "ancestor-file", "empty-slot"] {
+        let output = if kind == "empty-slot" { "details/*.md" } else { "details/result.md" };
+        let mut f = Fixture::new(&format!("{{path=\"summary.md\"}}, {{path=\"{output}\"}}"), false, false, 1);
+        let id = f.reserve(false);
+        let owner = f.run(&id);
+        grant_execution_completion(&mut f.state, &id, &owner).unwrap();
+        f.write_output(&id, 0, None);
+        let root = crate::artifacts_dir(&f.repo, "task");
+        let path = root.join(f.state.executions[&id].outputs[1].relative_path.replace('*', ""));
+        let parent = path.parent().unwrap();
+        let outside = f.repo.join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("target.md"), "outside evidence").unwrap();
+        match kind {
+            "ancestor-link" => symlink(&outside, parent).unwrap(),
+            "ancestor-file" => fs::write(parent, "not a directory").unwrap(),
+            _ => {
+                fs::create_dir_all(parent).unwrap();
+                match kind {
+                    "empty" => fs::write(&path, "").unwrap(),
+                    "directory" => fs::create_dir(&path).unwrap(),
+                    "fifo" => {
+                        let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+                        // SAFETY: name is a NUL-terminated path retained for this call.
+                        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+                    }
+                    "live-link" => symlink(outside.join("target.md"), &path).unwrap(),
+                    "dangling-link" => symlink(outside.join("absent.md"), &path).unwrap(),
+                    "empty-slot" => fs::write(&path, "invalid wildcard slot").unwrap(),
+                    _ => unreachable!(),
+                }
+            }
+        }
+        assert_rejected_without_publication(&mut f, &id, &owner);
+        match kind {
+            "ancestor-link" | "ancestor-file" => fs::remove_file(parent).unwrap(),
+            "directory" => fs::remove_dir(&path).unwrap(),
+            _ => fs::remove_file(&path).unwrap(),
+        }
+        f.write_output(&id, 1, (kind == "empty-slot").then_some("valid"));
+        assert!(
+            matches!(
+                accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap(),
+                CompletionOutcome::Accepted { .. }
+            ),
+            "{kind}"
+        );
+        assert_eq!(fs::read(outside.join("target.md")).unwrap(), b"outside evidence");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn inaccessible_optional_family_rejects_atomically() {
+    use std::os::unix::fs::PermissionsExt;
+    struct Restore(PathBuf, fs::Permissions);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            fs::set_permissions(&self.0, self.1.clone()).unwrap();
+        }
+    }
+    let mut f = Fixture::new("{path=\"summary.md\"}, {path=\"papers/*.md\"}", false, false, 1);
+    let id = f.reserve(false);
+    let owner = f.run(&id);
+    grant_execution_completion(&mut f.state, &id, &owner).unwrap();
+    f.write_output(&id, 0, None);
+    let parent = crate::artifacts_dir(&f.repo, "task").join("papers");
+    fs::create_dir(&parent).unwrap();
+    let restore = Restore(parent.clone(), fs::metadata(&parent).unwrap().permissions());
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o000)).unwrap();
+    assert_eq!(
+        fs::read_dir(&parent).unwrap_err().kind(),
+        std::io::ErrorKind::PermissionDenied,
+        "must run as an unprivileged user"
+    );
+    assert_rejected_without_publication(&mut f, &id, &owner);
+    drop(restore);
+    f.write_output(&id, 1, Some("valid"));
+    assert!(matches!(
+        accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap(),
+        CompletionOutcome::Accepted { .. }
+    ));
+}
+
+// APFS rejects non-UTF-8 filenames at creation (EILSEQ); exercise enumeration on Linux.
+#[cfg(target_os = "linux")]
+#[test]
+fn non_utf8_output_directory_entry_remains_an_error() {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+    let mut f = Fixture::new("{path=\"summary.md\"}, {path=\"papers/*.md\"}", false, false, 1);
+    let id = f.reserve(false);
+    let owner = f.run(&id);
+    grant_execution_completion(&mut f.state, &id, &owner).unwrap();
+    f.write_output(&id, 0, None);
+    f.write_output(&id, 1, Some("valid"));
+    let invalid = crate::artifacts_dir(&f.repo, "task").join("papers").join(OsString::from_vec(vec![0xff]));
+    fs::write(&invalid, "unrelated").unwrap();
+    assert_rejected_without_publication(&mut f, &id, &owner);
+    fs::remove_file(invalid).unwrap();
+    assert!(matches!(
+        accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap(),
+        CompletionOutcome::Accepted { .. }
+    ));
+}
+
+#[test]
+fn observed_wildcard_member_disappearance_is_not_omission() {
+    let mut f = Fixture::new("{path=\"papers/*.md\"}", false, true, 1);
+    let id = f.reserve(false);
+    f.write_output(&id, 0, Some("observed"));
+    let assignment = &f.state.executions[&id].outputs[0];
+    let physical = ArtifactSelector::parse(&assignment.relative_path).unwrap();
+    let root = crate::artifacts_dir(&f.repo, "task");
+    let observed: Vec<_> = fs::read_dir(root.join("papers"))
+        .unwrap()
+        .map(|entry| format!("papers/{}", entry.unwrap().file_name().to_str().unwrap()))
+        .filter(|path| physical.matches(path))
+        .collect();
+    assert_eq!(observed, [assignment.relative_path.replace('*', "observed")]);
+    fs::remove_file(root.join(&observed[0])).unwrap();
+    assert!(validate_assigned_paths(&root, assignment, &physical, observed).is_err());
+}
+
+#[test]
+fn unobserved_exact_path_is_omitted_at_validation_boundary() {
+    let mut f = Fixture::new("{path=\"absent/result.md\"}", false, true, 1);
+    let id = f.reserve(false);
+    let assignment = &f.state.executions[&id].outputs[0];
+    let physical = ArtifactSelector::parse(&assignment.relative_path).unwrap();
+    assert_eq!(
+        validate_assigned_paths(&crate::artifacts_dir(&f.repo, "task"), assignment, &physical, vec![assignment.relative_path.clone()]),
+        Ok(Vec::new())
+    );
+}
+
 #[test]
 fn reservations_are_disjoint_before_outputs_and_persist_unchanged() {
     let mut f = Fixture::new("{path=\"research/request-*.md\"}, {path=\"01-summary.md\"}", false, true, 10);
@@ -99,15 +270,18 @@ fn reservations_keep_case_distinct_roles_physically_disjoint() {
     assert_eq!(paths.len(), 4, "case-insensitive filesystems must not alias output reservations");
     let owner = f.run(&first);
     f.write_output(&first, 0, None);
-    assert!(matches!(
-        accept_execution_completion(&f.repo, "task", &mut f.state, &first, &owner).unwrap(),
-        CompletionOutcome::InvalidOutputs { .. }
-    ));
+    let accepted = accept_execution_completion(&f.repo, "task", &mut f.state, &first, &owner).unwrap();
+    assert!(matches!(accepted, CompletionOutcome::Accepted { .. }), "{accepted:?}");
+    assert_eq!(f.state.occurrences.values().map(|o| o.logical_path.as_str()).collect::<Vec<_>>(), ["result.md"]);
+    let publications = f.state.occurrences.clone();
+    let reservations = f.state.executions[&first].outputs.clone();
     f.write_output(&first, 1, None);
-    assert!(matches!(
-        accept_execution_completion(&f.repo, "task", &mut f.state, &first, &owner).unwrap(),
-        CompletionOutcome::Accepted { .. }
-    ));
+    write_execution_state_unlocked(&f.repo, "task", &mut f.state).unwrap();
+    f.state = read_execution_state(&f.repo, "task").unwrap();
+    assert_eq!(accept_execution_completion(&f.repo, "task", &mut f.state, &first, &owner).unwrap(), accepted);
+    assert_eq!(f.state.occurrences, publications, "late files must not extend an accepted receipt");
+    assert_eq!(f.state.executions[&first].outputs, reservations);
+    assert_eq!(f.state.executions[&first].owner_session_id, owner);
 }
 
 #[test]
@@ -185,9 +359,12 @@ fn wildcard_acceptance_attributes_all_and_only_reserved_members() {
 
 #[test]
 fn invalid_output_preserves_human_grant_and_acceptance_replays_receipt() {
-    let mut f = Fixture::new("{path=\"result.md\"}", true, false, 2);
+    let mut f = Fixture::new("{path=\"result.md\"}, {path=\"summary.md\"}", true, false, 2);
     let id = f.reserve(false);
     let owner = f.run(&id);
+    f.write_output(&id, 1, None);
+    fs::write(crate::artifacts_dir(&f.repo, "task").join(&f.state.executions[&id].outputs[0].relative_path), "").unwrap();
+    let reservations = f.state.executions[&id].outputs.clone();
     assert_eq!(
         accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap(),
         CompletionOutcome::HumanAuthorizationRequired
@@ -199,11 +376,17 @@ fn invalid_output_preserves_human_grant_and_acceptance_replays_receipt() {
     ));
     assert!(matches!(f.state.executions[&id].permission, CompletionPermission::HumanGranted { .. }));
     assert!(f.state.occurrences.is_empty());
+    assert_eq!(f.state.executions[&id].lifecycle, ExecutionLifecycle::Running);
+    assert_eq!(f.state.executions[&id].receipt_id, None);
+    assert_eq!(f.state.executions[&id].outputs, reservations);
     f.write_output(&id, 0, None);
     let accepted = accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap();
     assert!(matches!(accepted, CompletionOutcome::Accepted { .. }));
     assert_eq!(accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap(), accepted);
-    assert_eq!(f.state.occurrences.len(), 1);
+    assert_eq!(
+        f.state.occurrences.values().map(|o| o.logical_path.as_str()).collect::<BTreeSet<_>>(),
+        BTreeSet::from(["result.md", "summary.md"])
+    );
     assert!(recover_execution_owner(&mut f.state, &id).is_err());
 }
 
@@ -527,4 +710,103 @@ fn join_depth_uses_all_actual_parents_independent_of_completion_order() {
         let depths: BTreeSet<_> = f.state.executions[&join].parent_execution_ids.iter().map(|id| f.state.executions[id].depth).collect();
         assert_eq!(depths, BTreeSet::from([2, 5]));
     }
+}
+
+#[test]
+fn possible_outputs_accept_second_exact_outcome_without_first() {
+    let mut f = Fixture::new("{path=\"continue.md\"}, {path=\"stop.md\"}", true, true, 2);
+    let id = f.reserve(true);
+    let waiting = f.reserve(true);
+    let owner = f.run(&id);
+    f.write_output(&id, 1, None);
+    let accepted = accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap();
+    assert!(matches!(accepted, CompletionOutcome::Accepted { .. }), "{accepted:?}");
+    assert_eq!(f.state.occurrences.values().map(|o| o.logical_path.as_str()).collect::<Vec<_>>(), ["stop.md"]);
+    assert_eq!(f.state.executions[&id].lifecycle, ExecutionLifecycle::Finishing);
+    assert!(!claim_execution_launch(&mut f.state, &waiting).unwrap(), "coding ownership survives subset acceptance");
+    assert!(f.state.occurrences.values().all(|o| !occurrence_deliverable(&f.state, o)));
+    confirm_execution_exit(&mut f.state, &id, &owner, Some(0)).unwrap();
+    assert!(f.state.occurrences.values().all(|o| occurrence_deliverable(&f.state, o)));
+    assert!(claim_execution_launch(&mut f.state, &waiting).unwrap());
+}
+
+#[test]
+fn possible_outputs_accept_both_exact_outcomes_without_exclusivity() {
+    let mut f = Fixture::new("{path=\"continue.md\"}, {path=\"stop.md\"}", false, true, 1);
+    let id = f.reserve(false);
+    let owner = f.run(&id);
+    f.write_output(&id, 0, None);
+    f.write_output(&id, 1, None);
+    let accepted = accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap();
+    assert!(matches!(accepted, CompletionOutcome::Accepted { .. }), "{accepted:?}");
+    assert_eq!(
+        f.state.occurrences.values().map(|o| o.logical_path.as_str()).collect::<BTreeSet<_>>(),
+        BTreeSet::from(["continue.md", "stop.md"])
+    );
+}
+
+#[test]
+fn possible_outputs_summary_accepts_absent_nested_assignments() {
+    let mut f = Fixture::new("{path=\"summary.md\"}, {path=\"details/result.md\"}, {path=\"papers/*.md\"}", false, true, 1);
+    let id = f.reserve(true);
+    let waiting = f.reserve(true);
+    let owner = f.run(&id);
+    f.write_output(&id, 0, None);
+    let accepted = accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap();
+    assert!(matches!(accepted, CompletionOutcome::Accepted { .. }), "{accepted:?}");
+    assert_eq!(f.state.occurrences.values().map(|o| o.logical_path.as_str()).collect::<Vec<_>>(), ["summary.md"]);
+    let publications = f.state.occurrences.clone();
+    assert!(!claim_execution_launch(&mut f.state, &waiting).unwrap(), "subset acceptance still holds capacity");
+    f.write_output(&id, 1, None);
+    f.write_output(&id, 2, Some("late"));
+    write_execution_state_unlocked(&f.repo, "task", &mut f.state).unwrap();
+    f.state = read_execution_state(&f.repo, "task").unwrap();
+    assert_eq!(accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap(), accepted);
+    assert_eq!(f.state.occurrences, publications);
+    assert!(f.state.occurrences.values().all(|o| !occurrence_deliverable(&f.state, o)));
+    confirm_execution_exit(&mut f.state, &id, &owner, Some(0)).unwrap();
+    assert!(claim_execution_launch(&mut f.state, &waiting).unwrap());
+}
+
+#[test]
+fn possible_outputs_summary_accepts_wildcard_directory_with_no_matches() {
+    let mut f = Fixture::new("{path=\"summary.md\"}, {path=\"papers/*.md\"}", false, true, 1);
+    let id = f.reserve(false);
+    let owner = f.run(&id);
+    f.write_output(&id, 0, None);
+    let directory = crate::artifacts_dir(&f.repo, "task").join("papers");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("auxiliary.txt"), "not an assigned publication").unwrap();
+    let accepted = accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap();
+    assert!(matches!(accepted, CompletionOutcome::Accepted { .. }), "{accepted:?}");
+    assert_eq!(f.state.occurrences.values().map(|o| o.logical_path.as_str()).collect::<Vec<_>>(), ["summary.md"]);
+}
+
+#[test]
+fn possible_outputs_minimum_rejects_auxiliary_only_then_accepts_one_wildcard_member() {
+    let mut f = Fixture::new("{path=\"papers/*.md\"}", true, false, 1);
+    let id = f.reserve(true);
+    let waiting = f.reserve(true);
+    let owner = f.run(&id);
+    let root = crate::artifacts_dir(&f.repo, "task");
+    fs::create_dir_all(root.join("papers")).unwrap();
+    fs::write(root.join("auxiliary.md"), "not assigned evidence").unwrap();
+    assert_eq!(
+        accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap(),
+        CompletionOutcome::HumanAuthorizationRequired
+    );
+    grant_execution_completion(&mut f.state, &id, &owner).unwrap();
+    let reservations = f.state.executions[&id].outputs.clone();
+    let outcome = accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap();
+    assert!(matches!(outcome, CompletionOutcome::InvalidOutputs { .. }), "{outcome:?}");
+    assert!(f.state.occurrences.is_empty());
+    assert_eq!(f.state.executions[&id].receipt_id, None);
+    assert_eq!(f.state.executions[&id].lifecycle, ExecutionLifecycle::Running);
+    assert!(matches!(f.state.executions[&id].permission, CompletionPermission::HumanGranted { .. }));
+    assert_eq!(f.state.executions[&id].outputs, reservations);
+    assert!(!claim_execution_launch(&mut f.state, &waiting).unwrap());
+    f.write_output(&id, 0, Some("found"));
+    let accepted = accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap();
+    assert!(matches!(accepted, CompletionOutcome::Accepted { .. }), "{accepted:?}");
+    assert_eq!(f.state.occurrences.values().map(|o| o.logical_path.as_str()).collect::<Vec<_>>(), ["papers/found.md"]);
 }
