@@ -394,7 +394,7 @@ pub(super) fn create_session(
             }
             _ => unreachable!(),
         };
-        if slug.is_empty() && harness != NO_HARNESS_KEY {
+        if slug.is_empty() && harness != NO_HARNESS_KEY && harness != alinery_core::DEFAULT_HARNESS_KEY {
             return Err("root session must be Terminal".into());
         }
         alinery_core::resolve_harness_strict_for(config, repo, &harness)?;

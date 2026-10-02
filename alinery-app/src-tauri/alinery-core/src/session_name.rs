@@ -58,7 +58,19 @@ fn bounded_read(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
 }
 
 fn validate_target(repo: &Path, slug: &str, id: &str) -> Result<SessionMeta, String> {
-    if safe_component(slug) != Some(slug) || safe_component(id) != Some(id) {
+    if safe_component(id) != Some(id) {
+        return Err("invalid task slug or session id".into());
+    }
+    if slug.is_empty() {
+        let path = session_meta_path(repo, slug, id);
+        crate::paths::validate_retained_file(repo, &path)?;
+        let meta: SessionMeta = serde_json::from_slice(&bounded_read(&path, 1024 * 1024)?).map_err(|_| "invalid session metadata")?;
+        if meta.id != id || meta.harness != crate::DEFAULT_HARNESS_KEY || !meta.generic {
+            return Err("invalid task slug or session id".into());
+        }
+        return Ok(meta);
+    }
+    if safe_component(slug) != Some(slug) {
         return Err("invalid task slug or session id".into());
     }
     crate::paths::validate_retained_file(repo, &task_dir(repo, slug).join("task.md"))?;
@@ -103,6 +115,9 @@ pub fn set_session_name(repo: &Path, task_slug: &str, session_id: &str, name: &s
     let name = validate_session_name(name)?;
     // Validate before the lock helper can create its directory, then again inside the transaction.
     validate_target(repo, task_slug, session_id)?;
+    if task_slug.is_empty() && source == SessionNameSource::Auto {
+        return Err("root sessions are not auto-named".into());
+    }
     with_task_mutation_lock_waiting(repo, "rename session", crate::TASK_MUTATION_CONTENTION_WAIT, || {
         let meta = validate_target(repo, task_slug, session_id)?;
         if source == SessionNameSource::Auto && !meta.execution_id.is_empty() {
@@ -149,7 +164,7 @@ pub fn set_session_name(repo: &Path, task_slug: &str, session_id: &str, name: &s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{session_meta_path, session_name_path, sessions_dir, write_task, SessionMeta, Task};
+    use crate::{root_sessions_dir, session_meta_path, session_name_path, sessions_dir, write_task, SessionMeta, Task};
     use std::sync::mpsc;
     use std::time::Duration;
 
@@ -505,5 +520,92 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         assert!(result.is_err());
         assert_eq!(repo.read("s1").unwrap().name, "Before");
+    }
+
+    #[test]
+    fn session_name_path_empty_slug_is_root_sessions_dir() {
+        let repo = std::path::Path::new("/tmp/alinery-chat-name");
+        assert_eq!(session_name_path(repo, "", "s01234567"), root_sessions_dir(repo).join("s01234567.name.json"));
+        assert_eq!(session_name_path(repo, "task", "s01234567"), sessions_dir(repo, "task").join("s01234567.name.json"));
+    }
+
+    #[test]
+    fn user_rename_of_root_omp_does_not_require_task_md() {
+        let repo = std::env::temp_dir().join(format!("alinery-chat-name-{}", uuid::Uuid::new_v4()));
+        let id = "s01234567";
+        let meta_path = session_meta_path(&repo, "", id);
+        std::fs::create_dir_all(meta_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &meta_path,
+            serde_json::to_vec(&SessionMeta {
+                id: id.into(),
+                harness: crate::DEFAULT_HARNESS_KEY.into(),
+                generic: true,
+                worktree: repo.to_string_lossy().into_owned(),
+                created: 1,
+                ..SessionMeta::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let outcome = set_session_name(&repo, "", id, "Thread title", SessionNameSource::User).expect("root omp rename");
+        assert_eq!(outcome.value.name, "Thread title");
+        assert_eq!(outcome.value.source, SessionNameSource::User);
+        let sidecar = root_sessions_dir(&repo).join(format!("{id}.name.json"));
+        let stored: SessionName = serde_json::from_slice(&std::fs::read(&sidecar).unwrap()).unwrap();
+        assert_eq!(stored, outcome.value);
+        assert!(!sessions_dir(&repo, "").join(format!("{id}.name.json")).exists());
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn auto_rename_of_root_omp_writes_nothing() {
+        let repo = std::env::temp_dir().join(format!("alinery-chat-auto-{}", uuid::Uuid::new_v4()));
+        let id = "s01234567";
+        let meta_path = session_meta_path(&repo, "", id);
+        std::fs::create_dir_all(meta_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &meta_path,
+            serde_json::to_vec(&SessionMeta {
+                id: id.into(),
+                harness: crate::DEFAULT_HARNESS_KEY.into(),
+                generic: true,
+                worktree: repo.to_string_lossy().into_owned(),
+                created: 1,
+                ..SessionMeta::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let err = set_session_name(&repo, "", id, "Auto title", SessionNameSource::Auto).expect_err("auto root rename");
+        assert_ne!(err, "invalid task slug or session id");
+        assert!(!root_sessions_dir(&repo).join(format!("{id}.name.json")).exists());
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn user_rename_of_missing_root_and_drawer_writes_nothing() {
+        let repo = std::env::temp_dir().join(format!("alinery-chat-miss-{}", uuid::Uuid::new_v4()));
+        let id = "s01234567";
+        std::fs::create_dir_all(root_sessions_dir(&repo)).unwrap();
+        let missing = set_session_name(&repo, "", id, "Nope", SessionNameSource::User);
+        assert!(missing.is_err());
+        assert_ne!(missing.unwrap_err(), "task record is unavailable");
+        std::fs::write(
+            session_meta_path(&repo, "", id),
+            serde_json::to_vec(&SessionMeta {
+                id: id.into(),
+                harness: crate::NO_HARNESS_KEY.into(),
+                generic: true,
+                created: 1,
+                ..SessionMeta::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let err = set_session_name(&repo, "", id, "Nope", SessionNameSource::User).expect_err("drawer rename");
+        assert_ne!(err, "task record is unavailable");
+        assert!(!root_sessions_dir(&repo).join(format!("{id}.name.json")).exists());
+        let _ = std::fs::remove_dir_all(&repo);
     }
 }

@@ -1441,8 +1441,9 @@ fn chat_root_phase_completed_does_not_write_execution() {
     assert!(reply.get("completion").is_none(), "root phase_completed must not be a completion: {reply}");
     let tasks = fixture.root.join(".alinery/tasks");
     let wrote_execution = tasks.is_dir()
-        && fs::read_dir(&tasks).unwrap().flatten().any(|entry| {
-            entry.path().join("execution.json").is_file() || entry.file_name() == "execution.json"
-        });
+        && fs::read_dir(&tasks)
+            .unwrap()
+            .flatten()
+            .any(|entry| entry.path().join("execution.json").is_file() || entry.file_name() == "execution.json");
     assert!(!wrote_execution, "empty-slug phase_completed must not write an execution file");
 }

@@ -35,6 +35,8 @@ import type {
   BackupListItem,
   BackupMeta,
   BoardTask,
+  ChatBranch,
+  ChatThread,
   CommunityImportRow,
   CommunityMineResult,
   CommunityPlaybookPage,
@@ -269,6 +271,23 @@ export const discardSubtask = (taskSlug: string, managerSessionId: string) => in
 // ── session.rs ────────────────────────────────────────────────────────
 
 export const renameSession = (a: { repoPath: string; taskSlug: string; sessionId: string; name: string }) => invoke<SessionName>("rename_session", a);
+export const listChatThreads = (includeArchived: boolean) => invoke<ChatThread[]>("list_chat_threads", { includeArchived });
+export const createChatThread = (a: { repoPath: string; model?: string | null; createWorktree: boolean }) => invoke<CreateExecutionSessionReply>("create_chat_thread", a);
+export const startChatThread = (repoPath: string, sessionId: string) => invoke<CreateExecutionSessionReply>("start_chat_thread", { repoPath, sessionId });
+export const setChatPinned = (repoPath: string, sessionId: string, pinned: boolean) => invoke<void>("set_chat_pinned", { repoPath, sessionId, pinned });
+export const archiveChatThread = (repoPath: string, sessionId: string, removeWorktree: boolean) => invoke<void>("archive_chat_thread", { repoPath, sessionId, removeWorktree });
+export const removeChatWorktree = (repoPath: string, sessionId: string) => invoke<void>("remove_chat_worktree", { repoPath, sessionId });
+export const resumeChatThread = (repoPath: string, sessionId: string) => invoke<SessionMeta>("resume_chat_thread", { repoPath, sessionId });
+export const chatBranchLabel = (repoPath: string, sessionId: string) => invoke<ChatBranch>("chat_branch_label", { repoPath, sessionId });
+export const chatRpcWrite = (repoPath: string, id: string, payload: unknown) => invoke<void>("chat_rpc_write", { repoPath, id, payload });
+export const chatDetach = (repoPath: string, id: string, attachId: number) => invoke<void>("chat_detach", { repoPath, id, attachId });
+export const chatSessionStatus = (repoPath: string, id: string) => invoke<SessionObservation>("chat_session_status", { repoPath, id });
+export const readChatOmp = (a: { repoPath: string; id: string; end?: number | null; want?: number | null }) => invoke<ArrayBuffer>("read_chat_omp", a);
+export const chatRpcAttach = (a: { repoPath: string; id: string; attachId: number; streamToken: number; onLine: (line: string) => void }) => {
+  const onLine = new Channel<string>();
+  onLine.onmessage = a.onLine;
+  return invoke<void>("chat_rpc_attach", { repoPath: a.repoPath, id: a.id, attachId: a.attachId, streamToken: a.streamToken, onLine });
+};
 export const renameTask = (repoPath: string, taskSlug: string, name: string) => invoke<Task>("rename_task", { repoPath, taskSlug, name });
 export const getSessionDisplay = (repoPath: string, taskSlug: string, sessionId: string) => invoke<SessionDisplayContext>("get_session_display", { repoPath, taskSlug, sessionId });
 export const archiveSession = (taskSlug: string, id: string) => invoke<void>("archive_session", { taskSlug, id });

@@ -67,6 +67,7 @@ import { useOmpUpdateStatus } from "./useOmpUpdateStatus";
 import { useSessionNoticeSnapshot } from "./useSessionNoticeSnapshot";
 import { readStoredTaskSessionSort, writeStoredTaskSessionSort } from "./useSessionSort";
 import { useUpdateStatus } from "./useUpdateStatus";
+import { ChatView } from "./views/ChatView";
 import { CreateSessionPage } from "./views/CreateSessionPage";
 import { CreateTaskPage } from "./views/CreateTaskPage";
 import { Grid } from "./views/Grid";
@@ -952,6 +953,9 @@ export default function App() {
       const gridView = gridViews[slot];
       if (hasRepo && gridView) switchTop("grid", { instant: true, gridViewId: gridView.id });
     },
+    goChat: () => {
+      if (hasRepo) switchTop("chat", { instant: true });
+    },
     goSessions: () => {
       if (hasRepo) switchTop("sessions", { instant: true });
     },
@@ -1279,6 +1283,11 @@ export default function App() {
                 registerNav={registerNav}
                 onCreate={() => openCreate()}
               />
+            </div>
+          )}
+          {view.kind === "chat" && (
+            <div className="view">
+              <ChatView knownRepos={appConfig.known_repos} />
             </div>
           )}
           {view.kind === "sessions" && (

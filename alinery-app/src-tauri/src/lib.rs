@@ -79,6 +79,7 @@ mod account;
 mod app_config;
 mod artifacts;
 mod backup;
+mod chat;
 mod community_playbooks;
 mod connections;
 mod daemon;
@@ -103,6 +104,7 @@ use account::*;
 use app_config::*;
 use artifacts::*;
 use backup::*;
+use chat::*;
 use community_playbooks::*;
 use connections::*;
 use daemon::*;
@@ -171,6 +173,19 @@ pub fn run() {
             create_session,
             create_session_for_repo,
             ensure_drawer_terminal,
+            list_chat_threads,
+            create_chat_thread,
+            start_chat_thread,
+            set_chat_pinned,
+            archive_chat_thread,
+            remove_chat_worktree,
+            resume_chat_thread,
+            chat_branch_label,
+            chat_rpc_write,
+            chat_rpc_attach,
+            chat_detach,
+            chat_session_status,
+            read_chat_omp,
             list_sessions,
             rename_session,
             rename_task,

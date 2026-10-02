@@ -34,8 +34,10 @@ export function gridViewShortcutDigit(index: number): number {
   return index + 1;
 }
 
-/** The digit of a tab that follows the Grid views. `gridCount` is how many Grid views are shown. */
-export function trailingTabDigit(gridCount: number, tab: "tasks" | "sessions" | "kanban"): number {
+/** The digit of a tab that follows the Grid views. `gridCount` is how many Grid views are shown;
+ *  Chat comes last, so its digit moves up by one only while classic Kanban is on the bar. */
+export function trailingTabDigit(gridCount: number, tab: "tasks" | "sessions" | "kanban" | "chat", showKanban = true): number {
+  if (tab === "chat") return gridCount + (showKanban ? 4 : 3);
   return gridCount + { tasks: 1, sessions: 2, kanban: 3 }[tab];
 }
 

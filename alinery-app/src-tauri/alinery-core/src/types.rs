@@ -281,6 +281,8 @@ pub struct SessionMeta {
     #[serde(default)]
     pub archived: bool,
     #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
     pub phase: String,
     #[serde(default)]
     pub harness: String,

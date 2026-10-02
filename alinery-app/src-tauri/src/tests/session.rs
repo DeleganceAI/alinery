@@ -1104,3 +1104,241 @@ fn observation_includes_rpc_when_live() {
     let value = serde_json::to_value(&observation).unwrap();
     assert_eq!(value["transport"], "rpc");
 }
+
+fn plant_chat(
+    repo: &Path,
+    id: &str,
+    harness: &str,
+    created: u64,
+    pinned: bool,
+    archived: bool,
+    worktree: &str,
+    token: &str,
+    started: Option<u64>,
+    ended: Option<u64>,
+    resume_of: Option<&str>,
+) {
+    let path = session_meta_path(repo, "", id);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let meta = SessionMeta {
+        id: id.into(),
+        harness: harness.into(),
+        generic: true,
+        created,
+        pinned,
+        archived,
+        worktree: worktree.into(),
+        harness_resume_token: token.into(),
+        started_at: started,
+        ended_at: ended,
+        resume_of: resume_of.map(str::to_string),
+        ..Default::default()
+    };
+    fs::write(path, serde_json::to_vec(&meta).unwrap()).unwrap();
+}
+
+#[test]
+fn list_chat_threads_filters_drawer_tasks_archived_and_predecessors() {
+    let repo = init_git_test_repo("chat-list");
+    let other = init_git_test_repo("chat-list-other");
+    plant_chat(&repo, "s-pin", "omp", 1, true, false, &repo.to_string_lossy(), "", None, None, None);
+    plant_chat(&repo, "s-new", "omp", 9, false, false, &repo.to_string_lossy(), "", None, None, None);
+    plant_chat(&repo, "s-old", "omp", 5, false, false, &repo.to_string_lossy(), "", None, None, None);
+    plant_chat(&repo, "s-arch", "omp", 8, false, true, &repo.to_string_lossy(), "", Some(1), Some(2), None);
+    plant_chat(&repo, "s-draw", "no-harness", 7, false, false, &repo.to_string_lossy(), "", None, None, None);
+    plant_chat(&repo, "s-pred", "omp", 4, false, true, &repo.to_string_lossy(), "tok", Some(1), Some(2), None);
+    plant_chat(&repo, "s-next", "omp", 3, false, false, &repo.to_string_lossy(), "", None, None, Some("s-pred"));
+    let task = write_retained_discovery_task(&repo, "task-chat", "foreign", false);
+    fs::write(
+        session_meta_path(&repo, &task.slug, "s-task"),
+        serde_json::to_vec(&SessionMeta {
+            id: "s-task".into(),
+            harness: "omp".into(),
+            generic: true,
+            created: 100,
+            ..Default::default()
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    plant_chat(&other, "s-other", "omp", 2, false, false, &other.to_string_lossy(), "", None, None, None);
+    let live = list_chat_threads_in(&[repo.clone(), other.clone()], false).unwrap();
+    let ids: Vec<_> = live.iter().map(|thread| thread.session.id.as_str()).collect();
+    assert_eq!(ids, ["s-pin", "s-new", "s-old", "s-next", "s-other"]);
+    assert!(live.iter().all(|thread| thread.checkout), "checkout threads label the repo branch");
+    let archived = list_chat_threads_in(std::slice::from_ref(&repo), true).unwrap();
+    let archived_ids: Vec<_> = archived.iter().map(|thread| thread.session.id.as_str()).collect();
+    assert!(archived_ids.contains(&"s-arch"));
+    assert!(!archived_ids.contains(&"s-pred"), "a predecessor with a successor stays hidden");
+    assert!(!archived_ids.contains(&"s-draw"));
+    assert!(!archived_ids.contains(&"s-task"));
+    let _ = fs::remove_dir_all(repo);
+    let _ = fs::remove_dir_all(other);
+}
+
+#[test]
+fn set_chat_pinned_flips_only_pinned() {
+    let repo = init_git_test_repo("chat-pin");
+    plant_chat(&repo, "s-pin", "omp", 1, false, false, &repo.to_string_lossy(), "", Some(4), None, None);
+    set_chat_pinned_in(&repo, "s-pin", true).unwrap();
+    let meta: SessionMeta = serde_json::from_slice(&fs::read(session_meta_path(&repo, "", "s-pin")).unwrap()).unwrap();
+    assert!(meta.pinned);
+    assert_eq!(meta.started_at, Some(4));
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn require_explicit_daemon_does_not_call_active() {
+    let mut calls = 0;
+    let missing = require_explicit_daemon(None::<u8>, || {
+        calls += 1;
+        Some(1)
+    });
+    assert_eq!(missing.unwrap_err(), "daemon not connected");
+    assert_eq!(calls, 0);
+    let chosen = require_explicit_daemon(Some(2u8), || {
+        calls += 1;
+        Some(1)
+    })
+    .unwrap();
+    assert_eq!(chosen, 2);
+    assert_eq!(calls, 0);
+}
+
+#[test]
+fn archive_chat_keeps_journal_and_refuses_checkout_delete() {
+    let repo = init_git_test_repo("chat-archive");
+    let id = "s-ended";
+    plant_chat(&repo, id, "omp", 1, false, false, &repo.to_string_lossy(), "tok", Some(1), Some(2), None);
+    let journal = alinery_core::session_omp_dir(&repo, "", id);
+    fs::create_dir_all(&journal).unwrap();
+    fs::write(journal.join("session.jsonl"), b"{}\n").unwrap();
+    archive_chat_thread_in(&repo, id, false, None).unwrap();
+    let meta: SessionMeta = serde_json::from_slice(&fs::read(session_meta_path(&repo, "", id)).unwrap()).unwrap();
+    assert!(meta.archived);
+    assert!(journal.join("session.jsonl").is_file());
+    let err = archive_chat_thread_in(&repo, id, true, None).unwrap_err();
+    assert!(repo.join(".git").is_dir(), "{err}");
+    let after: SessionMeta = serde_json::from_slice(&fs::read(session_meta_path(&repo, "", id)).unwrap()).unwrap();
+    assert_eq!(after.worktree, repo.to_string_lossy());
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn archive_chat_removes_only_its_worktree() {
+    let repo = init_git_test_repo("chat-wt-archive");
+    let id = "s-wt";
+    let path = alinery_core::add_chat_worktree(&repo, id).unwrap();
+    plant_chat(&repo, id, "omp", 1, false, false, &path.to_string_lossy(), "tok", Some(1), Some(2), None);
+    let task_wt = worktrees_dir(&repo).join("task-leaf");
+    fs::create_dir_all(&task_wt).unwrap();
+    let mut task_meta: SessionMeta = serde_json::from_slice(&fs::read(session_meta_path(&repo, "", id)).unwrap()).unwrap();
+    task_meta.worktree = task_wt.to_string_lossy().into_owned();
+    fs::write(session_meta_path(&repo, "", id), serde_json::to_vec(&task_meta).unwrap()).unwrap();
+    let refused = archive_chat_thread_in(&repo, id, true, None).unwrap_err();
+    assert!(task_wt.is_dir(), "{refused}");
+    let archived: SessionMeta = serde_json::from_slice(&fs::read(session_meta_path(&repo, "", id)).unwrap()).unwrap();
+    assert!(archived.archived);
+    assert_eq!(archived.worktree, task_wt.to_string_lossy());
+    fs::write(
+        session_meta_path(&repo, "", id),
+        serde_json::to_vec(&SessionMeta {
+            worktree: path.to_string_lossy().into_owned(),
+            ..archived
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    remove_chat_worktree_in(&repo, id).unwrap();
+    let removed: SessionMeta = serde_json::from_slice(&fs::read(session_meta_path(&repo, "", id)).unwrap()).unwrap();
+    assert_eq!(removed.worktree, repo.to_string_lossy());
+    assert!(!path.exists());
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn archive_chat_refuses_when_daemon_is_down_and_live() {
+    let repo = init_git_test_repo("chat-live");
+    plant_chat(&repo, "s-live", "omp", 1, false, false, &repo.to_string_lossy(), "tok", Some(1), None, None);
+    let err = archive_chat_thread_in(&repo, "s-live", false, None).unwrap_err();
+    assert_eq!(err, "daemon not connected");
+    let meta: SessionMeta = serde_json::from_slice(&fs::read(session_meta_path(&repo, "", "s-live")).unwrap()).unwrap();
+    assert!(!meta.archived);
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn resume_chat_without_token_writes_no_successor() {
+    let repo = init_git_test_repo("chat-notoken");
+    plant_chat(&repo, "s-dead", "omp", 1, true, true, &repo.to_string_lossy(), "", Some(1), Some(2), None);
+    let err = resume_chat_thread_in(&repo, "s-dead", None).unwrap_err();
+    assert_eq!(err, "cannot continue");
+    let metas = fs::read_dir(alinery_core::root_sessions_dir(&repo))
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".meta.json"))
+        .count();
+    assert_eq!(metas, 1);
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn resume_chat_empty_token_uses_journal_when_present() {
+    let repo = init_git_test_repo("chat-journal-token");
+    plant_chat(&repo, "s-dead", "omp", 1, true, true, &repo.to_string_lossy(), "", Some(1), Some(2), None);
+    let dir = alinery_core::session_omp_dir(&repo, "", "s-dead");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("a.jsonl"), b"{}\n").unwrap();
+    let err = resume_chat_thread_in(&repo, "s-dead", None).unwrap_err();
+    assert_eq!(err, "daemon not connected");
+    let metas = fs::read_dir(alinery_core::root_sessions_dir(&repo))
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".meta.json"))
+        .count();
+    assert_eq!(metas, 1);
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn resume_chat_missing_worktree_opens_in_checkout_and_second_call_returns_successor() {
+    let repo = init_git_test_repo("chat-resume-cwd");
+    let missing = alinery_core::chat_worktrees_dir(&repo).join("s-pred");
+    plant_chat(&repo, "s-pred", "omp", 1, true, true, &missing.to_string_lossy(), "tok", Some(1), Some(2), None);
+    fs::create_dir_all(alinery_core::session_omp_dir(&repo, "", "s-pred")).unwrap();
+    fs::write(alinery_core::session_omp_dir(&repo, "", "s-pred").join("keep"), b"journal").unwrap();
+    let cwd = resolve_resume_cwd(
+        &repo,
+        &serde_json::from_slice::<SessionMeta>(&fs::read(session_meta_path(&repo, "", "s-pred")).unwrap()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(cwd, repo);
+    let predecessor: SessionMeta = serde_json::from_slice(&fs::read(session_meta_path(&repo, "", "s-pred")).unwrap()).unwrap();
+    assert_eq!(predecessor.worktree, repo.to_string_lossy());
+    assert!(alinery_core::session_omp_dir(&repo, "", "s-pred").join("keep").is_file());
+    plant_chat(&repo, "s-next", "omp", 2, true, false, &repo.to_string_lossy(), "", None, None, Some("s-pred"));
+    let again = resume_chat_thread_in(&repo, "s-pred", None).unwrap();
+    assert_eq!(again.id, "s-next");
+    let count = fs::read_dir(alinery_core::root_sessions_dir(&repo))
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".meta.json"))
+        .count();
+    assert_eq!(count, 2);
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn read_chat_journal_uses_root_sessions_dir() {
+    let repo = init_git_test_repo("chat-journal");
+    plant_chat(&repo, "s-j", "omp", 1, false, false, &repo.to_string_lossy(), "", None, None, None);
+    let root = alinery_core::session_omp_dir(&repo, "", "s-j");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("a.jsonl"), b"root-journal\n").unwrap();
+    let task = alinery_core::session_omp_dir(&repo, "task", "s-j");
+    fs::create_dir_all(&task).unwrap();
+    fs::write(task.join("a.jsonl"), b"task-journal\n").unwrap();
+    let window = alinery_core::read_omp_window(&repo, "", "s-j", None, Some(64)).unwrap();
+    assert_eq!(window.data, b"root-journal\n");
+    let _ = fs::remove_dir_all(repo);
+}

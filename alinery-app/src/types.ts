@@ -364,6 +364,7 @@ export type SessionMeta = {
   worktree: string;
   created: number;
   archived: boolean;
+  pinned?: boolean;
   phase: string;
   harness: string;
   model: string;
@@ -772,7 +773,7 @@ export type CreateExecutionSessionRequest = {
   handoff_artifact?: string | null;
   start: boolean;
 };
-export type CreateExecutionSessionReply = { session: SessionMeta; execution: ExecutionRecord | null; start: string };
+export type CreateExecutionSessionReply = { session: SessionMeta; execution: ExecutionRecord | null; start: string; errors?: { stage: string; code: string; message: string }[] };
 export type KanbanColumn = { key: string; title: string };
 export type RepoScope = "active" | "all";
 
@@ -862,6 +863,7 @@ export type View =
   | { kind: "list" }
   | { kind: "grid"; gridViewId: string }
   | { kind: "kanban" }
+  | { kind: "chat" }
   | { kind: "sessions" }
   | { kind: "notifications" }
   | { kind: "playbooks" }
@@ -885,7 +887,17 @@ export type View =
     }
   | { kind: "reviewHandoff"; from: View; source: ReviewHandoffSource };
 
-export type Tab = "list" | "kanban" | "grid" | "sessions" | "notifications" | "playbooks" | "settings";
+export type Tab = "list" | "kanban" | "grid" | "chat" | "sessions" | "notifications" | "playbooks" | "settings";
+
+export type ChatBranch = { label: string; checkout: boolean };
+
+export type ChatThread = {
+  repo_path: string;
+  session: SessionMeta;
+  name: string | null;
+  branch_label: string;
+  checkout: boolean;
+};
 
 export type BoardNav = {
   moveRow: (d: number) => void;

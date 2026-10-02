@@ -727,6 +727,7 @@ export function TopBar({
         {tab("list", "Tasks", String(trailingTabDigit(gridViews.length, "tasks")))}
         {tab("sessions", "Sessions", String(trailingTabDigit(gridViews.length, "sessions")))}
         {showOriginalKanban && tab("kanban", "Kanban", String(trailingTabDigit(gridViews.length, "kanban")))}
+        {tab("chat", "Chat", String(trailingTabDigit(gridViews.length, "chat", showOriginalKanban)))}
         {tab("playbooks", "Playbooks")}
       </nav>
       <div className="spacer" />
@@ -984,7 +985,7 @@ export function ArtifactProvenanceBadges({ handoffs, onOpenRelatedTask }: { hand
 
 // Visible status vocabulary — DESIGN.md §Agent lifecycle canonical labels,
 // compacted only where a row badge cannot carry the full phrase.
-function obsLabel(kind: ObservationDisplayKind): string {
+export function obsLabel(kind: ObservationDisplayKind): string {
   switch (kind) {
     case "failed":
       return "Failed";
