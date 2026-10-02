@@ -4233,6 +4233,481 @@ dialog.modal::backdrop {
 .session-view-hatch {
   flex: 0 0 auto;
 }
+/* ---- Ava chat view: left thread rail + main column ----
+   The column clamps between --chat-col-min and --chat-col-max so the journal, banner and
+   composer share one reading width instead of stretching across the window. */
+.chat-view {
+  --chat-col-min: 420px;
+  --chat-col-max: 860px;
+  --chat-rail-w: 272px;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  min-height: 0;
+  background: var(--canvas);
+}
+.chat-main {
+  flex: 1 1 auto;
+  min-width: var(--chat-col-min);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.chat-main .chat-pane {
+  flex: 1 1 auto;
+  height: auto;
+  --chat-max-width: var(--chat-col-max);
+}
+.chat-main .chat-journal,
+.chat-main .chat-empty {
+  min-width: min(100%, var(--chat-col-min));
+}
+.chat-main .chat-activity {
+  background: transparent;
+}
+.chat-view .chat-composer {
+  border-top: 0;
+  padding: 8px 24px 16px;
+  background: transparent;
+}
+.chat-view .chat-composer > *,
+.chat-banner {
+  width: 100%;
+  max-width: var(--chat-col-max);
+  margin-inline: auto;
+  box-sizing: border-box;
+}
+.chat-view .chat-composer-box {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-menu);
+}
+
+/* Title bar */
+.chat-titlebar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 56px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.chat-titlebar-identity {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.chat-titlebar > .chat-icon-btn {
+  flex: 0 0 auto;
+  margin-right: -6px;
+}
+.chat-titlebar-name {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.chat-titlebar-name h1 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: calc(15px * var(--ui-scale));
+  font-weight: 600;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-titlebar-name .chat-icon-btn {
+  opacity: 0;
+}
+.chat-titlebar-name:hover .chat-icon-btn,
+.chat-titlebar-name .chat-icon-btn:focus-visible {
+  opacity: 1;
+}
+.chat-titlebar-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.chat-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.chat-meta-item svg {
+  color: var(--text-faint);
+}
+.chat-meta-tag {
+  padding: 0 6px;
+  border-radius: 4px;
+  color: var(--text-faint);
+  font-size: calc(11px * var(--ui-scale));
+  background: var(--surface-subtle);
+}
+.chat-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.chat-state-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+.chat-state[data-kind="busy"] .chat-state-dot,
+.chat-state[data-kind="starting"] .chat-state-dot,
+.chat-state[data-kind="loading"] .chat-state-dot {
+  background: var(--accent);
+  animation: chat-state-pulse 1.4s ease-in-out infinite;
+}
+.chat-state[data-kind="waiting_for_approval"] .chat-state-dot {
+  background: var(--warning);
+}
+.chat-state[data-kind="failed"] .chat-state-dot {
+  background: var(--danger);
+}
+@keyframes chat-state-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-state-dot {
+    animation: none !important;
+  }
+}
+.chat-titlebar-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.chat-titlebar-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 6px;
+  background: var(--border);
+}
+.chat-model-btn {
+  gap: 6px;
+  max-width: 240px;
+  font-family: var(--font-mono);
+}
+.chat-model-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Square icon button: quiet until hovered, still reads as a button. */
+.chat-icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  background: transparent;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease;
+}
+.chat-icon-btn:hover {
+  border-color: var(--border);
+  color: var(--text-strong);
+  background: var(--surface-subtle);
+}
+.chat-icon-btn.on {
+  color: var(--accent);
+}
+.chat-icon-btn:focus-visible,
+.chat-repo-toggle:focus-visible,
+.chat-thread-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Empty / error */
+.chat-blank {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px;
+  color: var(--text-faint);
+  text-align: center;
+}
+.chat-blank p {
+  margin: 0;
+}
+.chat-blank-title {
+  color: var(--text);
+  font-weight: 600;
+}
+.chat-blank-hint {
+  font-size: calc(13px * var(--ui-scale));
+}
+.chat-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  border-radius: var(--radius-md);
+  color: var(--danger);
+  font-size: calc(13px * var(--ui-scale));
+  background: var(--danger-subtle);
+}
+
+/* Left rail */
+.chat-rail {
+  flex: 0 0 var(--chat-rail-w);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+.chat-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 56px;
+  padding: 10px 10px 10px 16px;
+  border-bottom: 1px solid var(--border);
+  box-sizing: border-box;
+}
+.chat-rail-title {
+  color: var(--text-muted);
+  font-size: calc(11px * var(--ui-scale));
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.chat-rail-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.chat-new-btn {
+  gap: 4px;
+  padding-left: 8px;
+}
+.chat-rail-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+.chat-rail-empty {
+  margin: 8px;
+  color: var(--text-faint);
+  font-size: calc(12px * var(--ui-scale));
+}
+.chat-repo + .chat-repo {
+  margin-top: 6px;
+}
+.chat-repo-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.chat-repo-head .chat-repo-add {
+  width: 24px;
+  height: 24px;
+  opacity: 0;
+}
+.chat-repo-head:hover .chat-repo-add,
+.chat-repo-add:focus-visible {
+  opacity: 1;
+}
+.chat-repo-toggle {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 600;
+  text-align: left;
+  background: transparent;
+}
+.chat-repo-toggle:hover {
+  background: var(--surface-subtle);
+}
+.chat-repo-toggle svg {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+.chat-repo-chevron {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.chat-repo-toggle[aria-expanded="true"] .chat-repo-chevron {
+  transform: rotate(90deg);
+}
+.chat-repo-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-repo-count {
+  color: var(--text-faint);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.chat-thread-list {
+  margin: 2px 0 0;
+  padding: 0 0 0 14px;
+  list-style: none;
+}
+.chat-thread {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.chat-thread-none {
+  padding: 4px 10px;
+  color: var(--text-faint);
+  font-size: calc(12px * var(--ui-scale));
+}
+.chat-thread-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(13px * var(--ui-scale));
+  text-align: left;
+  background: transparent;
+}
+.chat-thread-btn:hover {
+  color: var(--text-strong);
+  background: var(--surface-subtle);
+}
+.chat-thread-btn[aria-current="true"] {
+  border-left-color: var(--accent);
+  color: var(--text-strong);
+  font-weight: 500;
+  background: var(--accent-subtle);
+}
+.chat-thread-btn[data-archived="true"] {
+  font-style: italic;
+  opacity: 0.7;
+}
+.chat-thread-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-thread-pin {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+.chat-thread-resume {
+  flex: 0 0 auto;
+}
+.chat-rail-foot {
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+.chat-rail-foot .btn {
+  width: 100%;
+}
+
+/* New-thread dialog: the shared .modal .mh/.mb/.mfoot frame, plus a restyled select. */
+.chat-new-dialog {
+  width: min(440px, calc(100vw - 32px));
+}
+.chat-new-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 10px;
+}
+.chat-new-body .dsc {
+  margin: 0;
+}
+.chat-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 500;
+}
+.chat-new-foot {
+  justify-content: flex-end;
+}
+/* Native select without the OS chrome: appearance:none drops the system bezel and arrow,
+   and the lucide chevron stands in so it matches every other icon in the app. */
+.chat-select {
+  position: relative;
+  display: block;
+}
+.chat-select select {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: var(--control-h-lg);
+  padding: 0 34px 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-strong);
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(13px * var(--ui-scale));
+  background: var(--surface);
+  transition: border-color var(--dur-fast) ease, background var(--dur-fast) ease;
+}
+.chat-select select:hover {
+  border-color: color-mix(in srgb, var(--text) 40%, transparent);
+  background: var(--surface-subtle);
+}
+.chat-select select:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent-subtle);
+  outline-offset: 0;
+}
+.chat-select svg {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  color: var(--text-muted);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+
 .chat-pane {
   height: 100%;
   min-height: 0;

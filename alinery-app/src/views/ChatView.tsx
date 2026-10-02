@@ -1,10 +1,12 @@
+import { Archive, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquare, PanelLeftClose, PanelLeftOpen, Pencil, Pin, PinOff, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChatComposer } from "../ChatComposer";
 import { appendOptimisticAbort, appendOptimisticUser, type ChatTranscriptState, emptyTranscript } from "../chatTranscript";
 import { askConfirm, confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
+import { NameEditor } from "../NameEditor";
 import { observationDisplayKind } from "../sessionAttention";
-import { Dialog, obsLabel } from "../shared";
+import { Checkbox, Dialog, obsLabel } from "../shared";
 import type { ChatThread, SessionObservation } from "../types";
 import { ChatModelDialog } from "./ChatModelDialog";
 import { ChatPane } from "./ChatPane";
@@ -18,6 +20,16 @@ function threadLabel(thread: ChatThread): string {
 function repoBase(path: string): string {
   const parts = path.split("/").filter(Boolean);
   return parts[parts.length - 1] ?? path;
+}
+
+/** Threads under their repo, known repos first (empty ones too, so a thread can start there), pinned first within a repo. */
+function repoGroups(repos: string[], threads: ChatThread[]): { path: string; rows: ChatThread[] }[] {
+  const order = [...repos];
+  for (const thread of threads) if (!order.includes(thread.repo_path)) order.push(thread.repo_path);
+  return order.map((path) => ({
+    path,
+    rows: threads.filter((thread) => thread.repo_path === path).sort((a, b) => Number(Boolean(b.session.pinned)) - Number(Boolean(a.session.pinned))),
+  }));
 }
 
 function errorMessage(cause: unknown): string {
@@ -48,7 +60,8 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
   const [error, setError] = useState("");
   const [observation, setObservation] = useState<SessionObservation | null>(null);
   const [transcript, setTranscript] = useState<ChatTranscriptState>(emptyTranscript());
-  const [draftName, setDraftName] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(() => new Set());
   const [modelOpen, setModelOpen] = useState(false);
   const pendingPrompt = useRef<string | null>(null);
   const dirs = knownRepos.filter((path) => path.length > 0);
@@ -87,7 +100,7 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
     const id = selectedId;
     const attachId = 1;
     let cancelled = false;
-    setDraftName(selected.name ?? "");
+    setRenaming(false);
     setModelOpen(false);
     setError((current) => (current === "cannot continue" ? "" : current));
     ipc
@@ -228,7 +241,7 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
     setError("");
     try {
       const repo = selected.repo_path;
-      let id = selected.session.id;
+      const id = selected.session.id;
       if (selected.session.ended_at != null || selected.session.archived) {
         const successor = await ipc.resumeChatThread(repo, id);
         const rows = await ipc.listChatThreads(false);
@@ -265,24 +278,97 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
   const statusKind = observation ? observationDisplayKind(observation) : "idle";
   const modelLabel = transcript.sessionMeta.model || selected?.session.model || "Model";
   const blocked = error === "cannot continue";
+  const groups = repoGroups(dirs, threads);
+
+  function startThreadIn(path: string) {
+    setRepoPath(path);
+    setCreating(true);
+  }
+
+  function toggleRepo(path: string) {
+    setCollapsedRepos((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }
 
   return (
-    <div className="chat-view" data-testid="chat-view">
-      {collapsed ? (
-        <button type="button" className="btn ghost small" onClick={() => setCollapsed(false)}>
-          Show threads
-        </button>
-      ) : (
-        <aside className="chat-rail" data-testid="chat-rail">
-          <div className="chat-rail-actions">
-            <button type="button" onClick={() => setCreating(true)}>
-              New thread
-            </button>
-            <button type="button" onClick={() => setCollapsed(true)}>
-              Collapse threads
-            </button>
+    <div className="chat-view" data-testid="chat-view" data-rail={collapsed ? "closed" : "open"}>
+      {collapsed ? null : (
+        <aside className="chat-rail" data-testid="chat-rail" aria-label="Threads">
+          <div className="chat-rail-head">
+            <span className="chat-rail-title">Threads</span>
+            <div className="chat-rail-head-actions">
+              <button type="button" className="btn small chat-new-btn" onClick={() => setCreating(true)}>
+                <Plus size={14} aria-hidden="true" />
+                New thread
+              </button>
+              <button type="button" className="chat-icon-btn" aria-label="Collapse threads" title="Collapse threads" onClick={() => setCollapsed(true)}>
+                <PanelLeftClose size={16} aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+          <div className="chat-rail-scroll">
+            {groups.length === 0 ? <p className="chat-rail-empty">No repositories yet.</p> : null}
+            {groups.map(({ path, rows }) => {
+              const open = !collapsedRepos.has(path);
+              return (
+                <section key={path} className="chat-repo">
+                  <div className="chat-repo-head">
+                    <button type="button" className="chat-repo-toggle" aria-expanded={open} onClick={() => toggleRepo(path)} title={path}>
+                      <ChevronRight size={14} aria-hidden="true" className="chat-repo-chevron" />
+                      <FolderGit2 size={14} aria-hidden="true" />
+                      <span className="chat-repo-name">{repoBase(path)}</span>
+                      <span className="chat-repo-count">{rows.length}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="chat-icon-btn chat-repo-add"
+                      aria-label={`New thread in ${repoBase(path)}`}
+                      title="New thread here"
+                      onClick={() => startThreadIn(path)}
+                    >
+                      <Plus size={14} aria-hidden="true" />
+                    </button>
+                  </div>
+                  {open ? (
+                    <ul className="chat-thread-list">
+                      {rows.length === 0 ? <li className="chat-thread-none">No threads</li> : null}
+                      {rows.map((thread) => {
+                        const key = `${thread.repo_path}:${thread.session.id}`;
+                        return (
+                          <li key={key} className="chat-thread">
+                            <button
+                              type="button"
+                              className="chat-thread-btn"
+                              aria-current={key === selectedKey ? "true" : undefined}
+                              data-archived={thread.session.archived ? "true" : undefined}
+                              onClick={() => setSelectedKey(key)}
+                            >
+                              {thread.session.pinned ? <Pin size={12} aria-hidden="true" className="chat-thread-pin" /> : null}
+                              <span className="chat-thread-name">{threadLabel(thread)}</span>
+                            </button>
+                            {showArchived && thread.session.archived ? (
+                              <button type="button" className="btn ghost small chat-thread-resume" onClick={() => resume(thread)}>
+                                Resume
+                              </button>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : null}
+                </section>
+              );
+            })}
+          </div>
+          <div className="chat-rail-foot">
             <button
               type="button"
+              className={`btn ghost small${showArchived ? " on" : ""}`}
+              aria-pressed={showArchived}
               onClick={() => {
                 const next = !showArchived;
                 setShowArchived(next);
@@ -295,76 +381,109 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
               {showArchived ? "Hide archived" : "Show archived"}
             </button>
           </div>
-          <ul>
-            {threads.map((thread) => {
-              const key = `${thread.repo_path}:${thread.session.id}`;
-              return (
-                <li key={key}>
-                  <button type="button" aria-current={key === selectedKey ? "true" : undefined} onClick={() => setSelectedKey(key)}>
-                    {threadLabel(thread)}
-                  </button>
-                  {showArchived && thread.session.archived ? (
-                    <button type="button" onClick={() => resume(thread)}>
-                      Resume
-                    </button>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
         </aside>
       )}
       <section className="chat-main">
-        <header>
-          <h1>Ava</h1>
-          {selected ? (
-            <>
-              <span>{repoBase(selected.repo_path)}</span>
-              <span>{selected.checkout ? `checkout ${selected.branch_label}` : selected.branch_label}</span>
-              <button type="button" onClick={() => setModelOpen(true)}>
-                {modelLabel}
-              </button>
-              <span>{obsLabel(statusKind)}</span>
-              <button type="button" onClick={archiveSelected}>
-                Archive
-              </button>
-              {selected.checkout ? null : (
-                <button type="button" onClick={() => void removeWorktree()}>
-                  Remove worktree
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  ipc
-                    .setChatPinned(selected.repo_path, selected.session.id, !selected.session.pinned)
-                    .then(() => reload())
-                    .catch((cause: unknown) => setError(String(cause)));
-                }}
-              >
-                {selected.session.pinned ? "Unpin" : "Pin"}
-              </button>
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  ipc
-                    .renameSession({ repoPath: selected.repo_path, taskSlug: "", sessionId: selected.session.id, name: draftName })
-                    .then(() => reload())
-                    .catch((cause: unknown) => setError(String(cause)));
-                }}
-              >
-                <input aria-label="Thread name" value={draftName} onChange={(event) => setDraftName(event.target.value)} />
-                <button type="submit">Rename</button>
-              </form>
-            </>
+        <header className="chat-titlebar">
+          {collapsed ? (
+            <button type="button" className="chat-icon-btn" aria-label="Show threads" title="Show threads" onClick={() => setCollapsed(false)}>
+              <PanelLeftOpen size={16} aria-hidden="true" />
+            </button>
           ) : null}
+          <div className="chat-titlebar-identity">
+            {selected && renaming ? (
+              <NameEditor
+                value={selected.name ?? ""}
+                label="Thread name"
+                onCancel={() => setRenaming(false)}
+                onSave={async (name) => {
+                  await ipc.renameSession({ repoPath: selected.repo_path, taskSlug: "", sessionId: selected.session.id, name });
+                  setRenaming(false);
+                  await reload();
+                }}
+              />
+            ) : (
+              <div className="chat-titlebar-name">
+                <h1>{selected ? threadLabel(selected) : "Ava"}</h1>
+                {selected ? (
+                  <button type="button" className="chat-icon-btn" aria-label="Rename thread" title="Rename" onClick={() => setRenaming(true)}>
+                    <Pencil size={14} aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
+            )}
+            {selected ? (
+              <div className="chat-titlebar-meta">
+                <span className="chat-meta-item">
+                  <FolderGit2 size={13} aria-hidden="true" />
+                  {repoBase(selected.repo_path)}
+                </span>
+                <span className="chat-meta-item">
+                  <GitBranch size={13} aria-hidden="true" />
+                  {selected.branch_label}
+                  {selected.checkout ? <span className="chat-meta-tag">checkout</span> : <span className="chat-meta-tag">worktree</span>}
+                </span>
+                <span className="chat-state" data-kind={statusKind}>
+                  <span className="chat-state-dot" aria-hidden="true" />
+                  {obsLabel(statusKind)}
+                </span>
+              </div>
+            ) : (
+              <div className="chat-titlebar-meta">Pick a thread or start a new one.</div>
+            )}
+          </div>
+          <div className="chat-titlebar-actions">
+            {selected ? (
+              <>
+                <button type="button" className="btn ghost small chat-model-btn" onClick={() => setModelOpen(true)} title="Change model">
+                  <span className="chat-model-label">{modelLabel}</span>
+                  <ChevronDown size={14} aria-hidden="true" />
+                </button>
+                <span className="chat-titlebar-sep" aria-hidden="true" />
+                <button
+                  type="button"
+                  className={`chat-icon-btn${selected.session.pinned ? " on" : ""}`}
+                  aria-label={selected.session.pinned ? "Unpin" : "Pin"}
+                  title={selected.session.pinned ? "Unpin" : "Pin"}
+                  onClick={() => {
+                    ipc
+                      .setChatPinned(selected.repo_path, selected.session.id, !selected.session.pinned)
+                      .then(() => reload())
+                      .catch((cause: unknown) => setError(String(cause)));
+                  }}
+                >
+                  {selected.session.pinned ? <PinOff size={16} aria-hidden="true" /> : <Pin size={16} aria-hidden="true" />}
+                </button>
+                {selected.checkout ? null : (
+                  <button type="button" className="chat-icon-btn" aria-label="Remove worktree" title="Remove worktree" onClick={() => void removeWorktree()}>
+                    <Trash2 size={16} aria-hidden="true" />
+                  </button>
+                )}
+                <button type="button" className="chat-icon-btn" aria-label="Archive" title="Archive" onClick={archiveSelected}>
+                  <Archive size={16} aria-hidden="true" />
+                </button>
+              </>
+            ) : null}
+          </div>
         </header>
-        <ChatPane entries={transcript.entries} status={composerStatus(observation)} />
-        {error ? <p role="alert">{error}</p> : null}
-        {blocked ? (
-          <button type="button" onClick={() => setCreating(true)}>
-            New thread
-          </button>
+        {selected ? (
+          <ChatPane entries={transcript.entries} status={composerStatus(observation)} />
+        ) : (
+          <div className="chat-blank">
+            <MessageSquare size={28} aria-hidden="true" />
+            <p className="chat-blank-title">No thread selected</p>
+            <p className="chat-blank-hint">Choose a thread on the left, or start one in a repository.</p>
+          </div>
+        )}
+        {error ? (
+          <div className="chat-banner" role="alert">
+            <span>{error}</span>
+            {blocked ? (
+              <button type="button" className="btn small" onClick={() => setCreating(true)}>
+                New thread
+              </button>
+            ) : null}
+          </div>
         ) : null}
         <ChatComposer
           body={body}
@@ -379,28 +498,38 @@ export function ChatView({ knownRepos }: { knownRepos: string[] }) {
         />
       </section>
       {creating ? (
-        <Dialog onClose={() => setCreating(false)} ariaLabel="New thread">
-          {dirs.length === 0 ? <p>No repositories.</p> : null}
-          <label>
-            Repository
-            <select value={repoPath} onChange={(event) => setRepoPath(event.target.value)}>
-              {dirs.map((path) => (
-                <option key={path} value={path}>
-                  {repoBase(path)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <input type="checkbox" checked={createWorktree} onChange={(event) => setCreateWorktree(event.target.checked)} />
-            New worktree and branch
-          </label>
-          <button type="button" onClick={() => void createThread()} disabled={!repoPath}>
-            Create
-          </button>
-          <button type="button" onClick={() => setCreating(false)}>
-            Cancel
-          </button>
+        <Dialog onClose={() => setCreating(false)} ariaLabel="New thread" className="chat-new-dialog">
+          <div className="mh">
+            <span className="mt">New thread</span>
+            <button type="button" className="x" aria-label="Close" title="Close" onClick={() => setCreating(false)}>
+              <X size={14} strokeWidth={1.5} aria-hidden="true" />
+            </button>
+          </div>
+          <div className="mb chat-new-body">
+            {dirs.length === 0 ? <p className="dsc">No repositories yet. Add one from the repo switcher first.</p> : null}
+            <label className="chat-dialog-field">
+              <span>Repository</span>
+              <span className="chat-select">
+                <select value={repoPath} onChange={(event) => setRepoPath(event.target.value)}>
+                  {dirs.map((path) => (
+                    <option key={path} value={path}>
+                      {repoBase(path)}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown size={14} aria-hidden="true" />
+              </span>
+            </label>
+            <Checkbox checked={createWorktree} onChange={setCreateWorktree} label="New worktree and branch" />
+          </div>
+          <div className="mfoot chat-new-foot">
+            <button type="button" className="btn ghost" onClick={() => setCreating(false)}>
+              Cancel
+            </button>
+            <button type="button" className="btn" onClick={() => void createThread()} disabled={!repoPath} data-autofocus>
+              Create
+            </button>
+          </div>
         </Dialog>
       ) : null}
       {modelOpen && selected ? (
