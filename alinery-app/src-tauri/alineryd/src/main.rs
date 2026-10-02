@@ -851,6 +851,9 @@ fn accept_phase_completion(
     meta_path: &Path,
     _app_config: &Path,
 ) -> Result<CompletionOutcome, String> {
+    if task_slug.is_empty() {
+        return Err("session has no v2 execution".into());
+    }
     let source = read_session_meta_full(meta_path).ok_or("missing-session-meta")?;
     if source.execution_id.is_empty() {
         return Err("session has no v2 execution".into());
@@ -1063,6 +1066,10 @@ fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Pa
 
     let completion = match (&envelope.event, completion_action) {
         (_, CompletionEventAction::InFlight) => Err("completion-in-progress".to_string()),
+        (RunnerEvent::PhaseCompleted { .. }, CompletionEventAction::Attempt) if task_slug.is_empty() => {
+            inner.lock().unwrap_or_else(|error| error.into_inner()).completion_in_flight = false;
+            Ok(None)
+        }
         (RunnerEvent::PhaseCompleted { omp_session_id, omp_turn_id }, CompletionEventAction::Attempt) => {
             let result = accept_phase_completion(reg, repo, &envelope.session_id, &task_slug, omp_session_id, *omp_turn_id, &meta_path, app_config);
             inner.lock().unwrap_or_else(|error| error.into_inner()).completion_in_flight = false;
@@ -1690,9 +1697,14 @@ fn resume_or_attach(
     }
     let task_slug = req.get("task_slug").and_then(|v| v.as_str()).unwrap_or("").to_string();
     if task_slug.trim().is_empty() {
-        return Err("sessions must be attached to a task".into());
+        match read_session_meta_full(&session_meta_path(repo, &task_slug, &id)) {
+            None => return Err("missing-session-meta".into()),
+            Some(meta) if meta.generic && meta.harness == alinery_core::DEFAULT_HARNESS_KEY && meta.execution_id.is_empty() => {}
+            Some(_) => return Err("sessions must be attached to a task".into()),
+        }
+    } else {
+        execution::task_for_owner(repo, &task_slug, daemon_namespace)?;
     }
-    execution::task_for_owner(repo, &task_slug, daemon_namespace)?;
     if let Some(meta) = read_session_meta_full(&session_meta_path(repo, &task_slug, &id)) {
         if !meta.execution_id.is_empty() || (!meta.generic && meta.harness != NO_HARNESS_KEY) {
             return Err("graph owners cannot be resumed; recover proven-stopped unfinished execution explicitly".into());
@@ -2979,7 +2991,7 @@ fn spawn_rpc_session(
     resume: bool,
     seeded: Option<String>,
 ) -> Result<(), String> {
-    let stderr_path = sessions_dir(repo, &launch.task_slug).join(format!("{}.stderr.log", launch.id));
+    let stderr_path = session_meta_path(repo, &launch.task_slug, &launch.id).with_file_name(format!("{}.stderr.log", launch.id));
     let stderr = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
