@@ -76,6 +76,8 @@ export type ChatEntry =
       requestId: string;
       action: string;
       detail: string;
+      /** Browser-opening approvals must display the destination literally, without clickable Markdown. */
+      detailFormat?: "plain";
       scope?: string;
       options?: string[];
       disabled?: boolean;
