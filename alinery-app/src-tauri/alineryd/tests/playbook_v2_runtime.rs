@@ -119,6 +119,68 @@ fn definition() -> String {
 }
 
 #[test]
+fn auxiliary_sessions_inherit_current_settings_without_overriding_explicit_models_or_terminal() {
+    let fixture = Fixture::new();
+    fs::write(fixture.root.join("app.toml"), "[global.defaults]\nharness='omp'\nmodel='provider/global'\n").unwrap();
+    fixture.create(false, true);
+    let create = |harness: &str, model: Option<&str>| {
+        fixture
+            .client
+            .create_execution_session(&CreateExecutionSessionRequest {
+                task_slug: "fixture".into(),
+                target: ExecutionSessionTarget::Auxiliary {
+                    harness: harness.into(),
+                    model: model.map(str::to_owned),
+                    prompt: None,
+                },
+                launch_override: None,
+                prompt_extra: None,
+                handoff_artifact: None,
+                start: false,
+            })
+            .unwrap()
+            .session
+    };
+    assert_eq!(create("omp", None).model, "provider/global");
+    assert_eq!(create("omp", Some("")).model, "provider/global");
+    assert_eq!(create("omp", Some("provider/explicit")).model, "provider/explicit");
+    assert_eq!(create("no-harness", None).model, "");
+
+    fs::write(fixture.root.join(".alinery/config.toml"), "[defaults]\nmodel='provider/repository'\n").unwrap();
+    let repository_session = create("omp", None);
+    assert_eq!(repository_session.model, "provider/repository");
+    fs::write(fixture.root.join(".alinery/config.toml"), "[defaults]\nmodel=''\n").unwrap();
+    assert_eq!(create("omp", None).model, "");
+    let saved = alinery_core::read_session_meta_full(&alinery_core::session_meta_path(&fixture.root, "fixture", &repository_session.id)).unwrap();
+    assert_eq!(saved.model, "provider/repository", "settings changes must not rewrite existing sessions");
+}
+
+#[test]
+fn subtask_manager_inherits_chat_default_instead_of_retained_task_model() {
+    let fixture = Fixture::new();
+    fs::write(fixture.root.join("app.toml"), "[global.defaults]\nharness='omp'\nmodel='provider/old'\n").unwrap();
+    fixture.create(false, true);
+    fs::write(fixture.root.join("app.toml"), "[global.defaults]\nharness='omp'\nmodel='provider/current'\n").unwrap();
+    let manager = fixture
+        .client
+        .create_execution_session(&CreateExecutionSessionRequest {
+            task_slug: "fixture".into(),
+            target: ExecutionSessionTarget::SubtaskManager {
+                subtask_slug: None,
+                recover: false,
+                harness: "omp".into(),
+                model: None,
+            },
+            launch_override: None,
+            prompt_extra: None,
+            handoff_artifact: None,
+            start: false,
+        })
+        .unwrap();
+    assert_eq!(manager.session.model, "provider/current");
+}
+
+#[test]
 fn held_roots_and_coding_capacity_are_durable_and_individual_start_isolated() {
     let fixture = Fixture::new();
     let created = fixture.create(false, true);

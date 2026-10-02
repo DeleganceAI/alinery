@@ -369,7 +369,7 @@ pub(super) fn create_session(
     }
     let mut session = alinery_core::with_task_mutation_lock_waiting(repo, "create auxiliary session", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
         let task = task_for_owner(repo, slug, lane)?;
-        let (harness, model, prompt, manager, child) = match &request.target {
+        let (harness, mut model, prompt, manager, child) = match &request.target {
             ExecutionSessionTarget::Auxiliary { harness, model, prompt } => (harness.clone(), model.clone().unwrap_or_default(), prompt.clone(), false, String::new()),
             ExecutionSessionTarget::SubtaskManager {
                 subtask_slug,
@@ -398,6 +398,9 @@ pub(super) fn create_session(
             return Err("root session must be Terminal".into());
         }
         alinery_core::resolve_harness_strict_for(config, repo, &harness)?;
+        if harness == "omp" && model.trim().is_empty() {
+            model = product(repo, config)?.model;
+        }
         let id = format!("s{}", uuid::Uuid::new_v4());
         let meta = SessionMeta {
             id: id.clone(),
