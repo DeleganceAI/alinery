@@ -65,7 +65,36 @@ export type AppearancePrefs = {
   session_default_view?: SessionDefaultView;
   /** Absent in pre-reskin configs; normalizers default it to "system". */
   mode?: AppearanceMode;
+  /** The Chat view's own copy of the chat_* settings above (those drive the Sessions view). Absent → defaults. */
+  ava_chat?: ChatViewPrefs;
 };
+/** Journal, density and text settings of one chat surface: the Sessions view uses the flat chat_* fields, Chat uses `ava_chat`. */
+export type ChatViewPrefs = Pick<
+  AppearancePrefs,
+  | "chat_show_thinking"
+  | "chat_expand_thinking"
+  | "chat_show_tools"
+  | "chat_expand_tools"
+  | "chat_show_harness"
+  | "chat_show_turn_markers"
+  | "chat_show_subagent_rows"
+  | "chat_show_subagent_drawer"
+  | "chat_auto_collapse_thinking"
+  | "chat_auto_compaction"
+  | "chat_auto_scroll"
+  | "chat_rail_density"
+  | "chat_font_size"
+  | "chat_rail_font_size"
+  | "chat_show_meta"
+  | "chat_show_composer_hints"
+  | "chat_max_width"
+  | "chat_show_date"
+  | "chat_show_time"
+  | "chat_show_actor_labels"
+  | "chat_show_agent_bubbles"
+  | "chat_show_block_copy_buttons"
+  | "chat_show_copy_buttons"
+>;
 
 // Mirrors the Rust structs.
 export type RelatedTaskRef = { repo_path: string; slug: string; name: string };
@@ -857,7 +886,19 @@ export type ReviewHandoffDraft = ReviewHandoffSource & {
   prompt_extra: string;
 };
 
-export type SettingsSectionKey = "general" | "playbooks" | "connections" | "updates" | "storage" | "chat" | "gridViews" | "experimental" | "mcp" | "backup";
+export type SettingsSectionKey =
+  | "general"
+  | "harness"
+  | "playbooks"
+  | "connections"
+  | "updates"
+  | "storage"
+  | "sessionsView"
+  | "chat"
+  | "gridViews"
+  | "experimental"
+  | "mcp"
+  | "backup";
 
 export type View =
   | { kind: "list" }

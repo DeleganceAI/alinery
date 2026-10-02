@@ -4256,7 +4256,6 @@ dialog.modal::backdrop {
 .chat-main .chat-pane {
   flex: 1 1 auto;
   height: auto;
-  --chat-max-width: var(--chat-col-max);
 }
 .chat-main .chat-journal,
 .chat-main .chat-empty {

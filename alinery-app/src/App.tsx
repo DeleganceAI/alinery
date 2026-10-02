@@ -24,6 +24,7 @@ import { applyAppearance, DEFAULT_APPEARANCE } from "./appearance";
 import alineryIcon from "./assets/alinery-icon-white-plain.png";
 import { GlobalSearch, type SearchItem } from "./CommandPalette";
 import type { QueuedFollowUp } from "./chat/queue";
+import { chatVisibilityFromAppearance } from "./chat/visibility";
 import { askConfirm, ConfirmHost, confirmDanger } from "./confirm";
 import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner } from "./DaemonConflictBanner";
 import { ACTIVE_GRID_VIEW_STORAGE_KEY, DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute, trailingTabDigit } from "./gridViews";
@@ -368,6 +369,7 @@ export default function App() {
   const refreshBoards = () => setReloadNonce((n) => n + 1);
 
   const appearance = appConfig?.appearance ?? DEFAULT_APPEARANCE;
+  const chatViewVisibility = useMemo(() => chatVisibilityFromAppearance(appearance.ava_chat ?? {}), [appearance.ava_chat]);
   const isDev = isDevelopmentProductName(productName);
   const update = useUpdateStatus({ enabled: !isDev });
   const ompUpdate = useOmpUpdateStatus();
@@ -1219,7 +1221,7 @@ export default function App() {
       onUpgrade={onUpgrade}
       updating={updating}
       ompUpdate={ompUpdate.status}
-      onOmpUpdateClick={() => openSettings("chat")}
+      onOmpUpdateClick={() => openSettings("harness")}
     />
   );
 
@@ -1287,7 +1289,7 @@ export default function App() {
           )}
           {view.kind === "chat" && (
             <div className="view">
-              <ChatView knownRepos={appConfig.known_repos} terminalFontSize={appearance.terminal_font_size} />
+              <ChatView knownRepos={appConfig.known_repos} terminalFontSize={appearance.terminal_font_size} visibility={chatViewVisibility} />
             </div>
           )}
           {view.kind === "sessions" && (

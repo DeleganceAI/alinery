@@ -19,6 +19,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChatComposer } from "../ChatComposer";
 import { applySendPlan, planChatSend } from "../chat/send";
 import type { SessionChatStatus } from "../chat/types";
+import type { ChatPrefs } from "../chat/visibility";
 import { appendOptimisticAbort, appendOptimisticUser, type ChatTranscriptState, emptyTranscript } from "../chatTranscript";
 import { askConfirm, confirmDanger, confirmStopAndSwitch } from "../confirm";
 import { IdleDot, RunningIndicator } from "../Indicators";
@@ -101,7 +102,7 @@ function interruptedWithoutJournal(thread: ChatThread, transcript: ChatTranscrip
   return thread.session.ended_at != null && thread.session.harness_resume_token.length === 0 && transcript.entries.length === 0;
 }
 
-export function ChatView({ knownRepos, terminalFontSize }: { knownRepos: string[]; terminalFontSize: number }) {
+export function ChatView({ knownRepos, terminalFontSize, visibility }: { knownRepos: string[]; terminalFontSize: number; visibility: ChatPrefs }) {
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -454,7 +455,12 @@ export function ChatView({ knownRepos, terminalFontSize }: { knownRepos: string[
   }
 
   return (
-    <div className="chat-view" data-testid="chat-view" data-rail={collapsed ? "closed" : "open"}>
+    <div
+      className="chat-view"
+      data-testid="chat-view"
+      data-rail={collapsed ? "closed" : "open"}
+      style={{ ["--chat-col-max" as string]: visibility.maxWidth === "none" ? "100%" : `${visibility.maxWidth}px` }}
+    >
       {collapsed ? null : (
         <aside className="chat-rail" data-testid="chat-rail" aria-label="Threads">
           <div className="chat-rail-head">
@@ -580,7 +586,7 @@ export function ChatView({ knownRepos, terminalFontSize }: { knownRepos: string[
                 ) : null}
               </div>
             )}
-            {selected ? (
+            {selected && !visibility.showMeta ? null : selected ? (
               <div className="chat-titlebar-meta">
                 <span className="chat-meta-item">
                   <FolderGit2 size={13} aria-hidden="true" />
@@ -667,7 +673,7 @@ export function ChatView({ knownRepos, terminalFontSize }: { knownRepos: string[
             />
           </div>
         ) : selected ? (
-          <ChatPane entries={transcript.entries} status={activity.status} />
+          <ChatPane entries={transcript.entries} status={activity.status} visibility={visibility} />
         ) : (
           <div className="chat-blank">
             <MessageSquare size={28} aria-hidden="true" />
@@ -690,6 +696,7 @@ export function ChatView({ knownRepos, terminalFontSize }: { knownRepos: string[
             body={body}
             status={activity.status}
             catalog={transcript.commands}
+            showHints={visibility.showComposerHints}
             allowAttach={false}
             onBodyChange={setBody}
             onSend={() => {

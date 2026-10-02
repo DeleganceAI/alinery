@@ -1,4 +1,4 @@
-import type { AppearanceMode, AppearancePrefs, ChatMaxWidth, ChatRailDensity, SessionDefaultView } from "./types";
+import type { AppearanceMode, AppearancePrefs, ChatMaxWidth, ChatRailDensity, ChatViewPrefs, SessionDefaultView } from "./types";
 
 export const DEFAULT_ACCENT_COLOR = "#315bff";
 export const ARTIFACT_VIEWER_WIDTH_DEFAULT = 360;
@@ -95,26 +95,9 @@ function normalizeAccent(value: string | undefined): string {
   return normalized;
 }
 
-export function normalizeAppearance(input: AppearancePrefs): AppearancePrefs {
-  const raw = input ?? DEFAULT_APPEARANCE;
-  const requestedScale = Number.isFinite(raw.ui_scale) ? raw.ui_scale : DEFAULT_APPEARANCE.ui_scale;
-  let ui_scale: number = UI_SCALE_STEPS[0];
-  for (const step of UI_SCALE_STEPS) {
-    if (Math.abs(requestedScale - step) < Math.abs(requestedScale - ui_scale)) ui_scale = step;
-  }
-  const terminal_font_size = Number.isFinite(raw.terminal_font_size)
-    ? Math.min(TERMINAL_FONT_MAX, Math.max(TERMINAL_FONT_MIN, Math.round(raw.terminal_font_size)))
-    : DEFAULT_APPEARANCE.terminal_font_size;
-  const artifact_font_size = Number.isFinite(raw.artifact_font_size)
-    ? Math.min(ARTIFACT_FONT_MAX, Math.max(ARTIFACT_FONT_MIN, Math.round(raw.artifact_font_size)))
-    : DEFAULT_APPEARANCE.artifact_font_size;
-  const mode: AppearanceMode = raw.mode === "light" || raw.mode === "dark" ? raw.mode : "system";
+/** The chat_* settings of one chat surface (Sessions view = the flat fields, Chat = `ava_chat`), each coerced to a valid value. */
+export function normalizeChatView(raw: Partial<ChatViewPrefs>): ChatViewPrefs {
   return {
-    accent_color: normalizeAccent(raw.accent_color),
-    ui_scale,
-    terminal_font_size,
-    artifact_font_size,
-    artifact_viewer_width: normalizeArtifactViewerWidth(raw.artifact_viewer_width),
     chat_show_thinking: raw.chat_show_thinking === true,
     chat_expand_thinking: raw.chat_expand_thinking === true,
     chat_show_tools: raw.chat_show_tools === true,
@@ -138,8 +121,33 @@ export function normalizeAppearance(input: AppearancePrefs): AppearancePrefs {
     chat_show_agent_bubbles: raw.chat_show_agent_bubbles !== false,
     chat_show_block_copy_buttons: raw.chat_show_block_copy_buttons !== false,
     chat_show_copy_buttons: raw.chat_show_copy_buttons !== false,
+  };
+}
+
+export function normalizeAppearance(input: AppearancePrefs): AppearancePrefs {
+  const raw = input ?? DEFAULT_APPEARANCE;
+  const requestedScale = Number.isFinite(raw.ui_scale) ? raw.ui_scale : DEFAULT_APPEARANCE.ui_scale;
+  let ui_scale: number = UI_SCALE_STEPS[0];
+  for (const step of UI_SCALE_STEPS) {
+    if (Math.abs(requestedScale - step) < Math.abs(requestedScale - ui_scale)) ui_scale = step;
+  }
+  const terminal_font_size = Number.isFinite(raw.terminal_font_size)
+    ? Math.min(TERMINAL_FONT_MAX, Math.max(TERMINAL_FONT_MIN, Math.round(raw.terminal_font_size)))
+    : DEFAULT_APPEARANCE.terminal_font_size;
+  const artifact_font_size = Number.isFinite(raw.artifact_font_size)
+    ? Math.min(ARTIFACT_FONT_MAX, Math.max(ARTIFACT_FONT_MIN, Math.round(raw.artifact_font_size)))
+    : DEFAULT_APPEARANCE.artifact_font_size;
+  const mode: AppearanceMode = raw.mode === "light" || raw.mode === "dark" ? raw.mode : "system";
+  return {
+    accent_color: normalizeAccent(raw.accent_color),
+    ui_scale,
+    terminal_font_size,
+    artifact_font_size,
+    artifact_viewer_width: normalizeArtifactViewerWidth(raw.artifact_viewer_width),
+    ...normalizeChatView(raw),
     session_default_view: normalizeSessionDefaultView(raw.session_default_view),
     mode,
+    ava_chat: normalizeChatView(raw.ava_chat ?? {}),
   };
 }
 

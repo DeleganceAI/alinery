@@ -102,6 +102,11 @@ pub(crate) struct AppearancePrefs {
     /// "system" | "light" | "dark" — absent in pre-reskin configs (serde default).
     #[serde(default = "default_appearance_mode")]
     pub(crate) mode: String,
+    /// The Chat view's own copy of the `chat_*` settings above (those drive the Sessions view).
+    /// The frontend owns the names and the value ranges (`normalizeChatView`), so this only keeps
+    /// scalar `chat_*` entries. Last field: TOML needs tables after plain values.
+    #[serde(default)]
+    pub(crate) ava_chat: BTreeMap<String, toml::Value>,
 }
 
 impl Default for AppearancePrefs {
@@ -137,6 +142,7 @@ impl Default for AppearancePrefs {
             chat_show_copy_buttons: true,
             session_default_view: default_session_default_view(),
             mode: default_appearance_mode(),
+            ava_chat: BTreeMap::new(),
         }
     }
 }
@@ -248,6 +254,11 @@ pub(crate) fn sanitize_appearance(prefs: AppearancePrefs) -> AppearancePrefs {
             _ => default_session_default_view(),
         },
         mode,
+        ava_chat: prefs
+            .ava_chat
+            .into_iter()
+            .filter(|(key, value)| key.starts_with("chat_") && matches!(value, toml::Value::Boolean(_) | toml::Value::Integer(_) | toml::Value::String(_)))
+            .collect(),
     }
 }
 

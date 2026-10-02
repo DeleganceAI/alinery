@@ -213,6 +213,11 @@ fn appearance_defaults_sanitize_and_round_trip() {
         chat_show_copy_buttons: false,
         session_default_view: "terminal".into(),
         mode: "light".into(),
+        ava_chat: std::collections::BTreeMap::from([
+            ("chat_show_tools".into(), toml::Value::Boolean(true)),
+            ("chat_max_width".into(), toml::Value::String("600".into())),
+            ("not_a_chat_key".into(), toml::Value::Boolean(true)),
+        ]),
     };
     let s = toml::to_string(&custom).expect("appearance serializes");
     let back: AppearancePrefs = toml::from_str(&s).expect("appearance re-parses");
@@ -228,6 +233,10 @@ fn appearance_defaults_sanitize_and_round_trip() {
     assert!(back.chat_show_agent_bubbles);
     assert!(!sanitize_appearance(back.clone()).chat_show_block_copy_buttons);
     assert!(!back.chat_show_copy_buttons);
+    let ava = sanitize_appearance(back.clone()).ava_chat;
+    assert_eq!(ava.get("chat_show_tools"), Some(&toml::Value::Boolean(true)));
+    assert_eq!(ava.get("chat_max_width"), Some(&toml::Value::String("600".into())));
+    assert!(!ava.contains_key("not_a_chat_key"));
     assert_eq!(back.chat_rail_font_size, 13);
     assert_eq!(back.session_default_view, "terminal");
 
