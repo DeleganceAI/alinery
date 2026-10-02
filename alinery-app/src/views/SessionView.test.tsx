@@ -8,7 +8,7 @@ import type { SessionMessageDraft } from "../sessionMessage";
 import { mockIpc } from "../test/mockIpc";
 import { Toast, toast } from "../toast";
 import type { AgentState, ArtifactListItem, ArtifactTreeNode, SessionObservation, Task } from "../types";
-import { executionRecord, executionReply } from "./executionTestFixture";
+import { executionRecord, executionReply, partiallyPublishedExecution } from "./executionTestFixture";
 import { SessionView } from "./SessionView";
 
 const scenario = vi.hoisted(() => ({
@@ -1659,6 +1659,22 @@ describe("session-scoped completion permission", () => {
     vi.useRealTimers();
   });
 
+  it("distinguishes accepted outputs from omissions and counts only this execution's wildcard publications", async () => {
+    getTaskExecution.mockResolvedValue(partiallyPublishedExecution("session"));
+    renderSession();
+    await flushPromises();
+    const execution = screen.getByLabelText("Session execution");
+    fireEvent.click(within(execution).getByText(/Retained worker · finishing/));
+    const outputs = within(within(execution).getByRole("list", { name: "Execution outputs" }));
+    expect(outputs.getByText("resolution-options.md").closest("li")?.textContent).toContain("· accepted");
+    expect(outputs.getByText("selected-fix.md").closest("li")?.textContent).toContain("· not published");
+    expect(outputs.getByText("papers/*.md").closest("li")?.textContent).toContain("· 2 accepted");
+    expect(outputs.getByText("notes/*.md").closest("li")?.textContent).toContain("· 0 accepted");
+    expect(outputs.getByText("papers/2-a-12.md")).toBeDefined();
+    expect(outputs.getByText("papers/2-b-12.md")).toBeDefined();
+    expect(outputs.queryByText("notes/2-other-21.md")).toBeNull();
+  });
+
   async function requestCompletion(title = "Allow this session to complete") {
     await flushPromises();
     const attach = rpcAttachSession.mock.calls[rpcAttachSession.mock.calls.length - 1]?.[0] as { onLine: (line: string) => void };
@@ -1694,7 +1710,7 @@ describe("session-scoped completion permission", () => {
     expect(screen.getByLabelText("Message or /command")).toBeDefined();
   });
 
-  it("names the dependent step and grants only the current execution when moving on", async () => {
+  it("offers step completion without promising a dependent step and grants only the current execution", async () => {
     const saved = executionReply([executionRecord({ owner_session_id: "session" })]);
     saved.definition.step.unshift({
       ...saved.definition.step[0],
@@ -1706,7 +1722,9 @@ describe("session-scoped completion permission", () => {
     getTaskExecution.mockResolvedValue(saved);
     renderSession();
     await requestCompletion();
-    fireEvent.click(screen.getByRole("button", { name: "Move to Review changes" }));
+    expect(screen.getByText("Ready to finish this step?")).toBeDefined();
+    expect(screen.getByText(/Possible following steps: Review changes/)).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Finish step" }));
     await waitFor(() => expect(responses()).toEqual([{ type: "extension_ui_response", id: "completion-ask", confirmed: true }]));
     expect(allowExecutionCompletion).toHaveBeenCalledExactlyOnceWith("task", "execution-a", "session", "/repo");
   });

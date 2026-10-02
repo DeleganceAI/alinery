@@ -16,6 +16,7 @@ import {
   useBoardTaskActivity,
 } from "../shared";
 import type { BoardNav, BoardTask, KanbanColumn, TaskActivityStatus, TaskExecutionReply } from "../types";
+import { readTaskExecutions } from "../useExecutionObservation";
 import { usePointerDrag } from "../usePointerDrag";
 import { useTaskPullRequests } from "../useTaskPullRequests";
 
@@ -84,7 +85,7 @@ type TaskFacts = {
 type ProgressCell = { key: string; label: string; active?: boolean };
 type ExecutionRef = { key: string; repoPath: string; slug: string };
 type MovementHistory = Record<string, Partial<Record<ProgressField, string[]>>>;
-type GridActivityState = TaskActivityStatus | "none";
+type GridActivityState = TaskActivityStatus | "none" | "unknown";
 type LaneDragPreview = {
   taskId: string;
   left: number;
@@ -130,10 +131,11 @@ const STATUS_LABELS: Record<GridActivityState, string> = {
   waiting_for_approval: "Waiting for approval",
   failed: "Failed",
   completed: "Complete",
+  unknown: "Unknown",
   none: "No session",
 };
-const STATUS_ORDER: GridActivityState[] = ["none", "waiting_for_input", "waiting_for_approval", "failed", "running", "completed"];
-const ATTENTION_ORDER = ["Input", "Approval", "None"];
+const STATUS_ORDER: GridActivityState[] = ["unknown", "none", "waiting_for_input", "waiting_for_approval", "failed", "running", "completed"];
+const ATTENTION_ORDER = ["Unknown", "Input", "Approval", "None"];
 const AGE_WINDOWS = ["New this week", "8–30 days", "31–90 days", "90+ days"];
 const PROGRESS_FIELDS: ProgressField[] = ["stage", "column", "status", "createdWindow"];
 const GLYPHS = ["◇", "◆", "◈", "⌘", "↯", "◫", "⌁", "✣", "⬡", "⌥", "⊞", "!", "◒", "×", "⌗", "↳", "▣", "⊗", "∞", "↔"];
@@ -503,6 +505,7 @@ function ageWindow(days: number) {
 }
 
 function attentionFor(status: GridActivityState) {
+  if (status === "unknown") return "Unknown";
   if (status === "waiting_for_input") return "Input";
   if (status === "waiting_for_approval") return "Approval";
   return "None";
@@ -699,7 +702,7 @@ function propertyValue(fact: TaskFacts, property: Exclude<CardProperty, "activit
     case "createdDays":
       return fact.createdDays === 0 ? "created today" : `created ${fact.createdDays}d`;
     case "attention":
-      return fact.attention === "None" ? "no attention" : `needs ${fact.attention.toLowerCase()}`;
+      return fact.attention === "Unknown" ? "attention unknown" : fact.attention === "None" ? "no attention" : `needs ${fact.attention.toLowerCase()}`;
   }
 }
 
@@ -776,31 +779,42 @@ function VisibilityIcon({ hidden }: { hidden: boolean }) {
   );
 }
 
-export function Grid({
-  active = true,
-  allRepos,
-  onOpen,
-  onDuplicate = () => {},
-  registerNav,
-  storageKey,
-  initialPreset = "kanban",
-}: {
+type BoardSnapshot = { tasks: BoardTask[]; columns: KanbanColumn[] };
+const boardSnapshots = new Map<string, BoardSnapshot>();
+
+const boardRequests = new Map<string, symbol>();
+
+export function resetGridBoardSnapshots(): void {
+  boardSnapshots.clear();
+  boardRequests.clear();
+}
+
+type GridProps = {
   active?: boolean;
   allRepos: boolean;
+  repoPaths: string[];
   onOpen: (task: BoardTask) => void;
   onDuplicate?: (task: BoardTask) => void;
   registerNav: (nav: BoardNav | null) => void;
   storageKey?: string;
   initialPreset?: PresetKey;
-}) {
+};
+
+export function Grid(props: GridProps) {
+  const scopeKey = JSON.stringify([props.allRepos, [...new Set(props.repoPaths)].sort()]);
+  return <ScopedGrid key={scopeKey} {...props} scopeKey={scopeKey} />;
+}
+
+function ScopedGrid({ active = true, allRepos, scopeKey, onOpen, onDuplicate = () => {}, registerNav, storageKey, initialPreset = "kanban" }: GridProps & { scopeKey: string }) {
   const settingsId = useId();
   const initialWorkspace = useMemo(() => loadGridWorkspace(storageKey, initialPreset), [storageKey, initialPreset]);
-  const [tasks, setTasks] = useState<BoardTask[]>([]);
-  const [columns, setColumns] = useState<KanbanColumn[]>([]);
+  const cachedBoard = boardSnapshots.get(scopeKey);
+  const [tasks, setTasks] = useState<BoardTask[]>(() => cachedBoard?.tasks ?? []);
+  const [columns, setColumns] = useState<KanbanColumn[]>(() => cachedBoard?.columns ?? []);
   const [executions, setExecutions] = useState<Record<string, TaskExecutionReply>>({});
   const [librarySteps, setLibrarySteps] = useState<Record<string, BoardTask["playbook_steps"]>>({});
   const [definitionErr, setDefinitionErr] = useState("");
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(cachedBoard !== undefined);
   const [err, setErr] = useState("");
   const [executionErrors, setExecutionErrors] = useState<{ ref: ExecutionRef; error: string }[]>([]);
   const [dismissedAvailability, setDismissedAvailability] = useState<string | null>(null);
@@ -824,6 +838,8 @@ export function Grid({
   const draggedTaskId = useRef<string | null>(null);
   const movementHistory = useRef<MovementHistory>({});
   const pointerDrag = usePointerDrag();
+  const boardRequest = useRef<symbol | null>(null);
+  const boardActive = useRef(false);
   const activity = useBoardTaskActivity(tasks, active);
 
   useEffect(() => {
@@ -859,23 +875,33 @@ export function Grid({
   }, [storageKey, settingsOpen, preset, config, showArchived, selectedTaskKey, manualOrder, columnOrder, hiddenTaskIds, hiddenGroupKeys]);
 
   const load = useCallback(async () => {
+    if (!boardActive.current) return;
+    const request = Symbol();
+    boardRequest.current = request;
+    boardRequests.set(scopeKey, request);
     try {
       const [nextColumns, nextTasks] = await Promise.all([ipc.listKanbanColumns(allRepos), ipc.listBoardTasks(allRepos)]);
+      if (boardRequest.current !== request) return;
+      if (boardRequests.get(scopeKey) === request) boardSnapshots.set(scopeKey, { tasks: nextTasks, columns: nextColumns });
       setColumns((current) => (sameKanbanColumns(current, nextColumns) ? current : nextColumns));
       setTasks((current) => (sameBoardTasks(current, nextTasks) ? current : nextTasks));
       setErr("");
-    } catch (error) {
-      setErr(String(error));
-    } finally {
       setLoaded(true);
+    } catch (error) {
+      if (boardRequest.current === request) setErr(String(error));
     }
-  }, [allRepos]);
+  }, [allRepos, scopeKey]);
 
   useEffect(() => {
     if (!active) return;
+    boardActive.current = true;
     void load();
     const timer = window.setInterval(load, 3000);
-    return () => window.clearInterval(timer);
+    return () => {
+      boardActive.current = false;
+      boardRequest.current = null;
+      window.clearInterval(timer);
+    };
   }, [active, load]);
 
   const libraryRefs = useMemo(() => {
@@ -942,29 +968,24 @@ export function Grid({
   useEffect(() => {
     if (!active) return;
     let alive = true;
-    let loading = false;
+    let timer = 0;
     const loadExecutions = async () => {
-      if (loading) return;
-      loading = true;
-      const entries = await Promise.all(
-        executionRefs.map(async (ref) => {
-          try {
-            return { ref, execution: await ipc.getTaskExecution(ref.slug, ref.repoPath), error: "" };
-          } catch (error) {
-            return { ref, execution: null, error: String(error) };
-          }
-        }),
-      );
-      loading = false;
-      if (!alive) return;
-      setExecutions(Object.fromEntries(entries.flatMap(({ ref, execution }) => (execution ? [[ref.key, execution]] : []))));
-      setExecutionErrors(entries.filter((entry) => entry.execution === null));
+      try {
+        const entries = await readTaskExecutions(executionRefs.map((ref) => ({ repoPath: ref.repoPath, taskSlug: ref.slug })));
+        if (!alive) return;
+        setExecutions(Object.fromEntries(entries.flatMap((entry, index) => (entry.execution ? [[executionRefs[index].key, entry.execution]] : []))));
+        setExecutionErrors(entries.flatMap((entry, index) => (entry.execution ? [] : [{ ref: executionRefs[index], error: entry.error }])));
+      } catch (error) {
+        if (!alive) return;
+        setExecutionErrors(executionRefs.map((ref) => ({ ref, error: String(error) })));
+      } finally {
+        if (alive) timer = window.setTimeout(loadExecutions, 3000);
+      }
     };
     void loadExecutions();
-    const timer = window.setInterval(loadExecutions, 3000);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
     };
   }, [active, executionRefs]);
 
@@ -973,7 +994,7 @@ export function Grid({
       .filter((task) => showArchived || !task.archived)
       .map((task): TaskFacts => {
         const id = taskKey(task);
-        const statusKey = activity[id]?.status ?? "none";
+        const statusKey = activity[id] ? (activity[id].status ?? "none") : "unknown";
         const createdDays = ageIn(task.created, 86400);
         return {
           task,
@@ -1789,7 +1810,7 @@ export function Grid({
         </div>
       )}
       <div className="task-grid-board-wrap">
-        {!loaded && <div className="task-grid-empty">Loading grid…</div>}
+        {!loaded && !err && <div className="task-grid-empty">Loading grid…</div>}
         {loaded && !err && visibleFacts.length === 0 && <div className="task-grid-empty">No tasks match this grid configuration.</div>}
         <div className="task-grid-groups" data-position={config.position} data-placement={config.placement} data-column-flow={config.columnFlow} data-card-mode={config.mode}>
           {groups.map((group) => {
