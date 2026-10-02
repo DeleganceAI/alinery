@@ -39,7 +39,6 @@ import { completionPrompt } from "../completionPrompt";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
-
 import {
   abortAndPromptCommand,
   abortCommand,
@@ -61,7 +60,6 @@ import {
   setModelCommand,
   setSubagentSubscriptionCommand,
 } from "../ompRpc";
-
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
 import { appendGeneratedText, canAbortChatSession, isTurnActive, OMP_INTERRUPT_DATA, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
 import type { ContextAction } from "../shared";
@@ -69,6 +67,7 @@ import {
   ArtifactProvenanceBadges,
   ContextActionBar,
   ExecutionAvailabilityNotice,
+  ExecutionOutputs,
   finalizedSubtaskNotice,
   findOwnedArtifactNode,
   harnessDisplayName,
@@ -95,6 +94,7 @@ import type {
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
+import { readTaskExecution } from "../useExecutionObservation";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatModelDialog } from "./ChatModelDialog";
@@ -628,22 +628,24 @@ export function SessionView({
     setExecutionView(null);
     setExecutionError("");
     if (!taskSlug) return;
+    let timer = 0;
     const refresh = async () => {
       try {
-        const next = await ipc.getTaskExecution(taskSlug, repoPath);
+        const next = await readTaskExecution(repoPath, taskSlug);
         if (alive) {
           setExecutionView(next);
           setExecutionError("");
         }
       } catch (error) {
         if (alive) setExecutionError(String(error));
+      } finally {
+        if (alive) timer = window.setTimeout(refresh, 1500);
       }
     };
     void refresh();
-    const timer = window.setInterval(refresh, 1500);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
     };
   }, [taskSlug, repoPath, id]);
 
@@ -1782,7 +1784,7 @@ export function SessionView({
         if (allow && grantedCompletionRequestId !== requestId) {
           await ipc.allowExecutionCompletion(taskSlug, execution.id, id, repoPath);
           setCompletionGrant({ sessionId: id, requestId });
-          setExecutionView(await ipc.getTaskExecution(taskSlug, repoPath));
+          setExecutionView(await readTaskExecution(repoPath, taskSlug));
         }
         // Do not release the waiting tool until the grant is durably acknowledged.
         await ipc.rpcWriteSession(id, extensionUiConfirm(requestId, allow));
@@ -1948,7 +1950,7 @@ export function SessionView({
                 await ipc.startSession(taskSlug, id, repoPath);
                 setObservation(await ipc.sessionStatus(id, taskSlug));
                 setReclassifyTick((tick) => tick + 1);
-                setExecutionView(await ipc.getTaskExecution(taskSlug, repoPath));
+                setExecutionView(await readTaskExecution(repoPath, taskSlug));
                 setExecutionError("");
               } catch (error) {
                 setExecutionError(String(error));
@@ -1990,20 +1992,7 @@ export function SessionView({
                 }),
               )}
             </ul>
-            <ul aria-label="Execution outputs">
-              {execution.outputs.map((output) => (
-                <li key={output.relative_path}>
-                  <code>{output.selector}</code> → <code>{output.relative_path}</code> · {execution.receipt_id ? "accepted" : "pending"}
-                </li>
-              ))}
-              {Object.values(executionView.state.occurrences)
-                .filter((occurrence) => occurrence.producer_execution_id === execution.id && occurrence.selector.includes("*"))
-                .map((occurrence) => (
-                  <li key={occurrence.id}>
-                    Accepted member <code>{occurrence.relative_path}</code> · occurrence {occurrence.id}
-                  </li>
-                ))}
-            </ul>
+            <ExecutionOutputs execution={execution} occurrences={executionView.state.occurrences} />
             <p>
               Completion permission: {execution.permission.kind}
               {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}

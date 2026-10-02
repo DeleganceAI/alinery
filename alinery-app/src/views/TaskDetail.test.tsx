@@ -15,7 +15,7 @@ import type {
   TaskActivityRef,
   TaskActivitySummary,
 } from "../types";
-import { executionRecord, executionReply } from "./executionTestFixture";
+import { executionRecord, executionReply, partiallyPublishedExecution } from "./executionTestFixture";
 import { TaskDetail } from "./TaskDetail";
 
 const scenario = vi.hoisted(() => ({
@@ -1296,6 +1296,24 @@ describe("keying by slug", () => {
 });
 
 describe("authoritative task execution", () => {
+  it("distinguishes accepted outputs from omissions and counts only this execution's wildcard publications", async () => {
+    const fixture = task();
+    mocks.getTask.mockResolvedValue(fixture);
+    mocks.getTaskExecution.mockResolvedValue(partiallyPublishedExecution());
+    renderSeededDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    const execution = within(await screen.findByRole("article", { name: "Execution execution-a" }));
+    fireEvent.click(execution.getByText("Inputs and outputs"));
+    const outputs = within(execution.getByRole("list", { name: "Execution outputs" }));
+    expect(outputs.getByText("resolution-options.md").closest("li")?.textContent).toContain("· accepted");
+    expect(outputs.getByText("selected-fix.md").closest("li")?.textContent).toContain("· not published");
+    expect(outputs.getByText("papers/*.md").closest("li")?.textContent).toContain("· 2 accepted");
+    expect(outputs.getByText("notes/*.md").closest("li")?.textContent).toContain("· 0 accepted");
+    expect(outputs.getByText("papers/2-a-12.md")).toBeDefined();
+    expect(outputs.getByText("papers/2-b-12.md")).toBeDefined();
+    expect(outputs.queryByText("notes/2-other-21.md")).toBeNull();
+  });
+
   it("shows concurrent primary work without newer auxiliary sessions changing progress", async () => {
     const fixture = task();
     mocks.getTask.mockResolvedValue(fixture);
