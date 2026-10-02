@@ -274,7 +274,7 @@ export default function App() {
         if (shouldAskTelemetryConsent(cfg.global?.telemetry)) {
           void askConfirm({
             title: "Share anonymous usage?",
-            body: "Alinery can send anonymized product-usage events (app open, tasks, sessions, settings). Never paths, task names, prompts, artifacts, or tokens. Change anytime in Settings → Telemetry.",
+            body: "Alinery can send anonymized product-usage events (app open, tasks, sessions, settings). Never paths, task names, prompts, artifacts, or tokens. Change anytime in Settings → General.",
             choices: TELEMETRY_CONSENT_CHOICES,
             defaultKey: "opt-out",
             cancelKey: "later",

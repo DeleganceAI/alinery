@@ -142,14 +142,11 @@ function ConnectionMenu({ label, busy, onReconnect, onRemove }: { label: string;
 }
 
 export const SECTIONS: { key: SettingsSectionKey; label: string }[] = [
+  { key: "general", label: "General" },
   { key: "connections", label: "Connections" },
-  { key: "notifications", label: "Notifications" },
-  { key: "power", label: "Power" },
   { key: "playbooks", label: "Playbooks" },
-  { key: "telemetry", label: "Telemetry" },
   { key: "updates", label: "Updates" },
   { key: "storage", label: "Storage" },
-  { key: "appearance", label: "Appearance" },
   { key: "chat", label: "Chat" },
   { key: "experimental", label: "Experimental" },
   { key: "gridViews", label: "Grid views" },
@@ -272,7 +269,7 @@ export function Settings({
   const [storageErr, setStorageErr] = useState("");
   const [purgeBusy, setPurgeBusy] = useState(false);
   const [purgeErrors, setPurgeErrors] = useState<PurgeFailure[]>([]);
-  const [activeSection, setActiveSection] = useState<SettingsSectionKey>(initialSection ?? "notifications");
+  const [activeSection, setActiveSection] = useState<SettingsSectionKey>(initialSection ?? "general");
   const [backups, setBackups] = useState<BackupListItem[]>([]);
   const [backupsErr, setBackupsErr] = useState("");
   const [backupBusy, setBackupBusy] = useState(false);
@@ -1404,7 +1401,6 @@ export function Settings({
 
   const renderAppearance = () => (
     <>
-      {!isGlobal && globalOnly("Appearance settings")}
       <div className="field">
         <label id="appearance-theme-label">Theme</label>
         <div className="theme-cards" role="group" aria-labelledby="appearance-theme-label" aria-describedby="appearance-theme-hint">
@@ -1683,63 +1679,62 @@ export function Settings({
         return renderPlaybooks();
       case "connections":
         return connectionsSection();
-      case "notifications":
+      case "general":
+        // Every control on this page is global-only, so one banner covers all three subsections.
         return (
           <>
-            {!isGlobal && globalOnly("Notifications")}
-            {check("enabled", "Enabled", "master switch")}
-            {check("banner", "Banner", "native notification")}
-            {check("sound", "Sound", "notification sound")}
-            {check("bounce", "Dock bounce", "off by default")}
-            {check("dock_badge", "Dock badge", "show the current notice count on the macOS Dock icon")}
-            <div className="dock-badge-options" role="group" aria-label="Dock badge categories">
-              {check("dock_badge_input_waits", "Input waits", "include sessions waiting for input")}
-              {check("dock_badge_approval_waits", "Approval waits", "include sessions waiting for approval")}
-              {check("dock_badge_failures", "Failures", "include failed sessions")}
-              {check("dock_badge_completions", "Unread playbook completions", "include completed playbook steps")}
+            {!isGlobal && globalOnly("General settings")}
+            <div className="settings-subsection">
+              <h2>Appearance</h2>
+              {renderAppearance()}
             </div>
-            <button
-              type="button"
-              className="btn ghost small"
-              style={{ marginTop: 10 }}
-              onClick={() =>
-                ipc
-                  .notifyTest()
-                  .then(() => report("Test notification sent"))
-                  .catch((e) => reportError(e))
-              }
-            >
-              Send test notification
-            </button>
-          </>
-        );
-      case "power":
-        // Each repository's daemon reads this pref and holds the idle-sleep inhibit
-        // (alineryd/src/idle_inhibit.rs); the note states the same rule it enforces.
-        return (
-          <>
-            {!isGlobal && globalOnly("Power")}
-            <Checkbox
-              checked={global.power?.keep_awake ?? false}
-              disabled={!isGlobal}
-              onChange={setKeepAwake}
-              label={
-                <div>
-                  <div>Keep this computer awake</div>
-                  <div className="dsc">
-                    This keeps this computer from idling. It will not prevent closing the display from putting it to sleep. The screen can still turn off. It only does this while
-                    at least one session is not Idle.
+            <div className="settings-subsection">
+              <h2>Notifications</h2>
+              {check("enabled", "Enabled", "master switch")}
+              {check("banner", "Banner", "native notification")}
+              {check("sound", "Sound", "notification sound")}
+              {check("bounce", "Dock bounce", "off by default")}
+              {check("dock_badge", "Dock badge", "show the current notice count on the macOS Dock icon")}
+              <div className="dock-badge-options" role="group" aria-label="Dock badge categories">
+                {check("dock_badge_input_waits", "Input waits", "include sessions waiting for input")}
+                {check("dock_badge_approval_waits", "Approval waits", "include sessions waiting for approval")}
+                {check("dock_badge_failures", "Failures", "include failed sessions")}
+                {check("dock_badge_completions", "Unread playbook completions", "include completed playbook steps")}
+              </div>
+              <button
+                type="button"
+                className="btn ghost small"
+                style={{ marginTop: 10 }}
+                onClick={() =>
+                  ipc
+                    .notifyTest()
+                    .then(() => report("Test notification sent"))
+                    .catch((e) => reportError(e))
+                }
+              >
+                Send test notification
+              </button>
+            </div>
+            <div className="settings-subsection">
+              <h2>Misc</h2>
+              {/* Each repository's daemon reads this pref and holds the idle-sleep inhibit
+                (alineryd/src/idle_inhibit.rs); the note states the same rule it enforces. */}
+              <Checkbox
+                checked={global.power?.keep_awake ?? false}
+                disabled={!isGlobal}
+                onChange={setKeepAwake}
+                label={
+                  <div>
+                    <div>Keep this computer awake</div>
+                    <div className="dsc">
+                      This keeps this computer from idling. It will not prevent closing the display from putting it to sleep. The screen can still turn off. It only does this while
+                      at least one session is not Idle.
+                    </div>
                   </div>
-                </div>
-              }
-            />
-          </>
-        );
-      case "telemetry":
-        return (
-          <>
-            {!isGlobal && globalOnly("Telemetry")}
-            {telemetryCheck("Share anonymous usage", "state changes only — no paths, prompts, or artifact text")}
+                }
+              />
+              {telemetryCheck("Share anonymous usage", "state changes only — no paths, prompts, or artifact text")}
+            </div>
           </>
         );
       case "updates": {
@@ -1837,8 +1832,6 @@ export function Settings({
             )}
           </div>
         );
-      case "appearance":
-        return renderAppearance();
       case "chat":
         return (
           <>

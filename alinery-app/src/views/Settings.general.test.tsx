@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
@@ -80,64 +80,85 @@ const mcp: McpStatusHandle = {
 const NOTE =
   "This keeps this computer from idling. It will not prevent closing the display from putting it to sleep. The screen can still turn off. It only does this while at least one session is not Idle.";
 
-function renderPower() {
-  render(
-    <Settings
-      mcp={mcp}
-      activeRepo="/r"
-      knownRepos={["/r"]}
-      appearance={DEFAULT_APPEARANCE}
-      onAppearanceChange={() => {}}
-      onNotificationsChange={() => {}}
-      initialSection="power"
-    />,
-  );
+// No initialSection: General is also the tab Settings opens on.
+function renderGeneral() {
+  render(<Settings mcp={mcp} activeRepo="/r" knownRepos={["/r"]} appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} onNotificationsChange={() => {}} />);
 }
 
 const keepAwake = () => screen.findByRole("checkbox", { name: /Keep this computer awake/ }) as Promise<HTMLInputElement>;
+const telemetry = () => screen.getByRole("checkbox", { name: /Share anonymous usage/ }) as HTMLInputElement;
+const lastWrite = () => vi.mocked(ipc.writeGlobalSettings).mock.lastCall?.[0] as GlobalSettings;
 
 afterEach(() => {
   cleanup();
   vi.mocked(ipc.writeGlobalSettings).mockClear();
 });
 
-describe("Settings power", () => {
-  it("is a global section after Notifications", () => {
+describe("Settings General", () => {
+  it("is the first tab and absorbs Appearance, Notifications, and Telemetry", () => {
     const labels = SECTIONS.map((section) => section.label);
-    expect(labels).toContain("Power");
-    expect(labels.indexOf("Power")).toBe(labels.indexOf("Notifications") + 1);
+    expect(labels[0]).toBe("General");
+    for (const gone of ["Appearance", "Notifications", "Telemetry", "Power"]) expect(labels).not.toContain(gone);
   });
 
-  it("is off and editable in global scope, with the note under it", async () => {
-    renderPower();
+  it("opens on General with Appearance, Notifications, then Misc", async () => {
+    renderGeneral();
+    await keepAwake();
+    expect(screen.getByRole("button", { name: "General" }).classList.contains("on")).toBe(true);
+    expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent)).toEqual(["Appearance", "Notifications", "Misc"]);
+    const subsection = (name: string) => within(screen.getByRole("heading", { name }).closest(".settings-subsection") as HTMLElement);
+    expect(subsection("Appearance").getByRole("button", { name: "Light" })).toBeTruthy();
+    expect(subsection("Notifications").getByRole("button", { name: "Send test notification" })).toBeTruthy();
+    expect(subsection("Notifications").getByRole("group", { name: "Dock badge categories" })).toBeTruthy();
+    const misc = subsection("Misc").getAllByRole("checkbox");
+    expect(misc).toHaveLength(2);
+    expect(misc[0]).toBe(await keepAwake());
+    expect(misc[1]).toBe(telemetry());
+  });
+
+  it("shows Keep awake off and editable, with the note under it", async () => {
+    renderGeneral();
     const box = await keepAwake();
     expect(box.checked).toBe(false);
     expect(box.disabled).toBe(false);
     expect(screen.getByText(NOTE)).toBeTruthy();
     expect(screen.getByText(/not Idle/)).toBeTruthy();
     expect(screen.getByText(/closing the display/)).toBeTruthy();
-    expect(screen.queryByText(/Power are global-only\./)).toBeNull();
+    expect(screen.queryByText(/are global-only\./)).toBeNull();
   });
 
   it("writes power.keep_awake and leaves the rest of the loaded global unchanged", async () => {
-    renderPower();
+    renderGeneral();
     fireEvent.click(await keepAwake());
     await waitFor(() => expect(ipc.writeGlobalSettings).toHaveBeenCalledTimes(1));
-    const saved = vi.mocked(ipc.writeGlobalSettings).mock.calls[0][0] as GlobalSettings;
-    expect(saved.power?.keep_awake).toBe(true);
-    expect(saved).toEqual({ ...globalSettings, power: { keep_awake: true } });
+    expect(lastWrite().power?.keep_awake).toBe(true);
+    expect(lastWrite()).toEqual({ ...globalSettings, power: { keep_awake: true } });
   });
 
-  it("shows the global value read-only in repository scope", async () => {
-    renderPower();
+  it("writes telemetry from Misc", async () => {
+    renderGeneral();
+    await keepAwake();
+    expect(telemetry().checked).toBe(true);
+    fireEvent.click(telemetry());
+    await waitFor(() => expect(ipc.writeGlobalSettings).toHaveBeenCalledTimes(1));
+    expect(lastWrite()).toEqual({ ...globalSettings, telemetry: { ...globalSettings.telemetry, enabled: false } });
+  });
+
+  it("shows global values read-only in repository scope under one banner", async () => {
+    renderGeneral();
     await keepAwake();
     fireEvent.click(screen.getByRole("button", { name: "r" }));
     await waitFor(async () => expect((await keepAwake()).checked).toBe(true));
     const box = await keepAwake();
     expect(box.disabled).toBe(true);
-    expect(screen.getByText(/Power are global-only\./)).toBeTruthy();
+    expect(telemetry().disabled).toBe(true);
+    expect((screen.getByRole("checkbox", { name: /Enabled/ }) as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Light" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getAllByText(/are global-only\./)).toHaveLength(1);
+    expect(screen.getByText(/General settings are global-only\./)).toBeTruthy();
     expect(screen.getByText(NOTE)).toBeTruthy();
     fireEvent.click(box);
+    fireEvent.click(telemetry());
     expect(ipc.writeGlobalSettings).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,4 @@
-//! Settings → Power → "Keep this computer awake": block idle system sleep while at least one
+//! Settings → General → Misc → "Keep this computer awake": block idle system sleep while at least one
 //! session is live and not Idle.
 //!
 //! The daemon owns the hold, not the app: quit-leave-running destroys the app and keeps the

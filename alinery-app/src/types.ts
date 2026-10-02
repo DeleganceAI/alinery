@@ -856,20 +856,7 @@ export type ReviewHandoffDraft = ReviewHandoffSource & {
   prompt_extra: string;
 };
 
-export type SettingsSectionKey =
-  | "playbooks"
-  | "connections"
-  | "notifications"
-  | "power"
-  | "telemetry"
-  | "updates"
-  | "storage"
-  | "appearance"
-  | "chat"
-  | "gridViews"
-  | "experimental"
-  | "mcp"
-  | "backup";
+export type SettingsSectionKey = "general" | "playbooks" | "connections" | "updates" | "storage" | "chat" | "gridViews" | "experimental" | "mcp" | "backup";
 
 export type View =
   | { kind: "list" }
