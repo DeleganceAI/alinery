@@ -202,6 +202,8 @@ export type UpdateRelease = { version: string; url: string; sha256: string; size
 export type UpdateStatus = { current: string; available: UpdateRelease | null; checked_at: number };
 export type OmpRelease = { version: string; asset_url: string };
 export type OmpUpdateStatus = { installed: string; available: OmpRelease | null; checked_at: number; binary_path: string; config_dir: string };
+export type OmpCustomization = { name: string; kind: string; source: string; path: string | null };
+export type OmpCustomizations = { items: OmpCustomization[]; errors: string[] };
 export type StagedUpdate = { version: string; app_path: string; scratch_dir: string };
 export type GlobalSettings = {
   notifications: NotificationPrefs;

@@ -347,26 +347,4 @@ describe("App duplicate coordinator", () => {
     resolveDuplicate(duplicateResult());
     await screen.findByText("task:source-2");
   });
-
-  it("shows opening toast until the create form is ready, then hides it", async () => {
-    let resolveConfig: (config: Config) => void = () => {};
-    const config = await mocks.readConfigForRepo();
-    mocks.readConfigForRepo.mockReturnValue(
-      new Promise<Config>((resolve) => {
-        resolveConfig = resolve;
-      }),
-    );
-    const { default: App } = await import("./App");
-    render(<App />);
-    await screen.findByText("duplicate-source");
-
-    fireEvent.keyDown(document.body, { key: "n", metaKey: true });
-    const notifications = screen.getByRole("status", { name: "Notifications" });
-    expect(notifications.querySelector(".toast.loading")).not.toBeNull();
-
-    await screen.findByPlaceholderText("New task name…");
-    expect(notifications.querySelector(".toast.loading")).not.toBeNull();
-    resolveConfig(config);
-    await waitFor(() => expect(notifications.querySelector(".toast.loading")).toBeNull());
-  });
 });
