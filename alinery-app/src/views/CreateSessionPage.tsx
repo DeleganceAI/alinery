@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { askConfirm } from "../confirm";
 import * as ipc from "../ipc";
-import { ExecutionAvailabilityNotice, InlineStatus, ModelInput, repoName, taskKey } from "../shared";
+import { ExecutionAvailabilityNotice, InlineStatus, ModelInput, ompDefaultModel, repoName, taskKey } from "../shared";
 import type { BoardTask, SessionTypeChoice, TaskExecutionReply } from "../types";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
@@ -25,6 +25,7 @@ export function CreateSessionPage({
   const [selection, setSelection] = useState("auxiliary");
   const [harness, setHarness] = useState("omp");
   const [model, setModel] = useState("");
+  const [defaultModelHint, setDefaultModelHint] = useState("Loading default model…");
   const [prompt, setPrompt] = useState("");
   const [pickModel, setPickModel] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -90,6 +91,23 @@ export function CreateSessionPage({
       alive = false;
     };
   }, [task?.repo_path, task?.slug]);
+
+  useEffect(() => {
+    let alive = true;
+    setDefaultModelHint("Loading default model…");
+    if (!task?.repo_path) return;
+    ipc
+      .readScopedSettingsForRepo(task.repo_path)
+      .then((settings) => {
+        if (alive) setDefaultModelHint(`Default: ${ompDefaultModel(settings.effective.defaults) || "harness default"}`);
+      })
+      .catch(() => {
+        if (alive) setDefaultModelHint("Default model unavailable");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [task?.repo_path]);
 
   const changeContext = async (apply: () => void) => {
     if (decisionRef.current) return;
@@ -297,8 +315,16 @@ export function CreateSessionPage({
         )}
         {effectiveHarness !== "no-harness" && !existing && (
           <label className="create-field">
-            <span>Model override (empty = authored precedence)</span>
-            <ModelInput harness="omp" value={model} onChange={setModel} prefillRemembered={false} repoPath={task?.repo_path} onOpenPicker={() => setPickModel(true)} />
+            <span>Model override (empty = {auxiliary ? "Settings default" : "authored precedence"})</span>
+            <ModelInput
+              harness="omp"
+              value={model}
+              onChange={setModel}
+              prefillRemembered={false}
+              placeholder={auxiliary ? defaultModelHint : "Model (empty = authored precedence)"}
+              repoPath={task?.repo_path}
+              onOpenPicker={() => setPickModel(true)}
+            />
           </label>
         )}
         {pickModel && <ProviderSetupDialog mode="manual" initialTab="models" unsignedOpensAccounts onPick={setModel} onClose={() => setPickModel(false)} />}

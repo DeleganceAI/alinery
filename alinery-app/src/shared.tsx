@@ -1405,6 +1405,7 @@ export function ModelInput({
   prefillRemembered = true,
   onOpenPicker,
   ariaLabel = "Model",
+  placeholder = "Model (empty = harness default)",
 }: {
   harness: string;
   value: string;
@@ -1414,6 +1415,7 @@ export function ModelInput({
   repoPath?: string;
   prefillRemembered?: boolean;
   ariaLabel?: string;
+  placeholder?: string;
   /**
    * Host the providers/models dialog instead of this component's own picker.
    *
@@ -1575,14 +1577,7 @@ export function ModelInput({
 
   return (
     <div className="model-input" style={style}>
-      <input
-        className="field-input"
-        aria-label={ariaLabel}
-        value={value}
-        placeholder="Model (empty = harness default)"
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={() => onCommit?.(value)}
-      />
+      <input className="field-input" aria-label={ariaLabel} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} onBlur={() => onCommit?.(value)} />
       <button
         type="button"
         className="btn ghost small"

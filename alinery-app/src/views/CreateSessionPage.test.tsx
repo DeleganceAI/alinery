@@ -32,14 +32,22 @@ const task: BoardTask = {
   current_column_key: "",
   current_column_title: "",
 };
-const mocks = vi.hoisted(() => ({ getTaskExecution: vi.fn(), listBoardTasks: vi.fn(), askConfirm: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getTaskExecution: vi.fn(), listBoardTasks: vi.fn(), readScopedSettingsForRepo: vi.fn(), askConfirm: vi.fn() }));
 vi.mock("../confirm", () => ({ askConfirm: mocks.askConfirm }));
-vi.mock("../ipc", () => mockIpc({ getTaskExecution: mocks.getTaskExecution, listBoardTasks: mocks.listBoardTasks, listHarnessModelsForRepo: async () => [] }));
+vi.mock("../ipc", () =>
+  mockIpc({
+    getTaskExecution: mocks.getTaskExecution,
+    listBoardTasks: mocks.listBoardTasks,
+    readScopedSettingsForRepo: mocks.readScopedSettingsForRepo,
+    listHarnessModelsForRepo: async () => [],
+  }),
+);
 
 beforeEach(() => {
   vi.stubGlobal("localStorage", { getItem: vi.fn(() => null), setItem: vi.fn() });
   mocks.listBoardTasks.mockReset().mockResolvedValue([task]);
   mocks.getTaskExecution.mockReset().mockResolvedValue(executionReply([executionRecord({ lifecycle: "queued" })]));
+  mocks.readScopedSettingsForRepo.mockReset().mockResolvedValue({ effective: { defaults: { harness: "omp", model: "" } } });
   mocks.askConfirm.mockReset().mockResolvedValue("cancel");
 });
 afterEach(() => {
@@ -57,6 +65,50 @@ function choose(value: string) {
 }
 
 describe("retained execution session selection", () => {
+  it("shows the inherited model without turning it into an explicit override", async () => {
+    mocks.getTaskExecution.mockResolvedValue(executionReply([]));
+    mocks.readScopedSettingsForRepo.mockResolvedValue({ effective: { defaults: { harness: "omp", model: "provider/default" } } });
+    const created = renderPage();
+    const input = (await screen.findByPlaceholderText("Default: provider/default")) as HTMLInputElement;
+    expect(input.value).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    await waitFor(() => expect(created).toHaveBeenLastCalledWith(task, { kind: "auxiliary" }, "omp", "", undefined));
+
+    fireEvent.change(input, { target: { value: "provider/override" } });
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    await waitFor(() => expect(created).toHaveBeenLastCalledWith(task, { kind: "auxiliary" }, "omp", "provider/override", undefined));
+    fireEvent.change(input, { target: { value: "" } });
+    expect(screen.getByPlaceholderText("Default: provider/default")).toBe(input);
+    expect(input.value).toBe("");
+  });
+
+  it("keeps the selected repository's default when an earlier settings read finishes late", async () => {
+    let resolve!: (value: unknown) => void;
+    const pending = new Promise((accept) => {
+      resolve = accept;
+    });
+    mocks.getTaskExecution.mockResolvedValue(executionReply([]));
+    mocks.listBoardTasks.mockResolvedValue([task, { ...task, name: "B task", slug: "b-task", repo_path: "/other", worktree: "/other/b-task" }]);
+    mocks.readScopedSettingsForRepo.mockImplementation((repo: string) =>
+      repo === "/r" ? pending : Promise.resolve({ effective: { defaults: { harness: "omp", model: "provider/other" } } }),
+    );
+    renderPage();
+    await waitFor(() => expect(mocks.readScopedSettingsForRepo).toHaveBeenCalledWith("/r"));
+    const b = screen.getByRole("option", { name: "B task" }) as HTMLOptionElement;
+    fireEvent.change(screen.getByLabelText("Task"), { target: { value: b.value } });
+    await screen.findByPlaceholderText("Default: provider/other");
+    await act(async () => resolve({ effective: { defaults: { harness: "omp", model: "provider/stale" } } }));
+    expect((screen.getByLabelText("Model") as HTMLInputElement).placeholder).toContain("provider/other");
+  });
+
+  it("does not claim a harness default when scoped settings cannot be read", async () => {
+    mocks.getTaskExecution.mockResolvedValue(executionReply([]));
+    mocks.readScopedSettingsForRepo.mockRejectedValue(new Error("Settings unavailable"));
+    renderPage();
+    await screen.findByPlaceholderText("Default model unavailable");
+    expect(screen.queryByPlaceholderText("Default: harness default")).toBeNull();
+  });
+
   it("offers OMP instructions by default and lets the user switch to Terminal", async () => {
     mocks.getTaskExecution.mockResolvedValue(executionReply([]));
     const created = renderPage();
