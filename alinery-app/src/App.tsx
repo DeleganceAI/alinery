@@ -6,6 +6,7 @@ import {
   FolderPlus,
   Grid3X3,
   List,
+  MessageSquare,
   Play,
   Plus,
   RefreshCw,
@@ -1011,6 +1012,7 @@ export default function App() {
           ...(showOriginalKanban
             ? [action("kanban", pi(SquareKanban), "Go to Kanban", `⌘${trailingTabDigit(gridViews.length, "kanban")}`, () => switchTop("kanban", { instant: true }))]
             : []),
+          action("chat", pi(MessageSquare), "Go to Chat", `⌘${trailingTabDigit(gridViews.length, "chat", showOriginalKanban)}`, () => switchTop("chat", { instant: true })),
           action("notifications", pi(Bell), "Go to Notifications", "⌘8", () => switchTop("notifications", { instant: true })),
           action("settings", pi(SettingsIcon), "Open Settings", "⌘9", () => openSettings(undefined, { instant: true })),
           ...SETTINGS_SECTIONS.map((section) =>
