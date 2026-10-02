@@ -109,6 +109,11 @@ vi.mock("./ipc", () =>
     getCurrentWindow: (() => ({ onCloseRequested: mocks.onCloseRequested, destroy: vi.fn() })) as never,
     getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) as unknown as ReturnType<typeof import("./ipc").getCurrentWebview>,
     readConfigForRepo: mocks.readConfigForRepo,
+    taskSourceBranchesForRepo: async () => ({
+      branches: [{ full_ref: "refs/heads/main", name: "main" }],
+      head: { kind: "branch", full_ref: "refs/heads/main", name: "main" },
+      selected: null,
+    }),
     listPlaybookCatalog: async () => ({ candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [] }),
     listHarnessModelsForRepo: async () => [],
     connectionStatuses: async () => [],

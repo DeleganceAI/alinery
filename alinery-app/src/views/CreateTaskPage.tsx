@@ -6,7 +6,7 @@ import { PlaybookGraph } from "../PlaybookGraph";
 import { Checkbox, InlineStatus, ModelInput, ompDefaultModel, orderPlaybookCandidates, playbookRefKey, samePlaybookRef } from "../shared";
 import * as taskMutationGuard from "../taskMutationGuard";
 import { toast } from "../toast";
-import type { BoardTask, DraftOrigin, PickerPreferences, PlaybookCandidate, PlaybookRef, ScopedPlaybook, TargetedCreateResult, TaskAttachment } from "../types";
+import type { BoardTask, DraftOrigin, PickerPreferences, PlaybookCandidate, PlaybookRef, ScopedPlaybook, TargetedCreateResult, TaskAttachment, TaskSourceBranches } from "../types";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 type ErrState = { msg: string; detail: string } | null;
@@ -81,6 +81,14 @@ export function CreateTaskPage({
 }) {
   const initialTaskSlug = initialDraft?.requested_slug || slugifyTaskName(initialDraft?.name ?? "");
   const [repoPath, setRepoPath] = useState(initialDraft?.repo_path ?? activeRepo);
+  const [baseRef, setBaseRef] = useState<string | null>(initialDraft?.draft_base_ref ?? null);
+  const baseRefRef = useRef(baseRef);
+  const [startingBranches, setStartingBranches] = useState<TaskSourceBranches | null>(null);
+  const [branchError, setBranchError] = useState("");
+  const [branchesLoading, setBranchesLoading] = useState(true);
+  const [branchRevision, setBranchRevision] = useState(0);
+  const branchRequest = useRef(0);
+  const branchSnapshotRequest = useRef(-1);
   const [pickModel, setPickModel] = useState(false);
   const [name, setName] = useState(initialDraft?.name ?? "");
   const [taskSlug, setTaskSlug] = useState(initialTaskSlug);
@@ -140,8 +148,8 @@ export function CreateTaskPage({
   const ticketLoaded = useRef(false);
   const onOpenedRef = useRef(onOpened);
   onOpenedRef.current = onOpened;
-  // dirty only after a real user edit (or reopen of an existing draft).
-  const dirtyRef = useRef(!!initialDraft);
+  // Hydration and discovery are not user edits.
+  const dirtyRef = useRef(false);
   const cap = Number(maxLiveSessions);
   const validCap = /^\d+$/.test(maxLiveSessions) && Number.isInteger(cap) && cap > 0 && cap <= 4_294_967_295;
 
@@ -225,6 +233,48 @@ export function CreateTaskPage({
   useEffect(() => {
     repoRef.current = repoPath;
   }, [repoPath]);
+
+  useEffect(() => {
+    let alive = true;
+    const request = ++branchRequest.current;
+    const selected = baseRefRef.current;
+    setBranchesLoading(true);
+    setBranchError("");
+    ipc
+      .taskSourceBranchesForRepo(repoPath, selected)
+      .then((snapshot) => {
+        if (!alive || request !== branchRequest.current) return;
+        branchSnapshotRequest.current = request;
+        setStartingBranches(snapshot);
+        if (selected === null) {
+          const initial = snapshot.head.kind === "detached" ? snapshot.head.oid : snapshot.head.full_ref;
+          baseRefRef.current = initial;
+          setBaseRef(initial);
+        }
+        setBranchesLoading(false);
+      })
+      .catch((error) => {
+        if (!alive || request !== branchRequest.current) return;
+        setBranchError(String(error));
+        setBranchesLoading(false);
+        setStartingBranches(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [repoPath, branchRevision]);
+
+  const invalidateStartingBranches = (reset: boolean) => {
+    branchRequest.current += 1;
+    setStartingBranches(null);
+    setBranchesLoading(true);
+    setBranchError("");
+    if (reset) {
+      baseRefRef.current = null;
+      setBaseRef(null);
+    }
+    setBranchRevision((revision) => revision + 1);
+  };
 
   useEffect(() => {
     let alive = true;
@@ -345,6 +395,7 @@ export function CreateTaskPage({
             branchName: branchName.trim(),
             worktreeName: worktreeName.trim(),
             taskSlug,
+            draftBaseRef: baseRef,
           });
           draftIdentities.current.set(target, t.slug);
           setDraftOrigins((origins) =>
@@ -371,6 +422,7 @@ export function CreateTaskPage({
     autoAdvance,
     branchName,
     worktreeName,
+    baseRef,
     taskSlug,
     draftAutosave,
     maxLiveSessions,
@@ -403,10 +455,34 @@ export function CreateTaskPage({
   }, []);
 
   const sourceReady = selectedSource !== null && samePlaybookRef(selectedSource.source.reference, playbook) && !catalogLoading && !playbookNeedsReselection;
+  const currentHead = startingBranches?.head;
+  const branchOptions =
+    startingBranches?.branches.map((branch) => ({
+      value: branch.full_ref,
+      label: `${branch.name}${currentHead?.kind === "branch" && currentHead.full_ref === branch.full_ref ? " — current" : ""}`,
+    })) ?? [];
+  if (currentHead?.kind === "detached") branchOptions.push({ value: currentHead.oid, label: `Detached HEAD · ${currentHead.oid.slice(0, 12)}` });
+  const savedDetached = startingBranches?.selected;
+  if (savedDetached?.available && /^[a-fA-F0-9]{40}$|^[a-fA-F0-9]{64}$/.test(savedDetached.base_ref) && !branchOptions.some((option) => option.value === savedDetached.base_ref)) {
+    branchOptions.push({ value: savedDetached.base_ref, label: `Selected detached commit · ${savedDetached.base_ref.slice(0, 12)}` });
+  }
+  const startingBranchReady =
+    !branchesLoading && !branchError && branchSnapshotRequest.current === branchRequest.current && baseRef !== null && branchOptions.some((option) => option.value === baseRef);
+  const unavailableBranchLabel =
+    currentHead?.kind === "unborn" && currentHead.full_ref === baseRef ? `${currentHead.name} — no commits` : `${baseRef || "(empty saved source)"} — unavailable`;
+  const startingBranchProblem = branchesLoading
+    ? "Loading starting branches…"
+    : branchError
+      ? `Couldn't read starting branches: ${branchError}`
+      : !startingBranchReady
+        ? currentHead?.kind === "unborn" && !branchOptions.length
+          ? "Make an initial commit before creating a task."
+          : "Choose an available committed starting branch."
+        : "";
   const create = () => {
-    if (clearingRef.current) return;
+    if (clearingRef.current || branchSnapshotRequest.current !== branchRequest.current) return;
     const n = name.trim();
-    if (!n || !taskSlug || !sourceReady || !selectedSource || modelNeedsReselection || !validCap) return;
+    if (!n || !taskSlug || !sourceReady || !selectedSource || !startingBranchReady || baseRef === null || modelNeedsReselection || !validCap) return;
     if (creatingRef.current) {
       taskMutationGuard.refuseIfBusy();
       return;
@@ -418,6 +494,7 @@ export function CreateTaskPage({
     attachmentGeneration.current += 1;
     dirtyRef.current = false;
     const target = repoPath;
+    const capturedBaseRef = baseRef;
     const capturedPaths = attachments;
     const capturedImages = imagesRef.current;
     flushSync(() => {
@@ -453,6 +530,7 @@ export function CreateTaskPage({
             max_live_sessions: cap,
             start,
             branch_name: branchName.trim() || undefined,
+            base_ref: capturedBaseRef,
             worktree_name: worktreeName.trim() || undefined,
             requested_slug: taskSlug,
           },
@@ -593,7 +671,8 @@ export function CreateTaskPage({
   };
 
   const selectRepo = (nextRepo: string) => {
-    if (nextRepo === repoPath || clearingRef.current) return;
+    if (nextRepo === repoPath || clearingRef.current || creatingRef.current) return;
+    invalidateStartingBranches(true);
     repoRef.current = nextRepo;
     dirtyRef.current = false;
     setRepoPath(nextRepo);
@@ -610,6 +689,7 @@ export function CreateTaskPage({
     draftWriteGeneration.current += 1;
     const reset = () => {
       attachmentGeneration.current += 1;
+      invalidateStartingBranches(true);
       for (const image of imagesRef.current) URL.revokeObjectURL(image.previewUrl);
       updateImages([]);
       setPasteErrors([]);
@@ -676,7 +756,7 @@ export function CreateTaskPage({
           ? "Select a model available in this repository."
           : !sourceReady
             ? sourceError || "Select a playbook and wait for its validated source."
-            : "";
+            : startingBranchProblem;
 
   const preferredKeys = new Set(pickerPreferences.entries.filter((entry) => entry.preferred).map((entry) => playbookRefKey(entry.reference)));
   const visiblePlaybooks = browsePlaybooks
@@ -701,16 +781,71 @@ export function CreateTaskPage({
       <div className="create-form-panel">
         <div className="createform createform-page">
           <h1 className="create-title">New task</h1>
-          <label className="create-field">
-            <span>Repository</span>
-            <select className="field-input" value={repoPath} disabled={creating || clearing} onChange={(e) => selectRepo(e.target.value)}>
-              {knownRepos.map((repo) => (
-                <option key={repo} value={repo}>
-                  {repo}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="create-repository-source">
+            <label className="create-field">
+              <span>Repository</span>
+              <select className="field-input" value={repoPath} disabled={creating || clearing || creatingRef.current} onChange={(e) => selectRepo(e.target.value)}>
+                {knownRepos.map((repo) => (
+                  <option key={repo} value={repo}>
+                    {repo}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="create-source-field">
+              <label className="create-field">
+                <span>Starting branch</span>
+                <select
+                  className="field-input"
+                  value={baseRef ?? ""}
+                  disabled={branchesLoading || !!branchError || creating || clearing || creatingRef.current}
+                  onChange={(event) => {
+                    if (creatingRef.current || clearingRef.current || branchesLoading || branchError || branchSnapshotRequest.current !== branchRequest.current) return;
+                    const next = event.target.value;
+                    if (!branchOptions.some((option) => option.value === next)) return;
+                    dirtyRef.current = true;
+                    baseRefRef.current = next;
+                    setBaseRef(next);
+                  }}
+                >
+                  {baseRef === null && (
+                    <option value="" disabled>
+                      {branchesLoading ? "Loading…" : "Choose a branch"}
+                    </option>
+                  )}
+                  {baseRef !== null && !branchOptions.some((option) => option.value === baseRef) && (
+                    <option value={baseRef} disabled>
+                      {unavailableBranchLabel}
+                    </option>
+                  )}
+                  {branchOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {branchError && (
+                <button
+                  type="button"
+                  className="btn ghost"
+                  aria-label="Retry starting branches"
+                  disabled={branchesLoading || creating || clearing || creatingRef.current}
+                  onClick={() => {
+                    if (creatingRef.current || clearingRef.current || branchesLoading || !branchError) return;
+                    invalidateStartingBranches(false);
+                  }}
+                >
+                  Retry
+                </button>
+              )}
+            </div>
+          </div>
+          {startingBranchProblem && (
+            <div className="hint create-source-hint" role="status">
+              {startingBranchProblem}
+            </div>
+          )}
           <div className="modes">
             {(["inline", "github", "linear"] as const).map((m) => (
               <button
@@ -942,28 +1077,45 @@ export function CreateTaskPage({
           </label>
           <div className="crow worktree-row">
             <span>Dedicated task worktree</span>
-            <input
-              className="field-input worktree-input"
-              value={branchName}
-              onChange={(e) => {
-                dirtyRef.current = true;
-                setBranchName(e.target.value);
-              }}
-              placeholder="Branch name (optional — auto if blank or taken)"
-            />
-            <input
-              className="field-input worktree-input"
-              value={worktreeName}
-              onChange={(e) => {
-                dirtyRef.current = true;
-                setWorktreeName(e.target.value);
-              }}
-              placeholder="Worktree folder name (optional — auto if blank or taken)"
-            />
+            <label className="create-field grow">
+              <span>New task branch</span>
+              <input
+                className="field-input worktree-input"
+                value={branchName}
+                onChange={(e) => {
+                  dirtyRef.current = true;
+                  setBranchName(e.target.value);
+                }}
+                placeholder="Branch name (optional — auto if blank or taken)"
+              />
+            </label>
+            <label className="create-field grow">
+              <span>Worktree folder</span>
+              <input
+                className="field-input worktree-input"
+                value={worktreeName}
+                onChange={(e) => {
+                  dirtyRef.current = true;
+                  setWorktreeName(e.target.value);
+                }}
+                placeholder="Worktree folder name (optional — auto if blank or taken)"
+              />
+            </label>
           </div>
           <label className="create-field">
             <span>Maximum live sessions</span>
-            <input className="field-input" type="number" min="1" max="4294967295" step="1" value={maxLiveSessions} onChange={(event) => setMaxLiveSessions(event.target.value)} />
+            <input
+              className="field-input"
+              type="number"
+              min="1"
+              max="4294967295"
+              step="1"
+              value={maxLiveSessions}
+              onChange={(event) => {
+                dirtyRef.current = true;
+                setMaxLiveSessions(event.target.value);
+              }}
+            />
           </label>
           <Checkbox checked={start} onChange={setStart} label="Start eligible sessions after creation" />
           {created && (

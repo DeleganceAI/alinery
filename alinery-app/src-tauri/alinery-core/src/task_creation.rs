@@ -639,6 +639,209 @@ mod tests {
     }
 
     #[test]
+    fn selected_source_preserves_checkout_and_dirty_content() {
+        let fixture = AttachmentRepo(repo());
+        let repo = &fixture.0;
+        fs::write(repo.join(".gitignore"), "/.alinery/\n").unwrap();
+        fs::write(repo.join("tracked.txt"), b"chosen committed content\n").unwrap();
+        git(repo, &["add", ".gitignore", "tracked.txt"]);
+        git(repo, &["-c", "commit.gpgsign=false", "commit", "-m", "chosen"]);
+        let chosen = git(repo, &["rev-parse", "HEAD"]);
+        git(repo, &["branch", "chosen"]);
+        fs::write(repo.join("tracked.txt"), b"current committed content\n").unwrap();
+        git(repo, &["add", "tracked.txt"]);
+        git(repo, &["-c", "commit.gpgsign=false", "commit", "-m", "current"]);
+        assert_ne!(git(repo, &["rev-parse", "HEAD"]), chosen);
+        fs::write(repo.join("tracked.txt"), b"staged source changes\n").unwrap();
+        git(repo, &["add", "tracked.txt"]);
+        fs::write(repo.join("tracked.txt"), b"unstaged source changes\n").unwrap();
+        fs::write(repo.join("untracked.txt"), b"untracked source bytes\n").unwrap();
+        let head = git(repo, &["symbolic-ref", "HEAD"]);
+        let oid = git(repo, &["rev-parse", "HEAD"]);
+        let index = fs::read(repo.join(".git/index")).unwrap();
+        let tracked = fs::read(repo.join("tracked.txt")).unwrap();
+        let untracked = fs::read(repo.join("untracked.txt")).unwrap();
+        let mut request = request("destination");
+        request.base_ref = Some("refs/heads/chosen".into());
+        let reply = provision_task(repo, "", "fixture", &request).unwrap();
+        assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+        let task = reply.task.unwrap();
+        let worktree = Path::new(&task.worktree);
+        assert_eq!(git(worktree, &["rev-parse", "HEAD"]), chosen);
+        assert_eq!(git(worktree, &["symbolic-ref", "HEAD"]).trim(), "refs/heads/destination");
+        assert_eq!(fs::read(worktree.join("tracked.txt")).unwrap(), b"chosen committed content\n");
+        assert!(!worktree.join("untracked.txt").exists());
+        assert_eq!(git(repo, &["symbolic-ref", "HEAD"]), head);
+        assert_eq!(git(repo, &["rev-parse", "HEAD"]), oid);
+        assert_eq!(fs::read(repo.join(".git/index")).unwrap(), index);
+        assert_eq!(fs::read(repo.join("tracked.txt")).unwrap(), tracked);
+        assert_eq!(fs::read(repo.join("untracked.txt")).unwrap(), untracked);
+    }
+
+    #[test]
+    fn selected_source_survives_checkout_switch_and_uses_latest_tip() {
+        let fixture = AttachmentRepo(repo());
+        let repo = &fixture.0;
+        fs::write(repo.join(".gitignore"), "/.alinery/\n").unwrap();
+        git(repo, &["add", ".gitignore"]);
+        git(repo, &["-c", "commit.gpgsign=false", "commit", "-m", "chosen"]);
+        git(repo, &["branch", "chosen"]);
+        let selected = "refs/heads/chosen";
+        let original = git(repo, &["rev-parse", selected]);
+        git(repo, &["switch", "-c", "other"]);
+        git(repo, &["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "other"]);
+        let head = git(repo, &["symbolic-ref", "HEAD"]);
+        let oid = git(repo, &["rev-parse", "HEAD"]);
+        let index = fs::read(repo.join(".git/index")).unwrap();
+        let mut request = request("after-switch");
+        request.base_ref = Some(selected.into());
+        let reply = provision_task(repo, "", "fixture", &request).unwrap();
+        assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+        assert_eq!(git(Path::new(&reply.task.unwrap().worktree), &["rev-parse", "HEAD"]), original);
+        let tree = git(repo, &["rev-parse", "HEAD^{tree}"]);
+        let latest = git(
+            repo,
+            &["-c", "commit.gpgsign=false", "commit-tree", tree.trim(), "-p", original.trim(), "-m", "latest chosen"],
+        );
+        assert_ne!(latest, original);
+        assert_ne!(latest, oid);
+        request.branch_name = Some("after-advance".into());
+        let reply = provision_task_with_reservation(
+            repo,
+            "",
+            "fixture",
+            &request,
+            || Ok(()),
+            |_| {
+                git(repo, &["update-ref", selected, latest.trim(), original.trim()]);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+        assert_eq!(git(Path::new(&reply.task.unwrap().worktree), &["rev-parse", "HEAD"]), latest);
+        assert_eq!(git(repo, &["symbolic-ref", "HEAD"]), head);
+        assert_eq!(git(repo, &["rev-parse", "HEAD"]), oid);
+        assert_eq!(fs::read(repo.join(".git/index")).unwrap(), index);
+    }
+
+    #[test]
+    fn deleted_source_retains_partial_without_tag_fallback() {
+        let fixture = AttachmentRepo(repo());
+        let repo = &fixture.0;
+        git(repo, &["branch", "chosen"]);
+        let chosen = git(repo, &["rev-parse", "refs/heads/chosen"]);
+        git(repo, &["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "tag target"]);
+        git(repo, &["tag", "chosen"]);
+        let tag = git(repo, &["rev-parse", "refs/tags/chosen"]);
+        assert_ne!(tag, chosen);
+        let mut request = request("deleted-source");
+        request.base_ref = Some("refs/heads/chosen".into());
+        let mut reserved = None;
+        let reply = provision_task_with_reservation(
+            repo,
+            "",
+            "fixture",
+            &request,
+            || Ok(()),
+            |task| {
+                reserved = Some((task.clone(), read_execution_state(repo, &task.slug).unwrap()));
+                git(repo, &["update-ref", "-d", "refs/heads/chosen"]);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(reply.creation, "partial");
+        assert_eq!(reply.start, "not_requested");
+        assert!(reply.sessions.is_empty());
+        assert!(reply.errors.iter().any(|error| error.stage == "git_worktree" && error.code == "provisioning_failed"));
+        let task = reply.task.unwrap();
+        let (reserved, reserved_state) = reserved.unwrap();
+        assert_eq!((&task.slug, &task.branch, &task.worktree), (&reserved.slug, &reserved.branch, &reserved.worktree));
+        assert_eq!(crate::read_task(repo, &task.slug).unwrap(), task);
+        assert!(!Path::new(&task.worktree).exists());
+        let state = read_execution_state(repo, &task.slug).unwrap();
+        assert_eq!(state.creation, "partial");
+        assert_eq!(state.definition_identity, reserved_state.definition_identity);
+        assert_eq!(state.executions, reserved_state.executions);
+        assert!(state.creation_error.unwrap().starts_with("git_worktree:"));
+        assert!(task_playbook_path(repo, &task.slug).unwrap().is_file());
+        assert_eq!(git(repo, &["rev-parse", "refs/tags/chosen"]), tag);
+        let branches = git(repo, &["for-each-ref", "--format=%(refname)", "refs/heads/"]);
+        assert!(!branches.lines().any(|branch| branch == "refs/heads/deleted-source" || branch == "refs/heads/chosen"));
+        assert_eq!(crate::list_tasks_for_repo(repo).len(), 1);
+    }
+
+    #[test]
+    fn captured_detached_source_does_not_follow_head() {
+        let fixture = AttachmentRepo(repo());
+        let repo = &fixture.0;
+        let original = git(repo, &["rev-parse", "HEAD"]);
+        git(repo, &["switch", "--detach", original.trim()]);
+        let captured = git(repo, &["rev-parse", "HEAD"]);
+        git(repo, &["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "later detached"]);
+        let current = git(repo, &["rev-parse", "HEAD"]);
+        assert_ne!(captured, current);
+        let mut request = request("captured-detached");
+        request.base_ref = Some(captured.trim().into());
+        let reply = provision_task(repo, "", "fixture", &request).unwrap();
+        assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+        assert_eq!(git(Path::new(&reply.task.unwrap().worktree), &["rev-parse", "HEAD"]), original);
+        assert_eq!(git(repo, &["rev-parse", "HEAD"]), current);
+        let symbolic = crate::git_cmd(repo).args(["symbolic-ref", "--quiet", "HEAD"]).output().unwrap();
+        assert_eq!(symbolic.status.code(), Some(1));
+    }
+
+    #[test]
+    fn draft_source_is_omitted_after_ready_and_partial_promotion() {
+        for fail in [false, true] {
+            let fixture = AttachmentRepo(repo());
+            let repo = &fixture.0;
+            git(repo, &["branch", "chosen"]);
+            let draft = Task {
+                name: "Draft".into(),
+                slug: "draft".into(),
+                draft: true,
+                draft_base_ref: Some("refs/heads/chosen".into()),
+                ..Task::default()
+            };
+            crate::task::write_task_unlocked(repo, &draft).unwrap();
+            assert_eq!(crate::read_task(repo, &draft.slug).unwrap().draft_base_ref.as_deref(), Some("refs/heads/chosen"));
+            let mut request = request("promoted");
+            request.draft_slug = Some(draft.slug);
+            request.base_ref = Some("refs/heads/chosen".into());
+            let reply = provision_task_with_reservation(
+                repo,
+                "",
+                "fixture",
+                &request,
+                || Ok(()),
+                |_| {
+                    if fail {
+                        git(repo, &["update-ref", "-d", "refs/heads/chosen"]);
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(reply.creation, if fail { "partial" } else { "ready" }, "{:?}", reply.errors);
+            if fail {
+                assert!(reply.errors.iter().any(|error| error.stage == "git_worktree" && error.code == "provisioning_failed"));
+            }
+            let task = reply.task.as_ref().unwrap();
+            let persisted = crate::read_task(repo, &task.slug).unwrap();
+            assert!(!persisted.draft);
+            assert_eq!(persisted.draft_base_ref, None);
+            let stored = fs::read_to_string(crate::task_dir(repo, &task.slug).join("task.md")).unwrap();
+            let stored: toml::Value = toml::from_str(&stored).unwrap();
+            assert!(stored.get("draft_base_ref").is_none());
+            let wire = serde_json::to_value(&reply).unwrap();
+            assert_eq!(wire["task"]["draft"], false);
+            assert!(wire["task"].get("draft_base_ref").is_none());
+        }
+    }
+
+    #[test]
     fn attachment_ticket_references_resolve_to_stored_bytes() {
         let fixture = AttachmentRepo(repo());
         let repo = &fixture.0;

@@ -106,6 +106,7 @@ fn write_draft_in_emits_task_draft_create_only_on_first_write() {
             10,
             "".into(),
             "".into(),
+            None,
         );
         assert!(draft.is_ok(), "{draft:?}");
         // Re-saving the same draft must not re-emit: only the JSON array captured by the
@@ -131,6 +132,7 @@ fn write_draft_in_emits_task_draft_create_only_on_first_write() {
             10,
             "".into(),
             "".into(),
+            None,
         )
         .unwrap();
     });

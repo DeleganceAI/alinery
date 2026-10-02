@@ -287,6 +287,7 @@ pub fn run() {
             remove_worktree,
             remove_worktree_for_repo,
             worktree_exists,
+            task_source_branches_for_repo,
             push_and_compare_url,
             push_and_compare_url_for_repo,
             set_pr_url,
