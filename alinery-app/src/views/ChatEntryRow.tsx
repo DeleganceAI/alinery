@@ -350,7 +350,15 @@ function ChatEntryRowImpl({
       return (
         <Msg at={entry.at} actor={entry.actor} type="approval" stamp={stamp} showActorLabels={showActorLabels} copyText={copyText} kicker={<Status tone="wait">waiting</Status>}>
           <p className="chat-msg-title">{entry.action}</p>
-          {entry.detail ? <p className="chat-msg-muted">{entry.detail}</p> : null}
+          {entry.detail ? (
+            entry.detailFormat === "plain" ? (
+              <p className="chat-msg-muted">{entry.detail}</p>
+            ) : (
+              <div className="chat-msg-muted">
+                <ChatMarkdown text={entry.detail} showBlockCopyButtons={showBlockCopyButtons} preserveLineBreaks />
+              </div>
+            )
+          ) : null}
           {entry.scope ? <p className="chat-work-meta">{entry.scope}</p> : null}
           <div className="chat-msg-actions">
             <button type="button" className="btn primary small" disabled={entry.disabled} onClick={() => onApprove?.(entry.requestId, true)}>
