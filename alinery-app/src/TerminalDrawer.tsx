@@ -318,6 +318,7 @@ export function TerminalDrawer({
               model=""
               intent="spawn"
               terminalFontSize={terminalFontSize}
+              keepViewport
             />
           </div>
         )}

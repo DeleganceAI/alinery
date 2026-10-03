@@ -6,6 +6,7 @@ import { APPEARANCE_EVENT } from "./appearance";
 import { decodeChannelFrame } from "./channelFrame";
 import * as ipc from "./ipc";
 import { attachGpuRenderer } from "./terminalRenderer";
+import { restoreViewport, saveViewport } from "./terminalViewport";
 import "@xterm/xterm/css/xterm.css";
 
 // xterm needs concrete colors; these tokens are plain hexes in both built-in
@@ -50,6 +51,7 @@ export function SessionTerminal({
   resumeToken,
   terminalFontSize,
   readOnly,
+  keepViewport,
   onConnectionStateChange,
 }: {
   sessionId: string;
@@ -64,6 +66,8 @@ export function SessionTerminal({
   terminalFontSize: number;
   // Read-only replay: mount the capped activity sidecar, no daemon session, no stdin (P7).
   readOnly?: boolean;
+  // Put a scrolled-back view back after a remount (the drawer swaps panes on tab switch).
+  keepViewport?: boolean;
   onConnectionStateChange?: (state: SessionTerminalConnectionState) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -165,6 +169,7 @@ export function SessionTerminal({
         term.refresh(0, term.rows - 1);
       };
       syncViewport();
+      if (keepViewport) restoreViewport(sessionId, term);
       window.clearTimeout(viewportIdleTimer);
       window.clearTimeout(viewportHardTimer);
       viewportIdleTimer = 0;
@@ -360,9 +365,10 @@ export function SessionTerminal({
       ro.disconnect();
       cancelAnimationFrame(resizeFrame);
       dataSub.dispose();
+      if (keepViewport) saveViewport(sessionId, term);
       term.dispose();
     };
-  }, [sessionId, cwd, taskSlug, phase, harness, model, intent, resumeToken, readOnly, terminalFontSize, onConnectionStateChange]);
+  }, [sessionId, cwd, taskSlug, phase, harness, model, intent, resumeToken, readOnly, keepViewport, terminalFontSize, onConnectionStateChange]);
 
   return <div ref={hostRef} style={{ width: "100%", height: "100%" }} />;
 }
