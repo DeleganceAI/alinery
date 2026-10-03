@@ -16,7 +16,7 @@ vi.mock("../ipc", () =>
   mockIpc({
     listBoardTasks: async () => {
       if (scenario.error) throw new Error(scenario.error);
-      return scenario.tasks;
+      return structuredClone(scenario.tasks);
     },
     listTaskActivity: async () => activity,
   }),
@@ -375,5 +375,55 @@ describe("Task List column sorting", () => {
     act(() => requireNav(nav).moveRow(-1));
     act(() => requireNav(nav).openSelected());
     expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ slug: "child-10" }));
+  });
+});
+
+describe("Task List age refresh", () => {
+  it("ages Created and Updated through unchanged polls without changing their timestamps", async () => {
+    const epoch = 1_700_000_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(epoch * 1000);
+    try {
+      scenario.tasks = [task({ created: epoch, updated: epoch })];
+      const onOpen = vi.fn();
+      let nav: BoardNav | null = null;
+      render(
+        <TaskList
+          allRepos={false}
+          onOpen={onOpen}
+          onDuplicate={() => {}}
+          onOpenActiveSession={() => {}}
+          onCreate={() => {}}
+          registerNav={(next) => {
+            nav = next;
+          }}
+        />,
+      );
+      await navReady(() => nav);
+      const row = screen.getByText("A task").closest("tr");
+      const ages = () => [...(row?.querySelectorAll(".age-cell") ?? [])].map((cell) => cell.textContent);
+      const absolute = new Date(epoch * 1000).toLocaleString();
+      expect(ages()).toEqual(["now", "now"]);
+      expect([...(row?.querySelectorAll(".age-cell") ?? [])].map((cell) => cell.getAttribute("title"))).toEqual([absolute, absolute]);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(59_000);
+      });
+      expect(ages()).toEqual(["now", "now"]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect.soft(ages()).toEqual(["1m", "1m"]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect.soft(ages()).toEqual(["2m", "2m"]);
+      expect([...(row?.querySelectorAll(".age-cell") ?? [])].map((cell) => cell.getAttribute("title"))).toEqual([absolute, absolute]);
+      act(() => requireNav(nav).openSelected());
+      expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ repo_path: "/r", slug: "a-task", created: epoch, updated: epoch }));
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
   });
 });
