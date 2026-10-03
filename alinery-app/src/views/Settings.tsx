@@ -1236,12 +1236,19 @@ export function Settings({
   );
 
   /** The journal / density / text settings shared by the Sessions view and the Chat view. `view` is that view's own values. */
-  const renderChatViewSettings = (label: string, view: ChatViewPrefs, saveView: (next: ChatViewPrefs) => void, ava: boolean) => (
+  // Two tabs render this form with separate values, so `where` and `title` (derived from `ava`) say which surface it edits.
+  const renderChatViewSettings = (
+    view: ChatViewPrefs,
+    saveView: (next: ChatViewPrefs) => void,
+    ava: boolean,
+    where = ava ? "the Chat view" : "session chats",
+    title = ava ? "Chat view" : "Session chat",
+  ) => (
     <>
       <div className="settings-subsection">
         <h2>Journal</h2>
-        <p>Which journal rows appear in {label}. Global-only.</p>
-        {!isGlobal && globalOnly(`${label} settings`)}
+        <p>Which journal rows appear in {where}. Global-only.</p>
+        {!isGlobal && globalOnly(`${title} settings`)}
         <Checkbox
           checked={view.chat_show_thinking === true}
           disabled={!isGlobal}
@@ -1256,7 +1263,7 @@ export function Settings({
           }}
           label={
             <>
-              Show thinking <span className="dsc">— agent reasoning rails in the Chat journal</span>
+              Show thinking <span className="dsc">— agent reasoning rails in the journal</span>
             </>
           }
         />
@@ -1399,7 +1406,7 @@ export function Settings({
           }
         />
         <Checkbox
-          checked={view.chat_show_block_copy_buttons !== false}
+          checked={view.chat_show_block_copy_buttons === true}
           disabled={!isGlobal}
           onChange={(enabled) => {
             if (isGlobal) saveView({ ...view, chat_show_block_copy_buttons: enabled });
@@ -1425,8 +1432,8 @@ export function Settings({
       </div>
       <div className="settings-subsection">
         <h2>Density</h2>
-        <p>How Chat feels and behaves. Global-only.</p>
-        {!isGlobal && globalOnly("Chat density settings")}
+        <p>Density, sizing and behavior of {where}. Global-only.</p>
+        {!isGlobal && globalOnly(`${title} density settings`)}
         <Checkbox
           checked={view.chat_auto_collapse_thinking !== false}
           disabled={!isGlobal}
@@ -1488,7 +1495,7 @@ export function Settings({
           <span className="dsc">Journal and rail spacing. Dense matches the previous compact look.</span>
         </div>
         <div className="field">
-          <label id="chat-max-width-label">Chat column width</label>
+          <label id="chat-max-width-label">{title} column width</label>
           <div className="theme-cards" role="group" aria-labelledby="chat-max-width-label">
             {(["600", "900", "1200", "none"] as const satisfies readonly ChatMaxWidth[]).map((width) => {
               const active = normalizeChatMaxWidth(view.chat_max_width) === width;
@@ -1512,8 +1519,8 @@ export function Settings({
         </div>
         {sizeRow({
           id: "chat-font-size",
-          name: "Chat text",
-          noun: "chat font size",
+          name: `${title} text`,
+          noun: `${title.toLowerCase()} font size`,
           sample: <span style={{ fontSize: `${normalizeChatFontSize(view.chat_font_size ?? CHAT_FONT_DEFAULT)}px` }}>Replies and expanded rail bodies</span>,
           value: normalizeChatFontSize(view.chat_font_size ?? CHAT_FONT_DEFAULT),
           min: CHAT_FONT_MIN,
@@ -1542,7 +1549,8 @@ export function Settings({
           }}
           label={
             <>
-              Show meta strip <span className="dsc">{ava ? "— repo · branch · status line under the thread title" : "— model · thinking · event count · context above Chat"}</span>
+              Show meta strip{" "}
+              <span className="dsc">{ava ? "— repo · branch · status line under the thread title" : "— model · thinking · event count · context above the chat"}</span>
             </>
           }
         />
@@ -2182,9 +2190,9 @@ export function Settings({
           </div>
         );
       case "sessionsView":
-        return renderChatViewSettings("the Sessions view", appearance, (next) => saveAppearance({ ...appearance, ...next }), false);
+        return renderChatViewSettings(appearance, (next) => saveAppearance({ ...appearance, ...next }), false);
       case "chat":
-        return renderChatViewSettings("Chat", normalizeChatView(appearance.ava_chat ?? {}), (next) => saveAppearance({ ...appearance, ava_chat: next }), true);
+        return renderChatViewSettings(normalizeChatView(appearance.ava_chat ?? {}), (next) => saveAppearance({ ...appearance, ava_chat: next }), true);
       case "gridViews": {
         const controlsDisabled = isGlobal === false;
         const disabledReason = isGlobal === false ? "Grid-based views are global settings." : "";

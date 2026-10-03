@@ -249,9 +249,19 @@ describe("applyAppearance", () => {
       chat_show_agent_bubbles: true,
       chat_show_copy_buttons: true,
     });
-    expect(normalizeAppearance({ ...prefs(), chat_show_actor_labels: undefined, chat_show_agent_bubbles: undefined, chat_show_copy_buttons: undefined })).toMatchObject({
-      chat_show_actor_labels: true,
-      chat_show_agent_bubbles: true,
+    // Absent keys: labels, reply bubbles and block copy buttons start off; the per-message copy icon starts on.
+    expect(
+      normalizeAppearance({
+        ...prefs(),
+        chat_show_actor_labels: undefined,
+        chat_show_agent_bubbles: undefined,
+        chat_show_block_copy_buttons: undefined,
+        chat_show_copy_buttons: undefined,
+      }),
+    ).toMatchObject({
+      chat_show_actor_labels: false,
+      chat_show_agent_bubbles: false,
+      chat_show_block_copy_buttons: false,
       chat_show_copy_buttons: true,
     });
   });

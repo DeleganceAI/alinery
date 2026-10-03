@@ -186,20 +186,52 @@ describe("Sessions view and Chat tabs", () => {
     expect(screen.getByRole("button", { name: "900px" }).getAttribute("aria-pressed")).toBe("true");
   });
 
+  // The journal rows both tabs start with: thinking, tools and turn markers hidden; harness notices,
+  // subagent rows and drawer, date, time and the per-message copy icon shown; no actor labels,
+  // agent bubbles or block copy buttons.
+  const JOURNAL_DEFAULTS: [RegExp, boolean][] = [
+    [/Show thinking/, false],
+    [/Expand thinking by default/, false],
+    [/Show tool use/, false],
+    [/Expand tools by default/, false],
+    [/Show harness events/, true],
+    [/Show turn markers/, false],
+    [/Show subagent rows/, true],
+    [/Show subagent drawer/, true],
+    [/Show date/, true],
+    [/Show time/, true],
+    [/Show You \/ Agent labels/, false],
+    [/Show agent reply bubbles/, false],
+    [/Show block copy buttons/, false],
+    [/Show copy buttons/, true],
+  ];
+
+  it.each(["sessionsView", "chat"] as const)("%s starts with the shared journal defaults", async (section) => {
+    renderSection(section, DEFAULT_APPEARANCE);
+    await screen.findByLabelText(/Show thinking/);
+    for (const [label, checked] of JOURNAL_DEFAULTS) expect((screen.getByLabelText(label) as HTMLInputElement).checked, String(label)).toBe(checked);
+  });
+
   it("Chat describes the meta strip and column width for Ava", async () => {
     renderSection("chat");
     expect(await screen.findByText("— repo · branch · status line under the thread title")).toBeTruthy();
     expect(screen.getByText("Limits the width of the message thread, composer and notices.")).toBeTruthy();
-    expect(screen.getByText("Which journal rows appear in Chat. Global-only.")).toBeTruthy();
+    expect(screen.getByText("Which journal rows appear in the Chat view. Global-only.")).toBeTruthy();
+    expect(screen.getByText("Density, sizing and behavior of the Chat view. Global-only.")).toBeTruthy();
+    expect(screen.getByText("Chat view column width")).toBeTruthy();
+    expect(screen.getByText("Chat view text")).toBeTruthy();
     expect(screen.queryByText(/model · thinking · event count/)).toBeNull();
     expect(screen.queryByText(/Limits journal thread width/)).toBeNull();
   });
 
   it("Sessions view keeps the journal descriptions for the session thread", async () => {
     renderSection("sessionsView");
-    expect(await screen.findByText("— model · thinking · event count · context above Chat")).toBeTruthy();
+    expect(await screen.findByText("— model · thinking · event count · context above the chat")).toBeTruthy();
     expect(screen.getByText("Limits journal thread width; meta and composer stay full width.")).toBeTruthy();
-    expect(screen.getByText("Which journal rows appear in the Sessions view. Global-only.")).toBeTruthy();
+    expect(screen.getByText("Which journal rows appear in session chats. Global-only.")).toBeTruthy();
+    expect(screen.getByText("Density, sizing and behavior of session chats. Global-only.")).toBeTruthy();
+    expect(screen.getByText("Session chat column width")).toBeTruthy();
+    expect(screen.getByText("Session chat text")).toBeTruthy();
     expect(screen.queryByText(/status line under the thread title/)).toBeNull();
     expect(screen.queryByText(/message thread, composer and notices/)).toBeNull();
   });
