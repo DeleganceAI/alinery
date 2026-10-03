@@ -56,21 +56,42 @@ fn root_omp_metas(repo: &Path) -> Vec<SessionMeta> {
         .collect()
 }
 
-pub(crate) fn is_live_chat_worktree(repo: &Path, session_id: &str, worktree: &Path) -> bool {
-    let expected = alinery_core::chat_worktrees_dir(repo).join(session_id);
-    worktree == expected && expected.is_dir()
+/// The generation whose id names `meta`'s live chat worktree. A resumed thread inherits its
+/// predecessor's directory, which keeps the name of the generation that ran `git worktree add`, so
+/// ownership is any id on the thread's own `resume_of` chain, never an arbitrary path.
+pub(crate) fn chat_worktree_owner(repo: &Path, meta: &SessionMeta) -> Option<String> {
+    let path = Path::new(&meta.worktree);
+    if path.parent() != Some(alinery_core::chat_worktrees_dir(repo).as_path()) || !path.is_dir() {
+        return None;
+    }
+    let dir = path.file_name()?.to_str()?;
+    let mut seen = std::collections::HashSet::new();
+    let mut next = Some(meta.id.clone());
+    while let Some(id) = next {
+        if id == dir {
+            return Some(id);
+        }
+        if !seen.insert(id.clone()) {
+            return None;
+        }
+        next = load_root_omp(repo, &id).ok().and_then(|ancestor| ancestor.resume_of);
+    }
+    None
 }
 
 pub(crate) fn chat_branch_of(repo: &Path, meta: &SessionMeta) -> ChatBranch {
-    let path = Path::new(&meta.worktree);
-    if is_live_chat_worktree(repo, &meta.id, path) {
+    chat_branch_with(repo, meta, || alinery_core::abbrev_ref(repo).unwrap_or_default())
+}
+
+fn chat_branch_with(repo: &Path, meta: &SessionMeta, checkout_label: impl FnOnce() -> String) -> ChatBranch {
+    if chat_worktree_owner(repo, meta).is_some() {
         ChatBranch {
-            label: alinery_core::abbrev_ref(path).unwrap_or_default(),
+            label: alinery_core::abbrev_ref(Path::new(&meta.worktree)).unwrap_or_default(),
             checkout: false,
         }
     } else {
         ChatBranch {
-            label: alinery_core::abbrev_ref(repo).unwrap_or_default(),
+            label: checkout_label(),
             checkout: true,
         }
     }
@@ -81,6 +102,8 @@ pub(crate) fn list_chat_threads_in(repos: &[PathBuf], include_archived: bool) ->
     for repo in repos.iter().filter(|repo| repo.is_dir()) {
         let metas = root_omp_metas(repo);
         let superseded: std::collections::HashSet<String> = metas.iter().filter_map(|meta| meta.resume_of.clone()).collect();
+        // Every checkout thread in a repo shares its branch: one git call per repo, not per thread.
+        let repo_branch = std::cell::OnceCell::new();
         for meta in metas {
             if superseded.contains(&meta.id) {
                 continue;
@@ -88,7 +111,7 @@ pub(crate) fn list_chat_threads_in(repos: &[PathBuf], include_archived: bool) ->
             if meta.archived && !include_archived {
                 continue;
             }
-            let branch = chat_branch_of(repo, &meta);
+            let branch = chat_branch_with(repo, &meta, || repo_branch.get_or_init(|| alinery_core::abbrev_ref(repo).unwrap_or_default()).clone());
             let name = alinery_core::read_session_name(repo, "", &meta.id).ok().flatten().map(|value| value.name);
             threads.push(ChatThread {
                 repo_path: repo.to_string_lossy().into_owned(),
@@ -186,31 +209,44 @@ pub(crate) fn create_chat_thread_in(
     }
 }
 
+/// Whether the thread's OMP is running. Without its repo's daemon a started, unended thread may
+/// still be, so that is an error rather than "no".
+fn chat_running(meta: &SessionMeta, daemon: Option<&DaemonClient>) -> Result<bool, String> {
+    match daemon {
+        Some(daemon) => Ok(daemon
+            .session_status_observed(&meta.id)?
+            .is_some_and(|status| !matches!(status.state.process, alinery_core::ProcessState::Exited { .. }))),
+        None if meta.started_at.is_some() && meta.ended_at.is_none() => Err("daemon not connected".into()),
+        None => Ok(false),
+    }
+}
+
 pub(crate) fn archive_chat_thread_in(repo: &Path, session_id: &str, remove_worktree: bool, daemon: Option<&DaemonClient>) -> Result<(), String> {
     let meta = load_root_omp(repo, session_id)?;
-    let live = match daemon {
-        Some(daemon) => daemon
-            .session_status_observed(session_id)?
-            .is_some_and(|status| !matches!(status.state.process, alinery_core::ProcessState::Exited { .. })),
-        None => false,
-    };
-    if live {
+    if chat_running(&meta, daemon)? {
         daemon.ok_or("daemon not connected")?.kill_session(session_id)?;
-    } else if daemon.is_none() && meta.started_at.is_some() && meta.ended_at.is_none() {
-        return Err("daemon not connected".into());
     }
     stamp_chat(repo, session_id, |value| value["archived"] = json!(true))?;
     if !remove_worktree {
         return Ok(());
     }
-    remove_chat_worktree_in(repo, session_id)
+    remove_owned_worktree(repo, &meta)
 }
 
-pub(crate) fn remove_chat_worktree_in(repo: &Path, session_id: &str) -> Result<(), String> {
+/// Standalone removal never stops the thread: a running OMP would be left inside a deleted directory.
+pub(crate) fn remove_chat_worktree_in(repo: &Path, session_id: &str, daemon: Option<&DaemonClient>) -> Result<(), String> {
     let meta = load_root_omp(repo, session_id)?;
+    if chat_running(&meta, daemon)? {
+        return Err("This thread is still running. Archive it with Archive and remove worktree, or stop it first.".into());
+    }
+    remove_owned_worktree(repo, &meta)
+}
+
+fn remove_owned_worktree(repo: &Path, meta: &SessionMeta) -> Result<(), String> {
     let path = PathBuf::from(&meta.worktree);
-    alinery_core::remove_chat_worktree_path(repo, session_id, &path)?;
-    stamp_chat(repo, session_id, |value| value["worktree"] = json!(repo.to_string_lossy()))
+    let owner = chat_worktree_owner(repo, meta).unwrap_or_else(|| meta.id.clone());
+    alinery_core::remove_chat_worktree_path(repo, &owner, &path)?;
+    stamp_chat(repo, &meta.id, |value| value["worktree"] = json!(repo.to_string_lossy()))
 }
 
 fn find_successor(repo: &Path, predecessor_id: &str) -> Option<SessionMeta> {
@@ -218,9 +254,8 @@ fn find_successor(repo: &Path, predecessor_id: &str) -> Option<SessionMeta> {
 }
 
 pub(crate) fn resolve_resume_cwd(repo: &Path, predecessor: &SessionMeta) -> Result<PathBuf, String> {
-    let path = PathBuf::from(&predecessor.worktree);
-    if is_live_chat_worktree(repo, &predecessor.id, &path) {
-        return Ok(path);
+    if chat_worktree_owner(repo, predecessor).is_some() {
+        return Ok(PathBuf::from(&predecessor.worktree));
     }
     let checkout = repo.to_path_buf();
     if predecessor.worktree != checkout.to_string_lossy() {
@@ -229,7 +264,14 @@ pub(crate) fn resolve_resume_cwd(repo: &Path, predecessor: &SessionMeta) -> Resu
     Ok(checkout)
 }
 
+// ponytail: one process-wide lock, so resumes of any two threads queue behind each other; per-thread
+// locks if that wait ever shows.
+static RESUMING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub(crate) fn resume_chat_thread_in(repo: &Path, predecessor_id: &str, daemon: Option<&DaemonClient>) -> Result<SessionMeta, String> {
+    // Held from the successor lookup through the launch, so overlapping resumes of one thread
+    // (two clicks, a send racing the Resume button) mint and launch exactly one successor.
+    let _resuming = RESUMING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let predecessor = load_root_omp(repo, predecessor_id)?;
     if let Some(successor) = find_successor(repo, predecessor_id) {
         return Ok(successor);
@@ -314,8 +356,20 @@ fn chat_daemon(state: &AppState, repo: &Path) -> Result<DaemonClient, String> {
 }
 
 #[tauri::command]
-pub(crate) fn list_chat_threads(app: AppHandle, include_archived: bool) -> Result<Vec<ChatThread>, String> {
-    list_chat_threads_in(&known_chat_repos(&app)?, include_archived)
+pub(crate) async fn list_chat_threads(app: AppHandle, include_archived: bool) -> Result<Vec<ChatThread>, String> {
+    let repos = known_chat_repos(&app)?;
+    // A directory scan plus a git call per worktree thread: never on the main thread.
+    tauri::async_runtime::spawn_blocking(move || list_chat_threads_in(&repos, include_archived))
+        .await
+        .map_err(|error| format!("list chat threads: {error}"))?
+}
+
+/// One thread's name, so a title refresh reads one file instead of relisting every thread.
+#[tauri::command]
+pub(crate) fn chat_thread_name(app: AppHandle, state: State<'_, AppState>, repo_path: String, session_id: String) -> Result<Option<String>, String> {
+    let repo = owned_chat_repo(&app, &state, &repo_path)?;
+    load_root_omp(&repo, &session_id)?;
+    Ok(alinery_core::read_session_name(&repo, "", &session_id)?.map(|name| name.name))
 }
 
 #[tauri::command]
@@ -372,9 +426,12 @@ pub(crate) async fn archive_chat_thread(app: AppHandle, state: State<'_, AppStat
 }
 
 #[tauri::command]
-pub(crate) fn remove_chat_worktree(app: AppHandle, state: State<'_, AppState>, repo_path: String, session_id: String) -> Result<(), String> {
+pub(crate) async fn remove_chat_worktree(app: AppHandle, state: State<'_, AppState>, repo_path: String, session_id: String) -> Result<(), String> {
     let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    remove_chat_worktree_in(&repo, &session_id)
+    let daemon = state.daemon_for(&repo);
+    tauri::async_runtime::spawn_blocking(move || remove_chat_worktree_in(&repo, &session_id, daemon.as_ref()))
+        .await
+        .map_err(|error| format!("remove chat worktree: {error}"))?
 }
 
 #[tauri::command]

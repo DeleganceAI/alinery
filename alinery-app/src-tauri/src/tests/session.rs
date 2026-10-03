@@ -1249,10 +1249,97 @@ fn archive_chat_removes_only_its_worktree() {
         .unwrap(),
     )
     .unwrap();
-    remove_chat_worktree_in(&repo, id).unwrap();
+    remove_chat_worktree_in(&repo, id, None).unwrap();
     let removed: SessionMeta = serde_json::from_slice(&fs::read(session_meta_path(&repo, "", id)).unwrap()).unwrap();
     assert_eq!(removed.worktree, repo.to_string_lossy());
     assert!(!path.exists());
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn chat_worktree_follows_its_thread_through_resume_generations() {
+    let repo = init_git_test_repo("chat-wt-generations");
+    let path = alinery_core::add_chat_worktree(&repo, "s-a").unwrap();
+    let wt = path.to_string_lossy().into_owned();
+    plant_chat(&repo, "s-a", "omp", 1, false, true, &wt, "tok-a", Some(1), Some(2), None);
+    plant_chat(&repo, "s-b", "omp", 2, false, true, &wt, "tok-b", Some(3), Some(4), Some("s-a"));
+    plant_chat(&repo, "s-c", "omp", 3, false, false, &wt, "tok-c", Some(5), Some(6), Some("s-b"));
+    // Off the chain: naming the same directory does not make a thread its owner.
+    plant_chat(&repo, "s-x", "omp", 4, false, false, &wt, "", Some(5), Some(6), None);
+    let meta = |id: &str| serde_json::from_slice::<SessionMeta>(&fs::read(session_meta_path(&repo, "", id)).unwrap()).unwrap();
+    let threads = list_chat_threads_in(std::slice::from_ref(&repo), false).unwrap();
+    let third = threads.iter().find(|thread| thread.session.id == "s-c").unwrap();
+    assert!(!third.checkout, "C still reports A's worktree");
+    assert_eq!(third.branch_label, "chat/s-a");
+    assert!(threads.iter().find(|thread| thread.session.id == "s-x").unwrap().checkout);
+    assert_eq!(
+        resolve_resume_cwd(&repo, &meta("s-c")).unwrap(),
+        path,
+        "a retained worktree carries into the next generation"
+    );
+    assert_eq!(meta("s-c").worktree, wt);
+    assert!(remove_chat_worktree_in(&repo, "s-x", None).is_err());
+    assert!(path.is_dir());
+    remove_chat_worktree_in(&repo, "s-c", None).unwrap();
+    assert!(!path.exists());
+    assert_eq!(meta("s-c").worktree, repo.to_string_lossy());
+    assert_eq!(
+        resolve_resume_cwd(&repo, &meta("s-c")).unwrap(),
+        repo,
+        "after an intentional removal the next generation opens in the checkout"
+    );
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn remove_chat_worktree_refuses_a_thread_that_may_still_be_running() {
+    let repo = init_git_test_repo("chat-wt-live");
+    let path = alinery_core::add_chat_worktree(&repo, "s-live").unwrap();
+    plant_chat(&repo, "s-live", "omp", 1, false, false, &path.to_string_lossy(), "tok", Some(1), None, None);
+    assert_eq!(remove_chat_worktree_in(&repo, "s-live", None).unwrap_err(), "daemon not connected");
+    assert!(path.is_dir());
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn overlapping_resumes_of_one_thread_mint_and_launch_one_successor() {
+    use std::os::unix::net::UnixListener;
+    let repo = init_git_test_repo("chat-resume-race");
+    plant_chat(&repo, "s-pred", "omp", 1, false, true, &repo.to_string_lossy(), "tok", Some(1), Some(2), None);
+    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let socket = std::path::PathBuf::from(format!("/tmp/ao-chat-race-{n}.sock"));
+    let listener = UnixListener::bind(&socket).unwrap();
+    let daemon_repo = repo.clone();
+    // One mint and one launch, then the listener closes: a second mint or launch has nowhere to go.
+    let daemon = std::thread::spawn(move || {
+        let mut ops = Vec::new();
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request: serde_json::Value = serde_json::from_str(&crate::read_socket_line(&mut stream).unwrap()).unwrap();
+            ops.push(request["op"].as_str().unwrap_or_default().to_string());
+            let reply = if request["op"] == "create_execution_session" {
+                // Slow enough that the second resume arrives while the first is mid-flight.
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                plant_chat(&daemon_repo, "s-succ", "omp", 2, false, false, "", "", None, None, None);
+                let session: serde_json::Value = serde_json::from_slice(&fs::read(session_meta_path(&daemon_repo, "", "s-succ")).unwrap()).unwrap();
+                serde_json::json!({"session": session, "execution": null, "start": "not_requested", "errors": []})
+            } else {
+                serde_json::json!({"ok": true})
+            };
+            writeln!(stream, "{reply}").unwrap();
+        }
+        ops
+    });
+    let client = alinery_core::DaemonClient { socket_path: socket.clone() };
+    let (first, second) = std::thread::scope(|scope| {
+        let first = scope.spawn(|| resume_chat_thread_in(&repo, "s-pred", Some(&client)));
+        let second = scope.spawn(|| resume_chat_thread_in(&repo, "s-pred", Some(&client)));
+        (first.join().unwrap(), second.join().unwrap())
+    });
+    assert_eq!(first.unwrap().id, "s-succ");
+    assert_eq!(second.unwrap().id, "s-succ");
+    assert_eq!(daemon.join().unwrap(), ["create_execution_session", "resume"]);
+    let _ = fs::remove_file(socket);
     let _ = fs::remove_dir_all(repo);
 }
 

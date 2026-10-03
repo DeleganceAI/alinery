@@ -7,7 +7,7 @@ import { type ChatPrefs, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
 import { askConfirm, confirmDanger } from "../confirm";
 import { mockIpc } from "../test/mockIpc";
 import type { ChatThread, SessionMeta } from "../types";
-import { ChatView } from "./ChatView";
+import { ChatView, repoLabel } from "./ChatView";
 
 vi.mock("../confirm", () => ({
   confirmDanger: vi.fn(async () => true),
@@ -29,6 +29,8 @@ const mocks = vi.hoisted(() => ({
   readChatOmp: vi.fn(),
   openUrl: vi.fn(),
   sessionListStatuses: vi.fn(),
+  chatThreadName: vi.fn(),
+  startChatThread: vi.fn(),
 }));
 
 vi.mock("../ipc", () =>
@@ -46,6 +48,8 @@ vi.mock("../ipc", () =>
     readChatOmp: mocks.readChatOmp,
     openUrl: mocks.openUrl,
     sessionListStatuses: mocks.sessionListStatuses,
+    chatThreadName: mocks.chatThreadName,
+    startChatThread: mocks.startChatThread,
   }),
 );
 function chat(visibility: ChatPrefs = DEFAULT_CHAT_VISIBILITY) {
@@ -81,7 +85,7 @@ function thread(id: string, extra: Partial<ChatThread> = {}): ChatThread {
 }
 
 /** A live OMP chat as the daemon reports it; `unknown` is a process that has not printed `ready` yet. */
-function observed(agent: "unknown" | "idle" | "busy", process: "alive" | "exited" = "alive", transport?: "pty" | "rpc") {
+function observed(agent: "unknown" | "idle" | "busy" | "waiting_for_input", process: "alive" | "exited" = "alive", transport?: "pty" | "rpc") {
   return {
     transport,
     lifecycle: { state: process === "alive" ? "live" : "live_exited" },
@@ -121,7 +125,14 @@ beforeEach(() => {
   mocks.archiveChatThread.mockResolvedValue(undefined);
   mocks.setChatPinned.mockReset().mockResolvedValue(undefined);
   mocks.listChatThreads.mockResolvedValue([]);
+  mocks.chatThreadName.mockResolvedValue(null);
 });
+
+/** A rail row's name is the thread label, then its status: "Chat s-live, Idle". */
+const threadRow = (id: string) => new RegExp(`^Chat ${id}(,|$)`);
+const link = () => screen.getByTestId("chat-view").dataset.link;
+/** The open thread's status, in the title bar (the rail row repeats it). */
+const titleBar = () => within(document.querySelector(".chat-titlebar") as HTMLElement);
 
 describe("ChatView", () => {
   it("asks for a repo and leaves the worktree checkbox off", async () => {
@@ -139,9 +150,10 @@ describe("ChatView", () => {
     mocks.listChatThreads.mockResolvedValue([row]);
     vi.mocked(confirmDanger).mockResolvedValue(true);
     render(chat());
-    fireEvent.click(await screen.findByRole("button", { name: "Chat s-checko" }));
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-checko") }));
     fireEvent.click(screen.getByRole("button", { name: "Archive" }));
-    await waitFor(() => expect(confirmDanger).toHaveBeenCalledWith("Archive chat", expect.stringContaining("not deleted"), "Archive"));
+    await waitFor(() => expect(confirmDanger).toHaveBeenCalledWith("Archive chat", expect.stringContaining("checkout is not touched"), "Archive"));
+    expect(String(vi.mocked(confirmDanger).mock.calls[0]?.[1])).toContain("Archive “Chat s-checko” in repo.");
     await waitFor(() => expect(mocks.archiveChatThread).toHaveBeenCalledWith("/repo", "s-checkout", false));
     expect(String(vi.mocked(confirmDanger).mock.calls[0]?.[1])).not.toContain("delete the repo");
   });
@@ -151,9 +163,11 @@ describe("ChatView", () => {
     mocks.listChatThreads.mockResolvedValue([row]);
     vi.mocked(askConfirm).mockResolvedValueOnce("archive");
     render(chat());
-    fireEvent.click(await screen.findByRole("button", { name: "Chat s-wt" }));
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-wt") }));
     fireEvent.click(screen.getByRole("button", { name: "Archive" }));
-    await waitFor(() => expect(askConfirm).toHaveBeenCalledWith(expect.objectContaining({ defaultKey: "archive" })));
+    await waitFor(() => expect(askConfirm).toHaveBeenCalled());
+    // Enter on the opened dialog is Cancel: no default on a choice that removes or stops work.
+    expect(vi.mocked(askConfirm).mock.calls[0]?.[0].defaultKey).toBeUndefined();
     await waitFor(() => expect(mocks.archiveChatThread).toHaveBeenCalledWith("/repo", "s-wt", false));
 
     vi.mocked(askConfirm).mockResolvedValueOnce("remove");
@@ -206,7 +220,7 @@ describe("ChatView", () => {
     mocks.listChatThreads.mockResolvedValue([open, other]);
     vi.mocked(confirmDanger).mockResolvedValue(true);
     render(chat());
-    fireEvent.click(await screen.findByRole("button", { name: "Chat s-open" }));
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-open") }));
     fireEvent.click(screen.getByRole("button", { name: "Archive Chat s-other" }));
     await waitFor(() => expect(mocks.archiveChatThread).toHaveBeenCalledWith("/repo", "s-other", false));
     expect(mocks.archiveChatThread).not.toHaveBeenCalledWith("/repo", "s-open", expect.anything());
@@ -228,9 +242,10 @@ describe("ChatView", () => {
     mocks.listChatThreads.mockResolvedValue([row]);
     mocks.chatSessionStatus.mockResolvedValue(observed("unknown"));
     render(chat());
-    fireEvent.click(await screen.findByRole("button", { name: "Chat s-new" }));
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-new") }));
     await waitFor(() => expect(mocks.chatSessionStatus).toHaveBeenCalled());
-    expect(await screen.findByText("Idle")).toBeTruthy();
+    expect(await titleBar().findByText("Idle")).toBeTruthy();
+    await waitFor(() => expect(link()).toBe("ready"));
     expect(screen.queryByText("Working…")).toBeNull();
     expect(screen.queryByRole("button", { name: "Abort turn" })).toBeNull();
     fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: "hello" } });
@@ -247,11 +262,11 @@ describe("ChatView", () => {
       mocks.listChatThreads.mockResolvedValue([row]);
       mocks.chatSessionStatus.mockResolvedValueOnce(observed("busy")).mockResolvedValue(observed("idle"));
       render(chat());
-      fireEvent.click(await screen.findByRole("button", { name: "Chat s-live" }));
+      fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
       expect(await screen.findByRole("button", { name: "Abort turn" })).toBeTruthy();
       await vi.advanceTimersByTimeAsync(1500);
       await waitFor(() => expect(screen.queryByRole("button", { name: "Abort turn" })).toBeNull());
-      expect(screen.getByText("Idle")).toBeTruthy();
+      expect(titleBar().getByText("Idle")).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }
@@ -262,7 +277,7 @@ describe("ChatView", () => {
     mocks.listChatThreads.mockResolvedValue([row]);
     mocks.chatSessionStatus.mockResolvedValue(observed("busy"));
     render(chat());
-    fireEvent.click(await screen.findByRole("button", { name: "Chat s-live" }));
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
     await screen.findByRole("button", { name: "Abort turn" });
     const field = screen.getByLabelText("Send after this turn…");
 
@@ -280,7 +295,7 @@ describe("ChatView", () => {
     mocks.listChatThreads.mockResolvedValue([row]);
     mocks.chatSessionStatus.mockResolvedValue(observed("busy"));
     render(chat());
-    fireEvent.click(await screen.findByRole("button", { name: "Chat s-live" }));
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
     fireEvent.click(await screen.findByRole("button", { name: "Abort turn" }));
     await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "abort" })));
   });
@@ -293,9 +308,10 @@ describe("ChatView", () => {
     mocks.listChatThreads.mockResolvedValue([row]);
     mocks.chatSessionStatus.mockResolvedValue(status);
     const { rerender } = render(chat());
-    fireEvent.click(await screen.findByRole("button", { name: "Chat s-live" }));
-    // The seven handshake writes land before any send in these tests.
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
+    // The seven handshake writes land, and the link is ready, before any send in these tests.
     await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledTimes(7));
+    await waitFor(() => expect(link()).toBe("ready"));
     return { rerender, emit: (event: object) => act(() => onLine(JSON.stringify(event))) };
   }
 
@@ -327,13 +343,15 @@ describe("ChatView", () => {
     mocks.chatRpcWrite.mockRejectedValueOnce(new Error("boom"));
     sendIdle("one");
     expect(await screen.findByText("boom")).toBeTruthy();
+    expect((screen.getByLabelText("Message or /command") as HTMLTextAreaElement).value).toBe("one");
+    expect(screen.queryByText("one", { selector: ".chat-journal *" })).toBeNull();
     sendIdle("two");
     await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "prompt", message: "two" })));
   });
 
   it("does not show a turn as running once OMP has exited", async () => {
     await openLive(observed("busy", "exited"));
-    expect(await screen.findByText("Exited")).toBeTruthy();
+    expect(await titleBar().findByText("Exited")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Abort turn" })).toBeNull();
     fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: "hello" } });
     expect(screen.queryByRole("button", { name: "Send now" })).toBeNull();
@@ -354,8 +372,9 @@ describe("ChatView", () => {
     const field = await screen.findByLabelText("Send after this turn…");
     fireEvent.change(field, { target: { value: "later" } });
     fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "follow_up", message: "later" })));
     fireEvent.change(field, { target: { value: "now" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Send now" }));
     await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "abort_and_prompt", message: "now" })));
     emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text: "now" }] } });
     emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text: "later" }] } });
@@ -415,19 +434,26 @@ describe("ChatView", () => {
     expect(within(menu).getByRole("option", { name: /\/compact/ })).toBeTruthy();
   });
 
-  it("marks a running rail thread with the orb and an idle live one with a dot", async () => {
+  it("marks rail threads with the shared status treatments for what was observed", async () => {
     const live = (id: string) => thread(id, { session: meta(id, { started_at: 1, ended_at: null, archived: false }) });
-    mocks.listChatThreads.mockResolvedValue([live("s-run"), live("s-wait")]);
-    mocks.sessionListStatuses.mockResolvedValue({ "/repo::s-run": observed("busy"), "/repo::s-wait": observed("idle") });
+    mocks.listChatThreads.mockResolvedValue([live("s-run"), live("s-idle"), live("s-ask"), thread("s-done")]);
+    mocks.sessionListStatuses.mockResolvedValue({
+      "/repo::s-run": observed("busy"),
+      "/repo::s-idle": observed("idle"),
+      "/repo::s-ask": observed("waiting_for_input"),
+    });
     render(chat());
-    const running = await screen.findByRole("button", { name: "Chat s-run" });
-    const waiting = screen.getByRole("button", { name: "Chat s-wait" });
-    await waitFor(() => expect(running.title).toBe("Working"));
-    expect(running.querySelector(".chat-thread-state .ind-orb")).not.toBeNull();
-    expect(running.querySelector(".chat-thread-state .ind-dot")).toBeNull();
-    expect(waiting.title).toBe("Idle");
-    expect(waiting.querySelector(".chat-thread-state .ind-dot")).not.toBeNull();
-    expect(waiting.querySelector(".chat-thread-state .ind-orb")).toBeNull();
+    const running = await screen.findByRole("button", { name: "Chat s-run, Running" });
+    expect(running.querySelector(".ind-orb")).not.toBeNull();
+    expect(within(running).getByText("Running")).toBeTruthy();
+    const idle = screen.getByRole("button", { name: "Chat s-idle, Idle" });
+    expect(idle.querySelector(".ind-orb")).toBeNull();
+    // Blocked on a person is a chip, never the moving orb.
+    const asking = screen.getByRole("button", { name: "Chat s-ask, Needs input" });
+    expect(asking.querySelector(".statusdot-waiting_for_input")).not.toBeNull();
+    expect(asking.querySelector(".ind-orb")).toBeNull();
+    // An ended thread keeps a marker.
+    expect(within(screen.getByRole("button", { name: "Chat s-done, Exited" })).getByText("Exited")).toBeTruthy();
   });
 
   it("renders a subagent row when a subagent lifecycle event arrives", async () => {
@@ -438,60 +464,65 @@ describe("ChatView", () => {
 
   const liveMeta = { started_at: 1, ended_at: null, archived: false };
 
-  it("re-lists threads 3s after a turn ends so the new title shows", async () => {
+  it("re-reads the open thread's name 3s after a turn ends and re-lists once it changes", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       mocks.listChatThreads
         .mockResolvedValueOnce([thread("s-live", { session: meta("s-live", liveMeta) })])
         .mockResolvedValue([thread("s-live", { name: "Fix the build", session: meta("s-live", liveMeta) })]);
       mocks.chatSessionStatus.mockResolvedValueOnce(observed("busy")).mockResolvedValue(observed("idle"));
+      mocks.chatThreadName.mockResolvedValue("Fix the build");
       render(chat());
-      fireEvent.click(await screen.findByRole("button", { name: "Chat s-live" }));
+      fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
       await screen.findByRole("button", { name: "Abort turn" });
       await vi.advanceTimersByTimeAsync(1500);
       await waitFor(() => expect(screen.queryByRole("button", { name: "Abort turn" })).toBeNull());
-      expect(mocks.listChatThreads).toHaveBeenCalledTimes(1);
+      expect(mocks.chatThreadName).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(3000);
-      expect(mocks.listChatThreads).toHaveBeenCalledTimes(2);
+      expect(mocks.chatThreadName).toHaveBeenCalledWith("/repo", "s-live");
+      await waitFor(() => expect(mocks.listChatThreads).toHaveBeenCalledTimes(2));
       expect(await screen.findByRole("heading", { name: "Fix the build" })).toBeTruthy();
       // The name changed, so the polling stops.
       await vi.advanceTimersByTimeAsync(12000);
+      expect(mocks.chatThreadName).toHaveBeenCalledTimes(1);
       expect(mocks.listChatThreads).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("keeps checking every 3s for up to a minute when the title lands late", async () => {
+  it("keeps reading the name every 3s for up to a minute when the title lands late, without re-listing", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       mocks.listChatThreads.mockResolvedValue([thread("s-live", { session: meta("s-live", liveMeta) })]);
       mocks.chatSessionStatus.mockResolvedValueOnce(observed("busy")).mockResolvedValue(observed("idle"));
       render(chat());
-      fireEvent.click(await screen.findByRole("button", { name: "Chat s-live" }));
+      fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
       await screen.findByRole("button", { name: "Abort turn" });
       await vi.advanceTimersByTimeAsync(1500);
       await waitFor(() => expect(screen.queryByRole("button", { name: "Abort turn" })).toBeNull());
       await vi.advanceTimersByTimeAsync(9000);
-      expect(mocks.listChatThreads).toHaveBeenCalledTimes(4);
+      expect(mocks.chatThreadName).toHaveBeenCalledTimes(3);
       await vi.advanceTimersByTimeAsync(51000);
-      expect(mocks.listChatThreads).toHaveBeenCalledTimes(21);
+      expect(mocks.chatThreadName).toHaveBeenCalledTimes(20);
       await vi.advanceTimersByTimeAsync(30000);
-      expect(mocks.listChatThreads).toHaveBeenCalledTimes(21);
+      expect(mocks.chatThreadName).toHaveBeenCalledTimes(20);
+      expect(mocks.listChatThreads).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("does not re-list threads when no turn ran", async () => {
+  it("does not read the name when no turn ran", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       mocks.listChatThreads.mockResolvedValue([thread("s-live", { session: meta("s-live", liveMeta) })]);
       mocks.chatSessionStatus.mockResolvedValue(observed("idle"));
       render(chat());
-      fireEvent.click(await screen.findByRole("button", { name: "Chat s-live" }));
-      await screen.findByText("Idle");
+      fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
+      await titleBar().findByText("Idle");
       await vi.advanceTimersByTimeAsync(12000);
+      expect(mocks.chatThreadName).not.toHaveBeenCalled();
       expect(mocks.listChatThreads).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
@@ -642,9 +673,9 @@ describe("ChatView", () => {
       return journalPage(0, [["b1", "b only"]]);
     });
     render(chat());
-    fireEvent.click(await screen.findByRole("button", { name: "Chat s-a" }));
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-a") }));
     await waitFor(() => expect(mocks.readChatOmp).toHaveBeenCalledWith({ repoPath: "/repo", id: "s-a", end: 500 }));
-    fireEvent.click(screen.getByRole("button", { name: "Chat s-b" }));
+    fireEvent.click(screen.getByRole("button", { name: threadRow("s-b") }));
     await screen.findByText("b only");
     await act(async () => {
       landStale(journalPage(0, [["a1", "a stale older"]]));
@@ -652,5 +683,169 @@ describe("ChatView", () => {
     });
     expect(screen.queryByText("a stale older")).toBeNull();
     expect(screen.getByText("b only")).toBeTruthy();
+  });
+
+  const live = (id: string, extra: Partial<ChatThread> = {}) => thread(id, { session: meta(id, liveMeta), ...extra });
+  const payloads = () => mocks.chatRpcWrite.mock.calls.map(([repo, id, payload]) => ({ ...(payload as { type?: string; message?: string }), repo, thread: id }));
+
+  it("hides one thread's rows and approvals while the next loads, and never routes a send on the old thread's turn", async () => {
+    mocks.listChatThreads.mockResolvedValue([live("s-a"), live("s-b")]);
+    mocks.chatSessionStatus.mockImplementation(async (_repo: string, id: string) => observed(id === "s-a" ? "busy" : "idle"));
+    const lines: Record<string, (line: string) => void> = {};
+    mocks.chatRpcAttach.mockImplementation(async (args: { id: string; onLine: (line: string) => void }) => {
+      lines[args.id] = args.onLine;
+    });
+    let landB: (buffer: ArrayBuffer) => void = () => {};
+    mocks.readChatOmp.mockImplementation((args: { id: string }) =>
+      args.id === "s-b"
+        ? new Promise<ArrayBuffer>((resolve) => {
+            landB = resolve;
+          })
+        : Promise.resolve(journalPage(0, [["a1", "a question"]])),
+    );
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-a") }));
+    await waitFor(() => expect(lines["s-a"]).toBeDefined());
+    act(() => lines["s-a"]?.(JSON.stringify(uiConfirm)));
+    expect(await screen.findByRole("button", { name: "Allow" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: threadRow("s-b") }));
+    // B's history has not landed: nothing of A's is left on screen to act on.
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(screen.queryByText("a question")).toBeNull();
+    sendIdle("hello");
+    expect(await screen.findByText(/Still connecting/)).toBeTruthy();
+    expect(payloads().filter((write) => write.message === "hello")).toHaveLength(0);
+
+    await act(async () => landB(journalPage(0, [["b1", "b question"]])));
+    await waitFor(() => expect(link()).toBe("ready"));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-b", expect.objectContaining({ type: "prompt", message: "hello" })));
+    expect(payloads().filter((write) => write.message === "hello")).toEqual([expect.objectContaining({ thread: "s-b", type: "prompt" })]);
+  });
+
+  it("sends a resumed thread's message to the successor once its handshake is done", async () => {
+    mocks.listChatThreads.mockResolvedValueOnce([thread("s-old")]).mockResolvedValue([live("s-next")]);
+    mocks.resumeChatThread.mockResolvedValue(meta("s-next", liveMeta));
+    mocks.chatSessionStatus.mockResolvedValue(observed("idle"));
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-old") }));
+    await waitFor(() => expect(link()).toBe("offline"));
+    sendIdle("hello");
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-next", expect.objectContaining({ type: "prompt", message: "hello" })));
+    const types = payloads().map((write) => write.type);
+    expect(types.indexOf("prompt")).toBeGreaterThan(types.indexOf("get_available_models"));
+    expect(await screen.findByText("hello", { selector: ".chat-journal *" })).toBeTruthy();
+    // The turn it started is running now, so the composer offers to queue.
+    expect((screen.getByLabelText("Send after this turn…") as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("never delivers a resumed thread's message to the thread picked while the successor connects", async () => {
+    const other = live("s-other", { repo_path: "/other", session: meta("s-other", liveMeta) });
+    mocks.listChatThreads.mockResolvedValueOnce([thread("s-old"), other]).mockResolvedValue([live("s-next"), other]);
+    mocks.resumeChatThread.mockResolvedValue(meta("s-next", liveMeta));
+    mocks.chatSessionStatus.mockResolvedValue(observed("idle"));
+    let attachNext: () => void = () => {};
+    mocks.chatRpcAttach.mockImplementation((args: { id: string }) =>
+      args.id === "s-next"
+        ? new Promise<void>((resolve) => {
+            attachNext = resolve;
+          })
+        : Promise.resolve(),
+    );
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-old") }));
+    sendIdle("hello");
+    await waitFor(() => expect(mocks.chatRpcAttach).toHaveBeenCalledWith(expect.objectContaining({ id: "s-next" })));
+    fireEvent.click(screen.getByRole("button", { name: threadRow("s-other") }));
+    await act(async () => attachNext());
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/other", "s-other", expect.objectContaining({ type: "get_available_models" })));
+    expect(payloads().filter((write) => write.message === "hello")).toHaveLength(0);
+    // The text stayed with the thread it was written for, unsent.
+    fireEvent.click(screen.getByRole("button", { name: threadRow("s-next") }));
+    expect((screen.getByLabelText("Message or /command") as HTMLTextAreaElement).value).toBe("hello");
+    expect(payloads().filter((write) => write.message === "hello")).toHaveLength(0);
+  });
+
+  it("starts a never-started thread on send and delivers the message after the new handshake", async () => {
+    mocks.listChatThreads.mockResolvedValueOnce([thread("s-fresh", { session: meta("s-fresh", { started_at: null, ended_at: null }) })]).mockResolvedValue([live("s-fresh")]);
+    mocks.startChatThread.mockResolvedValue({ session: meta("s-fresh", liveMeta), execution: null, start: "started", errors: [] });
+    mocks.chatSessionStatus.mockResolvedValue(observed("idle"));
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-fresh") }));
+    await waitFor(() => expect(link()).toBe("offline"));
+    expect(mocks.chatRpcAttach).not.toHaveBeenCalled();
+    sendIdle("hello");
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-fresh", expect.objectContaining({ type: "prompt", message: "hello" })));
+    expect(mocks.startChatThread).toHaveBeenCalledWith("/repo", "s-fresh");
+    expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(1);
+    const types = payloads().map((write) => write.type);
+    expect(types.indexOf("prompt")).toBeGreaterThan(types.indexOf("get_available_models"));
+  });
+
+  it("reads an ended thread's history without attaching or reporting a lost connection", async () => {
+    mocks.listChatThreads.mockResolvedValue([thread("s-done")]);
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-done") }));
+    await waitFor(() => expect(link()).toBe("offline"));
+    expect(mocks.chatRpcAttach).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Lost the connection/)).toBeNull();
+  });
+
+  it("shows a lost connection with its detail, sends nothing, and reconnects on request", async () => {
+    mocks.listChatThreads.mockResolvedValue([live("s-live")]);
+    mocks.chatSessionStatus.mockResolvedValue(observed("idle"));
+    mocks.chatRpcAttach.mockRejectedValueOnce("daemon not responding after 5s").mockResolvedValue(undefined);
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
+    expect(await screen.findByText(/Lost the connection to Ava/)).toBeTruthy();
+    expect(screen.getByText("daemon not responding after 5s")).toBeTruthy();
+    expect(titleBar().getByText("Disconnected")).toBeTruthy();
+    sendIdle("hello");
+    expect(await screen.findByText(/nothing was sent/)).toBeTruthy();
+    expect(mocks.chatRpcWrite).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    await waitFor(() => expect(link()).toBe("ready"));
+    expect(screen.queryByText(/Lost the connection/)).toBeNull();
+    expect((screen.getByLabelText("Message or /command") as HTMLTextAreaElement).value).toBe("hello");
+  });
+
+  it("says a running thread's archive stops it, and leaves Enter on Cancel", async () => {
+    mocks.listChatThreads.mockResolvedValue([live("s-live")]);
+    mocks.chatSessionStatus.mockResolvedValue(observed("idle"));
+    vi.mocked(confirmDanger).mockResolvedValue(false);
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
+    await titleBar().findByText("Idle");
+    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+    await waitFor(() => expect(confirmDanger).toHaveBeenCalledWith("Archive chat", expect.stringContaining("still running, and archiving stops it"), "Stop and archive"));
+    expect(mocks.archiveChatThread).not.toHaveBeenCalled();
+  });
+
+  it("will not remove a running thread's worktree on its own", async () => {
+    const worktree = "/repo/.alinery/chat-worktrees/s-wt";
+    mocks.listChatThreads.mockResolvedValue([live("s-wt", { checkout: false, session: meta("s-wt", { ...liveMeta, worktree }) })]);
+    mocks.chatSessionStatus.mockResolvedValue(observed("idle"));
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-wt") }));
+    const remove = (await screen.findByRole("button", { name: "Remove worktree" })) as HTMLButtonElement;
+    await waitFor(() => expect(remove.disabled).toBe(true));
+  });
+
+  it("tells same-named repositories apart in the new-thread dialog and shows the full path", async () => {
+    render(<ChatView knownRepos={["/a/work/alinery", "/a/oss/alinery"]} terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />);
+    fireEvent.click(screen.getByRole("button", { name: "New thread" }));
+    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    expect(Array.from(select.options).map((option) => option.textContent)).toEqual(["work/alinery", "oss/alinery"]);
+    expect(screen.getByText("/a/work/alinery")).toBeTruthy();
+  });
+});
+
+describe("repoLabel", () => {
+  it("keeps a unique basename and widens duplicates only until they differ", () => {
+    expect(repoLabel("/a/work/alinery", ["/a/work/alinery", "/b/notes"])).toBe("alinery");
+    expect(repoLabel("/a/work/alinery", ["/a/work/alinery", "/a/oss/alinery"])).toBe("work/alinery");
+    expect(repoLabel("/x/work/alinery", ["/x/work/alinery", "/y/work/alinery"])).toBe("x/work/alinery");
   });
 });

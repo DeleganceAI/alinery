@@ -272,6 +272,7 @@ export const discardSubtask = (taskSlug: string, managerSessionId: string) => in
 
 export const renameSession = (a: { repoPath: string; taskSlug: string; sessionId: string; name: string }) => invoke<SessionName>("rename_session", a);
 export const listChatThreads = (includeArchived: boolean) => invoke<ChatThread[]>("list_chat_threads", { includeArchived });
+export const chatThreadName = (repoPath: string, sessionId: string) => invoke<string | null>("chat_thread_name", { repoPath, sessionId });
 export const createChatThread = (a: { repoPath: string; model?: string | null; createWorktree: boolean }) => invoke<CreateExecutionSessionReply>("create_chat_thread", a);
 export const startChatThread = (repoPath: string, sessionId: string) => invoke<CreateExecutionSessionReply>("start_chat_thread", { repoPath, sessionId });
 export const setChatPinned = (repoPath: string, sessionId: string, pinned: boolean) => invoke<void>("set_chat_pinned", { repoPath, sessionId, pinned });

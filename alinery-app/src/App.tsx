@@ -151,6 +151,7 @@ export default function App() {
   const [navInstant, setNavInstant] = useState(true);
   const playbooksReturnView = useRef<View | null>(null);
   const [playbooksVisited, setPlaybooksVisited] = useState(false);
+  const [chatVisited, setChatVisited] = useState(false);
   const [scope, setScope] = useState<RepoScope>("active");
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   // Repo open is the first moment we can ask whether this install can actually run an agent:
@@ -220,6 +221,9 @@ export default function App() {
   const gridViews = useMemo(() => normalizeGridViews(appConfig?.global?.grid_views), [appConfig?.global?.grid_views]);
   const showOriginalKanban = appConfig?.global?.experiments?.show_original_kanban ?? true;
   const showChat = appConfig?.global?.experiments?.show_chat ?? false;
+  useEffect(() => {
+    if (view.kind === "chat") setChatVisited(true);
+  }, [view.kind]);
   const repoKey = appConfig?.active_repo ? `${scope}:${appConfig.active_repo}:${appConfig.known_repos.join("|")}:${reloadNonce}` : "";
   const activeGridViewId = view.kind === "grid" && gridViews.some((gridView) => gridView.id === view.gridViewId) ? view.gridViewId : undefined;
   const [mountedGridViews, setMountedGridViews] = useState<{ repoKey: string; ids: string[] }>({ repoKey: "", ids: [] });
@@ -1290,6 +1294,18 @@ export default function App() {
                   <Playbooks repoPath={appConfig?.active_repo || undefined} onCreateTask={(reference) => openCreate(reference)} />
                 </div>
               )}
+              {/* Kept mounted once visited, like Playbooks: the open thread, per-thread drafts and the
+                reading position survive a trip to Tasks or Settings. Hidden, it stops polling. */}
+              {showChat && (chatVisited || view.kind === "chat") && (
+                <div className="view" hidden={view.kind !== "chat" || daemon.repo_busy}>
+                  <ChatView
+                    active={view.kind === "chat" && !daemon.repo_busy}
+                    knownRepos={appConfig?.known_repos ?? []}
+                    terminalFontSize={appearance.terminal_font_size}
+                    visibility={chatViewVisibility}
+                  />
+                </div>
+              )}
             </main>
             <HotkeyBar
               view={view.kind}
@@ -1441,11 +1457,6 @@ export default function App() {
                 registerNav={registerNav}
                 onCreate={() => openCreate()}
               />
-            </div>
-          )}
-          {view.kind === "chat" && (
-            <div className="view">
-              <ChatView knownRepos={appConfig.known_repos} terminalFontSize={appearance.terminal_font_size} visibility={chatViewVisibility} />
             </div>
           )}
           {view.kind === "sessions" && (

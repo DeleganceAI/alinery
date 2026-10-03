@@ -233,7 +233,7 @@ const { ipcMocks, ipcModule } = vi.hoisted(() => {
 
 vi.mock("./ipc", () => ipcModule);
 vi.mock("./tabMotion", () => {
-  const isPrimaryTab = (kind: string) => ["kanban", "list", "grid", "sessions", "notifications", "playbooks", "settings"].includes(kind);
+  const isPrimaryTab = (kind: string) => ["kanban", "list", "grid", "sessions", "chat", "notifications", "playbooks", "settings"].includes(kind);
   return {
     isPrimaryTab,
     primaryTabOf: (view: { kind: string; from?: unknown }) => {
@@ -337,6 +337,16 @@ vi.mock("./views/Grid", () => ({
         <button type="button" onClick={() => onOpen?.(archivedDraft)}>
           open archived draft
         </button>
+      </div>
+    );
+  },
+}));
+vi.mock("./views/ChatView", () => ({
+  ChatView: ({ active }: { active?: boolean }) => {
+    const [draft, setDraft] = useState("");
+    return (
+      <div data-testid="chat-view-mock" data-active={String(active)}>
+        <input aria-label="Chat draft" value={draft} onChange={(event) => setDraft(event.target.value)} />
       </div>
     );
   },
@@ -958,6 +968,22 @@ describe("session navigation acknowledgment", () => {
     expect(screen.getByRole("button", { name: /^Chat\d/ })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByText("Go to Chat")).toBeTruthy();
+  });
+
+  it("keeps the Chat view mounted, and paused, while another tab is open", async () => {
+    ipcMocks.readAppConfig.mockResolvedValue({
+      ...appConfig,
+      global: { ...appConfig.global, experiments: { show_original_kanban: true, show_chat: true } },
+    });
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /^Chat\d/ }));
+    fireEvent.change(await screen.findByLabelText("Chat draft"), { target: { value: "half a thought" } });
+    expect(screen.getByTestId("chat-view-mock").dataset.active).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
+    expect(screen.getByTestId("chat-view-mock").dataset.active).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: /^Chat\d/ }));
+    expect((screen.getByLabelText("Chat draft") as HTMLInputElement).value).toBe("half a thought");
+    expect(screen.getByTestId("chat-view-mock").dataset.active).toBe("true");
   });
 
   it("keeps a visited Grid mounted while navigating away and back", async () => {
