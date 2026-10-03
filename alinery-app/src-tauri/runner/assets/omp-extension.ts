@@ -531,8 +531,10 @@ function makeChatTitler(emitTitle: SessionNameEmitter) {
       if (bucket === 0 || bucket === titledBucket) return;
       inFlight = true;
       try {
-        const reply = await context.runEphemeralTurn({ promptText: CHAT_TITLE_PROMPT, tools: false });
-        const name = cleanChatTitle(reply.replyText);
+        // Some transports cannot drop their tool definitions; those refuse `tools: false`. The side turn
+        // never runs tools, so asking again with them in the request only risks an empty reply.
+        const reply = await context.runEphemeralTurn({ promptText: CHAT_TITLE_PROMPT, tools: false }).catch(() => context.runEphemeralTurn?.({ promptText: CHAT_TITLE_PROMPT }));
+        const name = cleanChatTitle(reply?.replyText ?? "");
         if (!name) return;
         await emitTitle({ type: "session_name_suggested", name });
         titledBucket = bucket;

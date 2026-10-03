@@ -267,20 +267,30 @@ export function ChatView({ knownRepos, terminalFontSize, visibility }: { knownRe
   }, [selectedId, selectedRepo, attachEpoch]);
 
   const activity = chatActivity(observation, transcript);
-  // OMP titles a thread a few seconds after a turn ends (the first message, then every 10th), so the
-  // rail and title bar pick the new name up from the list once the turn has settled.
+  // A thread is titled by its own model after a turn ends (the first message, then every 10th), and the
+  // reply can take a while on a slow or thinking model. So the list is re-read every 3s for up to a
+  // minute after each turn, stopping as soon as the open thread's name changes.
   const turnWasActive = useRef(false);
   useEffect(() => {
     if (activity.turnActive) {
       turnWasActive.current = true;
       return;
     }
-    if (!turnWasActive.current) return;
+    if (!turnWasActive.current || !selectedKey) return;
     turnWasActive.current = false;
-    const timers = [3000, 9000].map((delay) => window.setTimeout(() => void reload().catch(() => {}), delay));
-    return () => {
-      for (const timer of timers) window.clearTimeout(timer);
-    };
+    const nameBefore = selected?.name ?? null;
+    let ticks = 0;
+    const timer = window.setInterval(() => {
+      ticks += 1;
+      reload()
+        .then((rows) => {
+          const row = rows.find((candidate) => `${candidate.repo_path}:${candidate.session.id}` === selectedKey);
+          if (row && (row.name ?? null) !== nameBefore) window.clearInterval(timer);
+        })
+        .catch(() => {});
+      if (ticks >= 20) window.clearInterval(timer);
+    }, 3000);
+    return () => window.clearInterval(timer);
   }, [activity.turnActive]);
   const statusKind = activity.kind;
   const processLive = observation?.state?.process.state === "alive";
@@ -363,14 +373,13 @@ export function ChatView({ knownRepos, terminalFontSize, visibility }: { knownRe
     }
   }
 
-  async function archiveSelected() {
-    if (!selected) return;
-    const repo = selected.repo_path;
-    const id = selected.session.id;
+  async function archiveThread(thread: ChatThread) {
+    const repo = thread.repo_path;
+    const id = thread.session.id;
     const base = repoBase(repo);
     setError("");
     try {
-      if (selected.checkout) {
+      if (thread.checkout) {
         const accepted = await confirmDanger(
           "Archive chat",
           `This stops the live Ava process for ${base} if it is running. The conversation is kept and can be resumed. The repository checkout is not deleted.`,
@@ -383,7 +392,7 @@ export function ChatView({ knownRepos, terminalFontSize, visibility }: { knownRe
           title: "Archive chat",
           cancelKey: "cancel",
           defaultKey: "archive",
-          body: `This stops the live Ava process for ${base} if it is running. The conversation is kept and can be resumed either way. Worktree: ${selected.session.worktree}. Archive keeps the worktree. Archive and remove worktree runs git worktree remove --force and discards uncommitted work in that worktree only. After remove, resume opens in the repository checkout on the branch checked out at resume time, not on the deleted worktree's branch.`,
+          body: `This stops the live Ava process for ${base} if it is running. The conversation is kept and can be resumed either way. Worktree: ${thread.session.worktree}. Archive keeps the worktree. Archive and remove worktree runs git worktree remove --force and discards uncommitted work in that worktree only. After remove, resume opens in the repository checkout on the branch checked out at resume time, not on the deleted worktree's branch.`,
           choices: [
             { key: "archive", label: "Archive" },
             { key: "remove", label: "Archive and remove worktree", tone: "danger" },
@@ -397,6 +406,13 @@ export function ChatView({ knownRepos, terminalFontSize, visibility }: { knownRe
     } catch (cause) {
       setError(errorMessage(cause));
     }
+  }
+
+  function togglePin(thread: ChatThread) {
+    ipc
+      .setChatPinned(thread.repo_path, thread.session.id, !thread.session.pinned)
+      .then(() => reload())
+      .catch((cause: unknown) => setError(String(cause)));
   }
 
   async function removeWorktree() {
@@ -598,7 +614,28 @@ export function ChatView({ knownRepos, terminalFontSize, visibility }: { knownRe
                               <button type="button" className="btn ghost small chat-thread-resume" onClick={() => resume(thread)}>
                                 Resume
                               </button>
-                            ) : null}
+                            ) : (
+                              <span className="chat-thread-actions">
+                                <button
+                                  type="button"
+                                  className={`chat-icon-btn${thread.session.pinned ? " on" : ""}`}
+                                  aria-label={`${thread.session.pinned ? "Unpin" : "Pin"} ${threadLabel(thread)}`}
+                                  title={thread.session.pinned ? "Unpin" : "Pin"}
+                                  onClick={() => togglePin(thread)}
+                                >
+                                  {thread.session.pinned ? <PinOff size={13} aria-hidden="true" /> : <Pin size={13} aria-hidden="true" />}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="chat-icon-btn"
+                                  aria-label={`Archive ${threadLabel(thread)}`}
+                                  title="Archive"
+                                  onClick={() => void archiveThread(thread)}
+                                >
+                                  <Archive size={13} aria-hidden="true" />
+                                </button>
+                              </span>
+                            )}
                           </li>
                         );
                       })}
@@ -693,12 +730,7 @@ export function ChatView({ knownRepos, terminalFontSize, visibility }: { knownRe
                   className={`chat-icon-btn${selected.session.pinned ? " on" : ""}`}
                   aria-label={selected.session.pinned ? "Unpin" : "Pin"}
                   title={selected.session.pinned ? "Unpin" : "Pin"}
-                  onClick={() => {
-                    ipc
-                      .setChatPinned(selected.repo_path, selected.session.id, !selected.session.pinned)
-                      .then(() => reload())
-                      .catch((cause: unknown) => setError(String(cause)));
-                  }}
+                  onClick={() => togglePin(selected)}
                 >
                   {selected.session.pinned ? <PinOff size={16} aria-hidden="true" /> : <Pin size={16} aria-hidden="true" />}
                 </button>
@@ -720,7 +752,7 @@ export function ChatView({ knownRepos, terminalFontSize, visibility }: { knownRe
                     {inTerminal ? <MessageSquare size={16} aria-hidden="true" /> : <SquareTerminal size={16} aria-hidden="true" />}
                   </button>
                 ) : null}
-                <button type="button" className="chat-icon-btn" aria-label="Archive" title="Archive" onClick={archiveSelected}>
+                <button type="button" className="chat-icon-btn" aria-label="Archive" title="Archive" onClick={() => void archiveThread(selected)}>
                   <Archive size={16} aria-hidden="true" />
                 </button>
               </>

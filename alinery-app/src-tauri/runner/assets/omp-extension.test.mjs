@@ -1312,20 +1312,38 @@ describe("chat thread titles", () => {
     assert.deepEqual(titles, []);
   });
 
+  test("a model that refuses tools:false is asked again without it", async () => {
+    const { api, titles } = registerChatTitles();
+    const chat = makeChatContext(1);
+    const sideTurn = chat.context.runEphemeralTurn;
+    const requests = [];
+    chat.context.runEphemeralTurn = async (options) => {
+      requests.push(options.tools);
+      if (options.tools === false) throw new Error("model does not support tools: false");
+      return sideTurn(options);
+    };
+    await endTurn(api, chat);
+    assert.deepEqual(requests, [false, undefined]);
+    assert.deepEqual(titles, [{ type: "session_name_suggested", name: "Fix login bug" }]);
+  });
+
   test("a failed side turn is swallowed and retried at the next turn end", async () => {
     const { api, titles } = registerChatTitles();
     const chat = makeChatContext(1);
     const sideTurn = chat.context.runEphemeralTurn;
+    let failing = true;
     let attempts = 0;
     chat.context.runEphemeralTurn = async (options) => {
       attempts += 1;
-      if (attempts === 1) throw new Error("model unavailable");
+      if (failing) throw new Error("model unavailable");
       return sideTurn(options);
     };
     await endTurn(api, chat);
     assert.deepEqual(titles, []);
+    assert.equal(attempts, 2, "tools:false, then the plain request");
+    failing = false;
     await endTurn(api, chat);
-    assert.equal(attempts, 2);
+    assert.equal(attempts, 3);
     assert.deepEqual(titles, [{ type: "session_name_suggested", name: "Fix login bug" }]);
   });
 

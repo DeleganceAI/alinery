@@ -18,6 +18,7 @@ vi.mock("../SessionTerminal", () => ({ SessionTerminal: () => <div data-testid="
 const mocks = vi.hoisted(() => ({
   listChatThreads: vi.fn(),
   archiveChatThread: vi.fn(),
+  setChatPinned: vi.fn(),
   resumeChatThread: vi.fn(),
   createChatThread: vi.fn(),
   chatSessionStatus: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock("../ipc", () =>
   mockIpc({
     listChatThreads: mocks.listChatThreads,
     archiveChatThread: mocks.archiveChatThread,
+    setChatPinned: mocks.setChatPinned,
     resumeChatThread: mocks.resumeChatThread,
     createChatThread: mocks.createChatThread,
     chatSessionStatus: mocks.chatSessionStatus,
@@ -117,6 +119,7 @@ beforeEach(() => {
   mocks.openUrl.mockResolvedValue(undefined);
   mocks.sessionListStatuses.mockResolvedValue({});
   mocks.archiveChatThread.mockResolvedValue(undefined);
+  mocks.setChatPinned.mockReset().mockResolvedValue(undefined);
   mocks.listChatThreads.mockResolvedValue([]);
 });
 
@@ -181,6 +184,42 @@ describe("ChatView", () => {
     await waitFor(() => expect(mocks.listChatThreads).toHaveBeenCalledWith(true));
     fireEvent.click(await screen.findByRole("button", { name: "Resume" }));
     await waitFor(() => expect(mocks.resumeChatThread).toHaveBeenCalledWith("/repo", "s-arch"));
+  });
+
+  it("pins and unpins a thread from its own row without selecting it", async () => {
+    const plain = thread("s-plain");
+    const pinned = thread("s-pinned", { session: meta("s-pinned", { pinned: true }) });
+    mocks.listChatThreads.mockResolvedValue([plain, pinned]);
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: "Pin Chat s-plain" }));
+    await waitFor(() => expect(mocks.setChatPinned).toHaveBeenCalledWith("/repo", "s-plain", true));
+    fireEvent.click(screen.getByRole("button", { name: "Unpin Chat s-pinned" }));
+    await waitFor(() => expect(mocks.setChatPinned).toHaveBeenCalledWith("/repo", "s-pinned", false));
+    // The thread list is re-read so the row's icon and order follow, and nothing was opened.
+    await waitFor(() => expect(mocks.listChatThreads.mock.calls.length).toBeGreaterThan(2));
+    expect(screen.getByRole("heading", { name: "Ava" })).toBeTruthy();
+  });
+
+  it("archives the hovered thread, not the open one", async () => {
+    const open = thread("s-open");
+    const other = thread("s-other");
+    mocks.listChatThreads.mockResolvedValue([open, other]);
+    vi.mocked(confirmDanger).mockResolvedValue(true);
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: "Chat s-open" }));
+    fireEvent.click(screen.getByRole("button", { name: "Archive Chat s-other" }));
+    await waitFor(() => expect(mocks.archiveChatThread).toHaveBeenCalledWith("/repo", "s-other", false));
+    expect(mocks.archiveChatThread).not.toHaveBeenCalledWith("/repo", "s-open", expect.anything());
+  });
+
+  it("offers Resume instead of row actions on an archived thread", async () => {
+    const row = thread("s-arch", { session: meta("s-arch", { archived: true }) });
+    mocks.listChatThreads.mockImplementation(async (includeArchived: boolean) => (includeArchived ? [row] : []));
+    render(chat());
+    fireEvent.click(screen.getByRole("button", { name: "Show archived" }));
+    expect(await screen.findByRole("button", { name: "Resume" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Archive Chat s-arch" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Pin Chat s-arch" })).toBeNull();
   });
 
   it("opens a booting thread idle and sends its first message as a prompt", async () => {
@@ -399,7 +438,7 @@ describe("ChatView", () => {
 
   const liveMeta = { started_at: 1, ended_at: null, archived: false };
 
-  it("re-lists threads 3s after a turn ends so OMP's new title shows", async () => {
+  it("re-lists threads 3s after a turn ends so the new title shows", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       mocks.listChatThreads
@@ -415,12 +454,15 @@ describe("ChatView", () => {
       await vi.advanceTimersByTimeAsync(3000);
       expect(mocks.listChatThreads).toHaveBeenCalledTimes(2);
       expect(await screen.findByRole("heading", { name: "Fix the build" })).toBeTruthy();
+      // The name changed, so the polling stops.
+      await vi.advanceTimersByTimeAsync(12000);
+      expect(mocks.listChatThreads).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("lists once more at 9s for a title that lands late", async () => {
+  it("keeps checking every 3s for up to a minute when the title lands late", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       mocks.listChatThreads.mockResolvedValue([thread("s-live", { session: meta("s-live", liveMeta) })]);
@@ -431,7 +473,11 @@ describe("ChatView", () => {
       await vi.advanceTimersByTimeAsync(1500);
       await waitFor(() => expect(screen.queryByRole("button", { name: "Abort turn" })).toBeNull());
       await vi.advanceTimersByTimeAsync(9000);
-      expect(mocks.listChatThreads).toHaveBeenCalledTimes(3);
+      expect(mocks.listChatThreads).toHaveBeenCalledTimes(4);
+      await vi.advanceTimersByTimeAsync(51000);
+      expect(mocks.listChatThreads).toHaveBeenCalledTimes(21);
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(mocks.listChatThreads).toHaveBeenCalledTimes(21);
     } finally {
       vi.useRealTimers();
     }

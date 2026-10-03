@@ -4621,6 +4621,7 @@ dialog.modal::backdrop {
   list-style: none;
 }
 .chat-thread {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -4671,6 +4672,32 @@ dialog.modal::backdrop {
   flex: 0 0 auto;
   margin-left: auto;
   color: var(--accent);
+}
+/* Pin and Archive appear on the hovered (or keyboard-focused) row. The name gives up the space they
+   take instead of sitting under them, so a selected row's tint never shows a mismatched patch. */
+.chat-thread-actions {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: none;
+  gap: 2px;
+  transform: translateY(-50%);
+}
+.chat-thread-actions .chat-icon-btn {
+  width: 24px;
+  height: 24px;
+}
+.chat-thread:hover .chat-thread-actions,
+.chat-thread:focus-within .chat-thread-actions {
+  display: flex;
+}
+.chat-thread:hover .chat-thread-btn,
+.chat-thread:focus-within .chat-thread-btn {
+  padding-right: 58px;
+}
+.chat-thread:hover .chat-thread-pin,
+.chat-thread:focus-within .chat-thread-pin {
+  display: none;
 }
 /* Fixed slot so names line up whether a row shows the orb, the idle dot, or nothing. */
 .chat-thread-state {
