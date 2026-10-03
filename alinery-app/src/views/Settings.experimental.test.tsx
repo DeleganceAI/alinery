@@ -74,7 +74,7 @@ describe("Settings experimental features", () => {
         onAppearanceChange={() => {}}
         onGlobalSettingsChange={onGlobalSettingsChange}
         onNotificationsChange={() => {}}
-        initialSection="experimental"
+        initialSection="general"
       />,
     );
 

@@ -886,19 +886,7 @@ export type ReviewHandoffDraft = ReviewHandoffSource & {
   prompt_extra: string;
 };
 
-export type SettingsSectionKey =
-  | "general"
-  | "harness"
-  | "playbooks"
-  | "connections"
-  | "updates"
-  | "storage"
-  | "sessionsView"
-  | "chat"
-  | "gridViews"
-  | "experimental"
-  | "mcp"
-  | "backup";
+export type SettingsSectionKey = "general" | "harness" | "connections" | "storage" | "sessionsView" | "chat" | "gridViews" | "mcp" | "backup";
 
 export type View =
   | { kind: "list" }
