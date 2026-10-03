@@ -86,10 +86,10 @@ export function commandOutputText(value: unknown): string | null {
   return "";
 }
 
-export function setModelReply(value: unknown): { ok: boolean; error?: string } | null {
+export function setModelReply(value: unknown, pending?: { id: string; type: "set_model" | "set_thinking_level" }): { ok: boolean; error?: string } | null {
   const rec = value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-  if (!rec || rec.type !== "response" || rec.command !== "set_model") return null;
-  if (rec.success === false) return { ok: false, error: typeof rec.error === "string" ? rec.error : "Could not set model." };
+  if (!rec || rec.type !== "response" || rec.command !== (pending?.type ?? "set_model") || (pending && rec.id !== pending.id)) return null;
+  if (rec.success !== true) return { ok: false, error: typeof rec.error === "string" ? rec.error : "Could not apply model and reasoning effort." };
   return { ok: true };
 }
 

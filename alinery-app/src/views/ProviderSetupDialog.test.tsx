@@ -26,7 +26,7 @@ const providersLine = (rows: { id: string; authenticated: boolean }[]) =>
     data: { providers: rows.map((row) => ({ id: row.id, name: row.id, available: true, authenticated: row.authenticated })) },
   });
 
-function mountWith(lines: string[], mode: "auto" | "manual" = "auto", hostedReady = false) {
+function mountWith(lines: string[], mode: "auto" | "manual" = "auto", hostedReady = false, picker: { onPick?: (model: string) => void; currentModel?: string } = {}) {
   const onClose = vi.fn();
   mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
   mocks.readOmpModelRoles.mockResolvedValue({});
@@ -48,7 +48,7 @@ function mountWith(lines: string[], mode: "auto" | "manual" = "auto", hostedRead
     for (const line of lines) onLine(line);
   });
 
-  render(<ProviderSetupDialog mode={mode} onClose={onClose} />);
+  render(<ProviderSetupDialog mode={mode} onClose={onClose} {...picker} />);
   return onClose;
 }
 
@@ -77,6 +77,37 @@ afterEach(() => {
 });
 
 describe("ProviderSetupDialog", () => {
+  it("persists form effort without mutating the setup session and defaults new choices to off", async () => {
+    const onPick = vi.fn();
+    mountWith([providersLine([{ id: "xai", authenticated: true }])], "manual", false, { onPick });
+    await waitFor(() => expect(mocks.rpcAttachSession).toHaveBeenCalled());
+    await emit({ type: "response", command: "get_available_models", success: true, data: { models: [{ provider: "xai", id: "grok:preview" }] } });
+    fireEvent.click(screen.getByRole("tab", { name: "Models" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(onPick).toHaveBeenCalledWith("xai/grok:preview:off");
+    expect(mocks.rpcWriteSession.mock.calls.some(([, command]) => command.type === "set_model")).toBe(false);
+  });
+
+  it("waits for matching acknowledgements and leaves effort failures visible for retry", async () => {
+    mountWith([providersLine([{ id: "xai", authenticated: true }])], "manual");
+    await waitFor(() => expect(mocks.rpcAttachSession).toHaveBeenCalled());
+    await emit({ type: "response", command: "get_available_models", success: true, data: { models: [{ provider: "xai", id: "grok" }] } });
+    fireEvent.click(screen.getByRole("tab", { name: "Models" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning effort" }));
+    fireEvent.click(screen.getByRole("option", { name: "High" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    const model = mocks.rpcWriteSession.mock.calls.map(([, command]) => command).find((command) => command.type === "set_model");
+    expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true);
+    await emit({ type: "response", id: "unrelated", command: "set_model", success: true });
+    expect(mocks.rpcWriteSession.mock.calls.some(([, command]) => command.type === "set_thinking_level")).toBe(false);
+    await emit({ type: "response", id: model.id, command: "set_model", success: true, data: { provider: "xai", id: "grok" } });
+    const thinking = mocks.rpcWriteSession.mock.calls.map(([, command]) => command).find((command) => command.type === "set_thinking_level");
+    expect(thinking.level).toBe("high");
+    await emit({ type: "response", id: thinking.id, command: "set_thinking_level", success: false, error: "effort rejected" });
+    expect(screen.getByText("effort rejected")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("opens the requested sign-in link once, acknowledges it, and requires approval for another link", async () => {
     await startLogin();
     const request = { type: "extension_ui_request", id: "login-url", method: "open_url", url: "https://display.example", launchUrl: "https://auth.example/callback" };

@@ -1,4 +1,5 @@
 /** Official OMP RPC stdin commands. Never `{ method, params }`. */
+import type { ReasoningEffort } from "./chat/modelRoles";
 
 export type ImageContent = { type: "image"; data: string; mimeType: string };
 
@@ -27,6 +28,7 @@ export const setModelCommand = (provider: string, modelId: string, id = nextId()
   provider,
   modelId,
 });
+export const setThinkingLevelCommand = (level: ReasoningEffort, id = nextId()) => ({ id, type: "set_thinking_level" as const, level });
 export const cycleModelCommand = (id = nextId()) => ({ id, type: "cycle_model" as const });
 export const compactCommand = (customInstructions?: string, id = nextId()) =>
   customInstructions ? { id, type: "compact" as const, customInstructions } : { id, type: "compact" as const };

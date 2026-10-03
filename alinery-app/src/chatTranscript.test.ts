@@ -28,6 +28,18 @@ const jsonl = (name: string) =>
     .map((line) => JSON.parse(line) as unknown);
 
 describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
+  it("preserves configured auto across effective-level state refreshes and observes explicit effort changes", () => {
+    const automatic = applyRpcLines([
+      { type: "thinking_level_changed", thinkingLevel: "high", configured: "auto" },
+      { type: "response", command: "get_state", success: true, data: { thinkingLevel: "medium" } },
+    ]);
+    expect(automatic.sessionMeta.configuredThinking).toBe("auto");
+    expect(automatic.sessionMeta.thinking).toBe("medium");
+    const off = applyRpcLine(automatic, { type: "thinking_level_changed", thinkingLevel: "off" });
+    expect(off.sessionMeta.configuredThinking).toBe("off");
+    expect(off.sessionMeta.thinking).toBe("off");
+  });
+
   it("records ready protocol v1", () => {
     const state = applyRpcLine(emptyTranscript(), load("live-ready.json"));
     expect(state.ready).toBe(true);

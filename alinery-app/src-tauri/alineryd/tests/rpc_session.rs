@@ -139,6 +139,10 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_model("")
+    }
+
+    fn with_model(model: &str) -> Self {
         let root = unique_root();
         fs::create_dir_all(root.join(".alinery")).unwrap();
         for args in [
@@ -204,7 +208,7 @@ key = "omp"
 name = "OMP fixture"
 binary = "{}"
 args = []
-model_arg = []
+model_arg = ["--model={{model}}"]
 prompt_injection = "arg"
 adapter = "omp"
 
@@ -214,7 +218,7 @@ enabled = true
 id_source = "manual"
 resume_args = ["--resume={{resume_token}}"]
 "#,
-                fixture_bin.display()
+                fixture_bin.display(),
             ),
         )
         .unwrap();
@@ -229,7 +233,7 @@ resume_args = ["--resume={{resume_token}}"]
         };
         let created = fixture.rpc(json!({"op": "create_task", "request": {
             "name": "task", "requested_slug": "task",
-            "playbook": {"reference": {"scope": "repo", "key": "transport"}, "source": PLAYBOOK},
+            "playbook": {"reference": {"scope": "repo", "key": "transport"}, "source": PLAYBOOK.replace("\nmodel = \"\"", &format!("\nmodel = \"{model}\""))},
             "start": false
         }}));
         assert_eq!(created["creation"], "ready", "{created}");
@@ -794,7 +798,7 @@ fn rpc_argv_has_extension_mode_thinking_session_dir() {
     assert!(argv.contains("--mode"), "{argv}");
     assert!(argv.contains("rpc"), "{argv}");
     assert!(argv.contains("--thinking"), "{argv}");
-    assert!(argv.contains("high"), "{argv}");
+    assert!(argv.lines().collect::<Vec<_>>().windows(2).any(|args| args == ["--thinking", "off"]), "{argv}");
     assert!(argv.contains("--session-dir"), "{argv}");
     assert!(argv.contains(&format!("{id}.omp")), "{argv}");
     assert!(!argv.contains("--trusted-extension"), "{argv}");
@@ -803,7 +807,7 @@ fn rpc_argv_has_extension_mode_thinking_session_dir() {
 }
 
 #[test]
-fn pty_argv_omits_mode_rpc_and_thinking_high() {
+fn pty_argv_omits_mode_rpc_and_defaults_thinking_off() {
     let fixture = Fixture::new();
     let id = fixture.spawn_omp();
     fixture.discard_argv(id);
@@ -812,7 +816,37 @@ fn pty_argv_omits_mode_rpc_and_thinking_high() {
     assert!(argv.contains("--session-dir"), "{argv}");
     assert!(!argv.contains("--mode"), "{argv}");
     assert!(!argv.contains("\nrpc\n") && !argv.ends_with("rpc"), "{argv}");
-    assert!(!argv.contains("--thinking"), "{argv}");
+    assert!(argv.lines().collect::<Vec<_>>().windows(2).any(|args| args == ["--thinking", "off"]), "{argv}");
+}
+
+#[test]
+fn persisted_model_effort_applies_until_journal_owns_live_effort() {
+    let fixture = Fixture::with_model("openai/gpt-5:high");
+    let id = fixture.spawn_omp();
+    let assert_effort = || {
+        let argv = fixture.argv(id);
+        assert!(argv.lines().any(|arg| arg == "--model=openai/gpt-5:high"), "{argv}");
+        assert!(argv.lines().collect::<Vec<_>>().windows(2).any(|args| args == ["--thinking", "high"]), "{argv}");
+        assert_eq!(fixture.meta(id).model, "openai/gpt-5:high");
+    };
+    assert_effort();
+    for transport in ["pty", "rpc"] {
+        fs::remove_file(fixture.root.join(format!("argv.{id}"))).unwrap();
+        assert_eq!(fixture.restate(id, transport).get("ok"), Some(&json!(true)));
+        assert_effort();
+    }
+    let journal = alinery_core::session_omp_dir(&fixture.root, "task", id).join("2026-01-01_session.jsonl");
+    fs::write(&journal, "{\"type\":\"session\",\"id\":\"fixture\"}\n").unwrap();
+    let journal = fs::canonicalize(journal).unwrap();
+    for transport in ["pty", "rpc"] {
+        fs::remove_file(fixture.root.join(format!("argv.{id}"))).unwrap();
+        assert_eq!(fixture.restate(id, transport).get("ok"), Some(&json!(true)));
+        let argv = fixture.argv(id);
+        assert!(argv.lines().any(|arg| arg == "--model=openai/gpt-5"), "{argv}");
+        assert!(!argv.contains("--thinking"), "journal effort must not be overridden: {argv}");
+        assert!(argv.lines().any(|arg| arg == journal.to_string_lossy()), "journal must be resumed");
+        assert_eq!(fixture.meta(id).model, "openai/gpt-5:high");
+    }
 }
 
 // "Newest" means newest by FILENAME, not mtime. OMP names journals `<timestamp>_<uuidv7>.jsonl`

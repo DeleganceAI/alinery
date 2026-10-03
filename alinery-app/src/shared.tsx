@@ -16,10 +16,11 @@ import {
   X,
 } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { type OrbState, ThinkingOrb } from "thinking-orbs";
 import { AccountMenu } from "./AccountMenu";
 import type { ArchiveTaskPhase } from "./archiveTask";
+import { REASONING_EFFORTS, type ReasoningEffort, splitModelEffort, withModelEffort } from "./chat/modelRoles";
 import { pickEmptyStateArt } from "./emptyStateArt";
 import { gridViewShortcut, gridViewShortcutDigit, trailingTabDigit } from "./gridViews";
 import { IdleDot, ORB_SPEED, ORB_STATE, RunningIndicator, StateIcon } from "./Indicators";
@@ -1420,6 +1421,139 @@ export function RepoPicker({
   );
 }
 
+export function ReasoningEffortSelect({
+  value,
+  onChange,
+  disabled = false,
+  ariaLabel = "Reasoning effort",
+  hideLabel = false,
+}: {
+  value: ReasoningEffort;
+  onChange: (effort: ReasoningEffort) => void;
+  disabled?: boolean;
+  ariaLabel?: string;
+  hideLabel?: boolean;
+}) {
+  const id = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<CSSProperties | null>(null);
+  const close = () => {
+    setPosition(null);
+    trigger.current?.focus();
+  };
+  const open = () => {
+    const rect = trigger.current?.getBoundingClientRect();
+    if (!rect || disabled) return;
+    const below = window.innerHeight - rect.bottom - 12;
+    const above = rect.top - 12;
+    setPosition({
+      left: Math.max(8, Math.min(rect.left, window.innerWidth - 192)),
+      width: Math.max(184, rect.width),
+      maxHeight: Math.max(below, above),
+      ...(below >= 280 || below >= above ? { top: rect.bottom + 4 } : { bottom: window.innerHeight - rect.top + 4 }),
+    });
+  };
+
+  useEffect(() => {
+    if (!position) return;
+    menu.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus();
+    const dismiss = (event: Event) => {
+      if (!menu.current?.contains(event.target as Node) && !trigger.current?.contains(event.target as Node)) setPosition(null);
+    };
+    const reposition = (event: Event) => {
+      if (!menu.current?.contains(event.target as Node)) setPosition(null);
+    };
+    document.addEventListener("mousedown", dismiss);
+    document.addEventListener("focusin", dismiss);
+    document.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      document.removeEventListener("mousedown", dismiss);
+      document.removeEventListener("focusin", dismiss);
+      document.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+  }, [position]);
+
+  return (
+    <span className={`effort-control${hideLabel ? " compact" : ""}`}>
+      {!hideLabel && <span className="effort-label">{ariaLabel}</span>}
+      <button
+        ref={trigger}
+        type="button"
+        className="effort-trigger"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={!!position}
+        aria-controls={position ? id : undefined}
+        disabled={disabled}
+        onClick={() => (position ? close() : open())}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            open();
+          }
+        }}
+      >
+        <span>{value === "xhigh" ? "Extra high" : value[0].toUpperCase() + value.slice(1)}</span>
+        <ChevronDown size={14} strokeWidth={1.5} aria-hidden="true" />
+      </button>
+      {position && (
+        <div
+          ref={menu}
+          id={id}
+          role="listbox"
+          aria-label={ariaLabel}
+          className="effort-menu"
+          style={position}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              close();
+              return;
+            }
+            const options = Array.from(menu.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? []);
+            const at = options.indexOf(document.activeElement as HTMLButtonElement);
+            const next =
+              event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? options.length - 1
+                  : event.key === "ArrowDown"
+                    ? (at + 1) % options.length
+                    : event.key === "ArrowUp"
+                      ? (at - 1 + options.length) % options.length
+                      : -1;
+            if (next >= 0) {
+              event.preventDefault();
+              options[next]?.focus();
+            }
+          }}
+        >
+          {REASONING_EFFORTS.map((effort) => (
+            <button
+              key={effort}
+              type="button"
+              role="option"
+              aria-selected={value === effort}
+              tabIndex={value === effort ? 0 : -1}
+              onClick={() => {
+                close();
+                onChange(effort);
+              }}
+            >
+              <span>{effort === "xhigh" ? "Extra high" : effort[0].toUpperCase() + effort.slice(1)}</span>
+              {value === effort && <Check size={14} strokeWidth={1.5} aria-hidden="true" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </span>
+  );
+}
+
 const rememberedModelKey = (harness: string, repoPath?: string) => (repoPath ? `alinery.lastmodel.${repoPath}:${harness}` : `alinery.lastmodel.${harness}`);
 
 export function ModelInput({
@@ -1456,6 +1590,7 @@ export function ModelInput({
   const [pendingFavorites, setPendingFavorites] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerEffort, setPickerEffort] = useState<ReasoningEffort>("off");
   const [q, setQ] = useState("");
   const [idx, setIdx] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -1530,6 +1665,7 @@ export function ModelInput({
   }, [pickerOpen]);
 
   const refresh = () => {
+    setPickerEffort(splitModelEffort(value).effort);
     if (!harness) {
       setModels([]);
       setPickerOpen(false);
@@ -1565,10 +1701,11 @@ export function ModelInput({
   };
 
   const pick = (model: string) => {
-    onChange(model);
-    if (harness) localStorage.setItem(lastKey, model);
+    const next = harness === "omp" ? withModelEffort(model, pickerEffort) : model;
+    onChange(next);
+    if (harness) localStorage.setItem(lastKey, next);
     setPickerOpen(false);
-    onCommit?.(model);
+    onCommit?.(next);
   };
 
   const toggleFavorite = (model: string, favorite: boolean) => {
@@ -1620,6 +1757,17 @@ export function ModelInput({
       >
         {busy ? "…" : <RotateCw size={14} strokeWidth={1.5} aria-hidden="true" />}
       </button>
+      {harness === "omp" && (
+        <ReasoningEffortSelect
+          value={splitModelEffort(value).effort}
+          disabled={!value.trim()}
+          onChange={(effort) => {
+            const next = withModelEffort(value, effort);
+            onChange(next);
+            onCommit?.(next);
+          }}
+        />
+      )}
       {!onOpenPicker && pickerOpen && (
         <Dialog onClose={() => setPickerOpen(false)} ariaLabel={`Select model — ${harness}`}>
           <div className="mh">
@@ -1629,6 +1777,7 @@ export function ModelInput({
             </button>
           </div>
           <div className="mb">
+            {harness === "omp" && <ReasoningEffortSelect value={pickerEffort} onChange={setPickerEffort} />}
             <input
               ref={searchRef}
               className="field-input"

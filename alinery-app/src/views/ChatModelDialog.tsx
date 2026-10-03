@@ -1,11 +1,11 @@
 import { Star, X } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { costBand } from "../chat/costBand";
-import { BUILTIN_MODEL_ROLES, type ModelRolesMap } from "../chat/modelRoles";
+import { BUILTIN_MODEL_ROLES, type ModelRolesMap, type ReasoningEffort, splitModelEffort, withModelEffort } from "../chat/modelRoles";
 import { type AdvancedProviderRow, HOSTED_PROVIDER, hostedPrice, type LoginProvider, mergeHostedModels, partitionProviders } from "../chat/providers";
 import type { ProvidersDialogTab } from "../chat/slash";
 import type { ChatModelOption } from "../chatTranscript";
-import { Dialog } from "../shared";
+import { Dialog, ReasoningEffortSelect } from "../shared";
 import type { HostedCatalogView } from "../types";
 
 export type ChatProvidersDialogProps = {
@@ -14,6 +14,8 @@ export type ChatProvidersDialogProps = {
   models: ChatModelOption[];
   current?: string;
   preselect?: string;
+  currentEffort?: string;
+  applying?: boolean;
   loginProviders: LoginProvider[];
   livePromotedIds?: string[];
   modelRoles: ModelRolesMap;
@@ -29,7 +31,7 @@ export type ChatProvidersDialogProps = {
   /** Omitted by hosts that do not persist favourites; the star is then not rendered at all. */
   onToggleFavorite?: (model: string, favorite: boolean) => void;
   onTabChange: (tab: ProvidersDialogTab) => void;
-  onApplyModel: (provider: string, modelId: string) => void;
+  onApplyModel: (provider: string, modelId: string, effort: ReasoningEffort) => void;
   onLogin: (providerId: string) => void;
   onHatchTerminalLogin: (providerId?: string) => void;
   onAssignRole: (role: string, model: string | null) => void;
@@ -119,6 +121,8 @@ export function ChatModelDialog({
   models,
   current,
   preselect,
+  currentEffort,
+  applying = false,
   loginProviders,
   livePromotedIds = [],
   modelRoles,
@@ -143,6 +147,11 @@ export function ChatModelDialog({
   const [query, setQuery] = useState(preselect ?? "");
   const [advancedOpen, setAdvancedOpen] = useState(defaultAdvancedOpen);
   const [rolePick, setRolePick] = useState<string | null>(null);
+  const [effort, setEffort] = useState<ReasoningEffort>(splitModelEffort(currentEffort ? `:${currentEffort}` : (current ?? "")).effort);
+
+  useEffect(() => {
+    setEffort(splitModelEffort(currentEffort ? `:${currentEffort}` : (current ?? "")).effort);
+  }, [current, currentEffort]);
 
   useEffect(() => {
     setQuery(preselect ?? "");
@@ -160,16 +169,20 @@ export function ChatModelDialog({
     if (starred.size === 0) return matched;
     return [...matched.filter((m) => starred.has(`${m.provider}/${m.id}`)), ...matched.filter((m) => !starred.has(`${m.provider}/${m.id}`))];
   }, [listed, query, favorites]);
-  const selected = filtered.find((m) => `${m.provider}/${m.id}` === query.trim()) ?? filtered[0];
+  const selected =
+    filtered.find((m) => `${m.provider}/${m.id}` === query.trim()) ??
+    (!query.trim() ? filtered.find((m) => `${m.provider}/${m.id}` === splitModelEffort(current ?? "").model) : undefined) ??
+    filtered[0];
   const title = setup ? "Set up your providers" : tab === "accounts" ? "Providers" : "Models";
 
   const applyOrUpsell = (provider: string, modelId: string) => {
+    if (applying) return;
     if (provider === HOSTED_PROVIDER && !hosted?.ready) {
       if (hosted?.upsell === "sign-in") onSignIn?.();
       else onTabChange("accounts");
       return;
     }
-    onApplyModel(provider, modelId);
+    onApplyModel(provider, modelId, effort);
   };
 
   return (
@@ -237,6 +250,7 @@ export function ChatModelDialog({
         ) : (
           <>
             <p className="dim">{current ? `Current session ${current}. Apply switches this chat only.` : "Choose a model for this session."}</p>
+            <ReasoningEffortSelect value={effort} onChange={setEffort} disabled={applying} />
             <input
               className="field-input"
               data-autofocus=""
@@ -256,12 +270,12 @@ export function ChatModelDialog({
               {filtered.map((m) => {
                 const label = `${m.provider}/${m.id}`;
                 const active = selected ? `${selected.provider}/${selected.id}` === label : false;
-                const isCurrent = current === label;
+                const isCurrent = splitModelEffort(current ?? "").model === label;
                 const starred = (favorites ?? []).includes(label);
                 const band = costBand(hostedPrice(hosted, m.provider, m.id));
                 return (
                   <li key={label} className="chat-model-row">
-                    <button type="button" className={`chat-model-item${active ? " active" : ""}`} onClick={() => applyOrUpsell(m.provider, m.id)}>
+                    <button type="button" disabled={applying} className={`chat-model-item${active ? " active" : ""}`} onClick={() => applyOrUpsell(m.provider, m.id)}>
                       <span>{label}</span>
                       <span className="chat-model-item-side">
                         {band !== null ? <CostBand price={band} /> : null}
@@ -292,6 +306,7 @@ export function ChatModelDialog({
                   <tr>
                     <th scope="col">Role</th>
                     <th scope="col">Model</th>
+                    <th scope="col">Reasoning effort</th>
                     <th scope="col" />
                   </tr>
                 </thead>
@@ -306,6 +321,15 @@ export function ChatModelDialog({
                         </td>
                         <td>{assigned || <span className="dim">unset</span>}</td>
                         <td>
+                          <ReasoningEffortSelect
+                            ariaLabel={`Reasoning effort for ${role}`}
+                            hideLabel
+                            value={splitModelEffort(assigned ?? "").effort}
+                            disabled={!assigned}
+                            onChange={(next) => onAssignRole(role, withModelEffort(assigned, next))}
+                          />
+                        </td>
+                        <td>
                           {picking ? (
                             <select
                               aria-label={`Assign ${role}`}
@@ -315,7 +339,7 @@ export function ChatModelDialog({
                                 const v = e.target.value;
                                 setRolePick(null);
                                 if (v === "") onAssignRole(role, null);
-                                else onAssignRole(role, v);
+                                else onAssignRole(role, withModelEffort(v, splitModelEffort(assigned ?? "").effort));
                               }}
                             >
                               <option value="">Clear</option>
@@ -347,7 +371,7 @@ export function ChatModelDialog({
       </div>
       <div className="mfoot">
         {tab === "models" ? (
-          <button type="button" className="btn small" disabled={!selected} onClick={() => selected && applyOrUpsell(selected.provider, selected.id)}>
+          <button type="button" className="btn small" disabled={!selected || applying} onClick={() => selected && applyOrUpsell(selected.provider, selected.id)}>
             Apply
           </button>
         ) : (

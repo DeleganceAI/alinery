@@ -25,6 +25,45 @@ describe("ChatModelDialog", () => {
 
   afterEach(cleanup);
 
+  it("changes effort on the current model rather than the first catalog entry", () => {
+    const onApplyModel = vi.fn();
+    render(<ChatModelDialog {...base} models={[{ provider: "other", id: "first" }, ...base.models]} current="xai/grok-4.6:high" onApplyModel={onApplyModel} />);
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning effort" }));
+    expect(screen.getByRole("option", { name: "High" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(screen.getByRole("option", { name: "Off" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(onApplyModel).toHaveBeenCalledWith("xai", "grok-4.6", "off");
+  });
+
+  it("keeps favorites independent of effort and preserves colons in role model ids", () => {
+    const onToggleFavorite = vi.fn();
+    const onAssignRole = vi.fn();
+    render(<ChatModelDialog {...base} modelRoles={{ smol: "openrouter/model:free:low" }} onAssignRole={onAssignRole} onToggleFavorite={onToggleFavorite} />);
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning effort" }));
+    fireEvent.click(screen.getByRole("option", { name: "High" }));
+    fireEvent.click(screen.getByRole("button", { name: "Star xai/grok-4.6" }));
+    expect(onToggleFavorite).toHaveBeenCalledWith("xai/grok-4.6", true);
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning effort for smol" }));
+    fireEvent.click(screen.getByRole("option", { name: "Max" }));
+    expect(onAssignRole).toHaveBeenCalledWith("smol", "openrouter/model:free:max");
+  });
+
+  it("navigates effort choices by keyboard and dismisses without closing the dialog", () => {
+    const onClose = vi.fn();
+    render(<ChatModelDialog {...base} onClose={onClose} />);
+    const trigger = screen.getByRole("button", { name: "Reasoning effort" });
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByRole("option", { name: "Off" }));
+    fireEvent.keyDown(screen.getByRole("option", { name: "Off" }), { key: "End" });
+    expect(document.activeElement).toBe(screen.getByRole("option", { name: "Auto" }));
+    fireEvent.keyDown(screen.getByRole("option", { name: "Auto" }), { key: "ArrowUp" });
+    expect(document.activeElement).toBe(screen.getByRole("option", { name: "Max" }));
+    fireEvent.keyDown(screen.getByRole("option", { name: "Max" }), { key: "Escape" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("renders models tab with current and role table", () => {
     const empty = renderToStaticMarkup(<ChatModelDialog {...base} models={[]} />);
     expect(empty).toContain("No models match");

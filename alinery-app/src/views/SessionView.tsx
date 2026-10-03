@@ -12,7 +12,7 @@ import { ChatComposer } from "../ChatComposer";
 import { buildPromptMessage, canStage, classifyAttachment, type DraftAttachment, draftToRowAttachments, isHttpUrl, revokeDraftPreviewUrls } from "../chat/attachments";
 import { CopyArtifactButton, CopyTextButton } from "../chat/CopyMessage";
 import { formatContextUsage } from "../chat/format";
-import type { ModelRolesMap } from "../chat/modelRoles";
+import { type ModelRolesMap, type ReasoningEffort, splitModelEffort } from "../chat/modelRoles";
 import { decodeOmpPage } from "../chat/ompFile";
 import { settleOpenUrl as settleBrowserUrl } from "../chat/openUrl";
 import { isInteractivePromptLoginError, shouldOfferProviderSetup } from "../chat/providers";
@@ -59,6 +59,7 @@ import {
   setAutoCompactionCommand,
   setModelCommand,
   setSubagentSubscriptionCommand,
+  setThinkingLevelCommand,
 } from "../ompRpc";
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
 import { appendGeneratedText, canAbortChatSession, isTurnActive, OMP_INTERRUPT_DATA, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
@@ -378,7 +379,8 @@ export function SessionView({
   const preferredViewAppliedRef = useRef<string | null>(null);
   const handledUiRef = useRef(new Set<string>());
   const mcpListWaitRef = useRef(false);
-  const modelApplyRef = useRef(false);
+  const modelApplyRef = useRef<{ id: string; type: "set_model" | "set_thinking_level"; effort: ReasoningEffort } | null>(null);
+  const [modelApplying, setModelApplying] = useState(false);
   const loginApplyRef = useRef<string | null>(null);
   // Armed by startChatLogin, consumed by the first `open_url` that follows. See the drain effect.
   const loginOpenUrlRef = useRef<string | null>(null);
@@ -590,7 +592,8 @@ export function SessionView({
     handledUiRef.current.clear();
     pendingSendRef.current = null;
     mcpListWaitRef.current = false;
-    modelApplyRef.current = false;
+    modelApplyRef.current = null;
+    setModelApplying(false);
     loginApplyRef.current = null;
     loginOpenUrlRef.current = null;
     setupOpenedRef.current = false;
@@ -1450,15 +1453,28 @@ export function SessionView({
             setMcpDialog(parsed === "empty" ? { rows: [], empty: true } : { rows: parsed, empty: false });
           }
         }
-        if (modelApplyRef.current) {
-          const reply = setModelReply(value);
+        const pendingModel = modelApplyRef.current;
+        if (pendingModel) {
+          const reply = setModelReply(value, pendingModel);
           if (reply) {
-            modelApplyRef.current = false;
-            if (reply.ok) {
-              setModelDialog(null);
-              setModelError(null);
+            if (reply.ok && pendingModel.type === "set_model") {
+              const command = setThinkingLevelCommand(pendingModel.effort);
+              modelApplyRef.current = { ...command, effort: pendingModel.effort };
+              void ipc.rpcWriteSession(id, command).catch((error) => {
+                modelApplyRef.current = null;
+                setModelApplying(false);
+                setModelError(String(error));
+              });
             } else {
-              setModelError(reply.error ?? "Could not set model.");
+              modelApplyRef.current = null;
+              setModelApplying(false);
+              if (reply.ok) {
+                setModelDialog(null);
+                setModelError(null);
+              } else {
+                setModelError(reply.error ?? "Could not apply model and reasoning effort.");
+              }
+              void ipc.rpcWriteSession(id, getStateCommand()).catch((error) => setModelError(String(error)));
             }
           }
         }
@@ -1818,13 +1834,17 @@ export function SessionView({
   approveChatRef.current = approveChat;
   const onApproveChat = useCallback((requestId: string, allow: boolean) => void approveChatRef.current(requestId, allow), []);
 
-  const applyChatModel = async (provider: string, modelId: string) => {
+  const applyChatModel = async (provider: string, modelId: string, effort: ReasoningEffort) => {
+    if (modelApplyRef.current) return;
     setModelError(null);
-    modelApplyRef.current = true;
+    const command = setModelCommand(provider, modelId);
+    modelApplyRef.current = { ...command, effort };
+    setModelApplying(true);
     try {
-      await ipc.rpcWriteSession(id, setModelCommand(provider, modelId));
+      await ipc.rpcWriteSession(id, command);
     } catch (error) {
-      modelApplyRef.current = false;
+      modelApplyRef.current = null;
+      setModelApplying(false);
       setModelError(String(error));
     }
   };
@@ -2181,6 +2201,8 @@ export function SessionView({
               setup={modelDialog.setup}
               models={chat.sessionMeta.models ?? []}
               current={chat.sessionMeta.model}
+              currentEffort={chat.sessionMeta.configuredThinking ?? (splitModelEffort(model ?? "").effort === "auto" ? "auto" : chat.sessionMeta.thinking)}
+              applying={modelApplying}
               preselect={modelDialog.preselect}
               loginProviders={chat.sessionMeta.loginProviders ?? []}
               livePromotedIds={livePromotedIds}
@@ -2189,7 +2211,7 @@ export function SessionView({
               error={modelError}
               loginBusy={loginBusy}
               onTabChange={(tab) => setModelDialog((current) => (current ? { ...current, tab, setup: false } : current))}
-              onApplyModel={(provider, modelId) => void applyChatModel(provider, modelId)}
+              onApplyModel={(provider, modelId, effort) => void applyChatModel(provider, modelId, effort)}
               onLogin={(providerId) => void startChatLogin(providerId)}
               onHatchTerminalLogin={(providerId) => void hatchTerminalLogin(providerId)}
               onAssignRole={(role, model) => void assignModelRole(role, model)}
