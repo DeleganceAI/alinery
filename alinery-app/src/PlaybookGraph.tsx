@@ -65,7 +65,7 @@ export function PlaybookGraph({
     if (canvasRef.current) canvasRef.current.style.zoom = String(scale);
     if (zoomLabelRef.current) zoomLabelRef.current.textContent = `${Math.round(scale * 100)}%`;
   }, []);
-  const { viewRef, panning, setView, zoomBy, center, fit, onPointerDown } = usePanZoom({
+  const { viewRef, panning, setView, zoomBy, center, fit, onPointerDown, onFocusCapture } = usePanZoom({
     viewportRef,
     paint: paintView,
     enabled: canvasEnabled,
@@ -245,26 +245,7 @@ export function PlaybookGraph({
                     }
                     event.preventDefault();
                   }}
-                  onFocusCapture={(event) => {
-                    const viewport = event.currentTarget;
-                    const node = event.target.closest<HTMLButtonElement>(".playbook-definition-node");
-                    if (!node || !viewport.clientWidth || !viewport.clientHeight) return;
-                    // Focus must reveal nodes through the camera, not the hidden overflow's scroll offset.
-                    viewport.scrollLeft = 0;
-                    viewport.scrollTop = 0;
-                    const bounds = viewport.getBoundingClientRect();
-                    const rect = node.getBoundingClientRect();
-                    const left = bounds.left + viewport.clientLeft + 16;
-                    const top = bounds.top + viewport.clientTop + 16;
-                    const right = left + viewport.clientWidth - 32;
-                    const bottom = top + viewport.clientHeight - 32;
-                    const dx = rect.left < left ? left - rect.left : rect.right > right ? Math.max(left - rect.left, right - rect.right) : 0;
-                    const dy = rect.top < top ? top - rect.top : rect.bottom > bottom ? Math.max(top - rect.top, bottom - rect.bottom) : 0;
-                    if (dx || dy) {
-                      const view = viewRef.current;
-                      setView({ ...view, tx: view.tx + dx, ty: view.ty + dy });
-                    }
-                  }}
+                  onFocusCapture={onFocusCapture}
                 >
                   <div ref={stageRef} className="playbook-definition-stage">
                     <div

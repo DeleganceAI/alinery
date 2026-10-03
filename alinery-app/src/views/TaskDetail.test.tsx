@@ -54,6 +54,7 @@ const mocks = vi.hoisted(() => ({
   listSessions: vi.fn(),
   listArtifactsWithMetadata: vi.fn(),
   listTaskArtifactTree: vi.fn(),
+  readArtifact: vi.fn(),
   listArtifactCommentDrafts: vi.fn(),
   sessionStatuses: vi.fn(),
   sessionStatus: vi.fn(),
@@ -83,6 +84,7 @@ vi.mock("../ipc", () =>
     listSessions: mocks.listSessions,
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
     listTaskArtifactTree: mocks.listTaskArtifactTree,
+    readArtifact: mocks.readArtifact,
     listArtifactCommentDrafts: mocks.listArtifactCommentDrafts,
     sessionStatuses: mocks.sessionStatuses,
     sessionStatus: mocks.sessionStatus,
@@ -311,6 +313,7 @@ beforeEach(() => {
   mocks.listSessions.mockReset().mockImplementation(async () => scenario.sessions);
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
   mocks.listTaskArtifactTree.mockReset().mockResolvedValue([]);
+  mocks.readArtifact.mockReset().mockResolvedValue("");
   mocks.listArtifactCommentDrafts.mockReset().mockResolvedValue([]);
   mocks.sessionStatuses.mockReset().mockImplementation(async (ids: string[]) =>
     Object.fromEntries(
@@ -336,7 +339,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-async function renderDetail(slug = "parent") {
+async function renderDetail(slug = "parent", sessionView: "controls" | "graph" = "controls") {
   const onOpenSession = vi.fn();
   const onOpenRelatedTask = vi.fn();
   const onNewSession = vi.fn();
@@ -356,11 +359,129 @@ async function renderDetail(slug = "parent") {
     />,
   );
   await screen.findByRole("heading", { name: scenario.task.name });
+  if (sessionView === "controls") fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
   return { onOpenSession, onOpenRelatedTask, onNewSession };
 }
 
+describe("task run graph", () => {
+  it("defaults to actual sessions and opens the exact session and consumed artifact occurrence", async () => {
+    const producer = { ...session({ id: "producer", phase: "worker" }), name: "Investigate the fault" };
+    const consumer = { ...session({ id: "consumer", phase: "worker" }), name: "Apply the finding" };
+    const produced = executionRecord({
+      id: "produced",
+      owner_session_id: producer.id,
+      lifecycle: "completed",
+      receipt_id: "accepted",
+      shutdown_confirmed: true,
+      candidate: { ...executionRecord().candidate, inputs: {} },
+      outputs: [{ selector: "result.md", relative_path: "research/2-result-99.md", discriminator: 99 }],
+    });
+    const consumed = executionRecord({
+      id: "consumed",
+      owner_session_id: consumer.id,
+      candidate: { ...executionRecord().candidate, inputs: { "result.md": ["accepted-result"] } },
+      parent_execution_ids: [produced.id],
+      outputs: [],
+    });
+    const retained = executionReply([produced, consumed]);
+    retained.definition.step.push({ ...retained.definition.step[0], key: "never-run", title: "Unexecuted review" });
+    retained.definition.section_order.push("never-run");
+    retained.state.occurrences = {
+      "accepted-result": {
+        ...retained.state.occurrences["input-a"],
+        id: "accepted-result",
+        producer_execution_id: produced.id,
+        selector: "result.md",
+        logical_path: "result.md",
+        relative_path: "research/2-result-10.md",
+        depth: 2,
+        discriminator: 10,
+      },
+    };
+    scenario.sessions = [producer, consumer];
+    mocks.getTaskExecution.mockResolvedValue(retained);
+    mocks.readArtifact.mockResolvedValue("# Accepted finding\n\nRead the recorded occurrence, not the assigned output path.");
+
+    const { onOpenSession } = await renderDetail("parent", "graph");
+    const graph = within(screen.getByRole("region", { name: "Task run graph" }));
+    await graph.findByRole("button", { name: `Open session ${consumer.name}` });
+    expect(screen.getByRole("button", { name: "Show list view" }).textContent).toBe("List");
+    expect(graph.getAllByRole("button", { name: /^Open session / })).toHaveLength(2);
+    expect(graph.queryByText("Unexecuted review")).toBeNull();
+    expect(graph.queryByRole("button", { name: /research\/2-result-99\.md/ })).toBeNull();
+    expect(screen.queryByRole("row", { name: /^Open session / })).toBeNull();
+
+    fireEvent.click(graph.getByRole("button", { name: `Open session ${consumer.name}` }));
+    expect(onOpenSession).toHaveBeenCalledExactlyOnceWith(
+      "parent",
+      consumer.id,
+      consumer.worktree,
+      consumer.phase,
+      consumer.harness,
+      consumer.model,
+      consumer.playbook,
+      consumer.generic,
+      "attach",
+    );
+
+    // The artifact scan intentionally has no entry: persisted occurrence provenance is enough.
+    fireEvent.click(graph.getByRole("button", { name: /research\/2-result-10\.md/ }));
+    expect(await screen.findByRole("heading", { name: "Accepted finding" })).toBeDefined();
+    expect(mocks.readArtifact).toHaveBeenCalledExactlyOnceWith("parent", "research/2-result-10.md");
+    expect(screen.getByRole("button", { name: "Back to artifact list" })).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
+    const consumerRow = screen.getByText(consumer.name).closest("tr") as HTMLTableRowElement;
+    expect(within(consumerRow).getByRole("button", { name: "Rename session" })).toBeDefined();
+    expect(screen.queryByRole("region", { name: "Task run graph" })).toBeNull();
+    const showGraph = screen.getByRole("button", { name: "Show graph view" });
+    expect(showGraph.textContent).toBe("Graph");
+    fireEvent.click(showGraph);
+    expect(screen.getByRole("region", { name: "Task run graph" })).toBeDefined();
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("remembers the chosen view across different task mounts", async () => {
+    const stored = new Map([["alinery.taskSessionView", "invalid"]]);
+    vi.mocked(localStorage.getItem).mockImplementation((key) => stored.get(key) ?? null);
+    vi.mocked(localStorage.setItem).mockImplementation((key, value) => {
+      stored.set(key, value);
+    });
+    await renderDetail("parent", "graph");
+    expect(screen.getByRole("region", { name: "Task run graph" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
+    expect(screen.getByRole("table")).toBeDefined();
+    cleanup();
+
+    scenario.task = { ...parentTask, slug: "other", name: "Other task" };
+    await renderDetail("other", "graph");
+    expect(screen.queryByRole("region", { name: "Task run graph" })).toBeNull();
+    expect(screen.getByRole("table")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Show graph view" }));
+    cleanup();
+
+    scenario.task = { ...parentTask, slug: "third", name: "Third task" };
+    await renderDetail("third", "graph");
+    expect(screen.getByRole("region", { name: "Task run graph" })).toBeDefined();
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("defaults to graph and still switches views when preference storage fails", async () => {
+    vi.mocked(localStorage.getItem).mockImplementation(() => {
+      throw new Error("Storage unavailable");
+    });
+    vi.mocked(localStorage.setItem).mockImplementation(() => {
+      throw new Error("Storage unavailable");
+    });
+    await renderDetail("parent", "graph");
+    expect(screen.getByRole("region", { name: "Task run graph" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
+    expect(screen.getByRole("table")).toBeDefined();
+  });
+});
+
 describe("session work names", () => {
-  it("shows names immediately after status while same-step sessions retain their identities", async () => {
+  it("opens the exact named session even when several sessions share a step", async () => {
     const named = [
       { ...session({ id: "cache", created: 10 }), name: "Repair cache eviction", name_source: "user" as const },
       { ...session({ id: "csv", created: 20 }), name: "Import <CSV>", name_source: "auto" as const },
@@ -372,19 +493,12 @@ describe("session work names", () => {
     for (const item of named) {
       const cell = screen.getByText(item.name).closest("td") as HTMLTableCellElement;
       const row = cell.closest("tr") as HTMLTableRowElement;
-      expect(within(row).getAllByRole("cell")[1]).toBe(cell);
       expect(within(row).getByText("superdevelop · research")).toBeDefined();
       fireEvent.click(cell);
       expect(onOpenSession.mock.lastCall?.[1]).toBe(item.id);
       fireEvent.keyDown(row, { key: "Enter" });
       expect(onOpenSession.mock.lastCall?.[1]).toBe(item.id);
     }
-    expect(
-      screen
-        .getAllByRole("columnheader")
-        .slice(0, 2)
-        .map((header) => header.textContent),
-    ).toEqual(["Status", "Name"]);
   });
 
   it("keeps a manager work name distinct from its current child name when relationship metadata is raw", async () => {
@@ -397,7 +511,7 @@ describe("session work names", () => {
     const row = openManager.closest("tr") as HTMLTableRowElement;
     const child = within(row).getByText("Child");
 
-    expect(within(row).getAllByRole("cell")[1].textContent).toContain("Coordinate cache repair");
+    expect(within(row).getByText("Coordinate cache repair")).toBeDefined();
     expect(within(row).getByText("Sub-task manager")).toBeDefined();
     fireEvent.click(child);
     expect(onOpenRelatedTask).toHaveBeenLastCalledWith("child");
@@ -415,7 +529,7 @@ describe("session work names", () => {
     expect(screen.getByRole("textbox", { name: "Session name" })).toBeDefined();
   });
 
-  it("keeps a static placeholder when an unnamed session is not waiting for a name", async () => {
+  it("does not wait for a name when a session is stopped or uses Terminal", async () => {
     scenario.sessions = [session({ id: "terminal", harness: "no-harness" }), session({ id: "stopped", harness: "omp" })];
     mocks.sessionStatuses.mockResolvedValue({
       terminal: observation("busy"),
@@ -423,13 +537,12 @@ describe("session work names", () => {
     });
     await renderDetail();
     await screen.findAllByRole("button", { name: "Rename session" });
-    expect([...document.querySelectorAll(".session-name-cell .editable-name-text")].map((cell) => cell.textContent)).toEqual(["—", "—"]);
     expect(screen.queryByRole("status", { name: "Waiting for session name" })).toBeNull();
   });
 });
 
 describe("retained name editing", () => {
-  it("name_column_aligns_every_retained_row_variant", async () => {
+  it("keeps session and child names distinct with the correct rename actions", async () => {
     scenario.relatedTasks = [
       { ...childBoardTask, slug: "finished", name: "Finished child", archived: true, subtask_outcome: "merged" },
       { ...childBoardTask, slug: "managerless", name: "Managerless child", archived: true, subtask_outcome: "killed" },
@@ -443,7 +556,6 @@ describe("retained name editing", () => {
     await renderDetail();
     fireEvent.click(screen.getByLabelText("Show archived"));
     await screen.findByText("Historical coordination");
-    expect(screen.getAllByRole("columnheader")).toHaveLength(7);
     for (const [name, type] of [
       ["Ordinary work", "superdevelop · research"],
       ["Terminal work", "Auxiliary"],
@@ -456,10 +568,7 @@ describe("retained name editing", () => {
         .find((node) => node.closest("td"))
         ?.closest("td") as HTMLTableCellElement;
       const row = cell.closest("tr") as HTMLTableRowElement;
-      const cells = within(row).getAllByRole("cell");
-      expect(cells).toHaveLength(7);
-      expect(cells[1]).toBe(cell);
-      expect(cells[2].textContent).toContain(type);
+      expect(within(row).getByText(type)).toBeDefined();
       if (name === "Managerless child" || name === "Child") {
         expect(within(row).queryByRole("button", { name: "Rename session" })).toBeNull();
         expect(within(row).getByRole("button", { name: "Rename task" })).toBeDefined();
@@ -480,8 +589,7 @@ describe("retained name editing", () => {
     await screen.findAllByRole("button", { name: "Rename session" });
     for (const trigger of screen.getAllByRole("button", { name: "Rename session" })) {
       const row = trigger.closest("tr") as HTMLTableRowElement;
-      const nameCell = within(row).getAllByRole("cell")[1];
-      expect(within(nameCell).getByRole("button", { name: "Rename session" })).toBe(trigger);
+      const nameCell = trigger.closest("td") as HTMLTableCellElement;
       fireEvent.click(trigger);
       const input = within(nameCell).getByRole("textbox", { name: "Session name" });
       fireEvent.change(input, { target: { value: "Shared purpose" } });
@@ -489,7 +597,7 @@ describe("retained name editing", () => {
       fireEvent.click(trigger);
       await waitFor(() => expect(within(row).queryByRole("textbox")).toBeNull());
       expect(document.activeElement).toBe(within(nameCell).getByRole("group", { name: "Session name" }));
-      expect(within(row).getAllByRole("cell")[1].textContent).toContain("Shared purpose");
+      expect(within(row).getByText("Shared purpose")).toBeDefined();
     }
     expect(new Set(ipcSpies.renameSession.mock.calls.map(([args]) => args.sessionId))).toEqual(new Set(["live", "terminal", "never", "exited", "history"]));
     expect(onOpenSession).not.toHaveBeenCalled();
@@ -501,7 +609,7 @@ describe("retained name editing", () => {
     fireEvent.change(within(row).getByRole("textbox"), { target: { value: "Rejected draft" } });
     fireEvent.click(within(row).getByRole("button", { name: "Save" }));
     expect(await within(row).findByText(/Name storage busy/)).toBeDefined();
-    expect(within(row).getAllByRole("cell")[1].textContent).toContain("Shared purpose");
+    expect(within(row).getByText("Shared purpose")).toBeDefined();
     expect((within(row).getByRole("textbox") as HTMLInputElement).value).toBe("Rejected draft");
   });
 
@@ -594,6 +702,7 @@ describe("retained name editing", () => {
     scenario.sessions = [{ ...manager, name: "Manager purpose" }];
     scenario.childBoardTask = oldChild;
     renderSeededDetail({ slug: "parent", repoPath: "/repo", initialTask: scenario.task });
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
@@ -1331,6 +1440,7 @@ describe("authoritative task execution", () => {
       session({ id: "owner-a", created: 2 }),
     ]);
     renderSeededDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     expect(screen.queryByRole("region", { name: "Task executions" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "History" }));
     expect(await screen.findByText(/2 active executions \/ 3 slots/)).toBeDefined();
@@ -1520,6 +1630,7 @@ describe("session list without identifiers", () => {
     mocks.sessionStatuses.mockResolvedValue({});
     const onOpenSession = vi.fn();
     const { container } = renderSeededDetail({ initialTask: fixture, onOpenSession });
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Show archived" }));
     const history = await screen.findByRole("button", { name: "View history" });
@@ -1576,6 +1687,7 @@ describe("attention-first session order", () => {
       "newer-tdd": { ...observation("idle"), lifecycle: { state: "exited", code: 0 }, state: null },
     });
     const { container } = renderSeededDetail({ initialTask: fixture, sessionSort: PRIORITY_SESSION_SORT, onSessionSortChange: noop });
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
 
     await waitFor(() => {
       expect(renderedSessionSteps(container)).toEqual([...backendRows].reverse().map((row) => `${row.playbook} · ${row.phase}`));
@@ -1611,6 +1723,7 @@ describe("attention-first session order", () => {
     });
 
     renderSeededDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
 
     const unreadRow = await screen.findByRole("row", { name: new RegExp(`${unread.phase}$`) });
     const acknowledgedRow = screen.getByRole("row", { name: new RegExp(`${acknowledged.phase}$`) });
@@ -1638,6 +1751,7 @@ describe("attention-first session order", () => {
 
     const onOpenSession = vi.fn();
     const { container } = renderSeededDetail({ initialTask: fixture, onOpenSession });
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
 
     await screen.findByRole("img", { name: "Failed: process exited with code 143" });
     const rows = container.querySelectorAll(".task-session-table tbody tr");
@@ -1670,6 +1784,7 @@ describe("session time columns and sorting", () => {
     mocks.listSessions.mockResolvedValue(backendRows);
     mocks.sessionStatuses.mockResolvedValue({});
     const { container } = renderSeededDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     await waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design", "superdevelop · clarify"]));
     const updated = screen.getByText(/^Updated/, { selector: ".session-sort-header" });
     expect(updated.closest("th")?.getAttribute("aria-sort")).toBe("descending");
@@ -1703,6 +1818,7 @@ describe("session time columns and sorting", () => {
     mocks.listSessions.mockImplementation(async () => rows);
     mocks.sessionStatuses.mockResolvedValue({});
     const { container } = renderSeededDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]));
     const updated = screen.getByText(/^Updated/, { selector: ".session-sort-header" });
     expect(updated.closest("th")?.getAttribute("aria-sort")).toBe("descending");
@@ -1746,6 +1862,7 @@ describe("session time columns and sorting", () => {
     }));
 
     const { container } = renderSeededDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]));
     expect(screen.getByLabelText("Stale")).toBeDefined();
 
@@ -1770,7 +1887,7 @@ describe("session time columns and sorting", () => {
     expect(screen.getByRole("button", { name: "Priority" }).getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("sorts session-backed managers and aligns managerless rows with the remaining columns", async () => {
+  it("sorts session-backed managers while keeping managerless task history last", async () => {
     scenario.relatedTasks = [
       {
         ...parentTask,
@@ -1792,13 +1909,10 @@ describe("session time columns and sorting", () => {
     expect(rows[0].textContent).toContain("Sub-task setup");
     expect(rows[1].textContent).toContain("superdevelop · research");
     expect(rows[2].textContent).toContain("History child");
-    expect(rows[2].children).toHaveLength(screen.getAllByRole("columnheader").length);
-    expect(rows[2].children[3].textContent).toBe("—");
-    expect(rows[2].children[4].textContent).toBe("—");
   });
 });
 
-describe("the empty-sessions row", () => {
+describe("the empty-sessions state", () => {
   it("never renders before load() settles, and appears once it does", async () => {
     const fixture = task();
     const getTaskDeferred = deferred<Task | null>();
@@ -1810,15 +1924,13 @@ describe("the empty-sessions row", () => {
 
     renderSeededDetail({ initialTask: fixture });
 
-    // Even though `sessions` hasn't been fetched yet (state still `[]`), the `loaded` gate
-    // must keep the empty row from flashing before load() settles.
+    // Do not show an empty graph before the first successful session read.
     expect(screen.queryByText("No sessions yet.")).toBeNull();
 
     getTaskDeferred.resolve(fixture);
     listSessionsDeferred.resolve([]);
 
     await waitFor(() => expect(screen.getByText("No sessions yet.")).toBeDefined());
-    expect(screen.getByText("No sessions yet.").closest("td")?.colSpan).toBe(screen.getAllByRole("columnheader").length);
   });
 });
 
