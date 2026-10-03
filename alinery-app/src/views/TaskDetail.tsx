@@ -18,6 +18,7 @@ import { PlaybookGraph } from "../PlaybookGraph";
 import { PullRequestIndicator } from "../PullRequestIndicator";
 import {
   classifySessionNotice,
+  DEFAULT_TASK_SESSION_SORT,
   hasAcknowledgedExit,
   hasUnacknowledgedExit,
   orderTaskPanelRows,
@@ -36,6 +37,7 @@ import {
   EMPTY_TASK_ACTIVITY,
   EmptyState,
   ExecutionAvailabilityNotice,
+  ExecutionOutputs,
   finalizedSubtaskNotice,
   findOwnedArtifactNode,
   harnessDisplayName,
@@ -71,6 +73,7 @@ import type {
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
+import { readTaskExecution } from "../useExecutionObservation";
 import { useSessionSort } from "../useSessionSort";
 import { useTaskPullRequests } from "../useTaskPullRequests";
 
@@ -218,6 +221,7 @@ export function TaskDetail({
   const [showArchived, setShowArchived] = useState(false);
   const [sessionSort, setSessionSort] = useSessionSort(
     controlledSessionSort !== undefined && onSessionSortChange !== undefined ? { sort: controlledSessionSort, onChange: onSessionSortChange } : undefined,
+    DEFAULT_TASK_SESSION_SORT,
   );
   const sessionNow = useMinuteNow();
   const [artifactItems, setArtifactItems] = useState<ArtifactListItem[]>([]);
@@ -347,7 +351,7 @@ export function TaskDetail({
     const request = ++executionRequest.current;
     const capturedScope = scope;
     try {
-      const value = await ipc.getTaskExecution(slug, repoPath);
+      const value = await readTaskExecution(repoPath, slug);
       if (!capturedScope.alive || scopeRef.current !== capturedScope || request !== executionRequest.current) return;
       setExecutionView(value);
       setExecutionError("");
@@ -1731,20 +1735,7 @@ export function TaskDetail({
                               }),
                             )}
                           </ul>
-                          <ul aria-label="Execution outputs">
-                            {execution.outputs.map((output) => (
-                              <li key={output.relative_path}>
-                                <code>{output.selector}</code> → <code>{output.relative_path}</code> · {execution.receipt_id ? "accepted" : "pending"}
-                              </li>
-                            ))}
-                            {Object.values(executionView.state.occurrences)
-                              .filter((occurrence) => occurrence.producer_execution_id === execution.id && occurrence.selector.includes("*"))
-                              .map((occurrence) => (
-                                <li key={occurrence.id}>
-                                  Accepted member <code>{occurrence.relative_path}</code> · occurrence {occurrence.id}
-                                </li>
-                              ))}
-                          </ul>
+                          <ExecutionOutputs execution={execution} occurrences={executionView.state.occurrences} />
                         </details>
                         <p className="task-history-permission">
                           Completion permission: {execution.permission.kind}

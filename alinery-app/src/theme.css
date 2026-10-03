@@ -1703,7 +1703,7 @@ main {
   text-align: center;
 }
 .task-table .age-col {
-  width: 10ch;
+  width: 12ch;
 }
 .task-table .task-name-cell {
   min-width: 0;
@@ -1836,23 +1836,52 @@ main {
   width: min(880px, 100%);
   gap: 16px;
 }
+.create-repository-source {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
+  gap: 12px;
+}
+.create-repository-source .create-field,
+.create-repository-source .field-input,
+.create-source-field {
+  min-width: 0;
+}
+.create-source-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.create-source-field > button {
+  align-self: flex-end;
+}
+.create-source-hint {
+  overflow-wrap: anywhere;
+}
 .createpage-with-preview {
-  gap: 16px;
-  justify-content: center;
+  /* Keep the form and preview centered; the left gutter belongs to the scroller. */
+  padding: 0 max(32px, calc((100% - 1256px) / 2)) 0 0;
   height: 100%;
   min-height: 0;
   overflow: hidden;
 }
-.createpage-with-preview .createform-page {
-  max-height: 100%;
+.create-form-panel {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
   min-height: 0;
   overflow-y: auto;
+  padding: 32px 16px 24px 32px;
+}
+.create-form-panel .createform-page {
+  margin-left: auto;
   padding-right: 8px;
 }
 .create-preview-panel {
   width: min(360px, 34vw);
   min-width: 280px;
-  max-height: 100%;
+  max-height: calc(100% - 56px);
+  margin: 32px 0 24px;
   flex-shrink: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -2092,18 +2121,26 @@ main {
   overflow-wrap: anywhere;
 }
 @media (max-width: 980px) {
+  .create-repository-source {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .createpage-with-preview {
     flex-direction: column;
     align-items: stretch;
+    padding: 0;
+  }
+  .create-form-panel {
+    padding: 32px 32px 16px;
   }
   .createform-page {
     width: 100%;
     flex: 1;
   }
   .create-preview-panel {
-    width: 100%;
     max-height: 45%;
     min-height: 180px;
+    width: auto;
+    margin: 0 32px 24px;
   }
 }
 /* inset inputs (shared) */
@@ -3934,6 +3971,7 @@ dialog.modal::backdrop {
 .task-session-table .session-name-col {
   width: 24%;
 }
+.task-sort-header,
 .playbooks-sort-header,
 .session-sort-header {
   border: 0;
@@ -3943,6 +3981,8 @@ dialog.modal::backdrop {
   font: inherit;
   padding: 2px 0;
 }
+.task-sort-header:hover,
+.task-sort-header.active,
 .playbooks-sort-header:hover,
 .playbooks-sort-header.active,
 .session-sort-header:hover,
@@ -3950,6 +3990,7 @@ dialog.modal::backdrop {
 .session-sort-control.active {
   color: var(--accent);
 }
+.task-sort-header:focus-visible,
 .playbooks-sort-header:focus-visible,
 .session-sort-header:focus-visible,
 .session-sort-control:focus-visible {
@@ -6024,6 +6065,54 @@ dialog.modal::backdrop {
   flex-basis: 100%;
   margin: 0 0 8px;
   overflow-wrap: anywhere;
+}
+.playbooks-key-choice p {
+  color: var(--text-muted);
+}
+.playbooks-key-choice code {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.playbooks-key-choice dl {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0 8px;
+}
+.playbooks-key-choice dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 16px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+}
+.playbooks-key-choice dt {
+  grid-column: 1;
+  font-weight: 600;
+}
+.playbooks-key-choice dd {
+  grid-column: 1;
+  margin: 4px 0 0;
+}
+.playbooks-key-choice .playbooks-key-action {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  margin: 0;
+}
+.playbooks-key-choice .playbooks-key-conflict {
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+}
+.playbooks-key-choice dd code {
+  color: var(--text-strong);
+  font-size: calc(15px * var(--ui-scale));
+}
+.playbooks-key-choice small {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-muted);
 }
 .playbooks-empty {
   padding: 24px 0;
@@ -8230,6 +8319,100 @@ dialog.modal::backdrop {
   margin-top: 28px;
   padding-top: 20px;
   border-top: 1px solid var(--border);
+}
+.omp-settings {
+  margin-top: 16px;
+  padding: 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.omp-settings h3,
+.harness-settings-section > h3 {
+  margin: 0 0 6px;
+  color: var(--text-strong);
+  font-size: calc(16px * var(--ui-scale));
+  font-weight: 600;
+}
+.omp-settings-heading {
+  margin-bottom: 20px;
+}
+.omp-settings h4 {
+  margin: 0 0 10px;
+  font-size: calc(14px * var(--ui-scale));
+  font-weight: 600;
+}
+.omp-settings .hint {
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.omp-settings > section + section,
+.harness-settings-section {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.harness-settings-section > h3 {
+  margin-bottom: 14px;
+}
+.omp-installation-paths {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+  font-size: calc(12px * var(--ui-scale));
+  overflow-wrap: anywhere;
+}
+.omp-update-offer {
+  margin-top: 14px;
+}
+.omp-customization-actions,
+.omp-inventory-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.omp-customization-actions {
+  margin-bottom: 20px;
+}
+.omp-inventory-heading h5 {
+  margin: 0;
+  font-size: calc(13px * var(--ui-scale));
+  font-weight: 600;
+}
+.omp-inventory-scope {
+  max-width: 90ch;
+  margin: 8px 0 12px;
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.5;
+}
+.omp-customization-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.omp-customization-list > li {
+  display: flex;
+  align-items: start;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px;
+}
+.omp-customization-list > li + li {
+  border-top: 1px solid var(--border);
+}
+.omp-customization-details {
+  flex: 1;
+  min-width: 180px;
+  overflow-wrap: anywhere;
+  font-size: calc(13px * var(--ui-scale));
+}
+.omp-customization-source {
+  margin-top: 4px;
+  font-size: calc(12px * var(--ui-scale));
 }
 .grid-view-settings-list {
   display: grid;

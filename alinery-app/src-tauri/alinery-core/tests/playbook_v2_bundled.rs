@@ -134,7 +134,12 @@ impl Trace {
 
     fn accepted(&mut self, id: &str) {
         self.authorize(id);
-        assert!(matches!(self.accept(id), CompletionOutcome::Accepted { .. }));
+        let outcome = self.accept(id);
+        assert!(
+            matches!(outcome, CompletionOutcome::Accepted { .. }),
+            "{} must accept its selected assigned publications: {outcome:?}",
+            self.state.executions[id].candidate.step_key
+        );
         assert_eq!(self.state.executions[id].lifecycle, ExecutionLifecycle::Finishing);
         assert!(!self.state.executions[id].shutdown_confirmed);
         assert!(self.state.executions[id].lifecycle.holds_capacity());
@@ -244,7 +249,12 @@ impl Trace {
     }
 
     fn collection_binding(&self, consumer: &str, selector: &str, producers: &[String]) {
-        let expected = producers.iter().flat_map(|id| self.outputs(id)).collect::<BTreeSet<_>>();
+        let parsed = ArtifactSelector::parse(selector).unwrap();
+        let expected = producers
+            .iter()
+            .flat_map(|id| self.outputs(id))
+            .filter(|id| parsed.matches(&self.state.occurrences[id].logical_path))
+            .collect::<BTreeSet<_>>();
         self.bound(consumer, selector, expected.clone());
         let collection_id = self.state.executions[consumer].candidate.complete_collection_id.as_ref().unwrap();
         let collection = &self.state.collections[collection_id];
@@ -284,7 +294,7 @@ impl Trace {
         self.authorize(&id);
         assert!(matches!(self.accept(&id), CompletionOutcome::InvalidOutputs { .. }));
         self.blocked(entry);
-        self.write_handoff(&id, 1);
+        self.write(&id, "ticket.md", "Human requests another pass; carry the assigned prior evidence and changed direction.");
         self.accepted(&id);
         self.blocked(entry);
         self.exit(&id);
@@ -293,6 +303,98 @@ impl Trace {
         assert_ne!(self.state.executions[&next].candidate.context_id, "root");
         assert!(!self.state.executions[&next].candidate.inputs["ticket.md"].contains(&self.seed));
         next
+    }
+
+    fn terminal_declaration(&self, step: &str, report: &str) {
+        let boundary = self.definition.step.iter().find(|candidate| candidate.key == step).unwrap();
+        assert!(
+            boundary.outputs.iter().any(|output| output.path == report),
+            "{}/{} must declare {report} so a concluded outcome can leave truthful evidence without manufacturing continuation or domain results",
+            self.definition.key,
+            step
+        );
+        assert!(
+            self.definition
+                .step
+                .iter()
+                .flat_map(|step| &step.inputs)
+                .all(|input| !ArtifactSelector::parse(&input.path).unwrap().matches(report)),
+            "terminal report {report} must not accidentally trigger a consumer"
+        );
+    }
+
+    // Run the actual prerequisite graph, stopping before the named boundary. No
+    // synthetic receipts, completed states, or test-only bundle declarations.
+    fn reach(&mut self, boundary: &str) -> String {
+        loop {
+            self.tick();
+            let queued = self
+                .state
+                .executions
+                .values()
+                .filter(|execution| execution.lifecycle == ExecutionLifecycle::Queued)
+                .map(|execution| (execution.id.clone(), execution.candidate.step_key.clone()))
+                .collect::<Vec<_>>();
+            if let Some((id, _)) = queued.iter().find(|(_, step)| step == boundary) {
+                return id.clone();
+            }
+            assert!(!queued.is_empty(), "actual {} prerequisites never reached {boundary}", self.definition.key);
+            for (id, step) in queued {
+                assert!(
+                    !step.starts_with("continue-") && step != "validate",
+                    "unexpected loop boundary {step} while reaching {boundary}"
+                );
+                self.start(&id);
+                if step == "review-finalists-with-human" {
+                    self.write(&id, "approved-shortlist.md", "Human approved the two ranked finalists for diligence.");
+                    for n in 0..2 {
+                        self.write(&id, &format!("diligence-request-member-{n}.md"), "Investigate this actual approved finalist.");
+                    }
+                } else {
+                    let members = match step.as_str() {
+                        "frame-the-challenge" => 7,
+                        "harvest-the-idea-wall" => 3,
+                        "plan-generation-wave" => 4,
+                        _ => 2,
+                    };
+                    self.write_handoff(&id, members);
+                }
+                self.accepted(&id);
+                self.exit(&id);
+            }
+        }
+    }
+
+    fn counts(&self) -> BTreeMap<String, usize> {
+        let mut counts = BTreeMap::new();
+        for execution in self.state.executions.values() {
+            *counts.entry(execution.candidate.step_key.clone()).or_default() += 1;
+        }
+        counts
+    }
+
+    fn stop(&mut self, id: &str, outputs: &[(&str, &str)], permission: CompletionPermission) {
+        assert_eq!(self.state.executions[id].permission, permission);
+        let before = self.counts();
+        self.start(id);
+        for (path, text) in outputs {
+            self.write(id, path, text);
+        }
+        self.accepted(id);
+        self.tick();
+        assert_eq!(self.counts(), before, "acceptance must not release work while the stopping owner lives");
+        let published = self.outputs(id);
+        assert_eq!(
+            published.iter().map(|oid| self.state.occurrences[oid].logical_path.as_str()).collect::<BTreeSet<_>>(),
+            outputs.iter().map(|(path, _)| *path).collect()
+        );
+        self.exit(id);
+        self.tick();
+        assert_eq!(self.counts(), before, "a terminal disposition must not create any forbidden execution");
+        assert!(published
+            .iter()
+            .all(|oid| alinery_core::execution::occurrence_deliverable(&self.state, &self.state.occurrences[oid])));
+        assert!(self.state.executions.values().all(|execution| execution.lifecycle == ExecutionLifecycle::Completed));
     }
 }
 
@@ -395,10 +497,81 @@ fn bundled_build_playbook_is_discoverable_and_runs() {
         "build-playbook",
         &[
             ("define", &["ticket.md"], &["playbook-spec.md"]),
-            ("draft-refine", &["ticket.md", "playbook-spec.md"], &["candidate-playbook.md", "save-handoff.md"]),
+            ("draft-refine", &["ticket.md", "playbook-spec.md"], &["candidate-playbook.md", "draft-handoff.md"]),
+            (
+                "verify-save",
+                &["ticket.md", "playbook-spec.md", "candidate-playbook.md", "draft-handoff.md"],
+                &["verified-playbook.md", "save-handoff.md"],
+            ),
         ],
-        &["define", "draft-refine"],
+        &["define", "draft-refine", "verify-save"],
     );
+}
+
+#[test]
+fn bundled_solution_exploration_loops_and_compares() {
+    let reference = PlaybookRef {
+        scope: PlaybookScope::Bundled,
+        key: "solution-exploration".into(),
+    };
+    for continue_after_comparison in [false, true] {
+        let mut trace = Trace::new("solution-exploration");
+        let catalog = load_playbook_catalog(&trace.roots);
+        let candidate = catalog
+            .candidates
+            .iter()
+            .find(|candidate| candidate.source.reference == reference)
+            .expect("Solution Exploration must appear in the bundled catalog");
+        assert!(candidate.diagnostics.is_empty(), "{:?}", candidate.diagnostics);
+        let clarify = trace.step("clarify", 1);
+        let mut request = trace.output(&clarify, "design-request.md");
+        for decision in ["design-request.md", "synthesis-request.md"] {
+            let design = trace.one("design");
+            trace.bound(&design, "design-request.md", BTreeSet::from([request.clone()]));
+            trace.bound(&design, "problem-brief.md", BTreeSet::from([trace.output(&clarify, "problem-brief.md")]));
+            trace.finish_handoff(&design, 1);
+            let plan = trace.step("plan", 1);
+            let check = trace.one("check");
+            trace.bound(&check, "solution-design.md", trace.outputs(&design));
+            trace.bound(&check, "implementation-plan.md", trace.outputs(&plan));
+            trace.start(&check);
+            trace.write(&check, "exploration-record.md", "Cumulative findings and design references.");
+            trace.write(&check, "loop-decision.md", "Evidence supports the selected next action.");
+            trace.write(&check, decision, "Carry accumulated findings into the next action.");
+            trace.accepted(&check);
+            trace.blocked("design");
+            trace.blocked("synthesize");
+            trace.exit(&check);
+            if decision == "design-request.md" {
+                request = trace.output(&check, decision);
+                trace.blocked("synthesize");
+                continue;
+            }
+            trace.blocked("design");
+            let synthesis = trace.one("synthesize");
+            for selector in ["exploration-record.md", "loop-decision.md", "synthesis-request.md"] {
+                trace.bound(&synthesis, selector, BTreeSet::from([trace.output(&check, selector)]));
+            }
+            if continue_after_comparison {
+                trace.start(&synthesis);
+                trace.write(&synthesis, "solution-comparison.md", "Compare the explored alternatives and tradeoffs.");
+                trace.write(&synthesis, "design-request.md", "Human feedback requests another alternative.");
+                assert_eq!(trace.accept(&synthesis), CompletionOutcome::HumanAuthorizationRequired);
+                trace.accepted(&synthesis);
+                trace.blocked("design");
+                trace.exit(&synthesis);
+                let next = trace.one("design");
+                trace.bound(&next, "design-request.md", BTreeSet::from([trace.output(&synthesis, "design-request.md")]));
+            } else {
+                trace.stop(
+                    &synthesis,
+                    &[("solution-comparison.md", "Compare alternatives without requiring a winner or further exploration.")],
+                    CompletionPermission::Locked,
+                );
+            }
+        }
+        assert_eq!(trace.counts()["clarify"], 1);
+    }
 }
 
 #[test]
@@ -451,9 +624,6 @@ fn bundled_bug_hunting_trace() {
     trace.start(&solutions);
     trace.write(&solutions, "resolution-options.md", "Two evidenced repair options; awaiting selection");
     assert_eq!(trace.accept(&solutions), CompletionOutcome::HumanAuthorizationRequired);
-    trace.blocked("design");
-    trace.authorize(&solutions);
-    assert!(matches!(trace.accept(&solutions), CompletionOutcome::InvalidOutputs { .. }));
     trace.blocked("design");
     trace.write(&solutions, "selected-fix.md", "Human selects the bounded correction");
     trace.accepted(&solutions);
@@ -713,7 +883,14 @@ fn naming_pass(trace: &mut Trace, frame: &str) -> BTreeSet<String> {
     assert_eq!(trace.state.executions[&shortlist].permission, CompletionPermission::Locked);
     trace.bound(&shortlist, "ranking-wave-summary.md", trace.outputs(&summary));
     trace.start(&shortlist);
-    trace.write_handoff(&shortlist, 2);
+    trace.write(&shortlist, "approved-shortlist.md", "Human approved two actual finalists for diligence.");
+    for n in 0..2 {
+        trace.write(
+            &shortlist,
+            &format!("diligence-request-member-{n}.md"),
+            "Research this approved finalist and report evidence and residual risks.",
+        );
+    }
     assert_eq!(trace.accept(&shortlist), CompletionOutcome::HumanAuthorizationRequired);
     trace.blocked("research-one-finalist");
     trace.accepted(&shortlist);
@@ -791,11 +968,6 @@ fn evidence_pass(trace: &mut Trace, method: &str) -> BTreeSet<String> {
     let validation = trace.one("validate-and-approve-search");
     assert_eq!(trace.state.executions[&validation].permission, CompletionPermission::Locked);
     trace.start(&validation);
-    // Empty search request families cannot become successful empty merges.
-    trace.write_handoff(&validation, 0);
-    trace.authorize(&validation);
-    assert!(matches!(trace.accept(&validation), CompletionOutcome::InvalidOutputs { .. }));
-    trace.blocked("run-one-search");
     trace.write_handoff(&validation, 2);
     trace.accepted(&validation);
     trace.blocked("run-one-search");
@@ -831,13 +1003,6 @@ fn evidence_pass(trace: &mut Trace, method: &str) -> BTreeSet<String> {
     let extraction = trace.one("prepare-and-pilot-extraction");
     trace.bound(&extraction, "frozen-corpus.md", BTreeSet::from([trace.output(&audit, "frozen-corpus.md")]));
     trace.start(&extraction);
-    // A no-included-study disposition must stay at a human boundary; it cannot
-    // silently accept an empty required extraction collection.
-    trace.write_handoff(&extraction, 0);
-    trace.authorize(&extraction);
-    assert!(matches!(trace.accept(&extraction), CompletionOutcome::InvalidOutputs { .. }));
-    trace.blocked("extract-and-code-a");
-    trace.blocked("extract-and-code-b");
     trace.write_handoff(&extraction, 2);
     trace.accepted(&extraction);
     trace.exit(&extraction);
@@ -932,7 +1097,11 @@ fn bundled_spec_loop_stays_inside_slices() {
 
     let validate = trace.one("validate");
     assert_eq!(trace.state.executions[&validate].permission, CompletionPermission::Automatic);
-    trace.finish_handoff(&validate, 1);
+    trace.start(&validate);
+    trace.write(&validate, "ticket.md", "Validation requests the next planned slice with current review evidence.");
+    trace.accepted(&validate);
+    trace.blocked("next-slice");
+    trace.exit(&validate);
 
     let again = trace.one("next-slice");
     trace.bound(&again, "ticket.md", BTreeSet::from([trace.output(&validate, "ticket.md")]));
@@ -969,4 +1138,271 @@ fn bundled_catalog_ignores_legacy_without_rewriting_bytes() {
     assert!(read_execution_state(&trace.repo, "pre-v2-task").is_err());
     assert_eq!(fs::read(&registry).unwrap(), registry_bytes);
     assert_eq!(fs::read(&prompt).unwrap(), prompt_bytes);
+}
+
+#[test]
+fn bundled_academic_survey_stops_without_next_ticket() {
+    let mut trace = Trace::new("academic-survey");
+    trace.terminal_declaration("continue-review", "review-stopping-report.md");
+    let stop = trace.reach("continue-review");
+    assert_eq!(trace.counts()["frame-review"], 1);
+    assert_eq!(trace.counts()["plan-search"], 1);
+    trace.stop(
+        &stop,
+        &[(
+            "review-stopping-report.md",
+            "Human concludes the survey after reviewing the draft and evidence; coverage and access limitations remain documented.",
+        )],
+        CompletionPermission::Automatic,
+    );
+}
+
+#[test]
+fn bundled_academic_survey_continuation_uses_fresh_ticket() {
+    let mut trace = Trace::new("academic-survey");
+    let continuation = trace.reach("continue-review");
+    let before = trace.counts();
+    assert_eq!(trace.state.executions[&continuation].permission, CompletionPermission::Automatic);
+    trace.start(&continuation);
+    trace.write(
+        &continuation,
+        "ticket.md",
+        "New relevant citations warrant a targeted wave; carry the cumulative ledger and exact prior assessment references.",
+    );
+    trace.accepted(&continuation);
+    trace.tick();
+    assert_eq!(trace.counts(), before);
+    trace.exit(&continuation);
+    let next = trace.one("plan-search");
+    trace.bound(&next, "ticket.md", BTreeSet::from([trace.output(&continuation, "ticket.md")]));
+    let frame = trace
+        .state
+        .executions
+        .values()
+        .find(|execution| execution.candidate.step_key == "frame-review")
+        .unwrap()
+        .id
+        .clone();
+    trace.bound(&next, "review-brief.md", trace.outputs(&frame));
+    assert!(!trace.state.executions[&next].candidate.inputs["ticket.md"].contains(&trace.seed));
+    assert_eq!(trace.counts()["frame-review"], 1);
+    assert_eq!(trace.counts()["plan-search"], 2);
+    trace.tick();
+    assert_eq!(trace.counts()["plan-search"], 2);
+}
+
+#[test]
+fn bundled_natural_planning_brainstorm_stops_without_next_ticket() {
+    let mut trace = Trace::new("natural-planning-brainstorm");
+    trace.terminal_declaration("continue-brainstorm", "brainstorm-stopping-report.md");
+    let stop = trace.reach("continue-brainstorm");
+    trace.stop(
+        &stop,
+        &[(
+            "brainstorm-stopping-report.md",
+            "Human closes the brainstorm with the agreed next actions, remaining uncertainties and evidence from the organized options.",
+        )],
+        CompletionPermission::Locked,
+    );
+    assert_eq!(trace.counts()["frame-the-challenge"], 1);
+}
+
+#[test]
+fn bundled_systematic_naming_stops_without_next_ticket() {
+    let mut trace = Trace::new("systematic-naming");
+    trace.terminal_declaration("continue-naming", "naming-stopping-report.md");
+    let stop = trace.reach("continue-naming");
+    trace.stop(
+        &stop,
+        &[(
+            "naming-stopping-report.md",
+            "Human concludes the naming campaign after the naming decision; selected name and residual diligence risks are recorded.",
+        )],
+        CompletionPermission::Locked,
+    );
+    assert_eq!(trace.counts()["frame-naming-brief"], 1);
+}
+
+#[test]
+fn bundled_systematic_evidence_review_stops_without_next_ticket() {
+    let mut trace = Trace::new("systematic-evidence-review");
+    trace.terminal_declaration("continue-evidence-review", "evidence-review-stopping-report.md");
+    let stop = trace.reach("continue-evidence-review");
+    trace.stop(
+        &stop,
+        &[(
+            "evidence-review-stopping-report.md",
+            "Human concludes the review after publication audit with the documented scientific and reporting limitations; no new search wave is requested.",
+        )],
+        CompletionPermission::Locked,
+    );
+    assert_eq!(trace.counts()["select-review-method"], 1);
+}
+
+#[test]
+fn bundled_spec_validation_stops_without_next_ticket() {
+    let mut trace = Trace::new("spec");
+    trace.terminal_declaration("validate", "validation-report.md");
+    let stop = trace.reach("validate");
+    trace.stop(&stop, &[("validation-report.md", "GO: human-approved terminal requirements/design comparison records covered requirements, tested boundaries and unrun checks; no pending manual check is claimed complete.")], CompletionPermission::Automatic);
+    for step in ["research", "specify", "design", "plan-slices", "next-slice"] {
+        assert_eq!(trace.counts()[step], 1);
+    }
+}
+
+#[test]
+fn bundled_systematic_naming_declined_shortlist_stops_without_diligence() {
+    let mut trace = Trace::new("systematic-naming");
+    trace.terminal_declaration("review-finalists-with-human", "shortlist-disposition.md");
+    let stop = trace.reach("review-finalists-with-human");
+    trace.stop(
+        &stop,
+        &[(
+            "shortlist-disposition.md",
+            "Human reviewed the generated, analyzed and ranked candidates and explicitly closes without approving a shortlist; no diligence or final name is requested.",
+        )],
+        CompletionPermission::Locked,
+    );
+}
+
+#[test]
+fn bundled_bug_hunting_no_fix_stops_without_design() {
+    let mut trace = Trace::new("bug-hunting");
+    let stop = trace.reach("solutions");
+    trace.stop(
+        &stop,
+        &[(
+            "resolution-options.md",
+            "Root-cause evidence supports the agreed no-code-change disposition; the human explicitly concludes without selecting a fix.",
+        )],
+        CompletionPermission::Locked,
+    );
+}
+
+#[test]
+fn bundled_systematic_naming_zero_survivors_stops_before_ranking() {
+    let mut trace = Trace::new("systematic-naming");
+    let stop = trace.reach("assemble-candidate-universe");
+    trace.stop(&stop, &[("candidate-universe.md", "All requested generation batches and analyses are accounted for; every candidate is rejected under the agreed criteria. The zero-survivor outcome is concluded, not an unfinished search.")], CompletionPermission::Automatic);
+}
+
+#[test]
+fn bundled_systematic_evidence_review_zero_candidates_stops_before_screening() {
+    let mut trace = Trace::new("systematic-evidence-review");
+    let stop = trace.reach("prepare-screening-wave");
+    trace.stop(
+        &stop,
+        &[
+            (
+                "candidate-ledger.md",
+                "All completed searches and merged records are accounted for; deduplication leaves zero novel eligible candidates.",
+            ),
+            (
+                "screening-wave.md",
+                "Concluded screening roster: zero candidates. No missing search report is treated as an empty result.",
+            ),
+        ],
+        CompletionPermission::Automatic,
+    );
+}
+
+#[test]
+fn bundled_systematic_evidence_review_no_title_advances_stops_before_retrieval() {
+    let mut trace = Trace::new("systematic-evidence-review");
+    let stop = trace.reach("resolve-title-abstract-wave");
+    trace.stop(
+        &stop,
+        &[(
+            "title-abstract-screening-summary.md",
+            "Both independent title-screen lanes are complete; disagreements and required human review are resolved. No candidate advances to full text.",
+        )],
+        CompletionPermission::Locked,
+    );
+}
+
+fn all_excluded_corpus_audit(trace: &mut Trace) -> String {
+    let resolver = trace.reach("resolve-full-text-wave");
+    assert_eq!(trace.state.executions[&resolver].permission, CompletionPermission::Locked);
+    let before = trace.counts();
+    trace.start(&resolver);
+    for path in ["eligibility-decisions.md", "eligibility-ledger.md", "corpus-audit-request.md"] {
+        trace.write(
+            &resolver,
+            path,
+            "Both full-text lanes and human review resolved every study as excluded with reasons; preserve all provenance and request the corpus audit.",
+        );
+    }
+    trace.accepted(&resolver);
+    trace.tick();
+    assert_eq!(trace.counts(), before);
+    trace.exit(&resolver);
+    let audit = trace.one("audit-and-freeze-corpus");
+    for path in ["eligibility-decisions.md", "eligibility-ledger.md", "corpus-audit-request.md"] {
+        trace.bound(&audit, path, BTreeSet::from([trace.output(&resolver, path)]));
+    }
+    for (step, path) in [
+        ("prepare-screening-wave", "candidate-ledger.md"),
+        ("validate-and-approve-search", "approved-review-protocol.md"),
+    ] {
+        let producer = trace.state.executions.values().find(|execution| execution.candidate.step_key == step).unwrap().id.clone();
+        trace.bound(&audit, path, BTreeSet::from([trace.output(&producer, path)]));
+    }
+    let mut expected = before;
+    expected.insert("audit-and-freeze-corpus".into(), 1);
+    assert_eq!(trace.counts(), expected);
+    audit
+}
+
+#[test]
+fn bundled_systematic_evidence_review_all_full_text_excluded_routes_to_audit() {
+    let mut trace = Trace::new("systematic-evidence-review");
+    all_excluded_corpus_audit(&mut trace);
+}
+
+#[test]
+fn bundled_systematic_evidence_review_zero_studies_closes_at_corpus_audit() {
+    let mut trace = Trace::new("systematic-evidence-review");
+    let stop = all_excluded_corpus_audit(&mut trace);
+    trace.stop(
+        &stop,
+        &[
+            (
+                "corpus-audit.md",
+                "Human-reviewed audit concludes a zero-study review with explicit scientific limitations; no nonempty corpus is approved.",
+            ),
+            (
+                "audited-corpus-ledger.md",
+                "All candidates, reports, exclusions and human decisions are reconciled; included studies: zero.",
+            ),
+        ],
+        CompletionPermission::Locked,
+    );
+}
+
+#[test]
+fn bundled_academic_survey_zero_requests_stops_after_search_plan() {
+    let mut trace = Trace::new("academic-survey");
+    let stop = trace.reach("plan-search");
+    trace.stop(
+        &stop,
+        &[(
+            "search-plan.md",
+            "The agreed question and search boundary admit no useful requests; human direction concludes this no-request outcome without claiming a completed survey.",
+        )],
+        CompletionPermission::Automatic,
+    );
+}
+
+#[test]
+fn bundled_academic_survey_zero_sources_stops_before_reading() {
+    let mut trace = Trace::new("academic-survey");
+    let stop = trace.reach("prepare-readings");
+    trace.stop(
+        &stop,
+        &[(
+            "reading-wave.md",
+            "All real searches and their complete reports are reconciled; no new sources need evaluation. This concluded zero-source outcome is not a completed survey draft.",
+        )],
+        CompletionPermission::Automatic,
+    );
 }

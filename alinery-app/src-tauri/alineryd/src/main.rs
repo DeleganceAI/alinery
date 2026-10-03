@@ -14,6 +14,7 @@
 
 // Use alinery-core for all pure FS/path/harness/phase/status logic (pty bits stay local to alineryd).
 mod execution;
+mod idle_inhibit;
 mod ui_control;
 use alinery_core::daemon_client::{control_request_size_error, MAX_CONTROL_BODY_BYTES, MAX_CONTROL_HEADER_BYTES};
 use alinery_core::execution::{CompletionOutcome, ExecutionLifecycle};
@@ -149,7 +150,7 @@ struct MessageBody {
 
 fn reserve_message_bytes(budget: &MessageBudget, bytes: usize) -> Result<MessageBudgetReservation, String> {
     budget
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             current.checked_add(bytes).filter(|next| *next <= MAX_IN_FLIGHT_MESSAGE_BYTES)
         })
         .map_err(|_| "message-in-flight-budget-exceeded".to_string())?;
@@ -158,7 +159,7 @@ fn reserve_message_bytes(budget: &MessageBudget, bytes: usize) -> Result<Message
 
 fn reserve_control_body_bytes(budget: &MessageBudget, bytes: usize) -> Result<MessageBudgetReservation, String> {
     budget
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             current.checked_add(bytes).filter(|next| *next <= MAX_IN_FLIGHT_CONTROL_BODY_BYTES)
         })
         .map_err(|_| "control-body-in-flight-budget-exceeded".to_string())?;
@@ -414,6 +415,10 @@ fn main() {
     let message_budget: MessageBudget = Arc::new(AtomicUsize::new(0));
     let control_body_budget: MessageBudget = Arc::new(AtomicUsize::new(0));
     start_auto_advance_reconciler(repo.clone(), reg.clone(), daemon_namespace.to_string(), app_config.as_ref().clone(), protected_host.clone());
+    let idle_inhibit = {
+        let reg = reg.clone();
+        idle_inhibit::start(app_config.as_ref().clone(), move || idle_inhibit_sessions(&reg))
+    };
 
     // Signal self-pipe: handler writes one byte; main loop reads and graceful_exits.
     let mut signal_rx = install_signal_self_pipe();
@@ -424,7 +429,7 @@ fn main() {
             let mut buf = [0u8; 8];
             match rx.read(&mut buf) {
                 Ok(n) if n > 0 => {
-                    graceful_exit(&reg, &socket_path);
+                    graceful_exit(&reg, &socket_path, &idle_inhibit);
                 }
                 _ => {}
             }
@@ -443,6 +448,7 @@ fn main() {
                 let app_config = app_config.clone();
                 let app_config_identity = app_config_identity.clone();
                 let protected_host = protected_host.clone();
+                let idle_inhibit = idle_inhibit.clone();
                 std::thread::spawn(move || {
                     handle_conn(
                         stream,
@@ -457,6 +463,7 @@ fn main() {
                         &app_config_identity,
                         &app_config,
                         &protected_host,
+                        &idle_inhibit,
                     );
                 });
             }
@@ -545,12 +552,22 @@ extern "C" fn signal_handler(_sig: libc::c_int) {
     }
 }
 
-/// Kill every live session, stamp any stragglers, unlink socket (never lock), exit.
-fn graceful_exit(reg: &Registry, socket_path: &Path) -> ! {
+/// Kill every live session, stamp any stragglers, drop the idle inhibit, unlink socket (never lock), exit.
+fn graceful_exit(reg: &Registry, socket_path: &Path, idle_inhibit: &idle_inhibit::Handle) -> ! {
     kill_all_sessions(reg);
+    idle_inhibit.release();
     let _ = fs::remove_file(socket_path);
     // Drop lock by process exit — do NOT unlink lock_path.
     process::exit(0);
+}
+
+/// Registry rows that keep the computer awake (`idle_inhibit::session_holds`). Same lock order
+/// as the `list` op: registry, then each session's inner, both dropped before returning.
+fn idle_inhibit_sessions(reg: &Registry) -> usize {
+    let map = reg.lock().unwrap_or_else(|e| e.into_inner());
+    map.iter()
+        .filter(|(id, sess)| idle_inhibit::session_holds(id, &sess.inner.lock().unwrap_or_else(|e| e.into_inner()).state))
+        .count()
 }
 
 /// (session id, harness pid, shared inner state, meta path) — snapshot for teardown.
@@ -1092,6 +1109,7 @@ fn handle_conn(
     app_config_identity: &str,
     app_config: &Path,
     protected_host: &ProtectedHost,
+    idle_inhibit: &idle_inhibit::Handle,
 ) {
     // The listener is non-blocking so the accept loop can poll the signal pipe.
     // On macOS accept() inherits O_NONBLOCK; a temporary gap must not be EOF.
@@ -1545,6 +1563,7 @@ fn handle_conn(
             // Never unlink the lock file — flock is the only singleton truth.
             let _ = lock_path; // retained in signature for protocol stability
             kill_all_sessions(reg);
+            idle_inhibit.release();
             let _ = fs::remove_file(socket_path);
             reply(&mut stream, json!({"ok": true}));
             process::exit(0);
@@ -3558,6 +3577,7 @@ mod request_limits {
                 "",
                 Path::new(""),
                 &Arc::new(None),
+                &idle_inhibit::Handle::noop(),
             );
         });
         // No newline or EOF: the header cap, not JSON parsing or the 100s timeout,

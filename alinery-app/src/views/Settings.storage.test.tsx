@@ -163,7 +163,7 @@ describe("Settings storage scope", () => {
     fireEvent.click(screen.getByRole("button", { name: "All repositories" }));
     expect(await screen.findByText(SCOPE_EMPTY)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Backup" }).classList.contains("on")).toBe(true);
-    expect(screen.getByRole("button", { name: "Notifications" }).classList.contains("on")).toBe(false);
+    expect(screen.getByRole("button", { name: "General" }).classList.contains("on")).toBe(false);
   });
 
   it("loads the Settings-scope repo, not the top-bar repo", async () => {

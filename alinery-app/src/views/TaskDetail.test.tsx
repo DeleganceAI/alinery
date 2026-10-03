@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
+import { PRIORITY_SESSION_SORT } from "../sessionAttention";
 import { mockIpc } from "../test/mockIpc";
 import { navReady, requireNav } from "../test/nav";
 import type {
@@ -15,7 +16,7 @@ import type {
   TaskActivityRef,
   TaskActivitySummary,
 } from "../types";
-import { executionRecord, executionReply } from "./executionTestFixture";
+import { executionRecord, executionReply, partiallyPublishedExecution } from "./executionTestFixture";
 import { TaskDetail } from "./TaskDetail";
 
 const scenario = vi.hoisted(() => ({
@@ -411,6 +412,25 @@ describe("session work names", () => {
     expect(await screen.findByRole("status", { name: "Waiting for session name" })).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
     expect(screen.queryByRole("status", { name: "Waiting for session name" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Session name" })).toBeDefined();
+  });
+
+  it("replaces the name animation with a dash when a live agent becomes idle", async () => {
+    vi.useFakeTimers();
+    scenario.sessions = [session({ id: "waiting", harness: "omp" })];
+    mocks.sessionStatuses.mockResolvedValue({ waiting: observation("busy") });
+    const rendered = renderDetail();
+    await vi.waitFor(() => expect(screen.getByRole("status", { name: "Waiting for session name" })).toBeDefined());
+    await rendered;
+    expect(screen.getByRole("status", { name: "Waiting for session name" })).toBeDefined();
+
+    mocks.sessionStatuses.mockResolvedValue({ waiting: observation("idle") });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(screen.queryByRole("status", { name: "Waiting for session name" })).toBeNull();
+    expect(document.querySelector(".session-name-cell .editable-name-text")?.textContent).toBe("—");
+    fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
     expect(screen.getByRole("textbox", { name: "Session name" })).toBeDefined();
   });
 
@@ -1296,6 +1316,24 @@ describe("keying by slug", () => {
 });
 
 describe("authoritative task execution", () => {
+  it("distinguishes accepted outputs from omissions and counts only this execution's wildcard publications", async () => {
+    const fixture = task();
+    mocks.getTask.mockResolvedValue(fixture);
+    mocks.getTaskExecution.mockResolvedValue(partiallyPublishedExecution());
+    renderSeededDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    const execution = within(await screen.findByRole("article", { name: "Execution execution-a" }));
+    fireEvent.click(execution.getByText("Inputs and outputs"));
+    const outputs = within(execution.getByRole("list", { name: "Execution outputs" }));
+    expect(outputs.getByText("resolution-options.md").closest("li")?.textContent).toContain("· accepted");
+    expect(outputs.getByText("selected-fix.md").closest("li")?.textContent).toContain("· not published");
+    expect(outputs.getByText("papers/*.md").closest("li")?.textContent).toContain("· 2 accepted");
+    expect(outputs.getByText("notes/*.md").closest("li")?.textContent).toContain("· 0 accepted");
+    expect(outputs.getByText("papers/2-a-12.md")).toBeDefined();
+    expect(outputs.getByText("papers/2-b-12.md")).toBeDefined();
+    expect(outputs.queryByText("notes/2-other-21.md")).toBeNull();
+  });
+
   it("shows concurrent primary work without newer auxiliary sessions changing progress", async () => {
     const fixture = task();
     mocks.getTask.mockResolvedValue(fixture);
@@ -1556,8 +1594,7 @@ describe("attention-first session order", () => {
       "older-design": observation("busy"),
       "newer-tdd": { ...observation("idle"), lifecycle: { state: "exited", code: 0 }, state: null },
     });
-
-    const { container } = renderSeededDetail({ initialTask: fixture });
+    const { container } = renderSeededDetail({ initialTask: fixture, sessionSort: PRIORITY_SESSION_SORT, onSessionSortChange: noop });
 
     await waitFor(() => {
       expect(renderedSessionSteps(container)).toEqual([...backendRows].reverse().map((row) => `${row.playbook} · ${row.phase}`));
@@ -1652,12 +1689,15 @@ describe("session time columns and sorting", () => {
     mocks.listSessions.mockResolvedValue(backendRows);
     mocks.sessionStatuses.mockResolvedValue({});
     const { container } = renderSeededDetail({ initialTask: fixture });
-    await waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · clarify", "superdevelop · design", "superdevelop · build"]));
+    await waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design", "superdevelop · clarify"]));
+    const updated = screen.getByText(/^Updated/, { selector: ".session-sort-header" });
+    expect(updated.closest("th")?.getAttribute("aria-sort")).toBe("descending");
+    expect(updated.textContent?.trim()).toBe("Updated ↓");
 
     const started = screen.getByText("Started", { selector: ".session-sort-header" });
     fireEvent.click(started);
-    await waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design", "superdevelop · clarify"]));
-    expect(started.closest("th")?.getAttribute("aria-sort")).toBe("descending");
+    await waitFor(() => expect(started.closest("th")?.getAttribute("aria-sort")).toBe("descending"));
+    expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design", "superdevelop · clarify"]);
     expect(started.textContent?.trim()).toBe("Started ↓");
     expect(container.querySelectorAll(".task-session-table tbody tr")[0].querySelector('[title^="Started "]')).not.toBeNull();
 
@@ -1682,10 +1722,11 @@ describe("session time columns and sorting", () => {
     mocks.listSessions.mockImplementation(async () => rows);
     mocks.sessionStatuses.mockResolvedValue({});
     const { container } = renderSeededDetail({ initialTask: fixture });
-    await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · design", "superdevelop · build"]));
-    const updated = screen.getByText("Updated", { selector: ".session-sort-header" });
-    fireEvent.click(updated);
-    expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]);
+    await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]));
+    const updated = screen.getByText(/^Updated/, { selector: ".session-sort-header" });
+    expect(updated.closest("th")?.getAttribute("aria-sort")).toBe("descending");
+    expect(updated.textContent?.trim()).toBe("Updated ↓");
+    expect(screen.getByRole("button", { name: "Priority" }).getAttribute("aria-pressed")).toBe("false");
 
     rows = [{ ...rows[0], status_changed_at: 300 }, rows[1]];
     await act(async () => {
@@ -1693,7 +1734,6 @@ describe("session time columns and sorting", () => {
     });
     await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · design", "superdevelop · build"]));
     expect(updated.closest("th")?.getAttribute("aria-sort")).toBe("descending");
-    expect(updated.textContent?.trim()).toBe("Updated ↓");
     expect(screen.getByRole("button", { name: "Priority" }).getAttribute("aria-pressed")).toBe("false");
 
     fireEvent.click(updated);
@@ -1732,12 +1772,11 @@ describe("session time columns and sorting", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
-    await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · design", "superdevelop · build"]));
-    expect(screen.getByText("Failed")).toBeDefined();
-
-    const updated = screen.getByText("Updated", { selector: ".session-sort-header" });
-    fireEvent.click(updated);
+    await vi.waitFor(() => expect(screen.getByText("Failed")).toBeDefined());
     expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]);
+    const updated = screen.getByText(/^Updated/, { selector: ".session-sort-header" });
+    expect(updated.closest("th")?.getAttribute("aria-sort")).toBe("descending");
+    expect(screen.getByRole("button", { name: "Priority" }).getAttribute("aria-pressed")).toBe("false");
 
     targetObservation = failedObservation("StaleSource");
     await act(async () => {

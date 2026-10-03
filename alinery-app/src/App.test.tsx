@@ -191,6 +191,17 @@ const { ipcMocks, ipcModule } = vi.hoisted(() => {
     subtaskState: vi.fn(),
     listSessions: vi.fn(),
     getTaskExecution: vi.fn(),
+    observeTaskExecutions: vi.fn(async (tasks: { repoPath: string; taskSlug: string }[]) =>
+      Promise.all(
+        tasks.map(async (task) => {
+          try {
+            return { repo_path: task.repoPath, task_slug: task.taskSlug, execution: await ipcMocks.getTaskExecution(task.taskSlug, task.repoPath) };
+          } catch (error) {
+            return { repo_path: task.repoPath, task_slug: task.taskSlug, error: String(error) };
+          }
+        }),
+      ),
+    ),
     listArtifactsWithMetadata: vi.fn(),
     listTaskArtifactTree: vi.fn(),
     listArtifactCommentDraftsForRepo: vi.fn(),
@@ -601,6 +612,12 @@ async function renderApp() {
   await screen.findByRole("button", { name: "Search" });
 }
 
+// Notifications lives in the account menu, above Settings, not in the top-bar tabs.
+async function openNotifications() {
+  fireEvent.click(await screen.findByRole("button", { name: "Account" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Notifications" }));
+}
+
 async function openGlobalSession() {
   fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
   fireEvent.click(await screen.findByRole("button", { name: "open global session" }));
@@ -700,6 +717,11 @@ describe("Playbooks navigation", () => {
       return source;
     });
     vi.mocked(ipc.readConfigForRepo).mockResolvedValue({ defaults: { playbook: sources[0].source.reference, draft_autosave: false } } as Config);
+    vi.mocked(ipc.taskSourceBranchesForRepo).mockResolvedValue({
+      branches: [{ full_ref: "refs/heads/main", name: "main" }],
+      head: { kind: "branch", full_ref: "refs/heads/main", name: "main" },
+      selected: null,
+    });
     vi.mocked(ipc.listHarnessModelsForRepo).mockResolvedValue([]);
     vi.mocked(ipc.getCurrentWebview, { partial: true }).mockReturnValue({ onDragDropEvent: async () => () => {} });
     await renderApp();
@@ -751,7 +773,7 @@ describe("session navigation acknowledgment", () => {
       global: { ...appConfig.global, experiments: { show_original_kanban: true } },
     });
     await renderApp();
-    fireEvent.click(screen.getByRole("button", { name: "Kanban3" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kanban4" }));
     fireEvent.click(await screen.findByRole("button", { name: "open active card session" }));
     await screen.findByText("session:active-design");
     expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "active-design");
@@ -790,7 +812,7 @@ describe("session navigation acknowledgment", () => {
   });
   it("renders the scoped Notifications tab and routes its exact session through acknowledgment", async () => {
     await renderApp();
-    fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+    await openNotifications();
     const row = await screen.findByRole("button", { name: "open notification session" });
     expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
 
@@ -807,7 +829,7 @@ describe("session navigation acknowledgment", () => {
       known_repos: ["/repo", "/foreign"],
     });
     await renderApp();
-    fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+    await openNotifications();
     fireEvent.click(await screen.findByRole("button", { name: "open foreign notification" }));
     await screen.findByText("session:foreign-design");
 
@@ -886,10 +908,11 @@ describe("session navigation acknowledgment", () => {
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
 
-    expect((await screen.findByText("Go to Tasks")).closest(".pitem")?.textContent).toContain("⌘1");
-    expect(screen.getByText("Go to Kanban+").closest(".pitem")?.textContent).toContain("⌘2");
-    expect(screen.getByText("Go to Kanban").closest(".pitem")?.textContent).toContain("⌘3");
-    expect(screen.getByText("Go to Sessions").closest(".pitem")?.textContent).toContain("⌘7");
+    // One Grid view by default, so the bar reads ⌘1 Kanban+, ⌘2 Tasks, ⌘3 Sessions, ⌘4 Kanban.
+    expect(screen.getByText("Go to Kanban+").closest(".pitem")?.textContent).toContain("⌘1");
+    expect((await screen.findByText("Go to Tasks")).closest(".pitem")?.textContent).toContain("⌘2");
+    expect(screen.getByText("Go to Sessions").closest(".pitem")?.textContent).toContain("⌘3");
+    expect(screen.getByText("Go to Kanban").closest(".pitem")?.textContent).toContain("⌘4");
     expect(screen.getByText("Go to Notifications").closest(".pitem")?.textContent).toContain("⌘8");
     expect(screen.queryByText("Go to Wiki")).toBeNull();
     expect(screen.getByText("Open Settings").closest(".pitem")?.textContent).toContain("⌘9");
@@ -899,7 +922,7 @@ describe("session navigation acknowledgment", () => {
     await renderApp();
 
     expect(screen.getByRole("button", { name: /Kanban\+/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Kanban3" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kanban4" }));
     expect(await screen.findByRole("button", { name: "open active card session" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByText("Go to Kanban+")).toBeTruthy();
@@ -913,7 +936,7 @@ describe("session navigation acknowledgment", () => {
     });
     await renderApp();
 
-    expect(screen.queryByRole("button", { name: "Kanban3" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Kanban4" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByText("Go to Kanban+")).toBeTruthy();
     expect(screen.queryByText("Go to Kanban")).toBeNull();
@@ -934,27 +957,41 @@ describe("session navigation acknowledgment", () => {
 });
 
 describe("session sort lifetime", () => {
-  it("keeps independent Task Detail and Sessions sorts across navigation for the current launch", async () => {
+  it("defaults Task Detail to updated descending and remembers that choice across launches", async () => {
     await renderApp();
 
     fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
     expect(await screen.findByText("global sort:priority")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "choose global updated" }));
     expect(await screen.findByText("global sort:updated")).toBeDefined();
+    expect(window.localStorage.getItem("alinery.taskSessionSort")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
     fireEvent.click(await screen.findByRole("button", { name: "open list task" }));
-    expect(await screen.findByText("task sort:priority")).toBeDefined();
+    expect(await screen.findByText("task sort:updated")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "choose task started" }));
     expect(await screen.findByText("task sort:started")).toBeDefined();
+    expect(window.localStorage.getItem("alinery.taskSessionSort")).toBe("started:desc");
 
     fireEvent.click(screen.getByRole("button", { name: "back from task" }));
     fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
     expect(await screen.findByText("global sort:updated")).toBeDefined();
 
+    cleanup();
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
+    expect(await screen.findByText("global sort:priority")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
     fireEvent.click(await screen.findByRole("button", { name: "open list task" }));
     expect(await screen.findByText("task sort:started")).toBeDefined();
+  });
+
+  it("ignores a corrupt remembered task sort", async () => {
+    window.localStorage.setItem("alinery.taskSessionSort", "nope");
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "open list task" }));
+    expect(await screen.findByText("task sort:updated")).toBeDefined();
   });
 });
 
@@ -965,7 +1002,7 @@ describe("global notification owner", () => {
     expect(ipcMocks.sessionListStatuses).toHaveBeenCalledWith([]);
     const calls = ipcMocks.listSessionItems.mock.calls.length;
 
-    fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+    await openNotifications();
     await screen.findByRole("button", { name: "open notification session" });
     expect(ipcMocks.listSessionItems).toHaveBeenCalledTimes(calls);
   });
@@ -1008,7 +1045,7 @@ describe("global notification owner", () => {
     await renderApp();
     await waitFor(() => expect(ipcMocks.setDockBadgeCount).toHaveBeenCalledWith(2));
 
-    fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+    await openNotifications();
     const notificationView = (await screen.findByRole("button", { name: "clear shared notifications" })).closest("[data-scope]");
     expect(notificationView?.getAttribute("data-scope")).toBe("/repo");
     expect(notificationView?.getAttribute("data-global-rows")).toBe("2");
@@ -1171,7 +1208,7 @@ describe("repository switch keeps the current page", () => {
   it("stays on kanban, settings, and notifications instead of bouncing to the task list", async () => {
     await renderApp();
 
-    fireEvent.click(screen.getByRole("button", { name: "Kanban3" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kanban4" }));
     expect(await screen.findByRole("button", { name: "open active card session" })).toBeTruthy();
     await chooseRepo("/other");
     expect(screen.getByRole("button", { name: "open active card session" })).toBeTruthy();
@@ -1185,7 +1222,7 @@ describe("repository switch keeps the current page", () => {
     await chooseRepo("/repo");
     expect(screen.getByRole("button", { name: "save notification settings" })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+    await openNotifications();
     expect((await screen.findByRole("button", { name: "clear shared notifications" })).closest("[data-scope]")?.getAttribute("data-scope")).toBe("/repo");
     await chooseAllRepos();
     expect(screen.getByRole("button", { name: "clear shared notifications" }).closest("[data-scope]")?.getAttribute("data-scope")).toBe("all");

@@ -653,7 +653,6 @@ pub fn grant_execution_completion(state: &mut TaskExecutionState, id: &str, sess
 }
 
 fn assigned_members(repo: &Path, slug: &str, assignment: &OutputAssignment) -> Result<Vec<(String, String)>, String> {
-    let logical = ArtifactSelector::parse(&assignment.selector)?;
     let physical = ArtifactSelector::parse(&assignment.relative_path)?;
     let root = crate::shared::resolve_artifact_directory(repo, &format!(".alinery/tasks/{slug}/artifacts"))?;
     let paths = if physical.wildcard {
@@ -664,7 +663,12 @@ fn assigned_members(repo: &Path, slug: &str, assignment: &OutputAssignment) -> R
         };
         let parent = crate::resolve_artifact_path(&root, &probe)?.parent().ok_or("artifact has no directory")?.to_path_buf();
         let mut paths = Vec::new();
-        for entry in fs::read_dir(parent).map_err(|e| format!("read assigned output directory: {e}"))? {
+        let entries = match fs::read_dir(parent) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(format!("read assigned output directory: {error}")),
+        };
+        for entry in entries {
             let entry = entry.map_err(|e| e.to_string())?;
             let name = entry.file_name().into_string().map_err(|_| "non UTF-8 output")?;
             let relative = if physical.directory.is_empty() {
@@ -681,15 +685,22 @@ fn assigned_members(repo: &Path, slug: &str, assignment: &OutputAssignment) -> R
     } else {
         vec![assignment.relative_path.clone()]
     };
-    if paths.is_empty() {
-        return Err(format!("required output family '{}' is empty", assignment.relative_path));
-    }
+    validate_assigned_paths(&root, assignment, &physical, paths)
+}
+
+fn validate_assigned_paths(root: &Path, assignment: &OutputAssignment, physical: &ArtifactSelector, paths: Vec<String>) -> Result<Vec<(String, String)>, String> {
+    let logical = ArtifactSelector::parse(&assignment.selector)?;
     let mut members = Vec::new();
     for relative in paths {
-        let path = crate::resolve_artifact_path(&root, &relative)?;
-        let meta = fs::symlink_metadata(&path).map_err(|e| format!("required output {relative}: {e}"))?;
+        let path = crate::resolve_artifact_path(root, &relative)?;
+        let meta = match fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            // An enumerated wildcard member disappearing is an inspection failure, not omission.
+            Err(error) if !physical.wildcard && error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("assigned output {relative}: {error}")),
+        };
         if !meta.is_file() || meta.file_type().is_symlink() || meta.len() == 0 {
-            return Err(format!("required output '{relative}' must be a nonempty regular file"));
+            return Err(format!("assigned output '{relative}' must be a nonempty regular file"));
         }
         let logical_path = if physical.wildcard {
             let name = relative.rsplit('/').next().ok_or("invalid output filename")?;
@@ -748,6 +759,9 @@ pub fn accept_execution_completion(repo: &Path, slug: &str, state: &mut TaskExec
             }
             Err(error) => diagnostics.push(error),
         }
+    }
+    if diagnostics.is_empty() && accepted.is_empty() {
+        diagnostics.push("Completion requires at least one valid assigned artifact overall; no publications were found.".into());
     }
     if !diagnostics.is_empty() {
         record.error = Some(diagnostics.join("\n"));
@@ -828,32 +842,33 @@ pub fn execution_assignment_prompt(repo: &Path, slug: &str, state: &TaskExecutio
     for assignment in &record.outputs {
         let _ = writeln!(
             prompt,
-            "Write: {} (logical {}; {}required)",
+            "Write: {} (logical {}; possible publication{})",
             root.join(&assignment.relative_path).display(),
             assignment.selector,
             if assignment.relative_path.contains('*') {
-                "nonempty wildcard family, all members "
+                ", wildcard family with zero or finitely many valid members"
             } else {
                 ""
             }
         );
     }
     prompt.push_str(concat!(
+        "\nEach output declaration is a possible publication, not an individual file requirement. Successful completion requires at least one valid assigned artifact overall. Safely absent outputs and zero-member wildcard families may be omitted; present invalid artifacts and genuine filesystem inspection errors reject the entire attempt. Publish only within these exact assigned paths. This current publication rule supersedes older blanket all-output requirements and older zero-publication guidance, but never waives substantive work, deliverables, verification, decisions, or human approval. Missing substantive work stays interactive. Accepted publications are immutable: files written after acceptance do not extend the receipt.\n",
         "\nCompletion is an explicit handshake: you request completion through alinery_phase_complete, the engine validates the assigned outputs and completion permission and records acceptance, and the session then shuts down normally. A written artifact, user-facing report, idle session, or process exit does not complete this execution by itself.\n\n",
-        "When the assigned work, required outputs, verification, and substantive decisions are ready, do both of these in the same assistant turn:\n",
-        "1. Send the user-facing handoff text.\n",
-        "2. Call alinery_phase_complete before ending the turn.\n\n",
-        "Finish all required work and the handoff before invoking the tool because acceptance requests shutdown.\n\n",
-        "The example text below is illustrative. Report the actual assigned output and verification result; do not copy an unsupported claim. The tool-call line denotes an actual tool invocation, not prose to print.\n\n",
-        "Valid:\n",
-        "  assistant text: \"Design complete; here is the artifact and decision.\"\n",
-        "  assistant tool call: alinery_phase_complete({})\n\n",
-        "Not valid:\n",
-        "  assistant text: \"Design complete.\"\n",
-        "  <turn ends without calling alinery_phase_complete>\n\n",
+        "## Deliver the result\n\n",
+        "Your artifact is a file on disk, not your chat response. Printing its contents or naming its path does not create it.\n\n",
+        "When the assigned work, verification, and substantive decisions are ready:\n",
+        "1. Use a filesystem tool to write the required deliverables to their exact assigned output paths. Publish only the outputs appropriate to the outcome; do not manufacture unused branch triggers.\n",
+        "2. Verify that the files were saved successfully.\n",
+        "3. Send a brief user-facing handoff naming the saved artifacts and verification. Do not substitute the full document in chat for saving it.\n",
+        "4. Invoke alinery_phase_complete as an actual tool call in the same assistant turn as the handoff, before ending the turn.\n\n",
+        "In OMP, invoke completion through your existing write tool with these arguments:\n",
+        "{\"path\":\"xd://alinery_phase_complete\",\"content\":\"{}\",\"i\":\"Completing assigned execution\"}\n",
+        "This executes the completion tool; it does not create a file. You do not need a separately listed alinery_phase_complete tool or a separate xd:// tool. Make the actual write tool call, not a chat message containing these arguments.\n\n",
+        "Do not end a ready-to-complete turn after only the handoff. Finish all required work and the handoff before invoking the tool because acceptance requests shutdown.\n\n",
         "If clarification, substantive approval, output work, or another blocker remains, explain what is needed and stay interactive instead. Do not call the completion tool merely because the session is idle.\n\n",
         "When ready, call alinery_phase_complete even when completion permission is locked. The tool handles the separate permission-to-finish gate; substantive approval of the work does not replace the completion call. If permission is denied or unavailable, stay interactive without repeatedly requesting it.\n\n",
-        "Correct invalid outputs before retrying. Resolve delivery or ownership failures rather than claiming success. Only an accepted tool result confirms completion. After acceptance, do no further work; allow ordinary shutdown. The engine releases dependent work only after confirmed process exit.\n\n",
+        "Correct invalid outputs before retrying. Resolve delivery or ownership failures rather than claiming success. Only an accepted tool result confirms completion. After acceptance, do no further work; allow ordinary shutdown. Only successors whose declared inputs are satisfied by accepted publications become eligible after confirmed process exit; completion does not promise every possible successor will run.\n\n",
         "Do not modify other executions' artifacts.\n",
     ));
     Ok(prompt)

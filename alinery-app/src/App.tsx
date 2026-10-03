@@ -26,7 +26,7 @@ import { GlobalSearch, type SearchItem } from "./CommandPalette";
 import type { QueuedFollowUp } from "./chat/queue";
 import { askConfirm, ConfirmHost, confirmDanger } from "./confirm";
 import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner } from "./DaemonConflictBanner";
-import { ACTIVE_GRID_VIEW_STORAGE_KEY, DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute } from "./gridViews";
+import { ACTIVE_GRID_VIEW_STORAGE_KEY, DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute, trailingTabDigit } from "./gridViews";
 import { HotkeyBar } from "./HotkeyBar";
 import { ORB_SPEED } from "./Indicators";
 import * as ipc from "./ipc";
@@ -65,6 +65,7 @@ import { useHotkeys } from "./useHotkeys";
 import { useMcpStatus } from "./useMcpStatus";
 import { useOmpUpdateStatus } from "./useOmpUpdateStatus";
 import { useSessionNoticeSnapshot } from "./useSessionNoticeSnapshot";
+import { readStoredTaskSessionSort, writeStoredTaskSessionSort } from "./useSessionSort";
 import { useUpdateStatus } from "./useUpdateStatus";
 import { CreateSessionPage } from "./views/CreateSessionPage";
 import { CreateTaskPage } from "./views/CreateTaskPage";
@@ -185,10 +186,14 @@ export default function App() {
   const [appVersion, setAppVersion] = useState("");
   const [busy, setBusy] = useState<ToastBusy | null>(null);
   const [updating, setUpdating] = useState(false);
-  // Presentation preferences live for this app process only. Each surface keeps its own
-  // choice while navigation unmounts and remounts the list.
+  // Sessions list sort lives for this process only. Task Detail defaults to Updated
+  // descending and remembers one install-wide choice across launches.
   const [globalSessionSort, setGlobalSessionSort] = useState<SessionSort>(PRIORITY_SESSION_SORT);
-  const [taskSessionSort, setTaskSessionSort] = useState<SessionSort>(PRIORITY_SESSION_SORT);
+  const [taskSessionSort, setTaskSessionSort] = useState(readStoredTaskSessionSort);
+  const onTaskSessionSortChange = (sort: SessionSort) => {
+    setTaskSessionSort(sort);
+    writeStoredTaskSessionSort(sort);
+  };
   // Global left terminal drawer — ephemeral; not persisted.
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerWidth, setDrawerWidth] = useState(DRAWER_DEFAULT_WIDTH);
@@ -413,7 +418,7 @@ export default function App() {
         if (shouldAskTelemetryConsent(cfg.global?.telemetry)) {
           void askConfirm({
             title: "Share anonymous usage?",
-            body: "Alinery can send anonymized product-usage events (app open, tasks, sessions, settings). Never paths, task names, prompts, artifacts, or tokens. Change anytime in Settings → Telemetry.",
+            body: "Alinery can send anonymized product-usage events (app open, tasks, sessions, settings). Never paths, task names, prompts, artifacts, or tokens. Change anytime in Settings → General.",
             choices: TELEMETRY_CONSENT_CHOICES,
             defaultKey: "opt-out",
             cancelKey: "later",
@@ -1079,6 +1084,8 @@ export default function App() {
     openCreate: () => {
       if (hasRepo) openCreate();
     },
+    gridCount: gridViews.length,
+    showKanban: showOriginalKanban,
     goList: () => {
       if (hasRepo) switchTop("list", { instant: true });
     },
@@ -1134,12 +1141,14 @@ export default function App() {
       ? [
           action("run", pi(Play), "Run session on selected", "⌘↵", () => navRef.current?.openSelected()),
           action("new-task", pi(Plus), "New task", "⌘N", openCreate),
-          action("tasks", pi(List), "Go to Tasks", "⌘1", () => switchTop("list", { instant: true })),
           ...gridViews.map((gridView, index) =>
             action(`grid-${gridView.id}`, pi(Grid3X3), `Go to ${gridView.name}`, gridViewShortcut(index), () => switchTop("grid", { instant: true, gridViewId: gridView.id })),
           ),
-          ...(showOriginalKanban ? [action("kanban", pi(SquareKanban), "Go to Kanban", "⌘3", () => switchTop("kanban", { instant: true }))] : []),
-          action("sessions", pi(SquareTerminal), "Go to Sessions", "⌘7", () => switchTop("sessions", { instant: true })),
+          action("tasks", pi(List), "Go to Tasks", `⌘${trailingTabDigit(gridViews.length, "tasks")}`, () => switchTop("list", { instant: true })),
+          action("sessions", pi(SquareTerminal), "Go to Sessions", `⌘${trailingTabDigit(gridViews.length, "sessions")}`, () => switchTop("sessions", { instant: true })),
+          ...(showOriginalKanban
+            ? [action("kanban", pi(SquareKanban), "Go to Kanban", `⌘${trailingTabDigit(gridViews.length, "kanban")}`, () => switchTop("kanban", { instant: true }))]
+            : []),
           action("notifications", pi(Bell), "Go to Notifications", "⌘8", () => switchTop("notifications", { instant: true })),
           action("settings", pi(SettingsIcon), "Open Settings", "⌘9", () => openSettings(undefined, { instant: true })),
           ...SETTINGS_SECTIONS.map((section) =>
@@ -1375,7 +1384,7 @@ export default function App() {
             </div>
           )}
           {view.kind === "create" && (
-            <div className="view scroll">
+            <div className="view nopad">
               <CreateTaskPage
                 initialDraft={view.kind === "create" ? view.draft : undefined}
                 initialPlaybook={view.initialPlaybook}
@@ -1494,7 +1503,7 @@ export default function App() {
                   repoPath={view.repoPath || appConfig.active_repo}
                   knownRepos={appConfig.known_repos}
                   sessionSort={taskSessionSort}
-                  onSessionSortChange={setTaskSessionSort}
+                  onSessionSortChange={onTaskSessionSortChange}
                   onNameCommitted={onNameCommitted}
                   onBack={goBack}
                   onOpenSession={(ownerTaskSlug, id, cwd, phase, harness, model, playbook, generic, intent) => {
@@ -1615,6 +1624,7 @@ export default function App() {
             <Grid
               active={active}
               allRepos={scope === "all"}
+              repoPaths={scope === "all" ? appConfig.known_repos : [appConfig.active_repo]}
               onOpen={openBoardTask}
               onDuplicate={(task) => duplicateTask({ repoPath: task.repo_path, sourceSlug: task.slug })}
               registerNav={registerNav}

@@ -807,6 +807,7 @@ function applyPendingUi(state: ChatTranscriptState, event: Record<string, unknow
       requestId: id,
       action: "Open a link in your browser?",
       detail: displayUrl(pending.launchUrl ?? pending.url ?? ""),
+      detailFormat: "plain",
       at: Date.now(),
     });
   }

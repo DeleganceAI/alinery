@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
@@ -169,6 +169,7 @@ describe("Harness OMP version", () => {
     await waitFor(() => expect(screen.getByText(/Installed: 18.1.10/)).toBeTruthy());
     expect(screen.queryByText(/Binary:/)).toBeNull();
     expect(screen.queryByText(/Config:/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Update OMP" })).toBeNull();
   });
 
   it("Update OMP goes through confirm, then updateOmp", async () => {
@@ -178,7 +179,8 @@ describe("Harness OMP version", () => {
       checked_at: 1,
     });
     renderHarnessSection();
-    const button = await screen.findByRole("button", { name: "Update OMP" });
+    const omp = await screen.findByRole("region", { name: "OMP" });
+    const button = await within(omp).findByRole("button", { name: "Update OMP" });
     fireEvent.click(button);
     await waitFor(() => expect(mocks.confirmDanger).toHaveBeenCalled());
     await waitFor(() => expect(mocks.updateOmp).toHaveBeenCalledTimes(1));

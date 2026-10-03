@@ -74,7 +74,7 @@ function renderAppearanceSection(onAppearanceChange = vi.fn(), appearance: Appea
       appearance={appearance}
       onAppearanceChange={onAppearanceChange}
       onNotificationsChange={() => {}}
-      initialSection="appearance"
+      initialSection="general"
     />,
   );
   return onAppearanceChange;

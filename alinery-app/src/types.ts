@@ -69,6 +69,13 @@ export type AppearancePrefs = {
 
 // Mirrors the Rust structs.
 export type RelatedTaskRef = { repo_path: string; slug: string; name: string };
+export type TaskSourceBranch = { full_ref: string; name: string };
+export type TaskSourceHead = { kind: "branch"; full_ref: string; name: string } | { kind: "detached"; oid: string } | { kind: "unborn"; full_ref: string; name: string };
+export type TaskSourceBranches = {
+  branches: TaskSourceBranch[];
+  head: TaskSourceHead;
+  selected: { base_ref: string; available: boolean } | null;
+};
 export type Task = {
   name: string;
   slug: string;
@@ -92,6 +99,7 @@ export type Task = {
   auto_advance: string[];
   /** M6: true while still being drafted on CreateTaskPage. */
   draft: boolean;
+  draft_base_ref?: string | null;
   related_tasks?: RelatedTaskRef[];
 };
 export type BoardTask = Task & {
@@ -193,8 +201,9 @@ export type BackupListItem = {
 };
 export type TelemetryPrefs = { enabled: boolean; prompted: boolean; install_id: string; endpoint: string };
 export type UpdatePrefs = { check_enabled: boolean };
+export type PowerPrefs = { keep_awake: boolean };
 export type ExperimentalFeatures = {
-  /** Classic Kanban tab (⌘3). Absent = enabled; false hides the tab. */
+  /** Classic Kanban tab, shown after Sessions. Absent = enabled; false hides the tab. */
   show_original_kanban?: boolean;
 };
 export type GridViewDefinition = { id: string; name: string; slot: number };
@@ -202,6 +211,8 @@ export type UpdateRelease = { version: string; url: string; sha256: string; size
 export type UpdateStatus = { current: string; available: UpdateRelease | null; checked_at: number };
 export type OmpRelease = { version: string; asset_url: string };
 export type OmpUpdateStatus = { installed: string; available: OmpRelease | null; checked_at: number; binary_path: string; config_dir: string };
+export type OmpCustomization = { name: string; kind: string; source: string; path: string | null };
+export type OmpCustomizations = { items: OmpCustomization[]; errors: string[] };
 export type StagedUpdate = { version: string; app_path: string; scratch_dir: string };
 export type GlobalSettings = {
   notifications: NotificationPrefs;
@@ -212,6 +223,8 @@ export type GlobalSettings = {
   model_favorites: Record<string, string[]>;
   telemetry: TelemetryPrefs;
   updates: UpdatePrefs;
+  /** Absent in app configs written before keep-awake existed. */
+  power?: PowerPrefs;
   /** Optional for app configs written before experiments existed. */
   experiments?: ExperimentalFeatures;
   /** Optional for app configs written before named Grid-based views existed. */
@@ -843,19 +856,7 @@ export type ReviewHandoffDraft = ReviewHandoffSource & {
   prompt_extra: string;
 };
 
-export type SettingsSectionKey =
-  | "playbooks"
-  | "connections"
-  | "notifications"
-  | "telemetry"
-  | "updates"
-  | "storage"
-  | "appearance"
-  | "chat"
-  | "gridViews"
-  | "experimental"
-  | "mcp"
-  | "backup";
+export type SettingsSectionKey = "general" | "playbooks" | "connections" | "updates" | "storage" | "chat" | "gridViews" | "experimental" | "mcp" | "backup";
 
 export type View =
   | { kind: "list" }

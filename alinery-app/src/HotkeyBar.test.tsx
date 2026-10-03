@@ -77,7 +77,7 @@ describe("HotkeyBar named Grid hints", () => {
 
   it("advertises only the assigned view shortcut ranges", () => {
     const html = renderToStaticMarkup(<HotkeyBar view="settings" daemon={daemon} mcp={mcp} />);
-    expect(html).toContain("⌘1–5, 7–9");
+    expect(html).toContain("⌘1–6, 8–9");
   });
 });
 

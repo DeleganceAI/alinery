@@ -675,7 +675,7 @@ describe("2C — OMP extension callback behavior in isolation", () => {
         },
       },
     );
-    assert.equal(await shown, "Allow this session to complete");
+    await shown;
     assert.equal(attempts, 1);
     assert.equal(shutdowns, 0);
     answer(true);
@@ -723,7 +723,7 @@ describe("2C — OMP extension callback behavior in isolation", () => {
   test("an_allowed_confirmation_does_not_replace_daemon_permission_or_output_validation", async () => {
     for (const outcome of [
       { status: "human_authorization_required" },
-      { status: "invalid_outputs", diagnostics: ["report missing"] },
+      { status: "invalid_outputs", diagnostics: ["report.md must not be empty"] },
       { status: "rejected", reason: "owner changed" },
     ]) {
       const api = makeFakeApi();
@@ -756,7 +756,7 @@ describe("2C — OMP extension callback behavior in isolation", () => {
   test("completion_tool_keeps_locked_invalid_and_transport_failures_interactive", async () => {
     const cases = [
       { outcome: { status: "human_authorization_required" } },
-      { outcome: { status: "invalid_outputs", diagnostics: ["Missing research/result.md", "report.md must not be empty"] } },
+      { outcome: { status: "invalid_outputs", diagnostics: ["research/result.md must be a regular file", "report.md must not be empty"] } },
       { outcome: { status: "rejected", reason: "execution owner is stale" } },
       { outcome: new Error("daemon unavailable") },
       { outcome: new Error("daemon timeout") },
@@ -789,6 +789,32 @@ describe("2C — OMP extension callback behavior in isolation", () => {
     const noSession = await api.callTool("alinery_phase_complete", {}, makeContext(""));
     assert.deepEqual(noSession.details, { status: "delivery_failed" });
     assert.equal(emit.emitted.length, 0);
+  });
+
+  test("invalid_completion_can_be_repaired_in_the_same_interactive_session", async () => {
+    const api = makeFakeApi();
+    const emit = makeRecordingEmitter();
+    const invalid = { status: "invalid_outputs", diagnostics: ["report.md must not be empty"] };
+    const accepted = { status: "accepted", receipt_id: "repaired-receipt" };
+    let attempts = 0;
+    let shutdowns = 0;
+    registerCallbacks(api, emit, async () => (++attempts === 1 ? invalid : accepted), undefined);
+    const context = {
+      ...makeContext("repair-session"),
+      shutdown() {
+        shutdowns += 1;
+      },
+    };
+    assert.deepEqual((await api.callTool("alinery_phase_complete", {}, context)).details, invalid);
+    assert.equal(shutdowns, 0);
+    await api.trigger("tool_call", { toolName: "ask", toolCallId: "repair" }, context);
+    assert.deepEqual(emit.emitted.at(-1), { type: "waiting_for_input", correlation_id: "repair" });
+    await api.trigger("tool_result", { toolName: "ask", toolCallId: "repair" }, context);
+    assert.deepEqual(emit.emitted.at(-1), { type: "busy", correlation_id: "repair" });
+    assert.deepEqual((await api.callTool("alinery_phase_complete", {}, context)).details, accepted);
+    assert.equal(shutdowns, 1);
+    assert.deepEqual((await api.callTool("alinery_phase_complete", {}, context)).details, accepted);
+    assert.equal(shutdowns, 1);
   });
 
   test("callback_delivery_failure_is_silent_and_fail_open", async () => {

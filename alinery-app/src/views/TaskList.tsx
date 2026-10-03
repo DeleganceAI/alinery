@@ -17,13 +17,32 @@ import {
   taskKey,
   useBoardTaskActivity,
 } from "../shared";
-import type { BoardNav, BoardTask, TaskActivitySession } from "../types";
+import type { BoardNav, BoardTask, TaskActivitySession, TaskActivitySummary } from "../types";
 
 export type TaskListRow = {
   task: BoardTask;
   depth: number;
   parentHidden: boolean;
 };
+
+const taskNameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+const STATUS_ORDER = ["waiting_for_input", "waiting_for_approval", "failed", "running", "completed"] as const;
+const TASK_COLUMNS = [
+  { field: "name", label: "Name", className: "name-col", value: (task: BoardTask) => task.name },
+  { field: "playbook", label: "Playbook", className: "", value: (task: BoardTask) => task.playbook_title || task.playbook || "Playbook" },
+  { field: "active", label: "Active session", className: "", value: (_task: BoardTask, activity: TaskActivitySummary) => activity.active_session?.step_title ?? null },
+  {
+    field: "status",
+    label: "Status",
+    className: "status-col",
+    value: (_task: BoardTask, activity: TaskActivitySummary) => (activity.status ? STATUS_ORDER.indexOf(activity.status) : null),
+  },
+  { field: "sessions", label: "Sessions", className: "num-col", value: (task: BoardTask) => task.session_count },
+  { field: "created", label: "Created", className: "age-col", value: (task: BoardTask) => task.created },
+  { field: "updated", label: "Updated", className: "age-col", value: (task: BoardTask) => task.updated || task.created },
+] as const;
+type TaskSort = { column: (typeof TASK_COLUMNS)[number]; direction: "asc" | "desc" };
+const TASK_SORT_STORAGE_KEY = "alinery:task-list:sort";
 
 function compareTaskRows(left: BoardTask, right: BoardTask): number {
   return left.created - right.created || left.repo_path.localeCompare(right.repo_path) || left.slug.localeCompare(right.slug);
@@ -33,7 +52,7 @@ function lineageKey(task: Pick<BoardTask, "repo_path" | "slug">): string {
   return `${task.repo_path}\u0000${task.slug}`;
 }
 
-export function flattenTaskRows(tasks: BoardTask[]): TaskListRow[] {
+export function flattenTaskRows(tasks: BoardTask[], compare = compareTaskRows): TaskListRow[] {
   const byKey = new Map(tasks.map((task) => [lineageKey(task), task]));
   const children = new Map<string, BoardTask[]>();
   for (const task of tasks) {
@@ -43,7 +62,7 @@ export function flattenTaskRows(tasks: BoardTask[]): TaskListRow[] {
     siblings.push(task);
     children.set(parentKey, siblings);
   }
-  for (const siblings of children.values()) siblings.sort(compareTaskRows);
+  for (const siblings of children.values()) siblings.sort(compare);
 
   const rows: TaskListRow[] = [];
   const visited = new Set<string>();
@@ -57,9 +76,9 @@ export function flattenTaskRows(tasks: BoardTask[]): TaskListRow[] {
   const roots = tasks
     .filter((task) => !task.parent_task || !byKey.has(`${task.repo_path}\u0000${task.parent_task}`))
     .slice()
-    .sort(compareTaskRows);
+    .sort(compare);
   for (const root of roots) append(root, 0, Boolean(root.parent_task));
-  for (const task of tasks.slice().sort(compareTaskRows)) {
+  for (const task of tasks.slice().sort(compare)) {
     if (!visited.has(lineageKey(task))) append(task, 0, Boolean(task.parent_task));
   }
   return rows;
@@ -87,8 +106,26 @@ export function TaskList({
   const [err, setErr] = useState<ErrState>(null);
   const [pendingArchive, setPendingArchive] = useState<BoardTask | null>(null);
   const [showArchived, setShowArchived] = useState(false);
-  const rows = flattenTaskRows(tasks);
-  const activity = useBoardTaskActivity(rows.map((row) => row.task));
+  const [sort, setSort] = useState<TaskSort>(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(TASK_SORT_STORAGE_KEY) ?? "null");
+      const column = TASK_COLUMNS.find((column) => column.field === saved?.field);
+      if (column && (saved.direction === "asc" || saved.direction === "desc")) return { column, direction: saved.direction };
+    } catch {
+      // Invalid or unavailable storage must not prevent opening the task list.
+    }
+    return { column: TASK_COLUMNS[5], direction: "asc" };
+  });
+  const activity = useBoardTaskActivity(tasks);
+  // Sort roots and siblings, never separate children from their parent.
+  const rows = flattenTaskRows(tasks, (left, right) => {
+    const a = sort.column.value(left, activity[taskKey(left)] ?? EMPTY_TASK_ACTIVITY);
+    const b = sort.column.value(right, activity[taskKey(right)] ?? EMPTY_TASK_ACTIVITY);
+    // Tasks without activity stay last in either direction.
+    if (a === null || b === null) return a === b ? compareTaskRows(left, right) : a === null ? 1 : -1;
+    const compared = typeof a === "number" && typeof b === "number" ? a - b : taskNameCollator.compare(String(a), String(b));
+    return (sort.direction === "asc" ? compared : -compared) || compareTaskRows(left, right);
+  });
   const bodyRef = useRef<HTMLTableSectionElement | null>(null);
 
   const load = () =>
@@ -192,13 +229,31 @@ export function TaskList({
           <table className="task-table sticky-head">
             <thead>
               <tr>
-                <th className="name-col">Name</th>
-                <th>Playbook</th>
-                <th>Active session</th>
-                <th className="status-col">Status</th>
-                <th className="num-col">Sessions</th>
-                <th className="age-col">Created</th>
-                <th className="age-col">Updated</th>
+                {TASK_COLUMNS.map((column) => {
+                  const { field, label, className } = column;
+                  const active = sort.column === column;
+                  const nextDirection = active ? (sort.direction === "asc" ? "desc" : "asc") : field === "created" || field === "updated" || field === "sessions" ? "desc" : "asc";
+                  return (
+                    <th key={field} scope="col" className={className} aria-sort={active ? (sort.direction === "asc" ? "ascending" : "descending") : undefined}>
+                      <button
+                        type="button"
+                        className={`task-sort-header${active ? " active" : ""}`}
+                        aria-label={`Sort by ${label}`}
+                        title={`Sort ${label} ${nextDirection === "asc" ? "ascending" : "descending"}`}
+                        onClick={() => {
+                          setSort({ column, direction: nextDirection });
+                          try {
+                            window.localStorage.setItem(TASK_SORT_STORAGE_KEY, JSON.stringify({ field, direction: nextDirection }));
+                          } catch {
+                            // Sorting still works in memory when storage is unavailable.
+                          }
+                        }}
+                      >
+                        {label} <span aria-hidden="true">{active ? (sort.direction === "asc" ? "↑" : "↓") : "↕"}</span>
+                      </button>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody ref={bodyRef}>

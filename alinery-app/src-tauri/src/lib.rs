@@ -87,6 +87,7 @@ mod hosted;
 mod imports;
 mod mcp;
 mod notify;
+mod omp_customizations;
 mod omp_update;
 mod paths;
 mod playbook;
@@ -110,6 +111,7 @@ use hosted::*;
 use imports::*;
 use mcp::*;
 use notify::*;
+use omp_customizations::*;
 use omp_update::*;
 use paths::*;
 use playbook::*;
@@ -174,7 +176,7 @@ pub fn run() {
             rename_task,
             get_session_display,
             list_session_items,
-            get_task_execution,
+            observe_task_executions,
             start_session,
             allow_execution_completion,
             session_list_statuses,
@@ -285,6 +287,7 @@ pub fn run() {
             remove_worktree,
             remove_worktree_for_repo,
             worktree_exists,
+            task_source_branches_for_repo,
             push_and_compare_url,
             push_and_compare_url_for_repo,
             set_pr_url,
@@ -316,6 +319,9 @@ pub fn run() {
             omp_agent_sessions_dir,
             read_omp_model_roles,
             write_omp_model_roles,
+            open_omp_config_dir,
+            omp_customization_prompt,
+            read_omp_customizations,
         ])
         .build(context)
         .expect("error while building tauri application")
@@ -327,6 +333,11 @@ pub fn run() {
             }
             // alineryd remains detached (on purpose)
         });
+}
+
+#[cfg(test)]
+pub(crate) fn observation_dispatch_builder(builder: tauri::Builder<tauri::test::MockRuntime>) -> tauri::Builder<tauri::test::MockRuntime> {
+    builder.invoke_handler(tauri::generate_handler![observe_task_executions, ping])
 }
 
 #[cfg(test)]

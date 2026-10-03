@@ -48,6 +48,7 @@ mod git_ops;
 mod hosted;
 mod imports;
 mod notify;
+mod omp_customizations;
 mod omp_update;
 mod paths;
 mod session;

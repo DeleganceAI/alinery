@@ -15,6 +15,7 @@ import {
   sameKanbanColumns,
   sameLifecycleMaps,
   sameSessionMetas,
+  sameTask,
   sameTaskActivityMaps,
   taskKey,
   useMinuteNow,
@@ -291,6 +292,24 @@ describe("re-render comparators", () => {
     expect(sameBoardTasks([task()], [task()])).toBe(true);
     expect(sameBoardTasks([task()], [task({ current_phase: "review" })])).toBe(false);
     expect(sameBoardTasks([task()], [task({ auto_advance: ["x"] })])).toBe(false);
+  });
+
+  it("sameTask notices a saved starting branch change", () => {
+    const saved = { ...task({ draft: true }), draft_base_ref: "refs/heads/release" };
+    const changed = { ...saved, draft_base_ref: "refs/heads/main" };
+    const cleared = { ...saved, draft_base_ref: null };
+    expect(sameTask(saved, { ...saved })).toBe(true);
+    expect(sameTask(saved, changed)).toBe(false);
+    expect(sameTask(saved, cleared)).toBe(false);
+  });
+
+  it("sameBoardTasks notices a saved starting branch change", () => {
+    const saved = { ...task({ draft: true }), draft_base_ref: "refs/heads/release" };
+    const changed = { ...saved, draft_base_ref: "refs/heads/main" };
+    const cleared = { ...saved, draft_base_ref: null };
+    expect(sameBoardTasks([saved], [{ ...saved }])).toBe(true);
+    expect(sameBoardTasks([saved], [changed])).toBe(false);
+    expect(sameBoardTasks([saved], [cleared])).toBe(false);
   });
 
   it("sameBoardTasks notices changed retained step metadata and declaration order", () => {

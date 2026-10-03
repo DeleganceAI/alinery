@@ -55,6 +55,7 @@ import type {
   LinearTicket,
   McpStatus,
   NormalizedPlaybook,
+  OmpCustomizations,
   OmpUpdateStatus,
   PickerPreferences,
   PlaybookCatalog,
@@ -88,6 +89,7 @@ import type {
   TaskActivityRef,
   TaskActivitySummary,
   TaskExecutionReply,
+  TaskSourceBranches,
   UpdateResult,
   UpdateStatus,
 } from "./types";
@@ -273,7 +275,8 @@ export const archiveSession = (taskSlug: string, id: string) => invoke<void>("ar
 export const archiveSessionForRepo = (repoPath: string, taskSlug: string, id: string) => invoke<void>("archive_session_for_repo", { repoPath, taskSlug, id });
 export const createSession = (request: CreateExecutionSessionRequest) => invoke<CreateExecutionSessionReply>("create_session", { request });
 export const createSessionForRepo = (a: { repoPath: string; request: CreateExecutionSessionRequest }) => invoke<CreateExecutionSessionReply>("create_session_for_repo", a);
-export const getTaskExecution = (taskSlug: string, repoPath?: string) => invoke<TaskExecutionReply>("get_task_execution", { taskSlug, repoPath });
+export type TaskExecutionOutcome = { repo_path: string; task_slug: string; execution?: TaskExecutionReply; error?: string };
+export const observeTaskExecutions = (tasks: { repoPath: string; taskSlug: string }[]) => invoke<TaskExecutionOutcome[]>("observe_task_executions", { tasks });
 export const allowExecutionCompletion = (taskSlug: string, executionId: string, sessionId: string, repoPath?: string) =>
   invoke<void>("allow_execution_completion", { taskSlug, executionId, sessionId, repoPath });
 export const startSession = (taskSlug: string, sessionId: string, repoPath?: string) => invoke<CreateExecutionSessionReply>("start_session", { taskSlug, sessionId, repoPath });
@@ -343,6 +346,8 @@ export const writeRepoOverridesForRepo = (repoPath: string, overrides: RepoOverr
 export const archiveTaskForRepo = (repoPath: string, slug: string) => invoke<void>("archive_task_for_repo", { repoPath, slug });
 export const restoreTaskForRepo = (repoPath: string, slug: string) => invoke<void>("restore_task_for_repo", { repoPath, slug });
 export const createTaskForRepo = (a: { repoPath: string; request: CreateTaskRequest }) => invoke<CreateTaskResult>("create_task_for_repo", a);
+export const taskSourceBranchesForRepo = (repoPath: string, selectedBaseRef?: string | null) =>
+  invoke<TaskSourceBranches>("task_source_branches_for_repo", { repoPath, selectedBaseRef: selectedBaseRef ?? null });
 export const prepareTaskAttachments = (entries: string[]) => invoke<PreparedTaskAttachments>("prepare_task_attachments", { entries });
 export const duplicateTaskForRepo = (repoPath: string, sourceSlug: string) => invoke<CreateTaskResult>("duplicate_task_for_repo", { repoPath, sourceSlug });
 export const deleteDraftForRepo = (repoPath: string, slug: string) => invoke<void>("delete_draft_for_repo", { repoPath, slug });
@@ -368,6 +373,7 @@ export const writeDraftForRepo = (a: {
   branchName: string;
   worktreeName: string;
   draftSlug: string;
+  draftBaseRef?: string | null;
 }) => invoke<Task>("write_draft_for_repo", a);
 export type ChatFileStat = { name: string; bytes: number };
 export type CopyChatAttachmentsResult = { copied: string[]; failures: string[] };
@@ -407,3 +413,8 @@ export const updateOmp = () => invoke<string>("update_omp");
 export const ompAgentSessionsDir = () => invoke<string>("omp_agent_sessions_dir");
 export const readOmpModelRoles = () => invoke<Record<string, string>>("read_omp_model_roles");
 export const writeOmpModelRoles = (roles: Record<string, string>) => invoke<Record<string, string>>("write_omp_model_roles", { roles });
+export const openOmpConfigDir = () => invoke<void>("open_omp_config_dir");
+export const ompCustomizationPrompt = () => invoke<string>("omp_customization_prompt");
+
+// ── omp_customizations.rs ─────────────────────────────────────────────
+export const readOmpCustomizations = () => invoke<OmpCustomizations>("read_omp_customizations");

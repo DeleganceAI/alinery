@@ -52,6 +52,7 @@ import type {
 } from "../types";
 import { type McpStatus, type McpStatusHandle, mcpDotColor, mcpStatusLabel } from "../useMcpStatus";
 import { useOmpUpdateStatus } from "../useOmpUpdateStatus";
+import { OmpCustomizations } from "./OmpCustomizations";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 /** Kebab menu for a connected row: the actions that only make sense once a connection exists.
@@ -141,13 +142,11 @@ function ConnectionMenu({ label, busy, onReconnect, onRemove }: { label: string;
 }
 
 export const SECTIONS: { key: SettingsSectionKey; label: string }[] = [
+  { key: "general", label: "General" },
   { key: "connections", label: "Connections" },
-  { key: "notifications", label: "Notifications" },
   { key: "playbooks", label: "Playbooks" },
-  { key: "telemetry", label: "Telemetry" },
   { key: "updates", label: "Updates" },
   { key: "storage", label: "Storage" },
-  { key: "appearance", label: "Appearance" },
   { key: "chat", label: "Chat" },
   { key: "experimental", label: "Experimental" },
   { key: "gridViews", label: "Grid views" },
@@ -270,7 +269,7 @@ export function Settings({
   const [storageErr, setStorageErr] = useState("");
   const [purgeBusy, setPurgeBusy] = useState(false);
   const [purgeErrors, setPurgeErrors] = useState<PurgeFailure[]>([]);
-  const [activeSection, setActiveSection] = useState<SettingsSectionKey>(initialSection ?? "notifications");
+  const [activeSection, setActiveSection] = useState<SettingsSectionKey>(initialSection ?? "general");
   const [backups, setBackups] = useState<BackupListItem[]>([]);
   const [backupsErr, setBackupsErr] = useState("");
   const [backupBusy, setBackupBusy] = useState(false);
@@ -657,6 +656,11 @@ export function Settings({
     if (!global) return;
     if (!value) onClearUpdateOffer?.();
     saveGlobal({ ...global, updates: { ...global.updates, check_enabled: value } });
+  };
+
+  const setKeepAwake = (value: boolean) => {
+    if (!global) return;
+    saveGlobal({ ...global, power: { ...global.power, keep_awake: value } });
   };
 
   const setShowOriginalKanban = (value: boolean) => {
@@ -1240,126 +1244,163 @@ export function Settings({
     const hitsActiveRepo = targets.some((target) => target.repo === activeRepo);
     return (
       <>
-        <div className="field" style={{ marginBottom: 16 }}>
-          {/* A version alone cannot answer "which install is this", which is the question anyone
+        <section className="omp-settings" aria-labelledby="omp-settings-title">
+          <div className="omp-settings-heading">
+            <h3 id="omp-settings-title">OMP</h3>
+            <p className="hint">The coding harness bundled with this Alinery installation.</p>
+          </div>
+          <section aria-labelledby="omp-installation-title">
+            <h4 id="omp-installation-title">Installation &amp; providers</h4>
+            {/* A version alone cannot answer "which install is this", which is the question anyone
               reading this panel is actually asking. Paths wrap rather than truncate: one you
               cannot read in full is one you retype wrong. */}
-          <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 6, display: "grid", gap: 2, overflowWrap: "anywhere" }}>
-            <div>Installed: {ompUpdate.status.installed || "not found"}</div>
-            {ompUpdate.status.binary_path && <div>Binary: {ompUpdate.status.binary_path}</div>}
-            {ompUpdate.status.config_dir && <div>Config: {ompUpdate.status.config_dir}</div>}
-          </div>
-          {/* Until now the accounts dialog was only reachable by being broken -- it opened when
+            <div className="omp-installation-paths dim">
+              <div>Installed: {ompUpdate.status.installed || "not found"}</div>
+              {ompUpdate.status.binary_path && <div>Binary: {ompUpdate.status.binary_path}</div>}
+              {ompUpdate.status.config_dir && <div>Config: {ompUpdate.status.config_dir}</div>}
+            </div>
+            {/* Until now the accounts dialog was only reachable by being broken -- it opened when
               setup was missing, or from a slash command inside a live chat. This is the way in
               that is not an error state. */}
-          <button type="button" className="btn small" style={{ marginBottom: 12 }} onClick={() => setProvidersOpen(true)}>
-            Providers &amp; accounts
-          </button>
-          {providersOpen && <ProviderSetupDialog mode="manual" onClose={() => setProvidersOpen(false)} />}
-          {ompUpdate.status.available && (
-            <div className="field">
-              <div style={{ marginBottom: 8 }}>Update available: {ompUpdate.status.available.version}</div>
-              <button
-                type="button"
-                className="btn small"
-                disabled={ompUpdating}
-                onClick={() => {
-                  void (async () => {
-                    const ok = await confirmDanger(
-                      `Update OMP to ${ompUpdate.status.available?.version}?`,
-                      <p>Live sessions keep running on the current binary. New sessions use the updated one.</p>,
-                      "Update OMP",
-                    );
-                    if (!ok) return;
-                    setOmpUpdating(true);
-                    setOmpError("");
-                    try {
-                      await ipc.updateOmp();
-                      ompUpdate.clearOffer();
-                      await ompUpdate.checkNow();
-                    } catch (e) {
-                      setOmpError(String(e));
-                    } finally {
-                      setOmpUpdating(false);
-                    }
-                  })();
-                }}
-              >
-                {ompUpdating ? "Updating…" : "Update OMP"}
-              </button>
-              {ompError ? (
-                <div className="dim" style={{ color: "var(--danger)", marginTop: 6 }}>
-                  {ompError}
+            <button type="button" className="btn ghost small" onClick={() => setProvidersOpen(true)}>
+              Providers &amp; accounts
+            </button>
+            {providersOpen && <ProviderSetupDialog mode="manual" onClose={() => setProvidersOpen(false)} />}
+            {ompUpdate.status.available && (
+              <div className="field omp-update-offer">
+                <div style={{ marginBottom: 8 }}>Update available: {ompUpdate.status.available.version}</div>
+                <button
+                  type="button"
+                  className="btn small"
+                  disabled={ompUpdating}
+                  onClick={() => {
+                    void (async () => {
+                      const ok = await confirmDanger(
+                        `Update OMP to ${ompUpdate.status.available?.version}?`,
+                        <p>Live sessions keep running on the current binary. New sessions use the updated one.</p>,
+                        "Update OMP",
+                      );
+                      if (!ok) return;
+                      setOmpUpdating(true);
+                      setOmpError("");
+                      try {
+                        await ipc.updateOmp();
+                        ompUpdate.clearOffer();
+                        await ompUpdate.checkNow();
+                      } catch (e) {
+                        setOmpError(String(e));
+                      } finally {
+                        setOmpUpdating(false);
+                      }
+                    })();
+                  }}
+                >
+                  {ompUpdating ? "Updating…" : "Update OMP"}
+                </button>
+                {ompError ? (
+                  <div className="dim" style={{ color: "var(--danger)", marginTop: 6 }}>
+                    {ompError}
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </section>
+          <OmpCustomizations />
+        </section>
+        <section className="harness-settings-section" aria-labelledby="session-defaults-title">
+          <h3 id="session-defaults-title">Session defaults</h3>
+          {choiceSection("defaults", "Default")}
+          <div className="field" style={{ marginTop: 16 }}>
+            <label id="session-default-view-label">Default session view</label>
+            {!isGlobal && globalOnly("Default session view")}
+            <div className="theme-cards" role="group" aria-labelledby="session-default-view-label">
+              {(["chat", "terminal"] as const satisfies readonly SessionDefaultView[]).map((view) => {
+                const active = normalizeSessionDefaultView(appearance.session_default_view) === view;
+                return (
+                  <button
+                    key={view}
+                    type="button"
+                    className={`theme-card ${active ? "active" : ""}`}
+                    disabled={!isGlobal}
+                    aria-pressed={active}
+                    onClick={() => {
+                      if (isGlobal) saveAppearance({ ...appearance, session_default_view: view });
+                    }}
+                  >
+                    <span>{view === "chat" ? "Chat" : "Terminal"}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <span className="dsc">Preferred hatch when starting an OMP session. Chat is the default.</span>
+          </div>
+        </section>
+        <section className="harness-settings-section" aria-labelledby="session-daemon-title">
+          <h3 id="session-daemon-title">Session daemon</h3>
+          <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 10 }}>
+            Sessions run in a background daemon that survives app quit. Stopping them affects <strong>{scopeName || "the selected repository"}</strong>
+            {isGlobal ? "" : " only"}
+            {hitsActiveRepo ? ", and also restarts the MCP server" : ""}. A fresh daemon is started immediately afterwards.
+          </div>
+          <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 10, color: live > 0 ? "var(--danger)" : undefined }}>
+            {live > 0 ? `${live} live session${plural(live)} will be killed. Any unsaved, in-flight harness work is lost.` : "No live sessions."}
+          </div>
+          {isGlobal && targets.length > 1 && (
+            <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 10 }}>
+              {targets.map((target) => (
+                <div key={target.repo} title={target.repo} style={{ color: target.live > 0 ? "var(--danger)" : undefined }}>
+                  {repoName(target.repo)} — {target.live} live session{plural(target.live)}
                 </div>
-              ) : null}
+              ))}
             </div>
           )}
-        </div>
-        {choiceSection("defaults", "Default")}
-        <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 10 }}>
-          Sessions run in a background daemon that survives app quit. Stopping them affects <strong>{scopeName || "the selected repository"}</strong>
-          {isGlobal ? "" : " only"}
-          {hitsActiveRepo ? ", and also restarts the MCP server" : ""}. A fresh daemon is started immediately afterwards.
-        </div>
-        <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 10, color: live > 0 ? "var(--danger)" : undefined }}>
-          {live > 0 ? `${live} live session${plural(live)} will be killed. Any unsaved, in-flight harness work is lost.` : "No live sessions."}
-        </div>
-        {isGlobal && targets.length > 1 && (
-          <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 10 }}>
-            {targets.map((target) => (
-              <div key={target.repo} title={target.repo} style={{ color: target.live > 0 ? "var(--danger)" : undefined }}>
-                {repoName(target.repo)} — {target.live} live session{plural(target.live)}
-              </div>
-            ))}
-          </div>
-        )}
-        <button
-          type="button"
-          className="btn danger"
-          disabled={!targets.length || sessionsBusy}
-          onClick={() => {
-            void (async () => {
-              const breakdown = isGlobal && targets.length > 1 && (
-                <ul className="confirm-list">
-                  {targets.map((t) => (
-                    <li key={t.repo}>
-                      <span className="confirm-repo">{repoName(t.repo)}</span>
-                      <span className="dim">
-                        {t.live} live session{plural(t.live)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              );
-              const ok = await confirmDanger(
-                live > 0 ? `Stop ${live} live session${plural(live)} in ${scopeName}?` : `Restart the session daemon${plural(targets.length)} for ${scopeName}?`,
-                <>
-                  {breakdown}
-                  {live > 0 ? (
-                    <p className="confirm-loss">In-flight harness work is lost. This cannot be undone.</p>
-                  ) : (
-                    <p>No live sessions — the daemon is replaced with a fresh one.</p>
-                  )}
-                </>,
-                live > 0 ? "Stop sessions" : "Restart daemon",
-              );
-              if (!ok) return;
-              await stopScopedSessions(
-                targets.map((target) => target.repo),
-                scopeName,
-              );
-            })();
-          }}
-        >
-          Stop all sessions in {scopeName || "this repo"}
-        </button>
+          <button
+            type="button"
+            className="btn danger"
+            disabled={!targets.length || sessionsBusy}
+            onClick={() => {
+              void (async () => {
+                const breakdown = isGlobal && targets.length > 1 && (
+                  <ul className="confirm-list">
+                    {targets.map((t) => (
+                      <li key={t.repo}>
+                        <span className="confirm-repo">{repoName(t.repo)}</span>
+                        <span className="dim">
+                          {t.live} live session{plural(t.live)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                );
+                const ok = await confirmDanger(
+                  live > 0 ? `Stop ${live} live session${plural(live)} in ${scopeName}?` : `Restart the session daemon${plural(targets.length)} for ${scopeName}?`,
+                  <>
+                    {breakdown}
+                    {live > 0 ? (
+                      <p className="confirm-loss">In-flight harness work is lost. This cannot be undone.</p>
+                    ) : (
+                      <p>No live sessions — the daemon is replaced with a fresh one.</p>
+                    )}
+                  </>,
+                  live > 0 ? "Stop sessions" : "Restart daemon",
+                );
+                if (!ok) return;
+                await stopScopedSessions(
+                  targets.map((target) => target.repo),
+                  scopeName,
+                );
+              })();
+            }}
+          >
+            Stop all sessions in {scopeName || "this repo"}
+          </button>
+        </section>
       </>
     );
   };
 
   const renderAppearance = () => (
     <>
-      {!isGlobal && globalOnly("Appearance settings")}
       <div className="field">
         <label id="appearance-theme-label">Theme</label>
         <div className="theme-cards" role="group" aria-labelledby="appearance-theme-label" aria-describedby="appearance-theme-hint">
@@ -1638,41 +1679,62 @@ export function Settings({
         return renderPlaybooks();
       case "connections":
         return connectionsSection();
-      case "notifications":
+      case "general":
+        // Every control on this page is global-only, so one banner covers all three subsections.
         return (
           <>
-            {!isGlobal && globalOnly("Notifications")}
-            {check("enabled", "Enabled", "master switch")}
-            {check("banner", "Banner", "native notification")}
-            {check("sound", "Sound", "notification sound")}
-            {check("bounce", "Dock bounce", "off by default")}
-            {check("dock_badge", "Dock badge", "show the current notice count on the macOS Dock icon")}
-            <div className="dock-badge-options" role="group" aria-label="Dock badge categories">
-              {check("dock_badge_input_waits", "Input waits", "include sessions waiting for input")}
-              {check("dock_badge_approval_waits", "Approval waits", "include sessions waiting for approval")}
-              {check("dock_badge_failures", "Failures", "include failed sessions")}
-              {check("dock_badge_completions", "Unread playbook completions", "include completed playbook steps")}
+            {!isGlobal && globalOnly("General settings")}
+            <div className="settings-subsection">
+              <h2>Appearance</h2>
+              {renderAppearance()}
             </div>
-            <button
-              type="button"
-              className="btn ghost small"
-              style={{ marginTop: 10 }}
-              onClick={() =>
-                ipc
-                  .notifyTest()
-                  .then(() => report("Test notification sent"))
-                  .catch((e) => reportError(e))
-              }
-            >
-              Send test notification
-            </button>
-          </>
-        );
-      case "telemetry":
-        return (
-          <>
-            {!isGlobal && globalOnly("Telemetry")}
-            {telemetryCheck("Share anonymous usage", "state changes only — no paths, prompts, or artifact text")}
+            <div className="settings-subsection">
+              <h2>Notifications</h2>
+              {check("enabled", "Enabled", "master switch")}
+              {check("banner", "Banner", "native notification")}
+              {check("sound", "Sound", "notification sound")}
+              {check("bounce", "Dock bounce", "off by default")}
+              {check("dock_badge", "Dock badge", "show the current notice count on the macOS Dock icon")}
+              <div className="dock-badge-options" role="group" aria-label="Dock badge categories">
+                {check("dock_badge_input_waits", "Input waits", "include sessions waiting for input")}
+                {check("dock_badge_approval_waits", "Approval waits", "include sessions waiting for approval")}
+                {check("dock_badge_failures", "Failures", "include failed sessions")}
+                {check("dock_badge_completions", "Unread playbook completions", "include completed playbook steps")}
+              </div>
+              <button
+                type="button"
+                className="btn ghost small"
+                style={{ marginTop: 10 }}
+                onClick={() =>
+                  ipc
+                    .notifyTest()
+                    .then(() => report("Test notification sent"))
+                    .catch((e) => reportError(e))
+                }
+              >
+                Send test notification
+              </button>
+            </div>
+            <div className="settings-subsection">
+              <h2>Misc</h2>
+              {/* Each repository's daemon reads this pref and holds the idle-sleep inhibit
+                (alineryd/src/idle_inhibit.rs); the note states the same rule it enforces. */}
+              <Checkbox
+                checked={global.power?.keep_awake ?? false}
+                disabled={!isGlobal}
+                onChange={setKeepAwake}
+                label={
+                  <div>
+                    <div>Keep this computer awake</div>
+                    <div className="dsc">
+                      This keeps this computer from idling. It will not prevent closing the display from putting it to sleep. The screen can still turn off. It only does this while
+                      at least one session is not Idle.
+                    </div>
+                  </div>
+                }
+              />
+              {telemetryCheck("Share anonymous usage", "state changes only — no paths, prompts, or artifact text")}
+            </div>
           </>
         );
       case "updates": {
@@ -1770,39 +1832,13 @@ export function Settings({
             )}
           </div>
         );
-      case "appearance":
-        return renderAppearance();
       case "chat":
         return (
           <>
             <div className="settings-subsection">
               <h2>Harness</h2>
-              <p>OMP version, default model, and session daemon controls for the current settings scope.</p>
+              <p>Manage OMP, session defaults, and background session daemons.</p>
               {renderHarness()}
-              <div className="field" style={{ marginTop: 16 }}>
-                <label id="session-default-view-label">Default session view</label>
-                {!isGlobal && globalOnly("Default session view")}
-                <div className="theme-cards" role="group" aria-labelledby="session-default-view-label">
-                  {(["chat", "terminal"] as const satisfies readonly SessionDefaultView[]).map((view) => {
-                    const active = normalizeSessionDefaultView(appearance.session_default_view) === view;
-                    return (
-                      <button
-                        key={view}
-                        type="button"
-                        className={`theme-card ${active ? "active" : ""}`}
-                        disabled={!isGlobal}
-                        aria-pressed={active}
-                        onClick={() => {
-                          if (isGlobal) saveAppearance({ ...appearance, session_default_view: view });
-                        }}
-                      >
-                        <span>{view === "chat" ? "Chat" : "Terminal"}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <span className="dsc">Preferred hatch when starting an OMP session. Chat is the default.</span>
-              </div>
             </div>
             <div className="settings-subsection">
               <h2>Journal</h2>
@@ -2135,7 +2171,7 @@ export function Settings({
             {isGlobal === false && globalOnly("Grid-based views")}
             <div className="grid-view-settings-intro">
               <h2>Grid-based views</h2>
-              <p>Configure up to three named Grid views. Their order assigns the fixed shortcuts ⌘2, ⌘4, and ⌘5 (⌘3 is reserved for classic Kanban).</p>
+              <p>Configure up to three named Grid views. Their order assigns the shortcuts ⌘1, ⌘2, and ⌘3. Tasks, Sessions, and classic Kanban take the numbers after them.</p>
             </div>
             <ol className="grid-view-settings-list">
               {gridViews.map((view, index) => {
@@ -2259,7 +2295,7 @@ export function Settings({
               label={
                 <div>
                   <div>Original Kanban</div>
-                  <div className="hint">Show the classic Kanban board in the top bar as ⌘3.</div>
+                  <div className="hint">Show the classic Kanban board in the top bar, after Sessions.</div>
                 </div>
               }
             />

@@ -23,6 +23,14 @@ fn command_timeout_kills_an_unresponsive_child() {
 }
 
 #[test]
+fn command_timeout_includes_pipes_inherited_by_a_descendant() {
+    let mut command = Command::new("/bin/sh");
+    command.args(["-c", "sleep 1 & exit 0"]);
+    let error = crate::output_with_timeout(command, Duration::from_millis(50)).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+}
+
+#[test]
 fn curl_request_times_out_after_server_accepts_without_responding() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();

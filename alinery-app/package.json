@@ -1,7 +1,7 @@
 {
   "name": "alinery-app",
   "private": true,
-  "version": "0.20.0",
+  "version": "0.21.0",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
@@ -31,6 +31,7 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
+    "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
     "thinking-orbs": "^0.3.1"
   },

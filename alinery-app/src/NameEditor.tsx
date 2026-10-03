@@ -122,10 +122,10 @@ export function NameEditor({
 
 export function awaitingSessionName(
   session: { name?: string | null; name_error?: string | null; archived?: boolean; harness?: string },
-  observation: { lifecycle: { state: string }; state?: { process: { state: string } } | null } | null | undefined,
+  observation: { lifecycle: { state: string }; state?: { process: { state: string }; agent: { state: string } } | null } | null | undefined,
 ): boolean {
   if (session.name || session.name_error || session.archived || session.harness !== "omp") return false;
-  return observation?.lifecycle.state === "live" && observation.state?.process.state !== "exited";
+  return observation?.lifecycle.state === "live" && observation.state?.process.state !== "exited" && observation.state?.agent.state !== "idle";
 }
 
 export function PendingSessionName() {
