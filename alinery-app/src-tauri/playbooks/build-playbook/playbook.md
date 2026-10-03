@@ -208,6 +208,8 @@ A task with an assigned playbook retains the validated definition selected when 
 
 Retained definitions are not migrated when publication semantics or bundled declarations change. A fresh launch receives the current authoritative assignment after retained prose, overriding older blanket all-output or zero-evidence guidance without waiving substantive work. An old continuation-only definition does not gain an undeclared stopping report. The corrected owning daemon must be running for the corrected behavior; already-running and resumed conversations are not retroactively rewritten. Do not replace a live daemon, edit retained bytes or manipulate sessions to make an authoring change take effect.
 
+Shared exact-role loops require both the updated canonical parser and an owning daemon with occurrence-based shared-role scheduling. Saving a definition with a new parser does not update a running older daemon. Confirm those prerequisites before a trial, and report an unavailable runtime separately from a defect in the candidate.
+
 The three scopes, `bundled/<key>`, `global/<key>` and `repo/<key>`, are separate. Entries with the same key in different scopes do not shadow one another. Bundled entries are read-only. Repository playbooks live under `<repository-root>/alinery/playbooks/`, and the catalog identifies them by the key declared inside the file. If two files in that repository tree declare the same key, the catalog cannot resolve the entry.
 
 An additional agent session can contribute to the task's context without changing its assigned playbook graph.
@@ -367,7 +369,7 @@ A scheduler check then supplied one routing file at each handoff. It correctly v
 
 Before choosing selectors, distinguish sequential discovery from independent work that can be split across a collection. For a sequential loop, use exact `single` handoffs and a fresh accepted trigger occurrence for another pass. Include all work that must be renewed inside the loop, as described below.
 
-Work out conditional continuation separately. Replacing `each` with `single` mechanically does not resolve competing output producers, unsatisfied input dependencies, or the need for meaningful evidence on every successful outcome. Output declarations are possible publications: an agent can publish a continuation or a stopping report according to its prompt. If the available fields cannot express the agreed gate and stopping behavior, explain the specific limitation and discuss a process adjustment with the human. Do not silently substitute wildcard routing, extra pass-through sessions or a permanently waiting final step.
+Work out conditional continuation separately. Replacing `each` with `single` mechanically does not resolve incompatible companion bindings, unsatisfied input dependencies, or the need for meaningful evidence on every successful outcome. A gate and a discussion step may both publish the same exact continuation role; the entry consumes that one role, together with any required compatible context. Output declarations are possible publications: an agent can publish a continuation or a stopping report according to its prompt. If the available fields cannot express the agreed gate and stopping behavior, explain the specific limitation and discuss a process adjustment with the human. Do not silently substitute wildcard routing, extra pass-through sessions or a permanently waiting final step.
 
 In the walkthrough, ask what the declared graph permits if a wildcard producer supplies two matching files. If that creates two workers where the process requires one sequential pass, the representation does not meet the requirement. Lowering Maximum live sessions only queues those workers; it does not change fan-out into a loop. Reserve collection inputs for intentional per-member work, and distinguish properties enforced by dependencies from conventions that prompts ask agents to follow.
 
@@ -387,9 +389,9 @@ A: Draft -> B: Request another pass -> A
 D consumes both A's draft and C's analysis.
 ```
 
-Only A and B belong to the loop's strongly connected component, the set of steps connected back to one another through directed paths. The current scheduler blocks inheritance of old results from steps inside that component, but can inherit results from steps outside it. C and D are outside the component.
+Only A and B belong to the loop's strongly connected component, the set of steps connected back to one another through directed paths. C and D are outside the component. Being outside the component does not establish that a result remains valid for later passes.
 
-After the second draft A2 finishes, D can therefore receive A2 together with the first analysis C1, even while C2 is queued or running. When C2 finishes, another execution of D may become eligible, but the earlier decision has already used stale analysis.
+Legacy side-branch graphs have allowed D to receive A2 together with the first analysis C1 while C2 was queued or running. Shared-role scheduling now checks actual occurrence provenance to keep changing evidence paired with its request and pass; this does not guarantee freshness for every legacy side-branch shape. A later correct decision cannot undo an earlier stale one, so represent the complete repeated unit explicitly.
 
 Place the repeat decision after all work needed for that pass:
 
@@ -552,6 +554,10 @@ Describe the evidence that warrants another pass and how the continuation step s
 When the continuation step cannot identify useful further work, report the evidence and ask the human how to proceed. Stay interactive while required direction or work is unresolved. When the process legitimately concludes, record that concluded outcome instead of manufacturing a meaningless ticket.
 
 In the example, B declares `ticket.md` and `loop-stopping-report.md`. Continuing publishes a fresh actionable ticket at its assigned path; stopping publishes the meaningful report with the decision, evidence and limitations, omitting the ticket. Both outcomes leave at least one valid assigned artifact. Only the accepted fresh ticket can trigger another pass after confirmed exit and satisfaction of all AND inputs. A report-only stop creates no new pass and does not cancel unrelated eligible work.
+
+Make a human choice about another pass before the responsible execution completes. Accepted completion freezes its publication set; writing a ticket afterward or reopening the conversation does not add a new trigger. Auxiliary/manual executions do not feed ordinary graph routing. If later human discussion may request another pass, keep that discussion execution interactive until the choice is resolved, or declare a downstream discussion step that consumes the report and can publish the continuation.
+
+Do not turn optional feedback into a mandatory decision or an indefinitely waiting session. If the agreed process requires a completed report to accept a later continuation request, report that unsupported capability separately; a live discussion checkpoint is not an equivalent substitute.
 
 A loop need not predetermine its number of passes. Use the existing automatic-completion setting for steps intended to proceed without a human unlock each pass; deliberately human-gated steps still pause. Exercise multiple fresh continuations and then a stopping report: each new pass must obtain its own changing design, analysis, plan and check evidence, while explicitly declared invariant inputs may be reused. No iteration cap, filename recency rule or implicit inheritance of old internal results is added. When the same agent can revise and conclude within one session, keep the work there instead of adding a graph loop.
 

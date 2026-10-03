@@ -84,6 +84,8 @@ The corrected owning daemon treats declarations as possible publications with at
 
 New bundled stopping declarations affect future selections only. An old continuation-only retained step does not acquire an undeclared report: it still needs truthful evidence within its actual assignments. Already-running and resumed conversations are not reliably reseeded, and a running old daemon does not gain new behavior merely because source files changed. Do not rewrite retained files, replace live daemons or manipulate sessions to simulate rollout.
 
+Shared exact-role loops require the updated canonical parser and an owning daemon with occurrence-based shared-role scheduling. A successful save through a newer parser does not establish that an already-running daemon supports the graph. Check those runtime prerequisites before a trial without changing retained definitions or replacing live processes.
+
 ## Validation should reject bad definitions
 
 The approved v2 file is one `playbook.md`: TOML `+++` frontmatter, required metadata and step records, and standalone `<!-- alinery:step key -->` prompt delimiters. Markdown heading levels are not structural execution markers.
@@ -204,6 +206,8 @@ When enough work has been done, progress stalls or judgment is needed, report th
 
 For example, the continuation step declares `ticket.md` and `loop-stopping-report.md`. Continuing publishes the fresh ticket; stopping publishes the report with the actual disposition, evidence and limitations. Each successful pass leaves at least one valid artifact. A report-only stop creates no new loop trigger and does not cancel unrelated eligible work. Both valid alternatives are accepted if both are published; any exclusivity belongs in the prompt, not engine XOR validation.
 
+Resolve a human choice about further passes before the responsible execution completes, or represent later discussion as a declared downstream step with its own continuation output. Accepted receipts cannot acquire a ticket written afterward, accepted executions are not recoverable as unfinished work, and auxiliary/manual publications do not feed ordinary graph routing. Keeping an unresolved discussion interactive is different from reopening a concluded execution.
+
 Prompts state when to seek human review and what evidence to include. Loops need no predetermined number of passes: use existing automatic completion for stretches intended to advance without per-pass permission, and preserve human locks where selected. Exercise multiple fresh continuations followed by a stopping report, with exactly one activation per fresh accepted trigger after exit and no activation from stopping. Keep changing design, analysis, plan and check roles inside the repeated dependency structure so old internal siblings cannot satisfy a new pass; carry reusable prior evidence through explicit inputs. No hard iteration cap or history scan is implied.
 
 ## Artifacts: ordinary files, explicit assignments
@@ -247,7 +251,7 @@ The execution allocator reserves each exact path or wildcard family in `executio
 
 ### Completion controls scheduling, not individual writes
 
-Harnesses write files whenever they choose. Instructions require finishing outputs before calling completion. The daemon controls whether completion is accepted and when dependent work starts.
+Harnesses write files whenever they choose. The shared engine assignment explicitly requires filesystem writes to the selected assigned paths, verification that the files were saved, a brief user-facing handoff, and an actual `alinery_phase_complete` call in the handoff turn. Printing an artifact in chat does not save it or complete the execution. These delivery instructions belong to the engine assignment, not repeated playbook boilerplate. The daemon controls whether completion is accepted and when dependent work starts.
 
 On accepted completion, record only the actual valid assigned publications in one immutable receipt. Later files cannot expand the accepted set through replay. Reservations and ownership remain attributed to the execution, including omitted assignments. Confirm source shutdown before dependent launch or capacity release. A file can exist and be readable before then without becoming scheduler-ready; acceptance does not promise every potential successor will run.
 
@@ -338,7 +342,7 @@ A creation/launch claim is not proof that a process started. Persist enough stat
 
 - Give each step a focused job, explicit required inputs, useful outputs and clear non-goals.
 - Specify what the next consumer needs: findings, evidence, limitations, unresolved questions or an actionable plan—not just “be thorough”.
-- Use distinct logical stems for different producers; do not hardcode engine-generated numbering.
+- Use distinct logical roles for different kinds of evidence. Alternative publishers may share an exact role when they request the same kind of continuation; preserve occurrence-specific companion pairing and do not hardcode engine-generated numbering.
 - Tell fan-out workers to process only assigned inputs and merges to consume the complete supplied set.
 - Mark mutating/exclusive work correctly; do not call it non-coding to gain parallelism.
 - Put real human review behind the completion gate, not prompt-only “ask first” wording.
@@ -359,7 +363,7 @@ Do not invent fields or tokens to express a desired behavior. If a valid graph/p
 | Change area | Behavior worth exercising |
 | --- | --- |
 | Task/library storage | Existing task behavior is unchanged after library edit/deletion; scope-qualified sources do not shadow. |
-| Graph validation | Conflicting distinct producers are rejected, while legitimate repeats of one step remain valid. |
+| Graph validation | Different steps may share exact output roles; same-step duplicates and every overlap involving a wildcard are rejected. |
 | Scheduling | Unaccepted files cannot start consumers; repeated reconciliation cannot duplicate the same binding. |
 | Fan-out/merge | Preserve all producer/source obligations; successful empty families close without empty consumers; mixed direct-worker dispositions are excluded from result bindings; chained/nested omitted intermediates are not pruned. |
 | Task concurrency | At the task's chosen cap, ready work stays queued; confirmed session exit frees capacity; concurrent launches cannot exceed the cap. |
