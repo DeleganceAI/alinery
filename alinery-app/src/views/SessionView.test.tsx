@@ -385,9 +385,9 @@ describe("session work names", () => {
     expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Session name" }));
   });
 
-  it("shows a waiting ellipsis for a live unnamed OMP session and hides it while renaming", async () => {
+  it("shows a waiting ellipsis for a busy unnamed OMP session and hides it while renaming", async () => {
     getSessionDisplay.mockResolvedValue({ session: { id: "session", harness: "omp" }, task_name: "Task", subtask_name: null } as never);
-    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
     renderSession();
     await flushPromises();
     expect(screen.getByRole("status", { name: "Waiting for session name" })).toBeDefined();

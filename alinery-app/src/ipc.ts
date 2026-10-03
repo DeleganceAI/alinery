@@ -119,7 +119,7 @@ export const classifyPickedFolder = (path: string) => invoke<PickedFolder>("clas
 export const initPickedFolder = (path: string) => invoke<InitializedFolder>("init_picked_folder", { path });
 export const readAppConfig = () => invoke<AppConfig>("read_app_config");
 export const removeRepo = (path: string) => invoke<AppConfig>("remove_repo", { path });
-export const setActiveRepo = (path: string, drawerSessionId: string | null) => invoke<AppConfig>("set_active_repo", { path, drawerSessionId });
+export const setActiveRepo = (path: string, drawerSessionIds: string[]) => invoke<AppConfig>("set_active_repo", { path, drawerSessionIds });
 export const writeAppearance = (appearance: AppearancePrefs) => invoke<AppConfig>("write_appearance", { appearance });
 
 // ── artifacts.rs ──────────────────────────────────────────────────────

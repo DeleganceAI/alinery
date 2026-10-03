@@ -833,7 +833,7 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(await screen.findByRole("button", { name: "open foreign notification" }));
     await screen.findByText("session:foreign-design");
 
-    expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/foreign", null);
+    expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/foreign", []);
     expect(ipcMocks.markSessionNotificationRead).toHaveBeenCalledWith("/foreign", "task", "foreign-design");
     expect(ipcMocks.setActiveRepo.mock.invocationCallOrder[0]).toBeLessThan(ipcMocks.markSessionNotificationRead.mock.invocationCallOrder[0]);
   });
@@ -1314,7 +1314,7 @@ describe("addRepo", () => {
     ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
     ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "checkout", root: "/canonical" });
     fireEvent.click(add);
-    await waitFor(() => expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/canonical", null));
+    await waitFor(() => expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/canonical", []));
     expect(ipcMocks.initPickedFolder).not.toHaveBeenCalled();
     expect(screen.queryByRole("alertdialog", { name: "Initialize Git?" })).toBeNull();
   });
@@ -1342,7 +1342,7 @@ describe("addRepo", () => {
     const dialog = await screen.findByRole("alertdialog", { name: "Initialize Git?" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Initialize Git" }));
     await waitFor(() => expect(ipcMocks.initPickedFolder).toHaveBeenCalledWith("/canon"));
-    await waitFor(() => expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/inited", null));
+    await waitFor(() => expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/inited", []));
     expect(ipcMocks.initPickedFolder.mock.invocationCallOrder[0]).toBeLessThan(ipcMocks.setActiveRepo.mock.invocationCallOrder[0]);
   });
 

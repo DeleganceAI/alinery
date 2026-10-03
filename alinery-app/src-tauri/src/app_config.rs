@@ -352,7 +352,18 @@ pub(crate) fn read_app_config(app: AppHandle) -> Result<AppConfig, String> {
 }
 
 #[tauri::command]
-pub(crate) fn set_active_repo<R: tauri::Runtime>(app: AppHandle<R>, state: State<'_, AppState>, path: String, drawer_session_id: Option<String>) -> Result<AppConfig, String> {
+pub(crate) async fn set_active_repo(app: AppHandle, path: String, drawer_session_ids: Vec<String>) -> Result<AppConfig, String> {
+    // Killing each drawer shell waits on the daemon; a sync command would run that on the main thread.
+    // The whole switch moves together so reservation, config write, kill, commit stay in order.
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        set_active_repo_sync(app.clone(), state, path, drawer_session_ids)
+    })
+    .await
+    .map_err(|e| format!("set active repo task: {e}"))?
+}
+
+pub(crate) fn set_active_repo_sync<R: tauri::Runtime>(app: AppHandle<R>, state: State<'_, AppState>, path: String, drawer_session_ids: Vec<String>) -> Result<AppConfig, String> {
     let repo = alinery_core::require_working_tree(Path::new(path.trim()))?;
     let reservation = state.reserve_repo(&repo)?.ok_or_else(|| {
         let name = repo
@@ -374,10 +385,12 @@ pub(crate) fn set_active_repo<R: tauri::Runtime>(app: AppHandle<R>, state: State
     cfg = sanitize_app_config(cfg);
     write_app_config(&app, &cfg)?;
 
-    if let (Some(previous), Some(id)) = (previous_repo.as_ref(), drawer_session_id.as_deref()) {
+    if let Some(previous) = previous_repo.as_ref() {
         if previous != &repo && state.owns_repo(previous) {
-            let _ = with_session_client(&state, previous, "", id, |daemon| daemon.kill_session(id));
-            state.clear_session_route(id);
+            for id in &drawer_session_ids {
+                let _ = with_session_client(&state, previous, "", id, |daemon| daemon.kill_session(id));
+                state.clear_session_route(id);
+            }
         }
     }
 

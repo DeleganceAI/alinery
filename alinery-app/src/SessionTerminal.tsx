@@ -6,6 +6,7 @@ import { APPEARANCE_EVENT } from "./appearance";
 import { decodeChannelFrame } from "./channelFrame";
 import * as ipc from "./ipc";
 import { attachGpuRenderer } from "./terminalRenderer";
+import { restoreViewport, saveViewport } from "./terminalViewport";
 import type { SessionObservation } from "./types";
 import "@xterm/xterm/css/xterm.css";
 
@@ -60,6 +61,7 @@ export function SessionTerminal({
   resumeToken,
   terminalFontSize,
   readOnly,
+  keepViewport,
   onConnectionStateChange,
   io,
 }: {
@@ -75,6 +77,8 @@ export function SessionTerminal({
   terminalFontSize: number;
   // Read-only replay: mount the capped activity sidecar, no daemon session, no stdin (P7).
   readOnly?: boolean;
+  // Put a scrolled-back view back after a remount (the drawer swaps panes on tab switch).
+  keepViewport?: boolean;
   onConnectionStateChange?: (state: SessionTerminalConnectionState) => void;
   /** Must keep a stable identity: a new object tears down and reattaches the terminal. */
   io?: SessionTerminalIo;
@@ -185,6 +189,7 @@ export function SessionTerminal({
         term.refresh(0, term.rows - 1);
       };
       syncViewport();
+      if (keepViewport) restoreViewport(sessionId, term);
       window.clearTimeout(viewportIdleTimer);
       window.clearTimeout(viewportHardTimer);
       viewportIdleTimer = 0;
@@ -380,9 +385,10 @@ export function SessionTerminal({
       ro.disconnect();
       cancelAnimationFrame(resizeFrame);
       dataSub.dispose();
+      if (keepViewport) saveViewport(sessionId, term);
       term.dispose();
     };
-  }, [sessionId, cwd, taskSlug, phase, harness, model, intent, resumeToken, readOnly, terminalFontSize, onConnectionStateChange, io]);
+  }, [sessionId, cwd, taskSlug, phase, harness, model, intent, resumeToken, readOnly, keepViewport, terminalFontSize, onConnectionStateChange, io]);
 
   return <div ref={hostRef} style={{ width: "100%", height: "100%" }} />;
 }

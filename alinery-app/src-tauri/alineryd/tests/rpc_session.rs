@@ -355,6 +355,15 @@ resume_args = ["--resume={{resume_token}}"]
         serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
     }
 
+    /// Drop the first child's argv so the next `argv()` reads the restated child's. `start_session`
+    /// returns before the fixture script has written it, so wait for it first: removing early lets
+    /// the first child's file land afterwards and be mistaken for the restate's.
+    fn discard_argv(&self, id: &str) {
+        let path = self.root.join(format!("argv.{id}"));
+        wait_until(Duration::from_secs(5), || path.is_file());
+        let _ = fs::remove_file(path);
+    }
+
     fn argv(&self, id: &str) -> String {
         wait_until(Duration::from_secs(5), || self.root.join(format!("argv.{id}")).is_file());
         fs::read_to_string(self.root.join(format!("argv.{id}"))).unwrap()
@@ -853,7 +862,7 @@ fn rpc_argv_has_extension_mode_thinking_session_dir() {
 fn pty_argv_omits_mode_rpc_and_thinking_high() {
     let fixture = Fixture::new();
     let id = fixture.spawn_omp();
-    let _ = fs::remove_file(fixture.root.join(format!("argv.{id}")));
+    fixture.discard_argv(id);
     assert_eq!(fixture.restate(id, "pty").get("ok"), Some(&json!(true)));
     let argv = fixture.argv(id);
     assert!(argv.contains("--session-dir"), "{argv}");
@@ -879,7 +888,7 @@ fn restate_resume_uses_newest_jsonl_in_session_dir() {
     thread::sleep(Duration::from_millis(20));
     fs::write(&older, "old\n").unwrap();
     let _ = filetime_touch(&newer, SystemTime::now() - Duration::from_secs(3600));
-    let _ = fs::remove_file(fixture.root.join(format!("argv.{id}")));
+    fixture.discard_argv(id);
     assert_eq!(fixture.restate(id, "rpc").get("ok"), Some(&json!(true)));
     let argv = fixture.argv(id);
     let newer_abs = fs::canonicalize(&newer).unwrap();
