@@ -1,0 +1,54 @@
+\begin{thebibliography}{8}
+\providecommand{\natexlab}[1]{#1}
+
+\bibitem[{Erol, Hendler, and Nau(1994)}]{erol1994htn}
+Erol, K.; Hendler, J.; and Nau, D.~S. 1994.
+\newblock {HTN} Planning: Complexity and Expressivity.
+\newblock In \emph{Proceedings of the Twelfth National Conference on Artificial
+  Intelligence}, 1123--1128.
+
+\bibitem[{Fikes and Nilsson(1971)}]{fikes1971strips}
+Fikes, R.~E.; and Nilsson, N.~J. 1971.
+\newblock {STRIPS}: A New Approach to the Application of Theorem Proving to
+  Problem Solving.
+\newblock \emph{Artificial Intelligence}, 2(3--4): 189--208.
+
+\bibitem[{Fox and Long(2003)}]{fox2003pddl21}
+Fox, M.; and Long, D. 2003.
+\newblock {PDDL2.1}: An Extension to {PDDL} for Expressing Temporal Planning
+  Domains.
+\newblock \emph{Journal of Artificial Intelligence Research}, 20: 61--124.
+
+\bibitem[{Harel(1987)}]{harel1987statecharts}
+Harel, D. 1987.
+\newblock Statecharts: A Visual Formalism for Complex Systems.
+\newblock \emph{Science of Computer Programming}, 8(3): 231--274.
+
+\bibitem[{Kuter and Nau(2004)}]{kuter2004nondeterministic}
+Kuter, U.; and Nau, D.~S. 2004.
+\newblock Forward-Chaining Planning in Nondeterministic Domains.
+\newblock In \emph{Proceedings of the Nineteenth National Conference on
+  Artificial Intelligence}, 513--518.
+
+\bibitem[{Moreau and Missier(2013)}]{moreau2013prov}
+Moreau, L.; and Missier, P. 2013.
+\newblock {PROV-DM}: The {PROV} Data Model.
+\newblock {W3C} recommendation, World Wide Web Consortium.
+
+\bibitem[{van~der Aalst et~al.(2003)van~der Aalst, ter Hofstede, Kiepuszewski,
+  and Barros}]{vanderAalst2003workflow}
+van~der Aalst, W. M.~P.; ter Hofstede, A. H.~M.; Kiepuszewski, B.; and Barros,
+  A.~P. 2003.
+\newblock Workflow Patterns.
+\newblock \emph{Distributed and Parallel Databases}, 14(1): 5--51.
+
+\bibitem[{Wu et~al.(2024)Wu, Bansal, Zhang, Wu, Li, Zhu, Jiang, Zhang, Zhang,
+  Liu, Awadallah, White, Burger, and Wang}]{wu2024autogen}
+Wu, Q.; Bansal, G.; Zhang, J.; Wu, Y.; Li, B.; Zhu, E.; Jiang, L.; Zhang, X.;
+  Zhang, S.; Liu, J.; Awadallah, A.~H.; White, R.~W.; Burger, D.; and Wang, C.
+  2024.
+\newblock {AutoGen}: Enabling Next-Gen {LLM} Applications via Multi-Agent
+  Conversation.
+\newblock In \emph{Proceedings of the Conference on Language Modeling}.
+
+\end{thebibliography}
