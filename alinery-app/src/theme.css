@@ -229,7 +229,75 @@ select:focus-visible {
   align-items: center;
   gap: 8px;
   padding: 4px 8px;
+  min-width: 0;
   background: var(--surface);
+}
+.terminal-drawer-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  /* Room for the focus ring: overflow-x:auto also clips vertically. */
+  padding: 2px;
+}
+.terminal-drawer-tab {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 0 0 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.terminal-drawer-tab:focus-visible,
+.terminal-drawer-tab-x:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.terminal-drawer-tab.is-active {
+  color: var(--text-strong);
+  background: var(--surface-subtle);
+}
+.terminal-drawer-tab-x {
+  /* The hit box is 32px; the 14px glyph stays small. */
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1;
+}
+.terminal-drawer-tab-x:hover {
+  color: var(--danger);
+  background: var(--danger-subtle);
+}
+.terminal-drawer-spin {
+  animation: toast-spin 1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .terminal-drawer-spin {
+    animation: none;
+  }
+}
+.terminal-drawer-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.terminal-drawer-killall:hover {
+  color: var(--danger);
+  background: var(--danger-subtle);
 }
 .terminal-drawer .termhost {
   flex: 1;

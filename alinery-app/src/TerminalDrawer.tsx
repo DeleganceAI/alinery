@@ -1,12 +1,21 @@
+import { CornerDownRight, LoaderCircle, Plus, SquareX, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import * as ipc from "./ipc";
 import { SessionTerminal } from "./SessionTerminal";
-import { KillButton } from "./shared";
 import type { RepoScope, View } from "./types";
 
 export const DRAWER_MIN_WIDTH = 260;
 export const DRAWER_MAX_SCREEN_FRACTION = 0.6;
 export const DRAWER_DEFAULT_WIDTH = 360;
+
+const DRAWER_PANEL_ID = "terminal-drawer-panel";
+const closeLabel = (ordinal: number) => `Close terminal ${ordinal} — terminate shell and child processes`;
+
+export type DrawerTab = {
+  id: string;
+  ordinal: number;
+  cwd: string;
+};
 
 export function clampDrawerWidth(w: number): number {
   return Math.max(DRAWER_MIN_WIDTH, Math.min(Math.floor(window.innerWidth * DRAWER_MAX_SCREEN_FRACTION), w));
@@ -73,28 +82,26 @@ export async function resolveDrawerCdTarget(opts: { view: View; scope: RepoScope
   return activeRepo.trim();
 }
 
-function CdHereButton({ sessionId, target }: { sessionId: string; target: string }) {
+function CdHereButton({ sessionId, target }: { sessionId: string | null; target: string }) {
   const [busy, setBusy] = useState(false);
   const dest = target.trim();
-  const ready = Boolean(sessionId && dest);
+  const ready = Boolean(sessionId && dest && !busy);
   return (
     <button
       type="button"
-      className="btn small"
-      disabled={busy || !ready}
-      title={dest || "Resolving path…"}
+      className="iconbtn"
+      disabled={!ready}
+      title={dest ? `cd here: ${dest}` : "Resolving path…"}
       aria-label={dest ? `cd here: ${dest}` : "cd here (resolving path)"}
-      onClick={(e) => {
-        e.stopPropagation();
-        if (!ready) return;
+      onClick={() => {
+        if (!sessionId || !dest) return;
         setBusy(true);
-        ipc
-          .writeSession(sessionId, shellCdCommand(dest))
+        void Promise.resolve(ipc.writeSession(sessionId, shellCdCommand(dest)))
           .catch(() => {})
           .finally(() => setBusy(false));
       }}
     >
-      cd here
+      <CornerDownRight size={16} strokeWidth={1.5} aria-hidden="true" />
     </button>
   );
 }
@@ -103,10 +110,15 @@ export function TerminalDrawer({
   open,
   width,
   onWidthChange,
-  session,
+  tabs,
+  activeId,
   terminalFontSize,
-  onKilled,
-  onExited,
+  onSelect,
+  creating,
+  onClose,
+  onNew,
+  onKillAll,
+  onTabExited,
   view,
   scope,
   activeRepo,
@@ -114,18 +126,28 @@ export function TerminalDrawer({
   open: boolean;
   width: number;
   onWidthChange: (w: number) => void;
-  session: { id: string; cwd: string } | null;
+  tabs: DrawerTab[];
+  activeId: string | null;
   terminalFontSize: number;
-  onKilled: () => void;
-  onExited: () => void;
+  onSelect: (id: string) => void;
+  creating: boolean;
+  onClose: (id: string) => void;
+  onNew: () => void;
+  onKillAll: () => void;
+  onTabExited: (id: string) => void;
   view: View;
   scope: RepoScope;
   activeRepo: string | undefined;
 }) {
-  const exitedRef = useRef(false);
-  // Empty until homeDir resolves — avoids cd '~' (quoted tilde does not expand).
   const [home, setHome] = useState("");
   const [cdTarget, setCdTarget] = useState("");
+  const activeTabRef = useRef<HTMLDivElement | null>(null);
+  const tabListRef = useRef<HTMLDivElement | null>(null);
+  const active = tabs.find((tab) => tab.id === activeId) ?? null;
+  const tabIds = tabs.map((tab) => tab.id).join("\n");
+  // Set when the user closes a tab; the close may finish later (kill is awaited), so focus
+  // is restored once that tab is actually gone.
+  const closingId = useRef<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -133,12 +155,10 @@ export function TerminalDrawer({
       .homeDir()
       .then((h) => {
         if (!alive) return;
-        // path API often returns a trailing slash; normalize for display/cd.
         const cleaned = h.replace(/\/+$/, "") || h;
         setHome(cleaned);
       })
       .catch(() => {
-        // Keep empty; resolve falls back to activeRepo when possible.
         if (alive) setHome("");
       });
     return () => {
@@ -156,58 +176,149 @@ export function TerminalDrawer({
     };
   }, [view, scope, activeRepo, home]);
 
-  // Reset the one-shot EOF guard when the session handle changes.
   useEffect(() => {
-    exitedRef.current = false;
-  }, [session?.id]);
+    activeTabRef.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [activeId]);
 
-  // Natural shell EOF → same path as Kill (design: close + clear; next open is fresh).
   useEffect(() => {
-    if (!session) return;
+    const closing = closingId.current;
+    if (!closing || tabIds.split("\n").includes(closing)) return;
+    closingId.current = null;
+    const focused = document.activeElement;
+    if (!focused || focused === document.body || tabListRef.current?.contains(focused)) activeTabRef.current?.focus();
+  }, [tabIds]);
+
+  useEffect(() => {
+    const ids = tabIds.split("\n").filter(Boolean);
+    if (ids.length === 0) return;
+    const reported = new Set<string>();
     let alive = true;
-    const tick = () =>
-      ipc
-        .sessionStatus(session.id, "")
-        .then((obs) => {
-          if (!alive || exitedRef.current) return;
-          const ls = obs.lifecycle;
-          if (ls.state !== "live" && ls.state !== "never_started") {
-            exitedRef.current = true;
-            onExited();
-          }
-        })
-        .catch(() => {});
+    const tick = () => {
+      for (const id of ids) {
+        if (reported.has(id)) continue;
+        ipc
+          .sessionStatus(id, "")
+          .then((obs) => {
+            if (!alive || reported.has(id)) return;
+            const state = obs.lifecycle.state;
+            if (state !== "live" && state !== "never_started") {
+              reported.add(id);
+              onTabExited(id);
+            }
+          })
+          .catch(() => {});
+      }
+    };
     tick();
-    const t = setInterval(tick, 1500);
+    const timer = setInterval(tick, 1500);
     return () => {
       alive = false;
-      clearInterval(t);
+      clearInterval(timer);
     };
-  }, [session, onExited]);
+  }, [tabIds, onTabExited]);
 
-  if (!session && !open) return null;
+  if (!open && tabs.length === 0) return null;
 
   return (
     <>
       <div className={open ? "terminal-drawer is-open" : "terminal-drawer is-hidden"} aria-hidden={!open}>
-        {open && session && (
+        {open && tabs.length > 0 && (
           <div className="terminal-drawer-chrome">
-            <CdHereButton sessionId={session.id} target={cdTarget} />
-            <KillButton id={session.id} slug="" onKilled={onKilled} danger={true} />
+            <div ref={tabListRef} role="tablist" aria-label="Terminals" className="terminal-drawer-tabs">
+              {tabs.map((tab) => {
+                const selected = tab.id === activeId;
+                return (
+                  <div
+                    key={tab.id}
+                    id={`terminal-drawer-tab-${tab.id}`}
+                    ref={selected ? activeTabRef : undefined}
+                    role="tab"
+                    aria-selected={selected}
+                    aria-controls={selected ? DRAWER_PANEL_ID : undefined}
+                    aria-label={`Terminal ${tab.ordinal}`}
+                    title={`Terminal ${tab.ordinal}`}
+                    tabIndex={selected ? 0 : -1}
+                    className={selected ? "terminal-drawer-tab is-active" : "terminal-drawer-tab"}
+                    onClick={() => onSelect(tab.id)}
+                    onKeyDown={(e) => {
+                      // The board shortcuts listen on window; none of these keys may reach them.
+                      const onTab = e.target === e.currentTarget;
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.stopPropagation();
+                        // From the nested X, leave the default alone so the button activates natively.
+                        if (onTab) {
+                          e.preventDefault();
+                          onSelect(tab.id);
+                        }
+                        return;
+                      }
+                      if (!onTab) return;
+                      const i = tabs.findIndex((t) => t.id === tab.id);
+                      const target = { ArrowRight: (i + 1) % tabs.length, ArrowLeft: (i - 1 + tabs.length) % tabs.length, Home: 0, End: tabs.length - 1 }[e.key];
+                      if (target === undefined) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onSelect(tabs[target].id);
+                      (e.currentTarget.parentElement?.children[target] as HTMLElement | undefined)?.focus();
+                    }}
+                  >
+                    <span aria-hidden="true">{tab.ordinal}</span>
+                    <button
+                      type="button"
+                      className="terminal-drawer-tab-x"
+                      aria-label={closeLabel(tab.ordinal)}
+                      title={closeLabel(tab.ordinal)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        closingId.current = tab.id;
+                        onClose(tab.id);
+                      }}
+                    >
+                      <X size={14} strokeWidth={1.5} aria-hidden="true" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="terminal-drawer-actions">
+              <button
+                type="button"
+                className="iconbtn"
+                aria-label={creating ? "Starting terminal" : "New terminal"}
+                title={creating ? "Starting terminal…" : "New terminal"}
+                disabled={creating}
+                aria-busy={creating}
+                onClick={onNew}
+              >
+                {creating ? (
+                  <LoaderCircle className="terminal-drawer-spin" size={16} strokeWidth={1.5} aria-hidden="true" />
+                ) : (
+                  <Plus size={16} strokeWidth={1.5} aria-hidden="true" />
+                )}
+              </button>
+              <span className="sr-only" role="status">
+                {creating ? "Starting terminal" : ""}
+              </span>
+              <button type="button" className="iconbtn terminal-drawer-killall" aria-label="Kill all terminals" title="Kill all terminals" onClick={onKillAll}>
+                <SquareX size={16} strokeWidth={1.5} aria-hidden="true" />
+              </button>
+              <CdHereButton sessionId={activeId} target={cdTarget} />
+            </div>
           </div>
         )}
-        {session && (
-          <div className="termhost">
+        {active && (
+          <div className="termhost" role="tabpanel" id={DRAWER_PANEL_ID} aria-labelledby={`terminal-drawer-tab-${active.id}`}>
             <SessionTerminal
-              key={session.id}
-              sessionId={session.id}
-              cwd={session.cwd}
+              key={active.id}
+              sessionId={active.id}
+              cwd={active.cwd}
               taskSlug=""
               phase=""
               harness="no-harness"
               model=""
               intent="spawn"
               terminalFontSize={terminalFontSize}
+              keepViewport
             />
           </div>
         )}
