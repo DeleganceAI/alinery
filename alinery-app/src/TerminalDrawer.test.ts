@@ -123,6 +123,7 @@ type DrawerProps = {
   activeId: string | null;
   terminalFontSize: number;
   onSelect: (id: string) => void;
+  creating: boolean;
   onClose: (id: string) => void;
   onNew: () => void;
   onKillAll: () => void;
@@ -146,6 +147,7 @@ function renderDrawer(overrides: Partial<DrawerProps> = {}) {
     activeId: "drawer-1",
     terminalFontSize: 13,
     onSelect: vi.fn(),
+    creating: false,
     onClose: vi.fn(),
     onNew: vi.fn(),
     onKillAll: vi.fn(),
@@ -182,8 +184,8 @@ describe("TerminalDrawer tab bar", () => {
     expect(tab2.textContent).not.toContain("/repo");
     expect(tab1.tagName).not.toBe("BUTTON");
 
-    const close1 = screen.getByRole("button", { name: "Close terminal 1" });
-    const close2 = screen.getByRole("button", { name: "Close terminal 2" });
+    const close1 = screen.getByRole("button", { name: /^Close terminal 1 — terminate shell and child processes$/ });
+    const close2 = screen.getByRole("button", { name: /^Close terminal 2 — terminate shell and child processes$/ });
     expect(tab1.contains(close1)).toBe(true);
     expect(tab2.contains(close2)).toBe(true);
     expect(close1.querySelector("svg")?.classList.contains("lucide-x")).toBe(true);
@@ -239,9 +241,74 @@ describe("TerminalDrawer tab bar", () => {
     fireEvent.keyDown(screen.getByRole("tab", { name: "Terminal 2" }), { key: " " });
     expect(props.onSelect).toHaveBeenCalledTimes(3);
 
-    fireEvent.click(screen.getByRole("button", { name: "Close terminal 2" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Close terminal 2 — terminate shell and child processes$/ }));
     expect(props.onClose).toHaveBeenCalledWith("drawer-2");
     expect(props.onSelect).toHaveBeenCalledTimes(3);
+  });
+
+  it("lets the nested X activate natively and keeps its keys from the board shortcuts", () => {
+    const { props } = renderDrawer();
+    const seen = vi.fn();
+    window.addEventListener("keydown", seen);
+    const x = screen.getByRole("button", { name: /^Close terminal 2/ });
+    for (const key of ["Enter", " "]) {
+      const notCancelled = fireEvent.keyDown(x, { key });
+      expect(notCancelled, `${key} on X keeps its default`).toBe(true);
+    }
+    expect(props.onSelect).not.toHaveBeenCalled();
+    expect(seen).not.toHaveBeenCalled();
+    window.removeEventListener("keydown", seen);
+  });
+
+  it("moves between tabs with the arrow keys, Home and End, wrapping, without leaking the key", () => {
+    const { props } = renderDrawer();
+    const seen = vi.fn();
+    window.addEventListener("keydown", seen);
+    const tab1 = screen.getByRole("tab", { name: "Terminal 1" });
+    const tab2 = screen.getByRole("tab", { name: "Terminal 2" });
+    tab1.focus();
+    fireEvent.keyDown(tab1, { key: "ArrowRight" });
+    expect(props.onSelect).toHaveBeenLastCalledWith("drawer-2");
+    expect(document.activeElement).toBe(tab2);
+    fireEvent.keyDown(tab2, { key: "ArrowRight" });
+    expect(props.onSelect).toHaveBeenLastCalledWith("drawer-1");
+    fireEvent.keyDown(tab1, { key: "ArrowLeft" });
+    expect(props.onSelect).toHaveBeenLastCalledWith("drawer-2");
+    fireEvent.keyDown(tab2, { key: "Home" });
+    expect(props.onSelect).toHaveBeenLastCalledWith("drawer-1");
+    fireEvent.keyDown(tab1, { key: "End" });
+    expect(props.onSelect).toHaveBeenLastCalledWith("drawer-2");
+    expect(seen).not.toHaveBeenCalled();
+    window.removeEventListener("keydown", seen);
+  });
+
+  it("associates the active tab with the panel", () => {
+    const { container } = renderDrawer();
+    const panel = container.querySelector(".termhost");
+    expect(panel?.getAttribute("role")).toBe("tabpanel");
+    expect(screen.getByRole("tab", { name: "Terminal 1" }).getAttribute("aria-controls")).toBe(panel?.id);
+    expect(panel?.getAttribute("aria-labelledby")).toBe(screen.getByRole("tab", { name: "Terminal 1" }).id);
+  });
+
+  it("returns focus to the active tab once the closed tab is gone, not before", () => {
+    const { props, rerender } = renderDrawer();
+    const Drawer = TerminalDrawer as unknown as (p: DrawerProps) => ReactElement;
+    const x = screen.getByRole("button", { name: /^Close terminal 2/ });
+    x.focus();
+    fireEvent.click(x);
+    expect(props.onClose).toHaveBeenCalledWith("drawer-2");
+    rerender(createElement(Drawer, { ...props, tabs: [tabs[0]] }));
+    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Terminal 1" }));
+  });
+
+  it("disables Plus and says a terminal is starting while a create is pending", () => {
+    const { props } = renderDrawer({ creating: true });
+    const plus = screen.getByRole("button", { name: "Starting terminal" }) as HTMLButtonElement;
+    expect(plus.disabled).toBe(true);
+    expect(plus.getAttribute("aria-busy")).toBe("true");
+    expect(screen.getByRole("status").textContent).toBe("Starting terminal");
+    fireEvent.click(plus);
+    expect(props.onNew).not.toHaveBeenCalled();
   });
 
   it("notifies new and kill-all without swallowing a second Plus click", () => {
@@ -257,6 +324,7 @@ describe("TerminalDrawer tab bar", () => {
   it("writes the cd command into the active id only", async () => {
     renderDrawer();
     const cdHere = await screen.findByRole("button", { name: "cd here: /repo" });
+    expect(cdHere.getAttribute("title")).toBe("cd here: /repo");
     fireEvent.click(cdHere);
     expect(ipc.writeSession).toHaveBeenCalledTimes(1);
     expect(ipc.writeSession).toHaveBeenCalledWith("drawer-1", shellCdCommand("/repo"));

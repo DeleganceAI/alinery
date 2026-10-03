@@ -193,6 +193,7 @@ export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerWidth, setDrawerWidth] = useState(DRAWER_DEFAULT_WIDTH);
   const [drawer, setDrawer] = useState<DrawerHandle | null>(null);
+  const [drawerCreating, setDrawerCreating] = useState(false);
   // Kill, switch, and EOF must not close over a stale tab list.
   const drawerRef = useRef(drawer);
   drawerRef.current = drawer;
@@ -260,9 +261,30 @@ export default function App() {
 
   const clearDrawerUi = useCallback(() => {
     drawerGeneration.current += 1;
+    drawerRef.current = null;
     setDrawerOpen(false);
     setDrawer(null);
   }, []);
+
+  // Every tab-list change composes from the ref, which is advanced synchronously, so two
+  // exits (or a create and an exit) in one batch cannot overwrite each other from a stale
+  // render. The kill side effects stay outside, in the callers.
+  const updateDrawer = useCallback((fn: (handle: DrawerHandle) => DrawerHandle | null) => {
+    const handle = drawerRef.current;
+    if (!handle) return;
+    const next = fn(handle);
+    drawerRef.current = next;
+    setDrawer(next);
+  }, []);
+  const removeDrawerTab = useCallback(
+    (id: string) => {
+      const handle = drawerRef.current;
+      if (!handle) return;
+      if (drawerAfterClose(handle, id) === null) clearDrawerUi();
+      else updateDrawer((h) => drawerAfterClose(h, id));
+    },
+    [clearDrawerUi, updateDrawer],
+  );
 
   const drawerIds = (claimInFlight = true) => {
     const ids = drawerRef.current?.tabs.map((tab) => tab.id) ?? [];
@@ -290,23 +312,46 @@ export default function App() {
     });
   };
 
-  const killDrawer = useCallback(async () => {
-    const ids = drawerIds();
-    clearDrawerUi();
-    for (const id of ids) {
+  // A tab leaves the drawer only once its shell is confirmed stopped (kill acknowledged, or
+  // an independently observed exit). Otherwise the handle stays so the user can retry.
+  const stopDrawerTab = useCallback(async (id: string): Promise<boolean> => {
+    try {
+      await ipc.killSession(id, "");
+      return true;
+    } catch {
       try {
-        await ipc.killSession(id, "");
+        const state = (await ipc.sessionStatus(id, "")).lifecycle.state;
+        return state !== "live" && state !== "never_started";
       } catch {
-        // Idempotent — already exited / daemon offline.
+        return false;
       }
     }
-  }, [clearDrawerUi]);
+  }, []);
+
+  const reportStuck = (ids: string[]) => {
+    const handle = drawerRef.current;
+    const names = ids.map((id) => handle?.tabs.find((tab) => tab.id === id)?.ordinal ?? id).join(", ");
+    toast.error(`Couldn't stop terminal ${names}. It may still be running; close it again to retry.`);
+  };
+
+  const killDrawer = useCallback(async () => {
+    const ids = drawerIds();
+    // A create still in flight must not land in a drawer that is being killed.
+    drawerGeneration.current += 1;
+    const stuck: string[] = [];
+    for (const id of ids) {
+      if (await stopDrawerTab(id)) removeDrawerTab(id);
+      else stuck.push(id);
+    }
+    if (stuck.length > 0) reportStuck(stuck);
+  }, [stopDrawerTab, removeDrawerTab]);
 
   const addDrawerTab = useCallback(async () => {
     if (creatingDrawer.current) return;
     const repoAtCreate = appConfigRef.current?.active_repo;
     if (!repoAtCreate) return;
     creatingDrawer.current = true;
+    setDrawerCreating(true);
     const generation = drawerGeneration.current;
     try {
       const meta = await ipc.ensureDrawerTerminal();
@@ -325,36 +370,31 @@ export default function App() {
       }
       inFlightDrawerId.current = null;
       const cwd = meta.worktree || repoAtCreate;
-      setDrawer((current) => {
-        const nextOrdinal = current?.nextOrdinal ?? 1;
-        const tab = { id: meta.id, ordinal: nextOrdinal, cwd };
-        if (!current) return { tabs: [tab], activeId: meta.id, nextOrdinal: nextOrdinal + 1 };
-        return { tabs: [...current.tabs, tab], activeId: meta.id, nextOrdinal: nextOrdinal + 1 };
-      });
+      const current = drawerRef.current;
+      const nextOrdinal = current?.nextOrdinal ?? 1;
+      const tab = { id: meta.id, ordinal: nextOrdinal, cwd };
+      const next = { tabs: [...(current?.tabs ?? []), tab], activeId: meta.id, nextOrdinal: nextOrdinal + 1 };
+      drawerRef.current = next;
+      setDrawer(next);
       setDrawerOpen(true);
     } catch (e) {
       toast(String(e), "error");
     } finally {
       creatingDrawer.current = false;
+      setDrawerCreating(false);
     }
   }, []);
 
   const closeDrawerTab = useCallback(
-    (id: string) => {
-      const handle = drawerRef.current;
-      if (!handle) return;
-      const next = drawerAfterClose(handle, id);
-      if (next === handle) return;
-      if (next === null) clearDrawerUi();
-      else setDrawer(next);
-      void ipc.killSession(id, "").catch(() => {});
+    async (id: string) => {
+      if (!drawerRef.current?.tabs.some((tab) => tab.id === id)) return;
+      if (await stopDrawerTab(id)) removeDrawerTab(id);
+      else reportStuck([id]);
     },
-    [clearDrawerUi],
+    [stopDrawerTab, removeDrawerTab],
   );
 
-  const selectDrawerTab = useCallback((id: string) => {
-    setDrawer((current) => (current && current.tabs.some((tab) => tab.id === id) ? { ...current, activeId: id } : current));
-  }, []);
+  const selectDrawerTab = useCallback((id: string) => updateDrawer((handle) => (handle.tabs.some((tab) => tab.id === id) ? { ...handle, activeId: id } : handle)), [updateDrawer]);
 
   useEffect(() => {
     ipc
@@ -1195,10 +1235,11 @@ export default function App() {
               activeId={drawer?.activeId ?? null}
               terminalFontSize={appearance.terminal_font_size}
               onSelect={selectDrawerTab}
-              onClose={closeDrawerTab}
+              creating={drawerCreating}
+              onClose={(id) => void closeDrawerTab(id)}
               onNew={() => void addDrawerTab()}
               onKillAll={() => void killDrawer()}
-              onTabExited={closeDrawerTab}
+              onTabExited={removeDrawerTab}
               view={view}
               scope={scope}
               activeRepo={appConfig?.active_repo}

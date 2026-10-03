@@ -91,7 +91,7 @@ fn set_active_repo_rejects_a_deleted_git_dir_without_creating_alinery() {
     let mut context = tauri::test::mock_context(tauri::test::noop_assets());
     context.config_mut().identifier = format!("test.alinery.open-git.{}", uuid::Uuid::new_v4());
     let app = tauri::test::mock_builder().manage(AppState::default()).build(context).unwrap();
-    let err = match crate::set_active_repo(app.handle().clone(), app.state(), repo.display().to_string(), Vec::new()) {
+    let err = match crate::set_active_repo_sync(app.handle().clone(), app.state(), repo.display().to_string(), Vec::new()) {
         Ok(_) => panic!("deleted .git must not open"),
         Err(err) => err,
     };
@@ -283,7 +283,7 @@ fn set_active_repo_kills_every_drawer_id_only_when_the_repo_changes() {
     let fixture = drawer_switch("drawer-kill", false);
     let state = fixture.app.state::<AppState>();
     seed_routes(&state, &["s-a", "s-b"]);
-    let result = crate::set_active_repo(
+    let result = crate::set_active_repo_sync(
         fixture.app.handle().clone(),
         fixture.app.state(),
         fixture.destination.display().to_string(),
@@ -304,7 +304,7 @@ fn set_active_repo_does_not_kill_drawer_ids_when_the_repo_stays() {
     let fixture = drawer_switch("drawer-same", false);
     let again = alinery_core::require_working_tree(Path::new(&fixture.previous.display().to_string())).unwrap();
     assert_eq!(again, fixture.previous);
-    let result = crate::set_active_repo(fixture.app.handle().clone(), fixture.app.state(), again.display().to_string(), vec!["s-a".into()]);
+    let result = crate::set_active_repo_sync(fixture.app.handle().clone(), fixture.app.state(), again.display().to_string(), vec!["s-a".into()]);
     assert!(result.is_ok(), "{}", result.err().unwrap_or_default());
     assert!(kills_of(&fixture.prev_requests).is_empty(), "same-repo switch must not kill");
 }
@@ -314,7 +314,7 @@ fn set_active_repo_does_not_kill_drawer_ids_when_the_list_is_empty() {
     use tauri::Manager;
     let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let fixture = drawer_switch("drawer-empty", false);
-    let result = crate::set_active_repo(fixture.app.handle().clone(), fixture.app.state(), fixture.destination.display().to_string(), Vec::new());
+    let result = crate::set_active_repo_sync(fixture.app.handle().clone(), fixture.app.state(), fixture.destination.display().to_string(), Vec::new());
     assert!(result.is_ok(), "{}", result.err().unwrap_or_default());
     assert!(kills_of(&fixture.prev_requests).is_empty());
     assert!(kills_of(&fixture.dest_requests).is_empty());
@@ -327,7 +327,7 @@ fn set_active_repo_clears_drawer_routes_when_kill_fails() {
     let fixture = drawer_switch("drawer-kill-err", true);
     let state = fixture.app.state::<AppState>();
     seed_routes(&state, &["s-a"]);
-    let result = crate::set_active_repo(
+    let result = crate::set_active_repo_sync(
         fixture.app.handle().clone(),
         fixture.app.state(),
         fixture.destination.display().to_string(),
@@ -374,7 +374,7 @@ fn set_active_repo_does_not_kill_drawer_ids_when_reservation_fails() {
     let mut ready = String::new();
     BufReader::new(holder.stdout.take().unwrap()).read_line(&mut ready).unwrap();
     assert_eq!(ready.trim(), "ready");
-    let err = match crate::set_active_repo(app.handle().clone(), app.state(), destination.display().to_string(), vec!["s-a".into(), "s-b".into()]) {
+    let err = match crate::set_active_repo_sync(app.handle().clone(), app.state(), destination.display().to_string(), vec!["s-a".into(), "s-b".into()]) {
         Ok(_) => panic!("a held destination lock must reject the switch"),
         Err(err) => err,
     };

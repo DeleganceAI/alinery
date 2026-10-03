@@ -1,4 +1,4 @@
-import { CornerDownRight, Plus, SquareX, X } from "lucide-react";
+import { CornerDownRight, LoaderCircle, Plus, SquareX, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import * as ipc from "./ipc";
 import { SessionTerminal } from "./SessionTerminal";
@@ -7,6 +7,9 @@ import type { RepoScope, View } from "./types";
 export const DRAWER_MIN_WIDTH = 260;
 export const DRAWER_MAX_SCREEN_FRACTION = 0.6;
 export const DRAWER_DEFAULT_WIDTH = 360;
+
+const DRAWER_PANEL_ID = "terminal-drawer-panel";
+const closeLabel = (ordinal: number) => `Close terminal ${ordinal} — terminate shell and child processes`;
 
 export type DrawerTab = {
   id: string;
@@ -88,7 +91,7 @@ function CdHereButton({ sessionId, target }: { sessionId: string | null; target:
       type="button"
       className="iconbtn"
       disabled={!ready}
-      title={dest || "Resolving path…"}
+      title={dest ? `cd here: ${dest}` : "Resolving path…"}
       aria-label={dest ? `cd here: ${dest}` : "cd here (resolving path)"}
       onClick={() => {
         if (!sessionId || !dest) return;
@@ -111,6 +114,7 @@ export function TerminalDrawer({
   activeId,
   terminalFontSize,
   onSelect,
+  creating,
   onClose,
   onNew,
   onKillAll,
@@ -126,6 +130,7 @@ export function TerminalDrawer({
   activeId: string | null;
   terminalFontSize: number;
   onSelect: (id: string) => void;
+  creating: boolean;
   onClose: (id: string) => void;
   onNew: () => void;
   onKillAll: () => void;
@@ -137,8 +142,12 @@ export function TerminalDrawer({
   const [home, setHome] = useState("");
   const [cdTarget, setCdTarget] = useState("");
   const activeTabRef = useRef<HTMLDivElement | null>(null);
+  const tabListRef = useRef<HTMLDivElement | null>(null);
   const active = tabs.find((tab) => tab.id === activeId) ?? null;
   const tabIds = tabs.map((tab) => tab.id).join("\n");
+  // Set when the user closes a tab; the close may finish later (kill is awaited), so focus
+  // is restored once that tab is actually gone.
+  const closingId = useRef<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -170,6 +179,14 @@ export function TerminalDrawer({
   useEffect(() => {
     activeTabRef.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   }, [activeId]);
+
+  useEffect(() => {
+    const closing = closingId.current;
+    if (!closing || tabIds.split("\n").includes(closing)) return;
+    closingId.current = null;
+    const focused = document.activeElement;
+    if (!focused || focused === document.body || tabListRef.current?.contains(focused)) activeTabRef.current?.focus();
+  }, [tabIds]);
 
   useEffect(() => {
     const ids = tabIds.split("\n").filter(Boolean);
@@ -207,35 +224,53 @@ export function TerminalDrawer({
       <div className={open ? "terminal-drawer is-open" : "terminal-drawer is-hidden"} aria-hidden={!open}>
         {open && tabs.length > 0 && (
           <div className="terminal-drawer-chrome">
-            <div role="tablist" aria-label="Terminals" className="terminal-drawer-tabs">
+            <div ref={tabListRef} role="tablist" aria-label="Terminals" className="terminal-drawer-tabs">
               {tabs.map((tab) => {
                 const selected = tab.id === activeId;
                 return (
                   <div
                     key={tab.id}
+                    id={`terminal-drawer-tab-${tab.id}`}
                     ref={selected ? activeTabRef : undefined}
                     role="tab"
                     aria-selected={selected}
+                    aria-controls={selected ? DRAWER_PANEL_ID : undefined}
                     aria-label={`Terminal ${tab.ordinal}`}
                     title={`Terminal ${tab.ordinal}`}
                     tabIndex={selected ? 0 : -1}
                     className={selected ? "terminal-drawer-tab is-active" : "terminal-drawer-tab"}
                     onClick={() => onSelect(tab.id)}
                     onKeyDown={(e) => {
+                      // The board shortcuts listen on window; none of these keys may reach them.
+                      const onTab = e.target === e.currentTarget;
                       if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        onSelect(tab.id);
+                        e.stopPropagation();
+                        // From the nested X, leave the default alone so the button activates natively.
+                        if (onTab) {
+                          e.preventDefault();
+                          onSelect(tab.id);
+                        }
+                        return;
                       }
+                      if (!onTab) return;
+                      const i = tabs.findIndex((t) => t.id === tab.id);
+                      const target = { ArrowRight: (i + 1) % tabs.length, ArrowLeft: (i - 1 + tabs.length) % tabs.length, Home: 0, End: tabs.length - 1 }[e.key];
+                      if (target === undefined) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onSelect(tabs[target].id);
+                      (e.currentTarget.parentElement?.children[target] as HTMLElement | undefined)?.focus();
                     }}
                   >
                     <span aria-hidden="true">{tab.ordinal}</span>
                     <button
                       type="button"
                       className="terminal-drawer-tab-x"
-                      aria-label={`Close terminal ${tab.ordinal}`}
-                      title={`Close terminal ${tab.ordinal}`}
+                      aria-label={closeLabel(tab.ordinal)}
+                      title={closeLabel(tab.ordinal)}
                       onClick={(e) => {
                         e.stopPropagation();
+                        closingId.current = tab.id;
                         onClose(tab.id);
                       }}
                     >
@@ -246,9 +281,24 @@ export function TerminalDrawer({
               })}
             </div>
             <div className="terminal-drawer-actions">
-              <button type="button" className="iconbtn" aria-label="New terminal" title="New terminal" onClick={onNew}>
-                <Plus size={16} strokeWidth={1.5} aria-hidden="true" />
+              <button
+                type="button"
+                className="iconbtn"
+                aria-label={creating ? "Starting terminal" : "New terminal"}
+                title={creating ? "Starting terminal…" : "New terminal"}
+                disabled={creating}
+                aria-busy={creating}
+                onClick={onNew}
+              >
+                {creating ? (
+                  <LoaderCircle className="terminal-drawer-spin" size={16} strokeWidth={1.5} aria-hidden="true" />
+                ) : (
+                  <Plus size={16} strokeWidth={1.5} aria-hidden="true" />
+                )}
               </button>
+              <span className="sr-only" role="status">
+                {creating ? "Starting terminal" : ""}
+              </span>
               <button type="button" className="iconbtn terminal-drawer-killall" aria-label="Kill all terminals" title="Kill all terminals" onClick={onKillAll}>
                 <SquareX size={16} strokeWidth={1.5} aria-hidden="true" />
               </button>
@@ -257,7 +307,7 @@ export function TerminalDrawer({
           </div>
         )}
         {active && (
-          <div className="termhost">
+          <div className="termhost" role="tabpanel" id={DRAWER_PANEL_ID} aria-labelledby={`terminal-drawer-tab-${active.id}`}>
             <SessionTerminal
               key={active.id}
               sessionId={active.id}
