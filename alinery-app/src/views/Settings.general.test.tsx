@@ -116,10 +116,11 @@ describe("Settings General", () => {
     const misc = subsection("Misc");
     expect(misc.getByRole("heading", { level: 3, name: "Experimental options" })).toBeTruthy();
     const boxes = misc.getAllByRole("checkbox");
-    expect(boxes).toHaveLength(3);
+    expect(boxes).toHaveLength(4);
     expect(boxes[0]).toBe(await keepAwake());
     expect(boxes[1]).toBe(telemetry());
     expect(boxes[2]).toBe(misc.getByRole("checkbox", { name: /Original Kanban/ }));
+    expect(boxes[3]).toBe(misc.getByRole("checkbox", { name: /^Chat/ }));
   });
 
   it("shows Keep awake off and editable, with the note under it", async () => {
@@ -164,6 +165,7 @@ describe("Settings General", () => {
     expect(screen.getByText(/Appearance, notifications, updates, and misc are global-only\./)).toBeTruthy();
     expect((screen.getByRole("checkbox", { name: /Check for updates/ }) as HTMLInputElement).disabled).toBe(true);
     expect((screen.getByRole("checkbox", { name: /Original Kanban/ }) as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByRole("checkbox", { name: /^Chat/ }) as HTMLInputElement).disabled).toBe(true);
     await waitFor(() => expect((screen.getByLabelText("Default playbook") as HTMLSelectElement).disabled).toBe(false));
     expect(screen.getByText(NOTE)).toBeTruthy();
     fireEvent.click(box);

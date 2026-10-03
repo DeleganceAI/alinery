@@ -195,6 +195,7 @@ export default function App() {
   appConfigRef.current = appConfig;
   const gridViews = useMemo(() => normalizeGridViews(appConfig?.global?.grid_views), [appConfig?.global?.grid_views]);
   const showOriginalKanban = appConfig?.global?.experiments?.show_original_kanban ?? true;
+  const showChat = appConfig?.global?.experiments?.show_chat ?? false;
   const repoKey = appConfig?.active_repo ? `${scope}:${appConfig.active_repo}:${appConfig.known_repos.join("|")}:${reloadNonce}` : "";
   const activeGridViewId = view.kind === "grid" && gridViews.some((gridView) => gridView.id === view.gridViewId) ? view.gridViewId : undefined;
   const [mountedGridViews, setMountedGridViews] = useState<{ repoKey: string; ids: string[] }>({ repoKey: "", ids: [] });
@@ -212,10 +213,12 @@ export default function App() {
   useEffect(() => {
     if (!appConfig) return;
     setView((current) => {
+      // Turning the Chat tab off while it is open sends you to the first Grid view.
+      if (current.kind === "chat" && !showChat) return { kind: "grid", gridViewId: gridViews[0].id };
       if (current.kind !== "grid" && current.kind !== "kanban") return current;
       return resolveGridTopLevelRoute(current, showOriginalKanban, gridViews);
     });
-  }, [appConfig, gridViews, showOriginalKanban]);
+  }, [appConfig, gridViews, showOriginalKanban, showChat]);
 
   const selectedGridViewId = gridViewIdOf(view);
   useEffect(() => {
@@ -460,7 +463,7 @@ export default function App() {
       setView({ kind: "grid", gridViewId });
       return;
     }
-    if (kind === "kanban" && !showOriginalKanban) {
+    if ((kind === "kanban" && !showOriginalKanban) || (kind === "chat" && !showChat)) {
       setView({ kind: "grid", gridViewId: gridViews[0].id });
       return;
     }
@@ -946,6 +949,7 @@ export default function App() {
     },
     gridCount: gridViews.length,
     showKanban: showOriginalKanban,
+    showChat,
     goList: () => {
       if (hasRepo) switchTop("list", { instant: true });
     },
@@ -1012,7 +1016,9 @@ export default function App() {
           ...(showOriginalKanban
             ? [action("kanban", pi(SquareKanban), "Go to Kanban", `⌘${trailingTabDigit(gridViews.length, "kanban")}`, () => switchTop("kanban", { instant: true }))]
             : []),
-          action("chat", pi(MessageSquare), "Go to Chat", `⌘${trailingTabDigit(gridViews.length, "chat", showOriginalKanban)}`, () => switchTop("chat", { instant: true })),
+          ...(showChat
+            ? [action("chat", pi(MessageSquare), "Go to Chat", `⌘${trailingTabDigit(gridViews.length, "chat", showOriginalKanban)}`, () => switchTop("chat", { instant: true }))]
+            : []),
           action("notifications", pi(Bell), "Go to Notifications", "⌘8", () => switchTop("notifications", { instant: true })),
           action("settings", pi(SettingsIcon), "Open Settings", "⌘9", () => openSettings(undefined, { instant: true })),
           ...SETTINGS_SECTIONS.map((section) =>
@@ -1210,6 +1216,7 @@ export default function App() {
       appConfig={appConfig}
       gridViews={gridViews}
       showOriginalKanban={showOriginalKanban}
+      showChat={showChat}
       instant={navInstant}
       onSwitch={switchTop}
       onSwitchGrid={(gridViewId) => switchTop("grid", { gridViewId })}

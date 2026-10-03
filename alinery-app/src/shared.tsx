@@ -613,6 +613,7 @@ export function TopBar({
   appConfig,
   gridViews = [],
   showOriginalKanban = false,
+  showChat = false,
   onSwitch,
   onSwitchGrid,
   onSelectRepo,
@@ -635,6 +636,7 @@ export function TopBar({
   appConfig: AppConfig;
   gridViews?: GridViewDefinition[];
   showOriginalKanban?: boolean;
+  showChat?: boolean;
   instant?: boolean;
   onSwitch: (k: Tab) => void;
   onSwitchGrid: (gridViewId: string) => void;
@@ -727,7 +729,7 @@ export function TopBar({
         {tab("list", "Tasks", String(trailingTabDigit(gridViews.length, "tasks")))}
         {tab("sessions", "Sessions", String(trailingTabDigit(gridViews.length, "sessions")))}
         {showOriginalKanban && tab("kanban", "Kanban", String(trailingTabDigit(gridViews.length, "kanban")))}
-        {tab("chat", "Chat", String(trailingTabDigit(gridViews.length, "chat", showOriginalKanban)))}
+        {showChat && tab("chat", "Chat", String(trailingTabDigit(gridViews.length, "chat", showOriginalKanban)))}
         {tab("playbooks", "Playbooks")}
       </nav>
       <div className="spacer" />

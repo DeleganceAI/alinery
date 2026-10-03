@@ -669,6 +669,11 @@ export function Settings({
     saveGlobal({ ...global, experiments: { ...global.experiments, show_original_kanban: value } }, value ? "Original Kanban tab shown" : "Original Kanban tab hidden");
   };
 
+  const setShowChat = (value: boolean) => {
+    if (!global) return;
+    saveGlobal({ ...global, experiments: { ...global.experiments, show_chat: value } }, value ? "Chat tab shown" : "Chat tab hidden");
+  };
+
   const updateGlobalChoice = (key: ChoiceKey, patch: Partial<GlobalSettings[ChoiceKey]>) => {
     if (!global) return;
     saveGlobal({ ...global, [key]: { ...global[key], ...patch } });
@@ -2115,6 +2120,17 @@ export function Settings({
                     <div>
                       <div>Original Kanban</div>
                       <div className="hint">Show the classic Kanban board in the top bar, after Sessions.</div>
+                    </div>
+                  }
+                />
+                <Checkbox
+                  checked={global.experiments?.show_chat ?? false}
+                  disabled={!isGlobal}
+                  onChange={setShowChat}
+                  label={
+                    <div>
+                      <div>Chat</div>
+                      <div className="hint">Show the Chat view (threads under your repositories) in the top bar, after Kanban.</div>
                     </div>
                   }
                 />

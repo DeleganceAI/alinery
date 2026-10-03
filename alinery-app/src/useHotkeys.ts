@@ -12,6 +12,7 @@ export type Handlers = {
   // right, so both shift which key Tasks, Sessions, and Kanban answer to.
   gridCount: number;
   showKanban: boolean;
+  showChat: boolean;
   toggleSearch: () => void;
   openCreate: () => void;
   goList: () => void;
@@ -80,7 +81,7 @@ export function useHotkeys(handlers: Handlers) {
           if (digit === H.gridCount) return end(e, H.goList);
           if (digit === H.gridCount + 1) return end(e, H.goSessions);
           if (H.showKanban && digit === H.gridCount + 2) return end(e, H.goKanban);
-          if (digit === H.gridCount + (H.showKanban ? 3 : 2)) return end(e, H.goChat);
+          if (H.showChat && digit === H.gridCount + (H.showKanban ? 3 : 2)) return end(e, H.goChat);
           return;
         }
         if (k === "8") return end(e, H.goNotifications);

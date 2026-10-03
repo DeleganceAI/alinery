@@ -234,6 +234,8 @@ export type PowerPrefs = { keep_awake: boolean };
 export type ExperimentalFeatures = {
   /** Classic Kanban tab, shown after Sessions. Absent = enabled; false hides the tab. */
   show_original_kanban?: boolean;
+  /** Chat tab, shown after Kanban. Absent = hidden; true shows the tab. */
+  show_chat?: boolean;
 };
 export type GridViewDefinition = { id: string; name: string; slot: number };
 export type UpdateRelease = { version: string; url: string; sha256: string; size: number; protocol_version: number; published_at: string };

@@ -23,6 +23,7 @@ const handlers = (overrides: Partial<Handlers> = {}): Handlers => ({
   // ⌘1 Grid, ⌘2 Tasks, ⌘3 Sessions, ⌘4 Kanban.
   gridCount: 1,
   showKanban: true,
+  showChat: true,
   toggleSearch: vi.fn(),
   openCreate: vi.fn(),
   goList: vi.fn(),
@@ -184,6 +185,16 @@ describe("useHotkeys", () => {
     fireEvent.keyDown(document.body, { key: "4", metaKey: true });
     expect(active.goChat).toHaveBeenCalledOnce();
     expect(active.goKanban).not.toHaveBeenCalled();
+  });
+
+  it("leaves Chat's digit dead while the Chat tab is off, and does not shift the other shortcuts", () => {
+    const active = handlers({ showChat: false });
+    render(<Probe handlers={active} />);
+
+    fireEvent.keyDown(document.body, { key: "5", metaKey: true });
+    expect(active.goChat).not.toHaveBeenCalled();
+    fireEvent.keyDown(document.body, { key: "4", metaKey: true });
+    expect(active.goKanban).toHaveBeenCalledOnce();
   });
 
   it("puts Chat after Kanban while Kanban is shown", () => {

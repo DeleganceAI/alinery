@@ -56,6 +56,7 @@ describe("TopBar navigation", () => {
         appConfig={appConfig}
         isDev={false}
         showOriginalKanban
+        showChat
         gridViews={[
           { id: "planning", name: "Planning", slot: 1 },
           { id: "triage", name: "Triage", slot: 2 },
@@ -67,6 +68,14 @@ describe("TopBar navigation", () => {
     // Two Grid views push everything else right: ⌘1 and ⌘2 are the grids, ⌘5 is Kanban, ⌘6 is Chat.
     expect(Array.from(document.querySelectorAll("nav.tabs .k")).map((badge) => badge.textContent)).toEqual(["1", "2", "3", "4", "5", "6"]);
     expect(screen.queryByRole("button", { name: /^Notifications/ })).toBeNull();
+  });
+
+  it("hides the Chat tab unless the experimental flag is on", () => {
+    const { unmount } = render(<TopBar active="list" scope="active" appConfig={appConfig} isDev={false} showOriginalKanban {...callbacks} />);
+    expect(tabLabels()).not.toContain("Chat");
+    unmount();
+    render(<TopBar active="list" scope="active" appConfig={appConfig} isDev={false} showOriginalKanban showChat {...callbacks} />);
+    expect(tabLabels()).toContain("Chat");
   });
 
   it("opens Notifications and Settings from the account menu", () => {

@@ -942,6 +942,24 @@ describe("session navigation acknowledgment", () => {
     expect(screen.queryByText("Go to Kanban")).toBeNull();
   });
 
+  it("shows the Chat tab and palette entry only when the experimental flag is on", async () => {
+    await renderApp();
+    expect(screen.queryByRole("button", { name: /^Chat\d/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await screen.findByText("Go to Kanban");
+    expect(screen.queryByText("Go to Chat")).toBeNull();
+    cleanup();
+
+    ipcMocks.readAppConfig.mockResolvedValue({
+      ...appConfig,
+      global: { ...appConfig.global, experiments: { show_original_kanban: true, show_chat: true } },
+    });
+    await renderApp();
+    expect(screen.getByRole("button", { name: /^Chat\d/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("Go to Chat")).toBeTruthy();
+  });
+
   it("keeps a visited Grid mounted while navigating away and back", async () => {
     await renderApp();
 
