@@ -168,7 +168,7 @@ export function TaskRunGraph({
                 })}
                 {layout.nodes.map((position) => {
                   const node = graph.nodes.get(position.key);
-                  if (!node) return null;
+                  if (!node || (!("session" in node) && node.seed)) return null;
                   const style = { left: position.x, top: position.y, width: GRAPH_NODE_WIDTH, height: GRAPH_NODE_HEIGHT };
                   if (!("session" in node))
                     return (

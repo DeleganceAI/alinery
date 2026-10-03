@@ -1,6 +1,6 @@
 import type { ArtifactOccurrence, ExecutionRecord, SessionDisplayMeta, SessionMeta, TaskExecutionState } from "./types";
 
-export type RunGraphNode = { key: string; session: SessionDisplayMeta; execution?: ExecutionRecord } | { key: string; label: string; detail: string };
+export type RunGraphNode = { key: string; session: SessionDisplayMeta; execution?: ExecutionRecord } | { key: string; label: string; detail: string; seed?: boolean };
 export type RunGraphConnection = { from: string; to: string; artifacts: ArtifactOccurrence[]; resumed: boolean };
 
 export function buildTaskRunGraph(sessions: SessionMeta[], state: TaskExecutionState | null) {
@@ -46,6 +46,7 @@ export function buildTaskRunGraph(sessions: SessionMeta[], state: TaskExecutionS
         from = `source:${occurrence.id}`;
         nodes.set(from, {
           key: from,
+          seed: occurrence.producer_execution_id === null,
           label: occurrence.producer_execution_id ? "Producer not shown" : "Seed input",
           detail: producer ? `Session ${producer.owner_session_id}` : occurrence.producer_execution_id ? `Execution ${occurrence.producer_execution_id}` : "External artifact",
         });

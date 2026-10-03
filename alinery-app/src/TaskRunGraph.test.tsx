@@ -73,6 +73,22 @@ it("preserves branch and convergence bindings, including all recorded wildcard m
   expect(graph.nodes.has("session:auxiliary")).toBe(true);
 });
 
+it("keeps the ticket input link without a seed box and preserves missing-producer warnings", () => {
+  const state = executionReply([execution("worker", { "ticket.md": ["ticket"], "prior.md": ["prior"] })]).state;
+  state.occurrences = {
+    ticket: occurrence("ticket", null, "00-ticket.md"),
+    prior: occurrence("prior", "missing", "1-prior.md"),
+  };
+  const onOpenArtifact = vi.fn();
+  render(<TaskRunGraph sessions={[session("worker")]} state={state} onOpenArtifact={onOpenArtifact} onOpenSession={vi.fn()} />);
+  expect(screen.queryByText("Seed input")).toBeNull();
+  expect(screen.queryByText("External artifact")).toBeNull();
+  expect(screen.getByText("Producer not shown")).toBeDefined();
+  fireEvent.click(screen.getByRole("button", { name: "Open artifact 00-ticket.md, occurrence ticket" }));
+  expect(onOpenArtifact).toHaveBeenCalledExactlyOnceWith("00-ticket.md");
+  expect(screen.getByRole("button", { name: "Open session worker" })).toBeDefined();
+});
+
 it("keeps repeated paths distinct and attributes accepted outputs to the current owner, never the prior attempt", () => {
   const producer = execution("producer");
   producer.owner_session_id = "recovered";
