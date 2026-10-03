@@ -115,7 +115,9 @@ beforeEach(() => {
     } catch {
       return {
         definition: null,
-        diagnostics: [{ code: "overlapping_outputs", message: "inspect and build overlap findings.md", line: 12, field: "step.outputs", severity: "error" }],
+        diagnostics: [
+          { code: "overlapping_outputs", message: "inspect output findings-*.md overlaps build output findings-summary.md", line: 12, field: "step.outputs", severity: "error" },
+        ],
       };
     }
   });
