@@ -84,8 +84,6 @@ The corrected owning daemon treats declarations as possible publications with at
 
 New bundled stopping declarations affect future selections only. An old continuation-only retained step does not acquire an undeclared report: it still needs truthful evidence within its actual assignments. Already-running and resumed conversations are not reliably reseeded, and a running old daemon does not gain new behavior merely because source files changed. Do not rewrite retained files, replace live daemons or manipulate sessions to simulate rollout.
 
-Shared exact-role loops require the updated canonical parser and an owning daemon with occurrence-based shared-role scheduling. A successful save through a newer parser does not establish that an already-running daemon supports the graph. Check those runtime prerequisites before a trial without changing retained definitions or replacing live processes.
-
 ## Validation should reject bad definitions
 
 The approved v2 file is one `playbook.md`: TOML `+++` frontmatter, required metadata and step records, and standalone `<!-- alinery:step key -->` prompt delimiters. Markdown heading levels are not structural execution markers.
@@ -120,9 +118,11 @@ The daemon binds concrete inputs before launching an execution and records the p
 
 Repeated reconciliation of the same ordinary binding must not create duplicate work. A new loop-pass occurrence is different input even if its logical name is unchanged.
 
-With requests R1 and R2 and one governing brief B, a consumer of `single(request.md)` AND `single(brief.md)` receives two bindings: R1+B and R2+B. Each runs as soon as its own inputs are deliverable, subject to capacity and coding exclusivity; it does not wait for hypothetical alternative publishers. A missing companion waits. Co-published or explicitly consumed companions and request-specific descendants stay paired by recorded provenance, not common root membership.
+Suppose a designer needs a request and a project brief. Two requests using the same brief produce two designer sessions, one per request. Each can start once its required files are accepted, their producing sessions have exited, and capacity is available. A missing required file makes that session wait; a step that might publish another request does not. Coding sessions still run one at a time.
 
-Independent alternatives R1/R2 and B1/B2 with no determined pairing are an unsupported ambiguous join, reported as a playbook problem with the consumer, roles and occurrence/producer references. The engine does not form all combinations, zip by order or silently wait forever. Earlier unambiguous work is not rolled back if later publications expose that authoring error.
+When requests have different briefs or findings, the engine keeps the matching files together by tracking what each step read and produced. Files do not belong together merely because they are in the same task.
+
+If there are two requests and two briefs but no recorded relationship showing which brief goes with which request, the engine reports a playbook error and identifies the step, conflicting files and their producers. It does not guess from their order, try every combination or leave the step waiting indefinitely. Work already scheduled with a clear match is not undone.
 
 A merge cannot silently omit a running, paused or failed worker. The engine knows which contributions are expected because it recorded the upstream set and worker assignments—not because three matching files exist or nothing has changed recently.
 
