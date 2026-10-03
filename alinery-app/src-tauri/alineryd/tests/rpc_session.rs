@@ -506,7 +506,7 @@ fn chat_thread_gets_chat_naming_while_task_session_keeps_tool_naming() {
         // The fixture publishes the token only after it has written the naming probe.
         let token = fixture.root.join(format!("token.{id}"));
         wait_until(Duration::from_secs(5), || token.is_file());
-        assert_eq!(fs::read_to_string(fixture.root.join(format!("naming.{id}"))).unwrap(), mode, "naming mode for {id}");
+        assert_eq!(fs::read_to_string(fixture.root.join(format!("naming.{id}"))).unwrap(), mode, "naming mode mismatch");
     }
 }
 
