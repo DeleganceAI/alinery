@@ -253,6 +253,8 @@ The execution allocator reserves each exact path or wildcard family in `executio
 
 Harnesses write files whenever they choose. The shared engine assignment explicitly requires filesystem writes to the selected assigned paths, verification that the files were saved, a brief user-facing handoff, and an actual `alinery_phase_complete` call in the handoff turn. Printing an artifact in chat does not save it or complete the execution. These delivery instructions belong to the engine assignment, not repeated playbook boilerplate. The daemon controls whether completion is accepted and when dependent work starts.
 
+For OMP, that assignment supplies the actual invocation route: use `write` with `path: "xd://alinery_phase_complete"` and `content: "{}"`. This dispatches the extension tool; it does not write an artifact or require a separately listed completion tool. The user-facing handoff precedes acceptance because the accepted call requests session shutdown.
+
 On accepted completion, record only the actual valid assigned publications in one immutable receipt. Later files cannot expand the accepted set through replay. Reservations and ownership remain attributed to the execution, including omitted assignments. Confirm source shutdown before dependent launch or capacity release. A file can exist and be readable before then without becoming scheduler-ready; acceptance does not promise every potential successor will run.
 
 No file-write interception, quiet-period heuristic, byte-publication transaction or streaming API is needed. Correct content and respecting another session's files remain part of the cooperative-agent trust model; assignments are not an OS sandbox.

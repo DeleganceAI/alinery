@@ -208,8 +208,6 @@ A task with an assigned playbook retains the validated definition selected when 
 
 Retained definitions are not migrated when publication semantics or bundled declarations change. A fresh launch receives the current authoritative assignment after retained prose, overriding older blanket all-output or zero-evidence guidance without waiving substantive work. An old continuation-only definition does not gain an undeclared stopping report. The corrected owning daemon must be running for the corrected behavior; already-running and resumed conversations are not retroactively rewritten. Do not replace a live daemon, edit retained bytes or manipulate sessions to make an authoring change take effect.
 
-Shared exact-role loops require both the updated canonical parser and an owning daemon with occurrence-based shared-role scheduling. Saving a definition with a new parser does not update a running older daemon. Confirm those prerequisites before a trial, and report an unavailable runtime separately from a defect in the candidate.
-
 The three scopes, `bundled/<key>`, `global/<key>` and `repo/<key>`, are separate. Entries with the same key in different scopes do not shadow one another. Bundled entries are read-only. Repository playbooks live under `<repository-root>/alinery/playbooks/`, and the catalog identifies them by the key declared inside the file. If two files in that repository tree declare the same key, the catalog cannot resolve the entry.
 
 An additional agent session can contribute to the task's context without changing its assigned playbook graph.
@@ -555,9 +553,7 @@ When the continuation step cannot identify useful further work, report the evide
 
 In the example, B declares `ticket.md` and `loop-stopping-report.md`. Continuing publishes a fresh actionable ticket at its assigned path; stopping publishes the meaningful report with the decision, evidence and limitations, omitting the ticket. Both outcomes leave at least one valid assigned artifact. Only the accepted fresh ticket can trigger another pass after confirmed exit and satisfaction of all AND inputs. A report-only stop creates no new pass and does not cancel unrelated eligible work.
 
-Make a human choice about another pass before the responsible execution completes. Accepted completion freezes its publication set; writing a ticket afterward or reopening the conversation does not add a new trigger. Auxiliary/manual executions do not feed ordinary graph routing. If later human discussion may request another pass, keep that discussion execution interactive until the choice is resolved, or declare a downstream discussion step that consumes the report and can publish the continuation.
-
-Do not turn optional feedback into a mandatory decision or an indefinitely waiting session. If the agreed process requires a completed report to accept a later continuation request, report that unsupported capability separately; a live discussion checkpoint is not an equivalent substitute.
+If a human decision determines whether another pass runs, put that decision before the step finishes.
 
 A loop need not predetermine its number of passes. Use the existing automatic-completion setting for steps intended to proceed without a human unlock each pass; deliberately human-gated steps still pause. Exercise multiple fresh continuations and then a stopping report: each new pass must obtain its own changing design, analysis, plan and check evidence, while explicitly declared invariant inputs may be reused. No iteration cap, filename recency rule or implicit inheritance of old internal results is added. When the same agent can revise and conclude within one session, keep the work there instead of adding a graph loop.
 
