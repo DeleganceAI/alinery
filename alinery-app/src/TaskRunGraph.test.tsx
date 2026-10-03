@@ -89,6 +89,33 @@ it("keeps the ticket input link without a seed box and preserves missing-produce
   expect(screen.getByRole("button", { name: "Open session worker" })).toBeDefined();
 });
 
+it("keeps unconsumed output clickable without a future-session box until a real consumer exists", () => {
+  const producer = execution("producer");
+  const state = executionReply([producer]).state;
+  state.occurrences = { result: occurrence("result", producer.id, "2-result.md") };
+  const onOpenArtifact = vi.fn();
+  const onOpenSession = vi.fn();
+  const { rerender } = render(<TaskRunGraph sessions={[session("producer")]} state={state} onOpenArtifact={onOpenArtifact} onOpenSession={onOpenSession} />);
+  expect(screen.queryByText("Published artifact")).toBeNull();
+  expect(screen.queryByText("Not yet consumed")).toBeNull();
+  expect(screen.getAllByRole("button", { name: /^Open session / })).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Open artifact 2-result.md, occurrence result" }));
+  expect(onOpenArtifact).toHaveBeenCalledExactlyOnceWith("2-result.md");
+
+  const consumer = execution("consumer", { "result.md": ["result"] });
+  rerender(
+    <TaskRunGraph
+      sessions={[session("producer"), session("consumer")]}
+      state={{ ...state, executions: { ...state.executions, [consumer.id]: consumer } }}
+      onOpenArtifact={onOpenArtifact}
+      onOpenSession={onOpenSession}
+    />,
+  );
+  expect(within(screen.getByRole("group", { name: "producer → consumer" })).getByRole("button", { name: "Open artifact 2-result.md, occurrence result" })).toBeDefined();
+  fireEvent.click(screen.getByRole("button", { name: "Open session consumer" }));
+  expect(onOpenSession.mock.lastCall?.[0].id).toBe("consumer");
+});
+
 it("keeps repeated paths distinct and attributes accepted outputs to the current owner, never the prior attempt", () => {
   const producer = execution("producer");
   producer.owner_session_id = "recovered";
