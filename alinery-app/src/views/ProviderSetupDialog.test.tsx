@@ -93,7 +93,8 @@ describe("ProviderSetupDialog", () => {
     await waitFor(() => expect(mocks.rpcAttachSession).toHaveBeenCalled());
     await emit({ type: "response", command: "get_available_models", success: true, data: { models: [{ provider: "xai", id: "grok" }] } });
     fireEvent.click(screen.getByRole("tab", { name: "Models" }));
-    fireEvent.change(screen.getByLabelText("Reasoning effort"), { target: { value: "high" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning effort" }));
+    fireEvent.click(screen.getByRole("option", { name: "High" }));
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     const model = mocks.rpcWriteSession.mock.calls.map(([, command]) => command).find((command) => command.type === "set_model");
     expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true);

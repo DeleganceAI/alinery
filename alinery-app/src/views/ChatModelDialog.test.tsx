@@ -28,8 +28,9 @@ describe("ChatModelDialog", () => {
   it("changes effort on the current model rather than the first catalog entry", () => {
     const onApplyModel = vi.fn();
     render(<ChatModelDialog {...base} models={[{ provider: "other", id: "first" }, ...base.models]} current="xai/grok-4.6:high" onApplyModel={onApplyModel} />);
-    expect((screen.getByLabelText("Reasoning effort") as HTMLSelectElement).value).toBe("high");
-    fireEvent.change(screen.getByLabelText("Reasoning effort"), { target: { value: "off" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning effort" }));
+    expect(screen.getByRole("option", { name: "High" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(screen.getByRole("option", { name: "Off" }));
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     expect(onApplyModel).toHaveBeenCalledWith("xai", "grok-4.6", "off");
   });
@@ -38,11 +39,29 @@ describe("ChatModelDialog", () => {
     const onToggleFavorite = vi.fn();
     const onAssignRole = vi.fn();
     render(<ChatModelDialog {...base} modelRoles={{ smol: "openrouter/model:free:low" }} onAssignRole={onAssignRole} onToggleFavorite={onToggleFavorite} />);
-    fireEvent.change(screen.getByLabelText("Reasoning effort"), { target: { value: "high" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning effort" }));
+    fireEvent.click(screen.getByRole("option", { name: "High" }));
     fireEvent.click(screen.getByRole("button", { name: "Star xai/grok-4.6" }));
     expect(onToggleFavorite).toHaveBeenCalledWith("xai/grok-4.6", true);
-    fireEvent.change(screen.getByLabelText("Reasoning effort for smol"), { target: { value: "max" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning effort for smol" }));
+    fireEvent.click(screen.getByRole("option", { name: "Max" }));
     expect(onAssignRole).toHaveBeenCalledWith("smol", "openrouter/model:free:max");
+  });
+
+  it("navigates effort choices by keyboard and dismisses without closing the dialog", () => {
+    const onClose = vi.fn();
+    render(<ChatModelDialog {...base} onClose={onClose} />);
+    const trigger = screen.getByRole("button", { name: "Reasoning effort" });
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByRole("option", { name: "Off" }));
+    fireEvent.keyDown(screen.getByRole("option", { name: "Off" }), { key: "End" });
+    expect(document.activeElement).toBe(screen.getByRole("option", { name: "Auto" }));
+    fireEvent.keyDown(screen.getByRole("option", { name: "Auto" }), { key: "ArrowUp" });
+    expect(document.activeElement).toBe(screen.getByRole("option", { name: "Max" }));
+    fireEvent.keyDown(screen.getByRole("option", { name: "Max" }), { key: "Escape" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("renders models tab with current and role table", () => {
