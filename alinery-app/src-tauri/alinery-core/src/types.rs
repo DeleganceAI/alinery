@@ -281,6 +281,8 @@ pub struct SessionMeta {
     #[serde(default)]
     pub archived: bool,
     #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
     pub phase: String,
     #[serde(default)]
     pub harness: String,
@@ -666,11 +668,16 @@ pub struct PowerPrefs {
 pub struct ExperimentalFeatures {
     /// Classic Kanban tab (⌘3). Enabled by default; explicit opt-outs are preserved.
     pub show_original_kanban: bool,
+    /// Chat tab (threads under repositories). Off until opted in.
+    pub show_chat: bool,
 }
 
 impl Default for ExperimentalFeatures {
     fn default() -> Self {
-        Self { show_original_kanban: true }
+        Self {
+            show_original_kanban: true,
+            show_chat: false,
+        }
     }
 }
 

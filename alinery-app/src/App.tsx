@@ -6,6 +6,7 @@ import {
   FolderPlus,
   Grid3X3,
   List,
+  MessageSquare,
   Play,
   Plus,
   RefreshCw,
@@ -24,6 +25,7 @@ import { applyAppearance, DEFAULT_APPEARANCE } from "./appearance";
 import alineryIcon from "./assets/alinery-icon-white-plain.png";
 import { GlobalSearch, type SearchItem } from "./CommandPalette";
 import type { QueuedFollowUp } from "./chat/queue";
+import { chatVisibilityFromAppearance } from "./chat/visibility";
 import { askConfirm, ConfirmHost, confirmDanger } from "./confirm";
 import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner } from "./DaemonConflictBanner";
 import { ACTIVE_GRID_VIEW_STORAGE_KEY, DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute, trailingTabDigit } from "./gridViews";
@@ -67,6 +69,7 @@ import { useOmpUpdateStatus } from "./useOmpUpdateStatus";
 import { useSessionNoticeSnapshot } from "./useSessionNoticeSnapshot";
 import { readStoredTaskSessionSort, writeStoredTaskSessionSort } from "./useSessionSort";
 import { useUpdateStatus } from "./useUpdateStatus";
+import { ChatView } from "./views/ChatView";
 import { CreateSessionPage } from "./views/CreateSessionPage";
 import { CreateTaskPage } from "./views/CreateTaskPage";
 import { Grid } from "./views/Grid";
@@ -148,6 +151,7 @@ export default function App() {
   const [navInstant, setNavInstant] = useState(true);
   const playbooksReturnView = useRef<View | null>(null);
   const [playbooksVisited, setPlaybooksVisited] = useState(false);
+  const [chatVisited, setChatVisited] = useState(false);
   const [scope, setScope] = useState<RepoScope>("active");
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   // Repo open is the first moment we can ask whether this install can actually run an agent:
@@ -216,6 +220,10 @@ export default function App() {
   appConfigRef.current = appConfig;
   const gridViews = useMemo(() => normalizeGridViews(appConfig?.global?.grid_views), [appConfig?.global?.grid_views]);
   const showOriginalKanban = appConfig?.global?.experiments?.show_original_kanban ?? true;
+  const showChat = appConfig?.global?.experiments?.show_chat ?? false;
+  useEffect(() => {
+    if (view.kind === "chat") setChatVisited(true);
+  }, [view.kind]);
   const repoKey = appConfig?.active_repo ? `${scope}:${appConfig.active_repo}:${appConfig.known_repos.join("|")}:${reloadNonce}` : "";
   const activeGridViewId = view.kind === "grid" && gridViews.some((gridView) => gridView.id === view.gridViewId) ? view.gridViewId : undefined;
   const [mountedGridViews, setMountedGridViews] = useState<{ repoKey: string; ids: string[] }>({ repoKey: "", ids: [] });
@@ -233,10 +241,12 @@ export default function App() {
   useEffect(() => {
     if (!appConfig) return;
     setView((current) => {
+      // Turning the Chat tab off while it is open sends you to the first Grid view.
+      if (current.kind === "chat" && !showChat) return { kind: "grid", gridViewId: gridViews[0].id };
       if (current.kind !== "grid" && current.kind !== "kanban") return current;
       return resolveGridTopLevelRoute(current, showOriginalKanban, gridViews);
     });
-  }, [appConfig, gridViews, showOriginalKanban]);
+  }, [appConfig, gridViews, showOriginalKanban, showChat]);
 
   const selectedGridViewId = gridViewIdOf(view);
   useEffect(() => {
@@ -511,6 +521,7 @@ export default function App() {
   const refreshBoards = () => setReloadNonce((n) => n + 1);
 
   const appearance = appConfig?.appearance ?? DEFAULT_APPEARANCE;
+  const chatViewVisibility = useMemo(() => chatVisibilityFromAppearance(appearance.ava_chat ?? {}), [appearance.ava_chat]);
   const isDev = isDevelopmentProductName(productName);
   const update = useUpdateStatus({ enabled: !isDev });
   const ompUpdate = useOmpUpdateStatus();
@@ -600,7 +611,7 @@ export default function App() {
       setView({ kind: "grid", gridViewId });
       return;
     }
-    if (kind === "kanban" && !showOriginalKanban) {
+    if ((kind === "kanban" && !showOriginalKanban) || (kind === "chat" && !showChat)) {
       setView({ kind: "grid", gridViewId: gridViews[0].id });
       return;
     }
@@ -1086,6 +1097,7 @@ export default function App() {
     },
     gridCount: gridViews.length,
     showKanban: showOriginalKanban,
+    showChat,
     goList: () => {
       if (hasRepo) switchTop("list", { instant: true });
     },
@@ -1095,6 +1107,9 @@ export default function App() {
     goGrid: (slot) => {
       const gridView = gridViews[slot];
       if (hasRepo && gridView) switchTop("grid", { instant: true, gridViewId: gridView.id });
+    },
+    goChat: () => {
+      if (hasRepo) switchTop("chat", { instant: true });
     },
     goSessions: () => {
       if (hasRepo) switchTop("sessions", { instant: true });
@@ -1148,6 +1163,9 @@ export default function App() {
           action("sessions", pi(SquareTerminal), "Go to Sessions", `⌘${trailingTabDigit(gridViews.length, "sessions")}`, () => switchTop("sessions", { instant: true })),
           ...(showOriginalKanban
             ? [action("kanban", pi(SquareKanban), "Go to Kanban", `⌘${trailingTabDigit(gridViews.length, "kanban")}`, () => switchTop("kanban", { instant: true }))]
+            : []),
+          ...(showChat
+            ? [action("chat", pi(MessageSquare), "Go to Chat", `⌘${trailingTabDigit(gridViews.length, "chat", showOriginalKanban)}`, () => switchTop("chat", { instant: true }))]
             : []),
           action("notifications", pi(Bell), "Go to Notifications", "⌘8", () => switchTop("notifications", { instant: true })),
           action("settings", pi(SettingsIcon), "Open Settings", "⌘9", () => openSettings(undefined, { instant: true })),
@@ -1276,6 +1294,18 @@ export default function App() {
                   <Playbooks repoPath={appConfig?.active_repo || undefined} onCreateTask={(reference) => openCreate(reference)} />
                 </div>
               )}
+              {/* Kept mounted once visited, like Playbooks: the open thread, per-thread drafts and the
+                reading position survive a trip to Tasks or Settings. Hidden, it stops polling. */}
+              {showChat && (chatVisited || view.kind === "chat") && (
+                <div className="view" hidden={view.kind !== "chat" || daemon.repo_busy}>
+                  <ChatView
+                    active={view.kind === "chat" && !daemon.repo_busy}
+                    knownRepos={appConfig?.known_repos ?? []}
+                    terminalFontSize={appearance.terminal_font_size}
+                    visibility={chatViewVisibility}
+                  />
+                </div>
+              )}
             </main>
             <HotkeyBar
               view={view.kind}
@@ -1349,6 +1379,7 @@ export default function App() {
       appConfig={appConfig}
       gridViews={gridViews}
       showOriginalKanban={showOriginalKanban}
+      showChat={showChat}
       instant={navInstant}
       onSwitch={switchTop}
       onSwitchGrid={(gridViewId) => switchTop("grid", { gridViewId })}
@@ -1362,7 +1393,7 @@ export default function App() {
       onUpgrade={onUpgrade}
       updating={updating}
       ompUpdate={ompUpdate.status}
-      onOmpUpdateClick={() => openSettings("chat")}
+      onOmpUpdateClick={() => openSettings("harness")}
     />
   );
 

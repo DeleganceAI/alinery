@@ -23,11 +23,13 @@ const handlers = (overrides: Partial<Handlers> = {}): Handlers => ({
   // ⌘1 Grid, ⌘2 Tasks, ⌘3 Sessions, ⌘4 Kanban.
   gridCount: 1,
   showKanban: true,
+  showChat: true,
   toggleSearch: vi.fn(),
   openCreate: vi.fn(),
   goList: vi.fn(),
   goKanban: vi.fn(),
   goGrid: vi.fn(),
+  goChat: vi.fn(),
   goSessions: vi.fn(),
   goNotifications: vi.fn(),
   goSettings: vi.fn(),
@@ -50,6 +52,7 @@ function commandCallbacks(value: Handlers) {
     value.openCreate,
     value.goList,
     value.goKanban,
+    value.goChat,
     value.goGrid,
     value.goSessions,
     value.goNotifications,
@@ -171,13 +174,42 @@ describe("useHotkeys", () => {
     expect(active.goKanban).toHaveBeenCalledOnce();
   });
 
-  it("leaves Command-7 unassigned, and Kanban's digit dead while Kanban is hidden", () => {
+  it("leaves Command-7 unassigned, and moves Chat into Kanban's digit while Kanban is hidden", () => {
     const active = handlers({ showKanban: false });
     render(<Probe handlers={active} />);
 
     fireEvent.keyDown(document.body, { key: "7", metaKey: true });
-    fireEvent.keyDown(document.body, { key: "4", metaKey: true });
+    fireEvent.keyDown(document.body, { key: "5", metaKey: true });
+    expect(active.goChat).not.toHaveBeenCalled();
 
-    for (const callback of commandCallbacks(active)) expect(callback).not.toHaveBeenCalled();
+    fireEvent.keyDown(document.body, { key: "4", metaKey: true });
+    expect(active.goChat).toHaveBeenCalledOnce();
+    expect(active.goKanban).not.toHaveBeenCalled();
+  });
+
+  it("leaves Chat's digit dead while the Chat tab is off, and does not shift the other shortcuts", () => {
+    const active = handlers({ showChat: false });
+    render(<Probe handlers={active} />);
+
+    fireEvent.keyDown(document.body, { key: "5", metaKey: true });
+    expect(active.goChat).not.toHaveBeenCalled();
+    fireEvent.keyDown(document.body, { key: "4", metaKey: true });
+    expect(active.goKanban).toHaveBeenCalledOnce();
+  });
+
+  it("puts Chat after Kanban while Kanban is shown", () => {
+    const active = handlers();
+    render(<Probe handlers={active} />);
+
+    fireEvent.keyDown(document.body, { key: "5", metaKey: true });
+    expect(active.goChat).toHaveBeenCalledOnce();
+    expect(active.goKanban).not.toHaveBeenCalled();
+  });
+
+  it.each(["input", "textarea", "editable"])("does not open chat from %s", (label) => {
+    const active = handlers();
+    render(<Probe handlers={active} controls />);
+    fireEvent.keyDown(screen.getByLabelText(label), { key: "5", metaKey: true });
+    expect(active.goChat).not.toHaveBeenCalled();
   });
 });

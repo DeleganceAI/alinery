@@ -311,6 +311,68 @@ pub fn registered_worktree_paths(repo: &Path) -> Result<Vec<PathBuf>, String> {
         .collect())
 }
 
+fn chat_worktree_path(repo: &Path, session_id: &str) -> Result<PathBuf, String> {
+    let id = crate::safe_component(session_id).ok_or_else(|| "invalid session id".to_string())?;
+    Ok(crate::chat_worktrees_dir(repo).join(id))
+}
+
+pub fn add_chat_worktree(repo: &Path, session_id: &str) -> Result<PathBuf, String> {
+    let path = chat_worktree_path(repo, session_id)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let branch = format!("chat/{session_id}");
+    let output = git_cmd(repo)
+        .args(["worktree", "add", "-b", &branch])
+        .arg(&path)
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(format!("git worktree add: {}", String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    Ok(path)
+}
+
+pub fn remove_chat_worktree_path(repo: &Path, session_id: &str, path: &Path) -> Result<(), String> {
+    let expected = chat_worktree_path(repo, session_id)?;
+    let repo_canon = repo.canonicalize().map_err(|error| error.to_string())?;
+    let path_canon = path.canonicalize().map_err(|_| "chat worktree path is not that session".to_string())?;
+    if path_canon == repo_canon {
+        return Err("refusing to remove the repository checkout".into());
+    }
+    let task_worktrees = crate::worktrees_dir(repo);
+    if path.starts_with(&task_worktrees) || path_canon.starts_with(&task_worktrees) {
+        return Err("refusing to remove a task worktree".into());
+    }
+    let root = expected.parent().ok_or("chat worktree path is not that session")?;
+    let root_canon = root.canonicalize().map_err(|_| "chat worktree path is not that session".to_string())?;
+    let child = path_canon.strip_prefix(&root_canon).map_err(|_| "chat worktree path is not that session".to_string())?;
+    if child != Path::new(session_id) {
+        return Err("chat worktree path is not that session".into());
+    }
+    let output = git_cmd(repo)
+        .args(["worktree", "remove", "--force"])
+        .arg(&path_canon)
+        .output()
+        .map_err(|error| format!("git worktree remove: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("git worktree remove failed: {}", String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    Ok(())
+}
+
+pub fn abbrev_ref(dir: &Path) -> Result<String, String> {
+    let output = git_cmd(dir).args(["rev-parse", "--abbrev-ref", "HEAD"]).output().map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(format!("git rev-parse: {}", String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    let label = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if label.is_empty() {
+        return Err("git rev-parse returned an empty branch".into());
+    }
+    Ok(label)
+}
+
 /// Canonicalized top-level directory of the Git working tree containing `path`. The single
 /// place that turns an arbitrary caller-supplied path into a trustworthy repo identity —
 /// `git rev-parse --show-toplevel` rejects anything that is not a real, locally accessible
@@ -923,6 +985,50 @@ mod tests {
         assert_eq!(parsed.secret, "gho_secret");
         assert!(parse_git_credential("username=octocat\npassword=\n").is_none());
         assert!(parse_git_credential("protocol=https\n").is_none());
+    }
+
+    fn commit_file(repo: &Path) {
+        std::fs::write(repo.join("README"), "hi").unwrap();
+        let add = git_cmd(repo).args(["add", "README"]).output().unwrap();
+        assert!(add.status.success(), "{add:?}");
+        let commit = git_cmd(repo)
+            .args(["-c", "user.email=t@example.com", "-c", "user.name=Test", "commit", "-m", "init"])
+            .output()
+            .unwrap();
+        assert!(commit.status.success(), "{}", String::from_utf8_lossy(&commit.stderr));
+    }
+
+    #[test]
+    fn chat_worktree_add_remove_keeps_branch_and_refuses_escapes() {
+        let repo = unique_repo("chat-wt");
+        commit_file(&repo);
+        let id = "s01234567";
+        let path = add_chat_worktree(&repo, id).expect("add chat worktree");
+        assert_eq!(path, crate::chat_worktrees_dir(&repo).join(id));
+        assert!(path.is_dir());
+        let branch = git_cmd(&repo).args(["rev-parse", "--verify", &format!("refs/heads/chat/{id}")]).output().unwrap();
+        assert!(branch.status.success(), "branch chat/{id} missing");
+        assert_eq!(abbrev_ref(&path).unwrap(), format!("chat/{id}"));
+        let checkout = abbrev_ref(&repo).unwrap();
+        assert_ne!(checkout, format!("chat/{id}"));
+        assert!(!checkout.is_empty());
+        assert!(remove_chat_worktree_path(&repo, id, &repo).is_err());
+        assert!(repo.join(".git").is_dir());
+        let task_wt = crate::worktrees_dir(&repo).join("task-leaf");
+        std::fs::create_dir_all(&task_wt).unwrap();
+        assert!(remove_chat_worktree_path(&repo, id, &task_wt).is_err());
+        assert!(task_wt.is_dir());
+        remove_chat_worktree_path(&repo, id, &path).expect("remove");
+        assert!(!path.exists());
+        let kept = git_cmd(&repo).args(["rev-parse", "--verify", &format!("refs/heads/chat/{id}")]).output().unwrap();
+        assert!(kept.status.success(), "remove must keep chat/{id}");
+        let outside = repo.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&outside, &path).unwrap();
+        assert!(remove_chat_worktree_path(&repo, id, &path).is_err());
+        assert!(outside.is_dir());
+        let _ = std::fs::remove_dir_all(&repo);
     }
 
     #[test]

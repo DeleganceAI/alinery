@@ -12,11 +12,13 @@ export type Handlers = {
   // right, so both shift which key Tasks, Sessions, and Kanban answer to.
   gridCount: number;
   showKanban: boolean;
+  showChat: boolean;
   toggleSearch: () => void;
   openCreate: () => void;
   goList: () => void;
   goKanban: () => void;
   goGrid: (slot: number) => void;
+  goChat: () => void;
   goSessions: () => void;
   goNotifications: () => void;
   goSettings: () => void;
@@ -71,14 +73,15 @@ export function useHotkeys(handlers: Handlers) {
         }
         const lk = k.toLowerCase();
         if (lk === "n") return end(e, H.openCreate);
-        // ⌘1..⌘6 follow the top bar left to right: the Grid views, then Tasks, Sessions, and
-        // classic Kanban. Three Grid views plus Kanban ends at ⌘6, so ⌘8 and ⌘9 never move.
-        const digit = "123456".indexOf(k);
+        // ⌘1..⌘7 follow the top bar left to right: the Grid views, then Tasks, Sessions, classic
+        // Kanban, and Chat. Three Grid views plus Kanban and Chat ends at ⌘7, so ⌘8 and ⌘9 never move.
+        const digit = "1234567".indexOf(k);
         if (digit >= 0) {
           if (digit < H.gridCount) return end(e, () => H.goGrid(digit));
           if (digit === H.gridCount) return end(e, H.goList);
           if (digit === H.gridCount + 1) return end(e, H.goSessions);
           if (H.showKanban && digit === H.gridCount + 2) return end(e, H.goKanban);
+          if (H.showChat && digit === H.gridCount + (H.showKanban ? 3 : 2)) return end(e, H.goChat);
           return;
         }
         if (k === "8") return end(e, H.goNotifications);

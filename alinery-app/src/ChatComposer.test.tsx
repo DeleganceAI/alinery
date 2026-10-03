@@ -253,6 +253,12 @@ describe("ChatComposer", () => {
     expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("hides the paperclip when attach is disabled", () => {
+    const onPasteFiles = vi.fn();
+    render(<ChatComposer body="" status="idle" catalog={[]} allowAttach={false} onPasteFiles={onPasteFiles} onBodyChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Attach files" })).toBeNull();
+  });
+
   it("highlights the composer while dropping", () => {
     const extras = { dropping: true };
     const html = renderToStaticMarkup(

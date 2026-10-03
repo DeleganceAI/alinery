@@ -36,7 +36,7 @@ import {
   removeOptimisticSend,
 } from "../chatTranscript";
 import { completionPrompt } from "../completionPrompt";
-import { confirmDanger } from "../confirm";
+import { confirmDanger, confirmStopAndSwitch } from "../confirm";
 import * as ipc from "../ipc";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 import {
@@ -1673,12 +1673,7 @@ export function SessionView({
       agentState: observation?.state?.agent?.state,
     });
     if (active) {
-      const ok = await confirmDanger(
-        target === "pty" ? "Switch to Terminal?" : "Switch to Chat?",
-        target === "pty" ? "Stop the agent’s current work and switch to Terminal?" : "Stop the agent’s current work and switch to Chat?",
-        "Stop and switch",
-      );
-      if (!ok) return false;
+      if (!(await confirmStopAndSwitch(target))) return false;
       if (liveRpc) await ipc.rpcWriteSession(id, abortCommand()).catch(() => undefined);
       else await ipc.writeSession(id, OMP_INTERRUPT_DATA).catch(() => undefined);
     }

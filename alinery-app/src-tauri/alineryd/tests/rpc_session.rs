@@ -500,6 +500,62 @@ fn session_name_survives_same_id_restate_and_does_not_consume_pending_pty_seed()
 }
 
 #[test]
+fn chat_thread_gets_chat_naming_while_task_session_keeps_tool_naming() {
+    let fixture = Fixture::new();
+    let task_id = fixture.spawn_omp().to_string();
+    let created = fixture.rpc(json!({"op": "create_execution_session", "request": {
+        "task_slug": "", "target": {"kind": "auxiliary", "harness": "omp"}, "start": false
+    }}));
+    assert_eq!(created["errors"], json!([]), "{created}");
+    let chat_id = created["session"]["id"].as_str().expect("chat thread row").to_string();
+    let started = fixture.rpc(json!({"op": "start_session", "request": {"task_slug": "", "session_id": chat_id}}));
+    assert_eq!(started["start"], "started", "start response: {started}");
+    // The overlay row sets ALINERY_SESSION_NAMING = "1"; the daemon's value must win for the chat thread.
+    for (id, mode) in [(&task_id, "1"), (&chat_id, "chat")] {
+        // The fixture publishes the token only after it has written the naming probe.
+        let token = fixture.root.join(format!("token.{id}"));
+        wait_until(Duration::from_secs(5), || token.is_file());
+        assert_eq!(fs::read_to_string(fixture.root.join(format!("naming.{id}"))).unwrap(), mode, "naming mode mismatch");
+    }
+}
+
+/// A chat thread's title comes from the extension as `session_name_suggested`: the daemon must save
+/// it, let a later generated title replace it, and never let one replace a human rename.
+#[test]
+fn chat_thread_title_events_are_saved_retitled_and_yield_to_a_human_name() {
+    let fixture = Fixture::new();
+    let created = fixture.rpc(json!({"op": "create_execution_session", "request": {
+        "task_slug": "", "target": {"kind": "auxiliary", "harness": "omp"}, "start": false
+    }}));
+    assert_eq!(created["errors"], json!([]), "{created}");
+    let id = created["session"]["id"].as_str().expect("chat thread row").to_string();
+    let started = fixture.rpc(json!({"op": "start_session", "request": {"task_slug": "", "session_id": id}}));
+    assert_eq!(started["start"], "started", "start response: {started}");
+    let token_path = fixture.root.join(format!("token.{id}"));
+    wait_until(Duration::from_secs(5), || token_path.is_file());
+    let token = fs::read_to_string(&token_path).unwrap();
+    let suggest = |name: &str| {
+        fixture.rpc(json!({"op":"event","version":alinery_core::RUNNER_EVENT_PROTOCOL_VERSION,"session_id":id,"token":token,
+            "event":{"type":"session_name_suggested","name":name}}))
+    };
+
+    let first = suggest("Fix login redirect");
+    assert_eq!(first["session_name"]["status"], "saved", "{first}");
+    let second = suggest("Login redirect: cookie scope");
+    assert_eq!(second["session_name"]["status"], "saved", "a later generated title replaces the first: {second}");
+    assert_eq!(second["session_name"]["value"]["name"], "Login redirect: cookie scope");
+    assert_eq!(second["session_name"]["value"]["source"], "auto");
+    let read = alinery_core::read_session_name(&fixture.root, "", &id).unwrap().unwrap();
+    assert_eq!((read.name.as_str(), read.source), ("Login redirect: cookie scope", alinery_core::SessionNameSource::Auto));
+
+    alinery_core::set_session_name(&fixture.root, "", &id, "My title", alinery_core::SessionNameSource::User).unwrap();
+    let late = suggest("Generated again");
+    assert_eq!(late["session_name"]["status"], "unchanged", "{late}");
+    assert_eq!(late["session_name"]["value"]["name"], "My title");
+    assert_eq!(late["session_name"]["value"]["source"], "user");
+}
+
+#[test]
 fn spawn_omp_is_rpc_and_restate_pty_keeps_id() {
     let fixture = Fixture::new();
     let id = fixture.spawn_omp();
