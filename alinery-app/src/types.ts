@@ -201,8 +201,9 @@ export type BackupListItem = {
 };
 export type TelemetryPrefs = { enabled: boolean; prompted: boolean; install_id: string; endpoint: string };
 export type UpdatePrefs = { check_enabled: boolean };
+export type PowerPrefs = { keep_awake: boolean };
 export type ExperimentalFeatures = {
-  /** Classic Kanban tab (⌘3). Absent = enabled; false hides the tab. */
+  /** Classic Kanban tab, shown after Sessions. Absent = enabled; false hides the tab. */
   show_original_kanban?: boolean;
 };
 export type GridViewDefinition = { id: string; name: string; slot: number };
@@ -222,6 +223,8 @@ export type GlobalSettings = {
   model_favorites: Record<string, string[]>;
   telemetry: TelemetryPrefs;
   updates: UpdatePrefs;
+  /** Absent in app configs written before keep-awake existed. */
+  power?: PowerPrefs;
   /** Optional for app configs written before experiments existed. */
   experiments?: ExperimentalFeatures;
   /** Optional for app configs written before named Grid-based views existed. */
@@ -853,19 +856,7 @@ export type ReviewHandoffDraft = ReviewHandoffSource & {
   prompt_extra: string;
 };
 
-export type SettingsSectionKey =
-  | "playbooks"
-  | "connections"
-  | "notifications"
-  | "telemetry"
-  | "updates"
-  | "storage"
-  | "appearance"
-  | "chat"
-  | "gridViews"
-  | "experimental"
-  | "mcp"
-  | "backup";
+export type SettingsSectionKey = "general" | "playbooks" | "connections" | "updates" | "storage" | "chat" | "gridViews" | "experimental" | "mcp" | "backup";
 
 export type View =
   | { kind: "list" }

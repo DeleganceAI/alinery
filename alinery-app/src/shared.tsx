@@ -21,7 +21,7 @@ import { type OrbState, ThinkingOrb } from "thinking-orbs";
 import { AccountMenu } from "./AccountMenu";
 import type { ArchiveTaskPhase } from "./archiveTask";
 import { pickEmptyStateArt } from "./emptyStateArt";
-import { gridViewShortcut, gridViewShortcutDigit } from "./gridViews";
+import { gridViewShortcut, gridViewShortcutDigit, trailingTabDigit } from "./gridViews";
 import { IdleDot, ORB_SPEED, ORB_STATE, RunningIndicator, StateIcon } from "./Indicators";
 import * as ipc from "./ipc";
 import { BrandMark } from "./Logo";
@@ -679,8 +679,6 @@ export function TopBar({
       </button>
     );
   };
-  const firstGridView = gridViews[0];
-  const extraGridViews = gridViews.slice(1);
   return (
     <header data-tauri-drag-region="">
       <WindowControls />
@@ -723,12 +721,12 @@ export function TopBar({
       </div>
       <nav className="tabs" ref={tabsRef}>
         <span className="tab-indicator" aria-hidden="true" />
-        {tab("list", "Tasks", "1")}
-        {firstGridView && gridTab(firstGridView, 0)}
-        {showOriginalKanban && tab("kanban", "Kanban", "3")}
-        {extraGridViews.map((gridView, index) => gridTab(gridView, index + 1))}
-        {tab("sessions", "Sessions", "7")}
-        {tab("notifications", "Notifications", "8")}
+        {/* Custom Grid views always lead, then Tasks and Sessions. Shortcuts stay bound to the
+          view, not its position. Notifications and Settings live in the account menu. */}
+        {gridViews.map((gridView, index) => gridTab(gridView, index))}
+        {tab("list", "Tasks", String(trailingTabDigit(gridViews.length, "tasks")))}
+        {tab("sessions", "Sessions", String(trailingTabDigit(gridViews.length, "sessions")))}
+        {showOriginalKanban && tab("kanban", "Kanban", String(trailingTabDigit(gridViews.length, "kanban")))}
         {tab("playbooks", "Playbooks")}
       </nav>
       <div className="spacer" />
@@ -750,7 +748,7 @@ export function TopBar({
           K
         </span>
       </button>
-      <AccountMenu onOpenSettings={() => onSwitch("settings")} />
+      <AccountMenu onOpenNotifications={() => onSwitch("notifications")} onOpenSettings={() => onSwitch("settings")} />
     </header>
   );
 }

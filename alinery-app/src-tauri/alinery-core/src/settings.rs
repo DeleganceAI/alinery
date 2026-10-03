@@ -440,6 +440,7 @@ fn log_global_diff(app_config: &Path, prev: &GlobalSettings, next: &GlobalSettin
     }
     push_changed_quoted(&mut fields, "telemetry.endpoint", &prev.telemetry.endpoint, &next.telemetry.endpoint);
     push_changed_bool(&mut fields, "updates.check_enabled", prev.updates.check_enabled, next.updates.check_enabled);
+    push_changed_bool(&mut fields, "power.keep_awake", prev.power.keep_awake, next.power.keep_awake);
     push_changed_bool(
         &mut fields,
         "experiments.show_original_kanban",
@@ -656,6 +657,47 @@ mod tests {
         assert!(!saved.experiments.show_original_kanban);
         write_global_settings(&app_config, &saved).unwrap();
         assert!(!load_global_settings(&app_config).experiments.show_original_kanban);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    // The daemon holds an idle-sleep inhibit off this pref, so every load that is not a clean
+    // `keep_awake = true` must read as off: a corrupt file must not keep the machine awake.
+    #[test]
+    fn power_keep_awake_defaults_off_and_round_trips() {
+        let (dir, app_config) = temp_app("alinery_power_keep_awake");
+        assert!(!load_global_settings(&app_config).power.keep_awake, "missing file");
+        fs::write(&app_config, "").unwrap();
+        assert!(!load_global_settings(&app_config).power.keep_awake, "empty file");
+        fs::write(&app_config, "[global]\n[global.updates]\ncheck_enabled = false\n").unwrap();
+        assert!(!load_global_settings(&app_config).power.keep_awake, "[global] without [global.power]");
+        fs::write(&app_config, "[global.power]\nkeep_awake = true\n[global.updates\n").unwrap();
+        assert!(!load_global_settings(&app_config).power.keep_awake, "unparseable file");
+        fs::create_dir_all(dir.join("as-dir.toml")).unwrap();
+        assert!(!load_global_settings(&dir.join("as-dir.toml")).power.keep_awake, "unreadable path");
+
+        fs::write(&app_config, "[global.updates]\ncheck_enabled = false\n").unwrap();
+        let mut next = load_global_settings(&app_config);
+        next.power.keep_awake = true;
+        write_global_settings(&app_config, &next).unwrap();
+        let reloaded = load_global_settings(&app_config);
+        assert!(reloaded.power.keep_awake);
+        assert!(!reloaded.updates.check_enabled, "other global fields survive the write");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn power_keep_awake_diff_logs_the_bool_only() {
+        let (dir, app_config) = temp_app("alinery_power_keep_awake_log");
+        write_global_settings(&app_config, &default_global_settings()).unwrap();
+        let mut next = default_global_settings();
+        next.power.keep_awake = true;
+        write_global_settings(&app_config, &next).unwrap();
+        let text = log_text(&app_config);
+        let lines: Vec<&str> = text.lines().filter(|l| l.contains("power.keep_awake")).collect();
+        assert_eq!(lines.len(), 1, "{text}");
+        assert!(lines[0].contains("settings.global power.keep_awake=true"), "{text}");
+        assert!(!lines[0].contains(&*dir.to_string_lossy()), "{text}");
+        assert!(!lines[0].contains("session"), "{text}");
         let _ = fs::remove_dir_all(dir);
     }
 
