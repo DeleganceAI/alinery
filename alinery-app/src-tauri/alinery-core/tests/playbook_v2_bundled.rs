@@ -509,6 +509,72 @@ fn bundled_build_playbook_is_discoverable_and_runs() {
 }
 
 #[test]
+fn bundled_solution_exploration_loops_and_compares() {
+    let reference = PlaybookRef {
+        scope: PlaybookScope::Bundled,
+        key: "solution-exploration".into(),
+    };
+    for continue_after_comparison in [false, true] {
+        let mut trace = Trace::new("solution-exploration");
+        let catalog = load_playbook_catalog(&trace.roots);
+        let candidate = catalog
+            .candidates
+            .iter()
+            .find(|candidate| candidate.source.reference == reference)
+            .expect("Solution Exploration must appear in the bundled catalog");
+        assert!(candidate.diagnostics.is_empty(), "{:?}", candidate.diagnostics);
+        let clarify = trace.step("clarify", 1);
+        let mut request = trace.output(&clarify, "design-request.md");
+        for decision in ["design-request.md", "synthesis-request.md"] {
+            let design = trace.one("design");
+            trace.bound(&design, "design-request.md", BTreeSet::from([request.clone()]));
+            trace.bound(&design, "problem-brief.md", BTreeSet::from([trace.output(&clarify, "problem-brief.md")]));
+            trace.finish_handoff(&design, 1);
+            let plan = trace.step("plan", 1);
+            let check = trace.one("check");
+            trace.bound(&check, "solution-design.md", trace.outputs(&design));
+            trace.bound(&check, "implementation-plan.md", trace.outputs(&plan));
+            trace.start(&check);
+            trace.write(&check, "exploration-record.md", "Cumulative findings and design references.");
+            trace.write(&check, "loop-decision.md", "Evidence supports the selected next action.");
+            trace.write(&check, decision, "Carry accumulated findings into the next action.");
+            trace.accepted(&check);
+            trace.blocked("design");
+            trace.blocked("synthesize");
+            trace.exit(&check);
+            if decision == "design-request.md" {
+                request = trace.output(&check, decision);
+                trace.blocked("synthesize");
+                continue;
+            }
+            trace.blocked("design");
+            let synthesis = trace.one("synthesize");
+            for selector in ["exploration-record.md", "loop-decision.md", "synthesis-request.md"] {
+                trace.bound(&synthesis, selector, BTreeSet::from([trace.output(&check, selector)]));
+            }
+            if continue_after_comparison {
+                trace.start(&synthesis);
+                trace.write(&synthesis, "solution-comparison.md", "Compare the explored alternatives and tradeoffs.");
+                trace.write(&synthesis, "design-request.md", "Human feedback requests another alternative.");
+                assert_eq!(trace.accept(&synthesis), CompletionOutcome::HumanAuthorizationRequired);
+                trace.accepted(&synthesis);
+                trace.blocked("design");
+                trace.exit(&synthesis);
+                let next = trace.one("design");
+                trace.bound(&next, "design-request.md", BTreeSet::from([trace.output(&synthesis, "design-request.md")]));
+            } else {
+                trace.stop(
+                    &synthesis,
+                    &[("solution-comparison.md", "Compare alternatives without requiring a winner or further exploration.")],
+                    CompletionPermission::Locked,
+                );
+            }
+        }
+        assert_eq!(trace.counts()["clarify"], 1);
+    }
+}
+
+#[test]
 fn numeric_demos_are_not_bundled() {
     let trace = Trace::new("superdevelop");
     let catalog = load_playbook_catalog(&trace.roots);
