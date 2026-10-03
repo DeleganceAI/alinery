@@ -1819,6 +1819,22 @@ fn unregister_aborted_spawn(reg: &Registry, id: &str) {
     reg.lock().unwrap_or_else(|error| error.into_inner()).remove(id);
 }
 
+fn omp_model_effort(model: &str) -> (&str, &str) {
+    match model.trim().rsplit_once(':') {
+        Some((model, level @ ("off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "auto"))) => (model, level),
+        _ => (model, "off"),
+    }
+}
+
+#[test]
+fn omp_effort_only_recognizes_known_final_suffixes() {
+    assert_eq!(omp_model_effort("provider/model:quantized"), ("provider/model:quantized", "off"));
+    assert_eq!(omp_model_effort("provider/model:high:quantized"), ("provider/model:high:quantized", "off"));
+    assert_eq!(omp_model_effort("provider/model:quantized:low"), ("provider/model:quantized", "low"));
+    assert_eq!(omp_model_effort("provider/model:max"), ("provider/model", "max"));
+    assert_eq!(omp_model_effort("provider/model:auto"), ("provider/model", "auto"));
+}
+
 fn spawn_session(
     reg: &Registry,
     repo: &Path,
@@ -1883,19 +1899,23 @@ fn spawn_session(
     let resolved_binary = executable_path(&resolved_binary, &cwd)?.to_string_lossy().into_owned();
 
     let token = launch.resume_token.as_str();
+    let restoring_omp = harness.adapter == HarnessAdapter::Omp && (restate_jsonl.is_some() || (resume && !token.is_empty()));
+    let (base_model, thinking_level) = omp_model_effort(&model);
+    // A resumed journal owns live thinking changes; don't reapply its original selector suffix.
+    let model = if restoring_omp { base_model } else { model.as_str() };
     let mut child_args = Vec::new();
     if hkey == NO_HARNESS_KEY {
         child_args.push("-l".to_string());
     } else {
         if !model.is_empty() {
-            child_args.extend(harness.model_arg.iter().map(|arg| subst(arg, &cwd, &model, token)));
+            child_args.extend(harness.model_arg.iter().map(|arg| subst(arg, &cwd, model, token)));
         }
-        child_args.extend(harness.args.iter().map(|arg| subst(arg, &cwd, &model, token)));
+        child_args.extend(harness.args.iter().map(|arg| subst(arg, &cwd, model, token)));
         if let Some(resume_config) = &harness.resume {
             if resume && !token.is_empty() {
-                child_args.extend(resume_config.resume_args.iter().map(|arg| subst(arg, &cwd, &model, token)));
+                child_args.extend(resume_config.resume_args.iter().map(|arg| subst(arg, &cwd, model, token)));
             } else if !resume && resume_config.enabled && resume_config.id_source == "launch" && !token.is_empty() {
-                child_args.extend(resume_config.launch_args.iter().map(|arg| subst(arg, &cwd, &model, token)));
+                child_args.extend(resume_config.launch_args.iter().map(|arg| subst(arg, &cwd, model, token)));
             }
         }
     }
@@ -1903,11 +1923,14 @@ fn spawn_session(
         child_args.push("--session-dir".into());
         child_args.push(dir.to_string_lossy().into_owned());
     }
+    if harness.adapter == HarnessAdapter::Omp && !restoring_omp {
+        // Fresh sessions must not inherit OMP's configured thinking default.
+        child_args.push("--thinking".into());
+        child_args.push(thinking_level.into());
+    }
     if transport == SessionTransport::Rpc {
         child_args.push("--mode".into());
         child_args.push("rpc".into());
-        child_args.push("--thinking".into());
-        child_args.push("high".into());
     }
     if let Some(path) = &restate_jsonl {
         child_args.push("--resume".into());
@@ -1930,7 +1953,7 @@ fn spawn_session(
     // RPC ignores CLI `--` / prompt_arg; the first turn is `{ type: "prompt", message }` after ready.
     if inject_arg && transport != SessionTransport::Rpc {
         if let Some(prompt) = &seeded {
-            append_prompt_args(&mut child_args, &harness, prompt, &cwd, &model, token)?;
+            append_prompt_args(&mut child_args, &harness, prompt, &cwd, model, token)?;
         }
     }
 
@@ -1964,7 +1987,7 @@ fn spawn_session(
         }
     }
     for (key, value) in &harness.env {
-        cmd.env(key, subst(value, &cwd, &model, token));
+        cmd.env(key, subst(value, &cwd, model, token));
     }
     cmd.env_remove("ALINERY_SESSION_NAMING");
     if let Some(path) = &runner_path {
@@ -2012,7 +2035,7 @@ fn spawn_session(
             app_config,
             protected_host,
             &cwd,
-            &model,
+            model,
             token,
             initial_client,
             resume,
@@ -2755,6 +2778,8 @@ fn spawn_omp_setup_session(reg: &Registry, repo: &Path, app_config: &Path, daemo
     child_args.push("--mode".into());
     child_args.push("rpc".into());
     child_args.push("--model=openai-codex/gpt-5.5".into());
+    child_args.push("--thinking".into());
+    child_args.push("off".into());
 
     let event_token = uuid::Uuid::new_v4().to_string();
     let launch = LaunchFields {

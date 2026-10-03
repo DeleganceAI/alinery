@@ -1151,6 +1151,7 @@ export function Settings({
             <ProviderSetupDialog
               mode="manual"
               initialTab="models"
+              currentModel={ompDefaultModel(value)}
               onPick={(v) => {
                 if (isGlobal) {
                   setGlobal({ ...global, [key]: { ...global[key], harness: "omp", model: v } });

@@ -167,8 +167,8 @@ describe("ModelInput favorites", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Filter models" }), { target: { value: "opus" } });
     expect(names()).toEqual(["claude-opus"]);
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Filter models" }), { key: "Enter" });
-    expect(props.onChange).toHaveBeenCalledWith("claude-opus");
-    expect(props.onCommit).toHaveBeenCalledWith("claude-opus");
+    expect(props.onChange).toHaveBeenCalledWith("claude-opus:off");
+    expect(props.onCommit).toHaveBeenCalledWith("claude-opus:off");
   });
 
   it("keeps duplicate rows hoverable and selectable by mouse", async () => {
@@ -182,8 +182,8 @@ describe("ModelInput favorites", () => {
     expect(secondSonnetRow?.classList.contains("sel")).toBe(true);
 
     fireEvent.click(sonnetButtons[1]);
-    expect(props.onChange).toHaveBeenCalledWith("sonnet");
-    expect(props.onCommit).toHaveBeenCalledWith("sonnet");
+    expect(props.onChange).toHaveBeenCalledWith("sonnet:off");
+    expect(props.onCommit).toHaveBeenCalledWith("sonnet:off");
     expect(screen.queryByRole("list", { name: "Models" })).toBeNull();
   });
 
@@ -199,8 +199,8 @@ describe("ModelInput favorites", () => {
     expect(screen.getByRole("button", { name: "Select opus" }).closest("li")?.classList.contains("sel")).toBe(true);
     fireEvent.keyDown(search, { key: "ArrowDown" });
     fireEvent.keyDown(search, { key: "Enter" });
-    expect(props.onChange).toHaveBeenCalledWith("sonnet");
-    expect(props.onCommit).toHaveBeenCalledWith("sonnet");
+    expect(props.onChange).toHaveBeenCalledWith("sonnet:off");
+    expect(props.onCommit).toHaveBeenCalledWith("sonnet:off");
 
     await openModels();
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Filter models" }), { key: "Escape" });

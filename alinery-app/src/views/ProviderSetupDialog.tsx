@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ModelRolesMap } from "../chat/modelRoles";
+import { type ModelRolesMap, type ReasoningEffort, withModelEffort } from "../chat/modelRoles";
 import { settleOpenUrl } from "../chat/openUrl";
 import { isInteractivePromptLoginError, needsProviderSetup, shouldOfferProviderSetup } from "../chat/providers";
 import { loginReply, setModelReply } from "../chat/send";
@@ -15,6 +15,7 @@ import {
   getStateCommand,
   loginCommand,
   setModelCommand,
+  setThinkingLevelCommand,
 } from "../ompRpc";
 import type { HostedCatalogView } from "../types";
 import { ChatEntryRow } from "./ChatEntryRow";
@@ -50,6 +51,7 @@ export function ProviderSetupDialog({
   initialTab = "accounts",
   unsignedOpensAccounts = false,
   onPick,
+  currentModel,
   onClose,
 }: {
   mode: ProviderSetupMode;
@@ -65,6 +67,7 @@ export function ProviderSetupDialog({
    * live session -- there is no session to write it to.
    */
   onPick?: (model: string) => void;
+  currentModel?: string;
   onClose: (reason: ProviderSetupClose) => void;
 }) {
   const [chat, setChat] = useState<ChatTranscriptState>(emptyTranscript);
@@ -83,7 +86,8 @@ export function ProviderSetupDialog({
   const loginOpenUrlRef = useRef(false);
   const handledUiRef = useRef(new Set<string>());
   const unsignedSwitchedRef = useRef(false);
-  const modelApplyRef = useRef(false);
+  const modelApplyRef = useRef<{ id: string; type: "set_model" | "set_thinking_level"; effort: ReasoningEffort } | null>(null);
+  const [modelApplying, setModelApplying] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -94,11 +98,24 @@ export function ProviderSetupDialog({
         // no-ops, so every provider row would vanish without an error anywhere.
         const value: unknown = JSON.parse(line);
         setChat((current) => applyRpcLine(current, value));
-        if (modelApplyRef.current) {
-          const reply = setModelReply(value);
+        const pending = modelApplyRef.current;
+        if (pending) {
+          const reply = setModelReply(value, pending);
           if (reply) {
-            modelApplyRef.current = false;
-            setModelError(reply.ok ? null : (reply.error ?? "Could not set model."));
+            if (reply.ok && pending.type === "set_model") {
+              const command = setThinkingLevelCommand(pending.effort);
+              modelApplyRef.current = { ...command, effort: pending.effort };
+              void ipc.rpcWriteSession(sessionIdRef.current, command).catch((error) => {
+                modelApplyRef.current = null;
+                setModelApplying(false);
+                setModelError(String(error));
+              });
+            } else {
+              modelApplyRef.current = null;
+              setModelApplying(false);
+              setModelError(reply.ok ? null : (reply.error ?? "Could not apply model and reasoning effort."));
+              void ipc.rpcWriteSession(sessionIdRef.current, getStateCommand()).catch((error) => setModelError(String(error)));
+            }
           }
         }
         if (loginApplyRef.current) {
@@ -269,13 +286,17 @@ export function ProviderSetupDialog({
     }
   };
 
-  const applyModel = useCallback(async (provider: string, modelId: string) => {
+  const applyModel = useCallback(async (provider: string, modelId: string, effort: ReasoningEffort) => {
+    if (modelApplyRef.current) return;
     setModelError(null);
-    modelApplyRef.current = true;
+    const command = setModelCommand(provider, modelId);
+    modelApplyRef.current = { ...command, effort };
+    setModelApplying(true);
     try {
-      await ipc.rpcWriteSession(sessionIdRef.current, setModelCommand(provider, modelId));
+      await ipc.rpcWriteSession(sessionIdRef.current, command);
     } catch (error) {
-      modelApplyRef.current = false;
+      modelApplyRef.current = null;
+      setModelApplying(false);
       setModelError(String(error));
     }
   }, []);
@@ -347,7 +368,9 @@ export function ProviderSetupDialog({
       tab={tab}
       setup={mode === "auto"}
       models={models}
-      current={chat.sessionMeta.model}
+      current={onPick ? currentModel : chat.sessionMeta.model}
+      currentEffort={onPick ? undefined : (chat.sessionMeta.configuredThinking ?? chat.sessionMeta.thinking)}
+      applying={modelApplying}
       preselect=""
       loginProviders={chat.sessionMeta.loginProviders ?? []}
       livePromotedIds={livePromotedIds}
@@ -366,13 +389,13 @@ export function ProviderSetupDialog({
       error={modelError}
       loginBusy={loginBusy}
       onTabChange={setTab}
-      onApplyModel={(provider, modelId) => {
+      onApplyModel={(provider, modelId, effort) => {
         if (onPick) {
-          onPick(`${provider}/${modelId}`);
+          onPick(withModelEffort(`${provider}/${modelId}`, effort));
           onClose("dismissed");
           return;
         }
-        void applyModel(provider, modelId);
+        void applyModel(provider, modelId, effort);
       }}
       onLogin={(providerId) => void startLogin(providerId)}
       // No pty here to drop into, so say where /login lives rather than silently doing nothing.

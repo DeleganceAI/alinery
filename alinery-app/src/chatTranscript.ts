@@ -41,6 +41,7 @@ export type ChatLoginProvider = {
 export type SessionChatMeta = {
   model?: string;
   thinking?: string;
+  configuredThinking?: string;
   contextUsage?: { tokens: number; contextWindow: number; percent?: number };
   isCompacting?: boolean;
   autoCompactionEnabled?: boolean;
@@ -387,6 +388,8 @@ function eventText(event: Record<string, unknown>): string {
   if (typeof event.text === "string") return event.text;
   if (typeof event.message === "string") return event.message;
   if (typeof event.model === "string") return event.model;
+  if (typeof event.configured === "string") return event.configured;
+  if (typeof event.thinkingLevel === "string") return event.thinkingLevel;
   if (typeof event.level === "string") return event.level;
   return "";
 }
@@ -867,8 +870,8 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
     const nextMeta =
       event.type === "model_changed" && text
         ? { ...state.sessionMeta, model: text }
-        : event.type === "thinking_level_changed" && text
-          ? { ...state.sessionMeta, thinking: text }
+        : event.type === "thinking_level_changed"
+          ? { ...state.sessionMeta, thinking: asString(event.thinkingLevel) ?? text, configuredThinking: asString(event.configured) ?? asString(event.thinkingLevel) ?? text }
           : event.type === "auto_compaction_start"
             ? { ...state.sessionMeta, isCompacting: true }
             : event.type === "auto_compaction_end"

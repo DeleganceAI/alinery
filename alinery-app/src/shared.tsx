@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from "react";
 import { type OrbState, ThinkingOrb } from "thinking-orbs";
 import { AccountMenu } from "./AccountMenu";
 import type { ArchiveTaskPhase } from "./archiveTask";
+import { REASONING_EFFORTS, type ReasoningEffort, splitModelEffort, withModelEffort } from "./chat/modelRoles";
 import { pickEmptyStateArt } from "./emptyStateArt";
 import { gridViewShortcut, gridViewShortcutDigit, trailingTabDigit } from "./gridViews";
 import { IdleDot, ORB_SPEED, ORB_STATE, RunningIndicator, StateIcon } from "./Indicators";
@@ -1420,6 +1421,33 @@ export function RepoPicker({
   );
 }
 
+export function ReasoningEffortSelect({
+  value,
+  onChange,
+  disabled = false,
+  ariaLabel = "Reasoning effort",
+  hideLabel = false,
+}: {
+  value: ReasoningEffort;
+  onChange: (effort: ReasoningEffort) => void;
+  disabled?: boolean;
+  ariaLabel?: string;
+  hideLabel?: boolean;
+}) {
+  return (
+    <span>
+      {!hideLabel && <span className="dim">{ariaLabel}</span>}
+      <select className="field-input" aria-label={ariaLabel} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value as ReasoningEffort)}>
+        {REASONING_EFFORTS.map((effort) => (
+          <option key={effort} value={effort}>
+            {effort === "off" ? "Off" : effort}
+          </option>
+        ))}
+      </select>
+    </span>
+  );
+}
+
 const rememberedModelKey = (harness: string, repoPath?: string) => (repoPath ? `alinery.lastmodel.${repoPath}:${harness}` : `alinery.lastmodel.${harness}`);
 
 export function ModelInput({
@@ -1456,6 +1484,7 @@ export function ModelInput({
   const [pendingFavorites, setPendingFavorites] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerEffort, setPickerEffort] = useState<ReasoningEffort>("off");
   const [q, setQ] = useState("");
   const [idx, setIdx] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -1530,6 +1559,7 @@ export function ModelInput({
   }, [pickerOpen]);
 
   const refresh = () => {
+    setPickerEffort(splitModelEffort(value).effort);
     if (!harness) {
       setModels([]);
       setPickerOpen(false);
@@ -1565,10 +1595,11 @@ export function ModelInput({
   };
 
   const pick = (model: string) => {
-    onChange(model);
-    if (harness) localStorage.setItem(lastKey, model);
+    const next = harness === "omp" ? withModelEffort(model, pickerEffort) : model;
+    onChange(next);
+    if (harness) localStorage.setItem(lastKey, next);
     setPickerOpen(false);
-    onCommit?.(model);
+    onCommit?.(next);
   };
 
   const toggleFavorite = (model: string, favorite: boolean) => {
@@ -1620,6 +1651,17 @@ export function ModelInput({
       >
         {busy ? "…" : <RotateCw size={14} strokeWidth={1.5} aria-hidden="true" />}
       </button>
+      {harness === "omp" && (
+        <ReasoningEffortSelect
+          value={splitModelEffort(value).effort}
+          disabled={!value.trim()}
+          onChange={(effort) => {
+            const next = withModelEffort(value, effort);
+            onChange(next);
+            onCommit?.(next);
+          }}
+        />
+      )}
       {!onOpenPicker && pickerOpen && (
         <Dialog onClose={() => setPickerOpen(false)} ariaLabel={`Select model — ${harness}`}>
           <div className="mh">
@@ -1629,6 +1671,7 @@ export function ModelInput({
             </button>
           </div>
           <div className="mb">
+            {harness === "omp" && <ReasoningEffortSelect value={pickerEffort} onChange={setPickerEffort} />}
             <input
               ref={searchRef}
               className="field-input"

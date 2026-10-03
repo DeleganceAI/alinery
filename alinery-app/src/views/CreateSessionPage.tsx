@@ -301,7 +301,7 @@ export function CreateSessionPage({
             <ModelInput harness="omp" value={model} onChange={setModel} prefillRemembered={false} repoPath={task?.repo_path} onOpenPicker={() => setPickModel(true)} />
           </label>
         )}
-        {pickModel && <ProviderSetupDialog mode="manual" initialTab="models" unsignedOpensAccounts onPick={setModel} onClose={() => setPickModel(false)} />}
+        {pickModel && <ProviderSetupDialog mode="manual" initialTab="models" currentModel={model} unsignedOpensAccounts onPick={setModel} onClose={() => setPickModel(false)} />}
         <label className="create-field">
           <span>Working directory</span>
           <input className="field-input mono" value={task?.worktree || activeRepo} readOnly />

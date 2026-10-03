@@ -25,6 +25,26 @@ describe("ChatModelDialog", () => {
 
   afterEach(cleanup);
 
+  it("changes effort on the current model rather than the first catalog entry", () => {
+    const onApplyModel = vi.fn();
+    render(<ChatModelDialog {...base} models={[{ provider: "other", id: "first" }, ...base.models]} current="xai/grok-4.6:high" onApplyModel={onApplyModel} />);
+    expect((screen.getByLabelText("Reasoning effort") as HTMLSelectElement).value).toBe("high");
+    fireEvent.change(screen.getByLabelText("Reasoning effort"), { target: { value: "off" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(onApplyModel).toHaveBeenCalledWith("xai", "grok-4.6", "off");
+  });
+
+  it("keeps favorites independent of effort and preserves colons in role model ids", () => {
+    const onToggleFavorite = vi.fn();
+    const onAssignRole = vi.fn();
+    render(<ChatModelDialog {...base} modelRoles={{ smol: "openrouter/model:free:low" }} onAssignRole={onAssignRole} onToggleFavorite={onToggleFavorite} />);
+    fireEvent.change(screen.getByLabelText("Reasoning effort"), { target: { value: "high" } });
+    fireEvent.click(screen.getByRole("button", { name: "Star xai/grok-4.6" }));
+    expect(onToggleFavorite).toHaveBeenCalledWith("xai/grok-4.6", true);
+    fireEvent.change(screen.getByLabelText("Reasoning effort for smol"), { target: { value: "max" } });
+    expect(onAssignRole).toHaveBeenCalledWith("smol", "openrouter/model:free:max");
+  });
+
   it("renders models tab with current and role table", () => {
     const empty = renderToStaticMarkup(<ChatModelDialog {...base} models={[]} />);
     expect(empty).toContain("No models match");
