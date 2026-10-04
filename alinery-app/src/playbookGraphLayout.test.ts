@@ -39,6 +39,23 @@ function expectBounded(layout: DefinitionGraphLayout) {
   }
 }
 
+it("reserves nonoverlapping space for zoom-compensated multiline artifact targets", () => {
+  const layout = layoutDefinitionGraph(
+    ["producer", "left", "right", "join"],
+    [
+      { from: "producer", to: "left", label: "result.md · first\nresult.md · second\nlong-artifact-filename-with-many-words-to-wrap-across-lines.md" },
+      { from: "producer", to: "right", label: "right.md" },
+      { from: "left", to: "join", label: "left-result.md" },
+      { from: "right", to: "join", label: "right-result.md" },
+    ],
+    undefined,
+    96,
+  );
+  expectBounded(layout);
+  expect(layout.edges[0].labelHeight).toBeGreaterThanOrEqual(4 * 96);
+  expect(layout.edges.every((edge) => edge.labelWidth >= 96)).toBe(true);
+});
+
 it("fans a wildcard request into three illustrative instances and merges their results without changing canonical dependencies", () => {
   const layout = layoutDefinitionGraph(
     ["seed", "square", "collect"],

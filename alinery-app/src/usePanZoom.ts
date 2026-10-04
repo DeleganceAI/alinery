@@ -1,4 +1,4 @@
-import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
+import type { FocusEvent as ReactFocusEvent, PointerEvent as ReactPointerEvent, RefObject } from "react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { usePointerDrag } from "./usePointerDrag";
 
@@ -82,6 +82,30 @@ export function usePanZoom({ viewportRef, paint, initialScale = 1, minScale = 0.
     [viewportRef, center],
   );
 
+  const onFocusCapture = useCallback(
+    (event: ReactFocusEvent<HTMLDivElement>) => {
+      const viewport = event.currentTarget;
+      const node = event.target.closest<HTMLButtonElement>("button");
+      if (!optionsRef.current.enabled || !node || !viewport.clientWidth || !viewport.clientHeight) return;
+      // Reveal focused controls through the camera, not the hidden overflow's scroll offset.
+      viewport.scrollLeft = 0;
+      viewport.scrollTop = 0;
+      const bounds = viewport.getBoundingClientRect();
+      const rect = node.getBoundingClientRect();
+      const left = bounds.left + viewport.clientLeft + 16;
+      const top = bounds.top + viewport.clientTop + 16;
+      const right = left + viewport.clientWidth - 32;
+      const bottom = top + viewport.clientHeight - 16 - Math.max(16, Number.parseFloat(getComputedStyle(viewport).scrollPaddingBottom) || 0);
+      const dx = rect.left < left ? left - rect.left : rect.right > right ? Math.max(left - rect.left, right - rect.right) : 0;
+      const dy = rect.top < top ? top - rect.top : rect.bottom > bottom ? Math.max(top - rect.top, bottom - rect.bottom) : 0;
+      if (dx || dy) {
+        const view = viewRef.current;
+        setView({ ...view, tx: view.tx + dx, ty: view.ty + dy });
+      }
+    },
+    [setView],
+  );
+
   const releaseCapture = useCallback(() => {
     const capture = captureRef.current;
     captureRef.current = null;
@@ -148,5 +172,5 @@ export function usePanZoom({ viewportRef, paint, initialScale = 1, minScale = 0.
     };
   }, [enabled, viewportRef, zoomAt, stop, releaseCapture]);
 
-  return { viewRef, panning, setView, zoomBy, center, fit, onPointerDown };
+  return { viewRef, panning, setView, zoomBy, center, fit, onPointerDown, onFocusCapture };
 }
