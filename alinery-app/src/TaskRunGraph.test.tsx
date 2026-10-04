@@ -45,6 +45,34 @@ const occurrence = (id: string, producer: string | null, path = `${id}.md`): Art
 
 afterEach(cleanup);
 
+it.each([false, true])("orders keyboard traversal through sessions and artifacts in visual flow (fork: %s)", (fork) => {
+  const records = [execution("root"), execution("left", { input: ["shared"] })];
+  const publications = [occurrence("shared", "root")];
+  if (fork) {
+    records.push(execution("right", { input: ["shared"] }), execution("join", { input: ["left-result", "right-result"] }));
+    publications.push(occurrence("left-result", "left"), occurrence("right-result", "right"));
+  }
+  const state = executionReply(records).state;
+  state.occurrences = Object.fromEntries(publications.map((item) => [item.id, item]));
+  render(<TaskRunGraph sessions={records.map((item) => session(item.id))} state={state} onOpenSession={vi.fn()} onOpenArtifact={vi.fn()} />);
+  const controls = within(screen.getByRole("region", { name: "Run graph canvas" })).getAllByRole("button");
+  expect(controls.map((button) => button.getAttribute("aria-label"))).toEqual(
+    fork
+      ? [
+          "Open session root",
+          "Open artifact shared.md, occurrence shared",
+          "Open artifact shared.md, occurrence shared",
+          "Open session left",
+          "Open session right",
+          "Open artifact left-result.md, occurrence left-result",
+          "Open artifact right-result.md, occurrence right-result",
+          "Open session join",
+        ]
+      : ["Open session root", "Open artifact shared.md, occurrence shared", "Open session left"],
+  );
+  expect(controls.every((button) => button.tabIndex === 0)).toBe(true);
+});
+
 it("preserves branch and convergence bindings, including all recorded wildcard members but not reserved outputs", () => {
   const state = executionReply([
     execution("root", { "request.md": ["seed"] }),

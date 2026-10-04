@@ -46,6 +46,14 @@ export function TaskRunGraph({
       ),
     [graph, artifactLineHeight],
   );
+  const visualItems = useMemo(
+    () =>
+      [
+        ...layout.nodes.map((position) => ({ key: position.key, x: position.x, y: position.y, position })),
+        ...layout.edges.map((edge) => ({ key: JSON.stringify([edge.from, edge.to]), x: edge.labelX, y: edge.labelY, edge })),
+      ].sort((left, right) => left.y - right.y || left.x - right.x || left.key.localeCompare(right.key)),
+    [layout],
+  );
   const activeEdge = hoveredEdge ?? focusedEdge;
   const highlightedEdge = activeEdge ? layout.edges.find((edge) => JSON.stringify([edge.from, edge.to]) === activeEdge) : undefined;
   const connections = new Map(graph.connections.map((connection) => [JSON.stringify([connection.from, connection.to]), connection]));
@@ -133,45 +141,46 @@ export function TaskRunGraph({
                     <path key={path} className="task-run-path highlighted" d={path} markerEnd={`url(#${arrowId}-active)`} />
                   ))}
                 </svg>
-                {layout.edges.map((edge) => {
-                  const key = JSON.stringify([edge.from, edge.to]);
-                  const connection = connections.get(key);
-                  if (!connection) return null;
-                  const from = graph.nodes.get(edge.from);
-                  const to = graph.nodes.get(edge.to);
-                  if (!from || !to) return null;
-                  const provenance = `${nodeName(from)} → ${nodeName(to)}`;
-                  return (
-                    <div
-                      key={key}
-                      className="task-run-labels"
-                      role="group"
-                      aria-label={provenance}
-                      style={{ left: edge.labelX, top: edge.labelY, width: edge.labelWidth }}
-                      onMouseEnter={() => setHoveredEdge(key)}
-                      onMouseLeave={() => setHoveredEdge(null)}
-                      onFocus={() => setFocusedEdge(key)}
-                      onBlur={(event) => {
-                        if (!event.currentTarget.contains(event.relatedTarget)) setFocusedEdge(null);
-                      }}
-                    >
-                      {connection.artifacts.map((occurrence) => (
-                        <button
-                          type="button"
-                          key={occurrence.id}
-                          className="task-run-artifact"
-                          title={`${occurrence.relative_path}\nOccurrence: ${occurrence.id}\nProducer execution: ${occurrence.producer_execution_id ?? "seed input"}\n${provenance}\n${edge.from} → ${edge.to}`}
-                          aria-label={`Open artifact ${occurrence.relative_path}, occurrence ${occurrence.id}`}
-                          onClick={() => onOpenArtifact(occurrence.relative_path)}
-                        >
-                          {occurrence.relative_path.slice(occurrence.relative_path.lastIndexOf("/") + 1)}
-                        </button>
-                      ))}
-                      {connection.resumed && <span className="task-run-resume">Resumed session (not an artifact)</span>}
-                    </div>
-                  );
-                })}
-                {layout.nodes.map((position) => {
+                {visualItems.map((item) => {
+                  if ("edge" in item) {
+                    const { edge, key } = item;
+                    const connection = connections.get(key);
+                    if (!connection) return null;
+                    const from = graph.nodes.get(edge.from);
+                    const to = graph.nodes.get(edge.to);
+                    if (!from || !to) return null;
+                    const provenance = `${nodeName(from)} → ${nodeName(to)}`;
+                    return (
+                      <div
+                        key={key}
+                        className="task-run-labels"
+                        role="group"
+                        aria-label={provenance}
+                        style={{ left: edge.labelX, top: edge.labelY, width: edge.labelWidth }}
+                        onMouseEnter={() => setHoveredEdge(key)}
+                        onMouseLeave={() => setHoveredEdge(null)}
+                        onFocus={() => setFocusedEdge(key)}
+                        onBlur={(event) => {
+                          if (!event.currentTarget.contains(event.relatedTarget)) setFocusedEdge(null);
+                        }}
+                      >
+                        {connection.artifacts.map((occurrence) => (
+                          <button
+                            type="button"
+                            key={occurrence.id}
+                            className="task-run-artifact"
+                            title={`${occurrence.relative_path}\nOccurrence: ${occurrence.id}\nProducer execution: ${occurrence.producer_execution_id ?? "seed input"}\n${provenance}\n${edge.from} → ${edge.to}`}
+                            aria-label={`Open artifact ${occurrence.relative_path}, occurrence ${occurrence.id}`}
+                            onClick={() => onOpenArtifact(occurrence.relative_path)}
+                          >
+                            {occurrence.relative_path.slice(occurrence.relative_path.lastIndexOf("/") + 1)}
+                          </button>
+                        ))}
+                        {connection.resumed && <span className="task-run-resume">Resumed session (not an artifact)</span>}
+                      </div>
+                    );
+                  }
+                  const { position } = item;
                   const node = graph.nodes.get(position.key);
                   if (!node || (!("session" in node) && node.anchorOnly)) return null;
                   const style = { left: position.x, top: position.y, width: GRAPH_NODE_WIDTH, height: GRAPH_NODE_HEIGHT };
