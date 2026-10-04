@@ -1,4 +1,4 @@
-import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH, layoutDefinitionGraph } from "./playbookGraphLayout";
 import type { RunGraphNode } from "./runGraphModel";
 import { buildTaskRunGraph, occurrenceLabel } from "./runGraphModel";
@@ -30,6 +30,8 @@ export function TaskRunGraph({
   const [focusedEdge, setFocusedEdge] = useState<string | null>(null);
   const arrowId = `${useId()}-run-arrow`;
   const graph = useMemo(() => buildTaskRunGraph(sessions, state), [sessions, state]);
+  // Keep artifact targets at least 24 screen pixels high even at minimum graph zoom.
+  const artifactLineHeight = 24 / Math.min(zoom, 1);
   const layout = useMemo(
     () =>
       layoutDefinitionGraph(
@@ -39,8 +41,10 @@ export function TaskRunGraph({
           to: connection.to,
           label: [...connection.artifacts.map(occurrenceLabel), ...(connection.resumed ? ["Resumed session (not an artifact)"] : [])].join("\n"),
         })),
+        undefined,
+        artifactLineHeight,
       ),
-    [graph],
+    [graph, artifactLineHeight],
   );
   const activeEdge = hoveredEdge ?? focusedEdge;
   const highlightedEdge = activeEdge ? layout.edges.find((edge) => JSON.stringify([edge.from, edge.to]) === activeEdge) : undefined;
@@ -73,7 +77,7 @@ export function TaskRunGraph({
   }, [enabled, resetView]);
 
   return (
-    <section className="task-run-graph" aria-label="Task run graph">
+    <section className="task-run-graph" aria-label="Task run graph" style={{ "--artifact-line-height": `${artifactLineHeight}px` } as CSSProperties}>
       {sessions.length === 0 && <p className="dim">No sessions yet.</p>}
       {graph.nodes.size > 0 && (
         <>

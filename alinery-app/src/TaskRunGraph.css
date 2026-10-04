@@ -166,7 +166,7 @@
 .task-run-labels {
   position: absolute;
   box-sizing: border-box;
-  padding: 6px;
+  padding: 0;
   border-radius: var(--radius-sm);
   background: var(--surface);
 }
@@ -175,18 +175,21 @@
 .task-run-resume {
   display: block;
   width: 100%;
-  padding: 0;
+  box-sizing: border-box;
+  padding: 0 6px;
   border: 0;
   background: none;
   color: var(--accent);
   font-family: monospace;
   font-size: 12px;
-  line-height: 16px;
+  line-height: var(--artifact-line-height);
   text-align: center;
   overflow-wrap: anywhere;
 }
 
 .task-run-artifact {
+  min-width: 24px;
+  min-height: 24px;
   cursor: pointer;
 }
 
@@ -208,4 +211,9 @@ button.task-run-node:hover {
 .task-run-artifact:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+
+.task-run-artifact:focus-visible {
+  outline: calc(var(--artifact-line-height) / 12) solid var(--accent);
+  outline-offset: calc(var(--artifact-line-height) / -12);
 }
