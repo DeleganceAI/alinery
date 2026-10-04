@@ -238,10 +238,13 @@ fn recording_lane_with_response(socket_path: PathBuf, response: impl Fn(&str) ->
     let requests = std::sync::Arc::new(Mutex::new(Vec::new()));
     let recorded = requests.clone();
     let handle = std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(3);
+        // Idle deadline, reset per request: a slow runner (binary hash, git auth between
+        // requests) must not outlive the listener mid-test.
+        let mut deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    deadline = Instant::now() + Duration::from_secs(3);
                     // Accepted sockets inherit nonblocking mode on macOS; full execution
                     // replies can exceed the send buffer, unlike the small version reply.
                     stream.set_nonblocking(false).unwrap();
