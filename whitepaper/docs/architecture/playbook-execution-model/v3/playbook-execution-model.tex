@@ -94,6 +94,61 @@ There is a spectrum of approaches to perform concrete work. You could create a s
 
 
 
+\section{Background}
+
+\subsection{Petri Nets and Concurrent Agent Execution}
+
+Petri nets describe processes in which several activities may be enabled at
+once and later activities depend on combinations of earlier results. A net
+contains \emph{places}, which hold tokens, and \emph{transitions}, which consume
+tokens from input places and produce tokens in output places. The distribution
+of tokens across all places is the \emph{marking}, or global state of the net.
+A transition is enabled when its required input tokens are available;
+independent transitions can proceed without imposing an order between them,
+while a transition requiring several inputs provides a synchronization point
+\cite{jensen1994coloured}.
+
+Colored Petri nets associate typed data values with tokens, allowing a
+transition to distinguish particular work items and match their associated
+inputs \cite{jensen1994coloured}. Read arcs add a complementary operation:
+requiring a token to be present without consuming it
+\cite{rodriguez2012readarcs}. Reusable information can therefore enable several
+activities, while ordinary consuming arcs can represent resources whose use
+must be exclusive.
+
+Playbooks implement an artifact-driven concurrent execution model closely
+related to colored Petri nets with read arcs. A Playbook defines agentic
+operations called Steps and connects them through declared artifact inputs and
+possible outputs. Each execution binds a Step to particular artifact
+occurrences, retaining the identity of each publication and its producing
+execution. In a Petri-net interpretation, occurrences provide data-bearing
+tokens, input requirements determine enabling conditions, and accepted
+publications supply new tokens. For example, two reviewers may read the same
+brief independently, while a synthesis Step requires both review results.
+Read arcs express reuse of the brief, and the synthesis inputs express the
+AND dependency. Occurrence and provenance information distinguishes results
+from different requests or loop passes.
+
+The engine also records behavior that a faithful net model would need to make
+explicit. An execution occupies capacity while active, and its accepted
+outputs become available to dependent executions only after shutdown is
+confirmed. Recorded input bindings prevent duplicate automatic executions;
+session limits and exclusive coding access constrain launches. Collection
+inputs support one execution per member and synchronization over a nonempty
+accepted collection after all expected contributors and source obligations
+have completed. Agent outcomes introduce nondeterminism in artifact contents
+and in the permitted outputs published. Publication of the required artifact
+roles determines downstream eligibility; agents interpret artifact contents.
+
+The Petri-net comparison identifies a structural relationship rather than an
+established formal equivalence. An exact encoding would need to preserve
+occurrence matching, binding deduplication, collection closure, and execution
+lifecycle rules. The distinction between a finite net description and its
+reachable markings also clarifies finiteness: a finite set of Step definitions
+can generate an unbounded number of executions and artifact occurrences.
+A limit on simultaneous sessions does not by itself make the complete
+execution state space finite.
+
 \section{Finite Agent Machines}
 
 Inspired by finite-state machines (citation), we define Finite Agent Machines.
