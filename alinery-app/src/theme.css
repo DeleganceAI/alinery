@@ -4399,6 +4399,9 @@ dialog.modal::backdrop {
   padding: 10px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+  /* Inherits the global `header` z-index 20; drop below the app header so
+     its account/repo menus paint over this bar. */
+  z-index: 10;
 }
 .chat-titlebar-identity {
   flex: 1 1 auto;
