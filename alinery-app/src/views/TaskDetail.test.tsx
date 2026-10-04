@@ -364,6 +364,37 @@ async function renderDetail(slug = "parent", sessionView: "controls" | "graph" =
 }
 
 describe("task run graph", () => {
+  it.each([true, false])("preserves attention when switching graph/list with live observations: %s", async (observed) => {
+    scenario.sessions = [
+      { ...session({ id: "unread" }), name: "Unread work", semantic: { phase_completed_at: 100 } },
+      { ...session({ id: "failed" }), name: "Failed work", ended_at: 100, exit_code: 2 },
+      { ...session({ id: "acknowledged" }), name: "Acknowledged failure", ended_at: 100, exit_code: 2, exit_notification_read_at: 100 },
+      { ...session({ id: "prior" }), name: "Prior attempt" },
+    ];
+    mocks.getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "replacement", previous_session_ids: ["prior"] })]));
+    mocks.sessionStatuses.mockResolvedValue(
+      observed
+        ? {
+            unread: observation("idle"),
+            failed: { lifecycle: { state: "exited", code: 2 }, state: null, checkpoint: {} },
+            acknowledged: { lifecycle: { state: "exited", code: 2 }, state: null, checkpoint: {} },
+            prior: observation("idle"),
+          }
+        : {},
+    );
+    await renderDetail("parent", "graph");
+    const assertAttention = () => {
+      expect(screen.getByRole("img", { name: "Unread completion" })).toBeDefined();
+      expect(screen.getAllByRole("img", { name: "Failed: process exited with code 2" })).toHaveLength(1);
+      if (observed) expect(screen.getByTitle(/newer session owns completion/)).toBeDefined();
+    };
+    await waitFor(assertAttention);
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
+    await waitFor(assertAttention);
+    fireEvent.click(screen.getByRole("button", { name: "Show graph view" }));
+    await waitFor(assertAttention);
+  });
+
   it("defaults to actual sessions and opens the exact session and consumed artifact occurrence", async () => {
     const producer = { ...session({ id: "producer", phase: "worker" }), name: "Investigate the fault" };
     const consumer = { ...session({ id: "consumer", phase: "worker" }), name: "Apply the finding" };

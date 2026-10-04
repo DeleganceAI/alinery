@@ -2,6 +2,7 @@ import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "
 import { GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH, layoutDefinitionGraph } from "./playbookGraphLayout";
 import type { RunGraphNode } from "./runGraphModel";
 import { buildTaskRunGraph, occurrenceLabel } from "./runGraphModel";
+import { classifySessionNotice, hasAcknowledgedExit, hasUnacknowledgedExit } from "./sessionAttention";
 import { StatusDot } from "./shared";
 import type { SessionMeta, SessionObservation, TaskExecutionState } from "./types";
 import { type PanZoomView, usePanZoom } from "./usePanZoom";
@@ -179,7 +180,9 @@ export function TaskRunGraph({
                     );
                   const { session, execution } = node;
                   const observation = observations[session.id];
-                  const previousAttempt = execution && execution.owner_session_id !== session.id;
+                  const previousAttempt = Boolean(execution && execution.owner_session_id !== session.id);
+                  const unreadCompletion = classifySessionNotice(session, observation) === "unread_completion";
+                  const exitAcknowledged = hasAcknowledgedExit(session);
                   const savedStatus = previousAttempt
                     ? "Previous attempt"
                     : (execution?.lifecycle.replace(/_/g, " ") ?? (session.ended_at != null ? "Exited" : "Status unavailable"));
@@ -195,7 +198,19 @@ export function TaskRunGraph({
                     >
                       <strong>{nodeName(node)}</strong>
                       <span className="task-run-node-status">
-                        {observation ? <StatusDot id={session.id} observation={observation} notifyTransitions={false} /> : savedStatus}
+                        {observation || unreadCompletion || hasUnacknowledgedExit(session) || exitAcknowledged ? (
+                          <StatusDot
+                            id={session.id}
+                            observation={observation ?? null}
+                            superseded={previousAttempt}
+                            unreadCompletion={unreadCompletion}
+                            exitCode={session.exit_code}
+                            exitAcknowledged={exitAcknowledged}
+                            notifyTransitions={false}
+                          />
+                        ) : (
+                          savedStatus
+                        )}
                         {session.archived && " · archived"}
                       </span>
                     </button>
