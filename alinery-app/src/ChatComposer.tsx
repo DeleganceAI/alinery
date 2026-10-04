@@ -17,6 +17,8 @@ export type ChatComposerProps = {
   showHints?: boolean;
   /** History view: the same composer shell, inert. A finished session has nothing to send to. */
   readOnly?: boolean;
+  /** Chat view has no task attachment store. Default keeps the paperclip. */
+  allowAttach?: boolean;
   onBodyChange: (body: string) => void;
   onCompositionChange?: (composing: boolean) => void;
   onSend: (text: string) => void;
@@ -40,6 +42,7 @@ export function ChatComposer({
   sending = false,
   showHints = true,
   readOnly = false,
+  allowAttach = true,
   onBodyChange,
   onCompositionChange,
   onSend,
@@ -112,7 +115,7 @@ export function ChatComposer({
       }
     }
     if (taken.length === 0) taken.push(...Array.from(data.files ?? []));
-    if (taken.length === 0) return;
+    if (taken.length === 0 || !allowAttach) return;
     e.preventDefault();
     onPasteFiles?.(taken);
   }
@@ -256,7 +259,7 @@ export function ChatComposer({
             </div>
           ) : null}
           <div className="chat-composer-row">
-            {!readOnly ? (
+            {!readOnly && allowAttach ? (
               <button type="button" className="btn ghost small" onClick={() => onAttach?.()} aria-label="Attach files">
                 <Paperclip className="chat-composer-icon" />
               </button>

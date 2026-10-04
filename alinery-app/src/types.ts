@@ -53,11 +53,11 @@ export type AppearancePrefs = {
   chat_show_date?: boolean;
   /** Journal stamps: clock time (e.g. 12:11). Absent → true. */
   chat_show_time?: boolean;
-  /** You / Agent name + kind icon above message bubbles. Absent → true. */
+  /** You / Agent name + kind icon above message bubbles. Absent → false. */
   chat_show_actor_labels?: boolean;
-  /** Filled bubble around agent text replies only. Absent → true. */
+  /** Filled bubble around agent text replies only. Absent → false. */
   chat_show_agent_bubbles?: boolean;
-  /** Copy buttons on individual code blocks and blockquotes. Absent → true. */
+  /** Copy buttons on individual code blocks and blockquotes. Absent → false. */
   chat_show_block_copy_buttons?: boolean;
   /** Per-message copy icon inside chat bubbles. Absent → true. */
   chat_show_copy_buttons?: boolean;
@@ -65,7 +65,36 @@ export type AppearancePrefs = {
   session_default_view?: SessionDefaultView;
   /** Absent in pre-reskin configs; normalizers default it to "system". */
   mode?: AppearanceMode;
+  /** The Chat view's own copy of the chat_* settings above (those drive the Sessions view). Absent → defaults. */
+  ava_chat?: ChatViewPrefs;
 };
+/** Journal, density and text settings of one chat surface: the Sessions view uses the flat chat_* fields, Chat uses `ava_chat`. */
+export type ChatViewPrefs = Pick<
+  AppearancePrefs,
+  | "chat_show_thinking"
+  | "chat_expand_thinking"
+  | "chat_show_tools"
+  | "chat_expand_tools"
+  | "chat_show_harness"
+  | "chat_show_turn_markers"
+  | "chat_show_subagent_rows"
+  | "chat_show_subagent_drawer"
+  | "chat_auto_collapse_thinking"
+  | "chat_auto_compaction"
+  | "chat_auto_scroll"
+  | "chat_rail_density"
+  | "chat_font_size"
+  | "chat_rail_font_size"
+  | "chat_show_meta"
+  | "chat_show_composer_hints"
+  | "chat_max_width"
+  | "chat_show_date"
+  | "chat_show_time"
+  | "chat_show_actor_labels"
+  | "chat_show_agent_bubbles"
+  | "chat_show_block_copy_buttons"
+  | "chat_show_copy_buttons"
+>;
 
 // Mirrors the Rust structs.
 export type RelatedTaskRef = { repo_path: string; slug: string; name: string };
@@ -205,6 +234,8 @@ export type PowerPrefs = { keep_awake: boolean };
 export type ExperimentalFeatures = {
   /** Classic Kanban tab, shown after Sessions. Absent = enabled; false hides the tab. */
   show_original_kanban?: boolean;
+  /** Chat tab, shown after Kanban. Absent = hidden; true shows the tab. */
+  show_chat?: boolean;
 };
 export type GridViewDefinition = { id: string; name: string; slot: number };
 export type UpdateRelease = { version: string; url: string; sha256: string; size: number; protocol_version: number; published_at: string };
@@ -364,6 +395,7 @@ export type SessionMeta = {
   worktree: string;
   created: number;
   archived: boolean;
+  pinned?: boolean;
   phase: string;
   harness: string;
   model: string;
@@ -772,7 +804,7 @@ export type CreateExecutionSessionRequest = {
   handoff_artifact?: string | null;
   start: boolean;
 };
-export type CreateExecutionSessionReply = { session: SessionMeta; execution: ExecutionRecord | null; start: string };
+export type CreateExecutionSessionReply = { session: SessionMeta; execution: ExecutionRecord | null; start: string; errors?: { stage: string; code: string; message: string }[] };
 export type KanbanColumn = { key: string; title: string };
 export type RepoScope = "active" | "all";
 
@@ -856,12 +888,13 @@ export type ReviewHandoffDraft = ReviewHandoffSource & {
   prompt_extra: string;
 };
 
-export type SettingsSectionKey = "general" | "playbooks" | "connections" | "updates" | "storage" | "chat" | "gridViews" | "experimental" | "mcp" | "backup";
+export type SettingsSectionKey = "general" | "harness" | "connections" | "storage" | "sessionsView" | "chat" | "gridViews" | "mcp" | "backup";
 
 export type View =
   | { kind: "list" }
   | { kind: "grid"; gridViewId: string }
   | { kind: "kanban" }
+  | { kind: "chat" }
   | { kind: "sessions" }
   | { kind: "notifications" }
   | { kind: "playbooks" }
@@ -885,7 +918,17 @@ export type View =
     }
   | { kind: "reviewHandoff"; from: View; source: ReviewHandoffSource };
 
-export type Tab = "list" | "kanban" | "grid" | "sessions" | "notifications" | "playbooks" | "settings";
+export type Tab = "list" | "kanban" | "grid" | "chat" | "sessions" | "notifications" | "playbooks" | "settings";
+
+export type ChatBranch = { label: string; checkout: boolean };
+
+export type ChatThread = {
+  repo_path: string;
+  session: SessionMeta;
+  name: string | null;
+  branch_label: string;
+  checkout: boolean;
+};
 
 export type BoardNav = {
   moveRow: (d: number) => void;

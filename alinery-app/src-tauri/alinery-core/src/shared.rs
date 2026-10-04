@@ -327,6 +327,10 @@ pub fn resolve_launch_prompt(repo: &Path, launch: &LaunchFields) -> Result<Optio
             return Ok((!prompt.is_empty()).then(|| compose_prompt_extra(prompt, &launch.prompt_extra)));
         }
     }
+    // A taskless chat has no ticket to seed. The first turn is the RPC prompt.
+    if launch.task_slug.is_empty() {
+        return Ok(None);
+    }
     let task = read_task(repo, &launch.task_slug).ok_or_else(|| format!("read task {}: missing task.md", launch.task_slug))?;
     let playbook = launch.playbook.clone();
     let worktree = if launch.worktree.trim().is_empty() {
@@ -2609,6 +2613,13 @@ prompt_injection = "arg"
             assert_eq!(meta.exit_notification_read_at, None);
             let explicit_null: SessionMeta = serde_json::from_str(r#"{"id":"s1","worktree":"/wt","created":5,"status_changed_at":null}"#).unwrap();
             assert_eq!(explicit_null.status_changed_at, None);
+        }
+
+        #[test]
+        fn session_meta_missing_pinned_defaults_false() {
+            let old = r#"{"id":"s1","worktree":"/wt","created":5}"#;
+            let meta: SessionMeta = serde_json::from_str(old).unwrap();
+            assert!(!meta.pinned);
         }
 
         #[test]

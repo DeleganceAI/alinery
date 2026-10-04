@@ -447,6 +447,7 @@ fn log_global_diff(app_config: &Path, prev: &GlobalSettings, next: &GlobalSettin
         prev.experiments.show_original_kanban,
         next.experiments.show_original_kanban,
     );
+    push_changed_bool(&mut fields, "experiments.show_chat", prev.experiments.show_chat, next.experiments.show_chat);
     if prev.grid_views != next.grid_views {
         fields.push("grid_views=changed".into());
     }
@@ -657,6 +658,24 @@ mod tests {
         assert!(!saved.experiments.show_original_kanban);
         write_global_settings(&app_config, &saved).unwrap();
         assert!(!load_global_settings(&app_config).experiments.show_original_kanban);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn chat_tab_defaults_off_and_round_trips() {
+        let (dir, app_config) = temp_app("alinery_chat_tab");
+        assert!(!load_global_settings(&app_config).experiments.show_chat);
+        assert!(!parse_global_settings("[global]").unwrap().experiments.show_chat);
+        // An older file that only knows the Kanban flag must not switch Chat on.
+        fs::write(&app_config, "[global.experiments]\nshow_original_kanban = false\n").unwrap();
+        assert!(!load_global_settings(&app_config).experiments.show_chat);
+
+        let mut next = load_global_settings(&app_config);
+        next.experiments.show_chat = true;
+        write_global_settings(&app_config, &next).unwrap();
+        let saved = load_global_settings(&app_config);
+        assert!(saved.experiments.show_chat);
+        assert!(!saved.experiments.show_original_kanban, "saving Chat keeps the Kanban opt-out");
         let _ = fs::remove_dir_all(dir);
     }
 

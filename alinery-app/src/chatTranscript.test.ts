@@ -463,6 +463,12 @@ describe("journal pages", () => {
     const handled = applyRpcLine(guessed, { type: "response", success: true, command: "prompt", data: { agentInvoked: false } });
     expect(handled.pendingTurn).toBe(false);
   });
+  it("drops the guessed turn when only prompt_result says OMP ran an extension command locally", () => {
+    const guessed = { ...emptyTranscript(), pendingTurn: true };
+    const admitted = applyRpcLine(guessed, { type: "response", success: true, command: "prompt" });
+    expect(admitted.pendingTurn).toBe(true);
+    expect(applyRpcLine(admitted, { type: "prompt_result", agentInvoked: false, status: "completed" }).pendingTurn).toBe(false);
+  });
 });
 
 function liveIds(cards: ReadonlyArray<{ id?: string }>): Array<string | undefined> {

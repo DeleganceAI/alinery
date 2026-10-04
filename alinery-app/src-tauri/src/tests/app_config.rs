@@ -70,14 +70,14 @@ fn legacy_playbook_default_keeps_repositories_and_appearance_on_save() {
             key: "superdevelop".into(),
         }
     );
-    cfg.appearance.chat_show_block_copy_buttons = false;
+    cfg.appearance.chat_show_block_copy_buttons = true;
     crate::write_app_config_at(&path, &cfg).unwrap();
     let saved = fs::read_to_string(&path).unwrap();
     let reloaded: AppConfig = toml::from_str(&saved).unwrap();
     assert_eq!(reloaded.known_repos, cfg.known_repos);
     assert_eq!(reloaded.active_repo, cfg.active_repo);
     assert_eq!(reloaded.appearance.ui_scale, 1.25);
-    assert!(!reloaded.appearance.chat_show_block_copy_buttons);
+    assert!(reloaded.appearance.chat_show_block_copy_buttons);
     let value: toml::Value = toml::from_str(&saved).unwrap();
     assert_eq!(value["global"]["defaults"]["playbook"]["scope"].as_str(), Some("bundled"));
     fs::remove_dir_all(dir).unwrap();

@@ -1299,3 +1299,151 @@ fn missing_protected_host_requires_explicit_recovery_after_ready_restart() {
     assert_eq!(fixture.host_for(&recovered.session.id), fixture.host.to_string_lossy());
     assert_eq!(fixture.state().state.executions.len(), 1);
 }
+
+fn chat_root_create(fixture: &Fixture, harness: &str) -> Result<SessionMeta, String> {
+    fixture
+        .client()
+        .create_execution_session(&CreateExecutionSessionRequest {
+            task_slug: String::new(),
+            target: ExecutionSessionTarget::Auxiliary {
+                harness: harness.into(),
+                model: None,
+                prompt: None,
+            },
+            launch_override: None,
+            prompt_extra: None,
+            handoff_artifact: None,
+            start: false,
+        })
+        .map(|reply| reply.session)
+}
+
+fn chat_root_resume(fixture: &Fixture, id: &str, token: Option<&str>) -> Result<(), String> {
+    let cwd = fixture.root.to_string_lossy();
+    fixture.client().resume_session(&alinery_core::daemon_client::OpenRequest {
+        intent: alinery_core::daemon_client::ops::RESUME,
+        id,
+        cwd: cwd.as_ref(),
+        task_slug: Some(""),
+        phase: None,
+        model: None,
+        attach_id: 0,
+        resume_token: token,
+        cols: None,
+        rows: None,
+    })
+}
+
+fn plant_chat_root_meta(fixture: &Fixture, id: &str, harness: &str, started_at: Option<u64>, token: &str) {
+    let path = fixture.root.join(format!(".alinery/sessions/{id}.meta.json"));
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let meta = SessionMeta {
+        id: id.into(),
+        worktree: fixture.root.to_string_lossy().into_owned(),
+        harness: harness.into(),
+        generic: true,
+        started_at,
+        harness_resume_token: token.into(),
+        created: 1,
+        ..SessionMeta::default()
+    };
+    fs::write(path, serde_json::to_vec(&meta).unwrap()).unwrap();
+}
+
+fn chat_root_wrote_meta(fixture: &Fixture) -> bool {
+    let sessions = fixture.root.join(".alinery/sessions");
+    sessions.is_dir()
+        && fs::read_dir(&sessions)
+            .unwrap()
+            .flatten()
+            .any(|entry| entry.file_name().to_string_lossy().ends_with(".meta.json"))
+}
+
+#[test]
+fn chat_root_omp_create_writes_taskless_meta() {
+    let fixture = Fixture::new();
+    let session = chat_root_create(&fixture, "omp").expect("empty-slug omp create");
+    let path = fixture.root.join(format!(".alinery/sessions/{}.meta.json", session.id));
+    let meta: SessionMeta = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert!(meta.generic, "taskless omp row must be generic");
+    assert!(meta.playbook.is_empty(), "chat must not run a playbook");
+    assert!(meta.execution_id.is_empty(), "chat must not own an execution");
+    assert_eq!(meta.worktree, fixture.root.to_string_lossy());
+    assert!(!fixture.root.join(".alinery/tasks/task.md").exists());
+}
+
+#[test]
+fn chat_root_claude_create_stays_terminal_only() {
+    let fixture = Fixture::new();
+    let err = chat_root_create(&fixture, "claude").expect_err("non-omp root harness");
+    assert_eq!(err, "root session must be Terminal");
+    assert!(!chat_root_wrote_meta(&fixture), "rejected root create must not write a meta");
+}
+
+#[test]
+fn chat_root_terminal_create_still_writes_meta() {
+    let fixture = Fixture::new();
+    let session = chat_root_create(&fixture, "no-harness").expect("drawer root create");
+    let path = fixture.root.join(format!(".alinery/sessions/{}.meta.json", session.id));
+    let meta: SessionMeta = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(meta.harness, "no-harness");
+    assert!(meta.generic);
+}
+
+#[test]
+fn chat_root_omp_resume_passes_empty_slug_gate() {
+    let fixture = Fixture::new();
+    plant_chat_root_meta(&fixture, "s-chat-resume", "omp", None, "journal-token");
+    let result = chat_root_resume(&fixture, "s-chat-resume", Some("journal-token"));
+    let blocked = result.as_ref().err().is_some_and(|error| error == "sessions must be attached to a task");
+    assert!(!blocked, "generic root omp resume must pass the empty-slug gate, got {result:?}");
+}
+
+#[test]
+fn chat_root_omp_resume_without_token_names_missing_token() {
+    let fixture = Fixture::new();
+    plant_chat_root_meta(&fixture, "s-chat-notoken", "omp", None, "");
+    let err = chat_root_resume(&fixture, "s-chat-notoken", None).expect_err("empty token");
+    assert_eq!(err, "no resume token for this session");
+}
+
+#[test]
+fn chat_root_started_omp_resume_names_already_started() {
+    let fixture = Fixture::new();
+    plant_chat_root_meta(&fixture, "s-chat-started", "omp", Some(1), "journal-token");
+    let err = chat_root_resume(&fixture, "s-chat-started", Some("journal-token")).expect_err("started row");
+    assert_eq!(err, "already-started; use resume or start-fresh");
+}
+
+#[test]
+fn chat_root_missing_meta_resume_names_missing_session_meta() {
+    let fixture = Fixture::new();
+    let err = chat_root_resume(&fixture, "s-chat-missing", Some("journal-token")).expect_err("missing meta");
+    assert_eq!(err, "missing-session-meta");
+}
+
+#[test]
+fn chat_root_terminal_resume_stays_task_attached() {
+    let fixture = Fixture::new();
+    plant_chat_root_meta(&fixture, "s-chat-drawer", "no-harness", None, "journal-token");
+    let err = chat_root_resume(&fixture, "s-chat-drawer", Some("journal-token")).expect_err("drawer resume");
+    assert_eq!(err, "sessions must be attached to a task");
+}
+
+#[test]
+fn chat_root_phase_completed_does_not_write_execution() {
+    let fixture = Fixture::new();
+    let session = chat_root_create(&fixture, "omp").expect("empty-slug omp create");
+    fixture.start("", &session);
+    let token = fixture.token_for(&session.id);
+    let reply = fixture.complete(&session, &token);
+    assert_eq!(reply["ok"], true, "root phase_completed must be passive, got {reply}");
+    assert!(reply.get("completion").is_none(), "root phase_completed must not be a completion: {reply}");
+    let tasks = fixture.root.join(".alinery/tasks");
+    let wrote_execution = tasks.is_dir()
+        && fs::read_dir(&tasks)
+            .unwrap()
+            .flatten()
+            .any(|entry| entry.path().join("execution.json").is_file() || entry.file_name() == "execution.json");
+    assert!(!wrote_execution, "empty-slug phase_completed must not write an execution file");
+}

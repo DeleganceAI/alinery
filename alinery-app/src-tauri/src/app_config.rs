@@ -89,11 +89,11 @@ pub(crate) struct AppearancePrefs {
     pub(crate) chat_show_date: bool,
     #[serde(default = "default_true")]
     pub(crate) chat_show_time: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub(crate) chat_show_actor_labels: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub(crate) chat_show_agent_bubbles: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub(crate) chat_show_block_copy_buttons: bool,
     #[serde(default = "default_true")]
     pub(crate) chat_show_copy_buttons: bool,
@@ -102,6 +102,11 @@ pub(crate) struct AppearancePrefs {
     /// "system" | "light" | "dark" — absent in pre-reskin configs (serde default).
     #[serde(default = "default_appearance_mode")]
     pub(crate) mode: String,
+    /// The Chat view's own copy of the `chat_*` settings above (those drive the Sessions view).
+    /// The frontend owns the names and the value ranges (`normalizeChatView`), so this only keeps
+    /// scalar `chat_*` entries. Last field: TOML needs tables after plain values.
+    #[serde(default)]
+    pub(crate) ava_chat: BTreeMap<String, toml::Value>,
 }
 
 impl Default for AppearancePrefs {
@@ -131,12 +136,13 @@ impl Default for AppearancePrefs {
             chat_max_width: default_chat_max_width(),
             chat_show_date: true,
             chat_show_time: true,
-            chat_show_actor_labels: true,
-            chat_show_agent_bubbles: true,
-            chat_show_block_copy_buttons: true,
+            chat_show_actor_labels: false,
+            chat_show_agent_bubbles: false,
+            chat_show_block_copy_buttons: false,
             chat_show_copy_buttons: true,
             session_default_view: default_session_default_view(),
             mode: default_appearance_mode(),
+            ava_chat: BTreeMap::new(),
         }
     }
 }
@@ -248,6 +254,11 @@ pub(crate) fn sanitize_appearance(prefs: AppearancePrefs) -> AppearancePrefs {
             _ => default_session_default_view(),
         },
         mode,
+        ava_chat: prefs
+            .ava_chat
+            .into_iter()
+            .filter(|(key, value)| key.starts_with("chat_") && matches!(value, toml::Value::Boolean(_) | toml::Value::Integer(_) | toml::Value::String(_)))
+            .collect(),
     }
 }
 

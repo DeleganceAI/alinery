@@ -551,7 +551,9 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
  */
 export function applyFilePage(state: ChatTranscriptState, page: { start: number; messages: ChatMessage[] }, position: "initial" | "older"): ChatTranscriptState {
   const messages = position === "older" ? [...page.messages, ...state.messages] : page.messages;
-  const hydrated = hydrateEntries(messages);
+  // Only journal rows carry an OMP row id. Messages the stream added since attach already have their
+  // live entries below, so hydrating them again would show each one twice.
+  const hydrated = hydrateEntries(position === "older" ? messages.filter((message) => message.rowId !== undefined) : messages);
   const live = state.entries.filter((entry) => !entry.id.startsWith("f:"));
   return {
     ...state,
@@ -1038,7 +1040,9 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
   if (event.type === "advisor_cost_changed" || event.type === "prompt_result") {
     if (event.type === "prompt_result") {
       const data = asRecord(event.data) ?? event;
-      if (data.agentInvoked === false) return patchLastSlash(state, true);
+      // An extension command's `prompt` response carries no agentInvoked; this is the only "no turn
+      // is coming" signal, so it must release the pendingTurn claim or the session reads busy forever.
+      if (data.agentInvoked === false) return patchLastSlash({ ...state, pendingTurn: false }, true);
       if (data.agentInvoked === true) return patchLastSlash(state, false);
     }
     return state;

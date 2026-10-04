@@ -19,7 +19,8 @@
 //   ALINERY_EVENT_PROTOCOL_VERSION   runner event protocol version
 //   ALINERY_EVENT_TOKEN              per-session secret token
 //   ALINERY_HOST_EXECUTABLE          canonical host app executable (launch-only)
-//   ALINERY_SESSION_NAMING          task-attached naming eligibility (launch-only)
+//   ALINERY_SESSION_NAMING          "1": task session names itself via a tool; "chat": chat thread
+//                                   is titled at turn ends (launch-only)
 
 import { spawn } from "node:child_process";
 import { realpath } from "node:fs/promises";
@@ -40,7 +41,11 @@ export interface OmpExtensionContext {
   readonly hasUI?: boolean;
   readonly sessionManager: {
     getSessionId(): string;
+    // Absent on older OMP; chat titling then quietly does nothing.
+    getBranch?(): readonly { readonly type?: string; readonly message?: { readonly role?: string } }[];
   };
+  // OMP 18.3+. A side turn on the active model that never enters session history.
+  runEphemeralTurn?(options: { readonly promptText: string; readonly tools?: boolean; readonly signal?: AbortSignal }): Promise<{ readonly replyText: string }>;
   shutdown(): void;
   readonly ui?: {
     confirm(title: string, message: string): Promise<boolean>;
@@ -115,7 +120,7 @@ export interface OmpExtensionAPI {
   on(event: "session_start", handler: (payload: unknown, context: OmpExtensionContext) => void | Promise<void>): void;
   on(event: "before_agent_start", handler: (payload: { readonly systemPrompt: readonly string[] }) => { systemPrompt: string[] } | undefined): void;
   on(event: "agent_start", handler: (payload: OmpAgentStartPayload) => void | Promise<void>): void;
-  on(event: "agent_end", handler: (payload: OmpAgentEndPayload) => void | Promise<void>): void;
+  on(event: "agent_end", handler: (payload: OmpAgentEndPayload, context: OmpExtensionContext) => void | Promise<void>): void;
   on(event: "session_stop", handler: (payload: OmpSessionStopPayload, context: OmpExtensionContext) => void | Promise<void>): void;
   on(event: "tool_approval_requested", handler: (payload: OmpToolApprovalRequestedPayload) => void | Promise<void>): void;
   on(event: "tool_approval_resolved", handler: (payload: OmpToolApprovalResolvedPayload) => void | Promise<void>): void;
@@ -190,6 +195,7 @@ interface RunnerConfig {
   readonly runnerPath: string;
   readonly environment: Readonly<Record<string, string>>;
   readonly sessionNaming: boolean;
+  readonly chatNaming: boolean;
 }
 
 const RUNNER_ENV_NAMES = [
@@ -288,6 +294,7 @@ export async function classifyBrowserOpen(input: unknown, cwd: string, protected
 export function captureRunnerConfig(environment: Record<string, string | undefined> = process.env): RunnerConfig | undefined {
   const captured: Record<string, string | undefined> = {};
   const sessionNaming = environment.ALINERY_SESSION_NAMING === "1";
+  const chatNaming = environment.ALINERY_SESSION_NAMING === "chat";
   delete environment.ALINERY_SESSION_NAMING;
   for (const name of RUNNER_ENV_NAMES) {
     captured[name] = environment[name];
@@ -315,6 +322,7 @@ export function captureRunnerConfig(environment: Record<string, string | undefin
   return {
     runnerPath,
     sessionNaming,
+    chatNaming,
     environment: {
       ALINERY_SESSION_ID: sessionId,
       ALINERY_DAEMON_SOCKET: daemonSocket,
@@ -473,6 +481,72 @@ export function makeProductionSessionNameEmitter(config: RunnerConfig | undefine
   };
 }
 
+// ---------- chat thread titles ----------
+
+const CHAT_TITLE_PROMPT =
+  "Give this conversation a short title that says what it is about, in the user's language. At most 40 characters; fewer than 30 is better. " +
+  "Reply with only the title: no quotes, no markdown, no trailing punctuation, no prefix.";
+
+/** Titles come after the first user message, then every 10th (10, 20, 30, ...). */
+export function chatTitleBucket(userMessages: number): number {
+  return userMessages >= 10 ? Math.floor(userMessages / 10) * 10 : userMessages >= 1 ? 1 : 0;
+}
+
+/** First line of the reply, stripped of quoting and markup, cut to 40 characters on a word edge. */
+export function cleanChatTitle(reply: string): string {
+  const line = (reply.split("\n").find((candidate) => candidate.trim() !== "") ?? "")
+    .replace(/^\s*(title\s*:\s*)/i, "")
+    .replace(/^[\s"'`*_#>-]+|[\s"'`*_.]+$/g, "")
+    .replace(/\s+/g, " ");
+  if (line.length <= 40) return line;
+  const cut = line.slice(0, 40);
+  // A word that ends exactly at the limit is kept whole.
+  const edge = line[40] === " " ? 40 : cut.lastIndexOf(" ");
+  return (edge >= 20 ? cut.slice(0, edge) : cut).trim();
+}
+
+function userMessageCount(context: OmpExtensionContext): number | undefined {
+  const branch = context.sessionManager.getBranch?.();
+  if (!Array.isArray(branch)) return undefined;
+  return branch.filter((entry) => entry?.type === "message" && entry.message?.role === "user").length;
+}
+
+/**
+ * Chat threads are titled by the thread's own model through an ephemeral side turn, so the cost
+ * lands on the model the user already picked. Everything is best effort: a missing OMP API, a
+ * failed turn, or a refused write leaves the old title and tries again at the next turn end.
+ * A human rename is protected by the daemon, not here.
+ */
+function makeChatTitler(emitTitle: SessionNameEmitter) {
+  let titledBucket = 0;
+  let inFlight = false;
+  return {
+    // A resumed thread has already had the titles its history earned.
+    start(context: OmpExtensionContext): void {
+      titledBucket = chatTitleBucket(userMessageCount(context) ?? 0);
+    },
+    async maybeTitle(context: OmpExtensionContext): Promise<void> {
+      if (inFlight || typeof context.runEphemeralTurn !== "function") return;
+      const bucket = chatTitleBucket(userMessageCount(context) ?? 0);
+      if (bucket === 0 || bucket === titledBucket) return;
+      inFlight = true;
+      try {
+        // Some transports cannot drop their tool definitions; those refuse `tools: false`. The side turn
+        // never runs tools, so asking again with them in the request only risks an empty reply.
+        const reply = await context.runEphemeralTurn({ promptText: CHAT_TITLE_PROMPT, tools: false }).catch(() => context.runEphemeralTurn?.({ promptText: CHAT_TITLE_PROMPT }));
+        const name = cleanChatTitle(reply?.replyText ?? "");
+        if (!name) return;
+        await emitTitle({ type: "session_name_suggested", name });
+        titledBucket = bucket;
+      } catch {
+        // Retried at the next turn end while the bucket stays untitled.
+      } finally {
+        inFlight = false;
+      }
+    },
+  };
+}
+
 // ---------- callback registration ----------
 
 /**
@@ -486,6 +560,7 @@ export function registerCallbacks(
   protectedHost: string | undefined,
   initialPtyPrompt?: string,
   emitSessionName?: SessionNameEmitter,
+  emitChatTitle?: SessionNameEmitter,
 ): void {
   let shutdownSessionId: string | undefined;
   let pendingPtyPrompt = initialPtyPrompt;
@@ -514,8 +589,10 @@ export function registerCallbacks(
       },
     });
   }
+  const chatTitles = emitChatTitle ? makeChatTitler(emitChatTitle) : undefined;
   api.on("session_start", async (_payload, context) => {
     shutdownSessionId = undefined;
+    chatTitles?.start(context);
     if (pendingPtyPrompt !== undefined) {
       if (!context.ui?.setEditorText) {
         await safeEmit(emit, { type: "adapter_error", detail: "OMP PTY editor is unavailable for initial prompt delivery" });
@@ -534,8 +611,10 @@ export function registerCallbacks(
     await safeEmit(emit, { type: "busy" });
   });
 
-  api.on("agent_end", async (payload: OmpAgentEndPayload) => {
+  api.on("agent_end", async (payload: OmpAgentEndPayload, context: OmpExtensionContext) => {
     await safeEmit(emit, { type: payload.willContinue ? "busy" : "idle" });
+    // Not awaited: a title is a side request and must never hold up the next turn.
+    if (!payload.willContinue) void chatTitles?.maybeTitle(context);
   });
 
   // session_stop settles agent state only; it never implies phase completion.
@@ -737,5 +816,6 @@ export default function (api: OmpExtensionAPI): void {
     protectedHost,
     initialPtyPrompt,
     config?.sessionNaming ? makeProductionSessionNameEmitter(config) : undefined,
+    config?.chatNaming ? makeProductionSessionNameEmitter(config) : undefined,
   );
 }

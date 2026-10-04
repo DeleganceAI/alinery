@@ -18,7 +18,13 @@ function pane(entries: ChatEntry[], visibility = DEFAULT_CHAT_VISIBILITY, status
 describe("ChatPane", () => {
   it("updates block copy controls on existing replies without hiding whole-message copying", () => {
     const entries: ChatEntry[] = [{ id: "copy", at, actor: ACTOR.agent, type: "text", text: "```sh\nsudo ls\n```\n\n> Quoted advice" }];
+    // Block copy buttons start off; the whole-message copy icon starts on.
     const view = render(<ChatPane entries={entries} visibility={chatVisibilityFromAppearance({})} />);
+    expect(view.queryByRole("button", { name: "Copy code block" })).toBeNull();
+    expect(view.queryByRole("button", { name: "Copy quote" })).toBeNull();
+    expect(view.getByRole("button", { name: "Copy message" })).toBeTruthy();
+
+    view.rerender(<ChatPane entries={entries} visibility={chatVisibilityFromAppearance({ chat_show_block_copy_buttons: true })} />);
     expect(view.getByRole("button", { name: "Copy code block" })).toBeTruthy();
     expect(view.getByRole("button", { name: "Copy quote" })).toBeTruthy();
 
@@ -33,7 +39,7 @@ describe("ChatPane", () => {
     expect(view.getByRole("button", { name: "Copy code block" })).toBeTruthy();
     expect(view.getByRole("button", { name: "Copy quote" })).toBeTruthy();
 
-    view.rerender(<ChatPane entries={entries} visibility={chatVisibilityFromAppearance({ chat_show_copy_buttons: false })} />);
+    view.rerender(<ChatPane entries={entries} visibility={chatVisibilityFromAppearance({ chat_show_block_copy_buttons: true, chat_show_copy_buttons: false })} />);
     expect(view.queryByRole("button", { name: "Copy message" })).toBeNull();
     expect(view.getByRole("button", { name: "Copy code block" })).toBeTruthy();
     expect(view.getByRole("button", { name: "Copy quote" })).toBeTruthy();
@@ -163,14 +169,14 @@ describe("ChatPane", () => {
     expect(pane([{ id: "1", at, actor: ACTOR.agent, type: "text", text: "hi" }], { ...DEFAULT_CHAT_VISIBILITY, showCopyButtons: false })).not.toContain("Copy message");
   });
 
-  it("defaults agent replies to labelled bubbles and keeps user prompts bubbled", () => {
+  it("shows labelled agent bubbles when those prefs are on and keeps user prompts bubbled", () => {
     const html = pane(
       [
         { id: "1", at, actor: ACTOR.you, type: "prompt", text: "Hello" },
         { id: "2", at, actor: ACTOR.agent, type: "text", text: "Reply" },
         { id: "3", at, actor: ACTOR.agent, type: "thinking", text: "plan", streaming: true },
       ],
-      { ...DEFAULT_CHAT_VISIBILITY, showThinking: true, showDate: true, showTime: true },
+      { ...DEFAULT_CHAT_VISIBILITY, showThinking: true, showDate: true, showTime: true, showActorLabels: true, showAgentBubbles: true },
     );
     expect(html).toContain('data-agent-bubbles="on"');
     expect(html).toContain('data-actor-labels="on"');
@@ -179,6 +185,17 @@ describe("ChatPane", () => {
     expect(html).toContain("chat-msg-reply");
     expect(html).toContain("chat-rail");
     expect(html).toContain("chat-msg-who");
+  });
+
+  it("starts without actor labels or agent bubbles", () => {
+    const html = pane([
+      { id: "1", at, actor: ACTOR.you, type: "prompt", text: "Hello" },
+      { id: "2", at, actor: ACTOR.agent, type: "text", text: "Reply" },
+    ]);
+    expect(html).toContain('data-agent-bubbles="off"');
+    expect(html).toContain('data-actor-labels="off"');
+    expect(html).toContain("chat-msg-mine");
+    expect(html).not.toContain("chat-msg-who");
   });
 
   it("shows a sticky activity strip while running", () => {

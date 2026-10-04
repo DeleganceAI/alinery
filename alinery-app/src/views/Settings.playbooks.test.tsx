@@ -93,7 +93,7 @@ function openSettings() {
       appearance={DEFAULT_APPEARANCE}
       onAppearanceChange={() => {}}
       onNotificationsChange={() => {}}
-      initialSection="playbooks"
+      initialSection="general"
     />,
   );
 }
