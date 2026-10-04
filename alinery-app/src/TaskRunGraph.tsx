@@ -58,6 +58,7 @@ export function TaskRunGraph({
   const highlightedEdge = activeEdge ? layout.edges.find((edge) => JSON.stringify([edge.from, edge.to]) === activeEdge) : undefined;
   const connections = new Map(graph.connections.map((connection) => [JSON.stringify([connection.from, connection.to]), connection]));
   const viewportRef = useRef<HTMLDivElement>(null);
+  const panButtonRef = useRef<HTMLButtonElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const enabled = graph.nodes.size > 0;
@@ -100,6 +101,16 @@ export function TaskRunGraph({
             <button type="button" className="btn ghost small" onClick={resetView}>
               Reset view
             </button>
+            <button
+              ref={panButtonRef}
+              type="button"
+              className="btn ghost small"
+              aria-label="Pan run graph"
+              title="Use arrow keys to pan; Escape returns to this button"
+              onClick={() => viewportRef.current?.focus({ preventScroll: true })}
+            >
+              Pan
+            </button>
           </div>
           <div
             ref={viewportRef}
@@ -111,6 +122,11 @@ export function TaskRunGraph({
             onFocusCapture={onFocusCapture}
             onKeyDown={(event) => {
               if (event.target !== event.currentTarget || event.metaKey || event.ctrlKey || event.altKey) return;
+              if (event.key === "Escape") {
+                event.preventDefault();
+                panButtonRef.current?.focus();
+                return;
+              }
               const dx = event.key === "ArrowLeft" ? 40 : event.key === "ArrowRight" ? -40 : 0;
               const dy = event.key === "ArrowUp" ? 40 : event.key === "ArrowDown" ? -40 : 0;
               if (!dx && !dy) return;

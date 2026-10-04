@@ -206,11 +206,16 @@ button.task-run-node:hover {
   background: var(--surface-subtle);
 }
 
-.task-run-viewport:focus-visible,
-.task-run-node:focus-visible,
-.task-run-artifact:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
+.task-run-viewport:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+button.task-run-node:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  outline: calc(var(--artifact-line-height) / 12) solid var(--accent);
+  outline-offset: calc(var(--artifact-line-height) / 12);
 }
 
 .task-run-artifact:focus-visible {

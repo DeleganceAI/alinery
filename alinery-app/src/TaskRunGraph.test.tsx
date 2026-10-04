@@ -45,6 +45,23 @@ const occurrence = (id: string, producer: string | null, path = `${id}.md`): Art
 
 afterEach(cleanup);
 
+it("enters keyboard panning from the toolbar and returns on Escape without stealing child keys", () => {
+  render(<TaskRunGraph sessions={[session("worker")]} state={null} onOpenSession={vi.fn()} onOpenArtifact={vi.fn()} />);
+  const pan = screen.getByRole("button", { name: "Pan run graph" });
+  const canvas = screen.getByRole("region", { name: "Run graph canvas" });
+  fireEvent.click(pan);
+  expect(document.activeElement).toBe(canvas);
+  expect(fireEvent.keyDown(canvas, { key: "ArrowRight" })).toBe(false);
+  fireEvent.keyDown(canvas, { key: "Escape" });
+  expect(document.activeElement).toBe(pan);
+
+  const child = screen.getByRole("button", { name: "Open session worker" });
+  child.focus();
+  expect(fireEvent.keyDown(child, { key: "ArrowRight" })).toBe(true);
+  fireEvent.keyDown(child, { key: "Escape" });
+  expect(document.activeElement).toBe(child);
+});
+
 it.each([false, true])("orders keyboard traversal through sessions and artifacts in visual flow (fork: %s)", (fork) => {
   const records = [execution("root"), execution("left", { input: ["shared"] })];
   const publications = [occurrence("shared", "root")];
