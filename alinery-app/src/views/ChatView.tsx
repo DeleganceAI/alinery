@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatComposer } from "../ChatComposer";
+import { formatContextUsage } from "../chat/format";
 import { applySendPlan, commandOutputText, planChatSend } from "../chat/send";
 import { type McpServerRow, type ProvidersDialogTab, parseMcpListOutput } from "../chat/slash";
 import type { SessionChatStatus } from "../chat/types";
@@ -715,6 +716,7 @@ export function ChatView({ active = true, knownRepos, terminalFontSize, visibili
     ipc.chatRpcWrite(selected.repo_path, selected.session.id, abortTurnCommand()).catch((cause: unknown) => setError(String(cause)));
   }
 
+  const contextUsage = formatContextUsage(transcript.sessionMeta.contextUsage?.tokens, transcript.sessionMeta.contextUsage?.contextWindow);
   const modelLabel = transcript.sessionMeta.model || selected?.session.model || "Model";
   const blocked = error === "cannot continue";
   const disconnected = connection.state === "failed" && !inTerminal ? connection.detail : null;
@@ -895,6 +897,11 @@ export function ChatView({ active = true, knownRepos, terminalFontSize, visibili
                   {selected.branch_label}
                   {selected.checkout ? <span className="chat-meta-tag">checkout</span> : <span className="chat-meta-tag">worktree</span>}
                 </span>
+                {contextUsage ? (
+                  <span className="chat-meta-item" title="Context used / available">
+                    {contextUsage}
+                  </span>
+                ) : null}
                 {disconnected !== null ? <StatusMarker kind="failed" label="Disconnected" title={disconnected} /> : <StatusMarker kind={statusKind} />}
               </div>
             ) : (
