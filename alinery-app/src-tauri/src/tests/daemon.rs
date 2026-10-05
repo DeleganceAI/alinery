@@ -1417,11 +1417,7 @@ fn pending_observation_dispatch_handles_ping_first() {
     let _lock = observation_test_lock();
     let repo = short_git_repo("dispatch");
     write_retained_discovery_task(&repo, "task", "owner", false);
-    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
-    context.config_mut().identifier = format!("test.alinery.observe.{}", uuid::Uuid::new_v4());
-    let app = crate::observation_dispatch_builder(tauri::test::mock_builder().manage(AppState::default()))
-        .build(context)
-        .unwrap();
+    let (app, _config_dir) = build_mock_app("observe", crate::observation_dispatch_builder(tauri::test::mock_builder().manage(AppState::default())));
     let config_path = crate::app_config_path(app.handle()).unwrap();
     crate::write_app_config_at(
         &config_path,
