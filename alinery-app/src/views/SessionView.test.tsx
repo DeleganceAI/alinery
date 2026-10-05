@@ -26,6 +26,8 @@ const sessionArtifactReady = vi.hoisted(() => vi.fn(async () => false));
 const startSession = vi.hoisted(() => vi.fn(async () => undefined));
 const restateSession = vi.hoisted(() => vi.fn(async () => undefined));
 const rpcAttachSession = vi.hoisted(() => vi.fn(async (_args: unknown) => undefined));
+const onStreamClosed = vi.hoisted(() => vi.fn((_id: string, _attachId: number, _onClosed: () => void, _onGiveUp: () => void) => () => {}));
+const readSessionOmp = vi.hoisted(() => vi.fn(async (_args: unknown): Promise<ArrayBuffer> => Promise.reject(new Error("no journal"))));
 const rpcWriteSession = vi.hoisted(() => vi.fn(async (_id: string, _payload: unknown) => undefined));
 const detachSession = vi.hoisted(() => vi.fn(async () => undefined));
 const readOmpModelRoles = vi.hoisted(() => vi.fn(async () => ({}) as Record<string, string>));
@@ -115,6 +117,8 @@ vi.mock("../ipc", () =>
     startSession,
     restateSession,
     rpcAttachSession,
+    onStreamClosed,
+    readSessionOmp,
     rpcWriteSession,
     detachSession,
     readOmpModelRoles,
@@ -1551,6 +1555,16 @@ describe("session chat attach handshake", () => {
     sessionStatus.mockReset();
     sessionStatus.mockResolvedValue({ lifecycle: { state: "exited" as const, code: 0 }, state: null, checkpoint: {} });
     rpcWriteSession.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("re-reads the journal when a dropped stream reattaches", async () => {
+    renderSession();
+    await waitFor(() => expect(rpcAttachSession).toHaveBeenCalledTimes(1));
+    const reads = readSessionOmp.mock.calls.length;
+    const onClosed = onStreamClosed.mock.calls[onStreamClosed.mock.calls.length - 1]?.[2];
+    await act(async () => onClosed?.());
+    await waitFor(() => expect(rpcAttachSession).toHaveBeenCalledTimes(2));
+    expect(readSessionOmp.mock.calls.length).toBe(reads + 1);
   });
 
   it("writes get_subagents after set_subagent_subscription", async () => {

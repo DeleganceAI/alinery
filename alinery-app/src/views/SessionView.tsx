@@ -27,6 +27,7 @@ import {
   applyFilePage,
   applyRpcLine,
   type ChatTranscriptState,
+  carryAnswered,
   dismissPendingUi,
   emptyTranscript,
   isPresentationUi,
@@ -100,6 +101,7 @@ import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatModelDialog } from "./ChatModelDialog";
 import { ChatPane } from "./ChatPane";
 import { ChatToolsDialog } from "./ChatToolsDialog";
+import { journalState } from "./chatSession";
 import { SessionActionPanel } from "./SessionActionPanel";
 
 // ---- session view -------------------------------------------------------------
@@ -374,6 +376,8 @@ export function SessionView({
   const [chatAttachEpoch, setChatAttachEpoch] = useState(0);
   const ompStartRef = useRef<string | null>(null);
   const ompSeedRef = useRef<{ id: string; done: Promise<unknown> } | null>(null);
+  // The session the RPC stream last attached to: a later attach for the same id is a reattach.
+  const rpcAttachedRef = useRef<string | null>(null);
   const preferredViewAppliedRef = useRef<string | null>(null);
   const handledUiRef = useRef(new Set<string>());
   const mcpListWaitRef = useRef(false);
@@ -1392,12 +1396,15 @@ export function SessionView({
       id,
       attachId,
       () => {
-        ipc
-          .sessionStatus(id, taskSlug || null)
-          .then((next) => {
+        ipc.sessionStatus(id, taskSlug || null).then(
+          (next) => {
             if (!cancelled && next.transport === "rpc" && next.lifecycle.state === "live") setChatAttachEpoch((epoch) => epoch + 1);
-          })
-          .catch(() => undefined);
+          },
+          // Unreadable status: reattach anyway; the attach itself reports a dead session.
+          () => {
+            if (!cancelled) setChatAttachEpoch((epoch) => epoch + 1);
+          },
+        );
       },
       () => {
         if (!cancelled) setTerminalConnection("failed");
@@ -1499,8 +1506,23 @@ export function SessionView({
         /* ignore non-JSON */
       }
     };
-    void seedOmpJournal()
-
+    // A reattach (dropped stream, back from Terminal) rebuilds from a fresh journal read, as chat does.
+    // The first seed is stale by then: turns that closed while detached are in neither it nor the
+    // replay, and a turn left open in the old transcript reads Running forever.
+    const reattach = rpcAttachedRef.current === id;
+    rpcAttachedRef.current = id;
+    const journal = reattach
+      ? ipc
+          .readSessionOmp({ id, taskSlug: taskSlug || null, end: null })
+          .then((buffer) => {
+            if (cancelled) return;
+            const next = carryAnswered(chatRef.current, journalState(buffer));
+            chatRef.current = next;
+            setChat(next);
+          })
+          .catch(() => undefined)
+      : seedOmpJournal();
+    void journal
       .then(() => {
         if (cancelled) return;
         const missing = queuedTextsNotInEntries(

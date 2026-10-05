@@ -22,7 +22,17 @@ import { applySendPlan, commandOutputText, planChatSend } from "../chat/send";
 import { type McpServerRow, type ProvidersDialogTab, parseMcpListOutput } from "../chat/slash";
 import type { SessionChatStatus } from "../chat/types";
 import type { ChatPrefs } from "../chat/visibility";
-import { appendOptimisticAbort, appendOptimisticUser, type ChatTranscriptState, emptyTranscript, needsUiReply } from "../chatTranscript";
+import {
+  appendOptimisticAbort,
+  appendOptimisticUser,
+  type ChatTranscriptState,
+  carryAnswered,
+  emptyTranscript,
+  matchingSendFailure,
+  matchingSendSuccess,
+  needsUiReply,
+  removeOptimisticSend,
+} from "../chatTranscript";
 import { askConfirm, confirmDanger, confirmStopAndSwitch } from "../confirm";
 import * as ipc from "../ipc";
 import { NameEditor } from "../NameEditor";
@@ -162,6 +172,9 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
   const [createWorktree, setCreateWorktree] = useState(false);
   // Per thread, so a half-written message stays with the thread it was written for.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  // The prompt/follow_up awaiting OMP's verdict. The daemon acks the stdin write, not the send: a
+  // refusal arrives later as a response, and the bubble must go and the text return to the composer.
+  const awaitingVerdict = useRef<{ key: string; commandId: string; text: string; refused: boolean } | null>(null);
   const [sendingKey, setSendingKey] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [observed, setObserved] = useState<Keyed<SessionObservation> | null>(null);
@@ -308,18 +321,32 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     mcpListWait.current = null;
     setError((current) => (current === "cannot continue" ? "" : current));
     setLink({ key, value: { state: "connecting" } });
+    // OMP gone: the link goes offline and the list reloads, so the row carries ended_at and a send
+    // resumes the thread instead of writing to a dead session. Once per run.
+    let endedSeen = false;
+    const ended = () => {
+      if (cancelled || endedSeen) return;
+      endedSeen = true;
+      setLink({ key, value: { state: "offline" } });
+      void reload().catch(() => {});
+    };
     // Dropped by the daemon mid-turn: re-read the journal and reattach, while OMP is still up in
     // chat. A hatch to Terminal also closes this stream; that process is PTY and is left alone.
+    // An unreadable status reattaches anyway: the attach itself reports offline or failed.
     const stopClosed = ipc.onStreamClosed(
       id,
       attachId,
       () => {
-        ipc
-          .chatSessionStatus(repo, id)
-          .then((next) => {
-            if (!cancelled && next.transport === "rpc" && next.lifecycle.state === "live") setAttachEpoch((epoch) => epoch + 1);
-          })
-          .catch(() => {});
+        ipc.chatSessionStatus(repo, id).then(
+          (next) => {
+            if (cancelled || next.transport === "pty") return;
+            if (next.transport === "rpc" && next.lifecycle.state === "live") setAttachEpoch((epoch) => epoch + 1);
+            else ended();
+          },
+          () => {
+            if (!cancelled) setAttachEpoch((epoch) => epoch + 1);
+          },
+        );
       },
       () => {
         if (!cancelled) setLink({ key, value: { state: "failed", detail: "The live view kept falling behind. Reconnect to resume." } });
@@ -332,7 +359,10 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
       ipc
         .chatSessionStatus(repo, id)
         .then((next) => {
-          if (!cancelled) setObserved({ key, value: next });
+          if (cancelled) return;
+          setObserved({ key, value: next });
+          // The daemon keeps an exited process's clients open, so no stream close reports it.
+          if (selected.session.ended_at == null && (next.lifecycle.state === "exited" || next.lifecycle.state === "live_exited")) ended();
         })
         .catch(() => {});
     };
@@ -352,7 +382,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
         (buffer) => {
           if (cancelled) return;
           const next = journalState(buffer);
-          setLoaded({ key, value: next });
+          setLoaded((current) => ({ key, value: carryAnswered(current?.key === key ? current.value : undefined, next) }));
           if (interruptedWithoutJournal(selected, next)) setError("cannot continue");
         },
         () => {
@@ -366,6 +396,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
         // Never started, ended or archived: there is no process, only history. Not a broken link.
         if (selected.session.started_at == null || selected.session.ended_at != null || selected.session.archived) {
           setLink({ key, value: { state: "offline" } });
+          dropClaim("Ava is not running in this thread, so the message was not sent. It is still in the composer.");
           return;
         }
         try {
@@ -378,6 +409,22 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
               if (cancelled) return;
               const value = parseChatLine(line);
               updateTranscript(key, (current) => applyChatValue(current, value));
+              const awaiting = awaitingVerdict.current;
+              if (awaiting?.key === key) {
+                const refused = matchingSendFailure(value, awaiting.commandId);
+                if (refused !== null) {
+                  awaiting.refused = true;
+                  awaitingVerdict.current = null;
+                  updateTranscript(key, (current) => {
+                    const row = [...current.entries].reverse().find((entry) => (entry.type === "prompt" || entry.type === "follow_up") && entry.text === awaiting.text);
+                    return row ? removeOptimisticSend(current, row.id) : current;
+                  });
+                  setDrafts((current) => ({ ...current, [key]: current[key] || awaiting.text }));
+                  setError(`Not sent: ${refused}`);
+                } else if (matchingSendSuccess(value, awaiting.commandId)) {
+                  awaitingVerdict.current = null;
+                }
+              }
               if (mcpListWait.current === key) {
                 const listed = commandOutputText(value);
                 if (listed !== null) {
@@ -729,10 +776,14 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
             ? promptCommand("/mcp list")
             : sendCommand(text, busy);
     if (dispatch.kind === "mcp-list") mcpListWait.current = key;
+    const verdict = command.type === "prompt" || command.type === "follow_up" ? { key, commandId: command.id, text, refused: false } : null;
+    awaitingVerdict.current = verdict;
     setSendingKey(key);
     try {
       await ipc.chatRpcWrite(repo, id, command);
       if (dispatch.kind === "get-tools") setToolsOpen(true);
+      // Refused before the write even resolved: no bubble, and the draft stays.
+      if (verdict?.refused) return;
       updateTranscript(key, (current) => applySendPlan(current, text, plan).state);
       setDrafts(clearDraft(key, text));
     } catch (cause) {

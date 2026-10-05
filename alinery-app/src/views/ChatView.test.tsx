@@ -359,6 +359,27 @@ describe("ChatView", () => {
     expect(await screen.findByRole("button", { name: "Reconnect" })).toBeTruthy();
   });
 
+  it("takes back a send OMP refuses: the bubble goes and the text returns to the composer", async () => {
+    const { emit } = await openLive(observed("idle", "alive", "rpc"));
+    sendIdle("add an HNSW index");
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledTimes(8));
+    const sent = mocks.chatRpcWrite.mock.calls[7]?.[2] as { id: string; type: string };
+    expect(sent.type).toBe("prompt");
+    await screen.findByText("add an HNSW index");
+    emit({ type: "response", id: sent.id, command: "prompt", success: false, error: "model busy" });
+    await waitFor(() => expect((screen.getByLabelText("Message or /command") as HTMLTextAreaElement).value).toBe("add an HNSW index"));
+    expect(screen.getByText(/Not sent: model busy/)).toBeTruthy();
+    expect(screen.queryAllByText("add an HNSW index").filter((element) => element.tagName !== "TEXTAREA")).toHaveLength(0);
+  });
+
+  it("goes offline and reloads the list once OMP has exited", async () => {
+    await openLive(observed("idle", "alive", "rpc"));
+    const reloads = mocks.listChatThreads.mock.calls.length;
+    mocks.chatSessionStatus.mockResolvedValue(observed("idle", "exited", "rpc"));
+    await waitFor(() => expect(link()).toBe("offline"), { timeout: 3000 });
+    expect(mocks.listChatThreads.mock.calls.length).toBe(reloads + 1);
+  });
+
   it("opens the providers dialog on the tab a slash command names, with its model preselected", async () => {
     await openLive(observed("idle"));
     sendIdle("/login");

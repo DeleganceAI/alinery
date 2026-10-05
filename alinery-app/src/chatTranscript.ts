@@ -59,6 +59,11 @@ export type ChatTranscriptState = {
   messages: ChatMessage[];
   commands: ChatCommand[];
   pendingUi: PendingUi[];
+  /** Requests already answered here. A reattach replays the turn's lines, and an answered request
+   *  coming back as a live card cannot be answered again (OMP has settled it). Carried across a
+   *  journal rebuild with `carryAnswered`. */
+  answeredUi: string[];
+  /** Distinct event types nothing handles. */
   unknownTypes: string[];
   /** Latest harness/error line for callers that still read a single notice. */
   notice: string | null;
@@ -97,6 +102,7 @@ export function emptyTranscript(): ChatTranscriptState {
     messages: [],
     commands: [],
     pendingUi: [],
+    answeredUi: [],
     unknownTypes: [],
     notice: null,
     entries: [],
@@ -197,6 +203,16 @@ function updateAssistantActivity(activity: AssistantActivity, raw: unknown, even
     }
   }
   return changed ?? activity;
+}
+
+function toolResultEntry(message: ChatMessage) {
+  return {
+    actor: ACTOR.agent,
+    type: "tool_result" as const,
+    tool: message.toolName ?? "tool",
+    text: message.content.map((part) => (part.type === "text" ? part.text : "")).join(""),
+    status: message.isError ? ("error" as const) : ("ok" as const),
+  };
 }
 
 export function mapHydratedMessage(raw: unknown, rowId?: string): ChatMessage | null {
@@ -321,7 +337,9 @@ function journalOwnsAssistantSnapshot(state: ChatTranscriptState, content: ChatP
   for (let i = 0; i < incoming.length; i += 1) {
     const part = incoming[i];
     const entry = cluster[i];
-    if (!part || !entry || entry.type !== part.type || journalEntryText(entry) !== part.text) return false;
+    // A prefix counts: a reattach mid-turn replays the message's partial updates after the journal
+    // already holds it whole, and each partial is a prefix of that text.
+    if (!part || !entry || entry.type !== part.type || !journalEntryText(entry)?.startsWith(part.text)) return false;
   }
   return true;
 }
@@ -515,14 +533,7 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
     // Tool output used to vanish here: the loop only branched on user and assistant, so every
     // toolResult message fell through with no entry pushed. They are the bulk of a real journal.
     if (message.role === "toolResult") {
-      entries.push({
-        id: alloc(),
-        actor: ACTOR.agent,
-        type: "tool_result",
-        tool: message.toolName ?? "tool",
-        text: message.content.map((part) => (part.type === "text" ? part.text : "")).join(""),
-        status: message.isError ? "error" : "ok",
-      });
+      entries.push({ id: alloc(), ...toolResultEntry(message) });
       continue;
     }
     if (message.role === "assistant") {
@@ -759,7 +770,7 @@ function applySubagent(state: ChatTranscriptState, event: Record<string, unknown
 
 function applyPendingUi(state: ChatTranscriptState, event: Record<string, unknown>): ChatTranscriptState {
   const id = asString(event.id);
-  if (!id) return state;
+  if (!id || state.answeredUi.includes(id) || state.pendingUi.some((pending) => pending.id === id)) return state;
   const method = asString(event.method);
   const pending: PendingUi = { id, method };
   const widgetKey = asString(event.widgetKey);
@@ -831,10 +842,16 @@ function displayUrl(raw: string): string {
   }
 }
 
+/** A transcript rebuilt from the journal keeps what the old one already answered. */
+export function carryAnswered(previous: ChatTranscriptState | undefined, next: ChatTranscriptState): ChatTranscriptState {
+  return previous && previous.answeredUi.length > 0 ? { ...next, answeredUi: previous.answeredUi } : next;
+}
+
 export function dismissPendingUi(state: ChatTranscriptState, id: string): ChatTranscriptState {
   return {
     ...state,
     pendingUi: state.pendingUi.filter((p) => p.id !== id),
+    answeredUi: state.answeredUi.includes(id) ? state.answeredUi : [...state.answeredUi, id],
     entries: state.entries.filter((e) => !(e.type === "approval" && e.requestId === id)),
   };
 }
@@ -943,6 +960,13 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
   if (event.type === "message_start" || event.type === "message_end") {
     const message = asRecord(event.message);
     if (!message) return state;
+    // Tool output arrives live as a toolResult message; it used to show only after a journal re-read.
+    // A reattach replays results the journal already holds, so one per tool call.
+    if (message.role === "toolResult") {
+      const result = event.type === "message_end" ? mapHydratedMessage(message) : null;
+      if (!result || (result.toolCallId && state.messages.some((m) => m.role === "toolResult" && m.toolCallId === result.toolCallId))) return state;
+      return appendEntry({ ...state, messages: [...state.messages, result] }, { ...toolResultEntry(result), at: Date.now() });
+    }
     const role = message.role === "user" || message.role === "assistant" ? message.role : null;
     const content = mapContent(message.content);
     if (role === "user") {
@@ -1053,7 +1077,9 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
   }
 
   void PRESENTATION_UI;
-  return { ...state, unknownTypes: [...state.unknownTypes, event.type] };
+  // Distinct only: `tool_execution_update` and friends arrive constantly, and an append per line grew
+  // this (and copied it) without bound.
+  return state.unknownTypes.includes(event.type) ? state : { ...state, unknownTypes: [...state.unknownTypes, event.type] };
 }
 
 export function applyRpcLines(lines: unknown[]): ChatTranscriptState {

@@ -11,6 +11,8 @@ import {
   applyRpcLine,
   applyRpcLines,
   type ChatTranscriptState,
+  carryAnswered,
+  dismissPendingUi,
   emptyTranscript,
   flattenWouldFail,
   mapHydratedMessage,
@@ -1227,5 +1229,49 @@ describe("DEL-722 block-local streaming", () => {
     expectActivity(later, [false, true]);
     expect.soft(later.entries.filter((entry) => entry.id.startsWith("f:"))).toEqual(journal.entries);
     expect.soft(later.entries.filter((entry) => entry.type === "thinking")).toHaveLength(2);
+  });
+});
+
+describe("reattach replay", () => {
+  const journal = () =>
+    applyFilePage(
+      emptyTranscript(),
+      {
+        start: 0,
+        messages: [
+          { rowId: "a1", role: "assistant", content: [{ type: "text", text: "Reading the vocab file now." }] },
+          { rowId: "t1", role: "toolResult", toolName: "read", toolCallId: "call-1", content: [{ type: "text", text: "CREATE TABLE" }] },
+        ],
+      },
+      "initial",
+    );
+
+  it("does not duplicate a message the journal holds when its partial updates are replayed", () => {
+    let state = journal();
+    for (const text of ["Reading", "Reading the vocab", "Reading the vocab file now."]) {
+      state = applyRpcLine(state, { type: "message_update", message: { role: "assistant", content: [{ type: "text", text }] }, assistantMessageEvent: { type: "text_delta" } });
+    }
+    expect(state.entries.filter((entry) => entry.type === "text")).toHaveLength(1);
+  });
+
+  it("shows a tool result live, once, even when the replay repeats one the journal holds", () => {
+    const result = (id: string, text: string) => ({ type: "message_end", message: { role: "toolResult", toolName: "bash", toolCallId: id, content: [{ type: "text", text }] } });
+    let state = applyRpcLine(journal(), result("call-1", "CREATE TABLE"));
+    expect(state.entries.filter((entry) => entry.type === "tool_result")).toHaveLength(1);
+    state = applyRpcLine(state, result("call-2", "pgvector 0.8.7"));
+    expect(state.entries.filter((entry) => entry.type === "tool_result").map((entry) => ("text" in entry ? entry.text : ""))).toEqual(["CREATE TABLE", "pgvector 0.8.7"]);
+  });
+
+  it("does not bring back a request already answered, across a journal rebuild", () => {
+    const ask = { type: "extension_ui_request", id: "q1", method: "confirm", title: "Run bash?" };
+    const answered = dismissPendingUi(applyRpcLine(emptyTranscript(), ask), "q1");
+    const rebuilt = applyRpcLine(carryAnswered(answered, journal()), ask);
+    expect(rebuilt.pendingUi).toEqual([]);
+    expect(rebuilt.entries.some((entry) => entry.type === "approval")).toBe(false);
+    expect(applyRpcLines([ask, ask]).pendingUi).toHaveLength(1);
+  });
+
+  it("records each unknown event type once", () => {
+    expect(applyRpcLines([{ type: "tool_execution_update" }, { type: "tool_execution_update" }]).unknownTypes).toEqual(["tool_execution_update"]);
   });
 });
