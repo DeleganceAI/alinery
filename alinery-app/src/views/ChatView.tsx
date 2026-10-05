@@ -17,22 +17,24 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatComposer } from "../ChatComposer";
-import { applySendPlan, planChatSend } from "../chat/send";
+import { applySendPlan, commandOutputText, planChatSend } from "../chat/send";
+import { type McpServerRow, type ProvidersDialogTab, parseMcpListOutput } from "../chat/slash";
 import type { SessionChatStatus } from "../chat/types";
 import type { ChatPrefs } from "../chat/visibility";
 import { appendOptimisticAbort, appendOptimisticUser, type ChatTranscriptState, emptyTranscript, needsUiReply } from "../chatTranscript";
 import { askConfirm, confirmDanger, confirmStopAndSwitch } from "../confirm";
 import * as ipc from "../ipc";
 import { NameEditor } from "../NameEditor";
-import { setAutoCompactionCommand } from "../ompRpc";
+import { compactCommand, getStateCommand, promptCommand, setAutoCompactionCommand } from "../ompRpc";
 import { SessionTerminal } from "../SessionTerminal";
 import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
 import { isTurnActive, OMP_INTERRUPT_DATA } from "../sessionMessage";
 import { Checkbox, Dialog, obsLabel, StatusMarker } from "../shared";
 import type { ChatThread, SessionObservation } from "../types";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
-import { ChatModelDialog } from "./ChatModelDialog";
+import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatPane } from "./ChatPane";
+import { ChatToolsDialog } from "./ChatToolsDialog";
 import {
   abortTurnCommand,
   applyChatValue,
@@ -47,6 +49,7 @@ import {
   sendCommand,
   sendNowCommand,
 } from "./chatSession";
+import { ProviderSetupDialog } from "./ProviderSetupDialog";
 import { useChatUiReplies } from "./useChatUiReplies";
 
 function threadLabel(thread: ChatThread): string {
@@ -162,7 +165,11 @@ export function ChatView({ active = true, knownRepos, terminalFontSize, visibili
   const [link, setLink] = useState<Keyed<Link> | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(() => new Set());
-  const [modelOpen, setModelOpen] = useState(false);
+  const [providersDialog, setProvidersDialog] = useState<{ tab: ProvidersDialogTab; preselect: string } | null>(null);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [mcpDialog, setMcpDialog] = useState<{ rows: McpServerRow[]; empty: boolean } | null>(null);
+  // The thread whose `/mcp list` output should open the MCP dialog rather than only land in the transcript.
+  const mcpListWait = useRef<string | null>(null);
   const [railObservations, setRailObservations] = useState<Record<string, SessionObservation>>({});
   // A send that had to start or resume its thread first. It is delivered after that thread's
   // handshake and only to that thread; selecting any other thread cancels it, and its text stays
@@ -264,7 +271,10 @@ export function ChatView({ active = true, knownRepos, terminalFontSize, visibili
     const claimed = pendingPrompt.current;
     let cancelled = false;
     setRenaming(false);
-    setModelOpen(false);
+    setProvidersDialog(null);
+    setToolsOpen(false);
+    setMcpDialog(null);
+    mcpListWait.current = null;
     setError((current) => (current === "cannot continue" ? "" : current));
     setLink({ key, value: { state: "connecting" } });
     // Polled like a task session's status: OMP's `ready` and every turn end land after this runs.
@@ -320,6 +330,14 @@ export function ChatView({ active = true, knownRepos, terminalFontSize, visibili
               if (cancelled) return;
               const value = parseChatLine(line);
               updateTranscript(key, (current) => applyChatValue(current, value));
+              if (mcpListWait.current === key) {
+                const listed = commandOutputText(value);
+                if (listed !== null) {
+                  mcpListWait.current = null;
+                  const parsed = parseMcpListOutput(listed);
+                  setMcpDialog(parsed === "empty" ? { rows: [], empty: true } : { rows: parsed, empty: false });
+                }
+              }
               const refresh = queueRefreshCommand(value);
               if (refresh) ipc.chatRpcWrite(repo, id, refresh).catch(() => {});
             },
@@ -576,10 +594,10 @@ export function ChatView({ active = true, knownRepos, terminalFontSize, visibili
    * The draft stays in the composer until the write lands, so a failed send loses nothing. A thread
    * with no process is started or resumed first, and the text goes out after that thread's handshake.
    */
-  async function send() {
+  async function send(override?: string) {
     if (!selected || !selectionKey || sending) return;
     const key = selectionKey;
-    const text = drafts[key] ?? "";
+    const text = override ?? drafts[key] ?? "";
     if (!text.trim()) return;
     const repo = selected.repo_path;
     const id = selected.session.id;
@@ -641,24 +659,35 @@ export function ChatView({ active = true, knownRepos, terminalFontSize, visibili
     const busy = activity.turnActive;
     const plan = planChatSend(text, transcript.commands, busy);
     const dispatch = plan.dispatch;
-    if (dispatch.kind === "open-providers" && dispatch.tab === "models") {
+    if (dispatch.kind === "open-providers") {
       setDrafts(clearDraft(key, text));
-      setModelOpen(true);
+      setProvidersDialog({ tab: dispatch.tab, preselect: dispatch.args });
       return;
     }
-    if (dispatch.kind === "hatch" || dispatch.kind === "open-providers") {
+    if (dispatch.kind === "hatch") {
       // Terminal-only in OMP: nothing to write over RPC. The notice points at the terminal button.
-      const notice = dispatch.kind === "hatch" ? dispatch.reason : `/${text.slice(1).split(/\s+/)[0]} runs in OMP's terminal. Use the terminal button in the title bar.`;
-      updateTranscript(key, (current) => applySendPlan(current, text, { ...plan, notice }).state);
+      updateTranscript(key, (current) => applySendPlan(current, text, plan).state);
       setDrafts(clearDraft(key, text));
       return;
     }
+    // Same routing as a task session's `dispatchChatPlan`: these have typed RPC or a dialog of their own.
+    const command =
+      dispatch.kind === "compact"
+        ? compactCommand(dispatch.customInstructions)
+        : dispatch.kind === "get-tools"
+          ? getStateCommand()
+          : dispatch.kind === "mcp-list"
+            ? promptCommand("/mcp list")
+            : sendCommand(text, busy);
+    if (dispatch.kind === "mcp-list") mcpListWait.current = key;
     setSendingKey(key);
     try {
-      await ipc.chatRpcWrite(repo, id, sendCommand(text, busy));
+      await ipc.chatRpcWrite(repo, id, command);
+      if (dispatch.kind === "get-tools") setToolsOpen(true);
       updateTranscript(key, (current) => applySendPlan(current, text, plan).state);
       setDrafts(clearDraft(key, text));
     } catch (cause) {
+      if (mcpListWait.current === key) mcpListWait.current = null;
       setError(errorMessage(cause));
     } finally {
       setSendingKey((current) => (current === key ? null : current));
@@ -877,7 +906,7 @@ export function ChatView({ active = true, knownRepos, terminalFontSize, visibili
               <>
                 {inTerminal ? null : (
                   <>
-                    <button type="button" className="btn ghost small chat-model-btn" onClick={() => setModelOpen(true)} title="Change model">
+                    <button type="button" className="btn ghost small chat-model-btn" onClick={() => setProvidersDialog({ tab: "models", preselect: "" })} title="Change model">
                       <span className="chat-model-label">{modelLabel}</span>
                       <ChevronDown size={14} aria-hidden="true" />
                     </button>
@@ -954,7 +983,11 @@ export function ChatView({ active = true, knownRepos, terminalFontSize, visibili
           <div className="chat-blank">
             <MessageSquare size={28} aria-hidden="true" />
             <p className="chat-blank-title">No thread selected</p>
-            <p className="chat-blank-hint">Choose a thread on the left, or start one in a repository.</p>
+            <p className="chat-blank-hint">Choose a thread on the left, or start a new one.</p>
+            <button type="button" className="btn small chat-new-btn" onClick={() => startThreadIn(dirs[0] ?? "")}>
+              <Plus size={14} aria-hidden="true" />
+              Start a new chat
+            </button>
           </div>
         )}
         {disconnected !== null ? (
@@ -980,7 +1013,8 @@ export function ChatView({ active = true, knownRepos, terminalFontSize, visibili
         {!inTerminal && uiPrompt ? (
           <ChatExtensionPrompt request={uiPrompt} onSubmit={(value) => void uiReplies.reply(uiPrompt.id, value)} onCancel={() => void uiReplies.cancel(uiPrompt.id)} />
         ) : null}
-        {inTerminal ? null : (
+        {/* No composer without a thread: drafts are per thread, so the box would swallow every keystroke. */}
+        {inTerminal || !selected ? null : (
           <ChatComposer
             body={body}
             status={activity.status}
@@ -1037,22 +1071,32 @@ export function ChatView({ active = true, knownRepos, terminalFontSize, visibili
           </div>
         </Dialog>
       ) : null}
-      {modelOpen && selected ? (
-        <ChatModelDialog
-          tab="models"
-          models={transcript.sessionMeta.models ?? []}
-          current={transcript.sessionMeta.model ?? selected.session.model}
-          loginProviders={transcript.sessionMeta.loginProviders ?? []}
-          modelRoles={{}}
-          onTabChange={() => {}}
-          onApplyModel={(provider, modelId) => {
-            ipc.chatRpcWrite(selected.repo_path, selected.session.id, applyModelCommand(provider, modelId)).catch((cause: unknown) => setError(String(cause)));
-            setModelOpen(false);
+      {providersDialog && selected ? (
+        // The setup session's dialog, not a bare ChatModelDialog: it owns the hosted catalogue, tab
+        // state and login, which a thread's own RPC stream does not. Credentials are app-wide.
+        <ProviderSetupDialog
+          mode="manual"
+          initialTab={providersDialog.tab}
+          preselect={providersDialog.preselect}
+          onPick={(model) => {
+            const slash = model.indexOf("/");
+            ipc
+              .chatRpcWrite(selected.repo_path, selected.session.id, applyModelCommand(model.slice(0, slash), model.slice(slash + 1)))
+              .catch((cause: unknown) => setError(String(cause)));
           }}
-          onLogin={() => {}}
-          onHatchTerminalLogin={() => {}}
-          onAssignRole={() => {}}
-          onClose={() => setModelOpen(false)}
+          onClose={() => setProvidersDialog(null)}
+        />
+      ) : null}
+      {toolsOpen ? <ChatToolsDialog tools={transcript.sessionMeta.dumpTools ?? []} onClose={() => setToolsOpen(false)} /> : null}
+      {mcpDialog ? (
+        <ChatMcpDialog
+          rows={mcpDialog.rows}
+          empty={mcpDialog.empty}
+          onPrompt={(message) => {
+            setMcpDialog(null);
+            void send(message);
+          }}
+          onClose={() => setMcpDialog(null)}
         />
       ) : null}
     </div>
