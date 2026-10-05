@@ -1048,9 +1048,7 @@ fn rename_task_uses_owned_explicit_repo_and_returns_committed_record() {
         task.parent_task = "parent".into();
         write_task(repo, &task).unwrap();
     }
-    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
-    context.config_mut().identifier = format!("test.alinery.task-names.{}", uuid::Uuid::new_v4());
-    let app = tauri::test::mock_builder().manage(AppState::default()).build(context).unwrap();
+    let (app, _config_dir) = build_mock_app("task-names", tauri::test::mock_builder().manage(AppState::default()));
     let config_path = crate::app_config_path(app.handle()).unwrap();
     crate::write_app_config_at(
         &config_path,
@@ -1075,7 +1073,6 @@ fn rename_task_uses_owned_explicit_repo_and_returns_committed_record() {
     set_active_repo_global(None).unwrap();
     drop(app);
     drop(owner);
-    let _ = fs::remove_dir_all(config_path.parent().unwrap());
     let _ = fs::remove_dir_all(repo_a);
     let _ = fs::remove_dir_all(repo_b);
 }
