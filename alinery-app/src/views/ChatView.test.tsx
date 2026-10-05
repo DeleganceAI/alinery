@@ -14,6 +14,9 @@ vi.mock("../confirm", () => ({
   askConfirm: vi.fn(async () => "cancel"),
 }));
 vi.mock("../SessionTerminal", () => ({ SessionTerminal: () => <div data-testid="terminal" /> }));
+vi.mock("./ProviderSetupDialog", () => ({
+  ProviderSetupDialog: ({ initialTab, preselect }: { initialTab?: string; preselect?: string }) => <div data-testid="providers" data-tab={initialTab} data-preselect={preselect} />,
+}));
 
 const mocks = vi.hoisted(() => ({
   listChatThreads: vi.fn(),
@@ -181,12 +184,21 @@ describe("ChatView", () => {
     expect(mocks.archiveChatThread).not.toHaveBeenCalled();
   });
 
-  it("starts the rail collapsed at 900 and keeps the composer", () => {
+  it("starts the rail collapsed at 900 and still offers a new chat", () => {
     mocks.listChatThreads.mockResolvedValue([]);
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
     render(chat());
     expect(screen.queryByTestId("chat-rail")).toBeNull();
-    expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Start a new chat" })).toBeTruthy();
+  });
+
+  it("hides the composer until a thread is picked and starts a new chat in the first repo", async () => {
+    mocks.listChatThreads.mockResolvedValue([]);
+    render(<ChatView knownRepos={["", "/first", "/second"]} terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />);
+    expect(screen.queryByLabelText("Message or /command")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Start a new chat" }));
+    const dialog = await screen.findByRole("dialog", { name: "New thread" });
+    expect((within(dialog).getByRole("combobox") as HTMLSelectElement).value).toBe("/first");
   });
 
   it("lists archived threads and resumes immediately", async () => {
@@ -319,6 +331,43 @@ describe("ChatView", () => {
     fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: text } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
   }
+
+  it("opens the providers dialog on the tab a slash command names, with its model preselected", async () => {
+    await openLive(observed("idle"));
+    sendIdle("/login");
+    expect((await screen.findByTestId("providers")).dataset.tab).toBe("accounts");
+    expect(mocks.chatRpcWrite).toHaveBeenCalledTimes(7);
+    cleanup();
+    await openLive(observed("idle"));
+    sendIdle("/model alinery/fast");
+    const dialog = await screen.findByTestId("providers");
+    expect(dialog.dataset.tab).toBe("models");
+    expect(dialog.dataset.preselect).toBe("alinery/fast");
+  });
+
+  it("compacts with typed RPC instead of prompting /compact", async () => {
+    await openLive(observed("idle"));
+    sendIdle("/compact keep the API");
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "compact", customInstructions: "keep the API" })));
+    expect(mocks.chatRpcWrite).not.toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "prompt" }));
+  });
+
+  it("opens the tools dialog from a fresh get_state", async () => {
+    await openLive(observed("idle"));
+    sendIdle("/tools");
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledTimes(8));
+    expect(mocks.chatRpcWrite).toHaveBeenLastCalledWith("/repo", "s-live", expect.objectContaining({ type: "get_state" }));
+    expect(await screen.findByRole("dialog", { name: "Tools this turn" })).toBeTruthy();
+  });
+
+  it("opens the MCP dialog from /mcp list output", async () => {
+    const { emit } = await openLive(observed("idle"));
+    sendIdle("/mcp");
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "prompt", message: "/mcp list" })));
+    emit({ type: "command_output", text: "gh | http | enabled | project" });
+    const dialog = await screen.findByRole("dialog", { name: "MCP servers" });
+    expect(within(dialog).getByText(/gh/)).toBeTruthy();
+  });
 
   it("prompts again on an idle thread once the previous turn ends", async () => {
     const { emit } = await openLive(observed("idle"));

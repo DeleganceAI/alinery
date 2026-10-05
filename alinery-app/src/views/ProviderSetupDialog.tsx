@@ -48,12 +48,15 @@ const DAEMON_BACKOFF_MS = [250, 500, 1000, 2000] as const;
 export function ProviderSetupDialog({
   mode,
   initialTab = "accounts",
+  preselect = "",
   unsignedOpensAccounts = false,
   onPick,
   onClose,
 }: {
   mode: ProviderSetupMode;
   initialTab?: ProvidersDialogTab;
+  /** `/model provider/id` typed in a chat: filters the Models tab to it. */
+  preselect?: string;
   /**
    * Form pickers (create task/session, review handoff) land on Accounts once the catalogue
    * is ready and this install still needs setup. Settings model field omits this.
@@ -348,7 +351,7 @@ export function ProviderSetupDialog({
       setup={mode === "auto"}
       models={models}
       current={chat.sessionMeta.model}
-      preselect=""
+      preselect={preselect}
       loginProviders={chat.sessionMeta.loginProviders ?? []}
       livePromotedIds={livePromotedIds}
       modelRoles={modelRoles}
