@@ -5389,13 +5389,17 @@ dialog.modal::backdrop {
   gap: 8px;
 }
 .chat-composer-prompt {
-  margin-bottom: 2px;
+  margin-bottom: 3px;
+  line-height: 20px;
   font-family: var(--font-mono);
   font-size: 14px;
   color: var(--accent);
   user-select: none;
 }
+/* The row bottom-aligns so the buttons stay on the last line as the field grows. The 3px
+   margins center a 20px line on the 26px `.btn.small` beside it. */
 .chat-composer-field {
+  margin-block: 3px;
   min-width: 0;
   flex: 1;
   min-height: var(--composer-min);
