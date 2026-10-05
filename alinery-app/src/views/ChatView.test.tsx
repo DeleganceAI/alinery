@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   createChatThread: vi.fn(),
   chatSessionStatus: vi.fn(),
   chatRpcAttach: vi.fn(),
+  onStreamClosed: vi.fn(),
   chatDetach: vi.fn(),
   chatRpcWrite: vi.fn(),
   chatRestate: vi.fn(),
@@ -47,6 +48,7 @@ vi.mock("../ipc", () =>
     createChatThread: mocks.createChatThread,
     chatSessionStatus: mocks.chatSessionStatus,
     chatRpcAttach: mocks.chatRpcAttach,
+    onStreamClosed: mocks.onStreamClosed,
     chatDetach: mocks.chatDetach,
     chatRpcWrite: mocks.chatRpcWrite,
     chatRestate: mocks.chatRestate,
@@ -121,6 +123,7 @@ afterEach(() => {
 beforeEach(() => {
   mocks.chatSessionStatus.mockResolvedValue(null);
   mocks.chatRpcAttach.mockResolvedValue(undefined);
+  mocks.onStreamClosed.mockReset().mockReturnValue(() => {});
   mocks.chatDetach.mockResolvedValue(undefined);
   mocks.chatRpcWrite.mockResolvedValue(undefined);
   mocks.chatRestate.mockResolvedValue(undefined);
@@ -335,6 +338,26 @@ describe("ChatView", () => {
     fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: text } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
   }
+
+  it("reattaches when the daemon drops the live stream, and leaves a thread moved to Terminal alone", async () => {
+    await openLive(observed("busy", "alive", "rpc"));
+    expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(1);
+    const [, , onClosed] = mocks.onStreamClosed.mock.calls[0] as [string, number, () => void];
+    act(() => onClosed());
+    await waitFor(() => expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(2));
+    mocks.chatSessionStatus.mockResolvedValue(observed("idle", "alive", "pty"));
+    const [, , closedAgain] = mocks.onStreamClosed.mock.calls[mocks.onStreamClosed.mock.calls.length - 1] as [string, number, () => void];
+    act(() => closedAgain());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops reattaching once the stream keeps dropping", async () => {
+    await openLive(observed("busy", "alive", "rpc"));
+    const [, , , onGiveUp] = mocks.onStreamClosed.mock.calls[0] as [string, number, () => void, () => void];
+    act(() => onGiveUp());
+    expect(await screen.findByRole("button", { name: "Reconnect" })).toBeTruthy();
+  });
 
   it("opens the providers dialog on the tab a slash command names, with its model preselected", async () => {
     await openLive(observed("idle"));

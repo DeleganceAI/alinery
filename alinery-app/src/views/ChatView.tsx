@@ -179,9 +179,8 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
   // handshake and only to that thread; selecting any other thread cancels it, and its text stays
   // in the thread's composer.
   const pendingPrompt = useRef<{ key: string; text: string } | null>(null);
-  // A fresh attach id per run: a re-run for the same thread (back from Terminal) must not let the
-  // previous run's fire-and-forget detach drop the new attach, which shares the daemon's id space.
-  const attachSeq = useRef(0);
+  // A fresh attach id per run (`ipc.nextAttachId`): a re-run for the same thread (back from
+  // Terminal) must not let the previous run's fire-and-forget detach drop the new attach.
   const [attachEpoch, setAttachEpoch] = useState(0);
   const [hatchBusy, setHatchBusy] = useState(false);
   // Hidden behind another tab the view stays mounted; its pollers skip their ticks.
@@ -295,7 +294,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     const key = `${repo}:${id}`;
     compactionPushed.current = `${key}:${autoCompactionRef.current}`;
     turnWasActive.current = false;
-    const attachId = ++attachSeq.current;
+    const attachId = ipc.nextAttachId();
     if (pendingPrompt.current && pendingPrompt.current.key !== key) {
       pendingPrompt.current = null;
       setSendingKey(null);
@@ -309,6 +308,23 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     mcpListWait.current = null;
     setError((current) => (current === "cannot continue" ? "" : current));
     setLink({ key, value: { state: "connecting" } });
+    // Dropped by the daemon mid-turn: re-read the journal and reattach, while OMP is still up in
+    // chat. A hatch to Terminal also closes this stream; that process is PTY and is left alone.
+    const stopClosed = ipc.onStreamClosed(
+      id,
+      attachId,
+      () => {
+        ipc
+          .chatSessionStatus(repo, id)
+          .then((next) => {
+            if (!cancelled && next.transport === "rpc" && next.lifecycle.state === "live") setAttachEpoch((epoch) => epoch + 1);
+          })
+          .catch(() => {});
+      },
+      () => {
+        if (!cancelled) setLink({ key, value: { state: "failed", detail: "The live view kept falling behind. Reconnect to resume." } });
+      },
+    );
     // Polled like a task session's status: OMP's `ready` and every turn end land after this runs.
     // A failed read keeps the last observation; null would read Loading mid-turn.
     const observe = () => {
@@ -403,6 +419,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      stopClosed();
       ipc.chatDetach(repo, id, attachId).catch(() => {});
     };
   }, [selectedId, selectedRepo, attachEpoch]);

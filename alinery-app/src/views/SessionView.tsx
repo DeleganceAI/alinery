@@ -371,7 +371,6 @@ export function SessionView({
   const [livePromotedIds, setLivePromotedIds] = useState<string[]>([]);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [mcpDialog, setMcpDialog] = useState<{ rows: McpServerRow[]; empty: boolean } | null>(null);
-  const chatAttachIdRef = useRef(0);
   const [chatAttachEpoch, setChatAttachEpoch] = useState(0);
   const ompStartRef = useRef<string | null>(null);
   const ompSeedRef = useRef<{ id: string; done: Promise<unknown> } | null>(null);
@@ -1387,8 +1386,23 @@ export function SessionView({
   useEffect(() => {
     if (!liveRpc) return;
     let cancelled = false;
-    chatAttachIdRef.current += 1;
-    const attachId = chatAttachIdRef.current;
+    const attachId = ipc.nextAttachId();
+    // Dropped by the daemon mid-turn (see `ipc.onStreamClosed`): reattach while still live in RPC.
+    const stopClosed = ipc.onStreamClosed(
+      id,
+      attachId,
+      () => {
+        ipc
+          .sessionStatus(id, taskSlug || null)
+          .then((next) => {
+            if (!cancelled && next.transport === "rpc" && next.lifecycle.state === "live") setChatAttachEpoch((epoch) => epoch + 1);
+          })
+          .catch(() => undefined);
+      },
+      () => {
+        if (!cancelled) setTerminalConnection("failed");
+      },
+    );
     // The session-id effect already clears the transcript on a real session change. Do not
     // emptyTranscript() here: a liveRpc flap would wipe visible history. The poll catch above
     // keeps the last observation so a transient error does not re-enter; a later successful
@@ -1548,6 +1562,7 @@ export function SessionView({
       });
     return () => {
       cancelled = true;
+      stopClosed();
       void ipc.detachSession(id, attachId);
     };
   }, [liveRpc, rpcProcessLive, id, taskSlug, seedOmpJournal, chatAttachEpoch]);

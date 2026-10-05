@@ -97,7 +97,9 @@ import type {
 } from "./types";
 
 export { getName, getVersion } from "@tauri-apps/api/app";
-export { listen } from "@tauri-apps/api/event";
+
+import { listen } from "@tauri-apps/api/event";
+
 export { homeDir } from "@tauri-apps/api/path";
 export type { Webview } from "@tauri-apps/api/webview";
 export { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -106,7 +108,7 @@ export { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 // ── platform (non-command Tauri APIs) ─────────────────────────────────
 // Re-exported rather than imported directly by consumers, so the boundary gate has a
 // single file to police and tests have a single module to mock.
-export { Channel };
+export { Channel, listen };
 
 // ── app_config.rs ─────────────────────────────────────────────────────
 export type PickedFolder = { kind: "checkout"; root: string } | { kind: "absent"; path: string } | { kind: "refused"; message: string };
@@ -452,3 +454,40 @@ export const ompCustomizationPrompt = () => invoke<string>("omp_customization_pr
 
 // ── omp_customizations.rs ─────────────────────────────────────────────
 export const readOmpCustomizations = () => invoke<OmpCustomizations>("read_omp_customizations");
+
+// One attach-id space per daemon session, shared by every pane that can attach to it (terminal,
+// chat, session chat). Per-pane counters collided: one pane's detach dropped another's stream.
+let attachIdSeq = 1;
+export const nextAttachId = () => attachIdSeq++;
+
+const STREAM_RECOVERY_WINDOW_MS = 30_000;
+const STREAM_RECOVERY_MAX = 6;
+const streamCloses = new Map<string, number[]>();
+
+/**
+ * The daemon drops an RPC client that falls 2 MB behind, or whose socket fails, so it can never
+ * block OMP; the attach's reader then emits `session_stream_closed`. Without a listener the view
+ * keeps showing a running turn that never prints again while OMP works on. `onClosed` fires for
+ * this attach only; `onGiveUp` replaces it after STREAM_RECOVERY_MAX closes in 30s, so a view that
+ * genuinely cannot keep up stops instead of re-reading the journal in a loop. Returns the unlisten.
+ */
+export function onStreamClosed(id: string, attachId: number, onClosed: () => void, onGiveUp: () => void): () => void {
+  let disposed = false;
+  let stop: (() => void) | null = null;
+  void listen<{ id: string; attach_id: number }>("session_stream_closed", (event) => {
+    if (disposed || event.payload.id !== id || event.payload.attach_id !== attachId) return;
+    const now = Date.now();
+    const recent = (streamCloses.get(id) ?? []).filter((at) => now - at < STREAM_RECOVERY_WINDOW_MS);
+    recent.push(now);
+    streamCloses.set(id, recent);
+    if (recent.length > STREAM_RECOVERY_MAX) onGiveUp();
+    else onClosed();
+  }).then((unlisten) => {
+    if (disposed) unlisten();
+    else stop = unlisten;
+  });
+  return () => {
+    disposed = true;
+    stop?.();
+  };
+}
