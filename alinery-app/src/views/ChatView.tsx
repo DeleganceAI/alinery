@@ -149,13 +149,16 @@ function clearDraft(key: string, text: string) {
 
 const RESUME_IN_CHECKOUT = "The conversation is kept. Continuing it later opens in the repository checkout, on whatever branch is checked out then, not on this worktree's branch.";
 
-export function ChatView({ active = true, knownRepos, terminalFontSize, visibility }: { active?: boolean; knownRepos: string[]; terminalFontSize: number; visibility: ChatPrefs }) {
+export function ChatView({ active = true, terminalFontSize, visibility }: { active?: boolean; terminalFontSize: number; visibility: ChatPrefs }) {
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(() => window.innerWidth <= 900);
   const [creating, setCreating] = useState(false);
-  const [repoPath, setRepoPath] = useState(knownRepos.find((path) => path.length > 0) ?? "");
+  // null until the first read: the thread list waits for it rather than loading twice.
+  const [openRepos, setOpenRepos] = useState<string[] | null>(null);
+  const dirs = openRepos ?? [];
+  const [pickedRepo, setRepoPath] = useState("");
   const [createWorktree, setCreateWorktree] = useState(false);
   // Per thread, so a half-written message stays with the thread it was written for.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -186,7 +189,11 @@ export function ChatView({ active = true, knownRepos, terminalFontSize, visibili
   activeRef.current = active;
   const selectedKeyRef = useRef(selectedKey);
   selectedKeyRef.current = selectedKey;
-  const dirs = knownRepos.filter((path) => path.length > 0);
+  const showArchivedRef = useRef(showArchived);
+  showArchivedRef.current = showArchived;
+  const reposKey = openRepos?.join("\n");
+  // A pick whose repo has since closed falls back to the first open one.
+  const repoPath = dirs.includes(pickedRepo) ? pickedRepo : (dirs[0] ?? "");
 
   const reload = async (archived = showArchived) => {
     const rows = await ipc.listChatThreads(archived);
@@ -194,10 +201,34 @@ export function ChatView({ active = true, knownRepos, terminalFontSize, visibili
     return rows;
   };
 
+  // Chat follows the app's open repos: a repo closed at the top level, held by another Alinery,
+  // or without a connected daemon drops out with its threads. Polled while visible; the thread
+  // list reloads only when that set changes.
   useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    const poll = () => {
+      ipc
+        .listChatRepos()
+        .then((next) => {
+          if (!cancelled) setOpenRepos((prev) => (prev?.join("\n") === next.join("\n") ? prev : next));
+        })
+        .catch(() => {});
+    };
+    poll();
+    const timer = window.setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [active]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reposKey is the trigger; the open-repo set changed.
+  useEffect(() => {
+    if (reposKey === undefined) return;
     let cancelled = false;
     ipc
-      .listChatThreads(false)
+      .listChatThreads(showArchivedRef.current)
       .then((rows) => {
         if (!cancelled) setThreads(rows);
       })
@@ -207,7 +238,7 @@ export function ChatView({ active = true, knownRepos, terminalFontSize, visibili
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reposKey]);
 
   // One batched read for every live thread in the rail, not a poller per row. The selected thread
   // also has its own 1.5s poll and live transcript, which the rail prefers for that row.

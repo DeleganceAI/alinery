@@ -1298,12 +1298,7 @@ export default function App() {
                 reading position survive a trip to Tasks or Settings. Hidden, it stops polling. */}
               {showChat && (chatVisited || view.kind === "chat") && (
                 <div className="view" hidden={view.kind !== "chat" || daemon.repo_busy}>
-                  <ChatView
-                    active={view.kind === "chat" && !daemon.repo_busy}
-                    knownRepos={appConfig?.known_repos ?? []}
-                    terminalFontSize={appearance.terminal_font_size}
-                    visibility={chatViewVisibility}
-                  />
+                  <ChatView active={view.kind === "chat" && !daemon.repo_busy} terminalFontSize={appearance.terminal_font_size} visibility={chatViewVisibility} />
                 </div>
               )}
             </main>

@@ -271,6 +271,8 @@ export const discardSubtask = (taskSlug: string, managerSessionId: string) => in
 // ── session.rs ────────────────────────────────────────────────────────
 
 export const renameSession = (a: { repoPath: string; taskSlug: string; sessionId: string; name: string }) => invoke<SessionName>("rename_session", a);
+/** Repos open in this window (owned, daemon connected): the only repos chat lists or offers. */
+export const listChatRepos = () => invoke<string[]>("list_chat_repos");
 export const listChatThreads = (includeArchived: boolean) => invoke<ChatThread[]>("list_chat_threads", { includeArchived });
 export const chatThreadName = (repoPath: string, sessionId: string) => invoke<string | null>("chat_thread_name", { repoPath, sessionId });
 export const createChatThread = (a: { repoPath: string; model?: string | null; createWorktree: boolean }) => invoke<CreateExecutionSessionReply>("create_chat_thread", a);

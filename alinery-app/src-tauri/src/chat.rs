@@ -341,8 +341,24 @@ pub(crate) fn resume_chat_thread_in(repo: &Path, predecessor_id: &str, daemon: O
     load_root_omp(repo, &successor_id)
 }
 
-fn known_chat_repos(app: &AppHandle) -> Result<Vec<PathBuf>, String> {
-    Ok(load_app_config(app).known_repos.into_iter().map(PathBuf::from).filter(|path| path.is_dir()).collect())
+/// Chat shows only repos that are open in this window: this window holds the repo's GUI
+/// flock, a daemon is connected for it, and no close is in flight. A repo another Alinery
+/// holds, one whose daemon is stopped or conflicted, or one being closed drops out of the
+/// rail with its threads, rather than listing threads every action on would refuse.
+pub(crate) fn open_chat_repos_in(known: &[String], state: &AppState) -> Vec<PathBuf> {
+    known
+        .iter()
+        .map(PathBuf::from)
+        .filter(|repo| repo.is_dir() && state.owns_repo(repo) && !state.is_closing(repo) && state.daemon_for(repo).is_some())
+        .collect()
+}
+
+#[tauri::command]
+pub(crate) fn list_chat_repos(app: AppHandle, state: State<'_, AppState>) -> Vec<String> {
+    open_chat_repos_in(&load_app_config(&app).known_repos, &state)
+        .into_iter()
+        .map(|repo| repo.to_string_lossy().into_owned())
+        .collect()
 }
 
 fn owned_chat_repo(app: &AppHandle, state: &AppState, repo_path: &str) -> Result<PathBuf, String> {
@@ -356,8 +372,8 @@ fn chat_daemon(state: &AppState, repo: &Path) -> Result<DaemonClient, String> {
 }
 
 #[tauri::command]
-pub(crate) async fn list_chat_threads(app: AppHandle, include_archived: bool) -> Result<Vec<ChatThread>, String> {
-    let repos = known_chat_repos(&app)?;
+pub(crate) async fn list_chat_threads(app: AppHandle, state: State<'_, AppState>, include_archived: bool) -> Result<Vec<ChatThread>, String> {
+    let repos = open_chat_repos_in(&load_app_config(&app).known_repos, &state);
     // A directory scan plus a git call per worktree thread: never on the main thread.
     tauri::async_runtime::spawn_blocking(move || list_chat_threads_in(&repos, include_archived))
         .await

@@ -20,6 +20,7 @@ vi.mock("./ProviderSetupDialog", () => ({
 
 const mocks = vi.hoisted(() => ({
   listChatThreads: vi.fn(),
+  listChatRepos: vi.fn(),
   archiveChatThread: vi.fn(),
   setChatPinned: vi.fn(),
   resumeChatThread: vi.fn(),
@@ -39,6 +40,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../ipc", () =>
   mockIpc({
     listChatThreads: mocks.listChatThreads,
+    listChatRepos: mocks.listChatRepos,
     archiveChatThread: mocks.archiveChatThread,
     setChatPinned: mocks.setChatPinned,
     resumeChatThread: mocks.resumeChatThread,
@@ -56,7 +58,7 @@ vi.mock("../ipc", () =>
   }),
 );
 function chat(visibility: ChatPrefs = DEFAULT_CHAT_VISIBILITY) {
-  return <ChatView knownRepos={["/repo"]} terminalFontSize={13} visibility={visibility} />;
+  return <ChatView terminalFontSize={13} visibility={visibility} />;
 }
 
 function meta(id: string, extra: Partial<SessionMeta> = {}): SessionMeta {
@@ -128,6 +130,7 @@ beforeEach(() => {
   mocks.archiveChatThread.mockResolvedValue(undefined);
   mocks.setChatPinned.mockReset().mockResolvedValue(undefined);
   mocks.listChatThreads.mockResolvedValue([]);
+  mocks.listChatRepos.mockResolvedValue(["/repo"]);
   mocks.chatThreadName.mockResolvedValue(null);
 });
 
@@ -194,7 +197,8 @@ describe("ChatView", () => {
 
   it("hides the composer until a thread is picked and starts a new chat in the first repo", async () => {
     mocks.listChatThreads.mockResolvedValue([]);
-    render(<ChatView knownRepos={["", "/first", "/second"]} terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />);
+    mocks.listChatRepos.mockResolvedValue(["/first", "/second"]);
+    render(<ChatView terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />);
     expect(screen.queryByLabelText("Message or /command")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Start a new chat" }));
     const dialog = await screen.findByRole("dialog", { name: "New thread" });
@@ -882,11 +886,27 @@ describe("ChatView", () => {
     await waitFor(() => expect(remove.disabled).toBe(true));
   });
 
+  it("drops a repo's threads once it is no longer open in the app", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatRepos.mockResolvedValueOnce(["/repo"]).mockResolvedValue([]);
+      mocks.listChatThreads.mockResolvedValueOnce([thread("s-live")]).mockResolvedValue([]);
+      render(chat());
+      expect(await screen.findByRole("button", { name: threadRow("s-live") })).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(3000);
+      await waitFor(() => expect(screen.queryByRole("button", { name: threadRow("s-live") })).toBeNull());
+      expect(mocks.listChatThreads).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("tells same-named repositories apart in the new-thread dialog and shows the full path", async () => {
-    render(<ChatView knownRepos={["/a/work/alinery", "/a/oss/alinery"]} terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />);
+    mocks.listChatRepos.mockResolvedValue(["/a/work/alinery", "/a/oss/alinery"]);
+    render(<ChatView terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />);
     fireEvent.click(screen.getByRole("button", { name: "New thread" }));
     const select = screen.getByRole("combobox") as HTMLSelectElement;
-    expect(Array.from(select.options).map((option) => option.textContent)).toEqual(["work/alinery", "oss/alinery"]);
+    await waitFor(() => expect(Array.from(select.options).map((option) => option.textContent)).toEqual(["work/alinery", "oss/alinery"]));
     expect(screen.getByText("/a/work/alinery")).toBeTruthy();
   });
 });
