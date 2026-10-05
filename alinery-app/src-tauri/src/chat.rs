@@ -487,35 +487,7 @@ pub(crate) fn chat_rpc_attach(
     let repo = owned_chat_repo(&app, &state, &repo_path)?;
     let _ = load_root_omp(&repo, &id)?;
     let daemon = chat_daemon(&state, &repo)?;
-    let mut stream = daemon.send(&daemon_client::rpc_attach_request(&id, attach_id))?;
-    let line = read_socket_line(&mut stream).map_err(|error| match error {
-        SocketReadError::Closed => "daemon closed".to_string(),
-        SocketReadError::TimedOut => format!("daemon not responding after {}", format_daemon_timeout(DAEMON_CONTROL_TIMEOUT)),
-    })?;
-    let response: Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
-    if let Some(error) = daemon_client::reply_error(&response) {
-        return Err(error.to_string());
-    }
-    let event_id = id.clone();
-    std::thread::spawn(move || {
-        use std::io::{BufRead, BufReader};
-        let mut reader = BufReader::new(stream);
-        let mut buf = String::new();
-        loop {
-            buf.clear();
-            match reader.read_line(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {
-                    let line = buf.trim_end_matches(['\n', '\r']).to_string();
-                    if on_line.send(line).is_err() {
-                        break;
-                    }
-                }
-            }
-        }
-        let _ = app.emit("session_stream_closed", json!({ "id": event_id, "attach_id": attach_id, "stream_token": stream_token }));
-    });
-    Ok(())
+    attach_rpc_stream(app, &daemon, id, attach_id, stream_token, on_line)
 }
 
 #[tauri::command]

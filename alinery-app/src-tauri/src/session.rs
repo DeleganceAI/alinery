@@ -1059,6 +1059,12 @@ pub(crate) fn rpc_write_session(state: State<'_, AppState>, id: String, payload:
 pub(crate) fn rpc_attach_session(state: State<'_, AppState>, app: AppHandle, id: String, attach_id: u64, stream_token: u64, on_line: Channel<String>) -> Result<(), String> {
     let _repo = require_owned_active_repo(&state)?;
     let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
+    attach_rpc_stream(app, &daemon, id, attach_id, stream_token, on_line)
+}
+
+/// Attach to a session's RPC lines and pump them into `on_line` until the daemon closes the
+/// stream, then emit `session_stream_closed`. Shared by chat and session chat.
+pub(crate) fn attach_rpc_stream(app: AppHandle, daemon: &DaemonClient, id: String, attach_id: u64, stream_token: u64, on_line: Channel<String>) -> Result<(), String> {
     let mut stream = daemon.send(&daemon_client::rpc_attach_request(&id, attach_id))?;
     let line = read_socket_line(&mut stream).map_err(|error| match error {
         SocketReadError::Closed => "daemon closed".to_string(),
@@ -1068,7 +1074,10 @@ pub(crate) fn rpc_attach_session(state: State<'_, AppState>, app: AppHandle, id:
     if let Some(error) = daemon_client::reply_error(&response) {
         return Err(error.to_string());
     }
-    let event_id = id.clone();
+    // The control timeout guards the ack only. This stream is quiet for as long as OMP is (idle,
+    // or a silent tool run); keeping a read timeout cut every quiet chat after 100s.
+    stream.set_read_timeout(None).map_err(|error| error.to_string())?;
+    let event_id = id;
     std::thread::spawn(move || {
         use std::io::{BufRead, BufReader};
         let mut reader = BufReader::new(stream);
