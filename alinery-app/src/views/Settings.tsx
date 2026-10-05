@@ -306,6 +306,10 @@ export function Settings({
 
   const selectedRepo = scope.kind === "repo" ? scope.repoPath : activeRepo;
   const effective = cfg;
+  const chatEnabled = global?.experiments?.show_chat ?? false;
+  useEffect(() => {
+    if (global && !chatEnabled && activeSection === "chat") setActiveSection("general");
+  }, [global, chatEnabled, activeSection]);
 
   useEffect(() => {
     if (activeSection !== "general") return;
@@ -814,8 +818,11 @@ export function Settings({
   const selectedScopeLabel = isGlobal ? "All repositories" : repoName(selectedRepo || "Repository");
   const selectedScopeDetail = isGlobal ? "Default settings used by every repository unless that repository overrides them." : selectedRepo;
   const gridViews = normalizeGridViews(global.grid_views);
-  const visibleSections = SECTIONS;
-  const visibleActiveSection = activeSection;
+  // Chat settings belong to the experimental Chat tab: hidden with it. An open Chat section falls
+  // back to General when the flag is turned off (the effect above moves the state; this covers the
+  // render before it lands).
+  const visibleSections = chatEnabled ? SECTIONS : SECTIONS.filter((section) => section.key !== "chat");
+  const visibleActiveSection = !chatEnabled && activeSection === "chat" ? "general" : activeSection;
 
   const saveGridViews = (next: GridViewDefinition[], message: string) => {
     setGridViewDrafts({});

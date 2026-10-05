@@ -32,6 +32,8 @@ const baseGlobal: GlobalSettings = {
   model_favorites: {},
   telemetry: { enabled: true, prompted: false, install_id: "", endpoint: "https://telemetry.alinery.ai" },
   updates: { check_enabled: true },
+  // The Chat settings section only exists while the experimental Chat tab is on.
+  experiments: { show_chat: true },
 };
 
 const mocks = vi.hoisted(() => ({
