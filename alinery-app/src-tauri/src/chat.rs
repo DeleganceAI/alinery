@@ -467,15 +467,15 @@ pub(crate) fn chat_branch_label(app: AppHandle, state: State<'_, AppState>, repo
 }
 
 #[tauri::command]
-pub(crate) fn chat_rpc_write(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, payload: Value) -> Result<(), String> {
+pub(crate) async fn chat_rpc_write(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, payload: Value) -> Result<(), String> {
     let repo = owned_chat_repo(&app, &state, &repo_path)?;
     let _ = load_root_omp(&repo, &id)?;
     let daemon = chat_daemon(&state, &repo)?;
-    daemon.rpc_write_session(&id, &payload)
+    off_main_thread("chat rpc write", move || daemon.rpc_write_session(&id, &payload)).await
 }
 
 #[tauri::command]
-pub(crate) fn chat_rpc_attach(
+pub(crate) async fn chat_rpc_attach(
     app: AppHandle,
     state: State<'_, AppState>,
     repo_path: String,
@@ -487,15 +487,15 @@ pub(crate) fn chat_rpc_attach(
     let repo = owned_chat_repo(&app, &state, &repo_path)?;
     let _ = load_root_omp(&repo, &id)?;
     let daemon = chat_daemon(&state, &repo)?;
-    attach_rpc_stream(app, &daemon, id, attach_id, stream_token, on_line)
+    off_main_thread("chat rpc attach", move || attach_rpc_stream(app, &daemon, id, attach_id, stream_token, on_line)).await
 }
 
 #[tauri::command]
-pub(crate) fn chat_detach(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, attach_id: u64) -> Result<(), String> {
+pub(crate) async fn chat_detach(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, attach_id: u64) -> Result<(), String> {
     let repo = owned_chat_repo(&app, &state, &repo_path)?;
     let _ = load_root_omp(&repo, &id)?;
     let daemon = chat_daemon(&state, &repo)?;
-    daemon.detach_session(&id, attach_id)
+    off_main_thread("chat detach", move || daemon.detach_session(&id, attach_id)).await
 }
 
 #[tauri::command]
@@ -505,7 +505,12 @@ pub(crate) async fn chat_session_status(app: AppHandle, state: State<'_, AppStat
     // Chat polls this every 1.5s; a sync command would run the daemon round trip on the main thread.
     tauri::async_runtime::spawn_blocking(move || {
         let meta = load_root_omp(&repo, &id)?;
-        let live = daemon.as_ref().and_then(|daemon| daemon.session_status_observed(&id).ok().flatten());
+        // A slow or failed read is an error, not "no process": collapsing it to None read as
+        // Orphaned, flickered the title, and made stream recovery skip a live thread.
+        let live = match daemon.as_ref() {
+            Some(daemon) => daemon.session_status_observed(&id)?,
+            None => None,
+        };
         Ok(SessionObservation {
             lifecycle: lifecycle_from_structured(meta.started_at, meta.ended_at, meta.exit_code, live.as_ref().map(|live| &live.state)),
             state: live.as_ref().map(|live| live.state.clone()),
