@@ -257,7 +257,10 @@ impl ClientSink {
         let Some(queued_bytes) = queue.queued_bytes.checked_add(bytes.len()) else {
             return false;
         };
-        if queue.closed || queued_bytes > CLIENT_BACKLOG_BYTES {
+        // A caught-up client always takes the next line, however large: one RPC line can be a
+        // multi-MB image echo, and refusing it dropped every attached view at once. The budget
+        // bounds how far *behind* a client may fall.
+        if queue.closed || (queue.queued_bytes > 0 && queued_bytes > CLIENT_BACKLOG_BYTES) {
             return false;
         }
         let coalesce = queue.chunks.back().and_then(|last| last.len().checked_add(bytes.len())).is_some_and(|len| len <= 8192);
@@ -2336,6 +2339,8 @@ enum RpcLineKind {
     Ready,
     /// Closes a turn. Everything buffered before it is committed to OMP's journal.
     TurnEnd,
+    /// Closes the agent loop: a `TurnEnd` that also means OMP is idle.
+    AgentEnd,
     /// A reply to a history request. The client that asked correlates it against its own walk;
     /// replaying it to a different client resurrects a dead cursor.
     HistoryResponse,
@@ -2348,9 +2353,23 @@ fn classify_rpc_line(line: &[u8]) -> RpcLineKind {
     };
     match value.get("type").and_then(Value::as_str) {
         Some("ready") => RpcLineKind::Ready,
-        Some("agent_end") | Some("turn_end") => RpcLineKind::TurnEnd,
+        Some("agent_end") => RpcLineKind::AgentEnd,
+        Some("turn_end") => RpcLineKind::TurnEnd,
         Some("response") if matches!(value.get("command").and_then(Value::as_str), Some("get_messages") | Some("get_messages_page")) => RpcLineKind::HistoryResponse,
         _ => RpcLineKind::Other,
+    }
+}
+
+/// OMP's own `agent_end` settles the agent axis to Idle. The extension's `idle` event is the usual
+/// source, but it is fire-and-forget (a 250ms ack, no retry): one lost emit left the session Busy,
+/// and the UI on Running, until the next turn. A late `idle` then reduces to the same status.
+fn settle_idle_on_agent_end(inner: &mut Inner, meta_path: &Path) {
+    if inner.state.agent == alinery_core::AgentState::Idle || !process_accepts_runner_events(&inner.state.process) {
+        return;
+    }
+    let reduced = reduce_runner_event(&inner.state, &RunnerEvent::Idle { omp_turn_id: None });
+    if let Err(error) = publish_live_transition(inner, meta_path, reduced.state) {
+        eprintln!("agent_end idle stamp {}: {error}", meta_path.display());
     }
 }
 
@@ -2371,7 +2390,7 @@ fn push_rpc_line(inner: &mut Inner, line: Vec<u8>, kind: RpcLineKind) {
             inner.rpc_ready = Some(line);
         }
         RpcLineKind::HistoryResponse => {}
-        RpcLineKind::TurnEnd => {
+        RpcLineKind::TurnEnd | RpcLineKind::AgentEnd => {
             inner.rpc_pending.clear();
             inner.rpc_pending_bytes = 0;
         }
@@ -2402,6 +2421,32 @@ mod rpc_ring_tests {
             reaped_and_drained: false,
             state: SessionState::default(),
         }
+    }
+
+    #[test]
+    fn agent_end_settles_busy_to_idle_and_leaves_a_pending_question() {
+        let meta_path = std::env::temp_dir().join(format!("alinery-agent-end-{}.meta.json", uuid::Uuid::new_v4()));
+        fs::write(
+            &meta_path,
+            serde_json::to_vec(&alinery_core::SessionMeta {
+                id: "s1".into(),
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let mut inner = empty_inner();
+        inner.state.process = ProcessState::Alive;
+        inner.state.agent = alinery_core::AgentState::Busy;
+        assert_eq!(classify_rpc_line(br#"{"type":"agent_end"}"#), RpcLineKind::AgentEnd);
+        settle_idle_on_agent_end(&mut inner, &meta_path);
+        assert_eq!(inner.state.agent, alinery_core::AgentState::Idle);
+
+        let waiting = alinery_core::AgentState::WaitingForInput { correlation_id: "q1".into() };
+        inner.state.agent = waiting.clone();
+        settle_idle_on_agent_end(&mut inner, &meta_path);
+        assert_eq!(inner.state.agent, waiting);
+        let _ = fs::remove_file(meta_path);
     }
 
     #[test]
@@ -3197,8 +3242,11 @@ fn spawn_rpc_session(
                                 {
                                     let mut inner = inner_t.lock().unwrap_or_else(|error| error.into_inner());
                                     push_rpc_line(&mut inner, complete, kind);
+                                    if kind == RpcLineKind::AgentEnd && !replacing_reader.load(Ordering::SeqCst) {
+                                        settle_idle_on_agent_end(&mut inner, &meta_path_reader);
+                                    }
                                 }
-                                if kind == RpcLineKind::TurnEnd
+                                if matches!(kind, RpcLineKind::TurnEnd | RpcLineKind::AgentEnd)
                                     && alinery_core::execution::read_execution_state(&execution_reader.0, &execution_reader.1).is_ok_and(|state| {
                                         state
                                             .executions
@@ -3867,19 +3915,28 @@ mod client_sink {
 
     // The old 256-message cap drops healthy streams under chatty redraws long before the intended
     // ~2 MiB backlog is used. The replacement sink is byte-budgeted, so many tiny chunks are valid
-    // while one oversized chunk is rejected.
+    // while one oversized chunk is rejected once the client is behind.
     #[test]
     fn byte_budget_accepts_more_than_256_small_chunks_and_rejects_oversized_chunk() {
         let (sock, _reader) = UnixStream::pair().expect("socketpair");
         let sink = ClientSink::new(sock);
-
         for chunk in burst_chunks(320) {
             assert!(sink.try_enqueue(chunk), "small chunk below the byte budget must be accepted");
         }
 
+        let (caught_up_sock, _caught_up_reader) = UnixStream::pair().expect("socketpair");
         assert!(
-            !sink.try_enqueue(vec![0u8; CLIENT_BACKLOG_BYTES + 1]),
-            "a single chunk larger than the per-client byte budget must be rejected"
+            ClientSink::new(caught_up_sock).try_enqueue(vec![0u8; CLIENT_BACKLOG_BYTES + 1]),
+            "a caught-up client takes one line larger than the budget"
+        );
+
+        // An unread initial replay far past the socket buffer parks the writer, so live bytes queue.
+        let (behind_sock, _behind_reader) = UnixStream::pair().expect("socketpair");
+        let behind = ClientSink::with_initial(behind_sock, vec![vec![0u8; 4 * 1024 * 1024]]);
+        assert!(behind.try_enqueue(b"queued\n".to_vec()));
+        assert!(
+            !behind.try_enqueue(vec![0u8; CLIENT_BACKLOG_BYTES]),
+            "a client already behind must not take a chunk past the per-client byte budget"
         );
     }
 
