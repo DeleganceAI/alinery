@@ -330,7 +330,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
       setLink({ key, value: { state: "offline" } });
       void reload().catch(() => {});
     };
-    // Dropped by the daemon mid-turn: re-read the journal and reattach, while OMP is still up in
+    // Live stream closed mid-turn: re-read the journal and reattach, while OMP is still up in
     // chat. A hatch to Terminal also closes this stream; that process is PTY and is left alone.
     // An unreadable status reattaches anyway: the attach itself reports offline or failed.
     const stopClosed = ipc.onStreamClosed(
@@ -349,7 +349,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
         );
       },
       () => {
-        if (!cancelled) setLink({ key, value: { state: "failed", detail: "The live view kept falling behind. Reconnect to resume." } });
+        if (!cancelled) setLink({ key, value: { state: "failed", detail: "The live connection closed repeatedly, so automatic reconnection stopped. Reconnect to try again." } });
       },
     );
     // Polled like a task session's status: OMP's `ready` and every turn end land after this runs.

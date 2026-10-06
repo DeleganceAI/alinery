@@ -465,11 +465,13 @@ const STREAM_RECOVERY_MAX = 6;
 const streamCloses = new Map<string, number[]>();
 
 /**
- * The daemon drops an RPC client that falls 2 MB behind, or whose socket fails, so it can never
- * block OMP; the attach's reader then emits `session_stream_closed`. Without a listener the view
- * keeps showing a running turn that never prints again while OMP works on. `onClosed` fires for
- * this attach only; `onGiveUp` replaces it after STREAM_RECOVERY_MAX closes in 30s, so a view that
- * genuinely cannot keep up stops instead of re-reading the journal in a loop. Returns the unlisten.
+ * An attach's reader emits `session_stream_closed` whenever it stops: the daemon dropped a client
+ * more than 2 MB behind (so it can never block OMP), the socket failed or ended, or the view's
+ * channel closed. The event carries no cause, so a view says the connection closed, never why.
+ * Without a listener the view keeps showing a running turn that never prints again while OMP works
+ * on. `onClosed` fires for this attach only; `onGiveUp` replaces it after STREAM_RECOVERY_MAX
+ * closes in 30s, so a stream that keeps closing stops instead of re-reading the journal in a loop.
+ * Returns the unlisten.
  */
 export function onStreamClosed(id: string, attachId: number, onClosed: () => void, onGiveUp: () => void): () => void {
   let disposed = false;

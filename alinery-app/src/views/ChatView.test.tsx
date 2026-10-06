@@ -352,11 +352,21 @@ describe("ChatView", () => {
     expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(2);
   });
 
-  it("stops reattaching once the stream keeps dropping", async () => {
+  it("stops reattaching once the stream keeps closing, says only that it closed, and reconnects on request", async () => {
     await openLive(observed("busy", "alive", "rpc"));
     const [, , , onGiveUp] = mocks.onStreamClosed.mock.calls[0] as [string, number, () => void, () => void];
     act(() => onGiveUp());
-    expect(await screen.findByRole("button", { name: "Reconnect" })).toBeTruthy();
+    expect(await screen.findByText("The live connection closed repeatedly, so automatic reconnection stopped. Reconnect to try again.")).toBeTruthy();
+    expect(screen.queryByText(/falling behind/i)).toBeNull();
+    expect(titleBar().getByText("Disconnected")).toBeTruthy();
+    expect(link()).toBe("failed");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    await waitFor(() => expect(link()).toBe("ready"));
+    expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(/Lost the connection/)).toBeNull();
   });
 
   it("takes back a send OMP refuses: the bubble goes and the text returns to the composer", async () => {

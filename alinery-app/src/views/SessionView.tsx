@@ -1391,7 +1391,7 @@ export function SessionView({
     if (!liveRpc) return;
     let cancelled = false;
     const attachId = ipc.nextAttachId();
-    // Dropped by the daemon mid-turn (see `ipc.onStreamClosed`): reattach while still live in RPC.
+    // Live stream closed mid-turn (see `ipc.onStreamClosed`): reattach while still live in RPC.
     const stopClosed = ipc.onStreamClosed(
       id,
       attachId,
