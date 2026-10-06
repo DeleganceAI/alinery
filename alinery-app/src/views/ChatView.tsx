@@ -470,7 +470,14 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
               if (refresh) ipc.chatRpcWrite(repo, id, refresh).catch(() => {});
             },
           });
-          if (cancelled) return;
+          // The attach runs off the main thread, so cleanup's detach can reach the daemon before
+          // the attach registers, and the daemon ignores a detach for an id it does not know yet.
+          // Detach again once it has landed. The id is this run's alone (`ipc.nextAttachId`), so
+          // this can never drop a newer attach.
+          if (cancelled) {
+            ipc.chatDetach(repo, id, attachId).catch(() => {});
+            return;
+          }
           for (const command of attachHandshake(autoCompactionRef.current)) {
             await ipc.chatRpcWrite(repo, id, command);
           }

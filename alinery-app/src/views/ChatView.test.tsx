@@ -957,6 +957,28 @@ describe("ChatView", () => {
     expect(screen.queryByText(/Lost the connection/)).toBeNull();
   });
 
+  it("detaches again when an attach lands after the view let go of it", async () => {
+    mocks.listChatThreads.mockResolvedValue([live("s-live")]);
+    mocks.chatSessionStatus.mockResolvedValue(observed("idle"));
+    let land: () => void = () => {};
+    mocks.chatRpcAttach.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          land = resolve;
+        }),
+    );
+    const { unmount } = render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
+    await waitFor(() => expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(1));
+    const attach = mocks.chatRpcAttach.mock.calls[0]?.[0] as { attachId: number };
+    unmount();
+    expect(mocks.chatDetach.mock.calls).toEqual([["/repo", "s-live", attach.attachId]]);
+    await act(async () => land());
+    await waitFor(() => expect(mocks.chatDetach).toHaveBeenCalledTimes(2));
+    expect(mocks.chatDetach.mock.calls[1]).toEqual(["/repo", "s-live", attach.attachId]);
+    expect(mocks.chatRpcWrite).not.toHaveBeenCalled();
+  });
+
   it("shows a lost connection with its detail, sends nothing, and reconnects on request", async () => {
     mocks.listChatThreads.mockResolvedValue([live("s-live")]);
     mocks.chatSessionStatus.mockResolvedValue(observed("idle"));

@@ -1567,6 +1567,21 @@ describe("session chat attach handshake", () => {
     expect(readSessionOmp.mock.calls.length).toBe(reads + 1);
   });
 
+  it("detaches again when an attach lands after the view let go of it", async () => {
+    const landing = deferred<undefined>();
+    rpcAttachSession.mockImplementation(() => landing.promise);
+    detachSession.mockClear();
+    const { unmount } = renderSession();
+    await waitFor(() => expect(rpcAttachSession).toHaveBeenCalledTimes(1));
+    const attach = rpcAttachSession.mock.calls[0]?.[0] as { attachId: number };
+    unmount();
+    expect(detachSession.mock.calls).toEqual([["session", attach.attachId]]);
+    await act(async () => landing.resolve(undefined));
+    await waitFor(() => expect(detachSession).toHaveBeenCalledTimes(2));
+    expect(detachSession.mock.calls[1]).toEqual(["session", attach.attachId]);
+    expect(rpcWriteSession.mock.calls.map(([, payload]) => (payload as { type?: string }).type)).not.toContain("negotiate_protocol");
+  });
+
   it("writes get_subagents after set_subagent_subscription", async () => {
     renderSession();
     await waitFor(() => expect(rpcWriteSession.mock.calls.some(([, payload]) => (payload as { type?: string } | null)?.type === "set_subagent_subscription")).toBe(true));

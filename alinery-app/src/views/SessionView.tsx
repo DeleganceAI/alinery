@@ -1537,7 +1537,10 @@ export function SessionView({
             return next;
           });
         }
-        return ipc.rpcAttachSession({ id, attachId, streamToken: attachId, onLine: apply });
+        // A detach sent before this attach lands is lost, so detach again once it has, as chat does.
+        return ipc.rpcAttachSession({ id, attachId, streamToken: attachId, onLine: apply }).then(() => {
+          if (cancelled) void ipc.detachSession(id, attachId).catch(() => undefined);
+        });
       })
 
       .then(async () => {

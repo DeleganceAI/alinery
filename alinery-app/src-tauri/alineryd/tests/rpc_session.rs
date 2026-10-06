@@ -652,6 +652,36 @@ fn rpc_attach_forwards_ready_and_get_messages_thinking() {
     assert!(!lines.iter().any(|line| line == &request.to_string()), "stdin echoed: {joined}");
 }
 
+// The app does not wait for an attach before a view's cleanup detaches it, so that detach can
+// arrive first; the view detaches again once the attach lands. Neither may leave a client behind.
+#[test]
+fn detach_before_attach_is_a_no_op_and_a_late_detach_ends_the_stream() {
+    let fixture = Fixture::new();
+    let id = fixture.spawn_omp();
+    let early = fixture.rpc(json!({"op": "detach", "id": id, "attach_id": 7}));
+    assert_eq!(early, json!({"ok": true}));
+    let mut attach = fixture.rpc_attach(id);
+    let lines = Fixture::read_lines(&mut attach, 1);
+    assert!(lines.iter().any(|line| line.contains(r#""type":"ready""#)), "attach is live: {lines:?}");
+    let late = fixture.rpc(json!({"op": "detach", "id": id, "attach_id": 7}));
+    assert_eq!(late, json!({"ok": true}));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        assert!(Instant::now() < deadline, "the detached stream stayed open");
+        let mut line = String::new();
+        match attach.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted
+                ) => {}
+            Err(error) => panic!("read detached stream: {error}"),
+        }
+    }
+}
+
 #[test]
 fn rpc_write_delivers_800_kib_base64_image_through_core_client() {
     let fixture = Fixture::new();
