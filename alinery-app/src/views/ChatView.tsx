@@ -34,13 +34,14 @@ import {
   removeOptimisticSend,
 } from "../chatTranscript";
 import { askConfirm, confirmDanger, confirmStopAndSwitch } from "../confirm";
+import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { NameEditor } from "../NameEditor";
 import { compactCommand, getStateCommand, promptCommand, setAutoCompactionCommand } from "../ompRpc";
 import { SessionTerminal } from "../SessionTerminal";
 import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
 import { isTurnActive, OMP_INTERRUPT_DATA } from "../sessionMessage";
-import { Checkbox, Dialog, obsLabel, StatusMarker } from "../shared";
+import { Checkbox, Dialog, InlineStatus, LoadingState, obsLabel, StatusMarker } from "../shared";
 import type { ChatThread, SessionObservation } from "../types";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatMcpDialog } from "./ChatMcpDialog";
@@ -95,6 +96,25 @@ function repoGroups(repos: string[], threads: ChatThread[]): { path: string; row
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+/**
+ * Loading, a failed read, and nothing open each read differently: `repos` is null until a read
+ * succeeds, and a failed refresh keeps the last list. The read gives no reason a repo is missing,
+ * so the empty copy names none.
+ */
+function OpenReposNotice({ repos, error, className }: { repos: string[] | null; error: string; className: string }) {
+  if (error) {
+    return (
+      <InlineStatus tone="error" detail={error}>
+        {repos === null ? "Couldn't read which repositories are open in this window." : "Couldn't refresh which repositories are open in this window. Showing the last list read."}{" "}
+        Retrying every few seconds.
+      </InlineStatus>
+    );
+  }
+  if (repos === null) return <LoadingState label="Loading repositories" state={ORB_STATE} />;
+  if (repos.length > 0) return null;
+  return <p className={className}>No repositories are currently available to Chat in this window. Open or check one in the repo switcher.</p>;
 }
 
 const NO_TRANSCRIPT = emptyTranscript();
@@ -167,6 +187,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
   const [creating, setCreating] = useState(false);
   // null until the first read: the thread list waits for it rather than loading twice.
   const [openRepos, setOpenRepos] = useState<string[] | null>(null);
+  const [reposError, setReposError] = useState("");
   const dirs = openRepos ?? [];
   const [pickedRepo, setRepoPath] = useState("");
   const [createWorktree, setCreateWorktree] = useState(false);
@@ -223,9 +244,13 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
       ipc
         .listChatRepos()
         .then((next) => {
-          if (!cancelled) setOpenRepos((prev) => (prev?.join("\n") === next.join("\n") ? prev : next));
+          if (cancelled) return;
+          setReposError("");
+          setOpenRepos((prev) => (prev?.join("\n") === next.join("\n") ? prev : next));
         })
-        .catch(() => {});
+        .catch((cause: unknown) => {
+          if (!cancelled) setReposError(errorMessage(cause));
+        });
     };
     poll();
     const timer = window.setInterval(poll, 3000);
@@ -857,7 +882,8 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
             </div>
           </div>
           <div className="chat-rail-scroll">
-            {groups.length === 0 ? <p className="chat-rail-empty">No repositories yet.</p> : null}
+            {/* Shown paths, not the open set: a closed repo's group stays until its threads reload, and "none available" must not sit above it. */}
+            <OpenReposNotice repos={openRepos === null ? null : repoPaths} error={reposError} className="chat-rail-empty" />
             {groups.map(({ path, rows }) => {
               const open = !collapsedRepos.has(path);
               return (
@@ -1150,7 +1176,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
             </button>
           </div>
           <div className="mb chat-new-body">
-            {dirs.length === 0 ? <p className="dsc">No repositories yet. Add one from the repo switcher first.</p> : null}
+            <OpenReposNotice repos={openRepos} error={reposError} className="dsc" />
             <label className="chat-dialog-field">
               <span>Repository</span>
               <span className="chat-select">

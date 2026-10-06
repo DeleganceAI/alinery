@@ -142,6 +142,8 @@ const threadRow = (id: string) => new RegExp(`^Chat ${id}(,|$)`);
 const link = () => screen.getByTestId("chat-view").dataset.link;
 /** The open thread's status, in the title bar (the rail row repeats it). */
 const titleBar = () => within(document.querySelector(".chat-titlebar") as HTMLElement);
+const rail = () => screen.getByTestId("chat-rail");
+const NONE_OPEN = "No repositories are currently available to Chat in this window. Open or check one in the repo switcher.";
 
 describe("ChatView", () => {
   it("asks for a repo and leaves the worktree checkbox off", async () => {
@@ -950,6 +952,121 @@ describe("ChatView", () => {
       await vi.advanceTimersByTimeAsync(3000);
       await waitFor(() => expect(screen.queryByRole("button", { name: threadRow("s-live") })).toBeNull());
       expect(mocks.listChatThreads).toHaveBeenCalledTimes(2);
+      expect(within(rail()).getByText(NONE_OPEN)).toBeTruthy();
+      expect(within(rail()).queryByRole("button", { name: "New thread in repo" })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says the repositories are loading until the first read lands, never that there are none", async () => {
+    mocks.listChatRepos.mockReturnValue(new Promise(() => {}));
+    render(chat());
+    expect(within(rail()).getByText("Loading repositories")).toBeTruthy();
+    expect(within(rail()).queryByText(NONE_OPEN)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "New thread" }));
+    const dialog = await screen.findByRole("dialog", { name: "New thread" });
+    expect(within(dialog).getByText("Loading repositories")).toBeTruthy();
+    expect(within(dialog).queryByText(NONE_OPEN)).toBeNull();
+    expect((within(dialog).getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows a failed read with its detail, not an empty list", async () => {
+    mocks.listChatRepos.mockRejectedValue(new Error("config.json unreadable"));
+    render(chat());
+    const alert = await within(rail()).findByRole("alert");
+    expect(alert.textContent).toContain("Couldn't read which repositories are open in this window. Retrying every few seconds.");
+    expect(within(alert).getByText("config.json unreadable")).toBeTruthy();
+    expect(within(rail()).queryByText(NONE_OPEN)).toBeNull();
+    expect(within(rail()).queryByText("Loading repositories")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "New thread" }));
+    const dialog = await screen.findByRole("dialog", { name: "New thread" });
+    expect(within(dialog).getByRole("alert").textContent).toContain("Couldn't read which repositories are open in this window.");
+    expect(within(dialog).queryByText(NONE_OPEN)).toBeNull();
+  });
+
+  it("says when no repository is available to Chat in this window", async () => {
+    mocks.listChatRepos.mockResolvedValue([]);
+    render(chat());
+    expect(await within(rail()).findByText(NONE_OPEN)).toBeTruthy();
+    expect(within(rail()).queryByRole("alert")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "New thread" }));
+    const dialog = await screen.findByRole("dialog", { name: "New thread" });
+    expect(within(dialog).getByText(NONE_OPEN)).toBeTruthy();
+  });
+
+  it("clears a failed read once a retry succeeds", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatRepos.mockRejectedValueOnce(new Error("config.json unreadable")).mockResolvedValue(["/repo"]);
+      render(chat());
+      expect(await within(rail()).findByRole("alert")).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await within(rail()).findByRole("button", { name: "New thread in repo" })).toBeTruthy();
+      expect(within(rail()).queryByRole("alert")).toBeNull();
+      expect(within(rail()).queryByText(NONE_OPEN)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops the empty notice once a repository becomes available", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatRepos.mockResolvedValueOnce([]).mockResolvedValue(["/repo"]);
+      render(chat());
+      expect(await within(rail()).findByText(NONE_OPEN)).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await within(rail()).findByRole("button", { name: "New thread in repo" })).toBeTruthy();
+      expect(within(rail()).queryByText(NONE_OPEN)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the last list read when a refresh fails, and says it is stale", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatRepos.mockResolvedValueOnce(["/repo"]).mockRejectedValue(new Error("config.json unreadable"));
+      mocks.listChatThreads.mockResolvedValue([thread("s-live")]);
+      render(chat());
+      expect(await within(rail()).findByRole("button", { name: threadRow("s-live") })).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(3000);
+      const alert = await within(rail()).findByRole("alert");
+      expect(alert.textContent).toContain("Couldn't refresh which repositories are open in this window. Showing the last list read. Retrying every few seconds.");
+      expect(within(rail()).getByRole("button", { name: threadRow("s-live") })).toBeTruthy();
+      expect(within(rail()).getByRole("button", { name: "New thread in repo" })).toBeTruthy();
+      expect(mocks.listChatThreads).toHaveBeenCalledTimes(1);
+      fireEvent.click(screen.getByRole("button", { name: "New thread" }));
+      const dialog = await screen.findByRole("dialog", { name: "New thread" });
+      expect((within(dialog).getByRole("combobox") as HTMLSelectElement).value).toBe("/repo");
+      expect(within(dialog).getByRole("alert").textContent).toContain("Showing the last list read.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never says no repository is available above a closed repo's group still reloading", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let reloadThreads: (rows: ChatThread[]) => void = () => {};
+      const reloading = new Promise<ChatThread[]>((resolve) => {
+        reloadThreads = resolve;
+      });
+      mocks.listChatRepos.mockResolvedValueOnce(["/repo"]).mockResolvedValue([]);
+      mocks.listChatThreads.mockResolvedValueOnce([thread("s-live")]).mockReturnValue(reloading);
+      render(chat());
+      expect(await within(rail()).findByRole("button", { name: threadRow("s-live") })).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(3000);
+      await waitFor(() => expect(mocks.listChatThreads).toHaveBeenCalledTimes(2));
+      expect(within(rail()).getByRole("button", { name: threadRow("s-live") })).toBeTruthy();
+      expect(within(rail()).queryByText(NONE_OPEN)).toBeNull();
+      await act(async () => {
+        reloadThreads([]);
+        await reloading;
+      });
+      expect(within(rail()).getByText(NONE_OPEN)).toBeTruthy();
+      expect(within(rail()).queryByRole("button", { name: threadRow("s-live") })).toBeNull();
     } finally {
       vi.useRealTimers();
     }
