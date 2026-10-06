@@ -328,13 +328,23 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
 
   const selectedId = selected?.session.id;
   const selectedRepo = selected?.repo_path;
+  // Per thread, not per attach: a reconnect re-runs the attach effect below, and an open dialog, a
+  // half-typed name, an awaited `/mcp list` or a turn that spans the reconnect must survive it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the selected thread is the trigger.
+  useEffect(() => {
+    turnWasActive.current = false;
+    setRenaming(false);
+    setProvidersDialog(null);
+    setToolsOpen(false);
+    setMcpDialog(null);
+    mcpListWait.current = null;
+  }, [selectedId, selectedRepo]);
   useEffect(() => {
     if (!selected || !selectedRepo || !selectedId) return;
     const repo = selectedRepo;
     const id = selectedId;
     const key = `${repo}:${id}`;
     compactionPushed.current = `${key}:${autoCompactionRef.current}`;
-    turnWasActive.current = false;
     const attachId = ipc.nextAttachId();
     if (pendingPrompt.current && pendingPrompt.current.key !== key) {
       pendingPrompt.current = null;
@@ -342,11 +352,6 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     }
     const claimed = pendingPrompt.current;
     let cancelled = false;
-    setRenaming(false);
-    setProvidersDialog(null);
-    setToolsOpen(false);
-    setMcpDialog(null);
-    mcpListWait.current = null;
     setError((current) => (current === "cannot continue" ? "" : current));
     setLink({ key, value: { state: "connecting" } });
     // OMP gone: the link goes offline and the list reloads, so the row carries ended_at and a send

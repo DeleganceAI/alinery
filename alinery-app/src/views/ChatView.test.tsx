@@ -320,13 +320,13 @@ describe("ChatView", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Abort turn" }));
     await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "abort" })));
   });
-  async function openLive(status: ReturnType<typeof observed>) {
+  async function openLive(status: ReturnType<typeof observed>, others: ChatThread[] = []) {
     let onLine: (line: string) => void = () => {};
     mocks.chatRpcAttach.mockImplementation(async (args: { onLine: (line: string) => void }) => {
       onLine = args.onLine;
     });
     const row = thread("s-live", { session: meta("s-live", { started_at: 1, ended_at: null, archived: false }) });
-    mocks.listChatThreads.mockResolvedValue([row]);
+    mocks.listChatThreads.mockResolvedValue([row, ...others]);
     mocks.chatSessionStatus.mockResolvedValue(status);
     const { rerender } = render(chat());
     fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
@@ -341,17 +341,58 @@ describe("ChatView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
   }
 
+  /** Closes the newest attach's live stream, as the daemon dropping its client does. */
+  function dropStream() {
+    const calls = mocks.onStreamClosed.mock.calls;
+    const [, , onClosed] = calls[calls.length - 1] as [string, number, () => void];
+    act(() => onClosed());
+  }
+
+  /** Drops the live stream of an RPC thread and waits until the reattach's handshake is done. */
+  async function reattach() {
+    const attaches = mocks.chatRpcAttach.mock.calls.length;
+    dropStream();
+    await waitFor(() => expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(attaches + 1));
+    await waitFor(() => expect(link()).toBe("ready"));
+  }
+
   it("reattaches when the daemon drops the live stream, and leaves a thread moved to Terminal alone", async () => {
     await openLive(observed("busy", "alive", "rpc"));
     expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(1);
-    const [, , onClosed] = mocks.onStreamClosed.mock.calls[0] as [string, number, () => void];
-    act(() => onClosed());
+    dropStream();
     await waitFor(() => expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(2));
     mocks.chatSessionStatus.mockResolvedValue(observed("idle", "alive", "pty"));
-    const [, , closedAgain] = mocks.onStreamClosed.mock.calls[mocks.onStreamClosed.mock.calls.length - 1] as [string, number, () => void];
-    act(() => closedAgain());
+    dropStream();
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the rename editor and its typed name through a reattach, and closes it on a thread switch", async () => {
+    await openLive(observed("idle", "alive", "rpc"), [thread("s-other")]);
+    fireEvent.click(titleBar().getByRole("button", { name: "Rename thread" }));
+    fireEvent.change(screen.getByLabelText("Thread name"), { target: { value: "Half typed" } });
+    await reattach();
+    expect((screen.getByLabelText("Thread name") as HTMLInputElement).value).toBe("Half typed");
+    fireEvent.click(screen.getByRole("button", { name: threadRow("s-other") }));
+    await waitFor(() => expect(screen.queryByLabelText("Thread name")).toBeNull());
+  });
+
+  it("keeps an open providers dialog through a reattach", async () => {
+    await openLive(observed("idle", "alive", "rpc"));
+    sendIdle("/login");
+    const dialog = await screen.findByTestId("providers");
+    await reattach();
+    expect(screen.getByTestId("providers")).toBe(dialog);
+  });
+
+  it("opens the MCP dialog from /mcp list output that lands after a reattach", async () => {
+    const { emit } = await openLive(observed("idle", "alive", "rpc"));
+    sendIdle("/mcp");
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "prompt", message: "/mcp list" })));
+    await reattach();
+    emit({ type: "command_output", text: "gh | http | enabled | project" });
+    const dialog = await screen.findByRole("dialog", { name: "MCP servers" });
+    expect(within(dialog).getByText(/gh/)).toBeTruthy();
   });
 
   it("stops reattaching once the stream keeps closing, says only that it closed, and reconnects on request", async () => {
@@ -633,6 +674,21 @@ describe("ChatView", () => {
       await vi.advanceTimersByTimeAsync(12000);
       expect(mocks.chatThreadName).not.toHaveBeenCalled();
       expect(mocks.listChatThreads).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still re-reads the name after a turn that spanned a reattach", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await openLive(observed("busy", "alive", "rpc"));
+      await reattach();
+      mocks.chatSessionStatus.mockResolvedValue(observed("idle", "alive", "rpc"));
+      await vi.advanceTimersByTimeAsync(1500);
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Abort turn" })).toBeNull());
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(mocks.chatThreadName).toHaveBeenCalledWith("/repo", "s-live");
     } finally {
       vi.useRealTimers();
     }
