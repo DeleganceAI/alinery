@@ -224,6 +224,7 @@ export function mapHydratedMessage(raw: unknown, rowId?: string): ChatMessage | 
   if (typeof message.stopReason === "string") mapped.stopReason = message.stopReason;
   if (typeof message.customType === "string") mapped.customType = message.customType;
   if (rowId) mapped.rowId = rowId;
+  if (typeof message.timestamp === "number") mapped.timestamp = message.timestamp;
   if (typeof message.toolName === "string") mapped.toolName = message.toolName;
   if (typeof message.toolCallId === "string") mapped.toolCallId = message.toolCallId;
   if (message.isError === true) mapped.isError = true;
@@ -292,61 +293,25 @@ function dropLiveAssistantRows(state: ChatTranscriptState): ChatTranscriptState 
   return { ...state, entries: state.entries.filter((entry) => !drop.has(entry.id)), liveAssistantKeys: {} };
 }
 
-const JOURNAL_ASSISTANT_TYPES = new Set(["thinking", "redacted_thinking", "text"]);
-
-function snapshotPartText(part: ChatPart): string | null {
-  if (part.type === "thinking") return part.thinking;
-  if (part.type === "text") return part.text;
-  if (part.type === "redactedThinking") return "";
-  return null;
+/**
+ * True when the newest assistant message read off the journal is this streamed one. A reattach
+ * replays the open turn's lines, and OMP may already have persisted that turn's message whole. The
+ * replay holds only the open turn, so no older assistant row can be it. Identity is OMP's per-message
+ * stamp, which the journal row keeps, never the text: one reply can begin with another's words. With
+ * no stamp this answers false, because a possible duplicate is better than a lost reply.
+ */
+function journalHoldsAssistant(state: ChatTranscriptState, timestamp: unknown): boolean {
+  if (typeof timestamp !== "number") return false;
+  for (let i = state.messages.length - 1; i >= 0; i -= 1) {
+    const message = state.messages[i];
+    if (message?.role === "assistant" && message.rowId !== undefined) return message.timestamp === timestamp;
+  }
+  return false;
 }
 
-function journalEntryText(entry: ChatEntry): string | null {
-  if (entry.type === "thinking" || entry.type === "text") return entry.text;
-  if (entry.type === "redacted_thinking") return "";
-  return null;
-}
-
-function journalOwnsAssistantSnapshot(state: ChatTranscriptState, content: ChatPart[]): boolean {
-  const incoming = content
-    .map((part) => {
-      const text = snapshotPartText(part);
-      if (text === null) return null;
-      const type = part.type === "redactedThinking" ? "redacted_thinking" : part.type;
-      return { type, text };
-    })
-    .filter((part): part is { type: string; text: string } => part !== null);
-  if (incoming.length === 0) return false;
-  const committed = state.entries.slice(0, state.liveStart);
-  let end = committed.length;
-  while (end > 0) {
-    const entry = committed[end - 1];
-    if (!entry || entry.actor.kind !== "assistant" || !JOURNAL_ASSISTANT_TYPES.has(entry.type)) {
-      end -= 1;
-      continue;
-    }
-    break;
-  }
-  const cluster: ChatEntry[] = [];
-  for (let i = end - 1; i >= 0; i -= 1) {
-    const entry = committed[i];
-    if (!entry || entry.actor.kind !== "assistant" || !JOURNAL_ASSISTANT_TYPES.has(entry.type)) break;
-    cluster.unshift(entry);
-  }
-  if (incoming.length > cluster.length) return false;
-  for (let i = 0; i < incoming.length; i += 1) {
-    const part = incoming[i];
-    const entry = cluster[i];
-    // A prefix counts: a reattach mid-turn replays the message's partial updates after the journal
-    // already holds it whole, and each partial is a prefix of that text.
-    if (!part || !entry || entry.type !== part.type || !journalEntryText(entry)?.startsWith(part.text)) return false;
-  }
-  return true;
-}
-
-function syncLiveAssistant(state: ChatTranscriptState, content: ChatPart[], stopReason: string | undefined): ChatTranscriptState {
+function syncLiveAssistant(state: ChatTranscriptState, content: ChatPart[], stopReason: string | undefined, timestamp: unknown): ChatTranscriptState {
   const messages = upsertMessages(state, content, stopReason);
-  if (journalOwnsAssistantSnapshot(state, content)) {
+  if (journalHoldsAssistant(state, timestamp)) {
     return { ...state, messages };
   }
   const aborted = stopReason === "aborted";
@@ -1024,7 +989,7 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
       return state;
     }
     if (role === "assistant") {
-      return syncLiveAssistant({ ...state, assistantActivity: {} }, content, typeof message.stopReason === "string" ? message.stopReason : undefined);
+      return syncLiveAssistant({ ...state, assistantActivity: {} }, content, typeof message.stopReason === "string" ? message.stopReason : undefined, message.timestamp);
     }
     return state;
   }
@@ -1037,7 +1002,7 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
     const assistantActivity = updateAssistantActivity(state.assistantActivity, incoming.content, eventType, rpcEvent?.contentIndex);
     const content = mapContent(incoming.content, assistantActivity);
     const stopReason = typeof incoming.stopReason === "string" ? incoming.stopReason : undefined;
-    return syncLiveAssistant({ ...state, assistantActivity }, content, stopReason);
+    return syncLiveAssistant({ ...state, assistantActivity }, content, stopReason, incoming.timestamp);
   }
 
   if (event.type === "agent_start" || event.type === "turn_start") {

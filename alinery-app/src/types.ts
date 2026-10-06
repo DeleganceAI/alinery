@@ -582,6 +582,8 @@ export type ChatMessage = {
    * cannot renumber rows that are already mounted.
    */
   rowId?: string;
+  /** OMP's per-message stamp. A streamed snapshot and the journal row OMP persists for it share it. */
+  timestamp?: number;
   /** toolResult rows carry these; assistant toolCall parts carry their own copies. */
   toolName?: string;
   toolCallId?: string;

@@ -19,6 +19,7 @@ import {
   matchingSendFailure,
   removeOptimisticSend,
 } from "./chatTranscript";
+import type { ChatMessage } from "./types";
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const fixtures = join(dir, "chat/fixtures");
@@ -28,6 +29,10 @@ const jsonl = (name: string) =>
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line) as unknown);
+const stamped = (line: unknown, timestamp: number) => {
+  const event = line as { message: Record<string, unknown> };
+  return { ...event, message: { ...event.message, timestamp } };
+};
 
 describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
   it("records ready protocol v1", () => {
@@ -642,6 +647,7 @@ describe("live assistant GC and journal join", () => {
           {
             rowId: "a1",
             role: "assistant",
+            timestamp: 1,
             content: [
               { type: "thinking", thinking: "The user wants me to reply" },
               { type: "text", text: "323" },
@@ -653,7 +659,7 @@ describe("live assistant GC and journal join", () => {
     );
     expect(journal.entries.filter((entry) => entry.type === "thinking")).toHaveLength(1);
     expect(journal.entries.filter((entry) => entry.type === "text")).toHaveLength(1);
-    const joined = applyRpcLine(journal, load("live-thinking_start.json"));
+    const joined = applyRpcLine(journal, stamped(load("live-thinking_start.json"), 1));
     expect(joined.entries.filter((entry) => entry.type === "thinking")).toHaveLength(1);
     expect(joined.entries.filter((entry) => entry.type === "text")).toHaveLength(1);
     expect(joined.entries.some((entry) => entry.type === "thinking" && entry.id.startsWith("e"))).toBe(false);
@@ -1210,6 +1216,7 @@ describe("DEL-722 block-local streaming", () => {
           {
             rowId: "same",
             role: "assistant",
+            timestamp: 1,
             content: [
               { type: "thinking", thinking: "Working it out" },
               { type: "text", text: "The answer" },
@@ -1219,13 +1226,13 @@ describe("DEL-722 block-local streaming", () => {
       },
       "initial",
     );
-    const suppressed = applyRpcLine(journal, update(content.slice(0, 2), "thinking_start", 0));
+    const suppressed = applyRpcLine(journal, stamped(update(content.slice(0, 2), "thinking_start", 0), 1));
     expect.soft(suppressed.entries).toEqual(journal.entries);
     expect.soft(activity(suppressed).message).toEqual([true, false]);
     const closed = applyRpcLine(suppressed, { type: "turn_end" });
     expect.soft(closed.entries).toEqual(journal.entries);
     expect.soft(activity(closed).message).toEqual([false, false]);
-    const later = applyRpcLine(closed, update([{ type: "thinking", thinking: "Different later thinking" }, content[1]], "text_delta", 1));
+    const later = applyRpcLine(closed, stamped(update([{ type: "thinking", thinking: "Different later thinking" }, content[1]], "text_delta", 1), 2));
     expectActivity(later, [false, true]);
     expect.soft(later.entries.filter((entry) => entry.id.startsWith("f:"))).toEqual(journal.entries);
     expect.soft(later.entries.filter((entry) => entry.type === "thinking")).toHaveLength(2);
@@ -1233,25 +1240,79 @@ describe("DEL-722 block-local streaming", () => {
 });
 
 describe("reattach replay", () => {
+  const T1 = 1_760_000_000_000;
+  const T2 = T1 + 5_000;
+  const assistantRow = (rowId: string, content: unknown[], timestamp: number) => {
+    const message = mapHydratedMessage({ role: "assistant", content, timestamp }, rowId);
+    if (!message) throw new Error("unmapped row");
+    return message;
+  };
+  const page = (...messages: ChatMessage[]) => applyFilePage(emptyTranscript(), { start: 0, messages }, "initial");
   const journal = () =>
-    applyFilePage(
-      emptyTranscript(),
-      {
-        start: 0,
-        messages: [
-          { rowId: "a1", role: "assistant", content: [{ type: "text", text: "Reading the vocab file now." }] },
-          { rowId: "t1", role: "toolResult", toolName: "read", toolCallId: "call-1", content: [{ type: "text", text: "CREATE TABLE" }] },
-        ],
-      },
-      "initial",
-    );
+    page(assistantRow("a1", [{ type: "text", text: "Reading the vocab file now." }], T1), {
+      rowId: "t1",
+      role: "toolResult",
+      toolName: "read",
+      toolCallId: "call-1",
+      content: [{ type: "text", text: "CREATE TABLE" }],
+    });
+  const partial = (text: string) => ({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text }] }, assistantMessageEvent: { type: "text_delta" } });
+  const whole = (type: "message_start" | "message_end", content: unknown[], timestamp: number) => stamped({ type, message: { role: "assistant", content } }, timestamp);
+  const texts = (state: ChatTranscriptState) => state.entries.flatMap((entry) => (entry.type === "text" ? [entry.text] : []));
 
   it("does not duplicate a message the journal holds when its partial updates are replayed", () => {
     let state = journal();
     for (const text of ["Reading", "Reading the vocab", "Reading the vocab file now."]) {
-      state = applyRpcLine(state, { type: "message_update", message: { role: "assistant", content: [{ type: "text", text }] }, assistantMessageEvent: { type: "text_delta" } });
+      state = applyRpcLine(state, stamped(partial(text), T1));
     }
-    expect(state.entries.filter((entry) => entry.type === "text")).toHaveLength(1);
+    expect(texts(state)).toEqual(["Reading the vocab file now."]);
+  });
+
+  it("does not duplicate a message the journal holds when its message_start and message_end are replayed", () => {
+    const content = [{ type: "text", text: "Reading the vocab file now." }];
+    const state = [whole("message_start", content, T1), whole("message_end", content, T1)].reduce((next, line) => applyRpcLine(next, line), journal());
+    expect(texts(state)).toEqual(["Reading the vocab file now."]);
+  });
+
+  it("shows a reply that begins with the words of the one the journal holds", () => {
+    const state = applyRpcLine(page(assistantRow("a1", [{ type: "text", text: "Done: updated config." }], T1)), whole("message_end", [{ type: "text", text: "Done" }], T2));
+    expect(texts(state)).toEqual(["Done: updated config.", "Done"]);
+  });
+
+  it("shows the next turn while the journal still ends on the previous one", () => {
+    let state = applyRpcLine(page(assistantRow("a1", [{ type: "text", text: "Done." }], T1)), { type: "turn_start" });
+    state = applyRpcLine(state, stamped(partial("Do"), T2));
+    expect(texts(state)).toEqual(["Done.", "Do"]);
+    state = applyRpcLine(state, stamped(partial("Doing the next step."), T2));
+    expect(texts(state)).toEqual(["Done.", "Doing the next step."]);
+  });
+
+  // A closed live turn sits below the seam like journal history, but it is not on disk.
+  it("shows both replies of a live run when the second begins with the first", () => {
+    const turn = (text: string, timestamp: number) => [
+      { type: "turn_start" },
+      stamped(partial(text), timestamp),
+      whole("message_end", [{ type: "text", text }], timestamp),
+      { type: "turn_end" },
+    ];
+    const state = applyRpcLines([...turn("Done: updated config.", T1), ...turn("Done", T2)]);
+    expect(texts(state)).toEqual(["Done: updated config.", "Done"]);
+  });
+
+  it("shows a message with the same text but its own stamp", () => {
+    const state = applyRpcLine(page(assistantRow("a1", [{ type: "text", text: "OK" }], T1)), whole("message_end", [{ type: "text", text: "OK" }], T2));
+    expect(texts(state)).toEqual(["OK", "OK"]);
+  });
+
+  it("shows an unstamped message rather than risk losing it", () => {
+    const state = applyRpcLine(journal(), partial("Reading the vocab file now."));
+    expect(texts(state)).toEqual(["Reading the vocab file now.", "Reading the vocab file now."]);
+  });
+
+  it("does not duplicate a tool-call-only message the journal holds", () => {
+    const call = [{ type: "toolCall", id: "call-2", name: "read", arguments: { path: "schema.sql" } }];
+    const state = [whole("message_start", call, T1), whole("message_end", call, T1)].reduce((next, line) => applyRpcLine(next, line), page(assistantRow("a1", call, T1)));
+    expect(state.entries.filter((entry) => entry.type === "tool_call")).toHaveLength(1);
   });
 
   it("shows a tool result live, once, even when the replay repeats one the journal holds", () => {
