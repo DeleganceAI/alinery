@@ -225,8 +225,11 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
   const showArchivedRef = useRef(showArchived);
   showArchivedRef.current = showArchived;
   const reposKey = openRepos?.join("\n");
-  // A pick whose repo has since closed falls back to the first open one.
-  const repoPath = dirs.includes(pickedRepo) ? pickedRepo : (dirs[0] ?? "");
+  // An explicit pick (the select or a repo's "+") stays the target after its repo closes: the form
+  // says so and will not create, rather than quietly retarget another repo. No pick follows the
+  // first open repo.
+  const repoPath = pickedRepo || (dirs[0] ?? "");
+  const pickClosed = pickedRepo !== "" && !dirs.includes(pickedRepo);
 
   const reload = async (archived = showArchived) => {
     const rows = await ipc.listChatThreads(archived);
@@ -696,7 +699,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
   }
 
   async function createThread() {
-    if (!repoPath) return;
+    if (!repoPath || pickClosed) return;
     setError("");
     try {
       const reply = await ipc.createChatThread({ repoPath, createWorktree });
@@ -1116,7 +1119,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
             <MessageSquare size={28} aria-hidden="true" />
             <p className="chat-blank-title">No thread selected</p>
             <p className="chat-blank-hint">Choose a thread on the left, or start a new one.</p>
-            <button type="button" className="btn small chat-new-btn" onClick={() => startThreadIn(dirs[0] ?? "")}>
+            <button type="button" className="btn small chat-new-btn" onClick={() => startThreadIn("")}>
               <Plus size={14} aria-hidden="true" />
               Start a new chat
             </button>
@@ -1181,6 +1184,11 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
               <span>Repository</span>
               <span className="chat-select">
                 <select value={repoPath} onChange={(event) => setRepoPath(event.target.value)}>
+                  {pickClosed ? (
+                    <option value={pickedRepo} disabled>
+                      {repoLabel(pickedRepo, dirs)} (not open)
+                    </option>
+                  ) : null}
                   {dirs.map((path) => (
                     <option key={path} value={path}>
                       {repoLabel(path, dirs)}
@@ -1191,13 +1199,18 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
               </span>
             </label>
             {repoPath ? <p className="dsc chat-dialog-path">{repoPath}</p> : null}
+            {pickClosed ? (
+              <p className="dsc field-error" role="alert">
+                {repoLabel(pickedRepo, dirs)} is not open in this window. Open it again{dirs.length > 0 ? ", or choose another repository" : ""}.
+              </p>
+            ) : null}
             <Checkbox checked={createWorktree} onChange={setCreateWorktree} label="New worktree and branch" />
           </div>
           <div className="mfoot chat-new-foot">
             <button type="button" className="btn ghost" onClick={() => setCreating(false)}>
               Cancel
             </button>
-            <button type="button" className="btn" onClick={() => void createThread()} disabled={!repoPath} data-autofocus>
+            <button type="button" className="btn" onClick={() => void createThread()} disabled={!repoPath || pickClosed} data-autofocus>
               Create
             </button>
           </div>

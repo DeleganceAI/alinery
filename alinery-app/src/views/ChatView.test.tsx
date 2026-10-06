@@ -1080,6 +1080,115 @@ describe("ChatView", () => {
     await waitFor(() => expect(Array.from(select.options).map((option) => option.textContent)).toEqual(["work/alinery", "oss/alinery"]));
     expect(screen.getByText("/a/work/alinery")).toBeTruthy();
   });
+
+  it("keeps a picked repo through its close, says it is not open, and creates there once it reopens", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatRepos.mockResolvedValueOnce(["/a", "/b"]).mockResolvedValueOnce(["/a"]).mockResolvedValue(["/a", "/b"]);
+      mocks.createChatThread.mockResolvedValue({ session: meta("s-new"), execution: null, start: "started", errors: [] });
+      render(chat());
+      expect(await within(rail()).findByRole("button", { name: "New thread in b" })).toBeTruthy();
+      fireEvent.click(within(rail()).getByRole("button", { name: "New thread" }));
+      const dialog = await screen.findByRole("dialog", { name: "New thread" });
+      const select = within(dialog).getByRole("combobox") as HTMLSelectElement;
+      fireEvent.change(select, { target: { value: "/b" } });
+      fireEvent.click(within(dialog).getByRole("checkbox", { name: "New worktree and branch" }));
+      const create = within(dialog).getByRole("button", { name: "Create" }) as HTMLButtonElement;
+
+      await vi.advanceTimersByTimeAsync(3000);
+      const alert = await within(dialog).findByRole("alert");
+      expect(alert.textContent).toBe("b is not open in this window. Open it again, or choose another repository.");
+      expect(select.value).toBe("/b");
+      const closed = within(dialog).getByRole("option", { name: "b (not open)" }) as HTMLOptionElement;
+      expect(closed.disabled).toBe(true);
+      expect(within(dialog).getByText("/b")).toBeTruthy();
+      expect(create.disabled).toBe(true);
+      fireEvent.click(create);
+      expect((within(dialog).getByRole("checkbox", { name: "New worktree and branch" }) as HTMLInputElement).checked).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(3000);
+      await waitFor(() => expect(within(dialog).queryByRole("alert")).toBeNull());
+      expect(select.value).toBe("/b");
+      expect(create.disabled).toBe(false);
+      fireEvent.click(create);
+      await waitFor(() => expect(mocks.createChatThread).toHaveBeenCalledWith({ repoPath: "/b", createWorktree: true }));
+      expect(mocks.createChatThread).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a repo's + pick until another repo is chosen", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatRepos.mockResolvedValueOnce(["/a", "/b"]).mockResolvedValueOnce(["/a"]).mockResolvedValue(["/a", "/b"]);
+      render(chat());
+      fireEvent.click(await within(rail()).findByRole("button", { name: "New thread in b" }));
+      const dialog = await screen.findByRole("dialog", { name: "New thread" });
+      const select = within(dialog).getByRole("combobox") as HTMLSelectElement;
+      expect(select.value).toBe("/b");
+
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await within(dialog).findByRole("alert")).toBeTruthy();
+      expect(select.value).toBe("/b");
+
+      fireEvent.change(select, { target: { value: "/a" } });
+      expect(select.value).toBe("/a");
+      expect(within(dialog).queryByRole("alert")).toBeNull();
+      expect(within(dialog).queryByRole("option", { name: "b (not open)" })).toBeNull();
+      expect((within(dialog).getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await within(rail()).findByRole("button", { name: "New thread in b" })).toBeTruthy();
+      expect(select.value).toBe("/a");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("points an unpicked form from the blank state at whichever repo is first open", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatRepos.mockResolvedValueOnce(["/a", "/b"]).mockResolvedValue(["/b"]);
+      mocks.createChatThread.mockResolvedValue({ session: meta("s-new"), execution: null, start: "started", errors: [] });
+      render(chat());
+      // The rail first, so the open repos are known when the form opens: it must still not pin /a.
+      expect(await within(rail()).findByRole("button", { name: "New thread in a" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Start a new chat" }));
+      const dialog = await screen.findByRole("dialog", { name: "New thread" });
+      const select = within(dialog).getByRole("combobox") as HTMLSelectElement;
+      expect(select.value).toBe("/a");
+
+      await vi.advanceTimersByTimeAsync(3000);
+      await waitFor(() => expect(select.value).toBe("/b"));
+      expect(within(dialog).queryByRole("alert")).toBeNull();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+      await waitFor(() => expect(mocks.createChatThread).toHaveBeenCalledWith({ repoPath: "/b", createWorktree: false }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("explains a remembered pick that closed while the form was shut", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatRepos.mockResolvedValueOnce(["/a", "/b"]).mockResolvedValue(["/a"]);
+      render(chat());
+      fireEvent.click(await within(rail()).findByRole("button", { name: "New thread in b" }));
+      fireEvent.click(within(await screen.findByRole("dialog", { name: "New thread" })).getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByRole("dialog", { name: "New thread" })).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(3000);
+      await waitFor(() => expect(within(rail()).queryByRole("button", { name: "New thread in b" })).toBeNull());
+      fireEvent.click(within(rail()).getByRole("button", { name: "New thread" }));
+      const dialog = await screen.findByRole("dialog", { name: "New thread" });
+      expect(within(dialog).getByRole("alert").textContent).toBe("b is not open in this window. Open it again, or choose another repository.");
+      expect((within(dialog).getByRole("combobox") as HTMLSelectElement).value).toBe("/b");
+      expect((within(dialog).getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("repoLabel", () => {
