@@ -27,7 +27,7 @@ import {
   applyFilePage,
   applyRpcLine,
   type ChatTranscriptState,
-  carryAnswered,
+  carryOver,
   dismissPendingUi,
   emptyTranscript,
   isPresentationUi,
@@ -101,7 +101,7 @@ import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatModelDialog } from "./ChatModelDialog";
 import { ChatPane } from "./ChatPane";
 import { ChatToolsDialog } from "./ChatToolsDialog";
-import { journalState } from "./chatSession";
+import { readJournalThrough } from "./chatSession";
 import { SessionActionPanel } from "./SessionActionPanel";
 
 // ---- session view -------------------------------------------------------------
@@ -1512,13 +1512,14 @@ export function SessionView({
     const reattach = rpcAttachedRef.current === id;
     rpcAttachedRef.current = id;
     const journal = reattach
-      ? ipc
-          .readSessionOmp({ id, taskSlug: taskSlug || null, end: null })
-          .then((buffer) => {
+      ? readJournalThrough((end, want) => ipc.readSessionOmp({ id, taskSlug: taskSlug || null, end: end ?? null, want }), chatRef.current.fileStart)
+          .then((built) => {
             if (cancelled) return;
-            const next = carryAnswered(chatRef.current, journalState(buffer));
-            chatRef.current = next;
-            setChat(next);
+            setChat((current) => {
+              const next = carryOver(current, built);
+              chatRef.current = next;
+              return next;
+            });
           })
           .catch(() => undefined)
       : seedOmpJournal();

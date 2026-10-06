@@ -61,7 +61,7 @@ export type ChatTranscriptState = {
   pendingUi: PendingUi[];
   /** Requests already answered here. A reattach replays the turn's lines, and an answered request
    *  coming back as a live card cannot be answered again (OMP has settled it). Carried across a
-   *  journal rebuild with `carryAnswered`. */
+   *  journal rebuild with `carryOver`. */
   answeredUi: string[];
   /** Distinct event types nothing handles. */
   unknownTypes: string[];
@@ -807,9 +807,20 @@ function displayUrl(raw: string): string {
   }
 }
 
-/** A transcript rebuilt from the journal keeps what the old one already answered. */
-export function carryAnswered(previous: ChatTranscriptState | undefined, next: ChatTranscriptState): ChatTranscriptState {
-  return previous && previous.answeredUi.length > 0 ? { ...next, answeredUi: previous.answeredUi } : next;
+/**
+ * What a journal rebuild keeps of the transcript it replaces, in one place:
+ *  - the older journal rows `previous` had paged in. A reattach reads the tail and the gap back to
+ *    the old boundary, but a page the reader loaded while that read was in flight is not in it. The
+ *    cut is by row id, not byte offset, so a journal that moved under us carries nothing over.
+ *  - the requests already answered, which the reattach's replay would bring back as live cards.
+ */
+export function carryOver(previous: ChatTranscriptState | undefined, rebuilt: ChatTranscriptState): ChatTranscriptState {
+  if (!previous) return rebuilt;
+  let next = rebuilt;
+  const first = rebuilt.messages[0]?.rowId;
+  const cut = first === undefined ? -1 : previous.messages.findIndex((message) => message.rowId === first);
+  if (cut > 0 && previous.fileStart !== null) next = applyFilePage(next, { start: previous.fileStart, messages: previous.messages.slice(0, cut) }, "older");
+  return previous.answeredUi.length > 0 ? { ...next, answeredUi: previous.answeredUi } : next;
 }
 
 export function dismissPendingUi(state: ChatTranscriptState, id: string): ChatTranscriptState {

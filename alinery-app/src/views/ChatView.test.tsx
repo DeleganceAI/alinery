@@ -6,6 +6,8 @@ import subagentLifecycle from "../chat/fixtures/live-subagent_lifecycle.json";
 import { type ChatPrefs, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
 import { askConfirm, confirmDanger } from "../confirm";
 import { mockIpc } from "../test/mockIpc";
+import { journalPage } from "../test/ompJournal";
+import { stubScrollSize } from "../test/scroll";
 import type { ChatThread, SessionMeta } from "../types";
 import { ChatView, repoLabel } from "./ChatView";
 
@@ -105,13 +107,6 @@ function observed(agent: "unknown" | "idle" | "busy" | "waiting_for_input", proc
       message_adapter: "omp_bracketed_paste",
     },
   };
-}
-
-/** A journal page as `read_chat_omp` returns it: a JSON header line, then one JSON row per line. */
-function journalPage(start: number, rows: [id: string, text: string][]): ArrayBuffer {
-  const body = rows.map(([id, text]) => JSON.stringify({ type: "message", id, message: { role: "user", content: [{ type: "text", text }] } })).join("\n");
-  const bytes = new TextEncoder().encode(`${JSON.stringify({ start, end: start + 100, length: 1000 })}\n${body}\n`);
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
 afterEach(() => {
@@ -848,6 +843,133 @@ describe("ChatView", () => {
     });
     expect(screen.queryByText("a stale older")).toBeNull();
     expect(screen.getByText("b only")).toBeTruthy();
+  });
+
+  // A reattach re-reads the journal, and by then it may have grown past the rows the reader has loaded.
+  // The rebuild reads back to the oldest row it replaces (a window sized to the gap, one byte wider
+  // so the row at the boundary is found) and keeps what the reader paged in meanwhile.
+  describe("a reattach after the journal moved on", () => {
+    let stub: ReturnType<typeof stubScrollSize>;
+    beforeEach(() => {
+      stub = stubScrollSize();
+    });
+    afterEach(() => stub.restore());
+
+    const rows = () => [...document.querySelectorAll<HTMLElement>('[data-entry-id^="f:"]')].map((node) => node.dataset.entryId);
+    const readerAt = (top: number) => {
+      const list = document.querySelector(".chat-list") as HTMLElement;
+      list.scrollTop = top;
+      fireEvent.scroll(list);
+    };
+    const pending = () => {
+      let land: (buffer: ArrayBuffer) => void = () => {};
+      const promise = new Promise<ArrayBuffer>((resolve) => {
+        land = resolve;
+      });
+      return { promise, land: (buffer: ArrayBuffer) => act(async () => land(buffer)) };
+    };
+
+    it.each([true, false])("keeps the loaded rows and the reader's place across several windows of growth, auto-scroll %s", async (autoScroll) => {
+      let grown = false;
+      mocks.readChatOmp.mockImplementation(async (args: { end?: number }) => {
+        if (!grown) return journalPage(500, [["m2", "second"]]);
+        return args.end == null
+          ? journalPage(2000, [["m4", "fourth"]])
+          : journalPage(500, [
+              ["m2", "second"],
+              ["m3", "third"],
+            ]);
+      });
+      const { rerender } = await openLive(observed("idle", "alive", "rpc"));
+      rerender(chat({ ...DEFAULT_CHAT_VISIBILITY, autoScroll }));
+      await screen.findByText("second");
+      const second = document.querySelector('[data-entry-id="f:m2"]');
+      readerAt(900);
+      stub.writes.length = 0;
+      grown = true;
+      mocks.readChatOmp.mockClear();
+
+      await reattach();
+      await screen.findByText("fourth");
+      // The tail, then one window sized to the gap: no other read.
+      expect(mocks.readChatOmp.mock.calls).toEqual([[{ repoPath: "/repo", id: "s-live" }], [{ repoPath: "/repo", id: "s-live", end: 2000, want: 1501 }]]);
+      expect(rows()).toEqual(["f:m2", "f:m3", "f:m4"]);
+      expect(document.querySelector('[data-entry-id="f:m2"]')).toBe(second);
+      expect(stub.writes).toEqual([]);
+    });
+
+    // Order A: the older page was asked for before the reattach and lands after the rebuild.
+    it("takes an older page that lands after the rebuild, each row once and in order", async () => {
+      const older = pending();
+      let grown = false;
+      mocks.readChatOmp.mockImplementation((args: { end?: number; want?: number }) => {
+        if (args.end === 1000 && args.want == null) return older.promise;
+        if (args.end == null) return Promise.resolve(grown ? journalPage(2000, [["m4", "fourth"]]) : journalPage(1000, [["m3", "third"]]));
+        return Promise.resolve(journalPage(1000, [["m3", "third"]]));
+      });
+      await openLive(observed("idle", "alive", "rpc"));
+      await screen.findByText("third");
+      readerAt(100);
+      await waitFor(() => expect(mocks.readChatOmp).toHaveBeenCalledWith({ repoPath: "/repo", id: "s-live", end: 1000 }));
+      grown = true;
+      await reattach();
+      await screen.findByText("fourth");
+
+      await older.land(
+        journalPage(0, [
+          ["m1", "first"],
+          ["m2", "second"],
+        ]),
+      );
+      expect(rows()).toEqual(["f:m1", "f:m2", "f:m3", "f:m4"]);
+      expect(await screen.findByText("Start of conversation")).toBeTruthy();
+    });
+
+    // Order B: the older page lands while the rebuild is still reading, so the rebuild never saw it.
+    it("keeps an older page that lands while the rebuild is still reading", async () => {
+      const gap = pending();
+      let grown = false;
+      mocks.readChatOmp.mockImplementation((args: { end?: number; want?: number }) => {
+        if (args.end === 2000) return gap.promise;
+        if (args.end === 1000) {
+          return Promise.resolve(
+            journalPage(0, [
+              ["m1", "first"],
+              ["m2", "second"],
+            ]),
+          );
+        }
+        return Promise.resolve(grown ? journalPage(2000, [["m4", "fourth"]]) : journalPage(1000, [["m3", "third"]]));
+      });
+      await openLive(observed("idle", "alive", "rpc"));
+      await screen.findByText("third");
+      grown = true;
+      dropStream();
+      await waitFor(() => expect(mocks.readChatOmp).toHaveBeenCalledWith({ repoPath: "/repo", id: "s-live", end: 2000, want: 1001 }));
+      readerAt(100);
+      await screen.findByText("first");
+
+      await gap.land(journalPage(1000, [["m3", "third"]]));
+      await waitFor(() => expect(link()).toBe("ready"));
+      await screen.findByText("fourth");
+      expect(rows()).toEqual(["f:m1", "f:m2", "f:m3", "f:m4"]);
+      expect(screen.getByText("Start of conversation")).toBeTruthy();
+    });
+
+    it("keeps the rows it has when the gap cannot be read, and still reattaches", async () => {
+      let grown = false;
+      mocks.readChatOmp.mockImplementation(async (args: { end?: number }) => {
+        if (!grown) return journalPage(500, [["m2", "second"]]);
+        if (args.end == null) return journalPage(2000, [["m4", "fourth"]]);
+        throw new Error("journal busy");
+      });
+      await openLive(observed("idle", "alive", "rpc"));
+      await screen.findByText("second");
+      grown = true;
+      await reattach();
+      expect(rows()).toEqual(["f:m2"]);
+      expect(screen.queryByText("fourth")).toBeNull();
+    });
   });
 
   const live = (id: string, extra: Partial<ChatThread> = {}) => thread(id, { session: meta(id, liveMeta), ...extra });

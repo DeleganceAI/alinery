@@ -451,6 +451,22 @@ mod tests {
         assert_eq!(seen, expected, "backward paging tiles the journal with no gap and no repeat");
     }
 
+    // Pins the contract `readJournalThrough` (chatSession.ts) sizes its windows by; the why is there.
+    #[test]
+    fn a_window_one_byte_past_a_row_boundary_starts_on_it() {
+        let rows: Vec<String> = (0..10).map(|i| row(&format!("r{i}"), &"w".repeat(120))).collect();
+        let repo = omp_fixture("omp_window_one_byte", &[("2026-01-01T00-00-00Z_a.jsonl", &rows.concat())]);
+        let offset = |index: usize| rows[..index].iter().map(|row| row.len() as u64).sum::<u64>();
+        let (through, end) = (offset(5), offset(8));
+
+        let window = read_omp_window(&repo, "task", "s1", Some(end), Some(end - through + 1)).unwrap();
+        assert_eq!(window.start, through, "the page starts on the row at the boundary");
+        assert_eq!(ids(&window.data), vec!["r5", "r6", "r7"]);
+
+        let short = read_omp_window(&repo, "task", "s1", Some(end), Some(end - through)).unwrap();
+        assert_eq!(ids(&short.data), vec!["r6", "r7"], "a window exactly the gap's size starts one row late");
+    }
+
     // The deadlock the review caught: a compaction row can be megabytes. If the boundary scan
     // looks at the window's own terminating newline it returns an empty page, forever.
     #[test]

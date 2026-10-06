@@ -11,7 +11,7 @@ import {
   applyRpcLine,
   applyRpcLines,
   type ChatTranscriptState,
-  carryAnswered,
+  carryOver,
   dismissPendingUi,
   emptyTranscript,
   flattenWouldFail,
@@ -1326,7 +1326,7 @@ describe("reattach replay", () => {
   it("does not bring back a request already answered, across a journal rebuild", () => {
     const ask = { type: "extension_ui_request", id: "q1", method: "confirm", title: "Run bash?" };
     const answered = dismissPendingUi(applyRpcLine(emptyTranscript(), ask), "q1");
-    const rebuilt = applyRpcLine(carryAnswered(answered, journal()), ask);
+    const rebuilt = applyRpcLine(carryOver(answered, journal()), ask);
     expect(rebuilt.pendingUi).toEqual([]);
     expect(rebuilt.entries.some((entry) => entry.type === "approval")).toBe(false);
     expect(applyRpcLines([ask, ask]).pendingUi).toHaveLength(1);
@@ -1334,5 +1334,47 @@ describe("reattach replay", () => {
 
   it("records each unknown event type once", () => {
     expect(applyRpcLines([{ type: "tool_execution_update" }, { type: "tool_execution_update" }]).unknownTypes).toEqual(["tool_execution_update"]);
+  });
+});
+
+describe("carryOver", () => {
+  const row = (rowId: string): ChatMessage => ({ rowId, role: "user", content: [{ type: "text", text: `row ${rowId}` }] });
+  const read = (start: number, ...ids: string[]) => applyFilePage(emptyTranscript(), { start, messages: ids.map(row) }, "initial");
+  const withOlder = (state: ChatTranscriptState, start: number, ...ids: string[]) => applyFilePage(state, { start, messages: ids.map(row) }, "older");
+  const rowIds = (state: ChatTranscriptState) => state.messages.map((message) => message.rowId);
+
+  it("keeps the older rows the rebuild does not reach, and the offset to page further back from", () => {
+    const previous = withOlder(read(500, "m2", "m3"), 100, "m1");
+    const next = carryOver(previous, read(500, "m2", "m3", "m4"));
+    expect(rowIds(next)).toEqual(["m1", "m2", "m3", "m4"]);
+    expect(next.entries.map((entry) => entry.id)).toEqual(["f:m1", "f:m2", "f:m3", "f:m4"]);
+    expect(next.fileStart).toBe(100);
+  });
+
+  it("leaves the rebuild alone when it reaches as far back as the old transcript did", () => {
+    const rebuilt = read(100, "m1", "m2", "m3");
+    expect(carryOver(withOlder(read(500, "m2", "m3"), 100, "m1"), rebuilt)).toBe(rebuilt);
+    expect(carryOver(undefined, rebuilt)).toBe(rebuilt);
+  });
+
+  it("carries nothing when the rebuild's first row is not one the old transcript held", () => {
+    // A different journal file, or one rewritten under us: offsets no longer line up, ids still do.
+    const rebuilt = read(900, "x1", "x2");
+    expect(carryOver(read(500, "m2", "m3"), rebuilt)).toBe(rebuilt);
+  });
+
+  it("carries journal rows only, never the live rows typed or streamed since", () => {
+    const previous = appendOptimisticUser(withOlder(read(500, "m2", "m3"), 100, "m1"), "typed since");
+    const next = carryOver(previous, read(500, "m3"));
+    expect(rowIds(next)).toEqual(["m1", "m2", "m3"]);
+    expect(next.entries.map((entry) => entry.id)).toEqual(["f:m1", "f:m2", "f:m3"]);
+  });
+
+  it("keeps the answered requests with the older rows", () => {
+    const answered = dismissPendingUi(applyRpcLine(withOlder(read(500, "m2"), 100, "m1"), { type: "extension_ui_request", id: "q1", method: "confirm", title: "Run bash?" }), "q1");
+    const next = carryOver(answered, read(500, "m2", "m3"));
+    expect(next.answeredUi).toEqual(["q1"]);
+    expect(next.fileStart).toBe(100);
+    expect(rowIds(next)).toEqual(["m1", "m2", "m3"]);
   });
 });

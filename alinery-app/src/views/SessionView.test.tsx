@@ -6,6 +6,8 @@ import type { QueuedFollowUp } from "../chat/queue";
 import type * as Ipc from "../ipc";
 import type { SessionMessageDraft } from "../sessionMessage";
 import { mockIpc } from "../test/mockIpc";
+import { journalPage } from "../test/ompJournal";
+import { stubScrollSize } from "../test/scroll";
 import { Toast, toast } from "../toast";
 import type { AgentState, ArtifactListItem, ArtifactTreeNode, SessionObservation, Task } from "../types";
 import { executionRecord, executionReply, partiallyPublishedExecution } from "./executionTestFixture";
@@ -1565,6 +1567,79 @@ describe("session chat attach handshake", () => {
     await act(async () => onClosed?.());
     await waitFor(() => expect(rpcAttachSession).toHaveBeenCalledTimes(2));
     expect(readSessionOmp.mock.calls.length).toBe(reads + 1);
+  });
+
+  // The rebuild reads back to the oldest row the transcript had loaded and keeps the rows in place, so
+  // a reader who turned auto-scroll off is not thrown back to the tail.
+  describe("reattach keeps the loaded history", () => {
+    let stub: ReturnType<typeof stubScrollSize>;
+    beforeEach(() => {
+      stub = stubScrollSize();
+    });
+    afterEach(() => {
+      stub.restore();
+      readSessionOmp.mockReset().mockRejectedValue(new Error("no journal"));
+    });
+
+    const rows = () => [...document.querySelectorAll<HTMLElement>('[data-entry-id^="f:"]')].map((node) => node.dataset.entryId);
+    const readerAt = (top: number) => {
+      const list = document.querySelector(".chat-list") as HTMLElement;
+      list.scrollTop = top;
+      fireEvent.scroll(list);
+    };
+    const reattach = async () => {
+      const attaches = rpcAttachSession.mock.calls.length;
+      const onClosed = onStreamClosed.mock.calls[onStreamClosed.mock.calls.length - 1]?.[2];
+      await act(async () => onClosed?.());
+      await waitFor(() => expect(rpcAttachSession).toHaveBeenCalledTimes(attaches + 1));
+    };
+    const reads = () => readSessionOmp.mock.calls.map(([args]) => args);
+
+    it("keeps the older rows the reader paged in, in place, with auto-scroll off", async () => {
+      readSessionOmp.mockImplementation(async (args) => ((args as { end: number | null }).end === 500 ? journalPage(0, [["m1", "first"]]) : journalPage(500, [["m2", "second"]])));
+      renderSession({ appearance: { ...DEFAULT_APPEARANCE, chat_auto_scroll: false } });
+      await screen.findByText("second");
+      readerAt(100);
+      await screen.findByText("first");
+      const first = document.querySelector('[data-entry-id="f:m1"]');
+      readerAt(900);
+      stub.writes.length = 0;
+      readSessionOmp.mockClear();
+
+      await reattach();
+      await waitFor(() => expect(reads()).toHaveLength(2));
+      expect(reads()).toEqual([expect.objectContaining({ end: null }), expect.objectContaining({ end: 500, want: 501 })]);
+      expect(rows()).toEqual(["f:m1", "f:m2"]);
+      expect(document.querySelector('[data-entry-id="f:m1"]')).toBe(first);
+      expect(stub.writes).toEqual([]);
+    });
+
+    it("reads the whole gap when the journal grew by several windows, with auto-scroll off", async () => {
+      let grown = false;
+      readSessionOmp.mockImplementation(async (args) => {
+        if (!grown) return journalPage(500, [["m2", "second"]]);
+        return (args as { end: number | null }).end === null
+          ? journalPage(2000, [["m4", "fourth"]])
+          : journalPage(500, [
+              ["m2", "second"],
+              ["m3", "third"],
+            ]);
+      });
+      renderSession({ appearance: { ...DEFAULT_APPEARANCE, chat_auto_scroll: false } });
+      await screen.findByText("second");
+      const second = document.querySelector('[data-entry-id="f:m2"]');
+      readerAt(900);
+      stub.writes.length = 0;
+      grown = true;
+      readSessionOmp.mockClear();
+
+      await reattach();
+      await screen.findByText("fourth");
+      expect(reads()).toEqual([expect.objectContaining({ end: null }), expect.objectContaining({ end: 2000, want: 1501 })]);
+      expect(rows()).toEqual(["f:m2", "f:m3", "f:m4"]);
+      expect(document.querySelector('[data-entry-id="f:m2"]')).toBe(second);
+      expect(stub.writes).toEqual([]);
+    });
   });
 
   it("detaches again when an attach lands after the view let go of it", async () => {

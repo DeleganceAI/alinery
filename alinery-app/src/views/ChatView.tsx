@@ -26,7 +26,7 @@ import {
   appendOptimisticAbort,
   appendOptimisticUser,
   type ChatTranscriptState,
-  carryAnswered,
+  carryOver,
   emptyTranscript,
   matchingSendFailure,
   matchingSendSuccess,
@@ -54,10 +54,10 @@ import {
   applyPlainSend,
   attachHandshake,
   chatTerminalIo,
-  journalState,
   olderPageState,
   parseChatLine,
   queueRefreshCommand,
+  readJournalThrough,
   sendCommand,
   sendNowCommand,
 } from "./chatSession";
@@ -312,6 +312,8 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
   const selected = useMemo(() => threads.find((thread) => threadKey(thread) === selectedKey) ?? null, [threads, selectedKey]);
   const selectionKey = selected ? threadKey(selected) : null;
   const transcript = loaded && loaded.key === selectionKey ? loaded.value : NO_TRANSCRIPT;
+  const transcriptRef = useRef(transcript);
+  transcriptRef.current = transcript;
   const observation = observed && observed.key === selectionKey ? observed.value : null;
   const connection: Link = link && link.key === selectionKey ? link.value : { state: "connecting" };
   /** Applies only while `key`'s transcript is the loaded one: a reply that lands after a switch is dropped. */
@@ -351,6 +353,8 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
       setSendingKey(null);
     }
     const claimed = pendingPrompt.current;
+    // Read now, before anything lands: the rebuild below reaches back at least this far.
+    const through = transcriptRef.current.fileStart;
     let cancelled = false;
     setError((current) => (current === "cannot continue" ? "" : current));
     setLink({ key, value: { state: "connecting" } });
@@ -409,18 +413,17 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     };
     // Attach only once the journal is in, as task sessions do: the handshake replies (commands,
     // state, models) must land on the journal-built transcript, not be replaced by it.
-    ipc
-      .readChatOmp({ repoPath: repo, id })
+    readJournalThrough((end, want) => ipc.readChatOmp({ repoPath: repo, id, end, want }), through)
       .then(
-        (buffer) => {
+        (next) => {
           if (cancelled) return;
-          const next = journalState(buffer);
-          setLoaded((current) => ({ key, value: carryAnswered(current?.key === key ? current.value : undefined, next) }));
+          setLoaded((current) => ({ key, value: carryOver(current?.key === key ? current.value : undefined, next) }));
           if (interruptedWithoutJournal(selected, next)) setError("cannot continue");
         },
         () => {
           if (cancelled) return;
-          setLoaded({ key, value: emptyTranscript() });
+          // A reattach that cannot read keeps the rows it has; only a first load has nothing to keep.
+          setLoaded((current) => (current?.key === key ? current : { key, value: emptyTranscript() }));
           if (selected.session.ended_at != null && selected.session.harness_resume_token.length === 0) setError("cannot continue");
         },
       )
@@ -577,8 +580,6 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
   // reader moved to another thread is dropped by the keyed update.
   const olderBusy = useRef(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const transcriptRef = useRef(transcript);
-  transcriptRef.current = transcript;
   const loadOlder = useCallback(() => {
     const from = transcriptRef.current.fileStart;
     if (olderBusy.current || from == null || from === 0 || !selectedRepo || !selectedId) return;

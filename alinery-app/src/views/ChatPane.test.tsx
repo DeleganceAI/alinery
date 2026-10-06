@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ACTOR, type ChatEntry, subagent } from "../chat/types";
 import { chatVisibilityFromAppearance, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
 import { applyRpcLine, emptyTranscript } from "../chatTranscript";
+import { stubScrollSize } from "../test/scroll";
 import { ChatPane } from "./ChatPane";
 
 const at = Date.parse("2026-09-05T12:11:00Z");
@@ -237,6 +238,34 @@ describe("ChatPane scroll-back paging", () => {
     const after = container.querySelector('[data-entry-id="f:a"]');
     expect(after).toBeTruthy();
     expect(container.querySelector('[data-entry-id="f:b"]')).toBe(before);
+  });
+
+  // jsdom has no layout: a row sits 100px below the one before it, which is all the anchor measures.
+  it("keeps the reader's place through a re-render that lands while an older page is still loading", () => {
+    const stub = stubScrollSize();
+    const offsetTop = vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockImplementation(function (this: HTMLElement) {
+      return [...(this.parentElement?.children ?? [])].indexOf(this) * 100;
+    });
+    try {
+      const asked = vi.fn();
+      const old = [row("f:b", "second"), row("f:c", "third")];
+      const view = render(<ChatPane entries={old} atStart={false} onLoadOlder={asked} />);
+      const list = view.container.querySelector(".chat-list") as HTMLElement;
+      list.scrollTop = 100;
+      fireEvent.scroll(list);
+      expect(asked).toHaveBeenCalledTimes(1);
+      stub.writes.length = 0;
+
+      // The rows rebuilt under the reader while the page is on its way: nothing to restore yet.
+      view.rerender(<ChatPane entries={[...old]} atStart={false} onLoadOlder={asked} loadingOlder />);
+      expect(stub.writes).toEqual([]);
+
+      view.rerender(<ChatPane entries={[row("f:a", "first"), ...old]} atStart={false} onLoadOlder={asked} />);
+      expect(stub.writes).toEqual([200]);
+    } finally {
+      offsetTop.mockRestore();
+      stub.restore();
+    }
   });
 
   it("tells the reader when the whole conversation is loaded", () => {
