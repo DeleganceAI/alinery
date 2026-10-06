@@ -92,7 +92,7 @@ We implement this model in Alinery\footnote{\url{https://github.com/deleganceai/
 A Finite Agent Machine (FAM) defines an abstract state space, a finite set of
 agentic operations, and rules governing when those operations may run. An
 execution engine enforces these rules, providing hard guardrails on how the
-agents' work is coordinated. A state is a set of available artifact files;
+agents' work is coordinated. A state is a set of available artifact filenames;
 agents interpret and create the files' contents. An
 execution engine binds
 operations to available inputs, records the resulting executions, and
@@ -110,21 +110,53 @@ $\mathcal{S}$ is a set of artifact states, $s_0\in\mathcal{S}$ is the
 initial state, and
 $\rightarrow\;\subseteq\;\mathcal{S}\times\mathcal{A}\times\mathcal{S}$
 is the transition relation. Each state is a finite set of available artifact
-files. A transition $s\xrightarrow{\alpha}s'$ represents a completed
-invocation of operation $\alpha$ using inputs from $s$ and publishing output
-files $P$, so that $s'=s\cup P$.
+filenames. A transition \mbox{$s\xrightarrow{\alpha}s'$} represents a completed
+invocation of operation $\alpha$ using artifacts named in $s$ and publishing
+output artifacts whose filenames form a set $P$, so that $s'=s\cup P$.
 \end{definition}
 
 Here, \emph{finite} refers to the authored operation set $\mathcal{A}$.
-The same operation may produce different outputs from the same artifact
-state, giving rise to more than one possible successor. Repeated invocations
-can add new artifacts, so the number of reachable states may be unbounded
+The same operation may publish different sets of artifact filenames from
+the same state, giving rise to more than one possible successor. Repeated invocations
+can add new filenames, so the number of reachable states may be unbounded
 and an execution need not terminate.
 
 % New formalism outline; draft each subsection separately.
 \subsection{Artifacts and States}
 
+An \emph{artifact} is a file that carries information used or produced by
+an agent operation, such as a task description, source assessment, or
+proposed solution. Let $\mathcal{D}$ denote the universe of artifact filenames.
+Each state $s\in\mathcal{S}$ is a finite subset of $\mathcal{D}$.
+The initial state $s_0$ contains the filenames of the initial input artifacts.
+
+Artifacts with different filenames remain distinct even when they serve the
+same purpose or contain identical text. Reading an artifact does not remove
+its filename from the state, so the same artifact can support several later
+operations.
+
 \subsection{Agent Operations}
+
+An \emph{agent operation schema} $\alpha\in\mathcal{A}$ is a reusable
+specification of work for an agent. We write
+\[
+  \alpha=(I_\alpha,O_\alpha,\xi_\alpha).
+\]
+The input and output specifications are families of permitted filename sets,
+\[
+  I_\alpha,\ O_\alpha\subseteq\mathcal{P}_{\mathrm{fin}}(\mathcal{D}),
+\]
+where $\mathcal{P}_{\mathrm{fin}}(\mathcal{D})$ denotes the finite subsets of
+$\mathcal{D}$. The execution specification $\xi_\alpha$ supplies the agent's
+instructions and execution configuration.
+
+An \emph{invocation} is one execution of a schema. Its input filenames must
+form a set in $I_\alpha$ and all be present in the current state. The agent
+interprets the corresponding files under the specified instructions, and
+its published output filenames must form a set in $O_\alpha$. Neither
+specification predetermines file contents. The same schema, $\alpha$, can be invoked
+repeatedly with different inputs, so additional executions do not enlarge
+the authored operation set $\mathcal{A}$.
 
 \subsection{Agentic Transitions}
 
