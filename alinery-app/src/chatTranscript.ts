@@ -41,6 +41,8 @@ export type ChatLoginProvider = {
 export type SessionChatMeta = {
   model?: string;
   thinking?: string;
+  /** The levels the current model offers, `off` first; `[]` when it offers none. Absent until a model is known. */
+  thinkingLevels?: string[];
   contextUsage?: { tokens: number; contextWindow: number; percent?: number };
   isCompacting?: boolean;
   autoCompactionEnabled?: boolean;
@@ -394,12 +396,26 @@ function modelLabel(raw: unknown): string | undefined {
   return id ?? provider;
 }
 
+/** Mirrors OMP `getSupportedEfforts`. A lone "off" is deliberately left out. The `set_model` reply
+ *  carries the model before OMP refreshes it, so the next `get_state` re-confirms the levels. */
+function thinkingLevelsFor(raw: unknown): string[] | undefined {
+  const model = asRecord(raw);
+  if (!model) return undefined;
+  const efforts = asRecord(model.thinking)?.efforts;
+  const named = Array.isArray(efforts) ? efforts.filter((effort): effort is string => typeof effort === "string") : [];
+  return model.reasoning === true && named.length > 0 ? ["off", ...named] : [];
+}
+
 function applySessionMeta(state: ChatTranscriptState, data: Record<string, unknown>): ChatTranscriptState {
   const sessionMeta: SessionChatMeta = { ...state.sessionMeta };
   const model = modelLabel(data.model);
   if (model) sessionMeta.model = model;
+  const levels = thinkingLevelsFor(data.model);
+  if (levels) sessionMeta.thinkingLevels = levels;
   const thinking = asString(data.thinking) ?? asString(data.thinkingLevel);
   if (thinking) sessionMeta.thinking = thinking;
+  // OMP omits the field for a model without reasoning, so a model with no level has none.
+  else if (levels) delete sessionMeta.thinking;
   const usage = mapContextUsage(data.contextUsage);
   if (usage) sessionMeta.contextUsage = usage;
   if (typeof data.isCompacting === "boolean") sessionMeta.isCompacting = data.isCompacting;
@@ -887,12 +903,14 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
         ? (asString(event.text) ?? "Compacting conversation…")
         : event.type === "auto_compaction_end"
           ? (asString(event.text) ?? "")
-          : eventText(event);
+          : event.type === "thinking_level_changed"
+            ? (asString(event.thinkingLevel) ?? eventText(event))
+            : eventText(event);
     const nextMeta =
       event.type === "model_changed" && text
         ? { ...state.sessionMeta, model: text }
-        : event.type === "thinking_level_changed" && text
-          ? { ...state.sessionMeta, thinking: text }
+        : event.type === "thinking_level_changed"
+          ? { ...state.sessionMeta, thinking: text || undefined }
           : event.type === "auto_compaction_start"
             ? { ...state.sessionMeta, isCompacting: true }
             : event.type === "auto_compaction_end"
@@ -950,7 +968,7 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
 
     if (event.command === "set_model" && data) {
       const model = modelLabel(data) ?? modelLabel({ provider: data.provider, id: data.modelId ?? data.id });
-      return model ? { ...state, sessionMeta: { ...state.sessionMeta, model } } : state;
+      return model ? { ...state, sessionMeta: { ...state.sessionMeta, model, thinkingLevels: thinkingLevelsFor(data) } } : state;
     }
     if (sendCommand && data?.agentInvoked === false) {
       // OMP handled it locally — no turn is coming.

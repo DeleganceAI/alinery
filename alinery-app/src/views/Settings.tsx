@@ -1590,7 +1590,7 @@ export function Settings({
           label={
             <>
               Show meta strip{" "}
-              <span className="dsc">{ava ? "— repo · branch · status line under the thread title" : "— model · thinking · event count · context above the chat"}</span>
+              <span className="dsc">{ava ? "— repo · branch · thinking · status line under the thread title" : "— model · thinking · event count · context above the chat"}</span>
             </>
           }
         />

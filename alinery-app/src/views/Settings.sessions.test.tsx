@@ -291,7 +291,7 @@ describe("Sessions view and Chat tabs", () => {
 
   it("Chat describes the meta strip and column width for Ava", async () => {
     renderSection("chat");
-    expect(await screen.findByText("— repo · branch · status line under the thread title")).toBeTruthy();
+    expect(await screen.findByText("— repo · branch · thinking · status line under the thread title")).toBeTruthy();
     expect(screen.getByText("Limits the width of the message thread, composer and notices.")).toBeTruthy();
     expect(screen.getByText("Which journal rows appear in the Chat view. Global-only.")).toBeTruthy();
     expect(screen.getByText("Density, sizing and behavior of the Chat view. Global-only.")).toBeTruthy();

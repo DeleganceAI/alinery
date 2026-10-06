@@ -60,6 +60,7 @@ import {
   setAutoCompactionCommand,
   setModelCommand,
   setSubagentSubscriptionCommand,
+  setThinkingLevelCommand,
 } from "../ompRpc";
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
 import { appendGeneratedText, canAbortChatSession, isTurnActive, OMP_INTERRUPT_DATA, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
@@ -103,6 +104,7 @@ import { ChatPane } from "./ChatPane";
 import { ChatToolsDialog } from "./ChatToolsDialog";
 import { readJournalThrough } from "./chatSession";
 import { SessionActionPanel } from "./SessionActionPanel";
+import { ThinkingSelect } from "./ThinkingSelect";
 
 // ---- session view -------------------------------------------------------------
 
@@ -1800,15 +1802,17 @@ export function SessionView({
     (messageDraft.body.trim().length > 0 || (messageDraft.attachments?.length ?? 0) > 0 || latestQueuedFollowUp(queuedFollowUps) !== undefined);
   const uiPrompt = chat.pendingUi.find((request) => request.method === "select" || request.method === "input" || request.method === "editor");
   const queuedMeta = chat.sessionMeta.queuedMessageCount ?? queuedFollowUps.length;
-  const chatMeta = [
-    chat.sessionMeta.model || model,
-    chat.sessionMeta.thinking,
+  const chatMetaHead = chat.sessionMeta.model || model;
+  const chatMetaTail = [
     `${chat.entries.length} event${chat.entries.length === 1 ? "" : "s"}`,
     formatContextUsage(chat.sessionMeta.contextUsage?.tokens, chat.sessionMeta.contextUsage?.contextWindow),
     queuedMeta > 0 ? `${queuedMeta} queued` : "",
   ]
     .filter((part) => part && part.length > 0)
     .join(" · ");
+  const pickThinking = (level: string) => {
+    void ipc.rpcWriteSession(id, setThinkingLevelCommand(level)).catch((error) => toast(String(error), "error"));
+  };
 
   const replyExtensionValue = async (requestId: string, value: string) => {
     handledUiRef.current.add(requestId);
@@ -2109,7 +2113,21 @@ export function SessionView({
                 <>
                   {chatVisibility.showMeta ? (
                     <div className="chat-meta">
-                      <p>{chatMeta}</p>
+                      <p>
+                        {chatMetaHead ? `${chatMetaHead} · ` : null}
+                        {chat.sessionMeta.thinking ? (
+                          <>
+                            <ThinkingSelect
+                              level={chat.sessionMeta.thinking}
+                              levels={chat.sessionMeta.thinkingLevels}
+                              disabledReason={rpcProcessLive ? null : "The session is not running, so its thinking level cannot change"}
+                              onPick={pickThinking}
+                            />
+                            {" · "}
+                          </>
+                        ) : null}
+                        {chatMetaTail}
+                      </p>
                     </div>
                   ) : null}
                   <div className="terminal-frame">

@@ -280,6 +280,65 @@ describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
     expect(state.sessionMeta.autoCompactionEnabled).toBe(false);
   });
 
+  describe("the thinking level", () => {
+    const reasoning = { provider: "anthropic", id: "opus", reasoning: true, thinking: { efforts: ["minimal", "low", "medium", "high"] } };
+    const getState = (data: object) => ({ type: "response", command: "get_state", success: true, data });
+    const withLevel = (thinking: string) => applyRpcLine(emptyTranscript(), getState({ model: reasoning, thinkingLevel: thinking }));
+
+    it("takes the level from the thinkingLevel OMP actually sends", () => {
+      const state = applyRpcLine(withLevel("high"), { type: "thinking_level_changed", thinkingLevel: "low" });
+      expect(state.sessionMeta.thinking).toBe("low");
+    });
+
+    it("shows the concrete level when OMP resolved a configured auto", () => {
+      const state = applyRpcLine(withLevel("high"), { type: "thinking_level_changed", thinkingLevel: "medium", configured: "auto" });
+      expect(state.sessionMeta.thinking).toBe("medium");
+    });
+
+    it("clears the level when the event carries none", () => {
+      const state = applyRpcLine(withLevel("high"), { type: "thinking_level_changed" });
+      expect(state.sessionMeta.thinking).toBeUndefined();
+    });
+
+    it("lists off and the model's efforts from a reasoning model's get_state", () => {
+      const state = withLevel("high");
+      expect(state.sessionMeta.thinking).toBe("high");
+      expect(state.sessionMeta.thinkingLevels).toEqual(["off", "minimal", "low", "medium", "high"]);
+    });
+
+    it("offers no levels for reasoning without efforts, and ignores efforts that are not names", () => {
+      const bare = applyRpcLine(emptyTranscript(), getState({ model: { id: "m", reasoning: true } }));
+      expect(bare.sessionMeta.thinkingLevels).toEqual([]);
+      const lone = applyRpcLine(emptyTranscript(), getState({ model: { id: "m", reasoning: true, thinking: { efforts: [] } } }));
+      expect(lone.sessionMeta.thinkingLevels).toEqual([]);
+      const mixed = applyRpcLine(emptyTranscript(), getState({ model: { ...reasoning, thinking: { efforts: ["low", 3, null, "high"] } } }));
+      expect(mixed.sessionMeta.thinkingLevels).toEqual(["off", "low", "high"]);
+    });
+
+    it("clears the level for a model without reasoning, which OMP sends no level for", () => {
+      const state = applyRpcLine(withLevel("high"), getState({ model: { provider: "xai", id: "grok", reasoning: false } }));
+      expect(state.sessionMeta.thinking).toBeUndefined();
+      expect(state.sessionMeta.thinkingLevels).toEqual([]);
+    });
+
+    it("leaves the level and the list alone when get_state names no model", () => {
+      const state = applyRpcLine(withLevel("high"), getState({ queuedMessageCount: 0 }));
+      expect(state.sessionMeta.thinking).toBe("high");
+      expect(state.sessionMeta.thinkingLevels).toEqual(["off", "minimal", "low", "medium", "high"]);
+    });
+
+    it("refreshes the list from a set_model reply", () => {
+      const state = applyRpcLine(withLevel("high"), {
+        type: "response",
+        command: "set_model",
+        success: true,
+        data: { provider: "xai", id: "grok", reasoning: true, thinking: { efforts: ["low", "high"] } },
+      });
+      expect(state.sessionMeta.model).toBe("xai/grok");
+      expect(state.sessionMeta.thinkingLevels).toEqual(["off", "low", "high"]);
+    });
+  });
+
   it("appends a host hatch notice without inventing a prompt", () => {
     const state = appendHarnessNotice(emptyTranscript(), "hatch", "Use Terminal to log in.");
     expect(state.entries).toEqual([expect.objectContaining({ type: "harness", event: "hatch", text: "Use Terminal to log in." })]);

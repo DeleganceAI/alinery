@@ -769,6 +769,70 @@ describe("ChatView", () => {
     expect(screen.getByLabelText("Message or /command")).toBeTruthy();
   });
 
+  describe("the thinking level in the title bar", () => {
+    const reasoningState = {
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: { model: { provider: "anthropic", id: "opus", reasoning: true, thinking: { efforts: ["low", "high"] } }, thinkingLevel: "high" },
+    };
+    const picker = () => titleBar().getByRole("combobox", { name: "Thinking level" }) as HTMLSelectElement;
+    const noPicker = () => titleBar().queryByRole("combobox", { name: "Thinking level" });
+
+    it("shows what get_state reports, and writes a pick without moving the label until OMP confirms", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      expect(noPicker()).toBeNull();
+      emit(reasoningState);
+      expect(picker().value).toBe("high");
+      expect(picker().disabled).toBe(false);
+      mocks.chatRpcWrite.mockClear();
+      fireEvent.change(picker(), { target: { value: "low" } });
+      await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledExactlyOnceWith("/repo", "s-live", expect.objectContaining({ type: "set_thinking_level", level: "low" })));
+      expect(picker().value).toBe("high");
+      emit({ type: "thinking_level_changed", thinkingLevel: "low" });
+      expect(picker().value).toBe("low");
+    });
+
+    it("shows a pick that could not be written", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      emit(reasoningState);
+      mocks.chatRpcWrite.mockRejectedValueOnce(new Error("socket closed"));
+      fireEvent.change(picker(), { target: { value: "low" } });
+      expect(await screen.findByText(/socket closed/)).toBeTruthy();
+    });
+
+    it("is disabled, with the reason, once OMP has exited", async () => {
+      const { emit } = await openLive(observed("idle", "exited"));
+      emit(reasoningState);
+      expect(picker().disabled).toBe(true);
+      expect(picker().title).toBe("Ava is not running in this thread, so its thinking level cannot change");
+    });
+
+    it("is hidden while the thread is in the terminal", async () => {
+      mocks.chatRestate.mockImplementation(async (_repo: string, _id: string, target: "pty" | "rpc") => {
+        mocks.chatSessionStatus.mockResolvedValue(observed("idle", "alive", target));
+      });
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      emit(reasoningState);
+      expect(picker()).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Open in Terminal" }));
+      expect(await screen.findByTestId("terminal")).toBeTruthy();
+      expect(noPicker()).toBeNull();
+    });
+
+    it("returns after a reattach once the fresh get_state lands", async () => {
+      mocks.readChatOmp.mockImplementation(async () => journalPage(500, [["m2", "second"]]));
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      emit(reasoningState);
+      expect(picker().value).toBe("high");
+      await reattach();
+      // The rebuilt transcript knows nothing OMP has not said again.
+      await waitFor(() => expect(noPicker()).toBeNull());
+      emit(reasoningState);
+      expect(picker().value).toBe("high");
+    });
+  });
+
   it("hides the terminal hatch once OMP has exited", async () => {
     await openLive(observed("idle", "exited"));
     expect(screen.queryByRole("button", { name: "Open in Terminal" })).toBeNull();

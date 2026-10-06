@@ -1822,6 +1822,81 @@ describe("session chat attach handshake", () => {
   });
 });
 
+describe("session chat thinking level", () => {
+  const reasoningState = {
+    type: "response",
+    command: "get_state",
+    success: true,
+    data: { model: { provider: "anthropic", id: "opus", reasoning: true, thinking: { efforts: ["low", "high"] } }, thinkingLevel: "high" },
+  };
+  const picker = () => screen.getByRole("combobox", { name: "Thinking level" }) as HTMLSelectElement;
+  /** Attaches the chat and returns what feeds it OMP lines. */
+  async function attached(status: SessionObservation, overrides: Partial<ComponentProps<typeof SessionView>> = {}) {
+    sessionStatus.mockResolvedValue(status);
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    renderSession(overrides);
+    await waitFor(() => expect(onLine.current).toBeDefined());
+    return (...lines: object[]) =>
+      act(async () => {
+        for (const line of lines) onLine.current?.(JSON.stringify(line));
+      });
+  }
+
+  beforeEach(() => {
+    scenario.tasks = [{ ...task }];
+    rpcWriteSession.mockReset().mockResolvedValue(undefined);
+    rpcAttachSession.mockReset();
+    rpcAttachSession.mockImplementation(async () => undefined);
+  });
+
+  afterEach(() => {
+    cleanup();
+    sessionStatus.mockReset();
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "exited" as const, code: 0 }, state: null, checkpoint: {} });
+    rpcWriteSession.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("keeps the status line's text with the level in it", async () => {
+    const feed = await attached(liveObservation("rpc"), { model: "xai/grok" });
+    await feed({ type: "response", command: "get_state", success: true, data: { thinkingLevel: "high" } });
+    expect(document.querySelector(".chat-meta p")?.textContent).toMatch(/^xai\/grok · high · \d+ events?$/);
+  });
+
+  it("writes the level a pick names, and keeps showing OMP's until it confirms", async () => {
+    const feed = await attached(liveObservation("rpc"));
+    await feed(reasoningState);
+    expect(picker().value).toBe("high");
+    expect(picker().disabled).toBe(false);
+    rpcWriteSession.mockClear();
+    fireEvent.change(picker(), { target: { value: "low" } });
+    expect(rpcWriteSession).toHaveBeenCalledExactlyOnceWith("session", expect.objectContaining({ type: "set_thinking_level", level: "low" }));
+    expect(picker().value).toBe("high");
+    await feed({ type: "thinking_level_changed", thinkingLevel: "low" });
+    expect(picker().value).toBe("low");
+  });
+
+  it("toasts a pick OMP could not be sent", async () => {
+    const feed = await attached(liveObservation("rpc"));
+    render(<Toast />);
+    await feed(reasoningState);
+    rpcWriteSession.mockRejectedValueOnce("session-exited");
+    fireEvent.change(picker(), { target: { value: "low" } });
+    expect(await within(screen.getByRole("status", { name: "Notifications" })).findByText("session-exited")).toBeTruthy();
+  });
+
+  it("is disabled, with the reason, while the session's process is not running", async () => {
+    const feed = await attached({
+      ...liveObservation("rpc"),
+      lifecycle: { state: "live_exited" },
+      state: { process: { state: "exited", code: 0 }, agent: { state: "idle" }, playbook: { state: "ready_to_advance" }, adapter: "omp", message_adapter: "omp_bracketed_paste" },
+    });
+    await feed(reasoningState);
+    expect(picker().disabled).toBe(true);
+    expect(picker().title).toBe("The session is not running, so its thinking level cannot change");
+  });
+});
+
 describe("session-scoped completion permission", () => {
   beforeEach(() => {
     scenario.tasks = [task];

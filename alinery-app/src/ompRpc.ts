@@ -28,6 +28,7 @@ export const setModelCommand = (provider: string, modelId: string, id = nextId()
   modelId,
 });
 export const cycleModelCommand = (id = nextId()) => ({ id, type: "cycle_model" as const });
+export const setThinkingLevelCommand = (level: string, id = nextId()) => ({ id, type: "set_thinking_level" as const, level });
 export const compactCommand = (customInstructions?: string, id = nextId()) =>
   customInstructions ? { id, type: "compact" as const, customInstructions } : { id, type: "compact" as const };
 export const setAutoCompactionCommand = (enabled: boolean, id = nextId()) => ({

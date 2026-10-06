@@ -1,5 +1,6 @@
 import {
   Archive,
+  Brain,
   ChevronDown,
   ChevronRight,
   FolderGit2,
@@ -37,7 +38,7 @@ import { askConfirm, confirmDanger, confirmStopAndSwitch } from "../confirm";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { NameEditor } from "../NameEditor";
-import { compactCommand, getStateCommand, promptCommand, setAutoCompactionCommand } from "../ompRpc";
+import { compactCommand, getStateCommand, promptCommand, setAutoCompactionCommand, setThinkingLevelCommand } from "../ompRpc";
 import { SessionTerminal } from "../SessionTerminal";
 import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
 import { isTurnActive, OMP_INTERRUPT_DATA } from "../sessionMessage";
@@ -62,6 +63,7 @@ import {
   sendNowCommand,
 } from "./chatSession";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
+import { ThinkingSelect } from "./ThinkingSelect";
 import { useChatUiReplies } from "./useChatUiReplies";
 
 function threadLabel(thread: ChatThread): string {
@@ -892,6 +894,11 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     ipc.chatRpcWrite(selected.repo_path, selected.session.id, abortTurnCommand()).catch((cause: unknown) => setError(String(cause)));
   }
 
+  function pickThinking(level: string) {
+    if (!selected) return;
+    ipc.chatRpcWrite(selected.repo_path, selected.session.id, setThinkingLevelCommand(level)).catch((cause: unknown) => setError(String(cause)));
+  }
+
   const contextUsage = formatContextUsage(transcript.sessionMeta.contextUsage?.tokens, transcript.sessionMeta.contextUsage?.contextWindow);
   const modelLabel = transcript.sessionMeta.model || selected?.session.model || "Model";
   const blocked = error === "cannot continue";
@@ -1074,6 +1081,17 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
                   {selected.branch_label}
                   {selected.checkout ? <span className="chat-meta-tag">checkout</span> : <span className="chat-meta-tag">worktree</span>}
                 </span>
+                {inTerminal || !transcript.sessionMeta.thinking ? null : (
+                  <span className="chat-meta-item">
+                    <Brain size={13} aria-hidden="true" />
+                    <ThinkingSelect
+                      level={transcript.sessionMeta.thinking}
+                      levels={transcript.sessionMeta.thinkingLevels}
+                      disabledReason={connection.state === "ready" && processLive ? null : "Ava is not running in this thread, so its thinking level cannot change"}
+                      onPick={pickThinking}
+                    />
+                  </span>
+                )}
                 {contextUsage ? (
                   <span className="chat-meta-item" title="Context used / available">
                     {contextUsage}
