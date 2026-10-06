@@ -1921,8 +1921,13 @@ fn spawn_session(
     if transport == SessionTransport::Rpc {
         child_args.push("--mode".into());
         child_args.push("rpc".into());
-        child_args.push("--thinking".into());
-        child_args.push("high".into());
+        // The flag seeds a new thread. OMP records the level in the session journal on every
+        // change, and a resumed thread keeps the one the user chose, which the flag would override.
+        let resuming = (resume && !token.is_empty()) || restate_jsonl.is_some();
+        if !resuming {
+            child_args.push("--thinking".into());
+            child_args.push("high".into());
+        }
     }
     if let Some(path) = &restate_jsonl {
         child_args.push("--resume".into());

@@ -12,6 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use alinery_core::daemon_client::{DaemonClient, MAX_CONTROL_HEADER_BYTES};
+use alinery_core::task_creation::{CreateExecutionSessionRequest, ExecutionSessionTarget};
 use alinery_core::SessionMeta;
 use serde_json::{json, Value};
 
@@ -879,8 +880,7 @@ fn rpc_argv_has_extension_mode_thinking_session_dir() {
     assert!(argv.contains("--extension"), "{argv}");
     assert!(argv.contains("--mode"), "{argv}");
     assert!(argv.contains("rpc"), "{argv}");
-    assert!(argv.contains("--thinking"), "{argv}");
-    assert!(argv.contains("high"), "{argv}");
+    assert!(argv.contains("--thinking\nhigh\n"), "{argv}");
     assert!(argv.contains("--session-dir"), "{argv}");
     assert!(argv.contains(&format!("{id}.omp")), "{argv}");
     assert!(!argv.contains("--trusted-extension"), "{argv}");
@@ -898,6 +898,50 @@ fn pty_argv_omits_mode_rpc_and_thinking_high() {
     assert!(argv.contains("--session-dir"), "{argv}");
     assert!(!argv.contains("--mode"), "{argv}");
     assert!(!argv.contains("\nrpc\n") && !argv.ends_with("rpc"), "{argv}");
+    assert!(!argv.contains("--thinking"), "{argv}");
+}
+
+// `--thinking` seeds a new thread only: OMP journals the level on every change, so a resumed
+// thread must not have the flag override the level its user chose.
+#[test]
+fn rpc_resume_with_token_omits_thinking() {
+    let fixture = Fixture::new();
+    let auxiliary = DaemonClient::connect_path(fixture.socket.clone())
+        .unwrap()
+        .create_execution_session(&CreateExecutionSessionRequest {
+            task_slug: "task".into(),
+            target: ExecutionSessionTarget::Auxiliary {
+                harness: "omp".into(),
+                model: None,
+                prompt: None,
+            },
+            launch_override: None,
+            prompt_extra: None,
+            handoff_artifact: None,
+            start: false,
+        })
+        .unwrap()
+        .session;
+    let resumed = fixture.rpc(json!({"op": "resume", "id": auxiliary.id, "task_slug": "task", "resume_token": "resume-token"}));
+    assert_eq!(resumed["ok"], true, "{resumed}");
+    let argv = fixture.argv(&auxiliary.id);
+    assert!(argv.contains("--mode\nrpc\n"), "must still be an RPC launch: {argv}");
+    assert!(argv.contains("--resume=resume-token"), "{argv}");
+    assert!(!argv.contains("--thinking"), "{argv}");
+}
+
+#[test]
+fn rpc_restate_with_journal_omits_thinking() {
+    let fixture = Fixture::new();
+    let id = fixture.spawn_omp();
+    let dir = fixture.root.join(format!(".alinery/tasks/task/sessions/{id}.omp"));
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("2026-01-01T00-00-00Z_0193a1.jsonl"), "turn\n").unwrap();
+    fixture.discard_argv(id);
+    assert_eq!(fixture.restate(id, "rpc").get("ok"), Some(&json!(true)));
+    let argv = fixture.argv(id);
+    assert!(argv.contains("--mode\nrpc\n"), "must still be an RPC launch: {argv}");
+    assert!(argv.contains("--resume\n"), "{argv}");
     assert!(!argv.contains("--thinking"), "{argv}");
 }
 
