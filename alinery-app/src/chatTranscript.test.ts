@@ -17,7 +17,7 @@ import {
   flattenWouldFail,
   mapHydratedMessage,
   matchingSendFailure,
-  removeOptimisticSend,
+  settleRefusedSend,
 } from "./chatTranscript";
 import type { ChatMessage } from "./types";
 
@@ -448,15 +448,6 @@ describe("journal pages", () => {
     });
     expect(refused.pendingTurn).toBe(false);
     expect(refused.entries.some((e) => e.type === "error")).toBe(true);
-  });
-
-  it("removes an optimistic send without leaving the user bubble behind", () => {
-    const seeded = appendOptimisticUser(emptyTranscript(), "keep me", "prompt");
-    const entryId = seeded.entries[0]?.id ?? "";
-    const next = removeOptimisticSend(seeded, entryId);
-    expect(next.entries).toEqual([]);
-    expect(next.messages).toEqual([]);
-    expect(next.pendingTurn).toBe(false);
   });
 
   it("matches only the refused prompt/follow_up for the pending command id", () => {
@@ -1337,6 +1328,84 @@ describe("reattach replay", () => {
   });
 });
 
+describe("settleRefusedSend", () => {
+  const journalMessage: ChatMessage = { rowId: "u1", role: "user", content: [{ type: "text", text: "continue" }] };
+  const sent = (text: string, kind: "prompt" | "follow_up" = "prompt") => {
+    const state = appendOptimisticUser(emptyTranscript(), text, kind);
+    return { state, id: state.entries[state.entries.length - 1]?.id ?? "" };
+  };
+  const userRows = (state: ChatTranscriptState) => state.entries.flatMap((entry) => (entry.type === "prompt" || entry.type === "follow_up" ? [entry] : []));
+
+  it("takes a refused send back without leaving the user bubble behind", () => {
+    const { state, id } = sent("keep me");
+    const next = settleRefusedSend({ ...state, pendingTurn: true }, id, "keep me", true);
+    expect(next.entries).toEqual([]);
+    expect(next.messages).toEqual([]);
+    expect(next.pendingTurn).toBe(false);
+  });
+
+  it("takes back only its own message, never one OMP wrote with the same words", () => {
+    const journal = applyFilePage(emptyTranscript(), { start: 0, messages: [journalMessage] }, "initial");
+    const state = appendOptimisticUser(journal, "continue", "prompt");
+    const next = settleRefusedSend(state, "e1", "continue", true);
+    expect(next.messages.map((message) => message.rowId)).toEqual(["u1"]);
+    expect(next.entries.map((entry) => entry.id)).toEqual(["f:u1"]);
+    // Nothing to take back: the journal's row is not this send's.
+    expect(settleRefusedSend(journal, null, "continue", true).messages).toEqual(journal.messages);
+  });
+
+  it("keeps the row as not sent, in place and with its attachments, when the composer cannot take the text back", () => {
+    const attachments = [{ kind: "file" as const, name: "notes.pdf" }];
+    const first = appendOptimisticUser(emptyTranscript(), "A", "prompt", undefined, attachments);
+    const second = appendOptimisticUser(first, "B", "prompt");
+    const next = settleRefusedSend(second, "e1", "A", false);
+    expect(next.entries.map((entry) => entry.id)).toEqual(["e1", "e2"]);
+    expect(next.entries[0]).toMatchObject({ type: "prompt", text: "A", failed: true, attachments });
+    expect(next.entries[1]).toMatchObject({ type: "prompt", text: "B" });
+    expect(userRows(next)[1]?.failed).toBeUndefined();
+    expect(next.messages.map((message) => (message.content[0] as { text: string }).text)).toEqual(["B"]);
+  });
+
+  it("turns a refused follow-up and a refused slash command into a not-sent prompt", () => {
+    const queued = sent("later", "follow_up");
+    expect(settleRefusedSend(queued.state, queued.id, "later", false).entries[0]).toMatchObject({ type: "prompt", text: "later", failed: true });
+    const slash = appendOptimisticUser(emptyTranscript(), "/skill:review the diff", "slash", { name: "skill:review", args: "the diff" });
+    const next = settleRefusedSend(slash, "e1", "/skill:review the diff", false);
+    expect(next.entries).toHaveLength(1);
+    expect(next.entries[0]).toMatchObject({ id: "e1", type: "prompt", text: "/skill:review the diff", failed: true });
+  });
+
+  it("appends a not-sent row when the refusal beat the write's ack, and has nothing to take back", () => {
+    const earlier = sent("continue").state;
+    const appended = settleRefusedSend(earlier, null, "continue", false);
+    expect(userRows(appended).map((entry) => entry.failed)).toEqual([undefined, true]);
+    expect(appended.messages).toEqual(earlier.messages);
+    expect(settleRefusedSend(earlier, null, "continue", true).entries).toEqual(earlier.entries);
+  });
+
+  it("counts a row only while it is still this send's: an id left over from before a rebuild is absent", () => {
+    // A rebuild restarts ids, so `e1` can now be any row: a different prompt, a failed one, a command.
+    const other = sent("something else").state;
+    expect(settleRefusedSend(other, "e1", "continue", true).entries).toEqual(other.entries);
+    const next = settleRefusedSend(other, "e1", "continue", false);
+    expect(userRows(next).map((entry) => [entry.text, entry.failed])).toEqual([
+      ["something else", undefined],
+      ["continue", true],
+    ]);
+    const failedAlready = settleRefusedSend(sent("continue").state, "e1", "continue", false);
+    expect(userRows(settleRefusedSend(failedAlready, "e1", "continue", false)).map((entry) => entry.failed)).toEqual([true, true]);
+    const command = appendOptimisticUser(emptyTranscript(), "/compact", "slash", { name: "compact" });
+    expect(userRows(settleRefusedSend(command, "e1", "/skill:x", false)).map((entry) => entry.text)).toEqual(["/skill:x"]);
+    expect(settleRefusedSend(command, "e1", "/skill:x", false).entries[0]).toMatchObject({ type: "slash", name: "compact" });
+  });
+
+  it("does not take a not-sent row for the echo of a later send", () => {
+    const failed = settleRefusedSend(sent("continue").state, "e1", "continue", false);
+    const echoed = applyRpcLine(failed, { type: "message_start", message: { role: "user", content: [{ type: "text", text: "continue" }] } });
+    expect(userRows(echoed).map((entry) => entry.failed)).toEqual([true, undefined]);
+  });
+});
+
 describe("carryOver", () => {
   const row = (rowId: string): ChatMessage => ({ rowId, role: "user", content: [{ type: "text", text: `row ${rowId}` }] });
   const read = (start: number, ...ids: string[]) => applyFilePage(emptyTranscript(), { start, messages: ids.map(row) }, "initial");
@@ -1376,5 +1445,15 @@ describe("carryOver", () => {
     expect(next.answeredUi).toEqual(["q1"]);
     expect(next.fileStart).toBe(100);
     expect(rowIds(next)).toEqual(["m1", "m2", "m3"]);
+  });
+
+  it("keeps the rows OMP refused, under fresh ids, and none of the sends it accepted", () => {
+    const typed = appendOptimisticUser(appendOptimisticUser(read(500, "m2"), "refused", "prompt"), "accepted", "prompt");
+    const previous = settleRefusedSend(typed, "e1", "refused", false);
+    const next = carryOver(previous, read(500, "m2", "m3"));
+    expect(rowIds(next)).toEqual(["m2", "m3"]);
+    expect(next.entries.map((entry) => entry.id)).toEqual(["f:m2", "f:m3", "e1"]);
+    expect(next.entries[2]).toMatchObject({ type: "prompt", text: "refused", failed: true });
+    expect(next.entrySeq).toBe(1);
   });
 });

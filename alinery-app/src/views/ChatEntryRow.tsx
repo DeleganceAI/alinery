@@ -396,8 +396,17 @@ function ChatEntryRowImpl({
         </Msg>
       );
     case "prompt":
+      // A refused send is the only copy of the text once the composer has moved on, so Copy stays even when the setting hides it.
       return (
-        <Msg at={entry.at} actor={entry.actor} type={entry.type} stamp={stamp} showActorLabels={showActorLabels} copyText={copyText}>
+        <Msg
+          at={entry.at}
+          actor={entry.actor}
+          type={entry.type}
+          stamp={stamp}
+          showActorLabels={showActorLabels}
+          copyText={entry.failed ? copyTextForEntry(entry) : copyText}
+          kicker={entry.failed ? <Status tone="bad">not sent</Status> : undefined}
+        >
           <UserRowBody entry={entry} />
         </Msg>
       );

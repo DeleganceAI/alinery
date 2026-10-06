@@ -573,23 +573,45 @@ export function appendOptimisticUser(
   );
 }
 
-/** Drop a send that OMP refused after the daemon already acked the stdin write. */
-export function removeOptimisticSend(state: ChatTranscriptState, entryId: string): ChatTranscriptState {
-  const entry = state.entries.find((row) => row.id === entryId);
-  const entries = state.entries.filter((row) => row.id !== entryId);
-  let messages = state.messages;
-  if (entry && (entry.type === "prompt" || entry.type === "follow_up")) {
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      const message = messages[i];
-      if (message?.role !== "user") continue;
-      const text = message.content.find((part) => part.type === "text");
-      if (text?.type === "text" && text.text === entry.text) {
-        messages = [...messages.slice(0, i), ...messages.slice(i + 1)];
-        break;
-      }
-    }
+/** The optimistic copy of a send in `messages`. A message with a `rowId` is OMP's own, so one with the same words stays. */
+function dropOptimisticMessage(messages: ChatMessage[], text: string): ChatMessage[] {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message?.role !== "user" || message.rowId !== undefined) continue;
+    const part = message.content.find((item) => item.type === "text");
+    if (part?.type === "text" && part.text === text) return [...messages.slice(0, i), ...messages.slice(i + 1)];
   }
-  return { ...state, entries, messages, pendingTurn: false };
+  return messages;
+}
+
+type SendRow = Extract<ChatEntry, { type: "prompt" | "follow_up" | "slash" }>;
+
+/** Whether `row` is still the row that sending `text` added. */
+function isSendOf(row: ChatEntry, text: string): row is SendRow {
+  if (row.type === "slash") {
+    const parsed = parseSlash(text);
+    return row.actor.kind === "user" && parsed?.name === row.name && parsed.args === (row.args ?? "");
+  }
+  return (row.type === "prompt" || row.type === "follow_up") && row.text === text && !row.failed;
+}
+
+/**
+ * OMP refused a send the daemon had already acked. `restore` means the composer takes the text back,
+ * so the row goes. Otherwise the row stays as "not sent" (a prompt, so a queue trim cannot delete it),
+ * rewritten in place, or appended when the refusal beat the write's ack and there is no row yet.
+ * `entryId` names the row at send time, but ids restart at every rebuild and may by now belong to an
+ * unrelated row, so it counts only while it is still this send's.
+ */
+export function settleRefusedSend(state: ChatTranscriptState, entryId: string | null, text: string, restore: boolean): ChatTranscriptState {
+  const index = entryId === null ? -1 : state.entries.findIndex((row) => row.id === entryId);
+  const found = state.entries[index];
+  const own = found !== undefined && isSendOf(found, text) ? found : undefined;
+  const settled = { ...state, pendingTurn: false };
+  if (restore) return own ? { ...settled, entries: state.entries.filter((_, i) => i !== index), messages: dropOptimisticMessage(state.messages, text) } : settled;
+  if (!own) return appendEntry(settled, { actor: ACTOR.you, type: "prompt", text, failed: true, at: Date.now() });
+  const entries = state.entries.slice();
+  entries[index] = own.type === "slash" ? { id: own.id, at: own.at, actor: own.actor, type: "prompt", text, failed: true } : { ...own, type: "prompt", failed: true };
+  return { ...settled, entries, messages: dropOptimisticMessage(state.messages, text) };
 }
 
 /** True when this response is the failure of the prompt/follow_up we just wrote. */
@@ -813,6 +835,8 @@ function displayUrl(raw: string): string {
  *    the old boundary, but a page the reader loaded while that read was in flight is not in it. The
  *    cut is by row id, not byte offset, so a journal that moved under us carries nothing over.
  *  - the requests already answered, which the reattach's replay would bring back as live cards.
+ *  - the rows OMP refused, which exist nowhere else: the journal never held them. They get fresh ids,
+ *    as the rebuild restarts them.
  */
 export function carryOver(previous: ChatTranscriptState | undefined, rebuilt: ChatTranscriptState): ChatTranscriptState {
   if (!previous) return rebuilt;
@@ -820,6 +844,11 @@ export function carryOver(previous: ChatTranscriptState | undefined, rebuilt: Ch
   const first = rebuilt.messages[0]?.rowId;
   const cut = first === undefined ? -1 : previous.messages.findIndex((message) => message.rowId === first);
   if (cut > 0 && previous.fileStart !== null) next = applyFilePage(next, { start: previous.fileStart, messages: previous.messages.slice(0, cut) }, "older");
+  for (const row of previous.entries) {
+    if (row.type !== "prompt" || !row.failed) continue;
+    const { id: _stale, ...rest } = row;
+    next = appendEntry(next, rest);
+  }
   return previous.answeredUi.length > 0 ? { ...next, answeredUi: previous.answeredUi } : next;
 }
 
@@ -952,7 +981,8 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
         let lastUserIndex = -1;
         for (let i = state.entries.length - 1; i >= 0; i -= 1) {
           const entry = state.entries[i];
-          if (entry?.type === "prompt" || entry?.type === "follow_up") {
+          // A not-sent row is not this echo's send: OMP never took it.
+          if ((entry?.type === "prompt" || entry?.type === "follow_up") && !entry.failed) {
             lastUserIndex = i;
             break;
           }

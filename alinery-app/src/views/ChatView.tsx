@@ -31,7 +31,7 @@ import {
   matchingSendFailure,
   matchingSendSuccess,
   needsUiReply,
-  removeOptimisticSend,
+  settleRefusedSend,
 } from "../chatTranscript";
 import { askConfirm, confirmDanger, confirmStopAndSwitch } from "../confirm";
 import { ORB_STATE } from "../Indicators";
@@ -193,9 +193,14 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
   const [createWorktree, setCreateWorktree] = useState(false);
   // Per thread, so a half-written message stays with the thread it was written for.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  // The prompt/follow_up awaiting OMP's verdict. The daemon acks the stdin write, not the send: a
-  // refusal arrives later as a response, and the bubble must go and the text return to the composer.
-  const awaitingVerdict = useRef<{ key: string; commandId: string; text: string; refused: boolean } | null>(null);
+  // Read where the render's `drafts` could be a tick old: two refusals landing together each see the other's restore.
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
+  // Sends awaiting OMP's verdict, by command id. The daemon acks the stdin write, not the send: a
+  // refusal arrives later as a response and settles only its own send. `entryId` is the row the send
+  // added, null until the write is acked. Kept across a thread switch, so a refusal replayed on the
+  // way back still finds its send.
+  const awaitingVerdicts = useRef(new Map<string, { key: string; text: string; entryId: string | null; refused: boolean }>());
   const [sendingKey, setSendingKey] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [observed, setObserved] = useState<Keyed<SessionObservation> | null>(null);
@@ -445,20 +450,28 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
               if (cancelled) return;
               const value = parseChatLine(line);
               updateTranscript(key, (current) => applyChatValue(current, value));
-              const awaiting = awaitingVerdict.current;
-              if (awaiting?.key === key) {
-                const refused = matchingSendFailure(value, awaiting.commandId);
+              for (const [commandId, awaiting] of awaitingVerdicts.current) {
+                if (awaiting.key !== key) continue;
+                const refused = matchingSendFailure(value, commandId);
                 if (refused !== null) {
                   awaiting.refused = true;
-                  awaitingVerdict.current = null;
-                  updateTranscript(key, (current) => {
-                    const row = [...current.entries].reverse().find((entry) => (entry.type === "prompt" || entry.type === "follow_up") && entry.text === awaiting.text);
-                    return row ? removeOptimisticSend(current, row.id) : current;
-                  });
-                  setDrafts((current) => ({ ...current, [key]: current[key] || awaiting.text }));
+                  awaitingVerdicts.current.delete(commandId);
+                  // The composer takes the text back unless something else is being written there: then
+                  // the row stays, marked not sent, and neither message is lost.
+                  const draft = draftsRef.current[key] ?? "";
+                  const restore = draft.trim() === "" || draft === awaiting.text;
+                  if (restore) {
+                    draftsRef.current = { ...draftsRef.current, [key]: awaiting.text };
+                    setDrafts((current) => ({ ...current, [key]: awaiting.text }));
+                  }
+                  // The row's id is read in the updater, which runs after the one that added the row.
+                  updateTranscript(key, (current) => settleRefusedSend(current, awaiting.entryId, awaiting.text, restore));
                   setError(`Not sent: ${refused}`);
-                } else if (matchingSendSuccess(value, awaiting.commandId)) {
-                  awaitingVerdict.current = null;
+                  break;
+                }
+                if (matchingSendSuccess(value, commandId)) {
+                  awaitingVerdicts.current.delete(commandId);
+                  break;
                 }
               }
               if (mcpListWait.current === key) {
@@ -496,15 +509,13 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
         setLink({ key, value: { state: "ready" } });
         if (!claimed) return;
         try {
-          await ipc.chatRpcWrite(repo, id, sendCommand(claimed.text, false));
+          await writeSend(key, repo, id, sendCommand(claimed.text, false), claimed.text, (current) => applyPlainSend(current, claimed.text, false));
         } catch (cause) {
           if (!cancelled) dropClaim(`Not sent: ${errorMessage(cause)}`);
           return;
         }
         if (pendingPrompt.current === claimed) pendingPrompt.current = null;
         setSendingKey((current) => (current === key ? null : current));
-        updateTranscript(key, (current) => applyPlainSend(current, claimed.text, false));
-        setDrafts(clearDraft(key, claimed.text));
       });
     return () => {
       cancelled = true;
@@ -728,6 +739,37 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
   }
 
   /**
+   * Writes a command and, once the daemon acks it, adds the send's row and clears its draft: a failed
+   * write keeps the draft and adds no row. A prompt is then awaiting OMP's verdict (`awaitingVerdicts`).
+   * One refused before the ack never gets a row, and its draft stays.
+   */
+  async function writeSend(
+    key: string,
+    repo: string,
+    id: string,
+    command: { id: string; type: string },
+    text: string,
+    addRow: (current: ChatTranscriptState) => { state: ChatTranscriptState; entryId: string },
+  ) {
+    const verdict = { key, text, entryId: null as string | null, refused: false };
+    const judged = command.type === "prompt" || command.type === "follow_up" || command.type === "abort_and_prompt";
+    if (judged) awaitingVerdicts.current.set(command.id, verdict);
+    try {
+      await ipc.chatRpcWrite(repo, id, command);
+    } catch (cause) {
+      awaitingVerdicts.current.delete(command.id);
+      throw cause;
+    }
+    if (verdict.refused) return;
+    updateTranscript(key, (current) => {
+      const added = addRow(current);
+      verdict.entryId = added.entryId;
+      return added.state;
+    });
+    setDrafts(clearDraft(key, text));
+  }
+
+  /**
    * The draft stays in the composer until the write lands, so a failed send loses nothing. A thread
    * with no process is started or resumed first, and the text goes out after that thread's handshake.
    */
@@ -817,16 +859,10 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
             ? promptCommand("/mcp list")
             : sendCommand(text, busy);
     if (dispatch.kind === "mcp-list") mcpListWait.current = key;
-    const verdict = command.type === "prompt" || command.type === "follow_up" ? { key, commandId: command.id, text, refused: false } : null;
-    awaitingVerdict.current = verdict;
     setSendingKey(key);
     try {
-      await ipc.chatRpcWrite(repo, id, command);
+      await writeSend(key, repo, id, command, text, (current) => applySendPlan(current, text, plan));
       if (dispatch.kind === "get-tools") setToolsOpen(true);
-      // Refused before the write even resolved: no bubble, and the draft stays.
-      if (verdict?.refused) return;
-      updateTranscript(key, (current) => applySendPlan(current, text, plan).state);
-      setDrafts(clearDraft(key, text));
     } catch (cause) {
       if (mcpListWait.current === key) mcpListWait.current = null;
       setError(errorMessage(cause));
@@ -841,10 +877,10 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     const text = body;
     setError("");
     try {
-      await ipc.chatRpcWrite(selected.repo_path, selected.session.id, sendNowCommand(text));
-      // Only after the write lands, as task sessions do: a failed Send now keeps the draft and adds no row.
-      setDrafts(clearDraft(key, text));
-      updateTranscript(key, (current) => appendOptimisticUser(current, text, "prompt"));
+      await writeSend(key, selected.repo_path, selected.session.id, sendNowCommand(text), text, (current) => {
+        const state = appendOptimisticUser(current, text, "prompt");
+        return { state, entryId: state.entries[state.entries.length - 1]?.id ?? "" };
+      });
     } catch (cause) {
       setError(errorMessage(cause));
     }

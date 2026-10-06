@@ -105,8 +105,8 @@ export function sendCommand(text: string, busy: boolean) {
 }
 
 /** The optimistic row for a send that resumed the thread: plain text, so it claims the turn. */
-export function applyPlainSend(state: ChatTranscriptState, text: string, busy: boolean): ChatTranscriptState {
-  return applySendPlan(state, text, { dispatch: { kind: "plain", message: text }, invokesModel: true, optimisticKind: busy ? "follow_up" : "prompt" }).state;
+export function applyPlainSend(state: ChatTranscriptState, text: string, busy: boolean): { state: ChatTranscriptState; entryId: string } {
+  return applySendPlan(state, text, { dispatch: { kind: "plain", message: text }, invokesModel: true, optimisticKind: busy ? "follow_up" : "prompt" });
 }
 
 /** Send now: abort the running turn and prompt with this text instead of queueing it. */

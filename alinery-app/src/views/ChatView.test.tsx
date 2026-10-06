@@ -328,7 +328,13 @@ describe("ChatView", () => {
     // The seven handshake writes land, and the link is ready, before any send in these tests.
     await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledTimes(7));
     await waitFor(() => expect(link()).toBe("ready"));
-    return { rerender, emit: (event: object) => act(() => onLine(JSON.stringify(event))) };
+    return {
+      rerender,
+      emit: (...events: object[]) =>
+        act(() => {
+          for (const event of events) onLine(JSON.stringify(event));
+        }),
+    };
   }
 
   function sendIdle(text: string) {
@@ -418,6 +424,207 @@ describe("ChatView", () => {
     await waitFor(() => expect((screen.getByLabelText("Message or /command") as HTMLTextAreaElement).value).toBe("add an HNSW index"));
     expect(screen.getByText(/Not sent: model busy/)).toBeTruthy();
     expect(screen.queryAllByText("add an HNSW index").filter((element) => element.tagName !== "TEXTAREA")).toHaveLength(0);
+  });
+
+  // OMP's verdict on a send arrives after the daemon acked the write, by command id.
+  describe("a send OMP refuses", () => {
+    const composer = () => document.querySelector("textarea") as HTMLTextAreaElement;
+    const typeInto = (value: string) => fireEvent.change(composer(), { target: { value } });
+    /** Sends from the composer, as Send when idle and as Queue while the claimed turn runs. */
+    const submit = (value: string) => {
+      typeInto(value);
+      fireEvent.click(screen.getByRole("button", { name: /^(Send|Queue)$/ }));
+    };
+    const sentIds = () =>
+      mocks.chatRpcWrite.mock.calls
+        .map(([, , payload]) => payload as { id: string; type: string })
+        .filter((payload) => payload.type === "prompt" || payload.type === "follow_up" || payload.type === "abort_and_prompt")
+        .map((payload) => payload.id);
+    const refusal = (id: string, command = "prompt") => ({ type: "response", id, command, success: false, error: "model busy" });
+    const bubbles = (text: string) => screen.queryAllByText(text).filter((element) => element.tagName !== "TEXTAREA");
+    const rowOf = (text: string) => bubbles(text)[0]?.closest("article") as HTMLElement;
+    /** A write the daemon has not acked yet. */
+    function holdNextWrite() {
+      let ack = () => {};
+      mocks.chatRpcWrite.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            ack = resolve;
+          }),
+      );
+      return () => act(async () => ack());
+    }
+
+    it("keeps the refused message as not sent, with Copy, when another is already being written", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      submit("add an HNSW index");
+      await waitFor(() => expect(bubbles("add an HNSW index")).toHaveLength(1));
+      typeInto("run the tests");
+      await emit(refusal(sentIds()[0] ?? ""));
+      await within(rowOf("add an HNSW index")).findByText("not sent");
+      expect(within(rowOf("add an HNSW index")).getByRole("button", { name: "Copy message" })).toBeTruthy();
+      expect(composer().value).toBe("run the tests");
+      expect(screen.getByText(/Not sent: model busy/)).toBeTruthy();
+    });
+
+    it("keeps a message refused before its write was acked as not sent when another is being written", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      const ack = holdNextWrite();
+      submit("add an HNSW index");
+      await waitFor(() => expect(sentIds()).toHaveLength(1));
+      typeInto("run the tests");
+      await emit(refusal(sentIds()[0] ?? ""));
+      await ack();
+      await within(rowOf("add an HNSW index")).findByText("not sent");
+      expect(bubbles("add an HNSW index")).toHaveLength(1);
+      expect(composer().value).toBe("run the tests");
+    });
+
+    it("leaves the text in the composer, and no row, when it is refused before the ack and nothing else was typed", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      const ack = holdNextWrite();
+      submit("add an HNSW index");
+      await waitFor(() => expect(sentIds()).toHaveLength(1));
+      await emit(refusal(sentIds()[0] ?? ""));
+      await ack();
+      expect(composer().value).toBe("add an HNSW index");
+      expect(bubbles("add an HNSW index")).toHaveLength(0);
+      expect(screen.queryByText("not sent")).toBeNull();
+    });
+
+    it("refused before the ack, a repeated message leaves the earlier identical one alone", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      submit("continue");
+      await waitFor(() => expect(bubbles("continue")).toHaveLength(1));
+      const ack = holdNextWrite();
+      submit("continue");
+      await waitFor(() => expect(sentIds()).toHaveLength(2));
+      await emit(refusal(sentIds()[1] ?? "", "follow_up"));
+      await ack();
+      expect(bubbles("continue")).toHaveLength(1);
+      expect(screen.queryByText("not sent")).toBeNull();
+      expect(screen.queryByText(/queued · after this turn/)).toBeNull();
+      expect(composer().value).toBe("continue");
+    });
+
+    it("refused after the ack, a repeated message takes back the send it names, not the one beside it", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      submit("continue");
+      await waitFor(() => expect(bubbles("continue")).toHaveLength(1));
+      submit("continue");
+      await waitFor(() => expect(bubbles("continue")).toHaveLength(2));
+      await emit(refusal(sentIds()[0] ?? ""));
+      // The first was a prompt and the second a queued follow-up: the queued one is what is left.
+      await waitFor(() => expect(bubbles("continue")).toHaveLength(1));
+      expect(screen.getByText(/queued · after this turn/)).toBeTruthy();
+      expect(composer().value).toBe("continue");
+    });
+
+    it("refused after the ack with the composer in use, a repeated message marks the one it names", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      submit("continue");
+      await waitFor(() => expect(bubbles("continue")).toHaveLength(1));
+      submit("continue");
+      await waitFor(() => expect(bubbles("continue")).toHaveLength(2));
+      typeInto("run the tests");
+      await emit(refusal(sentIds()[0] ?? ""));
+      const [first, second] = bubbles("continue").map((element) => element.closest("article") as HTMLElement);
+      await within(first as HTMLElement).findByText("not sent");
+      expect(within(second as HTMLElement).queryByText("not sent")).toBeNull();
+      expect(within(second as HTMLElement).getByText(/queued · after this turn/)).toBeTruthy();
+      expect(composer().value).toBe("run the tests");
+    });
+
+    it("settles each of two sends in flight by its own id, and loses neither", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      submit("add an HNSW index");
+      await waitFor(() => expect(bubbles("add an HNSW index")).toHaveLength(1));
+      submit("run the tests");
+      await waitFor(() => expect(bubbles("run the tests")).toHaveLength(1));
+      const [first = "", second = ""] = sentIds();
+      await emit(refusal(second, "follow_up"));
+      await waitFor(() => expect(composer().value).toBe("run the tests"));
+      expect(bubbles("run the tests")).toHaveLength(0);
+      await emit(refusal(first));
+      await within(rowOf("add an HNSW index")).findByText("not sent");
+      expect(composer().value).toBe("run the tests");
+    });
+
+    it("keeps both messages when two refusals land in one tick", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      submit("add an HNSW index");
+      await waitFor(() => expect(bubbles("add an HNSW index")).toHaveLength(1));
+      submit("run the tests");
+      await waitFor(() => expect(bubbles("run the tests")).toHaveLength(1));
+      const [first = "", second = ""] = sentIds();
+      await emit(refusal(first), refusal(second, "follow_up"));
+      await within(rowOf("run the tests")).findByText("not sent");
+      expect(composer().value).toBe("add an HNSW index");
+      expect(bubbles("add an HNSW index")).toHaveLength(0);
+    });
+
+    it("lets a refusal replayed after a reattach leave an unrelated row alone", async () => {
+      // The rebuild restarts row ids, so the second message now holds the id the first one had.
+      mocks.readChatOmp.mockResolvedValue(journalPage(0, [["m1", "earlier"]]));
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      submit("first message");
+      await waitFor(() => expect(bubbles("first message")).toHaveLength(1));
+      await reattach();
+      expect(bubbles("first message")).toHaveLength(0);
+      submit("second message");
+      await waitFor(() => expect(bubbles("second message")).toHaveLength(1));
+      await emit(refusal(sentIds()[0] ?? ""));
+      await waitFor(() => expect(composer().value).toBe("first message"));
+      expect(bubbles("second message")).toHaveLength(1);
+      expect(screen.queryByText("not sent")).toBeNull();
+    });
+
+    it("keeps a not-sent row through a reattach", async () => {
+      mocks.readChatOmp.mockResolvedValue(journalPage(0, [["m1", "earlier"]]));
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      submit("add an HNSW index");
+      await waitFor(() => expect(bubbles("add an HNSW index")).toHaveLength(1));
+      typeInto("run the tests");
+      await emit(refusal(sentIds()[0] ?? ""));
+      await within(rowOf("add an HNSW index")).findByText("not sent");
+      await reattach();
+      await screen.findByText("earlier");
+      expect(within(rowOf("add an HNSW index")).getByText("not sent")).toBeTruthy();
+      expect(composer().value).toBe("run the tests");
+    });
+
+    it("takes back a refused Send now", async () => {
+      const { emit } = await openLive(observed("busy", "alive", "rpc"));
+      typeInto("stop and do this");
+      fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+      await waitFor(() => expect(bubbles("stop and do this")).toHaveLength(1));
+      expect(composer().value).toBe("");
+      await emit(refusal(sentIds()[0] ?? "", "abort_and_prompt"));
+      await waitFor(() => expect(composer().value).toBe("stop and do this"));
+      expect(bubbles("stop and do this")).toHaveLength(0);
+      expect(screen.getByText(/Not sent: model busy/)).toBeTruthy();
+    });
+
+    it("takes back a first prompt that OMP refuses on a thread started by the send", async () => {
+      let onLine: (line: string) => void = () => {};
+      mocks.chatRpcAttach.mockImplementation(async (args: { onLine: (line: string) => void }) => {
+        onLine = args.onLine;
+      });
+      mocks.listChatThreads
+        .mockResolvedValueOnce([thread("s-fresh", { session: meta("s-fresh", { started_at: null, ended_at: null }) })])
+        .mockResolvedValue([thread("s-fresh", { session: meta("s-fresh", { started_at: 1, ended_at: null, archived: false }) })]);
+      mocks.startChatThread.mockResolvedValue({ session: meta("s-fresh", { started_at: 1, ended_at: null, archived: false }), execution: null, start: "started", errors: [] });
+      mocks.chatSessionStatus.mockResolvedValue(observed("idle"));
+      render(chat());
+      fireEvent.click(await screen.findByRole("button", { name: threadRow("s-fresh") }));
+      await waitFor(() => expect(link()).toBe("offline"));
+      sendIdle("hello there");
+      await waitFor(() => expect(sentIds()).toHaveLength(1));
+      await waitFor(() => expect(bubbles("hello there")).toHaveLength(1));
+      act(() => onLine(JSON.stringify(refusal(sentIds()[0] ?? ""))));
+      await waitFor(() => expect(composer().value).toBe("hello there"));
+      expect(bubbles("hello there")).toHaveLength(0);
+    });
   });
 
   it("goes offline and reloads the list once OMP has exited", async () => {

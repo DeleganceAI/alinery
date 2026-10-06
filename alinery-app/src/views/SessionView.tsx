@@ -34,7 +34,7 @@ import {
   matchingSendFailure,
   matchingSendSuccess,
   needsUiReply,
-  removeOptimisticSend,
+  settleRefusedSend,
 } from "../chatTranscript";
 import { completionPrompt } from "../completionPrompt";
 import { confirmDanger, confirmStopAndSwitch } from "../confirm";
@@ -399,6 +399,8 @@ export function SessionView({
     actions: SessionMessageDraft["pendingActions"];
     entryId: string;
     attachments: DraftAttachment[];
+    /** Also in `queuedFollowUpsRef`, which a refusal must leave. */
+    queued?: boolean;
   } | null>(null);
   const chatRef = useRef(chat);
   chatRef.current = chat;
@@ -1139,7 +1141,14 @@ export function SessionView({
         chatRef.current = applied.state;
         setChat(applied.state);
         if (sent && applied.entryId) {
-          pendingSendRef.current = { commandId: sent.commandId, draft: caption, actions, entryId: applied.entryId, attachments };
+          pendingSendRef.current = {
+            commandId: sent.commandId,
+            draft: caption,
+            actions,
+            entryId: applied.entryId,
+            attachments,
+            queued: busy && plan.optimisticKind === "follow_up",
+          };
         }
         if (busy && plan.optimisticKind === "follow_up") {
           const nextQueue = [...queuedFollowUpsRef.current, { text: caption, attachments: queuedAttachments }];
@@ -1424,12 +1433,26 @@ export function SessionView({
         const refused = pending ? matchingSendFailure(value, pending.commandId) : null;
         if (refused !== null && pending) {
           pendingSendRef.current = null;
+          // The composer takes the text back unless something else is being written there: then the row
+          // stays, marked not sent, and neither message is lost.
+          const draft = messageDraftRef.current;
+          const blank = draft.body.trim() === "" && (draft.attachments ?? []).length === 0 && draft.pendingActions.length === 0;
+          const restore = blank || (draft.body !== "" && draft.body === pending.draft);
           setChat((current) => {
-            const next = removeOptimisticSend(applyRpcLine(current, value), pending.entryId);
+            const next = settleRefusedSend(applyRpcLine(current, value), pending.entryId, pending.draft, restore);
             chatRef.current = next;
             return next;
           });
-          updateMessageDraft({ body: pending.draft, pendingActions: pending.actions, attachments: pending.attachments });
+          if (restore) updateMessageDraft({ body: pending.draft, pendingActions: pending.actions, attachments: pending.attachments });
+          if (pending.queued) {
+            // OMP never queued it, and a reattach would otherwise re-add its row from this list.
+            const at = queuedFollowUpsRef.current.map((item) => item.text).lastIndexOf(pending.draft);
+            if (at >= 0) {
+              const remaining = queuedFollowUpsRef.current.filter((_, index) => index !== at);
+              queuedFollowUpsRef.current = remaining;
+              onQueuedFollowUpsChange?.(remaining);
+            }
+          }
           toast.error(refused);
           setMessageError(refused);
         } else {

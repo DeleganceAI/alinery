@@ -1071,6 +1071,68 @@ describe("session chat send routing", () => {
     expect(within(screen.getByTestId("chat-pane")).queryByText("keep me")).toBeNull();
   });
 
+  it("keeps a refused send as not sent, with Copy, when the composer already holds another message", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    const onDraftChange = vi.fn();
+    const view = renderSession({ messageDraft: { body: "first", pendingActions: [], attachments: [] }, onMessageDraftChange: onDraftChange });
+    await flushPromises();
+    await waitFor(() => expect(onLine.current).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    const commandId = sends()[0]?.id;
+    // The parent's draft is the next message by now.
+    view.rerender(sessionView({ messageDraft: { body: "second", pendingActions: [], attachments: [] }, onMessageDraftChange: onDraftChange }));
+    onDraftChange.mockClear();
+
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "response", id: commandId, command: "prompt", success: false, error: "Agent is already processing" }));
+    });
+
+    const pane = within(screen.getByTestId("chat-pane"));
+    expect(await pane.findByText("not sent")).toBeDefined();
+    const row = pane.getByText("first").closest("article") as HTMLElement;
+    expect(within(row).getByText("not sent")).toBeDefined();
+    expect(within(row).getByRole("button", { name: "Copy message" })).toBeDefined();
+    expect(onDraftChange).not.toHaveBeenCalled();
+  });
+
+  it("drops a refused follow-up from the queued list, so a reattach does not bring its row back", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    const onQueuedChange = vi.fn();
+    const onDraftChange = vi.fn();
+    const view = renderSession({
+      messageDraft: { body: "later", pendingActions: [], attachments: [] },
+      onMessageDraftChange: onDraftChange,
+      onQueuedFollowUpsChange: onQueuedChange,
+    });
+    await flushPromises();
+    await waitFor(() => expect(onLine.current).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    expect(onQueuedChange).toHaveBeenLastCalledWith([{ text: "later", attachments: [] }]);
+    const commandId = sends()[0]?.id;
+    view.rerender(
+      sessionView({
+        messageDraft: { body: "", pendingActions: [], attachments: [] },
+        queuedFollowUps: [{ text: "later", attachments: [] }],
+        onMessageDraftChange: onDraftChange,
+        onQueuedFollowUpsChange: onQueuedChange,
+      }),
+    );
+
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "response", id: commandId, command: "follow_up", success: false, error: "Agent is not processing" }));
+    });
+
+    expect(onQueuedChange).toHaveBeenLastCalledWith([]);
+    expect(onDraftChange).toHaveBeenLastCalledWith({ body: "later", pendingActions: [], attachments: [] });
+    expect(screen.queryByText(/queued · after this turn/)).toBeNull();
+  });
+
   it("keeps queuing after an unrelated RPC failure between write and turn_start", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
     const onLine = { current: undefined as ((line: string) => void) | undefined };
