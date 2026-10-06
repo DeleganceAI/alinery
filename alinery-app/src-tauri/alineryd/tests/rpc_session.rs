@@ -359,6 +359,11 @@ resume_args = ["--resume={{resume_token}}"]
     /// Drop the first child's argv so the next `argv()` reads the restated child's. `start_session`
     /// returns before the fixture script has written it, so wait for it first: removing early lets
     /// the first child's file land afterwards and be mistaken for the restate's.
+    // Written after the daemon is up: the seed is read from disk on each spawn.
+    fn set_default_thinking(&self, level: &str) {
+        fs::write(self.root.join(".alinery/config.toml"), format!("[defaults]\nthinking = \"{level}\"\n")).unwrap();
+    }
+
     fn discard_argv(&self, id: &str) {
         let path = self.root.join(format!("argv.{id}"));
         wait_until(Duration::from_secs(5), || path.is_file());
@@ -906,6 +911,8 @@ fn pty_argv_omits_mode_rpc_and_thinking_high() {
 #[test]
 fn rpc_resume_with_token_omits_thinking() {
     let fixture = Fixture::new();
+    // A configured default must not reach a resumed thread either.
+    fixture.set_default_thinking("low");
     let auxiliary = DaemonClient::connect_path(fixture.socket.clone())
         .unwrap()
         .create_execution_session(&CreateExecutionSessionRequest {
@@ -928,6 +935,28 @@ fn rpc_resume_with_token_omits_thinking() {
     assert!(argv.contains("--mode\nrpc\n"), "must still be an RPC launch: {argv}");
     assert!(argv.contains("--resume=resume-token"), "{argv}");
     assert!(!argv.contains("--thinking"), "{argv}");
+}
+
+#[test]
+fn rpc_fresh_launch_seeds_configured_thinking() {
+    let fixture = Fixture::new();
+    fixture.set_default_thinking("low");
+    let id = fixture.spawn_omp();
+    let argv = fixture.argv(id);
+    assert!(argv.contains("--mode\nrpc\n"), "{argv}");
+    assert!(argv.contains("--thinking\nlow\n"), "{argv}");
+    assert!(!argv.contains("--thinking\nhigh\n"), "{argv}");
+}
+
+// OMP silently ignores an invalid `--thinking`, so the daemon must not pass one through.
+#[test]
+fn rpc_fresh_launch_falls_back_to_high_for_invalid_thinking() {
+    let fixture = Fixture::new();
+    fixture.set_default_thinking("auto");
+    let id = fixture.spawn_omp();
+    let argv = fixture.argv(id);
+    assert!(argv.contains("--thinking\nhigh\n"), "{argv}");
+    assert!(!argv.contains("auto"), "{argv}");
 }
 
 #[test]

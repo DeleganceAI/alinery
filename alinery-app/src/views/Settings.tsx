@@ -29,6 +29,7 @@ import { createGridViewId, gridViewShortcut, MAX_GRID_VIEWS, nextGridViewName, n
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { Checkbox, EmptyState, InlineStatus, LoadingState, ModelInput, ompDefaultModel, playbookRefKey, repoName, samePlaybookRef } from "../shared";
+import { effectiveThinking, THINKING_LEVELS } from "../thinking";
 import { type ToastLength, toast } from "../toast";
 import type {
   AppearancePrefs,
@@ -201,6 +202,7 @@ function mcpInstallReady(mcp: Pick<McpStatus, "binary_found" | "binary_path">): 
 const allGlobalChoiceSource: ChoiceProvenance = {
   harness: GLOBAL_SOURCE,
   model: GLOBAL_SOURCE,
+  thinking: GLOBAL_SOURCE,
   playbook: GLOBAL_SOURCE,
   draft_autosave: GLOBAL_SOURCE,
 };
@@ -1177,6 +1179,32 @@ export function Settings({
             />
           )}
           {!isGlobal && <div className="hint">Blank can be a repository override; use the button above to inherit.</div>}
+        </div>
+        <div className="field">
+          <label htmlFor={`${key}-thinking`}>
+            {title} thinking level
+            {!isGlobal && sourceBadge(provenance.thinking, `${key}.thinking`)}
+          </label>
+          <select
+            id={`${key}-thinking`}
+            className="field-input"
+            value={effectiveThinking(value.thinking)}
+            onChange={(event) => {
+              const thinking = event.target.value;
+              if (isGlobal) updateGlobalChoice(key, { thinking });
+              else {
+                setRepoChoice(key, { thinking });
+                saveRepoOverrides({ ...overrides, [key]: { ...overrides[key], thinking } });
+              }
+            }}
+          >
+            {THINKING_LEVELS.map((level) => (
+              <option key={level} value={level}>
+                {level}
+              </option>
+            ))}
+          </select>
+          <div className="hint">New OMP sessions start at this level; resumed sessions keep theirs, and OMP lowers it to what the model supports.</div>
         </div>
         <Checkbox
           checked={value.draft_autosave}
