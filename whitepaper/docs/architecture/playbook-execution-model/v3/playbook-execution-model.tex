@@ -8,7 +8,7 @@
 \usepackage{graphicx}
 \urlstyle{rm}
 \def\UrlFont{\rm}
-\usepackage{natbib}
+\usepackage[numbers,square]{natbib}
 \usepackage{caption}
 \frenchspacing
 \setlength{\pdfpagewidth}{8.5in}
@@ -65,13 +65,21 @@ TBD
 
 \section{Introduction}
 
-Conclusively verifying software outcomes is fundamentally unsolveable for most software. This is evidenced by the sheer number of techniques used to incrementally assure software is correct including unit tests, in-code assertions, human review, compiler and type checking, static analysis and linters, fuzzing, ... etc. Conclusive verification is the bottleneck that prevents brute forcing solutions or otherwise. Large Langage Models are improving the ability to search the space of software solutions for improvements in algorithms and software more generally. We say that a solution is \textit{conclusively verifiable} if the checker gaurauntees that incorrect outcomes are never accepted (soundness), correct outcomes are not rejected (completeness), and the checker always returns an answer for every candidate (totality). For problems where you have a conclusive verifier, the cost of solving that problem boils down to the cost running the verifier and the cost of searching the space of solutions for problems worth checking. If the gains of finding a solution is greater than the estimated cost to search and the cost to verify, then it is worth it to do the search. 
+Giving an AI an open-ended goal and letting it run creates a fundamental problem of trust: the same system decides what is worth pursuing and what will count as success. In exploratory work, the goal may initially be expressible only in abstract terms because we do not yet know what we might find or which findings will matter. An investigation of an unfamiliar software system, for example, may begin with the aim of identifying worthwhile improvements, while leaving the relevant problems and possible solutions to be discovered. Evidence gathered during the investigation helps determine what to pursue and what would count as a useful result. A concrete end state and a complete criterion for success may therefore be unavailable before the work begins. Even when the desired outcome is known, verifying that the outcome has been achieved may be costly or inconclusive.
 
-In this paper we propose a novel solution to perform solution search when there is no conclusive verifier with cheap cost. Our solution is a novel multi-agent policy with  human-oversight. 
+Exploratory work can be understood as a search whose concrete objectives emerge and change as evidence accumulates. We introduce \emph{nondeterministic finite agent machines} (FAMs)\footnote{Intentionally echoes finite state machines}, a model for process-driven agentic teams that makes the search process explicit and interpretable by defining how agents investigate possibilities, assess findings, and decide what to pursue next. FAMs ensure that work proceeds in a permitted order and make the path to a result inspectable. Confidence in the result can then draw on the reliability of the search process and evidence that it was followed, even when the result itself could not be specified in advance or conclusively verified.
 
+The same FAM can therefore produce different executions. An agentic transition may divide a problem into several investigations or produce findings that enable different continuations, while the available types of investigation and continuation remain defined by the FAM. A FAM defines a finite repertoire of predefined agentic transitions, each admitting multiple possible outcomes. Agents determine how those transitions are applied to the work at hand, allowing the search to develop through discoveries without requiring its concrete branches to be enumerated in advance.
 
+Here, \emph{finite} refers to the set of authored transition schemas. Finite transition schemas do not imply finitely many runtime states: executions can accumulate new artifacts and input bindings that affect subsequent work. The number of concrete branches and iterations need not be fixed in advance.
 
+Recent projects such as Compound Engineering \citep{everyCompoundEngineering}, Compound Writing \citep{everyCompoundWriting}, and Research--Plan--Implement (RPI) \citep{dex2025context} organize agent work through reusable skills and staged procedures. These approaches make a process explicit, but procedural instructions expressed in prompts do not by themselves guarantee adherence. Where a coordinating agent selects activities, judges whether their requirements have been met, and decides what happens next, the process remains dependent on that agent's interpretation. An agent may omit a prerequisite, advance on insufficient evidence, or allow an unsupported assumption to shape subsequent work. FAMs address this coordination problem by making declared dependencies conditions for execution, so that following the prescribed process does not rely solely on the coordinating agent's willingness or ability to follow instructions.
 
+We implement this model in Alinery\footnote{\url{https://github.com/deleganceai/alinery}}, where a Playbook specifies a particular FAM and the Playbook engine executes it. A single Playbook can produce many different executions, each developing according to the evidence generated during the work. The remainder of this paper develops the FAM model and its execution semantics, relates it to existing approaches, and describes its implementation in Alinery.
+
+\section{Background}
+
+\subsection{Why Software Verification Is Hard}
 
  the main question is whether the benefit of an improvement to a known solution to a problem is worth the cost of searching the space of possibel soltuions (cite alpha evolve here, and open evolve). For many problems in reseach and software development, complete verification is unattainable, and this limits the ability to apply LLM-based agents, because every potential solution generated by the agents produces more verification work, and this becomes prohibitevely expensive. 
 
@@ -90,11 +98,7 @@ We present a novel multi-agent architecture to solve alignment and verification 
 
 The ideal use case is work that cannot be trivially or automatically (including with software) verified. Additionally, the consqeuence of getting the work right is high stakes. For that reason, we avoid the problem of prototyping. We also are interested in work that is not possible to verify the outcome after the fact. Therefore, since the outcome of applying AI to sovle a problem is not completely verifiable, the process that produced it offloads some of the trust that a human puts into verifying it. If they can verify the process that was followed by the AI, then they can reduce the amount of verification needed on the end result. 
 
-There is a spectrum of approaches to perform concrete work. You could create a single agent, you could use dynamic workflows like claude code, you could do everything by hand yourself. 
-
-
-
-\section{Background}
+There is a spectrum of approaches to perform concrete work. You could create a single agent, you could use dynamic workflows like claude code, you could do everything by hand yourself.
 
 \subsection{Petri Nets and Concurrent Agent Execution}
 
@@ -250,13 +254,11 @@ output changes the machine state.
 	\]
 	exactly when
 	\[
-	b\in G_\alpha(\gamma),
-	\qquad
-	(b,o)\in E_\alpha,
-	\qquad
-	V_\alpha(\gamma,b,o)=\mathsf{accept},
-	\qquad
+	\begin{gathered}
+	b\in G_\alpha(\gamma), \qquad (b,o)\in E_\alpha,\\
+	V_\alpha(\gamma,b,o)=\mathsf{accept}, \qquad
 	\gamma'=U_\alpha(\gamma,b,o).
+	\end{gathered}
 	\]
 	
 	The relation $E_\alpha$ may be nondeterministic: repeated executions with the
@@ -1005,5 +1007,58 @@ as the first member of \texttt{followup-research}; later Design executions may
 emit another member or an explicitly empty collection.}
 \label{lst:playbook}
 \end{listing}
+
+\clearpage
+\section{Engine Design Decisions}
+\label{app:engine-design-decisions}
+
+This appendix records the engine decisions and associated authoring conventions.
+
+\begin{enumerate}
+  \item \textbf{No planning search:} the engine rolls out a fixed authored policy rather than searching for plans or inventing collaboration structures.
+  \item \textbf{Fixed process, variable work:} the same Playbook can produce different numbers of executions, branches, and loop passes.
+  \item \textbf{Intelligent transitions:} agents interpret evidence and choose outcomes, allowing the engine's structural rules to stay small.
+  \item \textbf{No general condition language:} domain decisions live in agent instructions and artifacts rather than engine-level expressions.
+  \item \textbf{Artifact-driven dependencies:} declared inputs and outputs determine readiness, independently of document order.
+  \item \textbf{AND-only inputs:} every declared input is required; listing alternatives does not create an OR condition.
+  \item \textbf{At least one output:} successful completion requires one valid assigned artifact, while any additional declared outputs are optional.
+  \item \textbf{No engine-enforced XOR:} publishing two valid alternative outcomes is allowed; instructions must establish any required exclusivity.
+  \item \textbf{Structural validation:} the engine checks publication validity, ownership, and permission without deciding whether the substantive work is good.
+  \item \textbf{Atomic acceptance:} one invalid present assigned output rejects the whole completion attempt rather than accepting a partial subset.
+  \item \textbf{Immutable receipts:} acceptance freezes the publication set, so repeated completion returns the same receipt and late files cannot extend it.
+  \item \textbf{Ordinary mutable files:} accepted artifacts are not protected by immutable byte snapshots or an operating-system write sandbox.
+  \item \textbf{Occurrence identity:} two publications count as distinct events even when their logical names and contents match.
+  \item \textbf{Shared exact roles:} several steps may publish the same exact role, with each eligible occurrence enabling its own continuation.
+  \item \textbf{Unique wildcard ownership:} overlapping wildcard output declarations are rejected to keep collection attribution unambiguous.
+  \item \textbf{Causal input pairing:} companion artifacts must belong together through recorded provenance, not timestamps, filename order, or ``latest wins.''
+  \item \textbf{Explicit ambiguity errors:} the engine rejects uncertain pairings rather than guessing, zipping alternatives, or trying every combination.
+  \item \textbf{Binding-based deduplication:} observing the same ordinary input binding again does not schedule duplicate work.
+  \item \textbf{Three input modes:} \texttt{single} binds one occurrence, \texttt{each} creates per-member work, and \texttt{complete} consumes a completed nonempty collection.
+  \item \textbf{One collection input per step:} combining multiple collections requires explicit intermediate steps rather than implicit cross-product joins.
+  \item \textbf{Batch publication:} collections become usable after accepted publication and producer shutdown, rather than streaming files into downstream work.
+  \item \textbf{Accountable completeness:} queued, paused, failed, and finishing workers remain obligations instead of silently disappearing from a merge.
+  \item \textbf{No implicit branch pruning:} an omitted intermediate output does not automatically discharge downstream work that was expected.
+  \item \textbf{No empty consumers:} empty collections create neither item workers nor an empty \texttt{complete} execution.
+  \item \textbf{Explicit no-result routing:} a disposition inside a wildcard becomes a member; one outside it can stop or route elsewhere.
+  \item \textbf{Artifact-triggered recurrence:} another pass requires a fresh accepted trigger, not an overwritten file or incremented filename.
+  \item \textbf{No predetermined iteration limit:} loops may continue through fresh publications, with stopping determined by the authored process.
+  \item \textbf{Explicit freshness structure:} authors must put changing work inside the repeated dependency chain; parser acceptance alone does not prove freshness.
+  \item \textbf{Explicit accumulated context:} agents carry useful earlier findings into new handoffs; the engine does not automatically summarize task history.
+  \item \textbf{No automatic success inference:} having no eligible work does not prove that the human's objective was achieved.
+  \item \textbf{Execution-scoped completion permission:} a human grant authorizes that execution and owner to finish, not particular immutable artifact contents.
+  \item \textbf{Completion differs from shutdown:} downstream work waits for confirmed producer exit and output drain after acceptance.
+  \item \textbf{One shared task worktree:} engine-managed coding is serialized instead of giving every execution an isolated workspace and later merging changes.
+  \item \textbf{Exact coding inputs:} collection results must be consolidated before coding, although coding steps may publish collections for subsequent work.
+  \item \textbf{Task-level concurrency:} the default cap is ten live sessions; excess work queues, and waiting or finishing sessions retain capacity.
+  \item \textbf{No automatic retries or takeover:} recovery requires explicit ownership changes and proof that the previous owner stopped.
+  \item \textbf{Manual work stays separate:} manual publications do not automatically satisfy ordinary graph dependencies or missing worker obligations.
+  \item \textbf{Pinned task definitions:} library edits affect future selections rather than silently changing an existing task's Playbook.
+  \item \textbf{Daemon-owned execution truth:} durable execution records drive scheduling; session metadata and UI state are repairable projections.
+  \item \textbf{File-backed persistence:} the engine uses durable local records rather than adding a database or distributed execution coordinator.
+  \item \textbf{Persist intent before effects:} executions and output paths are reserved before launch, while partial creation failures remain inspectable.
+  \item \textbf{Names are presentation:} depth numbers and collision suffixes help people navigate artifacts but never determine provenance or scheduling.
+  \item \textbf{Strict definitions:} unknown fields and unsupported syntax fail explicitly rather than acquiring guessed meanings or compatibility fallbacks.
+  \item \textbf{Narrow harness support:} model selection is configurable, but current graph execution supports OMP rather than arbitrary harness integrations.
+\end{enumerate}
 
 \end{document}
