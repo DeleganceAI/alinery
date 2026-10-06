@@ -65,7 +65,7 @@ TBD
 
 \section{Introduction}
 
-Giving an AI an open-ended goal and letting it run creates a fundamental problem of trust: the same system decides what is worth pursuing and what will count as success. In exploratory work, the goal may initially be expressible only in abstract terms because we do not yet know what we might find or which findings will matter. An investigation of an unfamiliar software system, for example, may begin with the aim of identifying worthwhile improvements, while leaving the relevant problems and possible solutions to be discovered. Evidence gathered during the investigation helps determine what to pursue and what would count as a useful result. A concrete end state and a complete criterion for success may therefore be unavailable before the work begins. Even when the desired outcome is known, verifying that the outcome has been achieved may be costly or inconclusive.
+Giving an AI an open-ended goal to run with creates a fundamental problem of trust: the same system decides what is worth pursuing and what will count as success. In exploratory work, we do not yet know what we will find or which findings will matter. An investigation of an unfamiliar software system, for example, may begin with the aim of identifying worthwhile improvements, while leaving the relevant problems and possible solutions to be discovered. Evidence gathered during the investigation helps determine what to pursue and what would count as a useful result. A concrete end state and a complete criterion for success may therefore be unavailable before the work begins. Even when the desired outcome is known, verifying that the outcome has been achieved may be costly or inconclusive.
 
 Exploratory work can be understood as a search whose concrete objectives emerge and change as evidence accumulates. We introduce \emph{nondeterministic finite agent machines} (FAMs)\footnote{Intentionally echoes finite state machines}, a model for process-driven agentic teams that makes the search process explicit and interpretable by defining how agents investigate possibilities, assess findings, and decide what to pursue next. FAMs ensure that work proceeds in a permitted order and make the path to a result inspectable. Confidence in the result can then draw on the reliability of the search process and evidence that it was followed, even when the result itself could not be specified in advance or conclusively verified.
 
@@ -77,6 +77,724 @@ Recent projects such as Compound Engineering \citep{everyCompoundEngineering}, C
 
 We implement this model in Alinery\footnote{\url{https://github.com/deleganceai/alinery}}, where a Playbook specifies a particular FAM and the Playbook engine executes it. A single Playbook can produce many different executions, each developing according to the evidence generated during the work. The remainder of this paper develops the FAM model and its execution semantics, relates it to existing approaches, and describes its implementation in Alinery.
 
+% New implementation-aligned section. Existing manuscript retained below.
+% Source baseline: Alinery 91213afb6e39b821cbf4bf5aed3df813cb2f46b7.
+\section{Finite Agent Machines}
+\label{sec:fam-definition-execution}
+
+\begin{figure*}[!t]
+\centering
+\begin{tikzpicture}[
+  operation/.style={draw,rounded corners=2pt,align=center,
+    text width=2.85cm,minimum height=1.2cm,inner sep=4pt,font=\small},
+  repeated/.style={operation,fill=black!7},
+  merge/.style={operation,fill=black!14},
+  artifact/.style={draw,dashed,align=center,font=\scriptsize,
+    inner sep=4pt,text width=3.2cm},
+  handoff/.style={-{Stealth[length=2mm]},thick},
+  annotation/.style={font=\scriptsize,align=center,fill=white,inner sep=2pt}
+]
+\node[operation] (frame) at (0,0) {Frame the review\\\scriptsize once per task};
+\node[operation] (plan) at (4,0) {Plan the\\evidence wave};
+\node[repeated] (gather) at (8,0) {Gather sources\\\scriptsize \texttt{each} search request};
+\node[merge] (select) at (12,0) {Deduplicate and\\dispatch sources\\\scriptsize \texttt{complete} search results};
+\node[repeated] (read) at (12,-2.4) {Read and evaluate\\one source\\\scriptsize \texttt{each} source request};
+\node[merge] (merge) at (8,-2.4) {Consolidate evidence\\and new citations\\\scriptsize \texttt{complete} assessments};
+\node[operation] (draft) at (4,-2.4) {Draft the survey};
+\node[operation] (continue) at (0,-2.4) {Continue discovery\\or conclude};
+\node[artifact] (stop) at (0,-3.8) {review-stopping-report.md};
+
+\draw[handoff] (frame) -- (plan);
+\draw[handoff] (plan) -- (gather);
+\draw[handoff] (gather) -- (select);
+\draw[handoff] (select) -- node[annotation,left]{source\\requests} (read);
+\draw[handoff] (read) -- (merge);
+\draw[handoff] (merge) -- (draft);
+\draw[handoff] (draft) -- (continue);
+\draw[handoff,dashed] (continue.west) -- (-2.1,-2.4) -- (-2.1,1.55)
+  -- node[annotation,above]{fresh \texttt{ticket.md} enables another wave}
+  (4,1.55) -- (plan.north);
+\draw[handoff] (continue) -- (stop);
+\end{tikzpicture}
+\caption{An example FAM that conducts a rigorous literature review. Each
+rounded box is one of eight
+agent operation schemas, shown once. An \texttt{each} input permits one execution
+per request; a \texttt{complete} input waits for the corresponding workers'
+results. The recurrence dependency permits a new wave using the same
+schemas. The dashed rectangle is a possible output artifact, not another
+operation or an engine-level halt command; output exclusivity is specified
+in the agent instructions. Only principal dependencies are shown. The
+initial ticket, shared brief inputs, search-plan and reading-wave handoffs,
+and other supporting bindings are omitted for clarity.}
+\label{fig:fam-literature-definition}
+\end{figure*}
+
+
+
+
+
+
+
+A Finite Agent Machine (FAM) defines an abstract state space, a finite set of
+agentic operations, and rules governing when those operations may run. An
+execution engine enforces these rules, providing hard guardrails on how the
+agents' work is coordinated. The state records artifact publications and
+execution status; agents interpret and create the artifacts' contents. An
+execution engine binds
+operations to available inputs, records the resulting executions, and
+enforces the conditions for passing their outputs to other agents. A single
+definition can therefore generate different numbers of executions and
+different chains of evidence without changing its authored operations.
+
+\subsection{An Example FAM: An Iterative Literature Review}
+\label{sec:fam-literature-example}
+
+A literature review often reveals sources that we did not know to search
+for. Reading one paper may uncover a relevant citation, and reading the
+cited paper may uncover another. We can define how to search, evaluate
+sources, and incorporate the findings without knowing in advance which
+papers the review will include or how many rounds of discovery it will
+require. Alinery's Academic Survey Playbook expresses this process through
+eight operations, with parallel work within each round and a loop for
+following new citations. Figure~\ref{fig:fam-literature-definition} shows
+the authored definition, and Figure~\ref{fig:fam-literature-rollout} shows
+one possible rollout of that definition. We call one pass from planning
+through continuation a wave.
+
+% A float page separates the rollout from the definition and surrounding prose.
+\begin{figure*}[p]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  execution/.style={draw,rounded corners=1.5pt,align=center,
+    text width=1.43cm,minimum height=.58cm,inner sep=3pt,font=\footnotesize},
+  worker/.style={execution,fill=black!7,minimum height=.35cm,inner sep=2pt},
+  merge/.style={execution,fill=black!14},
+  artifact/.style={draw,dashed,align=center,font=\scriptsize,
+    inner sep=4pt,text width=3.5cm},
+  handoff/.style={-{Stealth[length=1.5mm]},semithick},
+  annotation/.style={font=\scriptsize,align=center,fill=white,inner sep=2pt}
+]
+\node[execution] (frame) at (0,2.8) {Frame};
+\node[font=\small\bfseries] at (6.6,2.2) {Wave 1};
+\node[execution] (plan1) at (0,0) {Plan 1};
+\node[worker] (gather1a) at (2.2,.6) {Gather 1a};
+\node[worker] (gather1b) at (2.2,0) {Gather 1b};
+\node[worker] (gather1c) at (2.2,-.6) {Gather 1c};
+\node[merge] (select1) at (4.4,0) {Select 1};
+\foreach \paper/\height in {A/1.5,B/1.0,C/.5,D/0,E/-.5,F/-1.0,G/-1.5}{
+  \node[worker] (read\paper) at (6.6,\height) {Read \paper};
+}
+\node[merge] (merge1) at (8.8,0) {Merge 1};
+\node[execution] (draft1) at (11,0) {Draft 1};
+\node[execution] (continue1) at (13.2,0) {Continue 1};
+\node[annotation] at (6.6,-2.02) {B cites H; F cites I};
+\node[artifact] (ticket2) at (6.6,-2.65) {new ticket: citations H and I\\plus accumulated evidence};
+
+\draw[handoff] (frame) -- node[annotation,right]{original\\review brief} (plan1);
+\draw[semithick] (plan1.east) -- (1.1,0);
+\draw[semithick] (1.1,.6) -- (1.1,-.6);
+\foreach \worker in {gather1a,gather1b,gather1c}{
+  \draw[handoff] (1.1,0 |- \worker.west) -- (\worker.west);
+  \draw[semithick] (\worker.east) -- (3.3,0 |- \worker.east);
+}
+\draw[semithick] (3.3,.6) -- (3.3,-.6);
+\draw[handoff] (3.3,0) -- (select1.west);
+\draw[semithick] (select1.east) -- (5.5,0);
+\draw[semithick] (5.5,1.5) -- (5.5,-1.5);
+\foreach \paper in {A,B,C,D,E,F,G}{
+  \draw[handoff] (5.5,0 |- read\paper.west) -- (read\paper.west);
+  \draw[semithick] (read\paper.east) -- (7.7,0 |- read\paper.east);
+}
+\draw[semithick] (7.7,1.5) -- (7.7,-1.5);
+\draw[handoff] (7.7,0) -- (merge1.west);
+\draw[handoff] (merge1) -- (draft1);
+\draw[handoff] (draft1) -- (continue1);
+\draw[handoff] (continue1.south) -- (13.2,-2.65) -- (ticket2.east);
+
+\node[font=\small\bfseries] at (6.6,-3.55) {Wave 2};
+\node[execution] (plan2) at (0,-4.6) {Plan 2};
+\node[worker] (gather2a) at (2.2,-4.25) {Gather 2a};
+\node[worker] (gather2b) at (2.2,-4.95) {Gather 2b};
+\node[merge] (select2) at (4.4,-4.6) {Select 2};
+\node[worker] (readH) at (6.6,-4.25) {Read H};
+\node[worker] (readI) at (6.6,-4.95) {Read I};
+\node[merge] (merge2) at (8.8,-4.6) {Merge 2};
+\node[execution] (draft2) at (11,-4.6) {Draft 2};
+\node[execution] (continue2) at (13.2,-4.6) {Continue 2};
+\node[annotation] at (6.6,-5.65) {H cites J};
+\node[artifact] (ticket3) at (6.6,-6.3) {new ticket: citation J\\plus accumulated evidence};
+
+\draw[handoff] (ticket2.west) -- (0,-2.65) -- (plan2.north);
+\draw[semithick] (plan2.east) -- (1.1,-4.6);
+\draw[semithick] (1.1,-4.25) -- (1.1,-4.95);
+\foreach \worker in {gather2a,gather2b}{
+  \draw[handoff] (1.1,0 |- \worker.west) -- (\worker.west);
+  \draw[semithick] (\worker.east) -- (3.3,0 |- \worker.east);
+}
+\draw[semithick] (3.3,-4.25) -- (3.3,-4.95);
+\draw[handoff] (3.3,-4.6) -- (select2.west);
+\draw[semithick] (select2.east) -- (5.5,-4.6);
+\draw[semithick] (5.5,-4.25) -- (5.5,-4.95);
+\foreach \paper in {H,I}{
+  \draw[handoff] (5.5,0 |- read\paper.west) -- (read\paper.west);
+  \draw[semithick] (read\paper.east) -- (7.7,0 |- read\paper.east);
+}
+\draw[semithick] (7.7,-4.25) -- (7.7,-4.95);
+\draw[handoff] (7.7,-4.6) -- (merge2.west);
+\draw[handoff] (merge2) -- (draft2);
+\draw[handoff] (draft2) -- (continue2);
+\draw[handoff] (continue2.south) -- (13.2,-6.3) -- (ticket3.east);
+
+\node[font=\small\bfseries] at (6.6,-7.2) {Wave 3};
+\node[execution] (plan3) at (0,-8.4) {Plan 3};
+\node[worker] (gather3) at (2.2,-8.4) {Gather 3};
+\node[merge] (select3) at (4.4,-8.4) {Select 3};
+\node[worker] (readJ) at (6.6,-8.4) {Read J};
+\node[merge] (merge3) at (8.8,-8.4) {Merge 3};
+\node[execution] (draft3) at (11,-8.4) {Draft 3};
+\node[execution] (continue3) at (13.2,-8.4) {Continue 3};
+\node[artifact] (stop) at (11.7,-10.0) {stopping report\\human concludes the review};
+
+\draw[handoff] (ticket3.west) -- (0,-6.3) -- (plan3.north);
+\draw[handoff] (plan3) -- (gather3);
+\draw[handoff] (gather3) -- (select3);
+\draw[handoff] (select3) -- (readJ);
+\draw[handoff] (readJ) -- (merge3);
+\draw[handoff] (merge3) -- (draft3);
+\draw[handoff] (draft3) -- (continue3);
+\draw[handoff] (continue3.south) -- (13.2,-9.3) -- (stop.north);
+\end{tikzpicture}
+}
+\caption{One possible rollout of the FAM in
+Figure~\ref{fig:fam-literature-definition}. Each rounded box is an
+individual execution; dashed rectangles are artifacts. Wave 1 uses three
+searches and seven readers for sources A--G. Citations to H and I motivate
+a fresh ticket; this particular second wave uses two searches and two new
+readers. H cites J, prompting a third wave with one search and one reader.
+The human concludes the review after Wave 3. Select denotes deduplication
+and dispatch, and Merge denotes evidence consolidation. Arrows show
+principal handoff dependencies, not execution times or guaranteed
+simultaneous runs. Each continuation ticket enables a new planning
+execution: the definition's loop unfolds into an acyclic history.
+Frame runs once; the original brief and other supporting inputs remain
+bound but their additional edges are omitted. Earlier assessments are
+carried through evidence references, not counted as new reader outputs.}
+\label{fig:fam-literature-rollout}
+\end{figure*}
+
+
+Suppose we want to review how agents retain and reuse information over long
+tasks. The initial task description is supplied as
+\texttt{ticket.md}. A framing agent first writes
+\texttt{review-brief.md}, establishing the question, scope, and criteria for
+including sources. Later waves continue to use this original brief. A
+planning agent reads the brief and the current \texttt{ticket.md}, then
+writes a search plan and three search requests: one on retrieving stored
+notes, one on summarizing past interactions, and one on maintaining task
+state. Once the planner completes its handoff, the
+engine can run a separate gathering agent for each request, subject to the
+task's concurrency limit. Three requests produce three executions of the
+same gathering operation; the Playbook does not need three authored copies.
+
+Each gathering agent publishes a search report, including any access
+limitations or an absence of candidates. The source-selection operation
+waits for all three reports before comparing the candidates and removing
+duplicates. Suppose the selection agent identifies seven distinct sources
+to read and publishes seven source requests. The engine then creates seven
+reading executions, each bound to one request and the shared review brief.
+Each reader evaluates its assigned source and publishes an assessment
+containing findings, limitations, and potentially useful citations. Search
+requests and source requests therefore provide two fan-outs whose sizes are
+determined by agents during execution.
+
+The evidence-consolidation operation merges the source assessments. Six
+completed readers are insufficient while the seventh remains outstanding:
+the engine waits for the complete set of assigned readers to finish their
+handoffs. A reader that cannot access its source can report that limitation
+in an assessment; an unfinished reader cannot be silently dropped from the
+merge. The consolidation agent compares the assessments, updates the
+cumulative evidence record, and identifies citation leads that have not
+already been considered. A drafting agent uses that evidence to produce a
+survey draft. The engine establishes which assessments belong to the wave
+and when the merge can run; the agents judge source relevance, interpret
+findings, and decide which claims the evidence supports.
+
+Suppose two readers each identify one promising citation outside the seven
+sources already read. The continuation agent writes a new
+\texttt{ticket.md} naming those citations and carrying forward the evidence
+record, prior assessment references, and current draft. After that handoff,
+the engine enables another planning execution using the new ticket and the
+original review brief. The framing operation does not repeat. In this
+illustrative second wave, the planner writes two search requests, one for
+each new citation, and gathering agents locate the two cited sources. The source-selection
+agent checks both against the accumulated record and publishes two new
+reading requests. The resulting assessments support a revised survey.
+
+\begin{samepage}
+Suppose source H, read in the second wave, cites another relevant source J.
+The continuation agent publishes a new ticket for J, and a third wave
+plans one search, locates J, and assigns one reader. Consolidation
+incorporates J's assessment into the cumulative evidence, and the drafting
+agent updates the survey again. The third wave adds new executions of the
+same operations and retains the evidence accumulated in the earlier waves.
+\par
+\end{samepage}
+
+The continuation agent also provides a way to conclude the review. When no
+useful leads remain, an agreed search boundary has been reached, or further
+work needs direction, the agent presents the current draft and evidence
+coverage to the human. In this rollout, the human concludes the review
+after the third wave. The agent then publishes
+\texttt{review-stopping-report.md} without another ticket. That
+publication enables no further search wave. The closing decision records
+the scope and limitations of the review; it does not establish that every
+relevant source has been found.
+
+The eight operation definitions remain fixed throughout this execution,
+while discoveries determine the number of searches, source readings, and
+successive waves. Every wave has explicit merge conditions, and each new
+ticket retains a connection to the evidence that motivated further work.
+Agent instructions require relevance judgments and avoidance of duplicate
+readings; the engine enforces the declared artifact dependencies. The FAM
+therefore permits an expanding investigation while retaining an inspectable
+process for admitting work and incorporating its results.
+
+
+\subsection{Authored Operations and Runtime State}
+
+\begin{definition}[Finite Agent Machine]
+A FAM is a labeled transition system
+\[
+  \mathcal{F}=(\mathcal{A},\Gamma,\mathcal{L},\gamma_0,\Rightarrow),
+\]
+where $\mathcal{A}$ is a finite set of authored agentic transition schemas,
+$\Gamma$ is the space of runtime configurations, $\mathcal{L}$ is the
+event-label set, $\gamma_0\in\Gamma$ is an initial configuration, and
+\[
+  \Rightarrow\;\subseteq\;\Gamma\times\mathcal{L}\times\Gamma
+\]
+is the execution relation. A label in $\mathcal{L}$ identifies an event such
+as reserving an execution, launching its agent, accepting its publications,
+or confirming its termination. Event labels may carry execution and
+occurrence identifiers.
+\end{definition}
+
+The binding and lifecycle rules below induce $\Rightarrow$ for the Alinery
+instantiation; agent proposals supply the nondeterministic outcomes within
+those rules.
+
+Here, \emph{finite} qualifies the authored schema set $\mathcal{A}$.
+Neither $\Gamma$ nor $\mathcal{L}$ is required to be finite. Executions
+can accumulate artifact occurrences, input bindings, and execution records;
+cycles can generate further invocations of the same schemas. A bound on
+simultaneous agents limits resource use without bounding the total history
+or implying termination.
+
+In Alinery, a Playbook supplies $\mathcal{A}$, and each Step supplies one
+schema. For the implementation considered here, write a schema as
+\[
+  \alpha=(I_\alpha,O_\alpha,\xi_\alpha,\rho_\alpha).
+\]
+The finite set $I_\alpha$ specifies input selectors and their binding modes;
+$O_\alpha$ specifies possible output selectors. A selector names one
+logical artifact role or matches a family of roles through a filename
+wildcard. The execution specification $\xi_\alpha$ supplies instructions
+and the harness and model choices, with omitted choices resolved from the
+task and product defaults. The resource annotation $\rho_\alpha$ identifies
+a coding operation that requires exclusive engine-managed coding access to
+the task's shared worktree. Instructions determine how an agent interprets
+its inputs; selectors determine which recorded publications can enable an
+execution.
+
+We represent the engine's control configuration as
+\[
+  \gamma=(C,X,A,K,\theta).
+\]
+Here $C$ contains execution contexts, $X$ contains execution records, $A$
+contains accepted artifact occurrences, and $K$ contains collections.
+The task metadata $\theta$ includes its creation state, retained Playbook identity,
+initial-start choice, default launch choices, completion policy, and
+concurrency bound. Each execution record stores its bound inputs, assigned
+output paths, current session owner, lifecycle, completion permission, and
+any acceptance receipt. The filesystem contents, shared worktree, and
+external tools form the environment in which agents act. The control
+configuration records publication identities and causal relationships;
+it is not a snapshot of that environment.
+
+An \emph{artifact occurrence} records one accepted publication, with a
+unique identifier, logical role, physical path, producing execution, and
+execution context. Two publications of the same logical role are distinct
+occurrences even if their contents match. Designated initial inputs are
+registered as seed occurrences with no producing execution; attachments
+are not automatically seeds. A context identifies the scope of
+an activation: the task root, one collection member, or a loop pass triggered
+by fresh occurrences. Context ancestry allows a worker to inherit relevant
+inputs while keeping results from different members or passes separate.
+
+\subsection{Input Bindings and Collections}
+
+An ordinary graph execution binds every declared input to particular occurrence identifiers.
+Write an input binding as $b=(\alpha,c,\beta,\kappa)$, where $c\in C$ is its
+context, $\beta$ maps each input selector to a nonempty set of matching
+occurrences, and $\kappa$ records any collection and member identities.
+The binding modes constrain these sets:
+\begin{itemize}
+  \item \texttt{single} binds exactly one occurrence of an exact role.
+  \item \texttt{each} binds one member of a closed collection and creates
+        a separate activation context for that member.
+  \item \texttt{complete} binds the entire nonempty matching member set
+        of a closed collection at its governing context.
+\end{itemize}
+In the literature review, a reader binds the original brief through
+\texttt{single} and one source request through \texttt{each}; consolidation
+binds the completed assessment family through \texttt{complete}.
+
+For worker-produced outputs, \texttt{each} ranges over the closed local
+producer batches, while \texttt{complete} uses the governing derived family.
+An individual worker's local batch cannot stand in for that whole family.
+All declared inputs are required. Inputs are read without consuming their
+occurrences, so the same publication can support several executions. The
+current authoring language permits at most one collection input per Step;
+coding Steps accept only exact \texttt{single} inputs. More complicated
+combinations require intermediate Steps that publish explicit handoffs.
+
+Let $G_\alpha(\gamma)$ be the set of new ordinary bindings eligible for
+schema $\alpha$. Eligibility requires deliverable occurrences matching every
+input, compatible context and provenance, and satisfaction of the applicable
+collection rules. It also excludes any binding already recorded as an
+ordinary execution, including one that failed. Binding identity includes
+the schema, context, occurrence identifiers, and collection information.
+The engine can therefore reuse an artifact across different consumers while
+avoiding repeated scheduling of the same ordinary work.
+
+Matching logical roles alone is insufficient when several producers publish
+the same role. The engine uses recorded input ancestry, co-publication, and
+context boundaries to determine which companion occurrences belong together.
+A locally reserved producer can also prevent an inherited occurrence from
+standing in for a result that is still expected. When the available
+provenance leaves an unsupported ambiguous join, reconciliation reports an
+error rather than selecting a pairing. A file's modification time, numeric
+prefix, or position in a directory does not determine eligibility.
+
+A collection $k\in K$ records a selector, a governing context, its accepted
+member occurrences, a set of expected producing executions, and whether its
+membership is closed. A local collection is the batch published by one
+execution. A derived family aggregates the results associated with workers
+from one source collection. Closure requires the expected producers to
+complete their handoffs; a derived family also requires its source
+collection to close and its relevant source-member obligations to be
+represented. A queued, interrupted, or failed worker remains an obligation.
+The engine computes collection closure to a fixed point because a family
+can depend on another family closed during the same reconciliation.
+
+Both \texttt{each} and \texttt{complete} wait for closed membership. Empty
+collections create no member workers and do not enable a
+\texttt{complete} consumer. For recurrence, the engine derives cyclic
+components from the dependency graph and records a new loop context when
+fresh deliverable occurrences satisfy the component's inferred entry roles.
+Freshness is an occurrence and provenance property: overwriting an old
+file does not create another ordinary activation.
+
+\subsection{Execution, Acceptance, and Handoff}
+
+The agent's outcome is represented by a relation
+\[
+  E_\alpha\subseteq
+  \Gamma\times\mathcal{B}_\alpha\times\mathcal{P}_\alpha,
+\]
+where $\mathcal{B}_\alpha$ is the domain of bindings for $\alpha$ and
+$\mathcal{P}_\alpha$ is the domain of candidate publication proposals.
+The relation allows different proposals from the same binding, reflecting
+model behavior and changes in the environment. It does not require an agent
+to terminate or submit a valid proposal. The engine controls the lifecycle
+of each invocation separately from this nondeterministic work.
+
+Reservation creates a durable execution record and assigns output paths
+before launching a process. Ordinary reservation is idempotent in the full
+binding: an existing binding identifies its existing execution. A queued
+execution may launch only after a start request and a successful capacity
+claim. The states \texttt{Starting}, \texttt{Running}, \texttt{Finishing},
+and \texttt{Interrupted} hold capacity. At most one capacity-holding coding
+execution is admitted per task, while noncoding executions may coexist up
+to the task's bound. These limits apply to graph executions; auxiliary
+sessions are outside this accounting.
+
+Completion permission is independent of input eligibility and launch
+admission. The task's configured automatic-completion set initializes each
+execution's permission. A locked execution can run, but completion requires
+a grant for that execution and its current session owner. Eligible
+bindings that consume at least one produced occurrence request launch
+automatically; bindings containing only seeds, or no inputs, follow the
+task's initial-start choice. A human grant authorizes completion by an
+owner and does not certify a particular immutable version of its files.
+
+For an execution $x$, session owner $s$, and proposed publication set $p$,
+let $V_\alpha(\gamma,x,s,p)$ denote the acceptance check. The current owner
+must be running and hold completion permission. The engine inspects its
+assigned output paths and requires at least one valid artifact overall.
+Safely absent outputs are omitted; a present invalid output or an inspection
+error rejects the whole attempt. Valid artifacts are nonempty regular files
+at permitted assigned paths, without symlinks. Declared outputs are possible
+publications: the engine neither requires every declared output nor enforces
+mutual exclusivity between alternatives. Acceptance checks no domain claim
+in the artifact's prose.
+
+On first acceptance, $U_\alpha(\gamma,x,s,p)$ adds the occurrence records, stores a receipt,
+consumes completion permission, and changes the execution to
+\texttt{Finishing}. Repeating a completion request from the same owner
+returns the existing receipt without extending its publication set. The
+receipt fixes which occurrences were accepted, while the underlying files
+remain ordinary mutable files. Acceptance does not copy their bytes into
+an immutable store.
+
+Accepted occurrences become downstream inputs only after the producer's
+termination has been confirmed and its process output drained. Let
+$x_a$ identify occurrence $a$'s producing execution and let $H_\gamma(x)$
+mean that execution $x$, as recorded in $\gamma$, is
+\texttt{Completed}, has a receipt, and has confirmed shutdown. Let
+$\operatorname{ready}(\theta)$ mean that task creation is complete. Then
+\[
+\operatorname{available}_\gamma(a)=
+\begin{cases}
+ \operatorname{ready}(\theta), & a\text{ is a seed},\\
+ H_\gamma(x_a), & \text{otherwise}.
+\end{cases}
+\]
+The separate exit event releases capacity and makes the handoff usable.
+An exit without accepted completion records failure, even if its exit code
+is zero; an accepted execution with proven termination completes its handoff
+regardless of the exit code. A completed agentic operation can be viewed
+abstractly as the path from reservation through accepted handoff, but the
+intermediate lifecycle states remain necessary for concurrent scheduling
+and recovery.
+
+\subsection{Engine Algorithm}
+
+Algorithm~\ref{alg:fam-reconcile} gives the scheduling pass. A serialized
+mutation checks task ownership and the retained definition, changes the
+execution state, and persists the result before process effects occur.
+\textsc{ReconcileGraph} routes deliverable occurrences into contexts,
+updates collections and their closure, resolves provenance-compatible
+bindings, and removes previously recorded ordinary bindings. A second pass
+after reservation records the expected workers before any of them can
+launch. Capacity restrictions therefore delay workers without removing
+their obligations from a later merge.
+
+\begin{algorithm}[tb]
+\caption{Reconcile and dispatch a task}
+\label{alg:fam-reconcile}
+\begin{algorithmic}[1]
+\REQUIRE Retained Playbook $P$, durable configuration $\gamma$
+\STATE Begin serialized mutation; check task and definition ownership
+\IF{task creation is ready}
+  \STATE $B\gets\textsc{ReconcileGraph}(P,\gamma)$
+  \FORALL{$b\in B$}
+    \STATE Reserve execution, owner, and output assignments for $b$
+    \STATE Request start if inputs include a produced occurrence
+    \STATE Otherwise use the task's initial-start choice
+    \STATE Initialize completion permission
+  \ENDFOR
+  \STATE $\textsc{ReconcileGraph}(P,\gamma)$ \COMMENT{record obligations}
+\ENDIF
+\STATE Persist $\gamma$; end mutation
+\STATE Repair session projections from execution records
+\FORALL{queued executions $x$ with a start request}
+  \STATE Begin mutation; reload state; require task creation ready
+  \IF{$x$ is still queued, start-requested, and admission permits}
+    \STATE Set $x$ to \texttt{Starting}; persist; end mutation
+    \STATE Attempt to launch the assigned session
+    \STATE Record launch outcome for current owner
+  \ELSE
+    \STATE End mutation without launching $x$
+  \ENDIF
+\ENDFOR
+\end{algorithmic}
+\end{algorithm}
+
+Algorithm~\ref{alg:fam-completion} separates a completion request from the
+later process-exit event. Invalid outputs leave the execution available for
+correction, retaining any completion grant. After an accepted receipt is
+acknowledged, the runner requests ordinary agent shutdown. Only the process
+owner can confirm that wait/reap and output drain have finished. The engine
+reconciles after that confirmation and also performs periodic reconciliation
+to service queued work. The pseudocode abstracts transport and filesystem
+error handling; an unproven process disposition retains ownership and is
+recorded as \texttt{Interrupted}, rather than being treated as a completed
+handoff.
+
+Launch admission rechecks capacity and coding ownership inside the mutation.
+Recording a launch outcome preserves any receipt or confirmed exit already
+reported by the process owner. Subsequent process effects require a
+successful state commit. A persistence error after atomic file replacement
+has an ambiguous outcome; a retry reloads the durable state instead of
+assuming rollback.
+
+\begin{algorithm}[tb]
+\caption{Completion request and proven process exit}
+\label{alg:fam-completion}
+\begin{algorithmic}[1]
+\STATE \textbf{On completion request} $(x,s)$:
+\STATE Begin serialized mutation; require current owner $s$
+\IF{$x$ already has a receipt}
+  \STATE End mutation; return the recorded receipt
+\ENDIF
+\STATE Require \texttt{Running} and completion permission
+\STATE Inspect assigned outputs; collect publications $p$ and diagnostics $D$
+\IF{$D\ne\varnothing$ or $p=\varnothing$}
+  \STATE Record diagnostics; persist; end mutation; return rejection
+\ENDIF
+\STATE Record $p$ and a receipt; consume permission
+\STATE Set $x$ to \texttt{Finishing}; persist; end mutation
+\STATE Return receipt; runner requests agent shutdown
+\STATE \mbox{}
+\STATE \textbf{On proven exit} $(x,s,\mathit{code})$:
+\STATE Require wait/reap and output drain to have completed
+\STATE Begin serialized mutation; require current owner $s$
+\STATE Record exit code and confirmed shutdown
+\IF{$x$ has a receipt}
+  \STATE Set $x$ to \texttt{Completed}
+\ELSE
+  \STATE Set $x$ to \texttt{Failed}
+\ENDIF
+\STATE Persist; end mutation; trigger task reconciliation
+\end{algorithmic}
+\end{algorithm}
+
+The scheduling and lifecycle operations above describe the Alinery
+implementation at commit \texttt{91213af}.\footnote{Source snapshot:
+\url{https://github.com/deleganceai/alinery/tree/91213afb6e39b821cbf4bf5aed3df813cb2f46b7}.}
+The core library places binding and collection rules in
+\texttt{playbook\_scheduler.rs}; reservation,
+acceptance, and lifecycle state reside in its \texttt{execution.rs}.
+The daemon's \texttt{execution.rs} performs orchestration, and its process
+owner reports termination only after wait/reap and output drain. The
+algorithms express these responsibilities at the level needed to explain
+the model; they do not establish a formal refinement proof for the code.
+
+\subsection{A Literature Review Execution}
+\label{sec:fam-literature-trace}
+
+The reading stage of the literature review illustrates the binding and
+handoff rules. The source-selection operation publishes \texttt{reading-wave.md}
+and a family of \texttt{source-request-*.md} artifacts. Each
+\texttt{evaluate-source} execution binds one member of that family through
+\texttt{each}, together with the original \texttt{review-brief.md} through
+\texttt{single}, and can publish \texttt{source-assessment.md}. The
+\texttt{consolidate-evidence} operation requires the brief, the matching
+reading-wave report, and \texttt{complete(source-assessment*.md)}. Logical
+artifact names specify roles; the engine assigns physical paths separately
+for each execution.
+
+Let $r_1,\ldots,r_7$ denote the seven source-request occurrences from the
+illustrative first wave. Acceptance records those publications, but no
+reader becomes eligible until the producer has completed its handoff.
+Reconciliation then closes the request collection $k_r$, creates a member
+context for each request, and reserves reading executions $x_1,\ldots,x_7$.
+The second reconciliation records all seven executions as expected
+producers of the derived assessment family $k_a$, even if the concurrency
+bound permits only two readers to launch at a time.
+
+Suppose $x_1,\ldots,x_6$ each publish an assessment and finish. Their six
+assessments do not close $k_a$ while $x_7$ remains queued, running,
+interrupted, or failed without accepted completion. When $x_7$ publishes
+its assessment and finishes its handoff, $k_a$ closes with all seven
+members. Consolidation receives one binding containing those assessments,
+the reading-wave report, and the shared brief. An assessment documenting
+an inaccessible source can fulfill a reader's publication obligation; the
+engine does not judge whether the assessment adequately explains the
+limitation. A reader that exits without accepted output leaves the merge
+blocked.
+
+After consolidation and drafting, the continuation operation may publish
+a fresh ticket $t_1$. Its handoff enables planning with $t_1$ and the
+original brief, followed by further searches and source readings. The
+next wave has its own request and assessment collections. Earlier
+assessments remain available through references carried in the cumulative
+evidence, but they do not fulfill the new readers' obligations. Even an
+identical request published again has a distinct occurrence identity;
+avoiding semantically duplicate research is an agent responsibility.
+
+If the continuation agent instead publishes only the stopping report,
+there is no fresh ticket to enable another wave. The report has no built-in
+halt semantics, and the output declarations do not enforce exclusivity:
+publishing both a ticket and a stopping report would still permit a new
+wave. The Playbook's instructions specify which outcome the agent should
+publish. Similarly, an earlier wave that produces no search or source
+requests does not enable an empty \texttt{complete} merge; no downstream
+survey is inferred from that absence.
+
+
+\subsection{Design Tradeoffs and Scope of Guarantees}
+
+\paragraph{Structural dependencies and domain judgment.}
+Positive, conjunctive inputs make the engine's admission rule inspectable:
+every ordinary graph execution must have concrete evidence for each declared role.
+Agents express domain decisions by publishing artifacts that enable later
+Steps. Keeping a general condition language out of the engine reduces
+the number of engine-level rules an author must reason about, but places
+the interpretation of evidence and the choice of outcome inside agent
+instructions. Structurally valid publications can still be wrong,
+contradictory, or insufficient for the human's purpose. Review Steps can
+add scrutiny without changing the meaning of structural acceptance.
+
+\paragraph{Causal pairing and explicit ambiguity.}
+Occurrence identities and recorded provenance preserve distinctions between
+requests, producers, and loop passes that a logical filename alone cannot
+carry. A consumer can receive the particular evidence that enabled its
+work, and a later publication of the same role can enable another execution.
+Conservative pairing also means an underspecified join can stop progress.
+Authors must supply a clearer intermediate handoff when the recorded
+relationships do not determine a supported binding.
+
+\paragraph{Batch handoff and accountable completeness.}
+Closed collections give a consumer a determinate set of publications and
+prevent a fast worker from making a partially scheduled family appear
+complete. Waiting for producer shutdown also avoids releasing dependent
+work while that producer still occupies its execution resources. These
+rules add latency compared with streaming early files into downstream work.
+They deliberately preserve obligations from queued and failed workers,
+so a merge may remain blocked until a human resolves the outstanding work.
+Omitting an intermediate output does not automatically prune all work that
+depended on that branch.
+
+\paragraph{Shared workspace and publication identity.}
+One task worktree avoids the additional reconciliation needed to combine
+code from per-execution workspaces. Serializing operations marked as coding
+limits concurrent engine-managed edits to that worktree, at the cost of
+coding parallelism. The coding flag is a scheduling convention, not an
+operating-system write restriction: other sessions or tools can still
+change files. Similarly, receipts preserve publication membership and
+provenance without protecting accepted artifact bytes. An audit can recover
+which occurrence was accepted and used, but cannot reconstruct historical
+contents from a receipt alone.
+
+\paragraph{Durable ownership and recovery.}
+Persisting reservations before launch makes queued and partially launched
+work inspectable and supports ordinary binding deduplication across
+reconciliation passes. A failed binding remains recorded, so the engine
+does not silently rerun it. Recovery requires an unaccepted execution whose
+previous owner is proven stopped; recovery changes the owner, locks
+completion permission, and requires an explicit new start request. If an
+owner's disposition is unknown, the execution retains capacity. An accepted
+execution whose exit proof is lost can therefore remain blocked. The
+implementation prioritizes preserving ownership over automatic progress
+after an uncertain failure. Explicit manual executions have their own
+records and do not automatically satisfy ordinary graph dependencies or
+replace missing worker obligations.
+
+Within these constraints, the engine enforces declared input bindings,
+records accepted publications and their producers, suppresses duplicate
+ordinary reservations, and delays downstream use until completed handoff.
+These properties concern the execution process. The model does not imply
+correct artifact contents, byte-level immutability, fair scheduling,
+termination, or attainment of the human's objective. An empty set of new
+eligible bindings can indicate that the authored work is exhausted, that
+work is already reserved, or that a dependency remains blocked. Evaluating
+whether the resulting process improves confidence or reduces verification
+cost requires evidence beyond the execution rules themselves.
+
+% End of new section; the pre-existing manuscript continues unchanged.
 \section{Background}
 
 \subsection{Why Software Verification Is Hard}
