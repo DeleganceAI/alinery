@@ -82,6 +82,57 @@ We implement this model in Alinery\footnote{\url{https://github.com/deleganceai/
 \section{Finite Agent Machines}
 \label{sec:fam-definition-execution}
 
+
+
+
+
+
+
+
+A Finite Agent Machine (FAM) defines an abstract state space, a finite set of
+agentic operations, and rules governing when those operations may run. An
+execution engine enforces these rules, providing hard guardrails on how the
+agents' work is coordinated. A state is a set of available artifact files;
+agents interpret and create the files' contents. An
+execution engine binds
+operations to available inputs, records the resulting executions, and
+enforces the conditions for passing their outputs to other agents. A single
+definition can therefore generate different numbers of executions and
+different chains of evidence without changing its authored operations.
+
+\begin{definition}[Finite Agent Machine]
+A FAM is a transition system
+\[
+  \mathcal{F}=(\mathcal{A},\mathcal{S},s_0,\rightarrow),
+\]
+where $\mathcal{A}$ is a finite set of authored agent operation schemas,
+$\mathcal{S}$ is a set of artifact states, $s_0\in\mathcal{S}$ is the
+initial state, and
+$\rightarrow\;\subseteq\;\mathcal{S}\times\mathcal{A}\times\mathcal{S}$
+is the transition relation. Each state is a finite set of available artifact
+files. A transition $s\xrightarrow{\alpha}s'$ represents a completed
+invocation of operation $\alpha$ using inputs from $s$ and publishing output
+files $P$, so that $s'=s\cup P$.
+\end{definition}
+
+Here, \emph{finite} refers to the authored operation set $\mathcal{A}$.
+The same operation may produce different outputs from the same artifact
+state, giving rise to more than one possible successor. Repeated invocations
+can add new artifacts, so the number of reachable states may be unbounded
+and an execution need not terminate.
+
+% New formalism outline; draft each subsection separately.
+\subsection{Artifacts and States}
+
+\subsection{Agent Operations}
+
+\subsection{Agentic Transitions}
+
+\subsection{Executions and Their History}
+
+\subsection{An Example FAM: An Iterative Literature Review}
+\label{sec:fam-literature-example}
+
 \begin{figure*}[!t]
 \centering
 \begin{tikzpicture}[
@@ -128,26 +179,6 @@ initial ticket, shared brief inputs, search-plan and reading-wave handoffs,
 and other supporting bindings are omitted for clarity.}
 \label{fig:fam-literature-definition}
 \end{figure*}
-
-
-
-
-
-
-
-A Finite Agent Machine (FAM) defines an abstract state space, a finite set of
-agentic operations, and rules governing when those operations may run. An
-execution engine enforces these rules, providing hard guardrails on how the
-agents' work is coordinated. A state is a set of available artifact files;
-agents interpret and create the files' contents. An
-execution engine binds
-operations to available inputs, records the resulting executions, and
-enforces the conditions for passing their outputs to other agents. A single
-definition can therefore generate different numbers of executions and
-different chains of evidence without changing its authored operations.
-
-\subsection{An Example FAM: An Iterative Literature Review}
-\label{sec:fam-literature-example}
 
 A literature review often reveals sources that we did not know to search
 for. Reading one paper may uncover a relevant citation, and reading the
@@ -364,6 +395,7 @@ therefore permits an expanding investigation while retaining an inspectable
 process for admitting work and incorporating its results.
 
 
+% Previous formalism draft retained below for reference.
 \subsection{States and Agent Operations}
 \label{sec:fam-artifact-states}
 
