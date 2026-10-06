@@ -71,7 +71,7 @@ Exploratory work can be understood as a search whose concrete objectives emerge 
 
 The same FAM can therefore produce different executions. An agentic transition may divide a problem into several investigations or produce findings that enable different continuations, while the available types of investigation and continuation remain defined by the FAM. A FAM defines a finite repertoire of predefined agentic transitions, each admitting multiple possible outcomes. Agents determine how those transitions are applied to the work at hand, allowing the search to develop through discoveries without requiring its concrete branches to be enumerated in advance.
 
-Here, \emph{finite} refers to the set of authored transition schemas. Finite transition schemas do not imply finitely many runtime states: executions can accumulate new artifacts and input bindings that affect subsequent work. The number of concrete branches and iterations need not be fixed in advance.
+Here, \emph{finite} refers to the set of authored transition schemas. Finite transition schemas do not imply finitely many artifact states: executions can accumulate new artifact files that affect subsequent work. The number of concrete branches and iterations need not be fixed in advance.
 
 Recent projects such as Compound Engineering \citep{everyCompoundEngineering}, Compound Writing \citep{everyCompoundWriting}, and Research--Plan--Implement (RPI) \citep{dex2025context} organize agent work through reusable skills and staged procedures. These approaches make a process explicit, but procedural instructions expressed in prompts do not by themselves guarantee adherence. Where a coordinating agent selects activities, judges whether their requirements have been met, and decides what happens next, the process remains dependent on that agent's interpretation. An agent may omit a prerequisite, advance on insufficient evidence, or allow an unsupported assumption to shape subsequent work. FAMs address this coordination problem by making declared dependencies conditions for execution, so that following the prescribed process does not rely solely on the coordinating agent's willingness or ability to follow instructions.
 
@@ -138,8 +138,8 @@ and other supporting bindings are omitted for clarity.}
 A Finite Agent Machine (FAM) defines an abstract state space, a finite set of
 agentic operations, and rules governing when those operations may run. An
 execution engine enforces these rules, providing hard guardrails on how the
-agents' work is coordinated. The state records artifact publications and
-execution status; agents interpret and create the artifacts' contents. An
+agents' work is coordinated. A state is a set of available artifact files;
+agents interpret and create the files' contents. An
 execution engine binds
 operations to available inputs, records the resulting executions, and
 enforces the conditions for passing their outputs to other agents. A single
@@ -158,7 +158,10 @@ require. Alinery's Academic Survey Playbook expresses this process through
 eight operations, with parallel work within each round and a loop for
 following new citations. Figure~\ref{fig:fam-literature-definition} shows
 the authored definition, and Figure~\ref{fig:fam-literature-rollout} shows
-one possible rollout of that definition. We call one pass from planning
+one possible rollout of that definition. Each edge between agent operations
+represents at least one artifact dependency: one operation can publish an
+artifact that another requires as input. An execution can begin only when
+all its required inputs are available. We call one pass from planning
 through continuation a wave.
 
 % A float page separates the rollout from the definition and surrounding prose.
@@ -361,35 +364,61 @@ therefore permits an expanding investigation while retaining an inspectable
 process for admitting work and incorporating its results.
 
 
-\subsection{Authored Operations and Runtime State}
+\subsection{States and Agent Operations}
+\label{sec:fam-artifact-states}
+
+A FAM state is a set of available artifact files. In the literature review,
+a state may contain the review brief, source requests, and the assessments
+produced so far. The state identifies which files are available; agents
+interpret and create their contents.
+
+Let $\mathcal{D}$ be the universe of artifact files. Each state $s$ is a
+finite subset of $\mathcal{D}$. Distinct files remain distinct elements of
+the state even when they share a logical role, such as
+\texttt{source-assessment.md}. An agent operation schema specifies required
+inputs, possible outputs, and instructions for the agent.
 
 \begin{definition}[Finite Agent Machine]
-A FAM is a labeled transition system
+A FAM is a transition system
 \[
-  \mathcal{F}=(\mathcal{A},\Gamma,\mathcal{L},\gamma_0,\Rightarrow),
+  \mathcal{F}=(\mathcal{A},\mathcal{S},s_0,\rightarrow),
 \]
-where $\mathcal{A}$ is a finite set of authored agentic transition schemas,
-$\Gamma$ is the space of runtime configurations, $\mathcal{L}$ is the
-event-label set, $\gamma_0\in\Gamma$ is an initial configuration, and
+where $\mathcal{A}$ is a finite set of authored agent operation schemas,
+$\mathcal{S}$ is a set of artifact states, $s_0\in\mathcal{S}$ is the
+initial state, and
 \[
-  \Rightarrow\;\subseteq\;\Gamma\times\mathcal{L}\times\Gamma
+  \rightarrow\;\subseteq\;\mathcal{S}\times\mathcal{A}\times\mathcal{S}
 \]
-is the execution relation. A label in $\mathcal{L}$ identifies an event such
-as reserving an execution, launching its agent, accepting its publications,
-or confirming its termination. Event labels may carry execution and
-occurrence identifiers.
+is the transition relation. A transition
+\[
+  s\xrightarrow{\alpha}s'
+\]
+represents a completed invocation of operation $\alpha$ using input files
+from $s$ and publishing a set of output files $P$. Inputs remain available,
+so $s'=s\cup P$. The relation admits handoffs consistent with the authored
+input and output requirements. Agent work can produce different outputs,
+so an operation may have more than one possible successor state.
 \end{definition}
 
-The binding and lifecycle rules below induce $\Rightarrow$ for the Alinery
-instantiation; agent proposals supply the nondeterministic outcomes within
-those rules.
+The state records which artifacts are available. A separate execution
+history records which operation invocation produced each artifact and
+which inputs that invocation used. These relationships provide provenance
+without making the history part of the state.
 
 Here, \emph{finite} qualifies the authored schema set $\mathcal{A}$.
-Neither $\Gamma$ nor $\mathcal{L}$ is required to be finite. Executions
-can accumulate artifact occurrences, input bindings, and execution records;
-cycles can generate further invocations of the same schemas. A bound on
-simultaneous agents limits resource use without bounding the total history
-or implying termination.
+The number of states need not be finite: new invocations can publish new
+artifact files, and repeated use of the same schemas can generate further
+waves of work. A finite set of schemas therefore does not imply termination.
+
+\subsection{Engine Representation in Alinery}
+
+Alinery maintains an engine configuration alongside the FAM's artifact
+state. The configuration records execution history, scheduling obligations,
+and agent status. These records let the engine distinguish work from
+different waves, pair related inputs, and wait for outstanding producers.
+The engine uses execution history as well as artifact availability to
+determine which operation invocations are eligible. We write $\Omega$ for the set of engine configurations and
+$\gamma\in\Omega$ for one configuration.
 
 In Alinery, a Playbook supplies $\mathcal{A}$, and each Step supplies one
 schema. For the implementation considered here, write a schema as
@@ -407,7 +436,7 @@ the task's shared worktree. Instructions determine how an agent interprets
 its inputs; selectors determine which recorded publications can enable an
 execution.
 
-We represent the engine's control configuration as
+We represent the engine configuration as
 \[
   \gamma=(C,X,A,K,\theta).
 \]
@@ -418,7 +447,7 @@ initial-start choice, default launch choices, completion policy, and
 concurrency bound. Each execution record stores its bound inputs, assigned
 output paths, current session owner, lifecycle, completion permission, and
 any acceptance receipt. The filesystem contents, shared worktree, and
-external tools form the environment in which agents act. The control
+external tools form the environment in which agents act. The engine
 configuration records publication identities and causal relationships;
 it is not a snapshot of that environment.
 
@@ -501,7 +530,7 @@ file does not create another ordinary activation.
 The agent's outcome is represented by a relation
 \[
   E_\alpha\subseteq
-  \Gamma\times\mathcal{B}_\alpha\times\mathcal{P}_\alpha,
+  \Omega\times\mathcal{B}_\alpha\times\mathcal{P}_\alpha,
 \]
 where $\mathcal{B}_\alpha$ is the domain of bindings for $\alpha$ and
 $\mathcal{P}_\alpha$ is the domain of candidate publication proposals.
@@ -564,16 +593,21 @@ $\operatorname{ready}(\theta)$ mean that task creation is complete. Then
 The separate exit event releases capacity and makes the handoff usable.
 An exit without accepted completion records failure, even if its exit code
 is zero; an accepted execution with proven termination completes its handoff
-regardless of the exit code. A completed agentic operation can be viewed
-abstractly as the path from reservation through accepted handoff, but the
-intermediate lifecycle states remain necessary for concurrent scheduling
-and recovery.
+regardless of the exit code. The FAM state contains the files corresponding
+to available occurrences. Accepting an output alone does not yet add its
+file to that state; the producer must complete its handoff.
+
+Reservation, launch, acceptance, and confirmed exit describe how the engine
+carries out one agent operation. Its completed handoff contributes the
+output files to an abstract FAM transition. Intermediate engine
+configurations track concurrency and recovery while the FAM state remains
+a set of available artifact files.
 
 \subsection{Engine Algorithm}
 
 Algorithm~\ref{alg:fam-reconcile} gives the scheduling pass. A serialized
 mutation checks task ownership and the retained definition, changes the
-execution state, and persists the result before process effects occur.
+engine configuration, and persists the result before process effects occur.
 \textsc{ReconcileGraph} routes deliverable occurrences into contexts,
 updates collections and their closure, resolves provenance-compatible
 bindings, and removes previously recorded ordinary bindings. A second pass
@@ -585,7 +619,7 @@ their obligations from a later merge.
 \caption{Reconcile and dispatch a task}
 \label{alg:fam-reconcile}
 \begin{algorithmic}[1]
-\REQUIRE Retained Playbook $P$, durable configuration $\gamma$
+\REQUIRE Retained Playbook $P$, durable engine configuration $\gamma$
 \STATE Begin serialized mutation; check task and definition ownership
 \IF{task creation is ready}
   \STATE $B\gets\textsc{ReconcileGraph}(P,\gamma)$
@@ -600,7 +634,7 @@ their obligations from a later merge.
 \STATE Persist $\gamma$; end mutation
 \STATE Repair session projections from execution records
 \FORALL{queued executions $x$ with a start request}
-  \STATE Begin mutation; reload state; require task creation ready
+  \STATE Begin mutation; reload $\gamma$; require task creation ready
   \IF{$x$ is still queued, start-requested, and admission permits}
     \STATE Set $x$ to \texttt{Starting}; persist; end mutation
     \STATE Attempt to launch the assigned session
