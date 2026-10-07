@@ -160,7 +160,40 @@ the authored operation set $\mathcal{A}$.
 
 \subsection{Agentic Transitions}
 
-\subsection{Executions and Their History}
+For a completed invocation of schema $\alpha$ from state $s$, let $B$ be
+its set of input filenames and $P$ its set of published output filenames.
+The invocation must satisfy
+\[
+  B\in I_\alpha,\qquad B\subseteq s,\qquad P\in O_\alpha,\qquad P\ne\varnothing,
+\]
+and produces the \emph{agentic transition}
+\[
+  s\xrightarrow{\alpha}s',\qquad s'=s\cup P.
+\]
+All filenames in $s$ remain available in $s'$.
+
+Each invocation publishes one or more artifacts, whose filenames form $P$.
+By choosing which permitted outputs to publish, the agent can satisfy the
+input requirements of different subsequent operations, enabling conditional
+branching. Published artifacts can support several continuations, while
+fresh artifacts that supply inputs to an earlier operation can enable
+another iteration.
+
+\subsection{Executions}
+
+A \emph{rollout}, or execution of a FAM, is a finite or infinite sequence of
+transitions beginning at the initial state $s_0$:
+\[
+  s_0\xrightarrow{\alpha_1}s_1
+  \xrightarrow{\alpha_2}s_2
+  \xrightarrow{\alpha_3}\cdots,
+\]
+where each $\alpha_i\in\mathcal{A}$ and each transition belongs to the
+relation $\rightarrow$.
+
+The same schema may appear repeatedly in a rollout, and different rollouts
+of the same FAM may follow different sequences of transitions. Repeating
+an operation can extend the accumulated state with new artifact filenames.
 
 \subsection{An Example FAM: An Iterative Literature Review}
 \label{sec:fam-literature-example}
