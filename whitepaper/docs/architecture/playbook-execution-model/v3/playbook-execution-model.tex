@@ -195,55 +195,377 @@ The same schema may appear repeatedly in a rollout, and different rollouts
 of the same FAM may follow different sequences of transitions. Repeating
 an operation can extend the accumulated state with new artifact filenames.
 
-\subsection{An Example FAM: An Iterative Literature Review}
+\section{Motivating Examples}
 \label{sec:fam-literature-example}
 
-\begin{figure*}[!t]
+To illustrate how a FAM organizes agent work, consider a team conducting a
+literature review. Given a research question, the agents find relevant papers,
+assess their findings, and synthesize a report.
+Figure~\ref{fig:fam-literature-variants} shows three FAM definitions:
+one that branches across papers, one that loops as new sources are discovered,
+and one that combines both structures.
+
+% Requires tikz with arrows.meta; designed for a 17.8 cm two-column text width.
+% Deliberately unscaled: operation labels are 8.5 pt and annotations are 8 pt.
+\begin{figure*}[t]
 \centering
 \begin{tikzpicture}[
   operation/.style={draw,rounded corners=2pt,align=center,
-    text width=2.85cm,minimum height=1.2cm,inner sep=4pt,font=\small},
-  repeated/.style={operation,fill=black!7},
-  merge/.style={operation,fill=black!14},
-  artifact/.style={draw,dashed,align=center,font=\scriptsize,
-    inner sep=4pt,text width=3.2cm},
-  handoff/.style={-{Stealth[length=2mm]},thick},
-  annotation/.style={font=\scriptsize,align=center,fill=white,inner sep=2pt}
+    text width=2.35cm,minimum height=.64cm,inner sep=4pt,
+    font=\fontsize{8.5}{10}\selectfont},
+  reader/.style={operation,fill=black!7},
+  synthesis/.style={operation,fill=black!14},
+  artifact/.style={draw,dashed,align=center,text width=2.2cm,
+    minimum height=.53cm,inner sep=4pt,
+    font=\fontsize{8.5}{10}\selectfont},
+  handoff/.style={-{Stealth[length=1.7mm]},semithick},
+  recurrence/.style={handoff,dashed},
+  panel/.style={align=center,text width=5.5cm,inner sep=0pt,
+    font=\fontsize{9.5}{11}\selectfont\bfseries},
+  annotation/.style={align=center,font=\fontsize{8}{9}\selectfont},
+  request/.style={annotation,rotate=90,fill=white,inner sep=2pt}
 ]
-\node[operation] (frame) at (0,0) {Frame the review\\\scriptsize once per task};
-\node[operation] (plan) at (4,0) {Plan the\\evidence wave};
-\node[repeated] (gather) at (8,0) {Gather sources\\\scriptsize \texttt{each} search request};
-\node[merge] (select) at (12,0) {Deduplicate and\\dispatch sources\\\scriptsize \texttt{complete} search results};
-\node[repeated] (read) at (12,-2.4) {Read and evaluate\\one source\\\scriptsize \texttt{each} source request};
-\node[merge] (merge) at (8,-2.4) {Consolidate evidence\\and new citations\\\scriptsize \texttt{complete} assessments};
-\node[operation] (draft) at (4,-2.4) {Draft the survey};
-\node[operation] (continue) at (0,-2.4) {Continue discovery\\or conclude};
-\node[artifact] (stop) at (0,-3.8) {review-stopping-report.md};
+% Explicit bounds make the fragment fit without shrinking its text.
+\useasboundingbox (-2.8,-5.48) rectangle (14.97,.95);
 
-\draw[handoff] (frame) -- (plan);
-\draw[handoff] (plan) -- (gather);
-\draw[handoff] (gather) -- (select);
-\draw[handoff] (select) -- node[annotation,left]{source\\requests} (read);
-\draw[handoff] (read) -- (merge);
-\draw[handoff] (merge) -- (draft);
-\draw[handoff] (draft) -- (continue);
-\draw[handoff,dashed] (continue.west) -- (-2.1,-2.4) -- (-2.1,1.55)
-  -- node[annotation,above]{fresh \texttt{ticket.md} enables another wave}
-  (4,1.55) -- (plan.north);
-\draw[handoff] (continue) -- (stop);
+\begin{scope}
+  \node[panel] at (0,.73) {(a) Branching};
+  \node[operation] (a-find) at (0,0) {Find sources};
+  \node[reader,text width=1.25cm] (a-read-1) at (-1.1,-1.35) {Read\\source 1};
+  \node[reader,text width=1.25cm] (a-read-n) at (1.1,-1.35) {Read\\source \textit{n}};
+  \node[font=\normalsize] at (0,-1.35) {$\cdots$};
+  \node[synthesis] (a-synth) at (0,-2.65) {Synthesize review};
+  \node[artifact] (a-report) at (0,-3.85) {Review report};
+
+  \draw[semithick] (a-find.south) -- (0,-.65);
+  \draw[semithick] (-1.1,-.65) -- (1.1,-.65);
+  \draw[handoff] (-1.1,-.65) -- (a-read-1.north);
+  \draw[handoff] (1.1,-.65) -- (a-read-n.north);
+  \draw[semithick] (a-read-1.south) -- (-1.1,-2.08);
+  \draw[semithick] (a-read-n.south) -- (1.1,-2.08);
+  \draw[semithick] (-1.1,-2.08) -- (1.1,-2.08);
+  \draw[handoff] (0,-2.08) -- (a-synth.north);
+  \draw[handoff] (a-synth) -- (a-report);
+\end{scope}
+
+\begin{scope}[xshift=6cm]
+  \node[panel] at (0,.73) {(b) Looping};
+  \node[operation] (b-find) at (0,0) {Find source};
+  \node[reader] (b-read) at (0,-1.35)
+    {Read source\\{\fontsize{8}{9}\selectfont one per pass}};
+  \node[synthesis] (b-synth) at (0,-2.65) {Synthesize review};
+  \node[operation] (b-assess) at (0,-3.85) {Assess next step};
+  \node[artifact] (b-report) at (0,-5.05) {Closing report};
+
+  \draw[handoff] (b-find) -- (b-read);
+  \draw[handoff] (b-read) -- (b-synth);
+  \draw[handoff] (b-synth) -- (b-assess);
+  \draw[handoff] (b-assess) -- (b-report);
+  \draw[recurrence] (b-assess.west) -- (-2.35,-3.85)
+    -- node[request] {fresh request} (-2.35,0) -- (b-find.west);
+\end{scope}
+
+\begin{scope}[xshift=12cm]
+  \node[panel] at (0,.73) {(c) Branching and looping};
+  \node[operation] (c-find) at (0,0) {Find sources};
+  \node[reader,text width=1.25cm] (c-read-1) at (-1.1,-1.35) {Read\\source 1};
+  \node[reader,text width=1.25cm] (c-read-n) at (1.1,-1.35) {Read\\source \textit{n}};
+  \node[font=\normalsize] at (0,-1.35) {$\cdots$};
+  \node[synthesis] (c-synth) at (0,-2.65) {Synthesize review};
+  \node[operation] (c-assess) at (0,-3.85) {Assess next step};
+  \node[artifact] (c-report) at (0,-5.05) {Closing report};
+
+  \draw[semithick] (c-find.south) -- (0,-.65);
+  \draw[semithick] (-1.1,-.65) -- (1.1,-.65);
+  \draw[handoff] (-1.1,-.65) -- (c-read-1.north);
+  \draw[handoff] (1.1,-.65) -- (c-read-n.north);
+  \draw[semithick] (c-read-1.south) -- (-1.1,-2.08);
+  \draw[semithick] (c-read-n.south) -- (1.1,-2.08);
+  \draw[semithick] (-1.1,-2.08) -- (1.1,-2.08);
+  \draw[handoff] (0,-2.08) -- (c-synth.north);
+  \draw[handoff] (c-synth) -- (c-assess);
+  \draw[handoff] (c-assess) -- (c-report);
+  \draw[recurrence] (c-assess.west) -- (-2.35,-3.85)
+    -- node[request] {fresh request} (-2.35,0) -- (c-find.west);
+\end{scope}
 \end{tikzpicture}
-\caption{An example FAM that conducts a rigorous literature review. Each
-rounded box is one of eight
-agent operation schemas, shown once. An \texttt{each} input permits one execution
-per request; a \texttt{complete} input waits for the corresponding workers'
-results. The recurrence dependency permits a new wave using the same
-schemas. The dashed rectangle is a possible output artifact, not another
-operation or an engine-level halt command; output exclusivity is specified
-in the agent instructions. Only principal dependencies are shown. The
-initial ticket, shared brief inputs, search-plan and reading-wave handoffs,
-and other supporting bindings are omitted for clarity.}
-\label{fig:fam-literature-definition}
+\caption{Session patterns specified by three literature-review FAMs. Each
+rounded box represents an agent session invoking the named operation. In
+(a) and (c), there is one reading session per selected source; the ellipsis
+leaves the source count unspecified. These sessions invoke the same
+\emph{Read source} schema. Solid arrows show principal artifact dependencies.
+Dashed return arrows indicate new passes enabled by fresh requests; dashed
+rectangles are output artifacts.}
+\label{fig:fam-literature-variants}
 \end{figure*}
+
+% Full-page companion to the three literature-review operation patterns.
+% Requires tikz with arrows.meta. No scaling: labels are 9--11 pt.
+\begin{figure*}[p]
+\centering
+\begin{tikzpicture}[
+  execution/.style={draw,rounded corners=2pt,align=center,
+    text width=2.6cm,minimum height=.9cm,inner sep=5pt,
+    font=\fontsize{10.5}{12}\selectfont},
+  reader/.style={execution,fill=black!7,text width=2.55cm},
+  synthesis/.style={execution,fill=black!14,text width=3cm},
+  assessment/.style={execution,text width=2.9cm},
+  artifact/.style={draw,dashed,align=center,text width=5.6cm,
+    minimum height=.95cm,inner sep=5pt,
+    font=\fontsize{10}{12}\selectfont},
+  handoff/.style={-{Stealth[length=2mm]},semithick},
+  connector/.style={semithick},
+  roundtitle/.style={font=\fontsize{11}{13}\selectfont\bfseries,
+    align=center,inner sep=0pt},
+  annotation/.style={font=\fontsize{9}{11}\selectfont,
+    align=center,fill=white,inner sep=2pt}
+]
+\useasboundingbox (0,-16.65) rectangle (17.78,.7);
+
+% Initial artifact and the first six completed invocations.
+\node[artifact,text width=3.45cm,font=\fontsize{9}{11}\selectfont]
+  (question) at (1.9,0)
+  {\texttt{review-question.md}\\
+   {\fontsize{9}{11}\selectfont Initial question and scope}};
+\node[roundtitle] at (8.89,-.4) {Round 1: sources A, B, and C};
+\node[execution] (find1) at (1.9,-2.7) {Find sources 1};
+\node[reader] (readA) at (6.3,-1.4)
+  {Read source A\\{\fontsize{9}{11}\selectfont finds citation to D}};
+\node[reader] (readB) at (6.3,-2.7)
+  {Read source B\\{\fontsize{9}{11}\selectfont finds citation to E}};
+\node[reader] (readC) at (6.3,-4.0) {Read source C};
+\node[synthesis] (synth1) at (10.8,-2.7) {Synthesize review 1};
+\node[assessment] (assess1) at (15.3,-2.7) {Assess next step 1};
+\node[artifact] (followup2) at (8.85,-5.45)
+  {\texttt{followup-2.md}\\
+   {\fontsize{9}{11}\selectfont Leads: D and E}\\
+   {\fontsize{9}{11}\selectfont Accumulated review: \texttt{review-1.md}}};
+
+\draw[handoff] (question) -- (find1);
+\draw[connector] (find1.east) -- (4,-2.7);
+\draw[connector] (4,-1.4) -- (4,-4.0);
+\foreach \source in {A,B,C}{
+  \draw[handoff] (4,-2.7 |- read\source.west) -- (read\source.west);
+  \draw[connector] (read\source.east) -- (8.45,-2.7 |- read\source.east);
+}
+\draw[connector] (8.45,-1.4) -- (8.45,-4.0);
+\draw[handoff] (8.45,-2.7) -- (synth1.west);
+\draw[handoff] (synth1) -- (assess1);
+\node[annotation] at (13.05,-1.95) {\texttt{review-1.md}};
+\draw[handoff] (assess1.south) -- (15.3,-5.45) -- (followup2.east);
+
+% Five more completed invocations use the same four schemas.
+\node[roundtitle] at (8.89,-6.55) {Round 2: sources D and E};
+\node[execution] (find2) at (1.9,-8.25) {Find sources 2};
+\node[reader] (readD) at (6.3,-7.6) {Read source D};
+\node[reader] (readE) at (6.3,-8.9)
+  {Read source E\\{\fontsize{9}{11}\selectfont finds citation to F}};
+\node[synthesis] (synth2) at (10.8,-8.25) {Synthesize review 2};
+\node[assessment] (assess2) at (15.3,-8.25) {Assess next step 2};
+\node[artifact] (followup3) at (8.85,-10.7)
+  {\texttt{followup-3.md}\\
+   {\fontsize{9}{11}\selectfont Lead: F}\\
+   {\fontsize{9}{11}\selectfont Accumulated review: \texttt{review-2.md}}};
+
+% The fresh request reaches both source discovery and the next synthesis.
+\draw[handoff] (followup2.west) -- (1.9,-5.45) -- (find2.north);
+\node[annotation] at (3.8,-5.15) {fresh request};
+\draw[handoff] (followup2.south east) |- (10.8,-7.15) -- (synth2.north);
+\node[annotation,anchor=west] at (12.05,-6.7) {accumulated review};
+
+\draw[connector] (find2.east) -- (4,-8.25);
+\draw[connector] (4,-7.6) -- (4,-8.9);
+\foreach \source in {D,E}{
+  \draw[handoff] (4,-8.25 |- read\source.west) -- (read\source.west);
+  \draw[connector] (read\source.east) -- (8.45,-8.25 |- read\source.east);
+}
+\draw[connector] (8.45,-7.6) -- (8.45,-8.9);
+\draw[handoff] (8.45,-8.25) -- (synth2.west);
+\draw[handoff] (synth2) -- (assess2);
+\node[annotation] at (13.05,-7.5) {\texttt{review-2.md}};
+\draw[handoff] (assess2.south) -- (15.3,-10.7) -- (followup3.east);
+
+% Four final invocations; publication ends without another request.
+\node[roundtitle] at (8.89,-11.8) {Round 3: source F};
+\node[execution] (find3) at (1.9,-13.4) {Find sources 3};
+\node[reader] (readF) at (6.3,-13.4) {Read source F};
+\node[synthesis] (synth3) at (10.8,-13.4) {Synthesize review 3};
+\node[assessment] (assess3) at (15.3,-13.4) {Assess next step 3};
+\node[artifact] (closing) at (8.85,-15.4)
+  {\texttt{closing-report.md}\\
+   {\fontsize{9}{11}\selectfont Final review: \texttt{review-3.md}}};
+
+\draw[handoff] (followup3.west) -- (1.9,-10.7) -- (find3.north);
+\node[annotation] at (3.8,-10.4) {fresh request};
+\draw[handoff] (followup3.south east) |- (10.8,-12.3) -- (synth3.north);
+\node[annotation,anchor=west] at (12.05,-11.85) {accumulated review};
+
+\draw[handoff] (find3) -- (readF);
+\draw[handoff] (readF) -- (synth3);
+\draw[handoff] (synth3) -- (assess3);
+\node[annotation] at (13.05,-12.65) {\texttt{review-3.md}};
+\draw[handoff] (assess3.south) -- (15.3,-15.4) -- (closing.east);
+\node[annotation] at (8.85,-16.3) {No further request is published.};
+\end{tikzpicture}
+\caption{One possible rollout of the branching and looping FAM in
+Figure~\ref{fig:fam-literature-variants}(c). Four authored operation schemas
+produce 15 completed invocations across three rounds. Each rounded box is
+one invocation; dashed boxes identify artifacts. Reading connections
+represent the \texttt{request-X.md} and \texttt{assessment-X.md} handoffs for
+source X. Fresh requests enable further rounds until a closing report is
+published. Arrows show principal artifact dependencies. Intermediate states
+are omitted; accumulating output filenames in completion order gives the
+state-transition view of Section~\ref{sec:fam-definition-execution}.}
+\label{fig:fam-literature-concrete-rollout}
+\end{figure*}
+
+
+
+\subsection{Branching}
+
+The \emph{Find sources} operation selects relevant sources and publishes a
+source-request artifact for each. Each request enables a separate invocation
+of \emph{Read source}, which publishes an assessment. \emph{Synthesize review}
+combines the assessments into a review. The sources selected during execution
+determine which reading branches occur; the same reading schema serves every
+selected source.
+
+\subsection{Looping}
+
+The second version examines one source at a time. After \emph{Find source}
+and \emph{Read source}, \emph{Synthesize review} incorporates the new assessment
+into the accumulated review. \emph{Assess next step} chooses between two
+permitted outcomes: a fresh request to investigate a promising citation or
+unresolved question, or a closing report. A fresh request enables another
+pass through the same operations, with earlier findings carried forward.
+The next source and the number of passes are not fixed in advance.
+
+\subsection{Branching and Looping}
+
+The third version repeats the branching process. A round can assess several
+selected sources, and synthesis combines their assessments with earlier
+findings. \emph{Assess next step} may publish a fresh request for the questions
+or citations that warrant more investigation, enabling another round, or a
+closing report. Figure~\ref{fig:fam-literature-concrete-rollout} shows one
+possible rollout with three sources in the first round, two in the second,
+and one in the third before the review concludes.
+
+\section{Background}
+
+\subsection{Why Software Verification Is Hard}
+
+ the main question is whether the benefit of an improvement to a known solution to a problem is worth the cost of searching the space of possibel soltuions (cite alpha evolve here, and open evolve). For many problems in reseach and software development, complete verification is unattainable, and this limits the ability to apply LLM-based agents, because every potential solution generated by the agents produces more verification work, and this becomes prohibitevely expensive.
+
+There's other issues here that are relevant... while we want agents to be all powerful, the reality is that they still have a number of limitations in practice. COntext window sizes, following instructions generally, especially on problems in domains for which they have not been trained well. (this is why benchmaxxing is a thing). The scope of a problem given to an agent is incredibly important. From a practictionrs point of view, small scoped tasks are much more likeliy to be executed well by an agent then scope involving larger tasks. This is why the notiong of 'sub-agents' have become so popular. Sub-agents are a way to pass out narrow focused tasks so that each agent has a small piece of work  to focus on.
+
+Most sub-agents in use today refers to an automatic feature driven by a larger model.
+
+
+When verification is prohibitvel expensive, we need to reduce the number of candidate solutions generated by a agents, so that verification costs are within bounds of the budget of an individual or team. On this spectrum, the most extreme version is for all code to be manually reviewed by a human, and on the other end of the spectrum are techniques to limit the psace of what agents can do.
+
+
+We present a novel multi-agent architecture to solve alignment and verification problems with Large Language Models and similar neural-based models.
+
+
+
+
+The ideal use case is work that cannot be trivially or automatically (including with software) verified. Additionally, the consqeuence of getting the work right is high stakes. For that reason, we avoid the problem of prototyping. We also are interested in work that is not possible to verify the outcome after the fact. Therefore, since the outcome of applying AI to sovle a problem is not completely verifiable, the process that produced it offloads some of the trust that a human puts into verifying it. If they can verify the process that was followed by the AI, then they can reduce the amount of verification needed on the end result.
+
+There is a spectrum of approaches to perform concrete work. You could create a single agent, you could use dynamic workflows like claude code, you could do everything by hand yourself.
+
+\subsection{Petri Nets and Concurrent Agent Execution}
+
+Petri nets describe processes in which several activities may be enabled at
+once and later activities depend on combinations of earlier results. A net
+contains \emph{places}, which hold tokens, and \emph{transitions}, which consume
+tokens from input places and produce tokens in output places. The distribution
+of tokens across all places is the \emph{marking}, or global state of the net.
+A transition is enabled when its required input tokens are available;
+independent transitions can proceed without imposing an order between them,
+while a transition requiring several inputs provides a synchronization point
+\cite{jensen1994coloured}.
+
+Colored Petri nets associate typed data values with tokens, allowing a
+transition to distinguish particular work items and match their associated
+inputs \cite{jensen1994coloured}. Read arcs add a complementary operation:
+requiring a token to be present without consuming it
+\cite{rodriguez2012readarcs}. Reusable information can therefore enable several
+activities, while ordinary consuming arcs can represent resources whose use
+must be exclusive.
+
+Playbooks implement an artifact-driven concurrent execution model closely
+related to colored Petri nets with read arcs. A Playbook defines agentic
+operations called Steps and connects them through declared artifact inputs and
+possible outputs. Each execution binds a Step to particular artifact
+occurrences, retaining the identity of each publication and its producing
+execution. In a Petri-net interpretation, occurrences provide data-bearing
+tokens, input requirements determine enabling conditions, and accepted
+publications supply new tokens. For example, two reviewers may read the same
+brief independently, while a synthesis Step requires both review results.
+Read arcs express reuse of the brief, and the synthesis inputs express the
+AND dependency. Occurrence and provenance information distinguishes results
+from different requests or loop passes.
+
+The engine also records behavior that a faithful net model would need to make
+explicit. An execution occupies capacity while active, and its accepted
+outputs become available to dependent executions only after shutdown is
+confirmed. Recorded input bindings prevent duplicate automatic executions;
+session limits and exclusive coding access constrain launches. Collection
+inputs support one execution per member and synchronization over a nonempty
+accepted collection after all expected contributors and source obligations
+have completed. Agent outcomes introduce nondeterminism in artifact contents
+and in the permitted outputs published. Publication of the required artifact
+roles determines downstream eligibility; agents interpret artifact contents.
+
+The Petri-net comparison identifies a structural relationship rather than an
+established formal equivalence. An exact encoding would need to preserve
+occurrence matching, binding deduplication, collection closure, and execution
+lifecycle rules. The distinction between a finite net description and its
+reachable markings also clarifies finiteness: a finite set of Step definitions
+can generate an unbounded number of executions and artifact occurrences.
+A limit on simultaneous sessions does not by itself make the complete
+execution state space finite.
+
+\subsection{Related Work and Positioning}
+
+Classical planning supplies precise vocabulary for states, action
+applicability, and successor transitions \cite{fikes1971strips}. Hierarchical
+task network planning supplies authored task decompositions that a planner
+refines toward executable networks \cite{erol1994htn}. Reactive Playbooks use
+neither goal search nor search over alternative Step schemas or task networks:
+the process definition is fixed, while agent-produced data determines how many
+fixed Step executions are late-grounded. The model is therefore closer to execution and monitoring of an
+authored process than to plan synthesis.
+
+Workflow languages commonly represent splits, joins, choices, and loops as
+control-flow patterns \cite{vanderAalst2003workflow}; statecharts likewise make
+control state and transitions explicit \cite{harel1987statecharts}. A Playbook
+may be rendered with similar shapes, but its source of truth is exact material
+dependency and provenance. The definition view may contain a visual cycle,
+whereas the execution view contains only newly published DAG nodes. Avoiding a
+cursor is not a claim that workflow formalisms are incapable of the example.
+Material-state sufficiency is a design choice that makes it possible to reconstruct why
+each agent execution occurred.
+
+Temporal planning for actions with duration distinguishes an action's interval
+of execution from the points at which its effects change the state
+\cite{fox2003pddl21}. A Playbook Step execution draws a narrower analogous
+boundary: several sequential harness Sessions may perform work, but accepted
+completion exposes one atomic successor. The paper does not adopt the temporal
+constraints, time-varying numeric state variables, or formal plan validation of
+the Planning Domain Definition Language (PDDL).
+
+Multi-agent frameworks such as AutoGen provide flexible conversation and tool
+interaction patterns \cite{wu2024autogen}. A conversational agent can run
+inside a Playbook Session; the Playbook model instead governs durable
+publication between executions. General provenance models describe entities,
+activities, agents, and derivations \cite{moreau2013prov}. Playbook provenance
+specializes that vocabulary with exact input bindings, fulfillment
+relationships, automatic claim identity, and coverage-checked state parents.
+
+\clearpage
+\section*{Previous Literature Review Example (Preserved)}
+\label{sec:fam-literature-example-preserved}
 
 A literature review often reveals sources that we did not know to search
 for. Reading one paper may uncover a relevant citation, and reading the
@@ -252,136 +574,11 @@ sources, and incorporate the findings without knowing in advance which
 papers the review will include or how many rounds of discovery it will
 require. Alinery's Academic Survey Playbook expresses this process through
 eight operations, with parallel work within each round and a loop for
-following new citations. Figure~\ref{fig:fam-literature-definition} shows
-the authored definition, and Figure~\ref{fig:fam-literature-rollout} shows
-one possible rollout of that definition. Each edge between agent operations
-represents at least one artifact dependency: one operation can publish an
-artifact that another requires as input. An execution can begin only when
+following new citations. Operations are connected through artifact
+dependencies: one operation can publish an artifact that another requires
+as input. An execution can begin only when
 all its required inputs are available. We call one pass from planning
 through continuation a wave.
-
-% A float page separates the rollout from the definition and surrounding prose.
-\begin{figure*}[p]
-\centering
-\resizebox{\textwidth}{!}{%
-\begin{tikzpicture}[
-  execution/.style={draw,rounded corners=1.5pt,align=center,
-    text width=1.43cm,minimum height=.58cm,inner sep=3pt,font=\footnotesize},
-  worker/.style={execution,fill=black!7,minimum height=.35cm,inner sep=2pt},
-  merge/.style={execution,fill=black!14},
-  artifact/.style={draw,dashed,align=center,font=\scriptsize,
-    inner sep=4pt,text width=3.5cm},
-  handoff/.style={-{Stealth[length=1.5mm]},semithick},
-  annotation/.style={font=\scriptsize,align=center,fill=white,inner sep=2pt}
-]
-\node[execution] (frame) at (0,2.8) {Frame};
-\node[font=\small\bfseries] at (6.6,2.2) {Wave 1};
-\node[execution] (plan1) at (0,0) {Plan 1};
-\node[worker] (gather1a) at (2.2,.6) {Gather 1a};
-\node[worker] (gather1b) at (2.2,0) {Gather 1b};
-\node[worker] (gather1c) at (2.2,-.6) {Gather 1c};
-\node[merge] (select1) at (4.4,0) {Select 1};
-\foreach \paper/\height in {A/1.5,B/1.0,C/.5,D/0,E/-.5,F/-1.0,G/-1.5}{
-  \node[worker] (read\paper) at (6.6,\height) {Read \paper};
-}
-\node[merge] (merge1) at (8.8,0) {Merge 1};
-\node[execution] (draft1) at (11,0) {Draft 1};
-\node[execution] (continue1) at (13.2,0) {Continue 1};
-\node[annotation] at (6.6,-2.02) {B cites H; F cites I};
-\node[artifact] (ticket2) at (6.6,-2.65) {new ticket: citations H and I\\plus accumulated evidence};
-
-\draw[handoff] (frame) -- node[annotation,right]{original\\review brief} (plan1);
-\draw[semithick] (plan1.east) -- (1.1,0);
-\draw[semithick] (1.1,.6) -- (1.1,-.6);
-\foreach \worker in {gather1a,gather1b,gather1c}{
-  \draw[handoff] (1.1,0 |- \worker.west) -- (\worker.west);
-  \draw[semithick] (\worker.east) -- (3.3,0 |- \worker.east);
-}
-\draw[semithick] (3.3,.6) -- (3.3,-.6);
-\draw[handoff] (3.3,0) -- (select1.west);
-\draw[semithick] (select1.east) -- (5.5,0);
-\draw[semithick] (5.5,1.5) -- (5.5,-1.5);
-\foreach \paper in {A,B,C,D,E,F,G}{
-  \draw[handoff] (5.5,0 |- read\paper.west) -- (read\paper.west);
-  \draw[semithick] (read\paper.east) -- (7.7,0 |- read\paper.east);
-}
-\draw[semithick] (7.7,1.5) -- (7.7,-1.5);
-\draw[handoff] (7.7,0) -- (merge1.west);
-\draw[handoff] (merge1) -- (draft1);
-\draw[handoff] (draft1) -- (continue1);
-\draw[handoff] (continue1.south) -- (13.2,-2.65) -- (ticket2.east);
-
-\node[font=\small\bfseries] at (6.6,-3.55) {Wave 2};
-\node[execution] (plan2) at (0,-4.6) {Plan 2};
-\node[worker] (gather2a) at (2.2,-4.25) {Gather 2a};
-\node[worker] (gather2b) at (2.2,-4.95) {Gather 2b};
-\node[merge] (select2) at (4.4,-4.6) {Select 2};
-\node[worker] (readH) at (6.6,-4.25) {Read H};
-\node[worker] (readI) at (6.6,-4.95) {Read I};
-\node[merge] (merge2) at (8.8,-4.6) {Merge 2};
-\node[execution] (draft2) at (11,-4.6) {Draft 2};
-\node[execution] (continue2) at (13.2,-4.6) {Continue 2};
-\node[annotation] at (6.6,-5.65) {H cites J};
-\node[artifact] (ticket3) at (6.6,-6.3) {new ticket: citation J\\plus accumulated evidence};
-
-\draw[handoff] (ticket2.west) -- (0,-2.65) -- (plan2.north);
-\draw[semithick] (plan2.east) -- (1.1,-4.6);
-\draw[semithick] (1.1,-4.25) -- (1.1,-4.95);
-\foreach \worker in {gather2a,gather2b}{
-  \draw[handoff] (1.1,0 |- \worker.west) -- (\worker.west);
-  \draw[semithick] (\worker.east) -- (3.3,0 |- \worker.east);
-}
-\draw[semithick] (3.3,-4.25) -- (3.3,-4.95);
-\draw[handoff] (3.3,-4.6) -- (select2.west);
-\draw[semithick] (select2.east) -- (5.5,-4.6);
-\draw[semithick] (5.5,-4.25) -- (5.5,-4.95);
-\foreach \paper in {H,I}{
-  \draw[handoff] (5.5,0 |- read\paper.west) -- (read\paper.west);
-  \draw[semithick] (read\paper.east) -- (7.7,0 |- read\paper.east);
-}
-\draw[semithick] (7.7,-4.25) -- (7.7,-4.95);
-\draw[handoff] (7.7,-4.6) -- (merge2.west);
-\draw[handoff] (merge2) -- (draft2);
-\draw[handoff] (draft2) -- (continue2);
-\draw[handoff] (continue2.south) -- (13.2,-6.3) -- (ticket3.east);
-
-\node[font=\small\bfseries] at (6.6,-7.2) {Wave 3};
-\node[execution] (plan3) at (0,-8.4) {Plan 3};
-\node[worker] (gather3) at (2.2,-8.4) {Gather 3};
-\node[merge] (select3) at (4.4,-8.4) {Select 3};
-\node[worker] (readJ) at (6.6,-8.4) {Read J};
-\node[merge] (merge3) at (8.8,-8.4) {Merge 3};
-\node[execution] (draft3) at (11,-8.4) {Draft 3};
-\node[execution] (continue3) at (13.2,-8.4) {Continue 3};
-\node[artifact] (stop) at (11.7,-10.0) {stopping report\\human concludes the review};
-
-\draw[handoff] (ticket3.west) -- (0,-6.3) -- (plan3.north);
-\draw[handoff] (plan3) -- (gather3);
-\draw[handoff] (gather3) -- (select3);
-\draw[handoff] (select3) -- (readJ);
-\draw[handoff] (readJ) -- (merge3);
-\draw[handoff] (merge3) -- (draft3);
-\draw[handoff] (draft3) -- (continue3);
-\draw[handoff] (continue3.south) -- (13.2,-9.3) -- (stop.north);
-\end{tikzpicture}
-}
-\caption{One possible rollout of the FAM in
-Figure~\ref{fig:fam-literature-definition}. Each rounded box is an
-individual execution; dashed rectangles are artifacts. Wave 1 uses three
-searches and seven readers for sources A--G. Citations to H and I motivate
-a fresh ticket; this particular second wave uses two searches and two new
-readers. H cites J, prompting a third wave with one search and one reader.
-The human concludes the review after Wave 3. Select denotes deduplication
-and dispatch, and Merge denotes evidence consolidation. Arrows show
-principal handoff dependencies, not execution times or guaranteed
-simultaneous runs. Each continuation ticket enables a new planning
-execution: the definition's loop unfolds into an acyclic history.
-Frame runs once; the original brief and other supporting inputs remain
-bound but their additional edges are omitted. Earlier assessments are
-carried through evidence references, not counted as new reader outputs.}
-\label{fig:fam-literature-rollout}
-\end{figure*}
-
 
 Suppose we want to review how agents retain and reuse information over long
 tasks. The initial task description is supplied as
@@ -459,6 +656,8 @@ readings; the engine enforces the declared artifact dependencies. The FAM
 therefore permits an expanding investigation while retaining an inspectable
 process for admitting work and incorporating its results.
 
+\clearpage
+\section*{Previous Formalism Draft (Preserved)}
 
 % Previous formalism draft retained below for reference.
 \subsection{States and Agent Operations}
@@ -925,244 +1124,6 @@ work is already reserved, or that a dependency remains blocked. Evaluating
 whether the resulting process improves confidence or reduces verification
 cost requires evidence beyond the execution rules themselves.
 
-% End of new section; the pre-existing manuscript continues unchanged.
-\section{Background}
-
-\subsection{Why Software Verification Is Hard}
-
- the main question is whether the benefit of an improvement to a known solution to a problem is worth the cost of searching the space of possibel soltuions (cite alpha evolve here, and open evolve). For many problems in reseach and software development, complete verification is unattainable, and this limits the ability to apply LLM-based agents, because every potential solution generated by the agents produces more verification work, and this becomes prohibitevely expensive. 
-
-There's other issues here that are relevant... while we want agents to be all powerful, the reality is that they still have a number of limitations in practice. COntext window sizes, following instructions generally, especially on problems in domains for which they have not been trained well. (this is why benchmaxxing is a thing). The scope of a problem given to an agent is incredibly important. From a practictionrs point of view, small scoped tasks are much more likeliy to be executed well by an agent then scope involving larger tasks. This is why the notiong of 'sub-agents' have become so popular. Sub-agents are a way to pass out narrow focused tasks so that each agent has a small piece of work  to focus on.
-
-Most sub-agents in use today refers to an automatic feature driven by a larger model.
-
-
-When verification is prohibitvel expensive, we need to reduce the number of candidate solutions generated by a agents, so that verification costs are within bounds of the budget of an individual or team. On this spectrum, the most extreme version is for all code to be manually reviewed by a human, and on the other end of the spectrum are techniques to limit the psace of what agents can do. 
-
-
-We present a novel multi-agent architecture to solve alignment and verification problems with Large Language Models and similar neural-based models. 
-
-
-
-
-The ideal use case is work that cannot be trivially or automatically (including with software) verified. Additionally, the consqeuence of getting the work right is high stakes. For that reason, we avoid the problem of prototyping. We also are interested in work that is not possible to verify the outcome after the fact. Therefore, since the outcome of applying AI to sovle a problem is not completely verifiable, the process that produced it offloads some of the trust that a human puts into verifying it. If they can verify the process that was followed by the AI, then they can reduce the amount of verification needed on the end result. 
-
-There is a spectrum of approaches to perform concrete work. You could create a single agent, you could use dynamic workflows like claude code, you could do everything by hand yourself.
-
-\subsection{Petri Nets and Concurrent Agent Execution}
-
-Petri nets describe processes in which several activities may be enabled at
-once and later activities depend on combinations of earlier results. A net
-contains \emph{places}, which hold tokens, and \emph{transitions}, which consume
-tokens from input places and produce tokens in output places. The distribution
-of tokens across all places is the \emph{marking}, or global state of the net.
-A transition is enabled when its required input tokens are available;
-independent transitions can proceed without imposing an order between them,
-while a transition requiring several inputs provides a synchronization point
-\cite{jensen1994coloured}.
-
-Colored Petri nets associate typed data values with tokens, allowing a
-transition to distinguish particular work items and match their associated
-inputs \cite{jensen1994coloured}. Read arcs add a complementary operation:
-requiring a token to be present without consuming it
-\cite{rodriguez2012readarcs}. Reusable information can therefore enable several
-activities, while ordinary consuming arcs can represent resources whose use
-must be exclusive.
-
-Playbooks implement an artifact-driven concurrent execution model closely
-related to colored Petri nets with read arcs. A Playbook defines agentic
-operations called Steps and connects them through declared artifact inputs and
-possible outputs. Each execution binds a Step to particular artifact
-occurrences, retaining the identity of each publication and its producing
-execution. In a Petri-net interpretation, occurrences provide data-bearing
-tokens, input requirements determine enabling conditions, and accepted
-publications supply new tokens. For example, two reviewers may read the same
-brief independently, while a synthesis Step requires both review results.
-Read arcs express reuse of the brief, and the synthesis inputs express the
-AND dependency. Occurrence and provenance information distinguishes results
-from different requests or loop passes.
-
-The engine also records behavior that a faithful net model would need to make
-explicit. An execution occupies capacity while active, and its accepted
-outputs become available to dependent executions only after shutdown is
-confirmed. Recorded input bindings prevent duplicate automatic executions;
-session limits and exclusive coding access constrain launches. Collection
-inputs support one execution per member and synchronization over a nonempty
-accepted collection after all expected contributors and source obligations
-have completed. Agent outcomes introduce nondeterminism in artifact contents
-and in the permitted outputs published. Publication of the required artifact
-roles determines downstream eligibility; agents interpret artifact contents.
-
-The Petri-net comparison identifies a structural relationship rather than an
-established formal equivalence. An exact encoding would need to preserve
-occurrence matching, binding deduplication, collection closure, and execution
-lifecycle rules. The distinction between a finite net description and its
-reachable markings also clarifies finiteness: a finite set of Step definitions
-can generate an unbounded number of executions and artifact occurrences.
-A limit on simultaneous sessions does not by itself make the complete
-execution state space finite.
-
-\section{Finite Agent Machines}
-
-Inspired by finite-state machines (citation), we define Finite Agent Machines.
-The term \emph{finite} in finite-state machine refers to the finite number of
-states and transition labels, not to whether execution terminates. Cycles can
-produce arbitrarily long or infinite runs.\\~
-
-\begin{definition}
-	A \emph{finite-state transition system} is a tuple
-	\[
-	M=(Q,\Sigma,\delta,q_0),
-	\]
-	where $Q$ is a finite set of states, $\Sigma$ is a finite set of transition
-	labels,
-	\[
-	\delta \subseteq Q \times \Sigma \times Q
-	\]
-	is a transition relation, and $q_0\in Q$ is the initial state. 
-\end{definition}
-
-A Finite Agent Machine retains this structure but replaces the generic
-transition-label set $\Sigma$ with a set $\mathcal{A}$ of agentic transition
-labels. Each $\alpha\in\mathcal{A}$ identifies a predefined agentic transition.
-
-\begin{definition}
-An \emph{agentic transition} is a tuple
-\[
-\alpha=(\eta,\iota,\mu),
-\]
-where $\eta$ is an execution harness, $\iota$ is an instruction
-specification, and $\mu$ is a model. The harness $\eta$ constructs the
-execution context from the current state, provides the permitted tools, and
-invokes model $\mu$ under instructions $\iota$.
-\end{definition}
-
-\begin{definition}
-	A \emph{Finite Agent Machine} is a tuple
-	\[
-	M=(Q,\mathcal{A},\delta,q_0),
-	\] like a finite state machine, except the transitions are agentic.
-\end{definition}
-
-	
-\section{Finite Agent Machines}
-Inspired by finite state machines (citation) we define finate agent machines here. The 'finite' in finite state machines refers to the fact that there is a finite number of states and a finite number of transitions, not whether a finite state machine terminates. It is easy to construct a finite state machine that can run for a very long time or forever. Likewise, 'finite' in Finite Agent Machines refers to a finite set of transitions between states, where each transition between states is the result of an agent running. While this could be applicable to non-software based work, we describe a state space and agentic transitions for a software development domain.
-
-\begin{definition}
-	A \emph{finite-state transition system} is a tuple
-	\[
-	M=(Q,\Sigma,\delta,q_0),
-	\]
-	where $Q$ is a finite set of states, $\Sigma$ is a finite set of
-	transition labels, $\delta \subseteq Q \times \Sigma \times Q$ is a
-	transition relation, and $q_0 \in Q$ is the initial state.  Cycles in
-	$\delta$ permit arbitrarily long or infinite runs, so finiteness of the
-	system does not imply termination.
-\end{definition}
-
-A finite agent machine is one where transitions are agentic steps. Unlike other planning formalisms where transition functions may be well defined in terms of preconditions and effects, agentic transitions are more loosely defined since the transition operation is expected to be \textit{intelligent}. Agentic transitions still specify when the agent transition may run, which inputs it receives, which outputs may be accepted, and how an accepted
-output changes the machine state. 
-
-\begin{definition}
-	Let $Q$ be a set of states and let $\Sigma$ be a set of transition labels.
-	For $\alpha\in\Sigma$, an \emph{agentic transition}
-	\[
-	q \xrightarrow{\alpha} q'
-	\]
-	is a transition in which the Step identified by $\alpha$ invokes an agent from
-	state $q$, obtains a candidate result, and incorporates an accepted result into
-	successor state $q'$.
-
-\end{definition}
-
-\begin{definition}[Agentic transition schema]
-	An \emph{agentic transition schema} is a tuple
-	\[
-	\alpha =
-	(G_\alpha,E_\alpha,V_\alpha,U_\alpha),
-	\]
-	where:
-	
-	\begin{itemize}
-		\item $G_\alpha(\gamma) \subseteq \mathcal{B}_\alpha$ is the set of
-		input bindings for which $\alpha$ is eligible in configuration
-		$\gamma$;
-		\item $E_\alpha \subseteq
-		\mathcal{B}_\alpha \times \mathcal{O}_\alpha$ is the agent-execution
-		relation, where $(b,o)\in E_\alpha$ means that executing the agent
-		on binding $b$ may produce proposal $o$;
-		\item $V_\alpha(\gamma,b,o)$ determines whether proposal $o$ is accepted;
-		and
-		\item $U_\alpha(\gamma,b,o)$ constructs the successor configuration
-		obtained by publishing an accepted proposal.
-	\end{itemize}
-	
-	The schema induces a concrete agentic transition
-	\[
-	\gamma \xrightarrow{\alpha,b,o} \gamma'
-	\]
-	exactly when
-	\[
-	\begin{gathered}
-	b\in G_\alpha(\gamma), \qquad (b,o)\in E_\alpha,\\
-	V_\alpha(\gamma,b,o)=\mathsf{accept}, \qquad
-	\gamma'=U_\alpha(\gamma,b,o).
-	\end{gathered}
-	\]
-	
-	The relation $E_\alpha$ may be nondeterministic: repeated executions with the
-	same binding may produce different proposals. An execution that fails, does
-	not terminate, or produces a rejected proposal does not induce an agentic
-	transition.
-\end{definition}
-and
-
-\begin{definition}
-	A \emph{finite-state agentic-transition system} is a tuple
-	\[
-	M=(Q,\alpha,\delta,q_0),
-	\]
-	where $Q$ is a finite set of states, $\Sigma$ is a finite set of
-	transition labels, $\delta \subseteq Q \times \Sigma \times Q$ is a
-	transition relation, and $q_0 \in Q$ is the initial state.  Cycles in
-	$\delta$ permit arbitrarily long or infinite runs, so finiteness of the
-	system does not imply termination.
-\end{definition}
-
-
-
-
-\section{Why FAMs Improve Alignment}
-
-- people are trying to solve alignment at the wrong level, the model weights.
-- this is extremely hard for a bunch of reasons (citations here)
-- we are talking about alignment at an operation level. there is a general distrust that no model will ever be fully aligned. once you have this assumption, you can design systems to limit, monitor, and detect the problems
-- one of the biggest benefits of finite agent machines is that the top most coordination of agents is fixed. 
-
-
-\section{Execution Model}
-
-TBD
-
-\section{The Example as a Concrete Trace}
-
-TBD
-
-\section{Related Work and Positioning}
-
-TBD
-
-\section{Limitations and Open Decisions}
-
-TBD
-
-\section{Conclusion}
-
-TBD
-
-\section*{Appendix: Schematic Playbook Definition}
-
-TBD
 
 \clearpage
 \section*{Previous Draft (Preserved)}
@@ -1716,43 +1677,6 @@ Any runtime claiming compatibility with the model must preserve these
 obligations. The obligations concern execution provenance and publication
 topology; the semantic quality of an appraisal or design remains outside the
 execution specification.
-
-\section{Related Work and Positioning}
-
-Classical planning supplies precise vocabulary for states, action
-applicability, and successor transitions \cite{fikes1971strips}. Hierarchical
-task network planning supplies authored task decompositions that a planner
-refines toward executable networks \cite{erol1994htn}. Reactive Playbooks use
-neither goal search nor search over alternative Step schemas or task networks:
-the process definition is fixed, while agent-produced data determines how many
-fixed Step executions are late-grounded. The model is therefore closer to execution and monitoring of an
-authored process than to plan synthesis.
-
-Workflow languages commonly represent splits, joins, choices, and loops as
-control-flow patterns \cite{vanderAalst2003workflow}; statecharts likewise make
-control state and transitions explicit \cite{harel1987statecharts}. A Playbook
-may be rendered with similar shapes, but its source of truth is exact material
-dependency and provenance. The definition view may contain a visual cycle,
-whereas the execution view contains only newly published DAG nodes. Avoiding a
-cursor is not a claim that workflow formalisms are incapable of the example.
-Material-state sufficiency is a design choice that makes it possible to reconstruct why
-each agent execution occurred.
-
-Temporal planning for actions with duration distinguishes an action's interval
-of execution from the points at which its effects change the state
-\cite{fox2003pddl21}. A Playbook Step execution draws a narrower analogous
-boundary: several sequential harness Sessions may perform work, but accepted
-completion exposes one atomic successor. The paper does not adopt the temporal
-constraints, time-varying numeric state variables, or formal plan validation of
-the Planning Domain Definition Language (PDDL).
-
-Multi-agent frameworks such as AutoGen provide flexible conversation and tool
-interaction patterns \cite{wu2024autogen}. A conversational agent can run
-inside a Playbook Session; the Playbook model instead governs durable
-publication between executions. General provenance models describe entities,
-activities, agents, and derivations \cite{moreau2013prov}. Playbook provenance
-specializes that vocabulary with exact input bindings, fulfillment
-relationships, automatic claim identity, and coverage-checked state parents.
 
 \section{Limitations and Open Decisions}
 
