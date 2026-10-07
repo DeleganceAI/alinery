@@ -1,13 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { appendOptimisticUser, emptyTranscript } from "../chatTranscript";
-import { abortTurnCommand, applyChatValue, attachHandshake, journalState, olderPageState, parseChatLine, queueRefreshCommand, sendCommand, sendNowCommand } from "./chatSession";
-
-/** A journal page as `read_chat_omp` returns it: a JSON header line, then one JSON row per line. */
-function journalPage(start: number, rows: [id: string, text: string][]): ArrayBuffer {
-  const body = rows.map(([id, text]) => JSON.stringify({ type: "message", id, message: { role: "user", content: [{ type: "text", text }] } })).join("\n");
-  const bytes = new TextEncoder().encode(`${JSON.stringify({ start, end: start + 100, length: 1000 })}\n${body}\n`);
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-}
+import { journalPage } from "../test/ompJournal";
+import {
+  abortTurnCommand,
+  applyChatValue,
+  attachHandshake,
+  journalState,
+  olderPageState,
+  parseChatLine,
+  queueRefreshCommand,
+  readJournalThrough,
+  sendCommand,
+  sendNowCommand,
+} from "./chatSession";
 
 describe("chatSession", () => {
   it("prompts when idle, queues a follow-up when busy, and aborts-and-prompts on send now", () => {
@@ -76,5 +81,62 @@ describe("chatSession", () => {
     const older = olderPageState(live, journalPage(200, [["a1", "first"]]));
     expect(older.entries.map((entry) => entry.id).slice(0, 2)).toEqual(["f:a1", "f:b1"]);
     expect(older.entries.slice(2)).toEqual(liveRows);
+  });
+});
+
+describe("readJournalThrough", () => {
+  /** A journal read that answers each call with the next page, and remembers what it was asked. */
+  const reads = (...pages: ArrayBuffer[]) => vi.fn(async (_end?: number, _want?: number) => pages.shift() as ArrayBuffer);
+  const ids = (state: { messages: { rowId?: string }[] }) => state.messages.map((message) => message.rowId);
+
+  it("reads the tail alone when nothing was loaded before", async () => {
+    const read = reads(journalPage(2000, [["m4", "tail"]]));
+    const state = await readJournalThrough(read, null);
+    expect(read.mock.calls).toEqual([[]]);
+    expect(ids(state)).toEqual(["m4"]);
+  });
+
+  it("stops at the tail when it already reaches the old boundary", async () => {
+    const read = reads(journalPage(300, [["m3", "tail"]]));
+    const state = await readJournalThrough(read, 500);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(state.fileStart).toBe(300);
+  });
+
+  it("reads one window sized to the gap, a byte wider so the row at the boundary is found", async () => {
+    const read = reads(
+      journalPage(2000, [["m4", "tail"]]),
+      journalPage(500, [
+        ["m2", "old"],
+        ["m3", "newer"],
+      ]),
+    );
+    const state = await readJournalThrough(read, 500);
+    expect(read.mock.calls).toEqual([[], [2000, 1501]]);
+    expect(ids(state)).toEqual(["m2", "m3", "m4"]);
+    expect(state.fileStart).toBe(500);
+  });
+
+  it("keeps stepping while the daemon's window stops short of the boundary", async () => {
+    const read = reads(journalPage(2000, [["m4", "tail"]]), journalPage(1200, [["m3", "mid"]]), journalPage(500, [["m2", "old"]]));
+    const state = await readJournalThrough(read, 500);
+    expect(read.mock.calls).toEqual([[], [2000, 1501], [1200, 701]]);
+    expect(ids(state)).toEqual(["m2", "m3", "m4"]);
+  });
+
+  it("gives up on a page that does not move back, keeping what it has", async () => {
+    const read = reads(journalPage(2000, [["m4", "tail"]]), journalPage(2000, []));
+    const state = await readJournalThrough(read, 500);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(ids(state)).toEqual(["m4"]);
+    expect(state.fileStart).toBe(2000);
+  });
+
+  it("rejects when a read fails, so the caller can keep the transcript it has", async () => {
+    const read = vi
+      .fn()
+      .mockResolvedValueOnce(journalPage(2000, [["m4", "tail"]]))
+      .mockRejectedValueOnce(new Error("gone"));
+    await expect(readJournalThrough(read, 500)).rejects.toThrow("gone");
   });
 });

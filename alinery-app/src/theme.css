@@ -4837,6 +4837,46 @@ dialog.modal::backdrop {
   pointer-events: none;
   transform: translateY(-50%);
 }
+/* The thinking level in a status line: reads as the text around it until it is pointed at. The
+   chevron stands in for appearance:none's arrow, as in .chat-select. */
+.thinking-select {
+  position: relative;
+  display: inline-block;
+}
+.thinking-select select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 0 16px 0 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  background: transparent;
+  transition: background var(--dur-fast) ease;
+}
+.thinking-select select:hover:not(:disabled),
+.thinking-select select:focus-visible {
+  background: var(--surface-subtle);
+}
+.thinking-select select:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 0;
+}
+.thinking-select select:disabled {
+  cursor: default;
+}
+.thinking-select option {
+  color: var(--text-strong);
+  background: var(--surface);
+}
+.thinking-select svg {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
 
 
 .chat-pane {

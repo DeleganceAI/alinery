@@ -32,7 +32,6 @@ function terminalTheme() {
 
 // `attachId` is unique per mounted pane and scopes daemon replacement/detach. `streamToken` is
 // unique per socket pump within that mount so stale data/close events cannot affect a reattach.
-let nextAttachId = 1;
 let nextStreamToken = 1;
 
 export type SessionTerminalConnectionState = "opening" | "open" | "recovering" | "failed";
@@ -86,7 +85,7 @@ export function SessionTerminal({
   const hostRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const attachId = nextAttachId++;
+    const attachId = ipc.nextAttachId();
     const host = hostRef.current;
     if (!host) return;
     const sessionIo: SessionTerminalIo = io ?? {

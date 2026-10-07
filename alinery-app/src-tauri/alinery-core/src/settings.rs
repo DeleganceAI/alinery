@@ -407,6 +407,7 @@ fn log_global_diff(app_config: &Path, prev: &GlobalSettings, next: &GlobalSettin
     }
     push_changed_quoted(&mut fields, "defaults.harness", &prev.defaults.harness, &next.defaults.harness);
     push_changed_quoted(&mut fields, "defaults.model", &prev.defaults.model, &next.defaults.model);
+    push_changed_quoted(&mut fields, "defaults.thinking", &prev.defaults.thinking, &next.defaults.thinking);
     if prev.defaults.playbook != next.defaults.playbook {
         fields.push("defaults.playbook=changed".into());
     }
@@ -493,6 +494,7 @@ fn log_repo_field_diff(app_config: &Path, repo: &Path, prev: &RepoOverrides, nex
     push_opt_secret(&mut fields, "github.token", &prev.github.token, &next.github.token);
     push_opt_quoted(&mut fields, "defaults.harness", &prev.defaults.harness, &next.defaults.harness);
     push_opt_quoted(&mut fields, "defaults.model", &prev.defaults.model, &next.defaults.model);
+    push_opt_quoted(&mut fields, "defaults.thinking", &prev.defaults.thinking, &next.defaults.thinking);
     if prev.defaults.playbook != next.defaults.playbook {
         fields.push("defaults.playbook=changed".into());
     }

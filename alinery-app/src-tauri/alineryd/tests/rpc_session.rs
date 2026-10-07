@@ -12,6 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use alinery_core::daemon_client::{DaemonClient, MAX_CONTROL_HEADER_BYTES};
+use alinery_core::task_creation::{CreateExecutionSessionRequest, ExecutionSessionTarget};
 use alinery_core::SessionMeta;
 use serde_json::{json, Value};
 
@@ -358,6 +359,11 @@ resume_args = ["--resume={{resume_token}}"]
     /// Drop the first child's argv so the next `argv()` reads the restated child's. `start_session`
     /// returns before the fixture script has written it, so wait for it first: removing early lets
     /// the first child's file land afterwards and be mistaken for the restate's.
+    // Written after the daemon is up: the seed is read from disk on each spawn.
+    fn set_default_thinking(&self, level: &str) {
+        fs::write(self.root.join(".alinery/config.toml"), format!("[defaults]\nthinking = \"{level}\"\n")).unwrap();
+    }
+
     fn discard_argv(&self, id: &str) {
         let path = self.root.join(format!("argv.{id}"));
         wait_until(Duration::from_secs(5), || path.is_file());
@@ -652,6 +658,36 @@ fn rpc_attach_forwards_ready_and_get_messages_thinking() {
     assert!(!lines.iter().any(|line| line == &request.to_string()), "stdin echoed: {joined}");
 }
 
+// The app does not wait for an attach before a view's cleanup detaches it, so that detach can
+// arrive first; the view detaches again once the attach lands. Neither may leave a client behind.
+#[test]
+fn detach_before_attach_is_a_no_op_and_a_late_detach_ends_the_stream() {
+    let fixture = Fixture::new();
+    let id = fixture.spawn_omp();
+    let early = fixture.rpc(json!({"op": "detach", "id": id, "attach_id": 7}));
+    assert_eq!(early, json!({"ok": true}));
+    let mut attach = fixture.rpc_attach(id);
+    let lines = Fixture::read_lines(&mut attach, 1);
+    assert!(lines.iter().any(|line| line.contains(r#""type":"ready""#)), "attach is live: {lines:?}");
+    let late = fixture.rpc(json!({"op": "detach", "id": id, "attach_id": 7}));
+    assert_eq!(late, json!({"ok": true}));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        assert!(Instant::now() < deadline, "the detached stream stayed open");
+        let mut line = String::new();
+        match attach.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted
+                ) => {}
+            Err(error) => panic!("read detached stream: {error}"),
+        }
+    }
+}
+
 #[test]
 fn rpc_write_delivers_800_kib_base64_image_through_core_client() {
     let fixture = Fixture::new();
@@ -849,8 +885,7 @@ fn rpc_argv_has_extension_mode_thinking_session_dir() {
     assert!(argv.contains("--extension"), "{argv}");
     assert!(argv.contains("--mode"), "{argv}");
     assert!(argv.contains("rpc"), "{argv}");
-    assert!(argv.contains("--thinking"), "{argv}");
-    assert!(argv.contains("high"), "{argv}");
+    assert!(argv.contains("--thinking\nhigh\n"), "{argv}");
     assert!(argv.contains("--session-dir"), "{argv}");
     assert!(argv.contains(&format!("{id}.omp")), "{argv}");
     assert!(!argv.contains("--trusted-extension"), "{argv}");
@@ -868,6 +903,74 @@ fn pty_argv_omits_mode_rpc_and_thinking_high() {
     assert!(argv.contains("--session-dir"), "{argv}");
     assert!(!argv.contains("--mode"), "{argv}");
     assert!(!argv.contains("\nrpc\n") && !argv.ends_with("rpc"), "{argv}");
+    assert!(!argv.contains("--thinking"), "{argv}");
+}
+
+// `--thinking` seeds a new thread only: OMP journals the level on every change, so a resumed
+// thread must not have the flag override the level its user chose.
+#[test]
+fn rpc_resume_with_token_omits_thinking() {
+    let fixture = Fixture::new();
+    // A configured default must not reach a resumed thread either.
+    fixture.set_default_thinking("low");
+    let auxiliary = DaemonClient::connect_path(fixture.socket.clone())
+        .unwrap()
+        .create_execution_session(&CreateExecutionSessionRequest {
+            task_slug: "task".into(),
+            target: ExecutionSessionTarget::Auxiliary {
+                harness: "omp".into(),
+                model: None,
+                prompt: None,
+            },
+            launch_override: None,
+            prompt_extra: None,
+            handoff_artifact: None,
+            start: false,
+        })
+        .unwrap()
+        .session;
+    let resumed = fixture.rpc(json!({"op": "resume", "id": auxiliary.id, "task_slug": "task", "resume_token": "resume-token"}));
+    assert_eq!(resumed["ok"], true, "{resumed}");
+    let argv = fixture.argv(&auxiliary.id);
+    assert!(argv.contains("--mode\nrpc\n"), "must still be an RPC launch: {argv}");
+    assert!(argv.contains("--resume=resume-token"), "{argv}");
+    assert!(!argv.contains("--thinking"), "{argv}");
+}
+
+#[test]
+fn rpc_fresh_launch_seeds_configured_thinking() {
+    let fixture = Fixture::new();
+    fixture.set_default_thinking("low");
+    let id = fixture.spawn_omp();
+    let argv = fixture.argv(id);
+    assert!(argv.contains("--mode\nrpc\n"), "{argv}");
+    assert!(argv.contains("--thinking\nlow\n"), "{argv}");
+    assert!(!argv.contains("--thinking\nhigh\n"), "{argv}");
+}
+
+// OMP silently ignores an invalid `--thinking`, so the daemon must not pass one through.
+#[test]
+fn rpc_fresh_launch_falls_back_to_high_for_invalid_thinking() {
+    let fixture = Fixture::new();
+    fixture.set_default_thinking("auto");
+    let id = fixture.spawn_omp();
+    let argv = fixture.argv(id);
+    assert!(argv.contains("--thinking\nhigh\n"), "{argv}");
+    assert!(!argv.contains("auto"), "{argv}");
+}
+
+#[test]
+fn rpc_restate_with_journal_omits_thinking() {
+    let fixture = Fixture::new();
+    let id = fixture.spawn_omp();
+    let dir = fixture.root.join(format!(".alinery/tasks/task/sessions/{id}.omp"));
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("2026-01-01T00-00-00Z_0193a1.jsonl"), "turn\n").unwrap();
+    fixture.discard_argv(id);
+    assert_eq!(fixture.restate(id, "rpc").get("ok"), Some(&json!(true)));
+    let argv = fixture.argv(id);
+    assert!(argv.contains("--mode\nrpc\n"), "must still be an RPC launch: {argv}");
+    assert!(argv.contains("--resume\n"), "{argv}");
     assert!(!argv.contains("--thinking"), "{argv}");
 }
 

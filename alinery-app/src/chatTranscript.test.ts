@@ -11,12 +11,15 @@ import {
   applyRpcLine,
   applyRpcLines,
   type ChatTranscriptState,
+  carryOver,
+  dismissPendingUi,
   emptyTranscript,
   flattenWouldFail,
   mapHydratedMessage,
   matchingSendFailure,
-  removeOptimisticSend,
+  settleRefusedSend,
 } from "./chatTranscript";
+import type { ChatMessage } from "./types";
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const fixtures = join(dir, "chat/fixtures");
@@ -26,6 +29,10 @@ const jsonl = (name: string) =>
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line) as unknown);
+const stamped = (line: unknown, timestamp: number) => {
+  const event = line as { message: Record<string, unknown> };
+  return { ...event, message: { ...event.message, timestamp } };
+};
 
 describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
   it("records ready protocol v1", () => {
@@ -273,6 +280,65 @@ describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
     expect(state.sessionMeta.autoCompactionEnabled).toBe(false);
   });
 
+  describe("the thinking level", () => {
+    const reasoning = { provider: "anthropic", id: "opus", reasoning: true, thinking: { efforts: ["minimal", "low", "medium", "high"] } };
+    const getState = (data: object) => ({ type: "response", command: "get_state", success: true, data });
+    const withLevel = (thinking: string) => applyRpcLine(emptyTranscript(), getState({ model: reasoning, thinkingLevel: thinking }));
+
+    it("takes the level from the thinkingLevel OMP actually sends", () => {
+      const state = applyRpcLine(withLevel("high"), { type: "thinking_level_changed", thinkingLevel: "low" });
+      expect(state.sessionMeta.thinking).toBe("low");
+    });
+
+    it("shows the concrete level when OMP resolved a configured auto", () => {
+      const state = applyRpcLine(withLevel("high"), { type: "thinking_level_changed", thinkingLevel: "medium", configured: "auto" });
+      expect(state.sessionMeta.thinking).toBe("medium");
+    });
+
+    it("clears the level when the event carries none", () => {
+      const state = applyRpcLine(withLevel("high"), { type: "thinking_level_changed" });
+      expect(state.sessionMeta.thinking).toBeUndefined();
+    });
+
+    it("lists off and the model's efforts from a reasoning model's get_state", () => {
+      const state = withLevel("high");
+      expect(state.sessionMeta.thinking).toBe("high");
+      expect(state.sessionMeta.thinkingLevels).toEqual(["off", "minimal", "low", "medium", "high"]);
+    });
+
+    it("offers no levels for reasoning without efforts, and ignores efforts that are not names", () => {
+      const bare = applyRpcLine(emptyTranscript(), getState({ model: { id: "m", reasoning: true } }));
+      expect(bare.sessionMeta.thinkingLevels).toEqual([]);
+      const lone = applyRpcLine(emptyTranscript(), getState({ model: { id: "m", reasoning: true, thinking: { efforts: [] } } }));
+      expect(lone.sessionMeta.thinkingLevels).toEqual([]);
+      const mixed = applyRpcLine(emptyTranscript(), getState({ model: { ...reasoning, thinking: { efforts: ["low", 3, null, "high"] } } }));
+      expect(mixed.sessionMeta.thinkingLevels).toEqual(["off", "low", "high"]);
+    });
+
+    it("clears the level for a model without reasoning, which OMP sends no level for", () => {
+      const state = applyRpcLine(withLevel("high"), getState({ model: { provider: "xai", id: "grok", reasoning: false } }));
+      expect(state.sessionMeta.thinking).toBeUndefined();
+      expect(state.sessionMeta.thinkingLevels).toEqual([]);
+    });
+
+    it("leaves the level and the list alone when get_state names no model", () => {
+      const state = applyRpcLine(withLevel("high"), getState({ queuedMessageCount: 0 }));
+      expect(state.sessionMeta.thinking).toBe("high");
+      expect(state.sessionMeta.thinkingLevels).toEqual(["off", "minimal", "low", "medium", "high"]);
+    });
+
+    it("refreshes the list from a set_model reply", () => {
+      const state = applyRpcLine(withLevel("high"), {
+        type: "response",
+        command: "set_model",
+        success: true,
+        data: { provider: "xai", id: "grok", reasoning: true, thinking: { efforts: ["low", "high"] } },
+      });
+      expect(state.sessionMeta.model).toBe("xai/grok");
+      expect(state.sessionMeta.thinkingLevels).toEqual(["off", "low", "high"]);
+    });
+  });
+
   it("appends a host hatch notice without inventing a prompt", () => {
     const state = appendHarnessNotice(emptyTranscript(), "hatch", "Use Terminal to log in.");
     expect(state.entries).toEqual([expect.objectContaining({ type: "harness", event: "hatch", text: "Use Terminal to log in." })]);
@@ -441,15 +507,6 @@ describe("journal pages", () => {
     });
     expect(refused.pendingTurn).toBe(false);
     expect(refused.entries.some((e) => e.type === "error")).toBe(true);
-  });
-
-  it("removes an optimistic send without leaving the user bubble behind", () => {
-    const seeded = appendOptimisticUser(emptyTranscript(), "keep me", "prompt");
-    const entryId = seeded.entries[0]?.id ?? "";
-    const next = removeOptimisticSend(seeded, entryId);
-    expect(next.entries).toEqual([]);
-    expect(next.messages).toEqual([]);
-    expect(next.pendingTurn).toBe(false);
   });
 
   it("matches only the refused prompt/follow_up for the pending command id", () => {
@@ -640,6 +697,7 @@ describe("live assistant GC and journal join", () => {
           {
             rowId: "a1",
             role: "assistant",
+            timestamp: 1,
             content: [
               { type: "thinking", thinking: "The user wants me to reply" },
               { type: "text", text: "323" },
@@ -651,7 +709,7 @@ describe("live assistant GC and journal join", () => {
     );
     expect(journal.entries.filter((entry) => entry.type === "thinking")).toHaveLength(1);
     expect(journal.entries.filter((entry) => entry.type === "text")).toHaveLength(1);
-    const joined = applyRpcLine(journal, load("live-thinking_start.json"));
+    const joined = applyRpcLine(journal, stamped(load("live-thinking_start.json"), 1));
     expect(joined.entries.filter((entry) => entry.type === "thinking")).toHaveLength(1);
     expect(joined.entries.filter((entry) => entry.type === "text")).toHaveLength(1);
     expect(joined.entries.some((entry) => entry.type === "thinking" && entry.id.startsWith("e"))).toBe(false);
@@ -1208,6 +1266,7 @@ describe("DEL-722 block-local streaming", () => {
           {
             rowId: "same",
             role: "assistant",
+            timestamp: 1,
             content: [
               { type: "thinking", thinking: "Working it out" },
               { type: "text", text: "The answer" },
@@ -1217,15 +1276,243 @@ describe("DEL-722 block-local streaming", () => {
       },
       "initial",
     );
-    const suppressed = applyRpcLine(journal, update(content.slice(0, 2), "thinking_start", 0));
+    const suppressed = applyRpcLine(journal, stamped(update(content.slice(0, 2), "thinking_start", 0), 1));
     expect.soft(suppressed.entries).toEqual(journal.entries);
     expect.soft(activity(suppressed).message).toEqual([true, false]);
     const closed = applyRpcLine(suppressed, { type: "turn_end" });
     expect.soft(closed.entries).toEqual(journal.entries);
     expect.soft(activity(closed).message).toEqual([false, false]);
-    const later = applyRpcLine(closed, update([{ type: "thinking", thinking: "Different later thinking" }, content[1]], "text_delta", 1));
+    const later = applyRpcLine(closed, stamped(update([{ type: "thinking", thinking: "Different later thinking" }, content[1]], "text_delta", 1), 2));
     expectActivity(later, [false, true]);
     expect.soft(later.entries.filter((entry) => entry.id.startsWith("f:"))).toEqual(journal.entries);
     expect.soft(later.entries.filter((entry) => entry.type === "thinking")).toHaveLength(2);
+  });
+});
+
+describe("reattach replay", () => {
+  const T1 = 1_760_000_000_000;
+  const T2 = T1 + 5_000;
+  const assistantRow = (rowId: string, content: unknown[], timestamp: number) => {
+    const message = mapHydratedMessage({ role: "assistant", content, timestamp }, rowId);
+    if (!message) throw new Error("unmapped row");
+    return message;
+  };
+  const page = (...messages: ChatMessage[]) => applyFilePage(emptyTranscript(), { start: 0, messages }, "initial");
+  const journal = () =>
+    page(assistantRow("a1", [{ type: "text", text: "Reading the vocab file now." }], T1), {
+      rowId: "t1",
+      role: "toolResult",
+      toolName: "read",
+      toolCallId: "call-1",
+      content: [{ type: "text", text: "CREATE TABLE" }],
+    });
+  const partial = (text: string) => ({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text }] }, assistantMessageEvent: { type: "text_delta" } });
+  const whole = (type: "message_start" | "message_end", content: unknown[], timestamp: number) => stamped({ type, message: { role: "assistant", content } }, timestamp);
+  const texts = (state: ChatTranscriptState) => state.entries.flatMap((entry) => (entry.type === "text" ? [entry.text] : []));
+
+  it("does not duplicate a message the journal holds when its partial updates are replayed", () => {
+    let state = journal();
+    for (const text of ["Reading", "Reading the vocab", "Reading the vocab file now."]) {
+      state = applyRpcLine(state, stamped(partial(text), T1));
+    }
+    expect(texts(state)).toEqual(["Reading the vocab file now."]);
+  });
+
+  it("does not duplicate a message the journal holds when its message_start and message_end are replayed", () => {
+    const content = [{ type: "text", text: "Reading the vocab file now." }];
+    const state = [whole("message_start", content, T1), whole("message_end", content, T1)].reduce((next, line) => applyRpcLine(next, line), journal());
+    expect(texts(state)).toEqual(["Reading the vocab file now."]);
+  });
+
+  it("shows a reply that begins with the words of the one the journal holds", () => {
+    const state = applyRpcLine(page(assistantRow("a1", [{ type: "text", text: "Done: updated config." }], T1)), whole("message_end", [{ type: "text", text: "Done" }], T2));
+    expect(texts(state)).toEqual(["Done: updated config.", "Done"]);
+  });
+
+  it("shows the next turn while the journal still ends on the previous one", () => {
+    let state = applyRpcLine(page(assistantRow("a1", [{ type: "text", text: "Done." }], T1)), { type: "turn_start" });
+    state = applyRpcLine(state, stamped(partial("Do"), T2));
+    expect(texts(state)).toEqual(["Done.", "Do"]);
+    state = applyRpcLine(state, stamped(partial("Doing the next step."), T2));
+    expect(texts(state)).toEqual(["Done.", "Doing the next step."]);
+  });
+
+  // A closed live turn sits below the seam like journal history, but it is not on disk.
+  it("shows both replies of a live run when the second begins with the first", () => {
+    const turn = (text: string, timestamp: number) => [
+      { type: "turn_start" },
+      stamped(partial(text), timestamp),
+      whole("message_end", [{ type: "text", text }], timestamp),
+      { type: "turn_end" },
+    ];
+    const state = applyRpcLines([...turn("Done: updated config.", T1), ...turn("Done", T2)]);
+    expect(texts(state)).toEqual(["Done: updated config.", "Done"]);
+  });
+
+  it("shows a message with the same text but its own stamp", () => {
+    const state = applyRpcLine(page(assistantRow("a1", [{ type: "text", text: "OK" }], T1)), whole("message_end", [{ type: "text", text: "OK" }], T2));
+    expect(texts(state)).toEqual(["OK", "OK"]);
+  });
+
+  it("shows an unstamped message rather than risk losing it", () => {
+    const state = applyRpcLine(journal(), partial("Reading the vocab file now."));
+    expect(texts(state)).toEqual(["Reading the vocab file now.", "Reading the vocab file now."]);
+  });
+
+  it("does not duplicate a tool-call-only message the journal holds", () => {
+    const call = [{ type: "toolCall", id: "call-2", name: "read", arguments: { path: "schema.sql" } }];
+    const state = [whole("message_start", call, T1), whole("message_end", call, T1)].reduce((next, line) => applyRpcLine(next, line), page(assistantRow("a1", call, T1)));
+    expect(state.entries.filter((entry) => entry.type === "tool_call")).toHaveLength(1);
+  });
+
+  it("shows a tool result live, once, even when the replay repeats one the journal holds", () => {
+    const result = (id: string, text: string) => ({ type: "message_end", message: { role: "toolResult", toolName: "bash", toolCallId: id, content: [{ type: "text", text }] } });
+    let state = applyRpcLine(journal(), result("call-1", "CREATE TABLE"));
+    expect(state.entries.filter((entry) => entry.type === "tool_result")).toHaveLength(1);
+    state = applyRpcLine(state, result("call-2", "pgvector 0.8.7"));
+    expect(state.entries.filter((entry) => entry.type === "tool_result").map((entry) => ("text" in entry ? entry.text : ""))).toEqual(["CREATE TABLE", "pgvector 0.8.7"]);
+  });
+
+  it("does not bring back a request already answered, across a journal rebuild", () => {
+    const ask = { type: "extension_ui_request", id: "q1", method: "confirm", title: "Run bash?" };
+    const answered = dismissPendingUi(applyRpcLine(emptyTranscript(), ask), "q1");
+    const rebuilt = applyRpcLine(carryOver(answered, journal()), ask);
+    expect(rebuilt.pendingUi).toEqual([]);
+    expect(rebuilt.entries.some((entry) => entry.type === "approval")).toBe(false);
+    expect(applyRpcLines([ask, ask]).pendingUi).toHaveLength(1);
+  });
+
+  it("records each unknown event type once", () => {
+    expect(applyRpcLines([{ type: "tool_execution_update" }, { type: "tool_execution_update" }]).unknownTypes).toEqual(["tool_execution_update"]);
+  });
+});
+
+describe("settleRefusedSend", () => {
+  const journalMessage: ChatMessage = { rowId: "u1", role: "user", content: [{ type: "text", text: "continue" }] };
+  const sent = (text: string, kind: "prompt" | "follow_up" = "prompt") => {
+    const state = appendOptimisticUser(emptyTranscript(), text, kind);
+    return { state, id: state.entries[state.entries.length - 1]?.id ?? "" };
+  };
+  const userRows = (state: ChatTranscriptState) => state.entries.flatMap((entry) => (entry.type === "prompt" || entry.type === "follow_up" ? [entry] : []));
+
+  it("takes a refused send back without leaving the user bubble behind", () => {
+    const { state, id } = sent("keep me");
+    const next = settleRefusedSend({ ...state, pendingTurn: true }, id, "keep me", true);
+    expect(next.entries).toEqual([]);
+    expect(next.messages).toEqual([]);
+    expect(next.pendingTurn).toBe(false);
+  });
+
+  it("takes back only its own message, never one OMP wrote with the same words", () => {
+    const journal = applyFilePage(emptyTranscript(), { start: 0, messages: [journalMessage] }, "initial");
+    const state = appendOptimisticUser(journal, "continue", "prompt");
+    const next = settleRefusedSend(state, "e1", "continue", true);
+    expect(next.messages.map((message) => message.rowId)).toEqual(["u1"]);
+    expect(next.entries.map((entry) => entry.id)).toEqual(["f:u1"]);
+    // Nothing to take back: the journal's row is not this send's.
+    expect(settleRefusedSend(journal, null, "continue", true).messages).toEqual(journal.messages);
+  });
+
+  it("keeps the row as not sent, in place and with its attachments, when the composer cannot take the text back", () => {
+    const attachments = [{ kind: "file" as const, name: "notes.pdf" }];
+    const first = appendOptimisticUser(emptyTranscript(), "A", "prompt", undefined, attachments);
+    const second = appendOptimisticUser(first, "B", "prompt");
+    const next = settleRefusedSend(second, "e1", "A", false);
+    expect(next.entries.map((entry) => entry.id)).toEqual(["e1", "e2"]);
+    expect(next.entries[0]).toMatchObject({ type: "prompt", text: "A", failed: true, attachments });
+    expect(next.entries[1]).toMatchObject({ type: "prompt", text: "B" });
+    expect(userRows(next)[1]?.failed).toBeUndefined();
+    expect(next.messages.map((message) => (message.content[0] as { text: string }).text)).toEqual(["B"]);
+  });
+
+  it("turns a refused follow-up and a refused slash command into a not-sent prompt", () => {
+    const queued = sent("later", "follow_up");
+    expect(settleRefusedSend(queued.state, queued.id, "later", false).entries[0]).toMatchObject({ type: "prompt", text: "later", failed: true });
+    const slash = appendOptimisticUser(emptyTranscript(), "/skill:review the diff", "slash", { name: "skill:review", args: "the diff" });
+    const next = settleRefusedSend(slash, "e1", "/skill:review the diff", false);
+    expect(next.entries).toHaveLength(1);
+    expect(next.entries[0]).toMatchObject({ id: "e1", type: "prompt", text: "/skill:review the diff", failed: true });
+  });
+
+  it("appends a not-sent row when the refusal beat the write's ack, and has nothing to take back", () => {
+    const earlier = sent("continue").state;
+    const appended = settleRefusedSend(earlier, null, "continue", false);
+    expect(userRows(appended).map((entry) => entry.failed)).toEqual([undefined, true]);
+    expect(appended.messages).toEqual(earlier.messages);
+    expect(settleRefusedSend(earlier, null, "continue", true).entries).toEqual(earlier.entries);
+  });
+
+  it("counts a row only while it is still this send's: an id left over from before a rebuild is absent", () => {
+    // A rebuild restarts ids, so `e1` can now be any row: a different prompt, a failed one, a command.
+    const other = sent("something else").state;
+    expect(settleRefusedSend(other, "e1", "continue", true).entries).toEqual(other.entries);
+    const next = settleRefusedSend(other, "e1", "continue", false);
+    expect(userRows(next).map((entry) => [entry.text, entry.failed])).toEqual([
+      ["something else", undefined],
+      ["continue", true],
+    ]);
+    const failedAlready = settleRefusedSend(sent("continue").state, "e1", "continue", false);
+    expect(userRows(settleRefusedSend(failedAlready, "e1", "continue", false)).map((entry) => entry.failed)).toEqual([true, true]);
+    const command = appendOptimisticUser(emptyTranscript(), "/compact", "slash", { name: "compact" });
+    expect(userRows(settleRefusedSend(command, "e1", "/skill:x", false)).map((entry) => entry.text)).toEqual(["/skill:x"]);
+    expect(settleRefusedSend(command, "e1", "/skill:x", false).entries[0]).toMatchObject({ type: "slash", name: "compact" });
+  });
+
+  it("does not take a not-sent row for the echo of a later send", () => {
+    const failed = settleRefusedSend(sent("continue").state, "e1", "continue", false);
+    const echoed = applyRpcLine(failed, { type: "message_start", message: { role: "user", content: [{ type: "text", text: "continue" }] } });
+    expect(userRows(echoed).map((entry) => entry.failed)).toEqual([true, undefined]);
+  });
+});
+
+describe("carryOver", () => {
+  const row = (rowId: string): ChatMessage => ({ rowId, role: "user", content: [{ type: "text", text: `row ${rowId}` }] });
+  const read = (start: number, ...ids: string[]) => applyFilePage(emptyTranscript(), { start, messages: ids.map(row) }, "initial");
+  const withOlder = (state: ChatTranscriptState, start: number, ...ids: string[]) => applyFilePage(state, { start, messages: ids.map(row) }, "older");
+  const rowIds = (state: ChatTranscriptState) => state.messages.map((message) => message.rowId);
+
+  it("keeps the older rows the rebuild does not reach, and the offset to page further back from", () => {
+    const previous = withOlder(read(500, "m2", "m3"), 100, "m1");
+    const next = carryOver(previous, read(500, "m2", "m3", "m4"));
+    expect(rowIds(next)).toEqual(["m1", "m2", "m3", "m4"]);
+    expect(next.entries.map((entry) => entry.id)).toEqual(["f:m1", "f:m2", "f:m3", "f:m4"]);
+    expect(next.fileStart).toBe(100);
+  });
+
+  it("leaves the rebuild alone when it reaches as far back as the old transcript did", () => {
+    const rebuilt = read(100, "m1", "m2", "m3");
+    expect(carryOver(withOlder(read(500, "m2", "m3"), 100, "m1"), rebuilt)).toBe(rebuilt);
+    expect(carryOver(undefined, rebuilt)).toBe(rebuilt);
+  });
+
+  it("carries nothing when the rebuild's first row is not one the old transcript held", () => {
+    // A different journal file, or one rewritten under us: offsets no longer line up, ids still do.
+    const rebuilt = read(900, "x1", "x2");
+    expect(carryOver(read(500, "m2", "m3"), rebuilt)).toBe(rebuilt);
+  });
+
+  it("carries journal rows only, never the live rows typed or streamed since", () => {
+    const previous = appendOptimisticUser(withOlder(read(500, "m2", "m3"), 100, "m1"), "typed since");
+    const next = carryOver(previous, read(500, "m3"));
+    expect(rowIds(next)).toEqual(["m1", "m2", "m3"]);
+    expect(next.entries.map((entry) => entry.id)).toEqual(["f:m1", "f:m2", "f:m3"]);
+  });
+
+  it("keeps the answered requests with the older rows", () => {
+    const answered = dismissPendingUi(applyRpcLine(withOlder(read(500, "m2"), 100, "m1"), { type: "extension_ui_request", id: "q1", method: "confirm", title: "Run bash?" }), "q1");
+    const next = carryOver(answered, read(500, "m2", "m3"));
+    expect(next.answeredUi).toEqual(["q1"]);
+    expect(next.fileStart).toBe(100);
+    expect(rowIds(next)).toEqual(["m1", "m2", "m3"]);
+  });
+
+  it("keeps the rows OMP refused, under fresh ids, and none of the sends it accepted", () => {
+    const typed = appendOptimisticUser(appendOptimisticUser(read(500, "m2"), "refused", "prompt"), "accepted", "prompt");
+    const previous = settleRefusedSend(typed, "e1", "refused", false);
+    const next = carryOver(previous, read(500, "m2", "m3"));
+    expect(rowIds(next)).toEqual(["m2", "m3"]);
+    expect(next.entries.map((entry) => entry.id)).toEqual(["f:m2", "f:m3", "e1"]);
+    expect(next.entries[2]).toMatchObject({ type: "prompt", text: "refused", failed: true });
+    expect(next.entrySeq).toBe(1);
   });
 });

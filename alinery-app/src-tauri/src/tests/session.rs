@@ -1138,6 +1138,25 @@ fn plant_chat(
 }
 
 #[test]
+fn open_chat_repos_need_ownership_a_daemon_and_no_close_in_flight() {
+    let open = init_git_test_repo("chat-open");
+    let no_daemon = init_git_test_repo("chat-no-daemon");
+    let foreign = init_git_test_repo("chat-foreign");
+    let closing = init_git_test_repo("chat-closing");
+    let state = AppState::default();
+    let client = || crate::DaemonClient::connect_path(std::path::PathBuf::from("/tmp/unused-chat-open.sock")).unwrap();
+    for repo in [&open, &no_daemon, &closing] {
+        assert!(state.claim_repo(repo));
+    }
+    for repo in [&open, &foreign, &closing] {
+        state.set_daemon(repo, client(), alinery_core::DaemonCompat::Current, String::new(), false);
+    }
+    let _closing = state.mark_closing(&closing);
+    let known: Vec<String> = [&open, &no_daemon, &foreign, &closing].iter().map(|repo| repo.to_string_lossy().into_owned()).collect();
+    assert_eq!(open_chat_repos_in(&known, &state), [open]);
+}
+
+#[test]
 fn list_chat_threads_filters_drawer_tasks_archived_and_predecessors() {
     let repo = init_git_test_repo("chat-list");
     let other = init_git_test_repo("chat-list-other");

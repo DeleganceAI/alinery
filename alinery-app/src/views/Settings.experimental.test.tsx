@@ -112,4 +112,26 @@ describe("Settings experimental features", () => {
     expect(saved.experiments?.show_chat).toBe(true);
     expect(saved.experiments?.show_original_kanban).not.toBe(false);
   });
+
+  it("shows the Chat settings section only while the Chat flag is on", async () => {
+    render(
+      <Settings
+        mcp={mcp}
+        activeRepo="/r"
+        knownRepos={["/r"]}
+        appearance={DEFAULT_APPEARANCE}
+        onAppearanceChange={() => {}}
+        onGlobalSettingsChange={() => {}}
+        onNotificationsChange={() => {}}
+        initialSection="chat"
+      />,
+    );
+
+    // Off by default: no Chat section, and a request to open it lands on General.
+    const checkbox = (await screen.findByRole("checkbox", { name: /^Chat/ })) as HTMLInputElement;
+    expect(screen.queryByRole("button", { name: "Chat" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Sessions view" })).toBeTruthy();
+    fireEvent.click(checkbox);
+    expect(await screen.findByRole("button", { name: "Chat" })).toBeTruthy();
+  });
 });

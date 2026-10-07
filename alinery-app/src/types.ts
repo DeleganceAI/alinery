@@ -187,10 +187,11 @@ export type SessionNotificationClearRef = {
   id: string;
   notification_suppression?: NotificationSuppression | null;
 };
-export type HarnessChoice = { harness: string; model: string; playbook: PlaybookRef; draft_autosave: boolean };
+export type HarnessChoice = { harness: string; model: string; thinking?: string; playbook: PlaybookRef; draft_autosave: boolean };
 export type RepoHarnessChoiceOverrides = {
   harness?: string | null;
   model?: string | null;
+  thinking?: string | null;
   playbook?: PlaybookRef | null;
   draft_autosave?: boolean | null;
 };
@@ -325,6 +326,7 @@ export type SettingSource = "global" | "repository";
 export type ChoiceProvenance = {
   harness: SettingSource;
   model: SettingSource;
+  thinking: SettingSource;
   playbook: SettingSource;
   draft_autosave: SettingSource;
 };
@@ -582,6 +584,8 @@ export type ChatMessage = {
    * cannot renumber rows that are already mounted.
    */
   rowId?: string;
+  /** OMP's per-message stamp. A streamed snapshot and the journal row OMP persists for it share it. */
+  timestamp?: number;
   /** toolResult rows carry these; assistant toolCall parts carry their own copies. */
   toolName?: string;
   toolCallId?: string;

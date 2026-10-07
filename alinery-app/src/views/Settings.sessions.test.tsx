@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE, normalizeChatView } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
-import type { AppearancePrefs, GlobalSettings } from "../types";
+import type { AppearancePrefs, GlobalSettings, RepoOverrides, ScopedSettings } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
 
 const baseGlobal: GlobalSettings = {
@@ -32,11 +32,35 @@ const baseGlobal: GlobalSettings = {
   model_favorites: {},
   telemetry: { enabled: true, prompted: false, install_id: "", endpoint: "https://telemetry.alinery.ai" },
   updates: { check_enabled: true },
+  // The Chat settings section only exists while the experimental Chat tab is on.
+  experiments: { show_chat: true },
 };
+
+// A repo scope on top of `global`: `overrides` is what the repo file holds, and each field's provenance follows it.
+function scopedFor(global: GlobalSettings, overrides: RepoOverrides): ScopedSettings {
+  const thinking = overrides.defaults.thinking;
+  return {
+    global,
+    overrides,
+    effective: {
+      notifications: global.notifications,
+      github: global.github,
+      defaults: { ...global.defaults, thinking: thinking ?? global.defaults.thinking },
+      provenance: {
+        github_token: "global",
+        defaults: { harness: "global", model: "global", thinking: thinking == null ? "global" : "repository", playbook: "global", draft_autosave: "global" },
+      },
+      backup: global.backup,
+      telemetry: global.telemetry,
+    },
+  };
+}
 
 const mocks = vi.hoisted(() => ({
   writeGlobalSettings: vi.fn(),
   readGlobalSettings: vi.fn(),
+  readScopedSettingsForRepo: vi.fn(),
+  writeRepoOverridesForRepo: vi.fn(),
   checkOmpUpdate: vi.fn(),
   writeAppearance: vi.fn(),
   updateOmp: vi.fn(),
@@ -47,6 +71,8 @@ vi.mock("../ipc", () =>
   mockIpc({
     readGlobalSettings: mocks.readGlobalSettings,
     writeGlobalSettings: mocks.writeGlobalSettings,
+    readScopedSettingsForRepo: mocks.readScopedSettingsForRepo,
+    writeRepoOverridesForRepo: mocks.writeRepoOverridesForRepo,
     checkOmpUpdate: mocks.checkOmpUpdate,
     updateOmp: mocks.updateOmp,
     storageInfo: () => new Promise(() => {}),
@@ -98,6 +124,8 @@ function lastSavedAppearance(): AppearancePrefs {
 beforeEach(() => {
   mocks.writeGlobalSettings.mockReset().mockImplementation(async (next: GlobalSettings) => next);
   mocks.readGlobalSettings.mockReset().mockResolvedValue(baseGlobal);
+  mocks.readScopedSettingsForRepo.mockReset().mockResolvedValue(scopedFor(baseGlobal, { github: {}, defaults: {}, backup: {} }));
+  mocks.writeRepoOverridesForRepo.mockReset().mockImplementation(async (_repo: string, overrides: RepoOverrides) => scopedFor(baseGlobal, overrides));
   vi.stubGlobal("localStorage", {
     getItem: vi.fn(() => null),
     setItem: vi.fn(),
@@ -136,6 +164,55 @@ describe("Harness settings model default", () => {
     const saved = mocks.writeGlobalSettings.mock.calls[mocks.writeGlobalSettings.mock.calls.length - 1][0] as GlobalSettings;
     expect(saved.defaults.harness).toBe("omp");
     expect(saved.defaults.model).toBe("gpt-5");
+  });
+});
+
+describe("Harness settings thinking default", () => {
+  // By role: in a repo scope the label also holds the badge's "Use global value" button, which label text queries match too.
+  const thinkingSelect = async () => (await screen.findByRole("combobox", { name: /Default thinking level/ })) as HTMLSelectElement;
+
+  it("shows high while the setting is unset", async () => {
+    renderHarnessSection();
+    const select = await thinkingSelect();
+    expect(select.value).toBe("high");
+    expect(Array.from(select.options, (option) => option.value)).toEqual(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+  });
+
+  it("shows high for a stored value the daemon would not launch with", async () => {
+    mocks.readGlobalSettings.mockResolvedValue({ ...baseGlobal, defaults: { ...baseGlobal.defaults, thinking: "turbo" } });
+    renderHarnessSection();
+    expect((await thinkingSelect()).value).toBe("high");
+  });
+
+  it("shows a stored valid value", async () => {
+    mocks.readGlobalSettings.mockResolvedValue({ ...baseGlobal, defaults: { ...baseGlobal.defaults, thinking: "medium" } });
+    renderHarnessSection();
+    expect((await thinkingSelect()).value).toBe("medium");
+  });
+
+  it("writes a global change as defaults.thinking", async () => {
+    renderHarnessSection();
+    fireEvent.change(await thinkingSelect(), { target: { value: "low" } });
+    await waitFor(() => expect(mocks.writeGlobalSettings).toHaveBeenCalled());
+    const saved = mocks.writeGlobalSettings.mock.calls[mocks.writeGlobalSettings.mock.calls.length - 1][0] as GlobalSettings;
+    expect(saved.defaults.thinking).toBe("low");
+    expect(saved.defaults.model).toBe("");
+    expect(mocks.writeRepoOverridesForRepo).not.toHaveBeenCalled();
+  });
+
+  it("writes a repo change as a repository override and labels it", async () => {
+    renderHarnessSection();
+    fireEvent.click(await screen.findByRole("button", { name: "r" }));
+    const field = async () => (await thinkingSelect()).closest(".field") as HTMLElement;
+    expect(within(await field()).getByText("Global")).toBeTruthy();
+    fireEvent.change(await thinkingSelect(), { target: { value: "low" } });
+    await waitFor(() => expect(mocks.writeRepoOverridesForRepo).toHaveBeenCalled());
+    const [repo, overrides] = mocks.writeRepoOverridesForRepo.mock.calls[0] as [string, RepoOverrides];
+    expect(repo).toBe("/r");
+    expect(overrides.defaults.thinking).toBe("low");
+    expect(mocks.writeGlobalSettings).not.toHaveBeenCalled();
+    await waitFor(async () => expect(within(await field()).getByText(/Repository override/)).toBeTruthy());
+    expect((await thinkingSelect()).value).toBe("low");
   });
 });
 
@@ -214,7 +291,7 @@ describe("Sessions view and Chat tabs", () => {
 
   it("Chat describes the meta strip and column width for Ava", async () => {
     renderSection("chat");
-    expect(await screen.findByText("— repo · branch · status line under the thread title")).toBeTruthy();
+    expect(await screen.findByText("— repo · branch · thinking · status line under the thread title")).toBeTruthy();
     expect(screen.getByText("Limits the width of the message thread, composer and notices.")).toBeTruthy();
     expect(screen.getByText("Which journal rows appear in the Chat view. Global-only.")).toBeTruthy();
     expect(screen.getByText("Density, sizing and behavior of the Chat view. Global-only.")).toBeTruthy();

@@ -479,6 +479,39 @@ model = ""
     assert_eq!(back.defaults.model.as_deref(), Some(""));
 }
 
+#[test]
+fn thinking_default_round_trips_through_global_and_repo_files() {
+    let root = unique_attachment_temp("thinking-default-round-trip");
+    let app_config = root.join("app.toml");
+    let repo = root.join("repo");
+    let mut global = alinery_core::default_global_settings();
+    global.defaults.thinking = "medium".into();
+    alinery_core::write_global_settings(&app_config, &global).unwrap();
+    assert_eq!(alinery_core::load_global_settings(&app_config).defaults.thinking, "medium");
+
+    let overrides = RepoOverrides {
+        defaults: alinery_core::RepoHarnessChoiceOverrides {
+            thinking: Some("low".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    alinery_core::write_repo_overrides(Some(&app_config), &repo, &overrides).unwrap();
+    assert_eq!(alinery_core::load_repo_overrides(&repo).defaults.thinking.as_deref(), Some("low"));
+
+    let scoped = alinery_core::read_scoped_settings(&app_config, &repo);
+    assert_eq!(scoped.effective.defaults.thinking, "low");
+    assert_eq!(scoped.effective.provenance.defaults.thinking, alinery_core::SettingSource::Repository);
+
+    let mut cleared = alinery_core::load_repo_overrides(&repo);
+    alinery_core::clear_repo_override(&mut cleared, "defaults.thinking").unwrap();
+    alinery_core::write_repo_overrides(Some(&app_config), &repo, &cleared).unwrap();
+    let scoped = alinery_core::read_scoped_settings(&app_config, &repo);
+    assert_eq!(scoped.effective.defaults.thinking, "medium");
+    assert_eq!(scoped.effective.provenance.defaults.thinking, alinery_core::SettingSource::Global);
+    let _ = fs::remove_dir_all(root);
+}
+
 fn model_favorite_app_config(name: &str) -> (PathBuf, PathBuf) {
     let root = unique_attachment_temp(name);
     let app_config = root.join("app.toml");

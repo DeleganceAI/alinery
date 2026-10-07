@@ -73,7 +73,7 @@ vi.mock("../ipc", () =>
         defaults: globalSettings.defaults,
         provenance: {
           github_token: "global",
-          defaults: { harness: "global", model: "global", playbook: "global", draft_autosave: "global" },
+          defaults: { harness: "global", model: "global", thinking: "global", playbook: "global", draft_autosave: "global" },
         },
         backup: globalSettings.backup,
         telemetry: globalSettings.telemetry,

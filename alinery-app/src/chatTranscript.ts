@@ -41,6 +41,8 @@ export type ChatLoginProvider = {
 export type SessionChatMeta = {
   model?: string;
   thinking?: string;
+  /** The levels the current model offers, `off` first; `[]` when it offers none. Absent until a model is known. */
+  thinkingLevels?: string[];
   contextUsage?: { tokens: number; contextWindow: number; percent?: number };
   isCompacting?: boolean;
   autoCompactionEnabled?: boolean;
@@ -59,6 +61,11 @@ export type ChatTranscriptState = {
   messages: ChatMessage[];
   commands: ChatCommand[];
   pendingUi: PendingUi[];
+  /** Requests already answered here. A reattach replays the turn's lines, and an answered request
+   *  coming back as a live card cannot be answered again (OMP has settled it). Carried across a
+   *  journal rebuild with `carryOver`. */
+  answeredUi: string[];
+  /** Distinct event types nothing handles. */
   unknownTypes: string[];
   /** Latest harness/error line for callers that still read a single notice. */
   notice: string | null;
@@ -97,6 +104,7 @@ export function emptyTranscript(): ChatTranscriptState {
     messages: [],
     commands: [],
     pendingUi: [],
+    answeredUi: [],
     unknownTypes: [],
     notice: null,
     entries: [],
@@ -199,6 +207,16 @@ function updateAssistantActivity(activity: AssistantActivity, raw: unknown, even
   return changed ?? activity;
 }
 
+function toolResultEntry(message: ChatMessage) {
+  return {
+    actor: ACTOR.agent,
+    type: "tool_result" as const,
+    tool: message.toolName ?? "tool",
+    text: message.content.map((part) => (part.type === "text" ? part.text : "")).join(""),
+    status: message.isError ? ("error" as const) : ("ok" as const),
+  };
+}
+
 export function mapHydratedMessage(raw: unknown, rowId?: string): ChatMessage | null {
   const message = asRecord(raw);
   if (!message) return null;
@@ -208,6 +226,7 @@ export function mapHydratedMessage(raw: unknown, rowId?: string): ChatMessage | 
   if (typeof message.stopReason === "string") mapped.stopReason = message.stopReason;
   if (typeof message.customType === "string") mapped.customType = message.customType;
   if (rowId) mapped.rowId = rowId;
+  if (typeof message.timestamp === "number") mapped.timestamp = message.timestamp;
   if (typeof message.toolName === "string") mapped.toolName = message.toolName;
   if (typeof message.toolCallId === "string") mapped.toolCallId = message.toolCallId;
   if (message.isError === true) mapped.isError = true;
@@ -276,59 +295,25 @@ function dropLiveAssistantRows(state: ChatTranscriptState): ChatTranscriptState 
   return { ...state, entries: state.entries.filter((entry) => !drop.has(entry.id)), liveAssistantKeys: {} };
 }
 
-const JOURNAL_ASSISTANT_TYPES = new Set(["thinking", "redacted_thinking", "text"]);
-
-function snapshotPartText(part: ChatPart): string | null {
-  if (part.type === "thinking") return part.thinking;
-  if (part.type === "text") return part.text;
-  if (part.type === "redactedThinking") return "";
-  return null;
+/**
+ * True when the newest assistant message read off the journal is this streamed one. A reattach
+ * replays the open turn's lines, and OMP may already have persisted that turn's message whole. The
+ * replay holds only the open turn, so no older assistant row can be it. Identity is OMP's per-message
+ * stamp, which the journal row keeps, never the text: one reply can begin with another's words. With
+ * no stamp this answers false, because a possible duplicate is better than a lost reply.
+ */
+function journalHoldsAssistant(state: ChatTranscriptState, timestamp: unknown): boolean {
+  if (typeof timestamp !== "number") return false;
+  for (let i = state.messages.length - 1; i >= 0; i -= 1) {
+    const message = state.messages[i];
+    if (message?.role === "assistant" && message.rowId !== undefined) return message.timestamp === timestamp;
+  }
+  return false;
 }
 
-function journalEntryText(entry: ChatEntry): string | null {
-  if (entry.type === "thinking" || entry.type === "text") return entry.text;
-  if (entry.type === "redacted_thinking") return "";
-  return null;
-}
-
-function journalOwnsAssistantSnapshot(state: ChatTranscriptState, content: ChatPart[]): boolean {
-  const incoming = content
-    .map((part) => {
-      const text = snapshotPartText(part);
-      if (text === null) return null;
-      const type = part.type === "redactedThinking" ? "redacted_thinking" : part.type;
-      return { type, text };
-    })
-    .filter((part): part is { type: string; text: string } => part !== null);
-  if (incoming.length === 0) return false;
-  const committed = state.entries.slice(0, state.liveStart);
-  let end = committed.length;
-  while (end > 0) {
-    const entry = committed[end - 1];
-    if (!entry || entry.actor.kind !== "assistant" || !JOURNAL_ASSISTANT_TYPES.has(entry.type)) {
-      end -= 1;
-      continue;
-    }
-    break;
-  }
-  const cluster: ChatEntry[] = [];
-  for (let i = end - 1; i >= 0; i -= 1) {
-    const entry = committed[i];
-    if (!entry || entry.actor.kind !== "assistant" || !JOURNAL_ASSISTANT_TYPES.has(entry.type)) break;
-    cluster.unshift(entry);
-  }
-  if (incoming.length > cluster.length) return false;
-  for (let i = 0; i < incoming.length; i += 1) {
-    const part = incoming[i];
-    const entry = cluster[i];
-    if (!part || !entry || entry.type !== part.type || journalEntryText(entry) !== part.text) return false;
-  }
-  return true;
-}
-
-function syncLiveAssistant(state: ChatTranscriptState, content: ChatPart[], stopReason: string | undefined): ChatTranscriptState {
+function syncLiveAssistant(state: ChatTranscriptState, content: ChatPart[], stopReason: string | undefined, timestamp: unknown): ChatTranscriptState {
   const messages = upsertMessages(state, content, stopReason);
-  if (journalOwnsAssistantSnapshot(state, content)) {
+  if (journalHoldsAssistant(state, timestamp)) {
     return { ...state, messages };
   }
   const aborted = stopReason === "aborted";
@@ -411,12 +396,26 @@ function modelLabel(raw: unknown): string | undefined {
   return id ?? provider;
 }
 
+/** Mirrors OMP `getSupportedEfforts`. A lone "off" is deliberately left out. The `set_model` reply
+ *  carries the model before OMP refreshes it, so the next `get_state` re-confirms the levels. */
+function thinkingLevelsFor(raw: unknown): string[] | undefined {
+  const model = asRecord(raw);
+  if (!model) return undefined;
+  const efforts = asRecord(model.thinking)?.efforts;
+  const named = Array.isArray(efforts) ? efforts.filter((effort): effort is string => typeof effort === "string") : [];
+  return model.reasoning === true && named.length > 0 ? ["off", ...named] : [];
+}
+
 function applySessionMeta(state: ChatTranscriptState, data: Record<string, unknown>): ChatTranscriptState {
   const sessionMeta: SessionChatMeta = { ...state.sessionMeta };
   const model = modelLabel(data.model);
   if (model) sessionMeta.model = model;
+  const levels = thinkingLevelsFor(data.model);
+  if (levels) sessionMeta.thinkingLevels = levels;
   const thinking = asString(data.thinking) ?? asString(data.thinkingLevel);
   if (thinking) sessionMeta.thinking = thinking;
+  // OMP omits the field for a model without reasoning, so a model with no level has none.
+  else if (levels) delete sessionMeta.thinking;
   const usage = mapContextUsage(data.contextUsage);
   if (usage) sessionMeta.contextUsage = usage;
   if (typeof data.isCompacting === "boolean") sessionMeta.isCompacting = data.isCompacting;
@@ -515,14 +514,7 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
     // Tool output used to vanish here: the loop only branched on user and assistant, so every
     // toolResult message fell through with no entry pushed. They are the bulk of a real journal.
     if (message.role === "toolResult") {
-      entries.push({
-        id: alloc(),
-        actor: ACTOR.agent,
-        type: "tool_result",
-        tool: message.toolName ?? "tool",
-        text: message.content.map((part) => (part.type === "text" ? part.text : "")).join(""),
-        status: message.isError ? "error" : "ok",
-      });
+      entries.push({ id: alloc(), ...toolResultEntry(message) });
       continue;
     }
     if (message.role === "assistant") {
@@ -597,23 +589,45 @@ export function appendOptimisticUser(
   );
 }
 
-/** Drop a send that OMP refused after the daemon already acked the stdin write. */
-export function removeOptimisticSend(state: ChatTranscriptState, entryId: string): ChatTranscriptState {
-  const entry = state.entries.find((row) => row.id === entryId);
-  const entries = state.entries.filter((row) => row.id !== entryId);
-  let messages = state.messages;
-  if (entry && (entry.type === "prompt" || entry.type === "follow_up")) {
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      const message = messages[i];
-      if (message?.role !== "user") continue;
-      const text = message.content.find((part) => part.type === "text");
-      if (text?.type === "text" && text.text === entry.text) {
-        messages = [...messages.slice(0, i), ...messages.slice(i + 1)];
-        break;
-      }
-    }
+/** The optimistic copy of a send in `messages`. A message with a `rowId` is OMP's own, so one with the same words stays. */
+function dropOptimisticMessage(messages: ChatMessage[], text: string): ChatMessage[] {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message?.role !== "user" || message.rowId !== undefined) continue;
+    const part = message.content.find((item) => item.type === "text");
+    if (part?.type === "text" && part.text === text) return [...messages.slice(0, i), ...messages.slice(i + 1)];
   }
-  return { ...state, entries, messages, pendingTurn: false };
+  return messages;
+}
+
+type SendRow = Extract<ChatEntry, { type: "prompt" | "follow_up" | "slash" }>;
+
+/** Whether `row` is still the row that sending `text` added. */
+function isSendOf(row: ChatEntry, text: string): row is SendRow {
+  if (row.type === "slash") {
+    const parsed = parseSlash(text);
+    return row.actor.kind === "user" && parsed?.name === row.name && parsed.args === (row.args ?? "");
+  }
+  return (row.type === "prompt" || row.type === "follow_up") && row.text === text && !row.failed;
+}
+
+/**
+ * OMP refused a send the daemon had already acked. `restore` means the composer takes the text back,
+ * so the row goes. Otherwise the row stays as "not sent" (a prompt, so a queue trim cannot delete it),
+ * rewritten in place, or appended when the refusal beat the write's ack and there is no row yet.
+ * `entryId` names the row at send time, but ids restart at every rebuild and may by now belong to an
+ * unrelated row, so it counts only while it is still this send's.
+ */
+export function settleRefusedSend(state: ChatTranscriptState, entryId: string | null, text: string, restore: boolean): ChatTranscriptState {
+  const index = entryId === null ? -1 : state.entries.findIndex((row) => row.id === entryId);
+  const found = state.entries[index];
+  const own = found !== undefined && isSendOf(found, text) ? found : undefined;
+  const settled = { ...state, pendingTurn: false };
+  if (restore) return own ? { ...settled, entries: state.entries.filter((_, i) => i !== index), messages: dropOptimisticMessage(state.messages, text) } : settled;
+  if (!own) return appendEntry(settled, { actor: ACTOR.you, type: "prompt", text, failed: true, at: Date.now() });
+  const entries = state.entries.slice();
+  entries[index] = own.type === "slash" ? { id: own.id, at: own.at, actor: own.actor, type: "prompt", text, failed: true } : { ...own, type: "prompt", failed: true };
+  return { ...settled, entries, messages: dropOptimisticMessage(state.messages, text) };
 }
 
 /** True when this response is the failure of the prompt/follow_up we just wrote. */
@@ -759,7 +773,7 @@ function applySubagent(state: ChatTranscriptState, event: Record<string, unknown
 
 function applyPendingUi(state: ChatTranscriptState, event: Record<string, unknown>): ChatTranscriptState {
   const id = asString(event.id);
-  if (!id) return state;
+  if (!id || state.answeredUi.includes(id) || state.pendingUi.some((pending) => pending.id === id)) return state;
   const method = asString(event.method);
   const pending: PendingUi = { id, method };
   const widgetKey = asString(event.widgetKey);
@@ -831,10 +845,34 @@ function displayUrl(raw: string): string {
   }
 }
 
+/**
+ * What a journal rebuild keeps of the transcript it replaces, in one place:
+ *  - the older journal rows `previous` had paged in. A reattach reads the tail and the gap back to
+ *    the old boundary, but a page the reader loaded while that read was in flight is not in it. The
+ *    cut is by row id, not byte offset, so a journal that moved under us carries nothing over.
+ *  - the requests already answered, which the reattach's replay would bring back as live cards.
+ *  - the rows OMP refused, which exist nowhere else: the journal never held them. They get fresh ids,
+ *    as the rebuild restarts them.
+ */
+export function carryOver(previous: ChatTranscriptState | undefined, rebuilt: ChatTranscriptState): ChatTranscriptState {
+  if (!previous) return rebuilt;
+  let next = rebuilt;
+  const first = rebuilt.messages[0]?.rowId;
+  const cut = first === undefined ? -1 : previous.messages.findIndex((message) => message.rowId === first);
+  if (cut > 0 && previous.fileStart !== null) next = applyFilePage(next, { start: previous.fileStart, messages: previous.messages.slice(0, cut) }, "older");
+  for (const row of previous.entries) {
+    if (row.type !== "prompt" || !row.failed) continue;
+    const { id: _stale, ...rest } = row;
+    next = appendEntry(next, rest);
+  }
+  return previous.answeredUi.length > 0 ? { ...next, answeredUi: previous.answeredUi } : next;
+}
+
 export function dismissPendingUi(state: ChatTranscriptState, id: string): ChatTranscriptState {
   return {
     ...state,
     pendingUi: state.pendingUi.filter((p) => p.id !== id),
+    answeredUi: state.answeredUi.includes(id) ? state.answeredUi : [...state.answeredUi, id],
     entries: state.entries.filter((e) => !(e.type === "approval" && e.requestId === id)),
   };
 }
@@ -865,12 +903,14 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
         ? (asString(event.text) ?? "Compacting conversation…")
         : event.type === "auto_compaction_end"
           ? (asString(event.text) ?? "")
-          : eventText(event);
+          : event.type === "thinking_level_changed"
+            ? (asString(event.thinkingLevel) ?? eventText(event))
+            : eventText(event);
     const nextMeta =
       event.type === "model_changed" && text
         ? { ...state.sessionMeta, model: text }
-        : event.type === "thinking_level_changed" && text
-          ? { ...state.sessionMeta, thinking: text }
+        : event.type === "thinking_level_changed"
+          ? { ...state.sessionMeta, thinking: text || undefined }
           : event.type === "auto_compaction_start"
             ? { ...state.sessionMeta, isCompacting: true }
             : event.type === "auto_compaction_end"
@@ -928,7 +968,7 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
 
     if (event.command === "set_model" && data) {
       const model = modelLabel(data) ?? modelLabel({ provider: data.provider, id: data.modelId ?? data.id });
-      return model ? { ...state, sessionMeta: { ...state.sessionMeta, model } } : state;
+      return model ? { ...state, sessionMeta: { ...state.sessionMeta, model, thinkingLevels: thinkingLevelsFor(data) } } : state;
     }
     if (sendCommand && data?.agentInvoked === false) {
       // OMP handled it locally — no turn is coming.
@@ -943,6 +983,13 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
   if (event.type === "message_start" || event.type === "message_end") {
     const message = asRecord(event.message);
     if (!message) return state;
+    // Tool output arrives live as a toolResult message; it used to show only after a journal re-read.
+    // A reattach replays results the journal already holds, so one per tool call.
+    if (message.role === "toolResult") {
+      const result = event.type === "message_end" ? mapHydratedMessage(message) : null;
+      if (!result || (result.toolCallId && state.messages.some((m) => m.role === "toolResult" && m.toolCallId === result.toolCallId))) return state;
+      return appendEntry({ ...state, messages: [...state.messages, result] }, { ...toolResultEntry(result), at: Date.now() });
+    }
     const role = message.role === "user" || message.role === "assistant" ? message.role : null;
     const content = mapContent(message.content);
     if (role === "user") {
@@ -952,7 +999,8 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
         let lastUserIndex = -1;
         for (let i = state.entries.length - 1; i >= 0; i -= 1) {
           const entry = state.entries[i];
-          if (entry?.type === "prompt" || entry?.type === "follow_up") {
+          // A not-sent row is not this echo's send: OMP never took it.
+          if ((entry?.type === "prompt" || entry?.type === "follow_up") && !entry.failed) {
             lastUserIndex = i;
             break;
           }
@@ -1000,7 +1048,7 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
       return state;
     }
     if (role === "assistant") {
-      return syncLiveAssistant({ ...state, assistantActivity: {} }, content, typeof message.stopReason === "string" ? message.stopReason : undefined);
+      return syncLiveAssistant({ ...state, assistantActivity: {} }, content, typeof message.stopReason === "string" ? message.stopReason : undefined, message.timestamp);
     }
     return state;
   }
@@ -1013,7 +1061,7 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
     const assistantActivity = updateAssistantActivity(state.assistantActivity, incoming.content, eventType, rpcEvent?.contentIndex);
     const content = mapContent(incoming.content, assistantActivity);
     const stopReason = typeof incoming.stopReason === "string" ? incoming.stopReason : undefined;
-    return syncLiveAssistant({ ...state, assistantActivity }, content, stopReason);
+    return syncLiveAssistant({ ...state, assistantActivity }, content, stopReason, incoming.timestamp);
   }
 
   if (event.type === "agent_start" || event.type === "turn_start") {
@@ -1053,7 +1101,9 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
   }
 
   void PRESENTATION_UI;
-  return { ...state, unknownTypes: [...state.unknownTypes, event.type] };
+  // Distinct only: `tool_execution_update` and friends arrive constantly, and an append per line grew
+  // this (and copied it) without bound.
+  return state.unknownTypes.includes(event.type) ? state : { ...state, unknownTypes: [...state.unknownTypes, event.type] };
 }
 
 export function applyRpcLines(lines: unknown[]): ChatTranscriptState {

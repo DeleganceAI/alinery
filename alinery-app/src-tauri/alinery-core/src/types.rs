@@ -794,6 +794,8 @@ pub struct HarnessChoice {
     pub harness: String,
     #[serde(default)]
     pub model: String,
+    #[serde(default)]
+    pub thinking: String,
     #[serde(default = "default_playbook_ref", deserialize_with = "deserialize_playbook_default")]
     pub playbook: crate::playbook::PlaybookRef,
     #[serde(default = "default_enabled")]
@@ -805,6 +807,7 @@ impl Default for HarnessChoice {
         Self {
             harness: String::new(),
             model: String::new(),
+            thinking: String::new(),
             playbook: default_playbook_ref(),
             draft_autosave: true,
         }
@@ -867,6 +870,8 @@ pub struct RepoHarnessChoiceOverrides {
     pub harness: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_playbook_override")]
     pub playbook: Option<crate::playbook::PlaybookRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -910,6 +915,7 @@ pub enum SettingSource {
 pub struct ChoiceProvenance {
     pub harness: SettingSource,
     pub model: SettingSource,
+    pub thinking: SettingSource,
     pub playbook: SettingSource,
     pub draft_autosave: SettingSource,
 }

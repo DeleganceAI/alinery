@@ -11,7 +11,7 @@ export type ChatSendPlan = {
   /**
    * This send should start an agent turn, so routing can steer the next one before `turn_start`
    * arrives. Decided here because only this layer has the catalog: `prompt` covers both builtins
-   * OMP answers locally (`/thinking`) and the entries that do invoke the agent, and the source is
+   * OMP answers locally (`/effort`) and the entries that do invoke the agent, and the source is
    * what separates them (docs/research/omp-rpc-slash-commands.md).
    */
   invokesModel: boolean;

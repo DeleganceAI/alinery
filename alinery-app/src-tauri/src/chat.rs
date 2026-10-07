@@ -341,8 +341,24 @@ pub(crate) fn resume_chat_thread_in(repo: &Path, predecessor_id: &str, daemon: O
     load_root_omp(repo, &successor_id)
 }
 
-fn known_chat_repos(app: &AppHandle) -> Result<Vec<PathBuf>, String> {
-    Ok(load_app_config(app).known_repos.into_iter().map(PathBuf::from).filter(|path| path.is_dir()).collect())
+/// Chat shows only repos that are open in this window: this window holds the repo's GUI
+/// flock, a daemon is connected for it, and no close is in flight. A repo another Alinery
+/// holds, one whose daemon is stopped or conflicted, or one being closed drops out of the
+/// rail with its threads, rather than listing threads every action on would refuse.
+pub(crate) fn open_chat_repos_in(known: &[String], state: &AppState) -> Vec<PathBuf> {
+    known
+        .iter()
+        .map(PathBuf::from)
+        .filter(|repo| repo.is_dir() && state.owns_repo(repo) && !state.is_closing(repo) && state.daemon_for(repo).is_some())
+        .collect()
+}
+
+#[tauri::command]
+pub(crate) fn list_chat_repos(app: AppHandle, state: State<'_, AppState>) -> Vec<String> {
+    open_chat_repos_in(&load_app_config(&app).known_repos, &state)
+        .into_iter()
+        .map(|repo| repo.to_string_lossy().into_owned())
+        .collect()
 }
 
 fn owned_chat_repo(app: &AppHandle, state: &AppState, repo_path: &str) -> Result<PathBuf, String> {
@@ -356,8 +372,8 @@ fn chat_daemon(state: &AppState, repo: &Path) -> Result<DaemonClient, String> {
 }
 
 #[tauri::command]
-pub(crate) async fn list_chat_threads(app: AppHandle, include_archived: bool) -> Result<Vec<ChatThread>, String> {
-    let repos = known_chat_repos(&app)?;
+pub(crate) async fn list_chat_threads(app: AppHandle, state: State<'_, AppState>, include_archived: bool) -> Result<Vec<ChatThread>, String> {
+    let repos = open_chat_repos_in(&load_app_config(&app).known_repos, &state);
     // A directory scan plus a git call per worktree thread: never on the main thread.
     tauri::async_runtime::spawn_blocking(move || list_chat_threads_in(&repos, include_archived))
         .await
@@ -451,15 +467,15 @@ pub(crate) fn chat_branch_label(app: AppHandle, state: State<'_, AppState>, repo
 }
 
 #[tauri::command]
-pub(crate) fn chat_rpc_write(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, payload: Value) -> Result<(), String> {
+pub(crate) async fn chat_rpc_write(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, payload: Value) -> Result<(), String> {
     let repo = owned_chat_repo(&app, &state, &repo_path)?;
     let _ = load_root_omp(&repo, &id)?;
     let daemon = chat_daemon(&state, &repo)?;
-    daemon.rpc_write_session(&id, &payload)
+    off_main_thread("chat rpc write", move || daemon.rpc_write_session(&id, &payload)).await
 }
 
 #[tauri::command]
-pub(crate) fn chat_rpc_attach(
+pub(crate) async fn chat_rpc_attach(
     app: AppHandle,
     state: State<'_, AppState>,
     repo_path: String,
@@ -471,43 +487,15 @@ pub(crate) fn chat_rpc_attach(
     let repo = owned_chat_repo(&app, &state, &repo_path)?;
     let _ = load_root_omp(&repo, &id)?;
     let daemon = chat_daemon(&state, &repo)?;
-    let mut stream = daemon.send(&daemon_client::rpc_attach_request(&id, attach_id))?;
-    let line = read_socket_line(&mut stream).map_err(|error| match error {
-        SocketReadError::Closed => "daemon closed".to_string(),
-        SocketReadError::TimedOut => format!("daemon not responding after {}", format_daemon_timeout(DAEMON_CONTROL_TIMEOUT)),
-    })?;
-    let response: Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
-    if let Some(error) = daemon_client::reply_error(&response) {
-        return Err(error.to_string());
-    }
-    let event_id = id.clone();
-    std::thread::spawn(move || {
-        use std::io::{BufRead, BufReader};
-        let mut reader = BufReader::new(stream);
-        let mut buf = String::new();
-        loop {
-            buf.clear();
-            match reader.read_line(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {
-                    let line = buf.trim_end_matches(['\n', '\r']).to_string();
-                    if on_line.send(line).is_err() {
-                        break;
-                    }
-                }
-            }
-        }
-        let _ = app.emit("session_stream_closed", json!({ "id": event_id, "attach_id": attach_id, "stream_token": stream_token }));
-    });
-    Ok(())
+    off_main_thread("chat rpc attach", move || attach_rpc_stream(app, &daemon, id, attach_id, stream_token, on_line)).await
 }
 
 #[tauri::command]
-pub(crate) fn chat_detach(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, attach_id: u64) -> Result<(), String> {
+pub(crate) async fn chat_detach(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, attach_id: u64) -> Result<(), String> {
     let repo = owned_chat_repo(&app, &state, &repo_path)?;
     let _ = load_root_omp(&repo, &id)?;
     let daemon = chat_daemon(&state, &repo)?;
-    daemon.detach_session(&id, attach_id)
+    off_main_thread("chat detach", move || daemon.detach_session(&id, attach_id)).await
 }
 
 #[tauri::command]
@@ -517,7 +505,12 @@ pub(crate) async fn chat_session_status(app: AppHandle, state: State<'_, AppStat
     // Chat polls this every 1.5s; a sync command would run the daemon round trip on the main thread.
     tauri::async_runtime::spawn_blocking(move || {
         let meta = load_root_omp(&repo, &id)?;
-        let live = daemon.as_ref().and_then(|daemon| daemon.session_status_observed(&id).ok().flatten());
+        // A slow or failed read is an error, not "no process": collapsing it to None read as
+        // Orphaned, flickered the title, and made stream recovery skip a live thread.
+        let live = match daemon.as_ref() {
+            Some(daemon) => daemon.session_status_observed(&id)?,
+            None => None,
+        };
         Ok(SessionObservation {
             lifecycle: lifecycle_from_structured(meta.started_at, meta.ended_at, meta.exit_code, live.as_ref().map(|live| &live.state)),
             state: live.as_ref().map(|live| live.state.clone()),

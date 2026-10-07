@@ -6,6 +6,8 @@ import subagentLifecycle from "../chat/fixtures/live-subagent_lifecycle.json";
 import { type ChatPrefs, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
 import { askConfirm, confirmDanger } from "../confirm";
 import { mockIpc } from "../test/mockIpc";
+import { journalPage } from "../test/ompJournal";
+import { stubScrollSize } from "../test/scroll";
 import type { ChatThread, SessionMeta } from "../types";
 import { ChatView, repoLabel } from "./ChatView";
 
@@ -20,12 +22,14 @@ vi.mock("./ProviderSetupDialog", () => ({
 
 const mocks = vi.hoisted(() => ({
   listChatThreads: vi.fn(),
+  listChatRepos: vi.fn(),
   archiveChatThread: vi.fn(),
   setChatPinned: vi.fn(),
   resumeChatThread: vi.fn(),
   createChatThread: vi.fn(),
   chatSessionStatus: vi.fn(),
   chatRpcAttach: vi.fn(),
+  onStreamClosed: vi.fn(),
   chatDetach: vi.fn(),
   chatRpcWrite: vi.fn(),
   chatRestate: vi.fn(),
@@ -39,12 +43,14 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../ipc", () =>
   mockIpc({
     listChatThreads: mocks.listChatThreads,
+    listChatRepos: mocks.listChatRepos,
     archiveChatThread: mocks.archiveChatThread,
     setChatPinned: mocks.setChatPinned,
     resumeChatThread: mocks.resumeChatThread,
     createChatThread: mocks.createChatThread,
     chatSessionStatus: mocks.chatSessionStatus,
     chatRpcAttach: mocks.chatRpcAttach,
+    onStreamClosed: mocks.onStreamClosed,
     chatDetach: mocks.chatDetach,
     chatRpcWrite: mocks.chatRpcWrite,
     chatRestate: mocks.chatRestate,
@@ -56,7 +62,7 @@ vi.mock("../ipc", () =>
   }),
 );
 function chat(visibility: ChatPrefs = DEFAULT_CHAT_VISIBILITY) {
-  return <ChatView knownRepos={["/repo"]} terminalFontSize={13} visibility={visibility} />;
+  return <ChatView terminalFontSize={13} visibility={visibility} />;
 }
 
 function meta(id: string, extra: Partial<SessionMeta> = {}): SessionMeta {
@@ -103,13 +109,6 @@ function observed(agent: "unknown" | "idle" | "busy" | "waiting_for_input", proc
   };
 }
 
-/** A journal page as `read_chat_omp` returns it: a JSON header line, then one JSON row per line. */
-function journalPage(start: number, rows: [id: string, text: string][]): ArrayBuffer {
-  const body = rows.map(([id, text]) => JSON.stringify({ type: "message", id, message: { role: "user", content: [{ type: "text", text }] } })).join("\n");
-  const bytes = new TextEncoder().encode(`${JSON.stringify({ start, end: start + 100, length: 1000 })}\n${body}\n`);
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-}
-
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -119,6 +118,7 @@ afterEach(() => {
 beforeEach(() => {
   mocks.chatSessionStatus.mockResolvedValue(null);
   mocks.chatRpcAttach.mockResolvedValue(undefined);
+  mocks.onStreamClosed.mockReset().mockReturnValue(() => {});
   mocks.chatDetach.mockResolvedValue(undefined);
   mocks.chatRpcWrite.mockResolvedValue(undefined);
   mocks.chatRestate.mockResolvedValue(undefined);
@@ -128,6 +128,7 @@ beforeEach(() => {
   mocks.archiveChatThread.mockResolvedValue(undefined);
   mocks.setChatPinned.mockReset().mockResolvedValue(undefined);
   mocks.listChatThreads.mockResolvedValue([]);
+  mocks.listChatRepos.mockResolvedValue(["/repo"]);
   mocks.chatThreadName.mockResolvedValue(null);
 });
 
@@ -136,6 +137,8 @@ const threadRow = (id: string) => new RegExp(`^Chat ${id}(,|$)`);
 const link = () => screen.getByTestId("chat-view").dataset.link;
 /** The open thread's status, in the title bar (the rail row repeats it). */
 const titleBar = () => within(document.querySelector(".chat-titlebar") as HTMLElement);
+const rail = () => screen.getByTestId("chat-rail");
+const NONE_OPEN = "No repositories are currently available to Chat in this window. Open or check one in the repo switcher.";
 
 describe("ChatView", () => {
   it("asks for a repo and leaves the worktree checkbox off", async () => {
@@ -194,7 +197,8 @@ describe("ChatView", () => {
 
   it("hides the composer until a thread is picked and starts a new chat in the first repo", async () => {
     mocks.listChatThreads.mockResolvedValue([]);
-    render(<ChatView knownRepos={["", "/first", "/second"]} terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />);
+    mocks.listChatRepos.mockResolvedValue(["/first", "/second"]);
+    render(<ChatView terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />);
     expect(screen.queryByLabelText("Message or /command")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Start a new chat" }));
     const dialog = await screen.findByRole("dialog", { name: "New thread" });
@@ -311,26 +315,325 @@ describe("ChatView", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Abort turn" }));
     await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "abort" })));
   });
-  async function openLive(status: ReturnType<typeof observed>) {
+  async function openLive(status: ReturnType<typeof observed>, others: ChatThread[] = []) {
     let onLine: (line: string) => void = () => {};
     mocks.chatRpcAttach.mockImplementation(async (args: { onLine: (line: string) => void }) => {
       onLine = args.onLine;
     });
     const row = thread("s-live", { session: meta("s-live", { started_at: 1, ended_at: null, archived: false }) });
-    mocks.listChatThreads.mockResolvedValue([row]);
+    mocks.listChatThreads.mockResolvedValue([row, ...others]);
     mocks.chatSessionStatus.mockResolvedValue(status);
     const { rerender } = render(chat());
     fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
     // The seven handshake writes land, and the link is ready, before any send in these tests.
     await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledTimes(7));
     await waitFor(() => expect(link()).toBe("ready"));
-    return { rerender, emit: (event: object) => act(() => onLine(JSON.stringify(event))) };
+    return {
+      rerender,
+      emit: (...events: object[]) =>
+        act(() => {
+          for (const event of events) onLine(JSON.stringify(event));
+        }),
+    };
   }
 
   function sendIdle(text: string) {
     fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: text } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
   }
+
+  /** Closes the newest attach's live stream, as the daemon dropping its client does. */
+  function dropStream() {
+    const calls = mocks.onStreamClosed.mock.calls;
+    const [, , onClosed] = calls[calls.length - 1] as [string, number, () => void];
+    act(() => onClosed());
+  }
+
+  /** Drops the live stream of an RPC thread and waits until the reattach's handshake is done. */
+  async function reattach() {
+    const attaches = mocks.chatRpcAttach.mock.calls.length;
+    dropStream();
+    await waitFor(() => expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(attaches + 1));
+    await waitFor(() => expect(link()).toBe("ready"));
+  }
+
+  it("reattaches when the daemon drops the live stream, and leaves a thread moved to Terminal alone", async () => {
+    await openLive(observed("busy", "alive", "rpc"));
+    expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(1);
+    dropStream();
+    await waitFor(() => expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(2));
+    mocks.chatSessionStatus.mockResolvedValue(observed("idle", "alive", "pty"));
+    dropStream();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the rename editor and its typed name through a reattach, and closes it on a thread switch", async () => {
+    await openLive(observed("idle", "alive", "rpc"), [thread("s-other")]);
+    fireEvent.click(titleBar().getByRole("button", { name: "Rename thread" }));
+    fireEvent.change(screen.getByLabelText("Thread name"), { target: { value: "Half typed" } });
+    await reattach();
+    expect((screen.getByLabelText("Thread name") as HTMLInputElement).value).toBe("Half typed");
+    fireEvent.click(screen.getByRole("button", { name: threadRow("s-other") }));
+    await waitFor(() => expect(screen.queryByLabelText("Thread name")).toBeNull());
+  });
+
+  it("keeps an open providers dialog through a reattach", async () => {
+    await openLive(observed("idle", "alive", "rpc"));
+    sendIdle("/login");
+    const dialog = await screen.findByTestId("providers");
+    await reattach();
+    expect(screen.getByTestId("providers")).toBe(dialog);
+  });
+
+  it("opens the MCP dialog from /mcp list output that lands after a reattach", async () => {
+    const { emit } = await openLive(observed("idle", "alive", "rpc"));
+    sendIdle("/mcp");
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "prompt", message: "/mcp list" })));
+    await reattach();
+    emit({ type: "command_output", text: "gh | http | enabled | project" });
+    const dialog = await screen.findByRole("dialog", { name: "MCP servers" });
+    expect(within(dialog).getByText(/gh/)).toBeTruthy();
+  });
+
+  it("stops reattaching once the stream keeps closing, says only that it closed, and reconnects on request", async () => {
+    await openLive(observed("busy", "alive", "rpc"));
+    const [, , , onGiveUp] = mocks.onStreamClosed.mock.calls[0] as [string, number, () => void, () => void];
+    act(() => onGiveUp());
+    expect(await screen.findByText("The live connection closed repeatedly, so automatic reconnection stopped. Reconnect to try again.")).toBeTruthy();
+    expect(screen.queryByText(/falling behind/i)).toBeNull();
+    expect(titleBar().getByText("Disconnected")).toBeTruthy();
+    expect(link()).toBe("failed");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    await waitFor(() => expect(link()).toBe("ready"));
+    expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(/Lost the connection/)).toBeNull();
+  });
+
+  it("takes back a send OMP refuses: the bubble goes and the text returns to the composer", async () => {
+    const { emit } = await openLive(observed("idle", "alive", "rpc"));
+    sendIdle("add an HNSW index");
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledTimes(8));
+    const sent = mocks.chatRpcWrite.mock.calls[7]?.[2] as { id: string; type: string };
+    expect(sent.type).toBe("prompt");
+    await screen.findByText("add an HNSW index");
+    emit({ type: "response", id: sent.id, command: "prompt", success: false, error: "model busy" });
+    await waitFor(() => expect((screen.getByLabelText("Message or /command") as HTMLTextAreaElement).value).toBe("add an HNSW index"));
+    expect(screen.getByText(/Not sent: model busy/)).toBeTruthy();
+    expect(screen.queryAllByText("add an HNSW index").filter((element) => element.tagName !== "TEXTAREA")).toHaveLength(0);
+  });
+
+  // OMP's verdict on a send arrives after the daemon acked the write, by command id.
+  describe("a send OMP refuses", () => {
+    const composer = () => document.querySelector("textarea") as HTMLTextAreaElement;
+    const typeInto = (value: string) => fireEvent.change(composer(), { target: { value } });
+    /** Sends from the composer, as Send when idle and as Queue while the claimed turn runs. */
+    const submit = (value: string) => {
+      typeInto(value);
+      fireEvent.click(screen.getByRole("button", { name: /^(Send|Queue)$/ }));
+    };
+    const sentIds = () =>
+      mocks.chatRpcWrite.mock.calls
+        .map(([, , payload]) => payload as { id: string; type: string })
+        .filter((payload) => payload.type === "prompt" || payload.type === "follow_up" || payload.type === "abort_and_prompt")
+        .map((payload) => payload.id);
+    const refusal = (id: string, command = "prompt") => ({ type: "response", id, command, success: false, error: "model busy" });
+    const bubbles = (text: string) => screen.queryAllByText(text).filter((element) => element.tagName !== "TEXTAREA");
+    const rowOf = (text: string) => bubbles(text)[0]?.closest("article") as HTMLElement;
+    /** A write the daemon has not acked yet. */
+    function holdNextWrite() {
+      let ack = () => {};
+      mocks.chatRpcWrite.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            ack = resolve;
+          }),
+      );
+      return () => act(async () => ack());
+    }
+
+    it("keeps the refused message as not sent, with Copy, when another is already being written", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      submit("add an HNSW index");
+      await waitFor(() => expect(bubbles("add an HNSW index")).toHaveLength(1));
+      typeInto("run the tests");
+      await emit(refusal(sentIds()[0] ?? ""));
+      await within(rowOf("add an HNSW index")).findByText("not sent");
+      expect(within(rowOf("add an HNSW index")).getByRole("button", { name: "Copy message" })).toBeTruthy();
+      expect(composer().value).toBe("run the tests");
+      expect(screen.getByText(/Not sent: model busy/)).toBeTruthy();
+    });
+
+    it("keeps a message refused before its write was acked as not sent when another is being written", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      const ack = holdNextWrite();
+      submit("add an HNSW index");
+      await waitFor(() => expect(sentIds()).toHaveLength(1));
+      typeInto("run the tests");
+      await emit(refusal(sentIds()[0] ?? ""));
+      await ack();
+      await within(rowOf("add an HNSW index")).findByText("not sent");
+      expect(bubbles("add an HNSW index")).toHaveLength(1);
+      expect(composer().value).toBe("run the tests");
+    });
+
+    it("leaves the text in the composer, and no row, when it is refused before the ack and nothing else was typed", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      const ack = holdNextWrite();
+      submit("add an HNSW index");
+      await waitFor(() => expect(sentIds()).toHaveLength(1));
+      await emit(refusal(sentIds()[0] ?? ""));
+      await ack();
+      expect(composer().value).toBe("add an HNSW index");
+      expect(bubbles("add an HNSW index")).toHaveLength(0);
+      expect(screen.queryByText("not sent")).toBeNull();
+    });
+
+    it("refused before the ack, a repeated message leaves the earlier identical one alone", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      submit("continue");
+      await waitFor(() => expect(bubbles("continue")).toHaveLength(1));
+      const ack = holdNextWrite();
+      submit("continue");
+      await waitFor(() => expect(sentIds()).toHaveLength(2));
+      await emit(refusal(sentIds()[1] ?? "", "follow_up"));
+      await ack();
+      expect(bubbles("continue")).toHaveLength(1);
+      expect(screen.queryByText("not sent")).toBeNull();
+      expect(screen.queryByText(/queued · after this turn/)).toBeNull();
+      expect(composer().value).toBe("continue");
+    });
+
+    it("refused after the ack, a repeated message takes back the send it names, not the one beside it", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      submit("continue");
+      await waitFor(() => expect(bubbles("continue")).toHaveLength(1));
+      submit("continue");
+      await waitFor(() => expect(bubbles("continue")).toHaveLength(2));
+      await emit(refusal(sentIds()[0] ?? ""));
+      // The first was a prompt and the second a queued follow-up: the queued one is what is left.
+      await waitFor(() => expect(bubbles("continue")).toHaveLength(1));
+      expect(screen.getByText(/queued · after this turn/)).toBeTruthy();
+      expect(composer().value).toBe("continue");
+    });
+
+    it("refused after the ack with the composer in use, a repeated message marks the one it names", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      submit("continue");
+      await waitFor(() => expect(bubbles("continue")).toHaveLength(1));
+      submit("continue");
+      await waitFor(() => expect(bubbles("continue")).toHaveLength(2));
+      typeInto("run the tests");
+      await emit(refusal(sentIds()[0] ?? ""));
+      const [first, second] = bubbles("continue").map((element) => element.closest("article") as HTMLElement);
+      await within(first as HTMLElement).findByText("not sent");
+      expect(within(second as HTMLElement).queryByText("not sent")).toBeNull();
+      expect(within(second as HTMLElement).getByText(/queued · after this turn/)).toBeTruthy();
+      expect(composer().value).toBe("run the tests");
+    });
+
+    it("settles each of two sends in flight by its own id, and loses neither", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      submit("add an HNSW index");
+      await waitFor(() => expect(bubbles("add an HNSW index")).toHaveLength(1));
+      submit("run the tests");
+      await waitFor(() => expect(bubbles("run the tests")).toHaveLength(1));
+      const [first = "", second = ""] = sentIds();
+      await emit(refusal(second, "follow_up"));
+      await waitFor(() => expect(composer().value).toBe("run the tests"));
+      expect(bubbles("run the tests")).toHaveLength(0);
+      await emit(refusal(first));
+      await within(rowOf("add an HNSW index")).findByText("not sent");
+      expect(composer().value).toBe("run the tests");
+    });
+
+    it("keeps both messages when two refusals land in one tick", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      submit("add an HNSW index");
+      await waitFor(() => expect(bubbles("add an HNSW index")).toHaveLength(1));
+      submit("run the tests");
+      await waitFor(() => expect(bubbles("run the tests")).toHaveLength(1));
+      const [first = "", second = ""] = sentIds();
+      await emit(refusal(first), refusal(second, "follow_up"));
+      await within(rowOf("run the tests")).findByText("not sent");
+      expect(composer().value).toBe("add an HNSW index");
+      expect(bubbles("add an HNSW index")).toHaveLength(0);
+    });
+
+    it("lets a refusal replayed after a reattach leave an unrelated row alone", async () => {
+      // The rebuild restarts row ids, so the second message now holds the id the first one had.
+      mocks.readChatOmp.mockResolvedValue(journalPage(0, [["m1", "earlier"]]));
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      submit("first message");
+      await waitFor(() => expect(bubbles("first message")).toHaveLength(1));
+      await reattach();
+      expect(bubbles("first message")).toHaveLength(0);
+      submit("second message");
+      await waitFor(() => expect(bubbles("second message")).toHaveLength(1));
+      await emit(refusal(sentIds()[0] ?? ""));
+      await waitFor(() => expect(composer().value).toBe("first message"));
+      expect(bubbles("second message")).toHaveLength(1);
+      expect(screen.queryByText("not sent")).toBeNull();
+    });
+
+    it("keeps a not-sent row through a reattach", async () => {
+      mocks.readChatOmp.mockResolvedValue(journalPage(0, [["m1", "earlier"]]));
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      submit("add an HNSW index");
+      await waitFor(() => expect(bubbles("add an HNSW index")).toHaveLength(1));
+      typeInto("run the tests");
+      await emit(refusal(sentIds()[0] ?? ""));
+      await within(rowOf("add an HNSW index")).findByText("not sent");
+      await reattach();
+      await screen.findByText("earlier");
+      expect(within(rowOf("add an HNSW index")).getByText("not sent")).toBeTruthy();
+      expect(composer().value).toBe("run the tests");
+    });
+
+    it("takes back a refused Send now", async () => {
+      const { emit } = await openLive(observed("busy", "alive", "rpc"));
+      typeInto("stop and do this");
+      fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+      await waitFor(() => expect(bubbles("stop and do this")).toHaveLength(1));
+      expect(composer().value).toBe("");
+      await emit(refusal(sentIds()[0] ?? "", "abort_and_prompt"));
+      await waitFor(() => expect(composer().value).toBe("stop and do this"));
+      expect(bubbles("stop and do this")).toHaveLength(0);
+      expect(screen.getByText(/Not sent: model busy/)).toBeTruthy();
+    });
+
+    it("takes back a first prompt that OMP refuses on a thread started by the send", async () => {
+      let onLine: (line: string) => void = () => {};
+      mocks.chatRpcAttach.mockImplementation(async (args: { onLine: (line: string) => void }) => {
+        onLine = args.onLine;
+      });
+      mocks.listChatThreads
+        .mockResolvedValueOnce([thread("s-fresh", { session: meta("s-fresh", { started_at: null, ended_at: null }) })])
+        .mockResolvedValue([thread("s-fresh", { session: meta("s-fresh", { started_at: 1, ended_at: null, archived: false }) })]);
+      mocks.startChatThread.mockResolvedValue({ session: meta("s-fresh", { started_at: 1, ended_at: null, archived: false }), execution: null, start: "started", errors: [] });
+      mocks.chatSessionStatus.mockResolvedValue(observed("idle"));
+      render(chat());
+      fireEvent.click(await screen.findByRole("button", { name: threadRow("s-fresh") }));
+      await waitFor(() => expect(link()).toBe("offline"));
+      sendIdle("hello there");
+      await waitFor(() => expect(sentIds()).toHaveLength(1));
+      await waitFor(() => expect(bubbles("hello there")).toHaveLength(1));
+      act(() => onLine(JSON.stringify(refusal(sentIds()[0] ?? ""))));
+      await waitFor(() => expect(composer().value).toBe("hello there"));
+      expect(bubbles("hello there")).toHaveLength(0);
+    });
+  });
+
+  it("goes offline and reloads the list once OMP has exited", async () => {
+    await openLive(observed("idle", "alive", "rpc"));
+    const reloads = mocks.listChatThreads.mock.calls.length;
+    mocks.chatSessionStatus.mockResolvedValue(observed("idle", "exited", "rpc"));
+    await waitFor(() => expect(link()).toBe("offline"), { timeout: 3000 });
+    expect(mocks.listChatThreads.mock.calls.length).toBe(reloads + 1);
+  });
 
   it("opens the providers dialog on the tab a slash command names, with its model preselected", async () => {
     await openLive(observed("idle"));
@@ -466,6 +769,70 @@ describe("ChatView", () => {
     expect(screen.getByLabelText("Message or /command")).toBeTruthy();
   });
 
+  describe("the thinking level in the title bar", () => {
+    const reasoningState = {
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: { model: { provider: "anthropic", id: "opus", reasoning: true, thinking: { efforts: ["low", "high"] } }, thinkingLevel: "high" },
+    };
+    const picker = () => titleBar().getByRole("combobox", { name: "Thinking level" }) as HTMLSelectElement;
+    const noPicker = () => titleBar().queryByRole("combobox", { name: "Thinking level" });
+
+    it("shows what get_state reports, and writes a pick without moving the label until OMP confirms", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      expect(noPicker()).toBeNull();
+      emit(reasoningState);
+      expect(picker().value).toBe("high");
+      expect(picker().disabled).toBe(false);
+      mocks.chatRpcWrite.mockClear();
+      fireEvent.change(picker(), { target: { value: "low" } });
+      await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledExactlyOnceWith("/repo", "s-live", expect.objectContaining({ type: "set_thinking_level", level: "low" })));
+      expect(picker().value).toBe("high");
+      emit({ type: "thinking_level_changed", thinkingLevel: "low" });
+      expect(picker().value).toBe("low");
+    });
+
+    it("shows a pick that could not be written", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      emit(reasoningState);
+      mocks.chatRpcWrite.mockRejectedValueOnce(new Error("socket closed"));
+      fireEvent.change(picker(), { target: { value: "low" } });
+      expect(await screen.findByText(/socket closed/)).toBeTruthy();
+    });
+
+    it("is disabled, with the reason, once OMP has exited", async () => {
+      const { emit } = await openLive(observed("idle", "exited"));
+      emit(reasoningState);
+      expect(picker().disabled).toBe(true);
+      expect(picker().title).toBe("Ava is not running in this thread, so its thinking level cannot change");
+    });
+
+    it("is hidden while the thread is in the terminal", async () => {
+      mocks.chatRestate.mockImplementation(async (_repo: string, _id: string, target: "pty" | "rpc") => {
+        mocks.chatSessionStatus.mockResolvedValue(observed("idle", "alive", target));
+      });
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      emit(reasoningState);
+      expect(picker()).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Open in Terminal" }));
+      expect(await screen.findByTestId("terminal")).toBeTruthy();
+      expect(noPicker()).toBeNull();
+    });
+
+    it("returns after a reattach once the fresh get_state lands", async () => {
+      mocks.readChatOmp.mockImplementation(async () => journalPage(500, [["m2", "second"]]));
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      emit(reasoningState);
+      expect(picker().value).toBe("high");
+      await reattach();
+      // The rebuilt transcript knows nothing OMP has not said again.
+      await waitFor(() => expect(noPicker()).toBeNull());
+      emit(reasoningState);
+      expect(picker().value).toBe("high");
+    });
+  });
+
   it("hides the terminal hatch once OMP has exited", async () => {
     await openLive(observed("idle", "exited"));
     expect(screen.queryByRole("button", { name: "Open in Terminal" })).toBeNull();
@@ -573,6 +940,21 @@ describe("ChatView", () => {
       await vi.advanceTimersByTimeAsync(12000);
       expect(mocks.chatThreadName).not.toHaveBeenCalled();
       expect(mocks.listChatThreads).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still re-reads the name after a turn that spanned a reattach", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await openLive(observed("busy", "alive", "rpc"));
+      await reattach();
+      mocks.chatSessionStatus.mockResolvedValue(observed("idle", "alive", "rpc"));
+      await vi.advanceTimersByTimeAsync(1500);
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Abort turn" })).toBeNull());
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(mocks.chatThreadName).toHaveBeenCalledWith("/repo", "s-live");
     } finally {
       vi.useRealTimers();
     }
@@ -734,6 +1116,133 @@ describe("ChatView", () => {
     expect(screen.getByText("b only")).toBeTruthy();
   });
 
+  // A reattach re-reads the journal, and by then it may have grown past the rows the reader has loaded.
+  // The rebuild reads back to the oldest row it replaces (a window sized to the gap, one byte wider
+  // so the row at the boundary is found) and keeps what the reader paged in meanwhile.
+  describe("a reattach after the journal moved on", () => {
+    let stub: ReturnType<typeof stubScrollSize>;
+    beforeEach(() => {
+      stub = stubScrollSize();
+    });
+    afterEach(() => stub.restore());
+
+    const rows = () => [...document.querySelectorAll<HTMLElement>('[data-entry-id^="f:"]')].map((node) => node.dataset.entryId);
+    const readerAt = (top: number) => {
+      const list = document.querySelector(".chat-list") as HTMLElement;
+      list.scrollTop = top;
+      fireEvent.scroll(list);
+    };
+    const pending = () => {
+      let land: (buffer: ArrayBuffer) => void = () => {};
+      const promise = new Promise<ArrayBuffer>((resolve) => {
+        land = resolve;
+      });
+      return { promise, land: (buffer: ArrayBuffer) => act(async () => land(buffer)) };
+    };
+
+    it.each([true, false])("keeps the loaded rows and the reader's place across several windows of growth, auto-scroll %s", async (autoScroll) => {
+      let grown = false;
+      mocks.readChatOmp.mockImplementation(async (args: { end?: number }) => {
+        if (!grown) return journalPage(500, [["m2", "second"]]);
+        return args.end == null
+          ? journalPage(2000, [["m4", "fourth"]])
+          : journalPage(500, [
+              ["m2", "second"],
+              ["m3", "third"],
+            ]);
+      });
+      const { rerender } = await openLive(observed("idle", "alive", "rpc"));
+      rerender(chat({ ...DEFAULT_CHAT_VISIBILITY, autoScroll }));
+      await screen.findByText("second");
+      const second = document.querySelector('[data-entry-id="f:m2"]');
+      readerAt(900);
+      stub.writes.length = 0;
+      grown = true;
+      mocks.readChatOmp.mockClear();
+
+      await reattach();
+      await screen.findByText("fourth");
+      // The tail, then one window sized to the gap: no other read.
+      expect(mocks.readChatOmp.mock.calls).toEqual([[{ repoPath: "/repo", id: "s-live" }], [{ repoPath: "/repo", id: "s-live", end: 2000, want: 1501 }]]);
+      expect(rows()).toEqual(["f:m2", "f:m3", "f:m4"]);
+      expect(document.querySelector('[data-entry-id="f:m2"]')).toBe(second);
+      expect(stub.writes).toEqual([]);
+    });
+
+    // Order A: the older page was asked for before the reattach and lands after the rebuild.
+    it("takes an older page that lands after the rebuild, each row once and in order", async () => {
+      const older = pending();
+      let grown = false;
+      mocks.readChatOmp.mockImplementation((args: { end?: number; want?: number }) => {
+        if (args.end === 1000 && args.want == null) return older.promise;
+        if (args.end == null) return Promise.resolve(grown ? journalPage(2000, [["m4", "fourth"]]) : journalPage(1000, [["m3", "third"]]));
+        return Promise.resolve(journalPage(1000, [["m3", "third"]]));
+      });
+      await openLive(observed("idle", "alive", "rpc"));
+      await screen.findByText("third");
+      readerAt(100);
+      await waitFor(() => expect(mocks.readChatOmp).toHaveBeenCalledWith({ repoPath: "/repo", id: "s-live", end: 1000 }));
+      grown = true;
+      await reattach();
+      await screen.findByText("fourth");
+
+      await older.land(
+        journalPage(0, [
+          ["m1", "first"],
+          ["m2", "second"],
+        ]),
+      );
+      expect(rows()).toEqual(["f:m1", "f:m2", "f:m3", "f:m4"]);
+      expect(await screen.findByText("Start of conversation")).toBeTruthy();
+    });
+
+    // Order B: the older page lands while the rebuild is still reading, so the rebuild never saw it.
+    it("keeps an older page that lands while the rebuild is still reading", async () => {
+      const gap = pending();
+      let grown = false;
+      mocks.readChatOmp.mockImplementation((args: { end?: number; want?: number }) => {
+        if (args.end === 2000) return gap.promise;
+        if (args.end === 1000) {
+          return Promise.resolve(
+            journalPage(0, [
+              ["m1", "first"],
+              ["m2", "second"],
+            ]),
+          );
+        }
+        return Promise.resolve(grown ? journalPage(2000, [["m4", "fourth"]]) : journalPage(1000, [["m3", "third"]]));
+      });
+      await openLive(observed("idle", "alive", "rpc"));
+      await screen.findByText("third");
+      grown = true;
+      dropStream();
+      await waitFor(() => expect(mocks.readChatOmp).toHaveBeenCalledWith({ repoPath: "/repo", id: "s-live", end: 2000, want: 1001 }));
+      readerAt(100);
+      await screen.findByText("first");
+
+      await gap.land(journalPage(1000, [["m3", "third"]]));
+      await waitFor(() => expect(link()).toBe("ready"));
+      await screen.findByText("fourth");
+      expect(rows()).toEqual(["f:m1", "f:m2", "f:m3", "f:m4"]);
+      expect(screen.getByText("Start of conversation")).toBeTruthy();
+    });
+
+    it("keeps the rows it has when the gap cannot be read, and still reattaches", async () => {
+      let grown = false;
+      mocks.readChatOmp.mockImplementation(async (args: { end?: number }) => {
+        if (!grown) return journalPage(500, [["m2", "second"]]);
+        if (args.end == null) return journalPage(2000, [["m4", "fourth"]]);
+        throw new Error("journal busy");
+      });
+      await openLive(observed("idle", "alive", "rpc"));
+      await screen.findByText("second");
+      grown = true;
+      await reattach();
+      expect(rows()).toEqual(["f:m2"]);
+      expect(screen.queryByText("fourth")).toBeNull();
+    });
+  });
+
   const live = (id: string, extra: Partial<ChatThread> = {}) => thread(id, { session: meta(id, liveMeta), ...extra });
   const payloads = () => mocks.chatRpcWrite.mock.calls.map(([repo, id, payload]) => ({ ...(payload as { type?: string; message?: string }), repo, thread: id }));
 
@@ -841,6 +1350,28 @@ describe("ChatView", () => {
     expect(screen.queryByText(/Lost the connection/)).toBeNull();
   });
 
+  it("detaches again when an attach lands after the view let go of it", async () => {
+    mocks.listChatThreads.mockResolvedValue([live("s-live")]);
+    mocks.chatSessionStatus.mockResolvedValue(observed("idle"));
+    let land: () => void = () => {};
+    mocks.chatRpcAttach.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          land = resolve;
+        }),
+    );
+    const { unmount } = render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
+    await waitFor(() => expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(1));
+    const attach = mocks.chatRpcAttach.mock.calls[0]?.[0] as { attachId: number };
+    unmount();
+    expect(mocks.chatDetach.mock.calls).toEqual([["/repo", "s-live", attach.attachId]]);
+    await act(async () => land());
+    await waitFor(() => expect(mocks.chatDetach).toHaveBeenCalledTimes(2));
+    expect(mocks.chatDetach.mock.calls[1]).toEqual(["/repo", "s-live", attach.attachId]);
+    expect(mocks.chatRpcWrite).not.toHaveBeenCalled();
+  });
+
   it("shows a lost connection with its detail, sends nothing, and reconnects on request", async () => {
     mocks.listChatThreads.mockResolvedValue([live("s-live")]);
     mocks.chatSessionStatus.mockResolvedValue(observed("idle"));
@@ -882,12 +1413,252 @@ describe("ChatView", () => {
     await waitFor(() => expect(remove.disabled).toBe(true));
   });
 
+  it("drops a repo's threads once it is no longer open in the app", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatRepos.mockResolvedValueOnce(["/repo"]).mockResolvedValue([]);
+      mocks.listChatThreads.mockResolvedValueOnce([thread("s-live")]).mockResolvedValue([]);
+      render(chat());
+      expect(await screen.findByRole("button", { name: threadRow("s-live") })).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(3000);
+      await waitFor(() => expect(screen.queryByRole("button", { name: threadRow("s-live") })).toBeNull());
+      expect(mocks.listChatThreads).toHaveBeenCalledTimes(2);
+      expect(within(rail()).getByText(NONE_OPEN)).toBeTruthy();
+      expect(within(rail()).queryByRole("button", { name: "New thread in repo" })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says the repositories are loading until the first read lands, never that there are none", async () => {
+    mocks.listChatRepos.mockReturnValue(new Promise(() => {}));
+    render(chat());
+    expect(within(rail()).getByText("Loading repositories")).toBeTruthy();
+    expect(within(rail()).queryByText(NONE_OPEN)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "New thread" }));
+    const dialog = await screen.findByRole("dialog", { name: "New thread" });
+    expect(within(dialog).getByText("Loading repositories")).toBeTruthy();
+    expect(within(dialog).queryByText(NONE_OPEN)).toBeNull();
+    expect((within(dialog).getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows a failed read with its detail, not an empty list", async () => {
+    mocks.listChatRepos.mockRejectedValue(new Error("config.json unreadable"));
+    render(chat());
+    const alert = await within(rail()).findByRole("alert");
+    expect(alert.textContent).toContain("Couldn't read which repositories are open in this window. Retrying every few seconds.");
+    expect(within(alert).getByText("config.json unreadable")).toBeTruthy();
+    expect(within(rail()).queryByText(NONE_OPEN)).toBeNull();
+    expect(within(rail()).queryByText("Loading repositories")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "New thread" }));
+    const dialog = await screen.findByRole("dialog", { name: "New thread" });
+    expect(within(dialog).getByRole("alert").textContent).toContain("Couldn't read which repositories are open in this window.");
+    expect(within(dialog).queryByText(NONE_OPEN)).toBeNull();
+  });
+
+  it("says when no repository is available to Chat in this window", async () => {
+    mocks.listChatRepos.mockResolvedValue([]);
+    render(chat());
+    expect(await within(rail()).findByText(NONE_OPEN)).toBeTruthy();
+    expect(within(rail()).queryByRole("alert")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "New thread" }));
+    const dialog = await screen.findByRole("dialog", { name: "New thread" });
+    expect(within(dialog).getByText(NONE_OPEN)).toBeTruthy();
+  });
+
+  it("clears a failed read once a retry succeeds", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatRepos.mockRejectedValueOnce(new Error("config.json unreadable")).mockResolvedValue(["/repo"]);
+      render(chat());
+      expect(await within(rail()).findByRole("alert")).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await within(rail()).findByRole("button", { name: "New thread in repo" })).toBeTruthy();
+      expect(within(rail()).queryByRole("alert")).toBeNull();
+      expect(within(rail()).queryByText(NONE_OPEN)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops the empty notice once a repository becomes available", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatRepos.mockResolvedValueOnce([]).mockResolvedValue(["/repo"]);
+      render(chat());
+      expect(await within(rail()).findByText(NONE_OPEN)).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await within(rail()).findByRole("button", { name: "New thread in repo" })).toBeTruthy();
+      expect(within(rail()).queryByText(NONE_OPEN)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the last list read when a refresh fails, and says it is stale", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatRepos.mockResolvedValueOnce(["/repo"]).mockRejectedValue(new Error("config.json unreadable"));
+      mocks.listChatThreads.mockResolvedValue([thread("s-live")]);
+      render(chat());
+      expect(await within(rail()).findByRole("button", { name: threadRow("s-live") })).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(3000);
+      const alert = await within(rail()).findByRole("alert");
+      expect(alert.textContent).toContain("Couldn't refresh which repositories are open in this window. Showing the last list read. Retrying every few seconds.");
+      expect(within(rail()).getByRole("button", { name: threadRow("s-live") })).toBeTruthy();
+      expect(within(rail()).getByRole("button", { name: "New thread in repo" })).toBeTruthy();
+      expect(mocks.listChatThreads).toHaveBeenCalledTimes(1);
+      fireEvent.click(screen.getByRole("button", { name: "New thread" }));
+      const dialog = await screen.findByRole("dialog", { name: "New thread" });
+      expect((within(dialog).getByRole("combobox") as HTMLSelectElement).value).toBe("/repo");
+      expect(within(dialog).getByRole("alert").textContent).toContain("Showing the last list read.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never says no repository is available above a closed repo's group still reloading", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let reloadThreads: (rows: ChatThread[]) => void = () => {};
+      const reloading = new Promise<ChatThread[]>((resolve) => {
+        reloadThreads = resolve;
+      });
+      mocks.listChatRepos.mockResolvedValueOnce(["/repo"]).mockResolvedValue([]);
+      mocks.listChatThreads.mockResolvedValueOnce([thread("s-live")]).mockReturnValue(reloading);
+      render(chat());
+      expect(await within(rail()).findByRole("button", { name: threadRow("s-live") })).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(3000);
+      await waitFor(() => expect(mocks.listChatThreads).toHaveBeenCalledTimes(2));
+      expect(within(rail()).getByRole("button", { name: threadRow("s-live") })).toBeTruthy();
+      expect(within(rail()).queryByText(NONE_OPEN)).toBeNull();
+      await act(async () => {
+        reloadThreads([]);
+        await reloading;
+      });
+      expect(within(rail()).getByText(NONE_OPEN)).toBeTruthy();
+      expect(within(rail()).queryByRole("button", { name: threadRow("s-live") })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("tells same-named repositories apart in the new-thread dialog and shows the full path", async () => {
-    render(<ChatView knownRepos={["/a/work/alinery", "/a/oss/alinery"]} terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />);
+    mocks.listChatRepos.mockResolvedValue(["/a/work/alinery", "/a/oss/alinery"]);
+    render(<ChatView terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />);
     fireEvent.click(screen.getByRole("button", { name: "New thread" }));
     const select = screen.getByRole("combobox") as HTMLSelectElement;
-    expect(Array.from(select.options).map((option) => option.textContent)).toEqual(["work/alinery", "oss/alinery"]);
+    await waitFor(() => expect(Array.from(select.options).map((option) => option.textContent)).toEqual(["work/alinery", "oss/alinery"]));
     expect(screen.getByText("/a/work/alinery")).toBeTruthy();
+  });
+
+  it("keeps a picked repo through its close, says it is not open, and creates there once it reopens", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatRepos.mockResolvedValueOnce(["/a", "/b"]).mockResolvedValueOnce(["/a"]).mockResolvedValue(["/a", "/b"]);
+      mocks.createChatThread.mockResolvedValue({ session: meta("s-new"), execution: null, start: "started", errors: [] });
+      render(chat());
+      expect(await within(rail()).findByRole("button", { name: "New thread in b" })).toBeTruthy();
+      fireEvent.click(within(rail()).getByRole("button", { name: "New thread" }));
+      const dialog = await screen.findByRole("dialog", { name: "New thread" });
+      const select = within(dialog).getByRole("combobox") as HTMLSelectElement;
+      fireEvent.change(select, { target: { value: "/b" } });
+      fireEvent.click(within(dialog).getByRole("checkbox", { name: "New worktree and branch" }));
+      const create = within(dialog).getByRole("button", { name: "Create" }) as HTMLButtonElement;
+
+      await vi.advanceTimersByTimeAsync(3000);
+      const alert = await within(dialog).findByRole("alert");
+      expect(alert.textContent).toBe("b is not open in this window. Open it again, or choose another repository.");
+      expect(select.value).toBe("/b");
+      const closed = within(dialog).getByRole("option", { name: "b (not open)" }) as HTMLOptionElement;
+      expect(closed.disabled).toBe(true);
+      expect(within(dialog).getByText("/b")).toBeTruthy();
+      expect(create.disabled).toBe(true);
+      fireEvent.click(create);
+      expect((within(dialog).getByRole("checkbox", { name: "New worktree and branch" }) as HTMLInputElement).checked).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(3000);
+      await waitFor(() => expect(within(dialog).queryByRole("alert")).toBeNull());
+      expect(select.value).toBe("/b");
+      expect(create.disabled).toBe(false);
+      fireEvent.click(create);
+      await waitFor(() => expect(mocks.createChatThread).toHaveBeenCalledWith({ repoPath: "/b", createWorktree: true }));
+      expect(mocks.createChatThread).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a repo's + pick until another repo is chosen", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatRepos.mockResolvedValueOnce(["/a", "/b"]).mockResolvedValueOnce(["/a"]).mockResolvedValue(["/a", "/b"]);
+      render(chat());
+      fireEvent.click(await within(rail()).findByRole("button", { name: "New thread in b" }));
+      const dialog = await screen.findByRole("dialog", { name: "New thread" });
+      const select = within(dialog).getByRole("combobox") as HTMLSelectElement;
+      expect(select.value).toBe("/b");
+
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await within(dialog).findByRole("alert")).toBeTruthy();
+      expect(select.value).toBe("/b");
+
+      fireEvent.change(select, { target: { value: "/a" } });
+      expect(select.value).toBe("/a");
+      expect(within(dialog).queryByRole("alert")).toBeNull();
+      expect(within(dialog).queryByRole("option", { name: "b (not open)" })).toBeNull();
+      expect((within(dialog).getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await within(rail()).findByRole("button", { name: "New thread in b" })).toBeTruthy();
+      expect(select.value).toBe("/a");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("points an unpicked form from the blank state at whichever repo is first open", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatRepos.mockResolvedValueOnce(["/a", "/b"]).mockResolvedValue(["/b"]);
+      mocks.createChatThread.mockResolvedValue({ session: meta("s-new"), execution: null, start: "started", errors: [] });
+      render(chat());
+      // The rail first, so the open repos are known when the form opens: it must still not pin /a.
+      expect(await within(rail()).findByRole("button", { name: "New thread in a" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Start a new chat" }));
+      const dialog = await screen.findByRole("dialog", { name: "New thread" });
+      const select = within(dialog).getByRole("combobox") as HTMLSelectElement;
+      expect(select.value).toBe("/a");
+
+      await vi.advanceTimersByTimeAsync(3000);
+      await waitFor(() => expect(select.value).toBe("/b"));
+      expect(within(dialog).queryByRole("alert")).toBeNull();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+      await waitFor(() => expect(mocks.createChatThread).toHaveBeenCalledWith({ repoPath: "/b", createWorktree: false }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("explains a remembered pick that closed while the form was shut", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.listChatRepos.mockResolvedValueOnce(["/a", "/b"]).mockResolvedValue(["/a"]);
+      render(chat());
+      fireEvent.click(await within(rail()).findByRole("button", { name: "New thread in b" }));
+      fireEvent.click(within(await screen.findByRole("dialog", { name: "New thread" })).getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByRole("dialog", { name: "New thread" })).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(3000);
+      await waitFor(() => expect(within(rail()).queryByRole("button", { name: "New thread in b" })).toBeNull());
+      fireEvent.click(within(rail()).getByRole("button", { name: "New thread" }));
+      const dialog = await screen.findByRole("dialog", { name: "New thread" });
+      expect(within(dialog).getByRole("alert").textContent).toBe("b is not open in this window. Open it again, or choose another repository.");
+      expect((within(dialog).getByRole("combobox") as HTMLSelectElement).value).toBe("/b");
+      expect((within(dialog).getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

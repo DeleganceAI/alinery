@@ -30,6 +30,24 @@ export function olderPageState(current: ChatTranscriptState, buffer: ArrayBuffer
   return applyFilePage(current, { start: page.start, messages: page.messages }, "older");
 }
 
+/**
+ * The journal's tail, then older pages back to `through`, the oldest row of the transcript being
+ * replaced (null: the tail alone). A page begins after the first newline in the window the daemon
+ * reads, and `through` is a row's first byte, so a window of exactly the gap would begin after that
+ * row's own end and miss it. One byte more opens on the newline ending the row before, and the page
+ * starts on `through`. The daemon caps a window, so a long gap takes several steps; a page that
+ * does not move back ends the loop.
+ */
+export async function readJournalThrough(read: (end?: number, want?: number) => Promise<ArrayBuffer>, through: number | null): Promise<ChatTranscriptState> {
+  let state = journalState(await read());
+  while (through !== null && state.fileStart !== null && state.fileStart > through) {
+    const from = state.fileStart;
+    state = olderPageState(state, await read(from, from - through + 1));
+    if (state.fileStart !== null && state.fileStart >= from) break;
+  }
+  return state;
+}
+
 export function parseChatLine(line: string): unknown {
   try {
     return JSON.parse(line) as unknown;
@@ -87,8 +105,8 @@ export function sendCommand(text: string, busy: boolean) {
 }
 
 /** The optimistic row for a send that resumed the thread: plain text, so it claims the turn. */
-export function applyPlainSend(state: ChatTranscriptState, text: string, busy: boolean): ChatTranscriptState {
-  return applySendPlan(state, text, { dispatch: { kind: "plain", message: text }, invokesModel: true, optimisticKind: busy ? "follow_up" : "prompt" }).state;
+export function applyPlainSend(state: ChatTranscriptState, text: string, busy: boolean): { state: ChatTranscriptState; entryId: string } {
+  return applySendPlan(state, text, { dispatch: { kind: "plain", message: text }, invokesModel: true, optimisticKind: busy ? "follow_up" : "prompt" });
 }
 
 /** Send now: abort the running turn and prompt with this text instead of queueing it. */

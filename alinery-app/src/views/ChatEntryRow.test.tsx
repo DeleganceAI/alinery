@@ -53,6 +53,19 @@ describe("ChatEntryRow", () => {
     expect(html).toContain("Continue.");
   });
 
+  it("marks a refused send as not sent and keeps its Copy button even where copy buttons are hidden", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const { container } = render(<ChatEntryRow entry={{ id: "p1", at: Date.now(), actor: ACTOR.you, type: "prompt", text: "Continue.", failed: true }} showCopyButton={false} />);
+    expect(container.querySelector(".chat-status-bad")?.textContent).toBe("not sent");
+    fireEvent.click(screen.getByRole("button", { name: "Copy message" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("Continue."));
+    cleanup();
+    const sent = render(<ChatEntryRow entry={{ id: "p2", at: Date.now(), actor: ACTOR.you, type: "prompt", text: "Continue." }} showCopyButton={false} />).container;
+    expect(sent.textContent).not.toContain("not sent");
+    expect(sent.querySelector("button[title='Copy message']")).toBeNull();
+  });
+
   it("does not put the queued kicker on a prompt", () => {
     const html = render(<ChatEntryRow entry={{ id: "p1", at: Date.now(), actor: ACTOR.you, type: "prompt", text: "Continue." }} showActorLabels={false} />).container.innerHTML;
     expect(html).not.toContain("queued · after this turn");
