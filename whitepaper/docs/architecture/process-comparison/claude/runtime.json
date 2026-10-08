@@ -1,0 +1,10 @@
+{
+  "native_runtime": "Claude Code Dynamic Workflows",
+  "claude_code_version_checked": "2.1.289",
+  "node_version_tested": "26.0.0",
+  "node_role": "build and compatibility checks only",
+  "npm_dependencies": {},
+  "native_runtime_verified": false,
+  "live_inference_verified": false,
+  "blocker": "Claude Code is not authenticated; no sign-in attempted."
+}

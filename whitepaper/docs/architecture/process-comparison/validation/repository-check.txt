@@ -1,0 +1,5 @@
+Command: ./scripts/check.sh
+Checkout: whitepaper branch, d9768d9a8dbea228860e2a4408f7079a5952e788
+Exit code: 1
+ERROR: alinery-app/node_modules is missing
+The repository-wide check was not completed. No product code was changed.

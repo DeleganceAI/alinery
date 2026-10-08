@@ -1,0 +1,213 @@
+{
+  "checked_at": "2026-10-07T07:03:15.231Z",
+  "execution_environment": "Node v26.0.0 vm compatibility harness",
+  "native_runtime_verified": false,
+  "live_inference_verified": false,
+  "syntax_verified": "Node parse after removing initial export keyword and adding async function wrapper",
+  "body_modified_for_test": false,
+  "shims": [
+    "agent: canonical deterministic fixture outputs",
+    "pipeline: Promise.all over inputs"
+  ],
+  "generated_script_sha256": "18e501900da7199797ba8def27199ba9736b50c524d7fbbf571eb4a83916a0f9",
+  "canonical_prompt_and_schema_arguments_verified": true,
+  "scenarios": [
+    {
+      "name": "normal",
+      "passed": true,
+      "phases": [
+        "frame",
+        "discover",
+        "read",
+        "read",
+        "synthesize",
+        "decide",
+        "discover",
+        "read",
+        "synthesize",
+        "decide"
+      ],
+      "reader_batches": [
+        2,
+        1
+      ],
+      "maximum_simulated_concurrent_readers": 2,
+      "report": "# Fixture literature review\n\nSIMULATED report covering A, B and C. This is orchestration test data, not a scientific review.",
+      "expected_failure": null
+    },
+    {
+      "name": "empty_first",
+      "passed": true,
+      "phases": [
+        "frame",
+        "discover",
+        "finish_empty"
+      ],
+      "reader_batches": [],
+      "maximum_simulated_concurrent_readers": 0,
+      "report": "# No evidence found\n\nSIMULATED empty-first-round report; no scientific claims.",
+      "expected_failure": null
+    },
+    {
+      "name": "empty_second",
+      "passed": true,
+      "phases": [
+        "frame",
+        "discover",
+        "read",
+        "read",
+        "synthesize",
+        "decide",
+        "discover",
+        "finish_empty"
+      ],
+      "reader_batches": [
+        2
+      ],
+      "maximum_simulated_concurrent_readers": 2,
+      "report": "# Fixture literature review\n\nSIMULATED report covering A and B; no new sources in round 2.",
+      "expected_failure": null
+    },
+    {
+      "name": "failed_reader",
+      "passed": true,
+      "phases": [
+        "frame",
+        "discover",
+        "read",
+        "read"
+      ],
+      "reader_batches": [
+        2
+      ],
+      "maximum_simulated_concurrent_readers": 2,
+      "report": null,
+      "expected_failure": "Agent read:1:B failed or was stopped"
+    },
+    {
+      "name": "one_reader",
+      "passed": true,
+      "phases": [
+        "frame",
+        "discover",
+        "read",
+        "synthesize",
+        "decide"
+      ],
+      "reader_batches": [
+        1
+      ],
+      "maximum_simulated_concurrent_readers": 1,
+      "report": "# Fixture report\n\nSIMULATED one-reader report.",
+      "expected_failure": null
+    },
+    {
+      "name": "duplicate_and_seen_urls",
+      "passed": true,
+      "phases": [
+        "frame",
+        "discover",
+        "read",
+        "read",
+        "synthesize",
+        "decide",
+        "discover",
+        "read",
+        "synthesize",
+        "decide"
+      ],
+      "reader_batches": [
+        2,
+        1
+      ],
+      "maximum_simulated_concurrent_readers": 2,
+      "report": "# Fixture literature review\n\nSIMULATED report covering A, B and C. This is orchestration test data, not a scientific review.",
+      "expected_failure": null
+    },
+    {
+      "name": "mismatched_reader_id",
+      "passed": true,
+      "phases": [
+        "frame",
+        "discover",
+        "read",
+        "read"
+      ],
+      "reader_batches": [
+        2
+      ],
+      "maximum_simulated_concurrent_readers": 2,
+      "report": null,
+      "expected_failure": "Reader read:1:B changed its assigned source identity"
+    },
+    {
+      "name": "mismatched_reader_url",
+      "passed": true,
+      "phases": [
+        "frame",
+        "discover",
+        "read",
+        "read"
+      ],
+      "reader_batches": [
+        2
+      ],
+      "maximum_simulated_concurrent_readers": 2,
+      "report": null,
+      "expected_failure": "Reader read:1:B changed its assigned source identity"
+    },
+    {
+      "name": "mismatched_reader_title",
+      "passed": true,
+      "phases": [
+        "frame",
+        "discover",
+        "read",
+        "read"
+      ],
+      "reader_batches": [
+        2
+      ],
+      "maximum_simulated_concurrent_readers": 2,
+      "report": null,
+      "expected_failure": "Reader read:1:B changed its assigned source identity"
+    },
+    {
+      "name": "empty_stop_report",
+      "passed": true,
+      "phases": [
+        "frame",
+        "discover",
+        "read",
+        "read",
+        "synthesize",
+        "decide",
+        "discover",
+        "read",
+        "synthesize",
+        "decide"
+      ],
+      "reader_batches": [
+        2,
+        1
+      ],
+      "maximum_simulated_concurrent_readers": 2,
+      "report": null,
+      "expected_failure": "Agent decide:2 returned an empty final report"
+    },
+    {
+      "name": "empty_finish_empty_report",
+      "passed": true,
+      "phases": [
+        "frame",
+        "discover",
+        "finish_empty"
+      ],
+      "reader_batches": [],
+      "maximum_simulated_concurrent_readers": 0,
+      "report": null,
+      "expected_failure": "Agent finish_empty:1 returned an empty final report"
+    }
+  ],
+  "passed": true
+}

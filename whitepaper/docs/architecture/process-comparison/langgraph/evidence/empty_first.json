@@ -1,0 +1,148 @@
+{
+  "engine": "langgraph",
+  "version": "1.2.14",
+  "agent_adapter": "FixtureAgent",
+  "events": [
+    {
+      "phase": "frame",
+      "round": 1,
+      "source": null,
+      "event": "start",
+      "time": 1247389.532846083,
+      "input": {
+        "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?"
+      }
+    },
+    {
+      "phase": "frame",
+      "round": 1,
+      "source": null,
+      "event": "end",
+      "time": 1247389.534558541,
+      "output": {
+        "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+        "scope": "Primary literature on reusable adaptive agent processes.",
+        "round": 1,
+        "queries": [
+          "adaptive agent execution process"
+        ],
+        "seen": [],
+        "assessments": [],
+        "synthesis": ""
+      }
+    },
+    {
+      "phase": "discover",
+      "round": 1,
+      "source": null,
+      "event": "start",
+      "time": 1247389.53477,
+      "input": {
+        "state": {
+          "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+          "scope": "Primary literature on reusable adaptive agent processes.",
+          "round": 1,
+          "queries": [
+            "adaptive agent execution process"
+          ],
+          "seen": [],
+          "assessments": [],
+          "synthesis": ""
+        }
+      }
+    },
+    {
+      "phase": "discover",
+      "round": 1,
+      "source": null,
+      "event": "end",
+      "time": 1247389.535537291,
+      "output": {
+        "sources": [],
+        "notes": "SIMULATED no results."
+      }
+    },
+    {
+      "phase": "finish_empty",
+      "round": 1,
+      "source": null,
+      "event": "start",
+      "time": 1247389.535914208,
+      "input": {
+        "state": {
+          "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+          "scope": "Primary literature on reusable adaptive agent processes.",
+          "round": 1,
+          "queries": [
+            "adaptive agent execution process"
+          ],
+          "seen": [],
+          "assessments": [],
+          "synthesis": ""
+        },
+        "notes": "SIMULATED no results."
+      }
+    },
+    {
+      "phase": "finish_empty",
+      "round": 1,
+      "source": null,
+      "event": "end",
+      "time": 1247389.536205583,
+      "output": {
+        "report": "# No evidence found\n\nSIMULATED empty-first-round report; no scientific claims."
+      }
+    }
+  ],
+  "native_updates": [
+    {
+      "frame": {
+        "state": {
+          "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+          "scope": "Primary literature on reusable adaptive agent processes.",
+          "round": 1,
+          "queries": [
+            "adaptive agent execution process"
+          ],
+          "seen": [],
+          "assessments": [],
+          "synthesis": ""
+        }
+      }
+    },
+    {
+      "discover": {
+        "discovery": {
+          "sources": [],
+          "notes": "SIMULATED no results."
+        }
+      }
+    },
+    {
+      "finish_empty": {
+        "report": "# No evidence found\n\nSIMULATED empty-first-round report; no scientific claims."
+      }
+    }
+  ],
+  "result": {
+    "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+    "state": {
+      "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+      "scope": "Primary literature on reusable adaptive agent processes.",
+      "round": 1,
+      "queries": [
+        "adaptive agent execution process"
+      ],
+      "seen": [],
+      "assessments": [],
+      "synthesis": ""
+    },
+    "discovery": {
+      "sources": [],
+      "notes": "SIMULATED no results."
+    },
+    "reads": [],
+    "report": "# No evidence found\n\nSIMULATED empty-first-round report; no scientific claims."
+  },
+  "error": null
+}

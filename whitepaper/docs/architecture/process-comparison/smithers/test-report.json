@@ -1,0 +1,2095 @@
+{
+  "generatedAt": "2026-10-07T07:03:15.901Z",
+  "engine": "Smithers native FlowEngine.layerMemory",
+  "smithersCommit": "8fee1a6d88ef0308159cb1c9bd6a462ebf660724",
+  "smithersPackageVersion": "1.0.0-rc.1",
+  "node": "v26.4.0",
+  "effect": "4.0.0-rc.115",
+  "agentResponses": "synthetic deterministic fixtures",
+  "liveInferenceTested": false,
+  "durableRestartTested": false,
+  "homemadeScheduler": false,
+  "hashes": {
+    "process.mjs": "28341bbfc437ed2614d7c4e2d472925753e5b9a491e6ea7d2ca3b06f9dcb45bb",
+    "agents.mjs": "48205ba6efcc34fe89b4b209cb36a5e83dad916c5f383c50f6262890525f5fe3",
+    "register.mjs": "8769f03d1bf4e13e3316802451c9cb7cab6faad1adbfaadf85dde1a00f7e8bd7",
+    "test.mjs": "d2bd00d3f768e71f861fe48921ef18e7851f305450b549ce8eeb4050136bba05",
+    "package-lock.json": "906ec4d27545f91e38da90d75a68558c74dc7ba9d500bfd50d1f5f98250897d6",
+    "../shared/prompts.json": "cbbd022ec4c80e1294efeb612e4ada938246c646fdacb63d09262480d4cfe174",
+    "../shared/schemas.json": "5888d91803930d2dd6cb34ea38e3aba749008200dade2d1aeee84411131ac1fb",
+    "../shared/fixtures.json": "c1183eebe3e0550b747cee4ee1a753151c9d480dbe79bf22b7da55ec5fbac849"
+  },
+  "passed": 13,
+  "failed": 0,
+  "results": [
+    {
+      "name": "normal",
+      "passed": true,
+      "report": "# Fixture literature review\n\nSIMULATED report covering A, B and C. This is orchestration test data, not a scientific review.",
+      "events": [
+        {
+          "event": "start",
+          "phase": "frame",
+          "key": "",
+          "input": {
+            "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?"
+          }
+        },
+        {
+          "event": "done",
+          "phase": "frame",
+          "key": ""
+        },
+        {
+          "event": "start",
+          "phase": "discover",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "discover",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "read",
+          "key": "A",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "source": {
+              "id": "A",
+              "url": "https://example.invalid/paper-a",
+              "title": "Fixture paper A"
+            }
+          }
+        },
+        {
+          "event": "start",
+          "phase": "read",
+          "key": "B",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "source": {
+              "id": "B",
+              "url": "https://example.invalid/paper-b",
+              "title": "Fixture paper B"
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "read",
+          "key": "A"
+        },
+        {
+          "event": "done",
+          "phase": "read",
+          "key": "B"
+        },
+        {
+          "event": "start",
+          "phase": "synthesize",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "discovery": {
+              "sources": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A"
+                },
+                {
+                  "id": "B",
+                  "url": "https://example.invalid/paper-b",
+                  "title": "Fixture paper B"
+                }
+              ],
+              "notes": "SIMULATED first discovery batch."
+            },
+            "assessments": [
+              {
+                "id": "A",
+                "url": "https://example.invalid/paper-a",
+                "title": "Fixture paper A",
+                "summary": "SIMULATED assessment A for orchestration testing only.",
+                "limitations": "Synthetic fixture; this is not a real scientific source.",
+                "citations": []
+              },
+              {
+                "id": "B",
+                "url": "https://example.invalid/paper-b",
+                "title": "Fixture paper B",
+                "summary": "SIMULATED assessment B for orchestration testing only.",
+                "limitations": "Synthetic fixture; this is not a real scientific source.",
+                "citations": []
+              }
+            ]
+          }
+        },
+        {
+          "event": "done",
+          "phase": "synthesize",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "decide",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [
+                "https://example.invalid/paper-a",
+                "https://example.invalid/paper-b"
+              ],
+              "assessments": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A",
+                  "summary": "SIMULATED assessment A for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                },
+                {
+                  "id": "B",
+                  "url": "https://example.invalid/paper-b",
+                  "title": "Fixture paper B",
+                  "summary": "SIMULATED assessment B for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                }
+              ],
+              "synthesis": "SIMULATED cumulative synthesis of A and B."
+            },
+            "synthesis": {
+              "text": "SIMULATED cumulative synthesis of A and B.",
+              "gaps": [
+                "Need follow-up evidence."
+              ],
+              "queries": [
+                "follow-up evidence"
+              ]
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "decide",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "discover",
+          "key": "2",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 2,
+              "queries": [
+                "follow-up evidence"
+              ],
+              "seen": [
+                "https://example.invalid/paper-a",
+                "https://example.invalid/paper-b"
+              ],
+              "assessments": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A",
+                  "summary": "SIMULATED assessment A for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                },
+                {
+                  "id": "B",
+                  "url": "https://example.invalid/paper-b",
+                  "title": "Fixture paper B",
+                  "summary": "SIMULATED assessment B for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                }
+              ],
+              "synthesis": "SIMULATED cumulative synthesis of A and B."
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "discover",
+          "key": "2"
+        },
+        {
+          "event": "start",
+          "phase": "read",
+          "key": "C",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 2,
+              "queries": [
+                "follow-up evidence"
+              ],
+              "seen": [
+                "https://example.invalid/paper-a",
+                "https://example.invalid/paper-b"
+              ],
+              "assessments": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A",
+                  "summary": "SIMULATED assessment A for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                },
+                {
+                  "id": "B",
+                  "url": "https://example.invalid/paper-b",
+                  "title": "Fixture paper B",
+                  "summary": "SIMULATED assessment B for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                }
+              ],
+              "synthesis": "SIMULATED cumulative synthesis of A and B."
+            },
+            "source": {
+              "id": "C",
+              "url": "https://example.invalid/paper-c",
+              "title": "Fixture paper C"
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "read",
+          "key": "C"
+        },
+        {
+          "event": "start",
+          "phase": "synthesize",
+          "key": "2",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 2,
+              "queries": [
+                "follow-up evidence"
+              ],
+              "seen": [
+                "https://example.invalid/paper-a",
+                "https://example.invalid/paper-b"
+              ],
+              "assessments": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A",
+                  "summary": "SIMULATED assessment A for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                },
+                {
+                  "id": "B",
+                  "url": "https://example.invalid/paper-b",
+                  "title": "Fixture paper B",
+                  "summary": "SIMULATED assessment B for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                }
+              ],
+              "synthesis": "SIMULATED cumulative synthesis of A and B."
+            },
+            "discovery": {
+              "sources": [
+                {
+                  "id": "C",
+                  "url": "https://example.invalid/paper-c",
+                  "title": "Fixture paper C"
+                }
+              ],
+              "notes": "SIMULATED citation follow-up batch."
+            },
+            "assessments": [
+              {
+                "id": "C",
+                "url": "https://example.invalid/paper-c",
+                "title": "Fixture paper C",
+                "summary": "SIMULATED assessment C for orchestration testing only.",
+                "limitations": "Synthetic fixture; this is not a real scientific source.",
+                "citations": []
+              }
+            ]
+          }
+        },
+        {
+          "event": "done",
+          "phase": "synthesize",
+          "key": "2"
+        },
+        {
+          "event": "start",
+          "phase": "decide",
+          "key": "2",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 2,
+              "queries": [
+                "follow-up evidence"
+              ],
+              "seen": [
+                "https://example.invalid/paper-a",
+                "https://example.invalid/paper-b",
+                "https://example.invalid/paper-c"
+              ],
+              "assessments": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A",
+                  "summary": "SIMULATED assessment A for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                },
+                {
+                  "id": "B",
+                  "url": "https://example.invalid/paper-b",
+                  "title": "Fixture paper B",
+                  "summary": "SIMULATED assessment B for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                },
+                {
+                  "id": "C",
+                  "url": "https://example.invalid/paper-c",
+                  "title": "Fixture paper C",
+                  "summary": "SIMULATED assessment C for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                }
+              ],
+              "synthesis": "SIMULATED cumulative synthesis of A, B and C."
+            },
+            "synthesis": {
+              "text": "SIMULATED cumulative synthesis of A, B and C.",
+              "gaps": [],
+              "queries": []
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "decide",
+          "key": "2"
+        }
+      ]
+    },
+    {
+      "name": "empty_first",
+      "passed": true,
+      "report": "# No evidence found\n\nSIMULATED empty-first-round report; no scientific claims.",
+      "events": [
+        {
+          "event": "start",
+          "phase": "frame",
+          "key": "",
+          "input": {
+            "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?"
+          }
+        },
+        {
+          "event": "done",
+          "phase": "frame",
+          "key": ""
+        },
+        {
+          "event": "start",
+          "phase": "discover",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "discover",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "finish_empty",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "notes": "SIMULATED no results."
+          }
+        },
+        {
+          "event": "done",
+          "phase": "finish_empty",
+          "key": "1"
+        }
+      ]
+    },
+    {
+      "name": "empty_second",
+      "passed": true,
+      "report": "# Fixture literature review\n\nSIMULATED report covering A and B; no new sources in round 2.",
+      "events": [
+        {
+          "event": "start",
+          "phase": "frame",
+          "key": "",
+          "input": {
+            "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?"
+          }
+        },
+        {
+          "event": "done",
+          "phase": "frame",
+          "key": ""
+        },
+        {
+          "event": "start",
+          "phase": "discover",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "discover",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "read",
+          "key": "A",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "source": {
+              "id": "A",
+              "url": "https://example.invalid/paper-a",
+              "title": "Fixture paper A"
+            }
+          }
+        },
+        {
+          "event": "start",
+          "phase": "read",
+          "key": "B",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "source": {
+              "id": "B",
+              "url": "https://example.invalid/paper-b",
+              "title": "Fixture paper B"
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "read",
+          "key": "A"
+        },
+        {
+          "event": "done",
+          "phase": "read",
+          "key": "B"
+        },
+        {
+          "event": "start",
+          "phase": "synthesize",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "discovery": {
+              "sources": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A"
+                },
+                {
+                  "id": "B",
+                  "url": "https://example.invalid/paper-b",
+                  "title": "Fixture paper B"
+                }
+              ],
+              "notes": "SIMULATED first discovery batch."
+            },
+            "assessments": [
+              {
+                "id": "A",
+                "url": "https://example.invalid/paper-a",
+                "title": "Fixture paper A",
+                "summary": "SIMULATED assessment A for orchestration testing only.",
+                "limitations": "Synthetic fixture; this is not a real scientific source.",
+                "citations": []
+              },
+              {
+                "id": "B",
+                "url": "https://example.invalid/paper-b",
+                "title": "Fixture paper B",
+                "summary": "SIMULATED assessment B for orchestration testing only.",
+                "limitations": "Synthetic fixture; this is not a real scientific source.",
+                "citations": []
+              }
+            ]
+          }
+        },
+        {
+          "event": "done",
+          "phase": "synthesize",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "decide",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [
+                "https://example.invalid/paper-a",
+                "https://example.invalid/paper-b"
+              ],
+              "assessments": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A",
+                  "summary": "SIMULATED assessment A for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                },
+                {
+                  "id": "B",
+                  "url": "https://example.invalid/paper-b",
+                  "title": "Fixture paper B",
+                  "summary": "SIMULATED assessment B for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                }
+              ],
+              "synthesis": "SIMULATED cumulative synthesis of A and B."
+            },
+            "synthesis": {
+              "text": "SIMULATED cumulative synthesis of A and B.",
+              "gaps": [
+                "Need follow-up evidence."
+              ],
+              "queries": [
+                "follow-up evidence"
+              ]
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "decide",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "discover",
+          "key": "2",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 2,
+              "queries": [
+                "follow-up evidence"
+              ],
+              "seen": [
+                "https://example.invalid/paper-a",
+                "https://example.invalid/paper-b"
+              ],
+              "assessments": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A",
+                  "summary": "SIMULATED assessment A for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                },
+                {
+                  "id": "B",
+                  "url": "https://example.invalid/paper-b",
+                  "title": "Fixture paper B",
+                  "summary": "SIMULATED assessment B for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                }
+              ],
+              "synthesis": "SIMULATED cumulative synthesis of A and B."
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "discover",
+          "key": "2"
+        },
+        {
+          "event": "start",
+          "phase": "finish_empty",
+          "key": "2",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 2,
+              "queries": [
+                "follow-up evidence"
+              ],
+              "seen": [
+                "https://example.invalid/paper-a",
+                "https://example.invalid/paper-b"
+              ],
+              "assessments": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A",
+                  "summary": "SIMULATED assessment A for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                },
+                {
+                  "id": "B",
+                  "url": "https://example.invalid/paper-b",
+                  "title": "Fixture paper B",
+                  "summary": "SIMULATED assessment B for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                }
+              ],
+              "synthesis": "SIMULATED cumulative synthesis of A and B."
+            },
+            "notes": "SIMULATED no new results."
+          }
+        },
+        {
+          "event": "done",
+          "phase": "finish_empty",
+          "key": "2"
+        }
+      ]
+    },
+    {
+      "name": "failed_reader",
+      "passed": true,
+      "expectedFailure": "Error: SIMULATED reader B failed",
+      "events": [
+        {
+          "event": "start",
+          "phase": "frame",
+          "key": "",
+          "input": {
+            "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?"
+          }
+        },
+        {
+          "event": "done",
+          "phase": "frame",
+          "key": ""
+        },
+        {
+          "event": "start",
+          "phase": "discover",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "discover",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "read",
+          "key": "A",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "source": {
+              "id": "A",
+              "url": "https://example.invalid/paper-a",
+              "title": "Fixture paper A"
+            }
+          }
+        },
+        {
+          "event": "start",
+          "phase": "read",
+          "key": "B",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "source": {
+              "id": "B",
+              "url": "https://example.invalid/paper-b",
+              "title": "Fixture paper B"
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "read",
+          "key": "A"
+        },
+        {
+          "event": "failed",
+          "phase": "read",
+          "key": "B"
+        }
+      ]
+    },
+    {
+      "name": "one_reader",
+      "passed": true,
+      "report": "# Fixture report\n\nSIMULATED one-reader report.",
+      "events": [
+        {
+          "event": "start",
+          "phase": "frame",
+          "key": "",
+          "input": {
+            "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?"
+          }
+        },
+        {
+          "event": "done",
+          "phase": "frame",
+          "key": ""
+        },
+        {
+          "event": "start",
+          "phase": "discover",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "discover",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "read",
+          "key": "A",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "source": {
+              "id": "A",
+              "url": "https://example.invalid/paper-a",
+              "title": "Fixture paper A"
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "read",
+          "key": "A"
+        },
+        {
+          "event": "start",
+          "phase": "synthesize",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "discovery": {
+              "sources": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A"
+                }
+              ],
+              "notes": "SIMULATED single-reader batch."
+            },
+            "assessments": [
+              {
+                "id": "A",
+                "url": "https://example.invalid/paper-a",
+                "title": "Fixture paper A",
+                "summary": "SIMULATED assessment A for orchestration testing only.",
+                "limitations": "Synthetic fixture; this is not a real scientific source.",
+                "citations": []
+              }
+            ]
+          }
+        },
+        {
+          "event": "done",
+          "phase": "synthesize",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "decide",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [
+                "https://example.invalid/paper-a"
+              ],
+              "assessments": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A",
+                  "summary": "SIMULATED assessment A for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                }
+              ],
+              "synthesis": "SIMULATED cumulative synthesis of A only."
+            },
+            "synthesis": {
+              "text": "SIMULATED cumulative synthesis of A only.",
+              "gaps": [],
+              "queries": []
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "decide",
+          "key": "1"
+        }
+      ]
+    },
+    {
+      "name": "deduplicate",
+      "passed": true,
+      "report": "# Fixture literature review\n\nSIMULATED report covering A, B and C. This is orchestration test data, not a scientific review.",
+      "events": [
+        {
+          "event": "start",
+          "phase": "frame",
+          "key": "",
+          "input": {
+            "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?"
+          }
+        },
+        {
+          "event": "done",
+          "phase": "frame",
+          "key": ""
+        },
+        {
+          "event": "start",
+          "phase": "discover",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "discover",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "read",
+          "key": "A",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "source": {
+              "id": "A",
+              "url": "https://example.invalid/paper-a",
+              "title": "Fixture paper A"
+            }
+          }
+        },
+        {
+          "event": "start",
+          "phase": "read",
+          "key": "B",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "source": {
+              "id": "B",
+              "url": "https://example.invalid/paper-b",
+              "title": "Fixture paper B"
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "read",
+          "key": "A"
+        },
+        {
+          "event": "done",
+          "phase": "read",
+          "key": "B"
+        },
+        {
+          "event": "start",
+          "phase": "synthesize",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "discovery": {
+              "sources": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A"
+                },
+                {
+                  "id": "B",
+                  "url": "https://example.invalid/paper-b",
+                  "title": "Fixture paper B"
+                }
+              ],
+              "notes": "SIMULATED duplicated first batch."
+            },
+            "assessments": [
+              {
+                "id": "A",
+                "url": "https://example.invalid/paper-a",
+                "title": "Fixture paper A",
+                "summary": "SIMULATED assessment A for orchestration testing only.",
+                "limitations": "Synthetic fixture; this is not a real scientific source.",
+                "citations": []
+              },
+              {
+                "id": "B",
+                "url": "https://example.invalid/paper-b",
+                "title": "Fixture paper B",
+                "summary": "SIMULATED assessment B for orchestration testing only.",
+                "limitations": "Synthetic fixture; this is not a real scientific source.",
+                "citations": []
+              }
+            ]
+          }
+        },
+        {
+          "event": "done",
+          "phase": "synthesize",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "decide",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [
+                "https://example.invalid/paper-a",
+                "https://example.invalid/paper-b"
+              ],
+              "assessments": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A",
+                  "summary": "SIMULATED assessment A for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                },
+                {
+                  "id": "B",
+                  "url": "https://example.invalid/paper-b",
+                  "title": "Fixture paper B",
+                  "summary": "SIMULATED assessment B for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                }
+              ],
+              "synthesis": "SIMULATED cumulative synthesis of A and B."
+            },
+            "synthesis": {
+              "text": "SIMULATED cumulative synthesis of A and B.",
+              "gaps": [
+                "Need follow-up evidence."
+              ],
+              "queries": [
+                "follow-up evidence"
+              ]
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "decide",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "discover",
+          "key": "2",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 2,
+              "queries": [
+                "follow-up evidence"
+              ],
+              "seen": [
+                "https://example.invalid/paper-a",
+                "https://example.invalid/paper-b"
+              ],
+              "assessments": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A",
+                  "summary": "SIMULATED assessment A for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                },
+                {
+                  "id": "B",
+                  "url": "https://example.invalid/paper-b",
+                  "title": "Fixture paper B",
+                  "summary": "SIMULATED assessment B for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                }
+              ],
+              "synthesis": "SIMULATED cumulative synthesis of A and B."
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "discover",
+          "key": "2"
+        },
+        {
+          "event": "start",
+          "phase": "read",
+          "key": "C",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 2,
+              "queries": [
+                "follow-up evidence"
+              ],
+              "seen": [
+                "https://example.invalid/paper-a",
+                "https://example.invalid/paper-b"
+              ],
+              "assessments": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A",
+                  "summary": "SIMULATED assessment A for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                },
+                {
+                  "id": "B",
+                  "url": "https://example.invalid/paper-b",
+                  "title": "Fixture paper B",
+                  "summary": "SIMULATED assessment B for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                }
+              ],
+              "synthesis": "SIMULATED cumulative synthesis of A and B."
+            },
+            "source": {
+              "id": "C",
+              "url": "https://example.invalid/paper-c",
+              "title": "Fixture paper C"
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "read",
+          "key": "C"
+        },
+        {
+          "event": "start",
+          "phase": "synthesize",
+          "key": "2",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 2,
+              "queries": [
+                "follow-up evidence"
+              ],
+              "seen": [
+                "https://example.invalid/paper-a",
+                "https://example.invalid/paper-b"
+              ],
+              "assessments": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A",
+                  "summary": "SIMULATED assessment A for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                },
+                {
+                  "id": "B",
+                  "url": "https://example.invalid/paper-b",
+                  "title": "Fixture paper B",
+                  "summary": "SIMULATED assessment B for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                }
+              ],
+              "synthesis": "SIMULATED cumulative synthesis of A and B."
+            },
+            "discovery": {
+              "sources": [
+                {
+                  "id": "C",
+                  "url": "https://example.invalid/paper-c",
+                  "title": "Fixture paper C"
+                }
+              ],
+              "notes": "SIMULATED repeated known and fresh sources."
+            },
+            "assessments": [
+              {
+                "id": "C",
+                "url": "https://example.invalid/paper-c",
+                "title": "Fixture paper C",
+                "summary": "SIMULATED assessment C for orchestration testing only.",
+                "limitations": "Synthetic fixture; this is not a real scientific source.",
+                "citations": []
+              }
+            ]
+          }
+        },
+        {
+          "event": "done",
+          "phase": "synthesize",
+          "key": "2"
+        },
+        {
+          "event": "start",
+          "phase": "decide",
+          "key": "2",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 2,
+              "queries": [
+                "follow-up evidence"
+              ],
+              "seen": [
+                "https://example.invalid/paper-a",
+                "https://example.invalid/paper-b",
+                "https://example.invalid/paper-c"
+              ],
+              "assessments": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A",
+                  "summary": "SIMULATED assessment A for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                },
+                {
+                  "id": "B",
+                  "url": "https://example.invalid/paper-b",
+                  "title": "Fixture paper B",
+                  "summary": "SIMULATED assessment B for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                },
+                {
+                  "id": "C",
+                  "url": "https://example.invalid/paper-c",
+                  "title": "Fixture paper C",
+                  "summary": "SIMULATED assessment C for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                }
+              ],
+              "synthesis": "SIMULATED cumulative synthesis of A, B and C."
+            },
+            "synthesis": {
+              "text": "SIMULATED cumulative synthesis of A, B and C.",
+              "gaps": [],
+              "queries": []
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "decide",
+          "key": "2"
+        }
+      ]
+    },
+    {
+      "name": "invalid_frame_question",
+      "passed": true,
+      "expectedFailure": "Error: frame must preserve the research question",
+      "events": [
+        {
+          "event": "start",
+          "phase": "frame",
+          "key": "",
+          "input": {
+            "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?"
+          }
+        }
+      ]
+    },
+    {
+      "name": "invalid_frame_state",
+      "passed": true,
+      "expectedFailure": "Error: frame must initialize an empty first round",
+      "events": [
+        {
+          "event": "start",
+          "phase": "frame",
+          "key": "",
+          "input": {
+            "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?"
+          }
+        }
+      ]
+    },
+    {
+      "name": "invalid_reader_identity",
+      "passed": true,
+      "expectedFailure": "Error: read must assess its assigned source",
+      "events": [
+        {
+          "event": "start",
+          "phase": "frame",
+          "key": "",
+          "input": {
+            "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?"
+          }
+        },
+        {
+          "event": "done",
+          "phase": "frame",
+          "key": ""
+        },
+        {
+          "event": "start",
+          "phase": "discover",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "discover",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "read",
+          "key": "A",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "source": {
+              "id": "A",
+              "url": "https://example.invalid/paper-a",
+              "title": "Fixture paper A"
+            }
+          }
+        },
+        {
+          "event": "start",
+          "phase": "read",
+          "key": "B",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "source": {
+              "id": "B",
+              "url": "https://example.invalid/paper-b",
+              "title": "Fixture paper B"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "invalid_reader_title",
+      "passed": true,
+      "expectedFailure": "Error: read must assess its assigned source",
+      "events": [
+        {
+          "event": "start",
+          "phase": "frame",
+          "key": "",
+          "input": {
+            "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?"
+          }
+        },
+        {
+          "event": "done",
+          "phase": "frame",
+          "key": ""
+        },
+        {
+          "event": "start",
+          "phase": "discover",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "discover",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "read",
+          "key": "A",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "source": {
+              "id": "A",
+              "url": "https://example.invalid/paper-a",
+              "title": "Fixture paper A"
+            }
+          }
+        },
+        {
+          "event": "start",
+          "phase": "read",
+          "key": "B",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "source": {
+              "id": "B",
+              "url": "https://example.invalid/paper-b",
+              "title": "Fixture paper B"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "invalid_continuation",
+      "passed": true,
+      "expectedFailure": "Error: continuation requires nonempty queries",
+      "events": [
+        {
+          "event": "start",
+          "phase": "frame",
+          "key": "",
+          "input": {
+            "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?"
+          }
+        },
+        {
+          "event": "done",
+          "phase": "frame",
+          "key": ""
+        },
+        {
+          "event": "start",
+          "phase": "discover",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "discover",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "read",
+          "key": "A",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "source": {
+              "id": "A",
+              "url": "https://example.invalid/paper-a",
+              "title": "Fixture paper A"
+            }
+          }
+        },
+        {
+          "event": "start",
+          "phase": "read",
+          "key": "B",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "source": {
+              "id": "B",
+              "url": "https://example.invalid/paper-b",
+              "title": "Fixture paper B"
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "read",
+          "key": "A"
+        },
+        {
+          "event": "done",
+          "phase": "read",
+          "key": "B"
+        },
+        {
+          "event": "start",
+          "phase": "synthesize",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "discovery": {
+              "sources": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A"
+                },
+                {
+                  "id": "B",
+                  "url": "https://example.invalid/paper-b",
+                  "title": "Fixture paper B"
+                }
+              ],
+              "notes": "SIMULATED first discovery batch."
+            },
+            "assessments": [
+              {
+                "id": "A",
+                "url": "https://example.invalid/paper-a",
+                "title": "Fixture paper A",
+                "summary": "SIMULATED assessment A for orchestration testing only.",
+                "limitations": "Synthetic fixture; this is not a real scientific source.",
+                "citations": []
+              },
+              {
+                "id": "B",
+                "url": "https://example.invalid/paper-b",
+                "title": "Fixture paper B",
+                "summary": "SIMULATED assessment B for orchestration testing only.",
+                "limitations": "Synthetic fixture; this is not a real scientific source.",
+                "citations": []
+              }
+            ]
+          }
+        },
+        {
+          "event": "done",
+          "phase": "synthesize",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "decide",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [
+                "https://example.invalid/paper-a",
+                "https://example.invalid/paper-b"
+              ],
+              "assessments": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A",
+                  "summary": "SIMULATED assessment A for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                },
+                {
+                  "id": "B",
+                  "url": "https://example.invalid/paper-b",
+                  "title": "Fixture paper B",
+                  "summary": "SIMULATED assessment B for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                }
+              ],
+              "synthesis": "SIMULATED cumulative synthesis of A and B."
+            },
+            "synthesis": {
+              "text": "SIMULATED cumulative synthesis of A and B.",
+              "gaps": [
+                "Need follow-up evidence."
+              ],
+              "queries": [
+                "follow-up evidence"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "invalid_stop_report",
+      "passed": true,
+      "expectedFailure": "Error: stopping requires a final report",
+      "events": [
+        {
+          "event": "start",
+          "phase": "frame",
+          "key": "",
+          "input": {
+            "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?"
+          }
+        },
+        {
+          "event": "done",
+          "phase": "frame",
+          "key": ""
+        },
+        {
+          "event": "start",
+          "phase": "discover",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "discover",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "read",
+          "key": "A",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "source": {
+              "id": "A",
+              "url": "https://example.invalid/paper-a",
+              "title": "Fixture paper A"
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "read",
+          "key": "A"
+        },
+        {
+          "event": "start",
+          "phase": "synthesize",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "discovery": {
+              "sources": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A"
+                }
+              ],
+              "notes": "SIMULATED single-reader batch."
+            },
+            "assessments": [
+              {
+                "id": "A",
+                "url": "https://example.invalid/paper-a",
+                "title": "Fixture paper A",
+                "summary": "SIMULATED assessment A for orchestration testing only.",
+                "limitations": "Synthetic fixture; this is not a real scientific source.",
+                "citations": []
+              }
+            ]
+          }
+        },
+        {
+          "event": "done",
+          "phase": "synthesize",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "decide",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [
+                "https://example.invalid/paper-a"
+              ],
+              "assessments": [
+                {
+                  "id": "A",
+                  "url": "https://example.invalid/paper-a",
+                  "title": "Fixture paper A",
+                  "summary": "SIMULATED assessment A for orchestration testing only.",
+                  "limitations": "Synthetic fixture; this is not a real scientific source.",
+                  "citations": []
+                }
+              ],
+              "synthesis": "SIMULATED cumulative synthesis of A only."
+            },
+            "synthesis": {
+              "text": "SIMULATED cumulative synthesis of A only.",
+              "gaps": [],
+              "queries": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "invalid_empty_report",
+      "passed": true,
+      "expectedFailure": "Error: empty discovery requires a final report",
+      "events": [
+        {
+          "event": "start",
+          "phase": "frame",
+          "key": "",
+          "input": {
+            "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?"
+          }
+        },
+        {
+          "event": "done",
+          "phase": "frame",
+          "key": ""
+        },
+        {
+          "event": "start",
+          "phase": "discover",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            }
+          }
+        },
+        {
+          "event": "done",
+          "phase": "discover",
+          "key": "1"
+        },
+        {
+          "event": "start",
+          "phase": "finish_empty",
+          "key": "1",
+          "input": {
+            "state": {
+              "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+              "scope": "Primary literature on reusable adaptive agent processes.",
+              "round": 1,
+              "queries": [
+                "adaptive agent execution process"
+              ],
+              "seen": [],
+              "assessments": [],
+              "synthesis": ""
+            },
+            "notes": "SIMULATED no results."
+          }
+        }
+      ]
+    }
+  ]
+}

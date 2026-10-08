@@ -1,0 +1,46 @@
+Independent process-equivalence review — 2026-10-07 UTC
+
+Reviewed SPEC.md, shared prompts/schemas/fixtures, LangGraph process/adapters/checks,
+Smithers process/adapters/checks, Claude workflow body/compatibility checks, and
+Alinery playbook generator plus native-core fixture driver. No manuscript edits.
+
+For the canonical fixture scenarios, the four definitions have the same six
+operations, runtime-discovered reader cardinality, complete-batch synthesis
+requirement, cumulative decision state, decision-controlled repetition, and
+empty-discovery route. No unresolved concrete process mismatch was found.
+
+Closed findings:
+
+1. Smithers originally accepted a changed reader title; reproduced independently
+   on its native FlowEngine. agents.mjs now validates id, URL and title together.
+   test-report.json records 13 passing native scenarios, including the new
+   invalid_reader_title regression, which fails before synthesis as required.
+
+2. Alinery's fixture driver originally retained an empty trimmed URL. verify.rs
+   now excludes empty trimmed URLs along with duplicates and previously seen
+   URLs. Its native-core verifier adds a duplicate_urls scenario containing a
+   padded duplicate, a blank URL and a previously seen second-round source.
+   validation/alinery.json records six passing cases; duplicate_urls retains
+   the intended reader widths [2, 1]. The code fix and generated evidence were
+   inspected independently. This concerns the fixture boundary, not a change
+   to the production Alinery scheduler.
+
+Verification boundaries:
+
+- LangGraph: eleven conformance cases execute installed native StateGraph/Send
+  with deterministic synthetic agent responses; live Claude adapter untested.
+- Smithers: thirteen cases execute the pinned native in-memory FlowEngine with
+  synthetic responses. Cross-process replay, durability and live calls untested.
+- Alinery: six cases use production parser/scheduler/completion code with fixture
+  agent outputs and simulated process lifecycle signals. Reader eligibility and
+  batch barriers are verified; actual simultaneous agent processes are not.
+- Claude: compatibility checks execute the saved JavaScript process body with
+  agent/pipeline shims. Native runtime scheduling, persistence, permissions,
+  schema enforcement and live inference remain unverified.
+
+The six domain instructions are shared. The full prompts are not byte-identical:
+Alinery adds artifact-publication and completion instructions, while the other
+adapters use different prompt envelopes. These are process/transport adaptations;
+no contradictory domain operation was found. The examples do not establish
+identical live model behavior or literature quality. This review is not a proof
+of general semantic equivalence or successful live execution.

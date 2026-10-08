@@ -1,0 +1,27 @@
+{
+  "documentation_updated_on": "2026-10-08",
+  "page_count": 6,
+  "whitepaper_page_count": 40,
+  "compiler": "latexmk + pdfTeX (TeX Live 2026)",
+  "latex_warnings": [],
+  "rendering": "Poppler pdftoppm; all pages of both documents rendered",
+  "visual_review": "Both documents inspected in contact sheets with full-page spot checks; orphaned listing headings and empty continuation frames corrected.",
+  "content_review": "Independent migration audit confirms all five example appendices and all 17 included sources retained, previous whitepaper appendices A/B unchanged, and updated pointers resolved.",
+  "runtime_checks": "Not rerun: executable sources, fixtures, and original verification evidence are unchanged.",
+  "previous_comparison_pdf_review": {
+    "page_count": 33,
+    "compiler": "latexmk + pdfTeX (TeX Live 2026)",
+    "latex_warnings": [],
+    "rendering": "Poppler pdftoppm, all pages rendered",
+    "visual_review": "All pages reviewed in contact sheets; selected diagram and code pages inspected at larger size. No clipping, missing glyphs or overlapping elements found in final render.",
+    "content_review": "Independent prose review corrected schema-sharing and Claude subagent/session wording. Independent process review closed two discrepancies; see equivalence-review.txt."
+  },
+  "latest_whitepaper_revision": {
+    "date": "2026-10-08",
+    "change": "Replace the abstract placeholder with a 198-word abstract drafted and reviewed with Compound Writing.",
+    "rendering": "All 40 pages rendered with Poppler; changed pages 1-3 and 5-8 visually inspected and pass.",
+    "unchanged_pages": "Remaining page content streams are byte-identical to the previously inspected PDF.",
+    "latex_warnings": [],
+    "content_review": "Independent claim audit and reader review; manuscript content outside the abstract is byte-identical."
+  }
+}

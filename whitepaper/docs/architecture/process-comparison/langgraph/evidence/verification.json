@@ -1,0 +1,131 @@
+{
+  "verified_at": "2026-10-07T07:03:16.556556+00:00",
+  "python": "3.14.5",
+  "engine": "langgraph",
+  "version": "1.2.14",
+  "runtime": "native StateGraph / Send, no scheduler shim",
+  "inference": "deterministic synthetic fixtures; live Claude calls not run (CLI signed out)",
+  "live_adapter_cli": "Claude Code 2.1.289 (installed --help inspected; live inference not tested)",
+  "shared_sha256": {
+    "prompts.json": "cbbd022ec4c80e1294efeb612e4ada938246c646fdacb63d09262480d4cfe174",
+    "schemas.json": "5888d91803930d2dd6cb34ea38e3aba749008200dade2d1aeee84411131ac1fb",
+    "fixtures.json": "c1183eebe3e0550b747cee4ee1a753151c9d480dbe79bf22b7da55ec5fbac849"
+  },
+  "cases": [
+    {
+      "scenario": "normal",
+      "passed": true,
+      "reader_counts": {
+        "1": 2,
+        "2": 1
+      },
+      "phase_counts": {
+        "frame": 1,
+        "discover": 2,
+        "read": 3,
+        "synthesize": 2,
+        "decide": 2
+      },
+      "expected_failure": false
+    },
+    {
+      "scenario": "empty_first",
+      "passed": true,
+      "reader_counts": {},
+      "phase_counts": {
+        "frame": 1,
+        "discover": 1,
+        "finish_empty": 1
+      },
+      "expected_failure": false
+    },
+    {
+      "scenario": "empty_second",
+      "passed": true,
+      "reader_counts": {
+        "1": 2
+      },
+      "phase_counts": {
+        "frame": 1,
+        "discover": 2,
+        "read": 2,
+        "synthesize": 1,
+        "decide": 1,
+        "finish_empty": 1
+      },
+      "expected_failure": false
+    },
+    {
+      "scenario": "failed_reader",
+      "passed": true,
+      "reader_counts": {
+        "1": 2
+      },
+      "phase_counts": {
+        "frame": 1,
+        "discover": 1,
+        "read": 2
+      },
+      "expected_failure": true
+    },
+    {
+      "scenario": "one_reader",
+      "passed": true,
+      "reader_counts": {
+        "1": 1
+      },
+      "phase_counts": {
+        "frame": 1,
+        "discover": 1,
+        "read": 1,
+        "synthesize": 1,
+        "decide": 1
+      },
+      "expected_failure": false
+    },
+    {
+      "scenario": "duplicate_urls",
+      "passed": true
+    },
+    {
+      "scenario": "invalid_frame_question",
+      "passed": true,
+      "expected_failure": {
+        "type": "ValueError",
+        "message": "Frame must produce the specified initial state"
+      }
+    },
+    {
+      "scenario": "invalid_reader_identity",
+      "passed": true,
+      "expected_failure": {
+        "type": "ValueError",
+        "message": "A reader must preserve its source identity"
+      }
+    },
+    {
+      "scenario": "invalid_continuation",
+      "passed": true,
+      "expected_failure": {
+        "type": "ValueError",
+        "message": "A continuation must supply new queries"
+      }
+    },
+    {
+      "scenario": "invalid_stop_report",
+      "passed": true,
+      "expected_failure": {
+        "type": "ValueError",
+        "message": "A stop decision must include the complete report"
+      }
+    },
+    {
+      "scenario": "invalid_empty_report",
+      "passed": true,
+      "expected_failure": {
+        "type": "ValueError",
+        "message": "Empty discovery must still produce a nonblank report"
+      }
+    }
+  ]
+}

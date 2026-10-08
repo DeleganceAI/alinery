@@ -1,0 +1,44 @@
+{
+  "engine": "langgraph",
+  "version": "1.2.14",
+  "agent_adapter": "FixtureAgent",
+  "events": [
+    {
+      "phase": "frame",
+      "round": 1,
+      "source": null,
+      "event": "start",
+      "time": 1247389.704185291,
+      "input": {
+        "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?"
+      }
+    },
+    {
+      "phase": "frame",
+      "round": 1,
+      "source": null,
+      "event": "end",
+      "time": 1247389.706270875,
+      "output": {
+        "question": "changed question",
+        "scope": "Primary literature on reusable adaptive agent processes.",
+        "round": 1,
+        "queries": [
+          "adaptive agent execution process"
+        ],
+        "seen": [],
+        "assessments": [],
+        "synthesis": ""
+      }
+    }
+  ],
+  "native_updates": [],
+  "result": {
+    "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+    "reads": []
+  },
+  "error": {
+    "type": "ValueError",
+    "message": "Frame must produce the specified initial state"
+  }
+}

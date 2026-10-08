@@ -1,0 +1,145 @@
+{
+  "engine": "langgraph",
+  "version": "1.2.14",
+  "agent_adapter": "FixtureAgent",
+  "events": [
+    {
+      "phase": "frame",
+      "round": 1,
+      "source": null,
+      "event": "start",
+      "time": 1247389.818377041,
+      "input": {
+        "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?"
+      }
+    },
+    {
+      "phase": "frame",
+      "round": 1,
+      "source": null,
+      "event": "end",
+      "time": 1247389.820795458,
+      "output": {
+        "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+        "scope": "Primary literature on reusable adaptive agent processes.",
+        "round": 1,
+        "queries": [
+          "adaptive agent execution process"
+        ],
+        "seen": [],
+        "assessments": [],
+        "synthesis": ""
+      }
+    },
+    {
+      "phase": "discover",
+      "round": 1,
+      "source": null,
+      "event": "start",
+      "time": 1247389.821068125,
+      "input": {
+        "state": {
+          "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+          "scope": "Primary literature on reusable adaptive agent processes.",
+          "round": 1,
+          "queries": [
+            "adaptive agent execution process"
+          ],
+          "seen": [],
+          "assessments": [],
+          "synthesis": ""
+        }
+      }
+    },
+    {
+      "phase": "discover",
+      "round": 1,
+      "source": null,
+      "event": "end",
+      "time": 1247389.821985,
+      "output": {
+        "sources": [],
+        "notes": "SIMULATED no results."
+      }
+    },
+    {
+      "phase": "finish_empty",
+      "round": 1,
+      "source": null,
+      "event": "start",
+      "time": 1247389.822498083,
+      "input": {
+        "state": {
+          "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+          "scope": "Primary literature on reusable adaptive agent processes.",
+          "round": 1,
+          "queries": [
+            "adaptive agent execution process"
+          ],
+          "seen": [],
+          "assessments": [],
+          "synthesis": ""
+        },
+        "notes": "SIMULATED no results."
+      }
+    },
+    {
+      "phase": "finish_empty",
+      "round": 1,
+      "source": null,
+      "event": "end",
+      "time": 1247389.822903666,
+      "output": {
+        "report": " "
+      }
+    }
+  ],
+  "native_updates": [
+    {
+      "frame": {
+        "state": {
+          "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+          "scope": "Primary literature on reusable adaptive agent processes.",
+          "round": 1,
+          "queries": [
+            "adaptive agent execution process"
+          ],
+          "seen": [],
+          "assessments": [],
+          "synthesis": ""
+        }
+      }
+    },
+    {
+      "discover": {
+        "discovery": {
+          "sources": [],
+          "notes": "SIMULATED no results."
+        }
+      }
+    }
+  ],
+  "result": {
+    "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+    "state": {
+      "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+      "scope": "Primary literature on reusable adaptive agent processes.",
+      "round": 1,
+      "queries": [
+        "adaptive agent execution process"
+      ],
+      "seen": [],
+      "assessments": [],
+      "synthesis": ""
+    },
+    "discovery": {
+      "sources": [],
+      "notes": "SIMULATED no results."
+    },
+    "reads": []
+  },
+  "error": {
+    "type": "ValueError",
+    "message": "Empty discovery must still produce a nonblank report"
+  }
+}

@@ -1,0 +1,9 @@
+build/
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+.claude/
+smithers-source/
+run.json
+live-run.json

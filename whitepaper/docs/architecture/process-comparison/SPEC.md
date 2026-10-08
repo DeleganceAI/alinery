@@ -1,0 +1,19 @@
+# Matched literature-review process
+
+All four examples implement the same intended process. Their domain instructions, data contract and fixtures are common; wrappers, harnesses and enforcement boundaries differ as documented in process-comparison.tex.
+
+Six authored agent operations:
+1. frame({question}) -> State. Runs once. State = {question:string, scope:string, round:integer>=1, queries:string[], seen:string[], assessments:Assessment[], synthesis:string}. Initially round=1, seen=[], assessments=[], synthesis=""; frame chooses scope and initial queries.
+2. discover({state}) -> {sources:Source[], notes:string}. Search primary literature/web using state.queries and citation trails. Sources are fresh URLs not in state.seen; discard empty trimmed URLs and de-duplicate exact trimmed URLs, do not reread known sources. Source = {id:string,url:string,title:string}. Cardinality comes from runtime discovery, not a hard-coded worker count.
+3. read({state,source}) -> Assessment = {id:string,url:string,title:string,summary:string,limitations:string,citations:string[]}. Exactly one invocation per fresh source, independent and eligible for concurrency. Inaccessible source must be an honest assessment with limitation, never silently omitted.
+4. synthesize({state,discovery,assessments}) -> Synthesis = {text:string,gaps:string[],queries:string[]}. Wait for ALL readers in current batch; state.assessments contains earlier rounds, assessments current batch. Produce cumulative synthesis, retain source citations.
+5. decide({state,synthesis}) -> {continue:boolean,queries:string[],reason:string,report:string}. If useful unresolved gaps and new queries, continue=true with nonempty queries; otherwise false with complete final Markdown report. Before calling decide, update State with all seen URLs, cumulative assessments and synthesis.text. A continuation then increases round by one and replaces the query list. Same authored definition repeats discover. An agent makes the domain decision, native process control applies it. No hard-coded round count. An operator may stop a live run; termination is not guaranteed.
+6. finish_empty({state,notes}) -> {report:string}. If discover yields no fresh sources, do NOT invoke any read, synthesize or decide; finish honestly from previous evidence, or a no-evidence report in first round.
+
+Shared canonical prompts, JSON schemas and deterministic fixture responses are supplied in shared/prompts.json, shared/schemas.json and shared/fixtures.json. Prompt call convention: phase instruction plus JSON input context. Every live operation uses its own agent invocation. Infrastructure helpers may adapt calls, never hide the process control.
+
+Fixture scenario normal: frame -> discover round 1 yields A and B -> 2 readers -> synthesize round 1 -> decide continue -> discover round 2 yields C -> 1 reader -> synthesize round 2 -> decide stop. Other scenarios cover empty first and empty second round, failed reader (must not synthesize a partial batch), one reader, and URL deduplication. Fixtures are simulated agent outputs, not real scientific findings. The documented verification scope distinguishes actual orchestration runtimes from compatibility shims.
+
+Live inference: Claude CLI 2.1.289 is installed but NOT authenticated. Do not start sign-in or inspect credentials. Smithers/LangGraph can invoke claude -p as a documented live agent adapter with structured output. Native Claude workflow uses its native agent(), pipeline(), parallel() API; no imports/filesystem available in workflow body. Generated self-contained JS can embed shared prompts/schemas; include build command so no source drift. Never pretend a Node compatibility harness validates Claude's actual runtime.
+
+Sources, dependency manifests, fixture checks, detailed evidence and per-system RUNNING.md files are included. Native Claude execution and all live inference remain unverified.
