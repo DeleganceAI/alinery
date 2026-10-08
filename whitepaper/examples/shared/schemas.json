@@ -1,0 +1,216 @@
+{
+  "frame": {
+    "type": "object",
+    "properties": {
+      "question": {
+        "type": "string"
+      },
+      "scope": {
+        "type": "string"
+      },
+      "round": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "queries": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "seen": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "assessments": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "limitations": {
+              "type": "string"
+            },
+            "citations": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "id",
+            "url",
+            "title",
+            "summary",
+            "limitations",
+            "citations"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "synthesis": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "question",
+      "scope",
+      "round",
+      "queries",
+      "seen",
+      "assessments",
+      "synthesis"
+    ],
+    "additionalProperties": false
+  },
+  "discover": {
+    "type": "object",
+    "properties": {
+      "sources": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "url",
+            "title"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "notes": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "sources",
+      "notes"
+    ],
+    "additionalProperties": false
+  },
+  "read": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "url": {
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      },
+      "summary": {
+        "type": "string"
+      },
+      "limitations": {
+        "type": "string"
+      },
+      "citations": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "id",
+      "url",
+      "title",
+      "summary",
+      "limitations",
+      "citations"
+    ],
+    "additionalProperties": false
+  },
+  "synthesize": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string"
+      },
+      "gaps": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "queries": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "text",
+      "gaps",
+      "queries"
+    ],
+    "additionalProperties": false
+  },
+  "decide": {
+    "type": "object",
+    "properties": {
+      "continue": {
+        "type": "boolean"
+      },
+      "queries": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "reason": {
+        "type": "string"
+      },
+      "report": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "continue",
+      "queries",
+      "reason",
+      "report"
+    ],
+    "additionalProperties": false
+  },
+  "finish_empty": {
+    "type": "object",
+    "properties": {
+      "report": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "report"
+    ],
+    "additionalProperties": false
+  }
+}

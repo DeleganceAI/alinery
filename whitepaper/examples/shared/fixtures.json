@@ -1,0 +1,164 @@
+{
+  "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+  "responses": {
+    "frame": {
+      "question": "How can agent execution follow a reusable process while adapting the number of workers and iterations to discoveries?",
+      "scope": "Primary literature on reusable adaptive agent processes.",
+      "round": 1,
+      "queries": [
+        "adaptive agent execution process"
+      ],
+      "seen": [],
+      "assessments": [],
+      "synthesis": ""
+    },
+    "discover": {
+      "1": {
+        "sources": [
+          {
+            "id": "A",
+            "url": "https://example.invalid/paper-a",
+            "title": "Fixture paper A"
+          },
+          {
+            "id": "B",
+            "url": "https://example.invalid/paper-b",
+            "title": "Fixture paper B"
+          }
+        ],
+        "notes": "SIMULATED first discovery batch."
+      },
+      "2": {
+        "sources": [
+          {
+            "id": "C",
+            "url": "https://example.invalid/paper-c",
+            "title": "Fixture paper C"
+          }
+        ],
+        "notes": "SIMULATED citation follow-up batch."
+      }
+    },
+    "read": {
+      "A": {
+        "id": "A",
+        "url": "https://example.invalid/paper-a",
+        "title": "Fixture paper A",
+        "summary": "SIMULATED assessment A for orchestration testing only.",
+        "limitations": "Synthetic fixture; this is not a real scientific source.",
+        "citations": []
+      },
+      "B": {
+        "id": "B",
+        "url": "https://example.invalid/paper-b",
+        "title": "Fixture paper B",
+        "summary": "SIMULATED assessment B for orchestration testing only.",
+        "limitations": "Synthetic fixture; this is not a real scientific source.",
+        "citations": []
+      },
+      "C": {
+        "id": "C",
+        "url": "https://example.invalid/paper-c",
+        "title": "Fixture paper C",
+        "summary": "SIMULATED assessment C for orchestration testing only.",
+        "limitations": "Synthetic fixture; this is not a real scientific source.",
+        "citations": []
+      }
+    },
+    "synthesize": {
+      "1": {
+        "text": "SIMULATED cumulative synthesis of A and B.",
+        "gaps": [
+          "Need follow-up evidence."
+        ],
+        "queries": [
+          "follow-up evidence"
+        ]
+      },
+      "2": {
+        "text": "SIMULATED cumulative synthesis of A, B and C.",
+        "gaps": [],
+        "queries": []
+      }
+    },
+    "decide": {
+      "1": {
+        "continue": true,
+        "queries": [
+          "follow-up evidence"
+        ],
+        "reason": "SIMULATED gap requires another round.",
+        "report": ""
+      },
+      "2": {
+        "continue": false,
+        "queries": [],
+        "reason": "SIMULATED stopping decision.",
+        "report": "# Fixture literature review\n\nSIMULATED report covering A, B and C. This is orchestration test data, not a scientific review."
+      }
+    },
+    "finish_empty": {
+      "1": {
+        "report": "# No evidence found\n\nSIMULATED empty-first-round report; no scientific claims."
+      },
+      "2": {
+        "report": "# Fixture literature review\n\nSIMULATED report covering A and B; no new sources in round 2."
+      }
+    }
+  },
+  "scenarios": {
+    "normal": {},
+    "empty_first": {
+      "discover": {
+        "1": {
+          "sources": [],
+          "notes": "SIMULATED no results."
+        }
+      }
+    },
+    "empty_second": {
+      "discover": {
+        "2": {
+          "sources": [],
+          "notes": "SIMULATED no new results."
+        }
+      }
+    },
+    "failed_reader": {
+      "read": {
+        "B": {
+          "__error__": "SIMULATED reader B failed"
+        }
+      }
+    },
+    "one_reader": {
+      "discover": {
+        "1": {
+          "sources": [
+            {
+              "id": "A",
+              "url": "https://example.invalid/paper-a",
+              "title": "Fixture paper A"
+            }
+          ],
+          "notes": "SIMULATED single-reader batch."
+        }
+      },
+      "synthesize": {
+        "1": {
+          "text": "SIMULATED cumulative synthesis of A only.",
+          "gaps": [],
+          "queries": []
+        }
+      },
+      "decide": {
+        "1": {
+          "continue": false,
+          "queries": [],
+          "reason": "SIMULATED stop after one reader.",
+          "report": "# Fixture report\n\nSIMULATED one-reader report."
+        }
+      }
+    }
+  }
+}
