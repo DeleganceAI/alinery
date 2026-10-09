@@ -46,6 +46,20 @@ describe("workRailDefaultExpanded", () => {
 describe("chatVisibilityFromAppearance", () => {
   it("defaults requested journal chrome on and density normal when absent", () => {
     expect(chatVisibilityFromAppearance({})).toEqual(DEFAULT_CHAT_VISIBILITY);
+    expect(DEFAULT_CHAT_VISIBILITY).toMatchObject({
+      showHarness: true,
+      showSubagentRows: true,
+      showSubagentDrawer: true,
+      showDate: true,
+      showTime: true,
+      showCopyButtons: true,
+      showThinking: false,
+      showTools: false,
+      showTurnMarkers: false,
+      showActorLabels: false,
+      showAgentBubbles: false,
+      showBlockCopyButtons: false,
+    });
     expect(
       chatVisibilityFromAppearance({
         chat_show_thinking: true,
@@ -67,6 +81,8 @@ describe("chatVisibilityFromAppearance", () => {
       fontSize: 18,
       railFontSize: 14,
       maxWidth: "600",
+      showActorLabels: true,
+      showAgentBubbles: true,
       showCopyButtons: false,
     });
   });

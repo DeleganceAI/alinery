@@ -1,0 +1,224 @@
+.task-sessions-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.task-sessions-heading > .btn {
+  gap: 6px;
+}
+
+.task-run-graph {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  color: var(--text);
+}
+
+.task-run-toolbar {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+
+.task-run-toolbar output {
+  min-width: 4ch;
+  text-align: center;
+}
+
+
+.task-run-viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  scroll-padding-bottom: 64px;
+  cursor: grab;
+  touch-action: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.task-run-viewport.is-panning,
+.task-run-viewport.is-panning * {
+  cursor: grabbing;
+}
+
+.task-run-stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.task-run-canvas {
+  position: relative;
+  margin: 0;
+}
+
+.task-run-paths {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.task-run-paths marker {
+  fill: var(--text-muted);
+}
+
+.task-run-path {
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 1.5;
+}
+
+.task-run-node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  box-sizing: border-box;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+
+.task-run-node strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  flex-shrink: 0;
+  max-height: 32px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+  font-size: 13px;
+  line-height: 16px;
+}
+
+.task-run-node > span {
+  max-width: 100%;
+  flex-shrink: 0;
+  min-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.task-run-node-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.task-run-node-status .statusdot {
+  font-size: inherit;
+  line-height: 14px;
+}
+
+.task-run-node-status .statusdot-badge svg {
+  width: 14px;
+  height: 14px;
+}
+
+.task-run-path.highlighted {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.task-run-paths marker.highlighted {
+  fill: var(--accent);
+}
+
+.task-run-endpoint {
+  border-style: dashed;
+  background: var(--surface-subtle);
+  cursor: default;
+}
+
+.task-run-labels {
+  position: absolute;
+  box-sizing: border-box;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.task-run-artifact,
+.task-run-resume {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0 6px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-family: monospace;
+  font-size: 12px;
+  line-height: var(--artifact-line-height);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.task-run-artifact {
+  min-width: 24px;
+  min-height: 24px;
+  cursor: pointer;
+}
+
+.task-run-artifact:hover {
+  text-decoration: underline;
+}
+
+.task-run-resume {
+  color: var(--text-muted);
+}
+
+button.task-run-node:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-subtle);
+}
+
+.task-run-viewport:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+button.task-run-node:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  outline: calc(var(--artifact-line-height) / 12) solid var(--accent);
+  outline-offset: calc(var(--artifact-line-height) / 12);
+}
+
+.task-run-artifact:focus-visible {
+  outline: calc(var(--artifact-line-height) / 12) solid var(--accent);
+  outline-offset: calc(var(--artifact-line-height) / -12);
+}

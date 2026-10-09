@@ -62,6 +62,7 @@ vi.mock("../ipc", () =>
 );
 
 beforeEach(() => {
+  localStorage.removeItem("alinery.taskSessionView");
   mocks.getTask.mockReset().mockResolvedValue(null);
   mocks.listSessions.mockReset().mockResolvedValue([]);
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
@@ -186,6 +187,7 @@ describe("a session kill issued from task detail", () => {
         onAppearanceChange={noop}
       />,
     );
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
 
     const kill = await waitFor(() => screen.getByText("Kill"));
     fireEvent.click(kill);
@@ -240,6 +242,7 @@ it.each(["commit", "reject"] as const)("late_name_commit_cannot_patch_another_re
     />
   );
   const { rerender } = render(view("/repo-a"));
+  fireEvent.click(await screen.findByRole("button", { name: "Show list view" }));
   fireEvent.click(await screen.findByRole("button", { name: "Rename session" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Committed in A" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));

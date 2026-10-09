@@ -6,6 +6,8 @@ import type { QueuedFollowUp } from "../chat/queue";
 import type * as Ipc from "../ipc";
 import type { SessionMessageDraft } from "../sessionMessage";
 import { mockIpc } from "../test/mockIpc";
+import { journalPage } from "../test/ompJournal";
+import { stubScrollSize } from "../test/scroll";
 import { Toast, toast } from "../toast";
 import type { AgentState, ArtifactListItem, ArtifactTreeNode, SessionObservation, Task } from "../types";
 import { executionRecord, executionReply, partiallyPublishedExecution } from "./executionTestFixture";
@@ -26,12 +28,15 @@ const sessionArtifactReady = vi.hoisted(() => vi.fn(async () => false));
 const startSession = vi.hoisted(() => vi.fn(async () => undefined));
 const restateSession = vi.hoisted(() => vi.fn(async () => undefined));
 const rpcAttachSession = vi.hoisted(() => vi.fn(async (_args: unknown) => undefined));
+const onStreamClosed = vi.hoisted(() => vi.fn((_id: string, _attachId: number, _onClosed: () => void, _onGiveUp: () => void) => () => {}));
+const readSessionOmp = vi.hoisted(() => vi.fn(async (_args: unknown): Promise<ArrayBuffer> => Promise.reject(new Error("no journal"))));
 const rpcWriteSession = vi.hoisted(() => vi.fn(async (_id: string, _payload: unknown) => undefined));
 const detachSession = vi.hoisted(() => vi.fn(async () => undefined));
 const readOmpModelRoles = vi.hoisted(() => vi.fn(async () => ({}) as Record<string, string>));
 const writeOmpModelRoles = vi.hoisted(() => vi.fn(async (roles: Record<string, string>) => roles));
 const openUrl = vi.hoisted(() => vi.fn(async (_url: string | URL, _openWith?: string): Promise<void> => undefined));
 const confirmDanger = vi.hoisted(() => vi.fn(async () => true));
+const confirmStopAndSwitch = vi.hoisted(() => vi.fn(async (_target: "pty" | "rpc") => true));
 const archiveSession = vi.hoisted(() => vi.fn());
 const pickAttachmentFilesDialog = vi.hoisted(() => vi.fn(async (): Promise<string[]> => []));
 const chatFileStat = vi.hoisted(() => vi.fn(async (path: string) => ({ name: path.split("/").pop() ?? path, bytes: 12 })));
@@ -88,7 +93,7 @@ const initialTree: ArtifactTreeNode[] = [
 ];
 
 vi.mock("../SessionTerminal", () => ({ SessionTerminal: () => <div data-testid="terminal" /> }));
-vi.mock("../confirm", () => ({ confirmDanger }));
+vi.mock("../confirm", () => ({ confirmDanger, confirmStopAndSwitch }));
 vi.mock("../ipc", () =>
   mockIpc({
     getSessionDisplay,
@@ -114,6 +119,8 @@ vi.mock("../ipc", () =>
     startSession,
     restateSession,
     rpcAttachSession,
+    onStreamClosed,
+    readSessionOmp,
     rpcWriteSession,
     detachSession,
     readOmpModelRoles,
@@ -384,9 +391,9 @@ describe("session work names", () => {
     expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Session name" }));
   });
 
-  it("shows a waiting ellipsis for a live unnamed OMP session and hides it while renaming", async () => {
+  it("shows a waiting ellipsis for a busy unnamed OMP session and hides it while renaming", async () => {
     getSessionDisplay.mockResolvedValue({ session: { id: "session", harness: "omp" }, task_name: "Task", subtask_name: null } as never);
-    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
     renderSession();
     await flushPromises();
     expect(screen.getByRole("status", { name: "Waiting for session name" })).toBeDefined();
@@ -621,6 +628,8 @@ describe("session chat hatch", () => {
     restateSession.mockClear();
     confirmDanger.mockReset();
     confirmDanger.mockResolvedValue(true);
+    confirmStopAndSwitch.mockReset();
+    confirmStopAndSwitch.mockResolvedValue(true);
     rpcWriteSession.mockClear();
     rpcAttachSession.mockReset();
     rpcAttachSession.mockImplementation(async () => undefined);
@@ -642,7 +651,7 @@ describe("session chat hatch", () => {
     expect(screen.getByTestId("chat-pane")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
     await waitFor(() => expect(restateSession).toHaveBeenCalledWith("session", "pty"));
-    expect(confirmDanger).not.toHaveBeenCalled();
+    expect(confirmStopAndSwitch).not.toHaveBeenCalled();
   });
 
   it("restates live PTY to RPC from the Chat hatch", async () => {
@@ -656,20 +665,20 @@ describe("session chat hatch", () => {
 
   it("confirms before restating when a send is pending and the poll still reads idle", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
-    confirmDanger.mockResolvedValue(false);
+    confirmStopAndSwitch.mockResolvedValue(false);
     renderSession({ messageDraft: { body: "first", pendingActions: [], attachments: [] } });
     await flushPromises();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(rpcWriteSession.mock.calls.some(([, payload]) => (payload as { type?: string } | null)?.type === "prompt")).toBe(true));
 
     fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
-    await waitFor(() => expect(confirmDanger).toHaveBeenCalled());
+    await waitFor(() => expect(confirmStopAndSwitch).toHaveBeenCalledWith("pty"));
     expect(restateSession).not.toHaveBeenCalled();
   });
 
   it("confirms before restating when turn_start leads the idle observation poll", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
-    confirmDanger.mockResolvedValue(false);
+    confirmStopAndSwitch.mockResolvedValue(false);
     const onLine = { current: undefined as ((line: string) => void) | undefined };
     captureRpcOnLine(onLine);
     renderSession();
@@ -680,8 +689,25 @@ describe("session chat hatch", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
-    await waitFor(() => expect(confirmDanger).toHaveBeenCalled());
+    await waitFor(() => expect(confirmStopAndSwitch).toHaveBeenCalledWith("pty"));
     expect(restateSession).not.toHaveBeenCalled();
+  });
+
+  it("aborts the turn and restates once the user accepts stopping it", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    renderSession();
+    await flushPromises();
+    await waitFor(() => expect(onLine.current).toBeDefined());
+    act(() => {
+      onLine.current?.(JSON.stringify({ type: "turn_start" }));
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    await waitFor(() => expect(restateSession).toHaveBeenCalledWith("session", "pty"));
+    expect(confirmStopAndSwitch).toHaveBeenCalledWith("pty");
+    expect(rpcWriteSession.mock.calls.some(([, payload]) => (payload as { type?: string } | null)?.type === "abort")).toBe(true);
   });
 
   it("hides the hatch on leftover harnesses", async () => {
@@ -1043,6 +1069,68 @@ describe("session chat send routing", () => {
     await waitFor(() => expect(onDraftChange).toHaveBeenCalledWith({ body: "keep me", pendingActions: [], attachments: [] }));
     expect(screen.getAllByText("Agent is already processing").length).toBeGreaterThan(0);
     expect(within(screen.getByTestId("chat-pane")).queryByText("keep me")).toBeNull();
+  });
+
+  it("keeps a refused send as not sent, with Copy, when the composer already holds another message", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    const onDraftChange = vi.fn();
+    const view = renderSession({ messageDraft: { body: "first", pendingActions: [], attachments: [] }, onMessageDraftChange: onDraftChange });
+    await flushPromises();
+    await waitFor(() => expect(onLine.current).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    const commandId = sends()[0]?.id;
+    // The parent's draft is the next message by now.
+    view.rerender(sessionView({ messageDraft: { body: "second", pendingActions: [], attachments: [] }, onMessageDraftChange: onDraftChange }));
+    onDraftChange.mockClear();
+
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "response", id: commandId, command: "prompt", success: false, error: "Agent is already processing" }));
+    });
+
+    const pane = within(screen.getByTestId("chat-pane"));
+    expect(await pane.findByText("not sent")).toBeDefined();
+    const row = pane.getByText("first").closest("article") as HTMLElement;
+    expect(within(row).getByText("not sent")).toBeDefined();
+    expect(within(row).getByRole("button", { name: "Copy message" })).toBeDefined();
+    expect(onDraftChange).not.toHaveBeenCalled();
+  });
+
+  it("drops a refused follow-up from the queued list, so a reattach does not bring its row back", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    const onQueuedChange = vi.fn();
+    const onDraftChange = vi.fn();
+    const view = renderSession({
+      messageDraft: { body: "later", pendingActions: [], attachments: [] },
+      onMessageDraftChange: onDraftChange,
+      onQueuedFollowUpsChange: onQueuedChange,
+    });
+    await flushPromises();
+    await waitFor(() => expect(onLine.current).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    expect(onQueuedChange).toHaveBeenLastCalledWith([{ text: "later", attachments: [] }]);
+    const commandId = sends()[0]?.id;
+    view.rerender(
+      sessionView({
+        messageDraft: { body: "", pendingActions: [], attachments: [] },
+        queuedFollowUps: [{ text: "later", attachments: [] }],
+        onMessageDraftChange: onDraftChange,
+        onQueuedFollowUpsChange: onQueuedChange,
+      }),
+    );
+
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "response", id: commandId, command: "follow_up", success: false, error: "Agent is not processing" }));
+    });
+
+    expect(onQueuedChange).toHaveBeenLastCalledWith([]);
+    expect(onDraftChange).toHaveBeenLastCalledWith({ body: "later", pendingActions: [], attachments: [] });
+    expect(screen.queryByText(/queued · after this turn/)).toBeNull();
   });
 
   it("keeps queuing after an unrelated RPC failure between write and turn_start", async () => {
@@ -1533,6 +1621,104 @@ describe("session chat attach handshake", () => {
     rpcWriteSession.mockReset().mockResolvedValue(undefined);
   });
 
+  it("re-reads the journal when a dropped stream reattaches", async () => {
+    renderSession();
+    await waitFor(() => expect(rpcAttachSession).toHaveBeenCalledTimes(1));
+    const reads = readSessionOmp.mock.calls.length;
+    const onClosed = onStreamClosed.mock.calls[onStreamClosed.mock.calls.length - 1]?.[2];
+    await act(async () => onClosed?.());
+    await waitFor(() => expect(rpcAttachSession).toHaveBeenCalledTimes(2));
+    expect(readSessionOmp.mock.calls.length).toBe(reads + 1);
+  });
+
+  // The rebuild reads back to the oldest row the transcript had loaded and keeps the rows in place, so
+  // a reader who turned auto-scroll off is not thrown back to the tail.
+  describe("reattach keeps the loaded history", () => {
+    let stub: ReturnType<typeof stubScrollSize>;
+    beforeEach(() => {
+      stub = stubScrollSize();
+    });
+    afterEach(() => {
+      stub.restore();
+      readSessionOmp.mockReset().mockRejectedValue(new Error("no journal"));
+    });
+
+    const rows = () => [...document.querySelectorAll<HTMLElement>('[data-entry-id^="f:"]')].map((node) => node.dataset.entryId);
+    const readerAt = (top: number) => {
+      const list = document.querySelector(".chat-list") as HTMLElement;
+      list.scrollTop = top;
+      fireEvent.scroll(list);
+    };
+    const reattach = async () => {
+      const attaches = rpcAttachSession.mock.calls.length;
+      const onClosed = onStreamClosed.mock.calls[onStreamClosed.mock.calls.length - 1]?.[2];
+      await act(async () => onClosed?.());
+      await waitFor(() => expect(rpcAttachSession).toHaveBeenCalledTimes(attaches + 1));
+    };
+    const reads = () => readSessionOmp.mock.calls.map(([args]) => args);
+
+    it("keeps the older rows the reader paged in, in place, with auto-scroll off", async () => {
+      readSessionOmp.mockImplementation(async (args) => ((args as { end: number | null }).end === 500 ? journalPage(0, [["m1", "first"]]) : journalPage(500, [["m2", "second"]])));
+      renderSession({ appearance: { ...DEFAULT_APPEARANCE, chat_auto_scroll: false } });
+      await screen.findByText("second");
+      readerAt(100);
+      await screen.findByText("first");
+      const first = document.querySelector('[data-entry-id="f:m1"]');
+      readerAt(900);
+      stub.writes.length = 0;
+      readSessionOmp.mockClear();
+
+      await reattach();
+      await waitFor(() => expect(reads()).toHaveLength(2));
+      expect(reads()).toEqual([expect.objectContaining({ end: null }), expect.objectContaining({ end: 500, want: 501 })]);
+      expect(rows()).toEqual(["f:m1", "f:m2"]);
+      expect(document.querySelector('[data-entry-id="f:m1"]')).toBe(first);
+      expect(stub.writes).toEqual([]);
+    });
+
+    it("reads the whole gap when the journal grew by several windows, with auto-scroll off", async () => {
+      let grown = false;
+      readSessionOmp.mockImplementation(async (args) => {
+        if (!grown) return journalPage(500, [["m2", "second"]]);
+        return (args as { end: number | null }).end === null
+          ? journalPage(2000, [["m4", "fourth"]])
+          : journalPage(500, [
+              ["m2", "second"],
+              ["m3", "third"],
+            ]);
+      });
+      renderSession({ appearance: { ...DEFAULT_APPEARANCE, chat_auto_scroll: false } });
+      await screen.findByText("second");
+      const second = document.querySelector('[data-entry-id="f:m2"]');
+      readerAt(900);
+      stub.writes.length = 0;
+      grown = true;
+      readSessionOmp.mockClear();
+
+      await reattach();
+      await screen.findByText("fourth");
+      expect(reads()).toEqual([expect.objectContaining({ end: null }), expect.objectContaining({ end: 2000, want: 1501 })]);
+      expect(rows()).toEqual(["f:m2", "f:m3", "f:m4"]);
+      expect(document.querySelector('[data-entry-id="f:m2"]')).toBe(second);
+      expect(stub.writes).toEqual([]);
+    });
+  });
+
+  it("detaches again when an attach lands after the view let go of it", async () => {
+    const landing = deferred<undefined>();
+    rpcAttachSession.mockImplementation(() => landing.promise);
+    detachSession.mockClear();
+    const { unmount } = renderSession();
+    await waitFor(() => expect(rpcAttachSession).toHaveBeenCalledTimes(1));
+    const attach = rpcAttachSession.mock.calls[0]?.[0] as { attachId: number };
+    unmount();
+    expect(detachSession.mock.calls).toEqual([["session", attach.attachId]]);
+    await act(async () => landing.resolve(undefined));
+    await waitFor(() => expect(detachSession).toHaveBeenCalledTimes(2));
+    expect(detachSession.mock.calls[1]).toEqual(["session", attach.attachId]);
+    expect(rpcWriteSession.mock.calls.map(([, payload]) => (payload as { type?: string }).type)).not.toContain("negotiate_protocol");
+  });
+
   it("writes get_subagents after set_subagent_subscription", async () => {
     renderSession();
     await waitFor(() => expect(rpcWriteSession.mock.calls.some(([, payload]) => (payload as { type?: string } | null)?.type === "set_subagent_subscription")).toBe(true));
@@ -1633,6 +1819,81 @@ describe("session chat attach handshake", () => {
     });
     await flushPromises();
     expect(rpcAttachSession).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("session chat thinking level", () => {
+  const reasoningState = {
+    type: "response",
+    command: "get_state",
+    success: true,
+    data: { model: { provider: "anthropic", id: "opus", reasoning: true, thinking: { efforts: ["low", "high"] } }, thinkingLevel: "high" },
+  };
+  const picker = () => screen.getByRole("combobox", { name: "Thinking level" }) as HTMLSelectElement;
+  /** Attaches the chat and returns what feeds it OMP lines. */
+  async function attached(status: SessionObservation, overrides: Partial<ComponentProps<typeof SessionView>> = {}) {
+    sessionStatus.mockResolvedValue(status);
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    renderSession(overrides);
+    await waitFor(() => expect(onLine.current).toBeDefined());
+    return (...lines: object[]) =>
+      act(async () => {
+        for (const line of lines) onLine.current?.(JSON.stringify(line));
+      });
+  }
+
+  beforeEach(() => {
+    scenario.tasks = [{ ...task }];
+    rpcWriteSession.mockReset().mockResolvedValue(undefined);
+    rpcAttachSession.mockReset();
+    rpcAttachSession.mockImplementation(async () => undefined);
+  });
+
+  afterEach(() => {
+    cleanup();
+    sessionStatus.mockReset();
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "exited" as const, code: 0 }, state: null, checkpoint: {} });
+    rpcWriteSession.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("keeps the status line's text with the level in it", async () => {
+    const feed = await attached(liveObservation("rpc"), { model: "xai/grok" });
+    await feed({ type: "response", command: "get_state", success: true, data: { thinkingLevel: "high" } });
+    expect(document.querySelector(".chat-meta p")?.textContent).toMatch(/^xai\/grok · high · \d+ events?$/);
+  });
+
+  it("writes the level a pick names, and keeps showing OMP's until it confirms", async () => {
+    const feed = await attached(liveObservation("rpc"));
+    await feed(reasoningState);
+    expect(picker().value).toBe("high");
+    expect(picker().disabled).toBe(false);
+    rpcWriteSession.mockClear();
+    fireEvent.change(picker(), { target: { value: "low" } });
+    expect(rpcWriteSession).toHaveBeenCalledExactlyOnceWith("session", expect.objectContaining({ type: "set_thinking_level", level: "low" }));
+    expect(picker().value).toBe("high");
+    await feed({ type: "thinking_level_changed", thinkingLevel: "low" });
+    expect(picker().value).toBe("low");
+  });
+
+  it("toasts a pick OMP could not be sent", async () => {
+    const feed = await attached(liveObservation("rpc"));
+    render(<Toast />);
+    await feed(reasoningState);
+    rpcWriteSession.mockRejectedValueOnce("session-exited");
+    fireEvent.change(picker(), { target: { value: "low" } });
+    expect(await within(screen.getByRole("status", { name: "Notifications" })).findByText("session-exited")).toBeTruthy();
+  });
+
+  it("is disabled, with the reason, while the session's process is not running", async () => {
+    const feed = await attached({
+      ...liveObservation("rpc"),
+      lifecycle: { state: "live_exited" },
+      state: { process: { state: "exited", code: 0 }, agent: { state: "idle" }, playbook: { state: "ready_to_advance" }, adapter: "omp", message_adapter: "omp_bracketed_paste" },
+    });
+    await feed(reasoningState);
+    expect(picker().disabled).toBe(true);
+    expect(picker().title).toBe("The session is not running, so its thinking level cannot change");
   });
 });
 

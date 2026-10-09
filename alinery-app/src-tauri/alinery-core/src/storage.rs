@@ -748,4 +748,22 @@ mod tests {
         assert_eq!(format_mb(4_215_275), "4.02 MB");
         assert_eq!(format_mb(1_048_576), "1.00 MB");
     }
+
+    #[test]
+    fn purge_leaves_chat_worktrees_and_still_deletes_archived_task_leaf() {
+        let repo = temp_repo("chat-worktrees");
+        write_task_md(&repo, "arch", true, "");
+        let task_leaf = worktrees_dir(&repo).join("arch").join("f");
+        write_file(&task_leaf, "task-worktree");
+        let chat = alinery_dir(&repo).join("chat-worktrees").join("s-chat").join("f");
+        write_file(&chat, "chat-worktree");
+
+        let result = purge_archived_storage(&repo, &|_, _| {}).unwrap();
+        assert_eq!(result.deleted_tasks, 1);
+        assert!(!task_dir(&repo, "arch").exists());
+        assert!(!worktrees_dir(&repo).join("arch").exists(), "archived task leaf must still be purged");
+        assert!(chat.is_file(), "chat-worktrees must not be a purge target");
+
+        let _ = fs::remove_dir_all(&repo);
+    }
 }

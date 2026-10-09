@@ -60,12 +60,14 @@ function ChatPaneImpl({
   useLayoutEffect(() => {
     const el = scroller.current;
     const saved = anchor.current;
-    if (!el || !saved) return;
+    // Not while the older page is still on its way: a render in between (a reattach rebuilding the
+    // rows) would spend the anchor before the rows it measures against have moved.
+    if (!el || !saved || loadingOlder) return;
     anchor.current = null;
     const node = el.querySelector<HTMLElement>(`[data-entry-id="${CSS.escape(saved.id)}"]`);
     if (!node) return;
     el.scrollTop += node.offsetTop - saved.top;
-  }, [shown]);
+  }, [shown, loadingOlder]);
 
   useEffect(() => {
     const el = scroller.current;

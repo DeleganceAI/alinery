@@ -167,8 +167,9 @@ fn appearance_defaults_sanitize_and_round_trip() {
     assert_eq!(empty.appearance.chat_max_width, "900");
     assert!(empty.appearance.chat_show_date);
     assert!(empty.appearance.chat_show_time);
-    assert!(empty.appearance.chat_show_actor_labels);
-    assert!(empty.appearance.chat_show_agent_bubbles);
+    assert!(!empty.appearance.chat_show_actor_labels);
+    assert!(!empty.appearance.chat_show_agent_bubbles);
+    assert!(!empty.appearance.chat_show_block_copy_buttons);
     assert!(empty.appearance.chat_show_copy_buttons);
     assert_eq!(empty.appearance.session_default_view, "chat");
 
@@ -213,6 +214,11 @@ fn appearance_defaults_sanitize_and_round_trip() {
         chat_show_copy_buttons: false,
         session_default_view: "terminal".into(),
         mode: "light".into(),
+        ava_chat: std::collections::BTreeMap::from([
+            ("chat_show_tools".into(), toml::Value::Boolean(true)),
+            ("chat_max_width".into(), toml::Value::String("600".into())),
+            ("not_a_chat_key".into(), toml::Value::Boolean(true)),
+        ]),
     };
     let s = toml::to_string(&custom).expect("appearance serializes");
     let back: AppearancePrefs = toml::from_str(&s).expect("appearance re-parses");
@@ -228,6 +234,10 @@ fn appearance_defaults_sanitize_and_round_trip() {
     assert!(back.chat_show_agent_bubbles);
     assert!(!sanitize_appearance(back.clone()).chat_show_block_copy_buttons);
     assert!(!back.chat_show_copy_buttons);
+    let ava = sanitize_appearance(back.clone()).ava_chat;
+    assert_eq!(ava.get("chat_show_tools"), Some(&toml::Value::Boolean(true)));
+    assert_eq!(ava.get("chat_max_width"), Some(&toml::Value::String("600".into())));
+    assert!(!ava.contains_key("not_a_chat_key"));
     assert_eq!(back.chat_rail_font_size, 13);
     assert_eq!(back.session_default_view, "terminal");
 
@@ -467,6 +477,39 @@ model = ""
     let back: RepoOverrides = toml::from_str(&s).expect("config re-parses");
     assert_eq!(back.defaults.draft_autosave, Some(false));
     assert_eq!(back.defaults.model.as_deref(), Some(""));
+}
+
+#[test]
+fn thinking_default_round_trips_through_global_and_repo_files() {
+    let root = unique_attachment_temp("thinking-default-round-trip");
+    let app_config = root.join("app.toml");
+    let repo = root.join("repo");
+    let mut global = alinery_core::default_global_settings();
+    global.defaults.thinking = "medium".into();
+    alinery_core::write_global_settings(&app_config, &global).unwrap();
+    assert_eq!(alinery_core::load_global_settings(&app_config).defaults.thinking, "medium");
+
+    let overrides = RepoOverrides {
+        defaults: alinery_core::RepoHarnessChoiceOverrides {
+            thinking: Some("low".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    alinery_core::write_repo_overrides(Some(&app_config), &repo, &overrides).unwrap();
+    assert_eq!(alinery_core::load_repo_overrides(&repo).defaults.thinking.as_deref(), Some("low"));
+
+    let scoped = alinery_core::read_scoped_settings(&app_config, &repo);
+    assert_eq!(scoped.effective.defaults.thinking, "low");
+    assert_eq!(scoped.effective.provenance.defaults.thinking, alinery_core::SettingSource::Repository);
+
+    let mut cleared = alinery_core::load_repo_overrides(&repo);
+    alinery_core::clear_repo_override(&mut cleared, "defaults.thinking").unwrap();
+    alinery_core::write_repo_overrides(Some(&app_config), &repo, &cleared).unwrap();
+    let scoped = alinery_core::read_scoped_settings(&app_config, &repo);
+    assert_eq!(scoped.effective.defaults.thinking, "medium");
+    assert_eq!(scoped.effective.provenance.defaults.thinking, alinery_core::SettingSource::Global);
+    let _ = fs::remove_dir_all(root);
 }
 
 fn model_favorite_app_config(name: &str) -> (PathBuf, PathBuf) {

@@ -281,6 +281,8 @@ pub struct SessionMeta {
     #[serde(default)]
     pub archived: bool,
     #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
     pub phase: String,
     #[serde(default)]
     pub harness: String,
@@ -653,16 +655,29 @@ impl Default for UpdatePrefs {
     }
 }
 
+/// Global-only. Each alineryd re-reads this from the app config to decide whether to hold an
+/// idle-sleep inhibit (`alineryd/src/idle_inhibit.rs`); a missing or unreadable file is off.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct PowerPrefs {
+    #[serde(default)]
+    pub keep_awake: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ExperimentalFeatures {
     /// Classic Kanban tab (⌘3). Enabled by default; explicit opt-outs are preserved.
     pub show_original_kanban: bool,
+    /// Chat tab (threads under repositories). Off until opted in.
+    pub show_chat: bool,
 }
 
 impl Default for ExperimentalFeatures {
     fn default() -> Self {
-        Self { show_original_kanban: true }
+        Self {
+            show_original_kanban: true,
+            show_chat: false,
+        }
     }
 }
 
@@ -779,6 +794,8 @@ pub struct HarnessChoice {
     pub harness: String,
     #[serde(default)]
     pub model: String,
+    #[serde(default)]
+    pub thinking: String,
     #[serde(default = "default_playbook_ref", deserialize_with = "deserialize_playbook_default")]
     pub playbook: crate::playbook::PlaybookRef,
     #[serde(default = "default_enabled")]
@@ -790,6 +807,7 @@ impl Default for HarnessChoice {
         Self {
             harness: String::new(),
             model: String::new(),
+            thinking: String::new(),
             playbook: default_playbook_ref(),
             draft_autosave: true,
         }
@@ -815,6 +833,8 @@ pub struct GlobalSettings {
     #[serde(default)]
     pub updates: UpdatePrefs,
     #[serde(default)]
+    pub power: PowerPrefs,
+    #[serde(default)]
     pub experiments: ExperimentalFeatures,
     #[serde(default = "default_grid_views")]
     pub grid_views: Vec<GridViewDefinition>,
@@ -831,6 +851,7 @@ impl Default for GlobalSettings {
             model_favorites: BTreeMap::new(),
             telemetry: TelemetryPrefs::default(),
             updates: UpdatePrefs::default(),
+            power: PowerPrefs::default(),
             experiments: ExperimentalFeatures::default(),
             grid_views: default_grid_views(),
         }
@@ -849,6 +870,8 @@ pub struct RepoHarnessChoiceOverrides {
     pub harness: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_playbook_override")]
     pub playbook: Option<crate::playbook::PlaybookRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -892,6 +915,7 @@ pub enum SettingSource {
 pub struct ChoiceProvenance {
     pub harness: SettingSource,
     pub model: SettingSource,
+    pub thinking: SettingSource,
     pub playbook: SettingSource,
     pub draft_autosave: SettingSource,
 }

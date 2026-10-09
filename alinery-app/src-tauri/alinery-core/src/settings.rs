@@ -407,6 +407,7 @@ fn log_global_diff(app_config: &Path, prev: &GlobalSettings, next: &GlobalSettin
     }
     push_changed_quoted(&mut fields, "defaults.harness", &prev.defaults.harness, &next.defaults.harness);
     push_changed_quoted(&mut fields, "defaults.model", &prev.defaults.model, &next.defaults.model);
+    push_changed_quoted(&mut fields, "defaults.thinking", &prev.defaults.thinking, &next.defaults.thinking);
     if prev.defaults.playbook != next.defaults.playbook {
         fields.push("defaults.playbook=changed".into());
     }
@@ -440,12 +441,14 @@ fn log_global_diff(app_config: &Path, prev: &GlobalSettings, next: &GlobalSettin
     }
     push_changed_quoted(&mut fields, "telemetry.endpoint", &prev.telemetry.endpoint, &next.telemetry.endpoint);
     push_changed_bool(&mut fields, "updates.check_enabled", prev.updates.check_enabled, next.updates.check_enabled);
+    push_changed_bool(&mut fields, "power.keep_awake", prev.power.keep_awake, next.power.keep_awake);
     push_changed_bool(
         &mut fields,
         "experiments.show_original_kanban",
         prev.experiments.show_original_kanban,
         next.experiments.show_original_kanban,
     );
+    push_changed_bool(&mut fields, "experiments.show_chat", prev.experiments.show_chat, next.experiments.show_chat);
     if prev.grid_views != next.grid_views {
         fields.push("grid_views=changed".into());
     }
@@ -491,6 +494,7 @@ fn log_repo_field_diff(app_config: &Path, repo: &Path, prev: &RepoOverrides, nex
     push_opt_secret(&mut fields, "github.token", &prev.github.token, &next.github.token);
     push_opt_quoted(&mut fields, "defaults.harness", &prev.defaults.harness, &next.defaults.harness);
     push_opt_quoted(&mut fields, "defaults.model", &prev.defaults.model, &next.defaults.model);
+    push_opt_quoted(&mut fields, "defaults.thinking", &prev.defaults.thinking, &next.defaults.thinking);
     if prev.defaults.playbook != next.defaults.playbook {
         fields.push("defaults.playbook=changed".into());
     }
@@ -656,6 +660,65 @@ mod tests {
         assert!(!saved.experiments.show_original_kanban);
         write_global_settings(&app_config, &saved).unwrap();
         assert!(!load_global_settings(&app_config).experiments.show_original_kanban);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn chat_tab_defaults_off_and_round_trips() {
+        let (dir, app_config) = temp_app("alinery_chat_tab");
+        assert!(!load_global_settings(&app_config).experiments.show_chat);
+        assert!(!parse_global_settings("[global]").unwrap().experiments.show_chat);
+        // An older file that only knows the Kanban flag must not switch Chat on.
+        fs::write(&app_config, "[global.experiments]\nshow_original_kanban = false\n").unwrap();
+        assert!(!load_global_settings(&app_config).experiments.show_chat);
+
+        let mut next = load_global_settings(&app_config);
+        next.experiments.show_chat = true;
+        write_global_settings(&app_config, &next).unwrap();
+        let saved = load_global_settings(&app_config);
+        assert!(saved.experiments.show_chat);
+        assert!(!saved.experiments.show_original_kanban, "saving Chat keeps the Kanban opt-out");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    // The daemon holds an idle-sleep inhibit off this pref, so every load that is not a clean
+    // `keep_awake = true` must read as off: a corrupt file must not keep the machine awake.
+    #[test]
+    fn power_keep_awake_defaults_off_and_round_trips() {
+        let (dir, app_config) = temp_app("alinery_power_keep_awake");
+        assert!(!load_global_settings(&app_config).power.keep_awake, "missing file");
+        fs::write(&app_config, "").unwrap();
+        assert!(!load_global_settings(&app_config).power.keep_awake, "empty file");
+        fs::write(&app_config, "[global]\n[global.updates]\ncheck_enabled = false\n").unwrap();
+        assert!(!load_global_settings(&app_config).power.keep_awake, "[global] without [global.power]");
+        fs::write(&app_config, "[global.power]\nkeep_awake = true\n[global.updates\n").unwrap();
+        assert!(!load_global_settings(&app_config).power.keep_awake, "unparseable file");
+        fs::create_dir_all(dir.join("as-dir.toml")).unwrap();
+        assert!(!load_global_settings(&dir.join("as-dir.toml")).power.keep_awake, "unreadable path");
+
+        fs::write(&app_config, "[global.updates]\ncheck_enabled = false\n").unwrap();
+        let mut next = load_global_settings(&app_config);
+        next.power.keep_awake = true;
+        write_global_settings(&app_config, &next).unwrap();
+        let reloaded = load_global_settings(&app_config);
+        assert!(reloaded.power.keep_awake);
+        assert!(!reloaded.updates.check_enabled, "other global fields survive the write");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn power_keep_awake_diff_logs_the_bool_only() {
+        let (dir, app_config) = temp_app("alinery_power_keep_awake_log");
+        write_global_settings(&app_config, &default_global_settings()).unwrap();
+        let mut next = default_global_settings();
+        next.power.keep_awake = true;
+        write_global_settings(&app_config, &next).unwrap();
+        let text = log_text(&app_config);
+        let lines: Vec<&str> = text.lines().filter(|l| l.contains("power.keep_awake")).collect();
+        assert_eq!(lines.len(), 1, "{text}");
+        assert!(lines[0].contains("settings.global power.keep_awake=true"), "{text}");
+        assert!(!lines[0].contains(&*dir.to_string_lossy()), "{text}");
+        assert!(!lines[0].contains("session"), "{text}");
         let _ = fs::remove_dir_all(dir);
     }
 

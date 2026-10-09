@@ -17,6 +17,7 @@ import {
   normalizeChatMaxWidth,
   normalizeChatRailDensity,
   normalizeChatRailFontSize,
+  normalizeChatView,
   normalizeSessionDefaultView,
   TERMINAL_FONT_MAX,
   TERMINAL_FONT_MIN,
@@ -28,12 +29,14 @@ import { createGridViewId, gridViewShortcut, MAX_GRID_VIEWS, nextGridViewName, n
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { Checkbox, EmptyState, InlineStatus, LoadingState, ModelInput, ompDefaultModel, playbookRefKey, repoName, samePlaybookRef } from "../shared";
+import { effectiveThinking, THINKING_LEVELS } from "../thinking";
 import { type ToastLength, toast } from "../toast";
 import type {
   AppearancePrefs,
   BackupListItem,
   ChatMaxWidth,
   ChatRailDensity,
+  ChatViewPrefs,
   ChoiceProvenance,
   Config,
   ConnectionStatus,
@@ -142,15 +145,12 @@ function ConnectionMenu({ label, busy, onReconnect, onRemove }: { label: string;
 }
 
 export const SECTIONS: { key: SettingsSectionKey; label: string }[] = [
+  { key: "general", label: "General" },
+  { key: "harness", label: "Harness" },
   { key: "connections", label: "Connections" },
-  { key: "notifications", label: "Notifications" },
-  { key: "playbooks", label: "Playbooks" },
-  { key: "telemetry", label: "Telemetry" },
-  { key: "updates", label: "Updates" },
   { key: "storage", label: "Storage" },
-  { key: "appearance", label: "Appearance" },
+  { key: "sessionsView", label: "Sessions view" },
   { key: "chat", label: "Chat" },
-  { key: "experimental", label: "Experimental" },
   { key: "gridViews", label: "Grid views" },
   { key: "mcp", label: "MCP Server" },
   { key: "backup", label: "Backup" },
@@ -202,6 +202,7 @@ function mcpInstallReady(mcp: Pick<McpStatus, "binary_found" | "binary_path">): 
 const allGlobalChoiceSource: ChoiceProvenance = {
   harness: GLOBAL_SOURCE,
   model: GLOBAL_SOURCE,
+  thinking: GLOBAL_SOURCE,
   playbook: GLOBAL_SOURCE,
   draft_autosave: GLOBAL_SOURCE,
 };
@@ -271,7 +272,7 @@ export function Settings({
   const [storageErr, setStorageErr] = useState("");
   const [purgeBusy, setPurgeBusy] = useState(false);
   const [purgeErrors, setPurgeErrors] = useState<PurgeFailure[]>([]);
-  const [activeSection, setActiveSection] = useState<SettingsSectionKey>(initialSection ?? "notifications");
+  const [activeSection, setActiveSection] = useState<SettingsSectionKey>(initialSection ?? "general");
   const [backups, setBackups] = useState<BackupListItem[]>([]);
   const [backupsErr, setBackupsErr] = useState("");
   const [backupBusy, setBackupBusy] = useState(false);
@@ -307,9 +308,13 @@ export function Settings({
 
   const selectedRepo = scope.kind === "repo" ? scope.repoPath : activeRepo;
   const effective = cfg;
+  const chatEnabled = global?.experiments?.show_chat ?? false;
+  useEffect(() => {
+    if (global && !chatEnabled && activeSection === "chat") setActiveSection("general");
+  }, [global, chatEnabled, activeSection]);
 
   useEffect(() => {
-    if (activeSection !== "playbooks") return;
+    if (activeSection !== "general") return;
     let alive = true;
     setPlaybookCatalog(null);
     setPlaybookError("");
@@ -339,7 +344,7 @@ export function Settings({
     Promise.all(targets.map((repo) => ipc.repoLiveSessions(repo).then((live) => [repo, live] as const))).then((pairs) => Object.fromEntries(pairs));
 
   useEffect(() => {
-    if (activeSection !== "chat") return;
+    if (activeSection !== "harness") return;
     let alive = true;
     const tick = () =>
       probeLiveSessions(sessionTargets)
@@ -375,10 +380,10 @@ export function Settings({
       .finally(() => setLocalChecking(false));
   };
 
-  // Entering the section refreshes the shared hook so a hit also reveals the TopBar
+  // Opening General refreshes the shared hook so a hit also reveals the TopBar
   // button. Tests that do not pass onCheckNow keep the local ipc path.
   useEffect(() => {
-    if (activeSection !== "updates") return;
+    if (activeSection !== "general") return;
     if (onCheckNow) {
       onCheckNow().catch(() => {});
       return;
@@ -390,7 +395,7 @@ export function Settings({
   }, [activeSection, onCheckNow]);
 
   useEffect(() => {
-    if (activeSection !== "chat") return;
+    if (activeSection !== "harness") return;
     void ompUpdate.checkNow();
   }, [activeSection, ompUpdate.checkNow]);
 
@@ -660,9 +665,19 @@ export function Settings({
     saveGlobal({ ...global, updates: { ...global.updates, check_enabled: value } });
   };
 
+  const setKeepAwake = (value: boolean) => {
+    if (!global) return;
+    saveGlobal({ ...global, power: { ...global.power, keep_awake: value } });
+  };
+
   const setShowOriginalKanban = (value: boolean) => {
     if (!global) return;
     saveGlobal({ ...global, experiments: { ...global.experiments, show_original_kanban: value } }, value ? "Original Kanban tab shown" : "Original Kanban tab hidden");
+  };
+
+  const setShowChat = (value: boolean) => {
+    if (!global) return;
+    saveGlobal({ ...global, experiments: { ...global.experiments, show_chat: value } }, value ? "Chat tab shown" : "Chat tab hidden");
   };
 
   const updateGlobalChoice = (key: ChoiceKey, patch: Partial<GlobalSettings[ChoiceKey]>) => {
@@ -805,8 +820,11 @@ export function Settings({
   const selectedScopeLabel = isGlobal ? "All repositories" : repoName(selectedRepo || "Repository");
   const selectedScopeDetail = isGlobal ? "Default settings used by every repository unless that repository overrides them." : selectedRepo;
   const gridViews = normalizeGridViews(global.grid_views);
-  const visibleSections = SECTIONS;
-  const visibleActiveSection = activeSection;
+  // Chat settings belong to the experimental Chat tab: hidden with it. An open Chat section falls
+  // back to General when the flag is turned off (the effect above moves the state; this covers the
+  // render before it lands).
+  const visibleSections = chatEnabled ? SECTIONS : SECTIONS.filter((section) => section.key !== "chat");
+  const visibleActiveSection = !chatEnabled && activeSection === "chat" ? "general" : activeSection;
 
   const saveGridViews = (next: GridViewDefinition[], message: string) => {
     setGridViewDrafts({});
@@ -1162,6 +1180,32 @@ export function Settings({
           )}
           {!isGlobal && <div className="hint">Blank can be a repository override; use the button above to inherit.</div>}
         </div>
+        <div className="field">
+          <label htmlFor={`${key}-thinking`}>
+            {title} thinking level
+            {!isGlobal && sourceBadge(provenance.thinking, `${key}.thinking`)}
+          </label>
+          <select
+            id={`${key}-thinking`}
+            className="field-input"
+            value={effectiveThinking(value.thinking)}
+            onChange={(event) => {
+              const thinking = event.target.value;
+              if (isGlobal) updateGlobalChoice(key, { thinking });
+              else {
+                setRepoChoice(key, { thinking });
+                saveRepoOverrides({ ...overrides, [key]: { ...overrides[key], thinking } });
+              }
+            }}
+          >
+            {THINKING_LEVELS.map((level) => (
+              <option key={level} value={level}>
+                {level}
+              </option>
+            ))}
+          </select>
+          <div className="hint">New OMP sessions start at this level; resumed sessions keep theirs, and OMP lowers it to what the model supports.</div>
+        </div>
         <Checkbox
           checked={value.draft_autosave}
           onChange={(v) => {
@@ -1229,6 +1273,341 @@ export function Settings({
         </button>
       </div>
     </div>
+  );
+
+  /** The journal / density / text settings shared by the Sessions view and the Chat view. `view` is that view's own values. */
+  // Two tabs render this form with separate values, so `where` and `title` (derived from `ava`) say which surface it edits.
+  const renderChatViewSettings = (
+    view: ChatViewPrefs,
+    saveView: (next: ChatViewPrefs) => void,
+    ava: boolean,
+    where = ava ? "the Chat view" : "session chats",
+    title = ava ? "Chat view" : "Session chat",
+  ) => (
+    <>
+      <div className="settings-subsection">
+        <h2>Journal</h2>
+        <p>Which journal rows appear in {where}. Global-only.</p>
+        {!isGlobal && globalOnly(`${title} settings`)}
+        <Checkbox
+          checked={view.chat_show_thinking === true}
+          disabled={!isGlobal}
+          onChange={(enabled) => {
+            if (isGlobal) {
+              saveView({
+                ...view,
+                chat_show_thinking: enabled,
+                chat_expand_thinking: enabled ? view.chat_expand_thinking === true : false,
+              });
+            }
+          }}
+          label={
+            <>
+              Show thinking <span className="dsc">— agent reasoning rails in the journal</span>
+            </>
+          }
+        />
+        <Checkbox
+          checked={view.chat_expand_thinking === true}
+          disabled={!isGlobal || view.chat_show_thinking !== true}
+          onChange={(enabled) => {
+            if (isGlobal) saveView({ ...view, chat_expand_thinking: enabled });
+          }}
+          label={
+            <>
+              Expand thinking by default <span className="dsc">— live streaming still opens automatically</span>
+            </>
+          }
+        />
+        <Checkbox
+          checked={view.chat_show_tools === true}
+          disabled={!isGlobal}
+          onChange={(enabled) => {
+            if (isGlobal) {
+              saveView({
+                ...view,
+                chat_show_tools: enabled,
+                chat_expand_tools: enabled ? view.chat_expand_tools === true : false,
+              });
+            }
+          }}
+          label={
+            <>
+              Show tool use <span className="dsc">— tool call and result rails</span>
+            </>
+          }
+        />
+        <Checkbox
+          checked={view.chat_expand_tools === true}
+          disabled={!isGlobal || view.chat_show_tools !== true}
+          onChange={(enabled) => {
+            if (isGlobal) saveView({ ...view, chat_expand_tools: enabled });
+          }}
+          label={
+            <>
+              Expand tools by default <span className="dsc">— in-flight tool calls still open automatically</span>
+            </>
+          }
+        />
+        <Checkbox
+          checked={view.chat_show_harness !== false}
+          disabled={!isGlobal}
+          onChange={(enabled) => {
+            if (isGlobal) saveView({ ...view, chat_show_harness: enabled });
+          }}
+          label={
+            <>
+              Show harness events <span className="dsc">— model changes, compact, and similar notices</span>
+            </>
+          }
+        />
+        <Checkbox
+          checked={view.chat_show_turn_markers === true}
+          disabled={!isGlobal}
+          onChange={(enabled) => {
+            if (isGlobal) saveView({ ...view, chat_show_turn_markers: enabled });
+          }}
+          label={
+            <>
+              Show turn markers <span className="dsc">— turn start and end dividers</span>
+            </>
+          }
+        />
+        <Checkbox
+          checked={view.chat_show_subagent_rows === true}
+          disabled={!isGlobal}
+          onChange={(enabled) => {
+            if (isGlobal) saveView({ ...view, chat_show_subagent_rows: enabled });
+          }}
+          label={
+            <>
+              Show subagent rows <span className="dsc">— subagent status and messages in the journal</span>
+            </>
+          }
+        />
+        <Checkbox
+          checked={view.chat_show_subagent_drawer !== false}
+          disabled={!isGlobal}
+          onChange={(enabled) => {
+            if (isGlobal) saveView({ ...view, chat_show_subagent_drawer: enabled });
+          }}
+          label={
+            <>
+              Show subagent drawer <span className="dsc">— live subagent strip above the journal</span>
+            </>
+          }
+        />
+        <Checkbox
+          checked={view.chat_show_date === true}
+          disabled={!isGlobal}
+          onChange={(enabled) => {
+            if (isGlobal) saveView({ ...view, chat_show_date: enabled });
+          }}
+          label={
+            <>
+              Show date <span className="dsc">— calendar day on journal stamps (e.g. Sep 5)</span>
+            </>
+          }
+        />
+        <Checkbox
+          checked={view.chat_show_time === true}
+          disabled={!isGlobal}
+          onChange={(enabled) => {
+            if (isGlobal) saveView({ ...view, chat_show_time: enabled });
+          }}
+          label={
+            <>
+              Show time <span className="dsc">— clock on journal stamps (e.g. 12:11)</span>
+            </>
+          }
+        />
+        <Checkbox
+          checked={view.chat_show_actor_labels === true}
+          disabled={!isGlobal}
+          onChange={(enabled) => {
+            if (isGlobal) saveView({ ...view, chat_show_actor_labels: enabled });
+          }}
+          label={
+            <>
+              Show You / Agent labels <span className="dsc">— name and kind icon above message bubbles</span>
+            </>
+          }
+        />
+        <Checkbox
+          checked={view.chat_show_agent_bubbles === true}
+          disabled={!isGlobal}
+          onChange={(enabled) => {
+            if (isGlobal) saveView({ ...view, chat_show_agent_bubbles: enabled });
+          }}
+          label={
+            <>
+              Show agent reply bubbles <span className="dsc">— filled bubble around agent text replies only</span>
+            </>
+          }
+        />
+        <Checkbox
+          checked={view.chat_show_block_copy_buttons === true}
+          disabled={!isGlobal}
+          onChange={(enabled) => {
+            if (isGlobal) saveView({ ...view, chat_show_block_copy_buttons: enabled });
+          }}
+          label={
+            <>
+              Show block copy buttons <span className="dsc">— copy individual code blocks and quotes independently of per-message copy icons</span>
+            </>
+          }
+        />
+        <Checkbox
+          checked={view.chat_show_copy_buttons !== false}
+          disabled={!isGlobal}
+          onChange={(enabled) => {
+            if (isGlobal) saveView({ ...view, chat_show_copy_buttons: enabled });
+          }}
+          label={
+            <>
+              Show copy buttons <span className="dsc">— per-message copy icon inside chat bubbles</span>
+            </>
+          }
+        />
+      </div>
+      <div className="settings-subsection">
+        <h2>Density</h2>
+        <p>Density, sizing and behavior of {where}. Global-only.</p>
+        {!isGlobal && globalOnly(`${title} density settings`)}
+        <Checkbox
+          checked={view.chat_auto_collapse_thinking !== false}
+          disabled={!isGlobal}
+          onChange={(enabled) => {
+            if (isGlobal) saveView({ ...view, chat_auto_collapse_thinking: enabled });
+          }}
+          label={
+            <>
+              Auto-collapse thinking <span className="dsc">— close rails when streaming ends; expand-by-default wins if both are on</span>
+            </>
+          }
+        />
+        <Checkbox
+          checked={view.chat_auto_compaction !== false}
+          disabled={!isGlobal}
+          onChange={(enabled) => {
+            if (isGlobal) saveView({ ...view, chat_auto_compaction: enabled });
+          }}
+          label={
+            <>
+              Auto-compaction <span className="dsc">— ask OMP to compact context when the session fills up</span>
+            </>
+          }
+        />
+        <Checkbox
+          checked={view.chat_auto_scroll !== false}
+          disabled={!isGlobal}
+          onChange={(enabled) => {
+            if (isGlobal) saveView({ ...view, chat_auto_scroll: enabled });
+          }}
+          label={
+            <>
+              Auto-scroll <span className="dsc">— stick to the bottom while following new journal rows</span>
+            </>
+          }
+        />
+        <div className="field">
+          <label id="chat-rail-density-label">Rail density</label>
+          <div className="theme-cards" role="group" aria-labelledby="chat-rail-density-label">
+            {(["dense", "normal", "comfortable"] as const satisfies readonly ChatRailDensity[]).map((density) => {
+              const active = normalizeChatRailDensity(view.chat_rail_density) === density;
+              const label = density === "dense" ? "Dense" : density === "normal" ? "Normal" : "Comfortable";
+              return (
+                <button
+                  key={density}
+                  type="button"
+                  className={`theme-card ${active ? "active" : ""}`}
+                  disabled={!isGlobal}
+                  aria-pressed={active}
+                  onClick={() => {
+                    if (isGlobal) saveView({ ...view, chat_rail_density: density });
+                  }}
+                >
+                  <span>{label}</span>
+                </button>
+              );
+            })}
+          </div>
+          <span className="dsc">Journal and rail spacing. Dense matches the previous compact look.</span>
+        </div>
+        <div className="field">
+          <label id="chat-max-width-label">{title} column width</label>
+          <div className="theme-cards" role="group" aria-labelledby="chat-max-width-label">
+            {(["600", "900", "1200", "none"] as const satisfies readonly ChatMaxWidth[]).map((width) => {
+              const active = normalizeChatMaxWidth(view.chat_max_width) === width;
+              return (
+                <button
+                  key={width}
+                  type="button"
+                  className={`theme-card ${active ? "active" : ""}`}
+                  disabled={!isGlobal}
+                  aria-pressed={active}
+                  onClick={() => {
+                    if (isGlobal) saveView({ ...view, chat_max_width: width });
+                  }}
+                >
+                  <span>{width === "none" ? "None" : `${width}px`}</span>
+                </button>
+              );
+            })}
+          </div>
+          <span className="dsc">{ava ? "Limits the width of the message thread, composer and notices." : "Limits journal thread width; meta and composer stay full width."}</span>
+        </div>
+        {sizeRow({
+          id: "chat-font-size",
+          name: `${title} text`,
+          noun: `${title.toLowerCase()} font size`,
+          sample: <span style={{ fontSize: `${normalizeChatFontSize(view.chat_font_size ?? CHAT_FONT_DEFAULT)}px` }}>Replies and expanded rail bodies</span>,
+          value: normalizeChatFontSize(view.chat_font_size ?? CHAT_FONT_DEFAULT),
+          min: CHAT_FONT_MIN,
+          max: CHAT_FONT_MAX,
+          onChange: (chat_font_size) => {
+            if (isGlobal) saveView({ ...view, chat_font_size });
+          },
+        })}
+        {sizeRow({
+          id: "chat-rail-font-size",
+          name: "Rail text",
+          noun: "rail font size",
+          sample: <span style={{ fontSize: `${normalizeChatRailFontSize(view.chat_rail_font_size ?? CHAT_RAIL_FONT_DEFAULT)}px` }}>Thinking and tool labels</span>,
+          value: normalizeChatRailFontSize(view.chat_rail_font_size ?? CHAT_RAIL_FONT_DEFAULT),
+          min: CHAT_FONT_MIN,
+          max: CHAT_FONT_MAX,
+          onChange: (chat_rail_font_size) => {
+            if (isGlobal) saveView({ ...view, chat_rail_font_size });
+          },
+        })}
+        <Checkbox
+          checked={view.chat_show_meta !== false}
+          disabled={!isGlobal}
+          onChange={(enabled) => {
+            if (isGlobal) saveView({ ...view, chat_show_meta: enabled });
+          }}
+          label={
+            <>
+              Show meta strip{" "}
+              <span className="dsc">{ava ? "— repo · branch · thinking · status line under the thread title" : "— model · thinking · event count · context above the chat"}</span>
+            </>
+          }
+        />
+        <Checkbox
+          checked={view.chat_show_composer_hints !== false}
+          disabled={!isGlobal}
+          onChange={(enabled) => {
+            if (isGlobal) saveView({ ...view, chat_show_composer_hints: enabled });
+          }}
+          label={
+            <>
+              Show composer key hints <span className="dsc">— Enter / Shift+Enter row; char count stays</span>
+            </>
+          }
+        />
+      </div>
+    </>
   );
 
   const renderHarness = () => {
@@ -1398,7 +1777,6 @@ export function Settings({
 
   const renderAppearance = () => (
     <>
-      {!isGlobal && globalOnly("Appearance settings")}
       <div className="field">
         <label id="appearance-theme-label">Theme</label>
         <div className="theme-cards" role="group" aria-labelledby="appearance-theme-label" aria-describedby="appearance-theme-hint">
@@ -1673,48 +2051,10 @@ export function Settings({
 
   const renderSection = (key: string): ReactNode => {
     switch (key) {
-      case "playbooks":
-        return renderPlaybooks();
       case "connections":
         return connectionsSection();
-      case "notifications":
-        return (
-          <>
-            {!isGlobal && globalOnly("Notifications")}
-            {check("enabled", "Enabled", "master switch")}
-            {check("banner", "Banner", "native notification")}
-            {check("sound", "Sound", "notification sound")}
-            {check("bounce", "Dock bounce", "off by default")}
-            {check("dock_badge", "Dock badge", "show the current notice count on the macOS Dock icon")}
-            <div className="dock-badge-options" role="group" aria-label="Dock badge categories">
-              {check("dock_badge_input_waits", "Input waits", "include sessions waiting for input")}
-              {check("dock_badge_approval_waits", "Approval waits", "include sessions waiting for approval")}
-              {check("dock_badge_failures", "Failures", "include failed sessions")}
-              {check("dock_badge_completions", "Unread playbook completions", "include completed playbook steps")}
-            </div>
-            <button
-              type="button"
-              className="btn ghost small"
-              style={{ marginTop: 10 }}
-              onClick={() =>
-                ipc
-                  .notifyTest()
-                  .then(() => report("Test notification sent"))
-                  .catch((e) => reportError(e))
-              }
-            >
-              Send test notification
-            </button>
-          </>
-        );
-      case "telemetry":
-        return (
-          <>
-            {!isGlobal && globalOnly("Telemetry")}
-            {telemetryCheck("Share anonymous usage", "state changes only — no paths, prompts, or artifact text")}
-          </>
-        );
-      case "updates": {
+      case "general": {
+        // Playbooks follows the scope bar. The other subsections are global-only, so one banner covers them.
         const lastCheck = updateCheckFailed
           ? "Couldn't check"
           : !displayedUpdate || displayedUpdate.checked_at === 0
@@ -1724,29 +2064,112 @@ export function Settings({
               : "Up to date";
         return (
           <>
-            {!isGlobal && globalOnly("Updates")}
-            <div className="field">
-              <label>Current version</label>
-              <input className="field-input mono" type="text" value={appVersion} readOnly />
+            {!isGlobal && globalOnly("Appearance, notifications, updates, and misc")}
+            <div className="settings-subsection">
+              <h2>Appearance</h2>
+              {renderAppearance()}
             </div>
-            <div className="field" style={{ marginTop: 16 }}>
-              <label>Last check</label>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span className="dim">{checkingUpdates ? "Checking…" : lastCheck}</span>
-                <button type="button" className="btn ghost small" disabled={checkingUpdates} onClick={checkForUpdatesNow}>
-                  Check now
-                </button>
+            <div className="settings-subsection">
+              <h2>Playbooks</h2>
+              {renderPlaybooks()}
+            </div>
+            <div className="settings-subsection">
+              <h2>Notifications</h2>
+              {check("enabled", "Enabled", "master switch")}
+              {check("banner", "Banner", "native notification")}
+              {check("sound", "Sound", "notification sound")}
+              {check("bounce", "Dock bounce", "off by default")}
+              {check("dock_badge", "Dock badge", "show the current notice count on the macOS Dock icon")}
+              <div className="dock-badge-options" role="group" aria-label="Dock badge categories">
+                {check("dock_badge_input_waits", "Input waits", "include sessions waiting for input")}
+                {check("dock_badge_approval_waits", "Approval waits", "include sessions waiting for approval")}
+                {check("dock_badge_failures", "Failures", "include failed sessions")}
+                {check("dock_badge_completions", "Unread playbook completions", "include completed playbook steps")}
               </div>
+              <button
+                type="button"
+                className="btn ghost small"
+                style={{ marginTop: 10 }}
+                onClick={() =>
+                  ipc
+                    .notifyTest()
+                    .then(() => report("Test notification sent"))
+                    .catch((e) => reportError(e))
+                }
+              >
+                Send test notification
+              </button>
             </div>
-            {displayedUpdate?.available && onUpgrade && (
+            <div className="settings-subsection">
+              <h2>Updates</h2>
+              <div className="field">
+                <label>Current version</label>
+                <input className="field-input mono" type="text" value={appVersion} readOnly />
+              </div>
               <div className="field" style={{ marginTop: 16 }}>
-                <button type="button" className="btn small" disabled={updating} onClick={onUpgrade}>
-                  Upgrade to {displayedUpdate.available.version}
-                </button>
+                <label>Last check</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span className="dim">{checkingUpdates ? "Checking…" : lastCheck}</span>
+                  <button type="button" className="btn ghost small" disabled={checkingUpdates} onClick={checkForUpdatesNow}>
+                    Check now
+                  </button>
+                </div>
               </div>
-            )}
-            <div className="field" style={{ marginTop: 16 }}>
-              {updatesCheck("Check for updates")}
+              {displayedUpdate?.available && onUpgrade && (
+                <div className="field" style={{ marginTop: 16 }}>
+                  <button type="button" className="btn small" disabled={updating} onClick={onUpgrade}>
+                    Upgrade to {displayedUpdate.available.version}
+                  </button>
+                </div>
+              )}
+              <div className="field" style={{ marginTop: 16 }}>
+                {updatesCheck("Check for updates")}
+              </div>
+            </div>
+            <div className="settings-subsection">
+              <h2>Misc</h2>
+              {/* Each repository's daemon reads this pref and holds the idle-sleep inhibit
+                (alineryd/src/idle_inhibit.rs); the note states the same rule it enforces. */}
+              <Checkbox
+                checked={global.power?.keep_awake ?? false}
+                disabled={!isGlobal}
+                onChange={setKeepAwake}
+                label={
+                  <div>
+                    <div>Keep this computer awake</div>
+                    <div className="dsc">
+                      This keeps this computer from idling. It will not prevent closing the display from putting it to sleep. The screen can still turn off. It only does this while
+                      at least one session is not Idle.
+                    </div>
+                  </div>
+                }
+              />
+              {telemetryCheck("Share anonymous usage", "state changes only — no paths, prompts, or artifact text")}
+              <section className="settings-nested" aria-labelledby="experimental-options-title">
+                <h3 id="experimental-options-title">Experimental options</h3>
+                <Checkbox
+                  checked={global.experiments?.show_original_kanban ?? true}
+                  disabled={!isGlobal}
+                  onChange={setShowOriginalKanban}
+                  label={
+                    <div>
+                      <div>Original Kanban</div>
+                      <div className="hint">Show the classic Kanban board in the top bar, after Sessions.</div>
+                    </div>
+                  }
+                />
+                <Checkbox
+                  checked={global.experiments?.show_chat ?? false}
+                  disabled={!isGlobal}
+                  onChange={setShowChat}
+                  label={
+                    <div>
+                      <div>Chat</div>
+                      <div className="hint">Show the Chat view (threads under your repositories) in the top bar, after Kanban.</div>
+                    </div>
+                  }
+                />
+              </section>
             </div>
           </>
         );
@@ -1809,339 +2232,18 @@ export function Settings({
             )}
           </div>
         );
-      case "appearance":
-        return renderAppearance();
-      case "chat":
+      case "harness":
         return (
-          <>
-            <div className="settings-subsection">
-              <h2>Harness</h2>
-              <p>Manage OMP, session defaults, and background session daemons.</p>
-              {renderHarness()}
-            </div>
-            <div className="settings-subsection">
-              <h2>Journal</h2>
-              <p>Which Chat journal rows appear. Global-only.</p>
-              {!isGlobal && globalOnly("Chat journal settings")}
-              <Checkbox
-                checked={appearance.chat_show_thinking === true}
-                disabled={!isGlobal}
-                onChange={(enabled) => {
-                  if (isGlobal) {
-                    saveAppearance({
-                      ...appearance,
-                      chat_show_thinking: enabled,
-                      chat_expand_thinking: enabled ? appearance.chat_expand_thinking === true : false,
-                    });
-                  }
-                }}
-                label={
-                  <>
-                    Show thinking <span className="dsc">— agent reasoning rails in the Chat journal</span>
-                  </>
-                }
-              />
-              <Checkbox
-                checked={appearance.chat_expand_thinking === true}
-                disabled={!isGlobal || appearance.chat_show_thinking !== true}
-                onChange={(enabled) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_expand_thinking: enabled });
-                }}
-                label={
-                  <>
-                    Expand thinking by default <span className="dsc">— live streaming still opens automatically</span>
-                  </>
-                }
-              />
-              <Checkbox
-                checked={appearance.chat_show_tools === true}
-                disabled={!isGlobal}
-                onChange={(enabled) => {
-                  if (isGlobal) {
-                    saveAppearance({
-                      ...appearance,
-                      chat_show_tools: enabled,
-                      chat_expand_tools: enabled ? appearance.chat_expand_tools === true : false,
-                    });
-                  }
-                }}
-                label={
-                  <>
-                    Show tool use <span className="dsc">— tool call and result rails</span>
-                  </>
-                }
-              />
-              <Checkbox
-                checked={appearance.chat_expand_tools === true}
-                disabled={!isGlobal || appearance.chat_show_tools !== true}
-                onChange={(enabled) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_expand_tools: enabled });
-                }}
-                label={
-                  <>
-                    Expand tools by default <span className="dsc">— in-flight tool calls still open automatically</span>
-                  </>
-                }
-              />
-              <Checkbox
-                checked={appearance.chat_show_harness !== false}
-                disabled={!isGlobal}
-                onChange={(enabled) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_show_harness: enabled });
-                }}
-                label={
-                  <>
-                    Show harness events <span className="dsc">— model changes, compact, and similar notices</span>
-                  </>
-                }
-              />
-              <Checkbox
-                checked={appearance.chat_show_turn_markers === true}
-                disabled={!isGlobal}
-                onChange={(enabled) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_show_turn_markers: enabled });
-                }}
-                label={
-                  <>
-                    Show turn markers <span className="dsc">— turn start and end dividers</span>
-                  </>
-                }
-              />
-              <Checkbox
-                checked={appearance.chat_show_subagent_rows === true}
-                disabled={!isGlobal}
-                onChange={(enabled) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_show_subagent_rows: enabled });
-                }}
-                label={
-                  <>
-                    Show subagent rows <span className="dsc">— subagent status and messages in the journal</span>
-                  </>
-                }
-              />
-              <Checkbox
-                checked={appearance.chat_show_subagent_drawer !== false}
-                disabled={!isGlobal}
-                onChange={(enabled) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_show_subagent_drawer: enabled });
-                }}
-                label={
-                  <>
-                    Show subagent drawer <span className="dsc">— live subagent strip above the journal</span>
-                  </>
-                }
-              />
-              <Checkbox
-                checked={appearance.chat_show_date === true}
-                disabled={!isGlobal}
-                onChange={(enabled) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_show_date: enabled });
-                }}
-                label={
-                  <>
-                    Show date <span className="dsc">— calendar day on journal stamps (e.g. Sep 5)</span>
-                  </>
-                }
-              />
-              <Checkbox
-                checked={appearance.chat_show_time === true}
-                disabled={!isGlobal}
-                onChange={(enabled) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_show_time: enabled });
-                }}
-                label={
-                  <>
-                    Show time <span className="dsc">— clock on journal stamps (e.g. 12:11)</span>
-                  </>
-                }
-              />
-              <Checkbox
-                checked={appearance.chat_show_actor_labels === true}
-                disabled={!isGlobal}
-                onChange={(enabled) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_show_actor_labels: enabled });
-                }}
-                label={
-                  <>
-                    Show You / Agent labels <span className="dsc">— name and kind icon above message bubbles</span>
-                  </>
-                }
-              />
-              <Checkbox
-                checked={appearance.chat_show_agent_bubbles === true}
-                disabled={!isGlobal}
-                onChange={(enabled) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_show_agent_bubbles: enabled });
-                }}
-                label={
-                  <>
-                    Show agent reply bubbles <span className="dsc">— filled bubble around agent text replies only</span>
-                  </>
-                }
-              />
-              <Checkbox
-                checked={appearance.chat_show_block_copy_buttons !== false}
-                disabled={!isGlobal}
-                onChange={(enabled) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_show_block_copy_buttons: enabled });
-                }}
-                label={
-                  <>
-                    Show block copy buttons <span className="dsc">— copy individual code blocks and quotes independently of per-message copy icons</span>
-                  </>
-                }
-              />
-              <Checkbox
-                checked={appearance.chat_show_copy_buttons !== false}
-                disabled={!isGlobal}
-                onChange={(enabled) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_show_copy_buttons: enabled });
-                }}
-                label={
-                  <>
-                    Show copy buttons <span className="dsc">— per-message copy icon inside chat bubbles</span>
-                  </>
-                }
-              />
-            </div>
-            <div className="settings-subsection">
-              <h2>Density</h2>
-              <p>How Chat feels and behaves. Global-only.</p>
-              {!isGlobal && globalOnly("Chat density settings")}
-              <Checkbox
-                checked={appearance.chat_auto_collapse_thinking !== false}
-                disabled={!isGlobal}
-                onChange={(enabled) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_auto_collapse_thinking: enabled });
-                }}
-                label={
-                  <>
-                    Auto-collapse thinking <span className="dsc">— close rails when streaming ends; expand-by-default wins if both are on</span>
-                  </>
-                }
-              />
-              <Checkbox
-                checked={appearance.chat_auto_compaction !== false}
-                disabled={!isGlobal}
-                onChange={(enabled) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_auto_compaction: enabled });
-                }}
-                label={
-                  <>
-                    Auto-compaction <span className="dsc">— ask OMP to compact context when the session fills up</span>
-                  </>
-                }
-              />
-              <Checkbox
-                checked={appearance.chat_auto_scroll !== false}
-                disabled={!isGlobal}
-                onChange={(enabled) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_auto_scroll: enabled });
-                }}
-                label={
-                  <>
-                    Auto-scroll <span className="dsc">— stick to the bottom while following new journal rows</span>
-                  </>
-                }
-              />
-              <div className="field">
-                <label id="chat-rail-density-label">Rail density</label>
-                <div className="theme-cards" role="group" aria-labelledby="chat-rail-density-label">
-                  {(["dense", "normal", "comfortable"] as const satisfies readonly ChatRailDensity[]).map((density) => {
-                    const active = normalizeChatRailDensity(appearance.chat_rail_density) === density;
-                    const label = density === "dense" ? "Dense" : density === "normal" ? "Normal" : "Comfortable";
-                    return (
-                      <button
-                        key={density}
-                        type="button"
-                        className={`theme-card ${active ? "active" : ""}`}
-                        disabled={!isGlobal}
-                        aria-pressed={active}
-                        onClick={() => {
-                          if (isGlobal) saveAppearance({ ...appearance, chat_rail_density: density });
-                        }}
-                      >
-                        <span>{label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <span className="dsc">Journal and rail spacing. Dense matches the previous compact look.</span>
-              </div>
-              <div className="field">
-                <label id="chat-max-width-label">Chat column width</label>
-                <div className="theme-cards" role="group" aria-labelledby="chat-max-width-label">
-                  {(["600", "900", "1200", "none"] as const satisfies readonly ChatMaxWidth[]).map((width) => {
-                    const active = normalizeChatMaxWidth(appearance.chat_max_width) === width;
-                    return (
-                      <button
-                        key={width}
-                        type="button"
-                        className={`theme-card ${active ? "active" : ""}`}
-                        disabled={!isGlobal}
-                        aria-pressed={active}
-                        onClick={() => {
-                          if (isGlobal) saveAppearance({ ...appearance, chat_max_width: width });
-                        }}
-                      >
-                        <span>{width === "none" ? "None" : `${width}px`}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <span className="dsc">Limits journal thread width; meta and composer stay full width.</span>
-              </div>
-              {sizeRow({
-                id: "chat-font-size",
-                name: "Chat text",
-                noun: "chat font size",
-                sample: <span style={{ fontSize: `${normalizeChatFontSize(appearance.chat_font_size ?? CHAT_FONT_DEFAULT)}px` }}>Replies and expanded rail bodies</span>,
-                value: normalizeChatFontSize(appearance.chat_font_size ?? CHAT_FONT_DEFAULT),
-                min: CHAT_FONT_MIN,
-                max: CHAT_FONT_MAX,
-                onChange: (chat_font_size) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_font_size });
-                },
-              })}
-              {sizeRow({
-                id: "chat-rail-font-size",
-                name: "Rail text",
-                noun: "rail font size",
-                sample: <span style={{ fontSize: `${normalizeChatRailFontSize(appearance.chat_rail_font_size ?? CHAT_RAIL_FONT_DEFAULT)}px` }}>Thinking and tool labels</span>,
-                value: normalizeChatRailFontSize(appearance.chat_rail_font_size ?? CHAT_RAIL_FONT_DEFAULT),
-                min: CHAT_FONT_MIN,
-                max: CHAT_FONT_MAX,
-                onChange: (chat_rail_font_size) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_rail_font_size });
-                },
-              })}
-              <Checkbox
-                checked={appearance.chat_show_meta !== false}
-                disabled={!isGlobal}
-                onChange={(enabled) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_show_meta: enabled });
-                }}
-                label={
-                  <>
-                    Show meta strip <span className="dsc">— model · thinking · event count · context above Chat</span>
-                  </>
-                }
-              />
-              <Checkbox
-                checked={appearance.chat_show_composer_hints !== false}
-                disabled={!isGlobal}
-                onChange={(enabled) => {
-                  if (isGlobal) saveAppearance({ ...appearance, chat_show_composer_hints: enabled });
-                }}
-                label={
-                  <>
-                    Show composer key hints <span className="dsc">— Enter / Shift+Enter row; char count stays</span>
-                  </>
-                }
-              />
-            </div>
-          </>
+          <div className="settings-subsection">
+            <h2>Harness</h2>
+            <p>Manage OMP, session defaults, and background session daemons.</p>
+            {renderHarness()}
+          </div>
         );
+      case "sessionsView":
+        return renderChatViewSettings(appearance, (next) => saveAppearance({ ...appearance, ...next }), false);
+      case "chat":
+        return renderChatViewSettings(normalizeChatView(appearance.ava_chat ?? {}), (next) => saveAppearance({ ...appearance, ava_chat: next }), true);
       case "gridViews": {
         const controlsDisabled = isGlobal === false;
         const disabledReason = isGlobal === false ? "Grid-based views are global settings." : "";
@@ -2150,7 +2252,7 @@ export function Settings({
             {isGlobal === false && globalOnly("Grid-based views")}
             <div className="grid-view-settings-intro">
               <h2>Grid-based views</h2>
-              <p>Configure up to three named Grid views. Their order assigns the fixed shortcuts ⌘2, ⌘4, and ⌘5 (⌘3 is reserved for classic Kanban).</p>
+              <p>Configure up to three named Grid views. Their order assigns the shortcuts ⌘1, ⌘2, and ⌘3. Tasks, Sessions, and classic Kanban take the numbers after them.</p>
             </div>
             <ol className="grid-view-settings-list">
               {gridViews.map((view, index) => {
@@ -2263,23 +2365,6 @@ export function Settings({
           </>
         );
       }
-      case "experimental":
-        return (
-          <>
-            {!isGlobal && globalOnly("Experimental settings")}
-            <Checkbox
-              checked={global.experiments?.show_original_kanban ?? true}
-              disabled={!isGlobal}
-              onChange={setShowOriginalKanban}
-              label={
-                <div>
-                  <div>Original Kanban</div>
-                  <div className="hint">Show the classic Kanban board in the top bar as ⌘3.</div>
-                </div>
-              }
-            />
-          </>
-        );
       case "mcp": {
         const installReady = mcpInstallReady(mcp);
         const hostConfigJson = stdioHostConfigJson(installReady ? mcp.binary_path : "/path/to/alinery-mcp");

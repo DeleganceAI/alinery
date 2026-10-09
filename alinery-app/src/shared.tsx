@@ -21,7 +21,7 @@ import { type OrbState, ThinkingOrb } from "thinking-orbs";
 import { AccountMenu } from "./AccountMenu";
 import type { ArchiveTaskPhase } from "./archiveTask";
 import { pickEmptyStateArt } from "./emptyStateArt";
-import { gridViewShortcut, gridViewShortcutDigit } from "./gridViews";
+import { gridViewShortcut, gridViewShortcutDigit, trailingTabDigit } from "./gridViews";
 import { IdleDot, ORB_SPEED, ORB_STATE, RunningIndicator, StateIcon } from "./Indicators";
 import * as ipc from "./ipc";
 import { BrandMark } from "./Logo";
@@ -613,6 +613,7 @@ export function TopBar({
   appConfig,
   gridViews = [],
   showOriginalKanban = false,
+  showChat = false,
   onSwitch,
   onSwitchGrid,
   onSelectRepo,
@@ -635,6 +636,7 @@ export function TopBar({
   appConfig: AppConfig;
   gridViews?: GridViewDefinition[];
   showOriginalKanban?: boolean;
+  showChat?: boolean;
   instant?: boolean;
   onSwitch: (k: Tab) => void;
   onSwitchGrid: (gridViewId: string) => void;
@@ -679,8 +681,6 @@ export function TopBar({
       </button>
     );
   };
-  const firstGridView = gridViews[0];
-  const extraGridViews = gridViews.slice(1);
   return (
     <header data-tauri-drag-region="">
       <WindowControls />
@@ -723,12 +723,13 @@ export function TopBar({
       </div>
       <nav className="tabs" ref={tabsRef}>
         <span className="tab-indicator" aria-hidden="true" />
-        {tab("list", "Tasks", "1")}
-        {firstGridView && gridTab(firstGridView, 0)}
-        {showOriginalKanban && tab("kanban", "Kanban", "3")}
-        {extraGridViews.map((gridView, index) => gridTab(gridView, index + 1))}
-        {tab("sessions", "Sessions", "7")}
-        {tab("notifications", "Notifications", "8")}
+        {/* Custom Grid views always lead, then Tasks and Sessions. Shortcuts stay bound to the
+          view, not its position. Notifications and Settings live in the account menu. */}
+        {gridViews.map((gridView, index) => gridTab(gridView, index))}
+        {tab("list", "Tasks", String(trailingTabDigit(gridViews.length, "tasks")))}
+        {tab("sessions", "Sessions", String(trailingTabDigit(gridViews.length, "sessions")))}
+        {showOriginalKanban && tab("kanban", "Kanban", String(trailingTabDigit(gridViews.length, "kanban")))}
+        {showChat && tab("chat", "Chat", String(trailingTabDigit(gridViews.length, "chat", showOriginalKanban)))}
         {tab("playbooks", "Playbooks")}
       </nav>
       <div className="spacer" />
@@ -750,7 +751,7 @@ export function TopBar({
           K
         </span>
       </button>
-      <AccountMenu onOpenSettings={() => onSwitch("settings")} />
+      <AccountMenu onOpenNotifications={() => onSwitch("notifications")} onOpenSettings={() => onSwitch("settings")} />
     </header>
   );
 }
@@ -986,7 +987,7 @@ export function ArtifactProvenanceBadges({ handoffs, onOpenRelatedTask }: { hand
 
 // Visible status vocabulary — DESIGN.md §Agent lifecycle canonical labels,
 // compacted only where a row badge cannot carry the full phrase.
-function obsLabel(kind: ObservationDisplayKind): string {
+export function obsLabel(kind: ObservationDisplayKind): string {
   switch (kind) {
     case "failed":
       return "Failed";
@@ -1118,8 +1119,6 @@ export function StatusDot({
   const observedKind: ObservationDisplayKind = obs ? observationDisplayKind(obs) : "loading";
   const acknowledgedTerminalExit = exitAcknowledged && (!obs?.state || obs.state.process.state === "exited");
   const kind: ObservationDisplayKind = acknowledgedTerminalExit ? "exited" : superseded && (observedKind === "idle" || observedKind === "exited") ? "stale" : observedKind;
-  const label = obsLabel(kind);
-  const title = obsTooltip(kind);
 
   // Attention notifications: fire on transitions into idle/waiting states.
   // Never notify for unsupported/unknown; artifact presence never triggers.
@@ -1158,6 +1157,25 @@ export function StatusDot({
     );
   }
 
+  return <StatusMarker kind={kind} minimal={minimal} />;
+}
+
+/**
+ * One display kind's treatment from DESIGN.md's status table. `StatusDot` resolves a session's kind
+ * and renders this; a surface that already holds the kind (the Chat view merges its live transcript
+ * into it) composes this directly instead of drawing its own marker.
+ */
+export function StatusMarker({
+  kind,
+  minimal,
+  label = obsLabel(kind),
+  title = obsTooltip(kind),
+}: {
+  kind: ObservationDisplayKind;
+  minimal?: boolean;
+  label?: string;
+  title?: string;
+}) {
   if (kind === "busy" || kind === "starting" || kind === "loading") {
     // When minimal mode suppresses the visible label, the accessible name keeps
     // the state text-readable (state never lives in motion alone). All three

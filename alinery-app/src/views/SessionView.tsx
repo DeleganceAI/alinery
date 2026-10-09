@@ -27,16 +27,17 @@ import {
   applyFilePage,
   applyRpcLine,
   type ChatTranscriptState,
+  carryOver,
   dismissPendingUi,
   emptyTranscript,
   isPresentationUi,
   matchingSendFailure,
   matchingSendSuccess,
   needsUiReply,
-  removeOptimisticSend,
+  settleRefusedSend,
 } from "../chatTranscript";
 import { completionPrompt } from "../completionPrompt";
-import { confirmDanger } from "../confirm";
+import { confirmDanger, confirmStopAndSwitch } from "../confirm";
 import * as ipc from "../ipc";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 import {
@@ -59,6 +60,7 @@ import {
   setAutoCompactionCommand,
   setModelCommand,
   setSubagentSubscriptionCommand,
+  setThinkingLevelCommand,
 } from "../ompRpc";
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
 import { appendGeneratedText, canAbortChatSession, isTurnActive, OMP_INTERRUPT_DATA, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
@@ -100,7 +102,9 @@ import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatModelDialog } from "./ChatModelDialog";
 import { ChatPane } from "./ChatPane";
 import { ChatToolsDialog } from "./ChatToolsDialog";
+import { readJournalThrough } from "./chatSession";
 import { SessionActionPanel } from "./SessionActionPanel";
+import { ThinkingSelect } from "./ThinkingSelect";
 
 // ---- session view -------------------------------------------------------------
 
@@ -371,10 +375,11 @@ export function SessionView({
   const [livePromotedIds, setLivePromotedIds] = useState<string[]>([]);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [mcpDialog, setMcpDialog] = useState<{ rows: McpServerRow[]; empty: boolean } | null>(null);
-  const chatAttachIdRef = useRef(0);
   const [chatAttachEpoch, setChatAttachEpoch] = useState(0);
   const ompStartRef = useRef<string | null>(null);
   const ompSeedRef = useRef<{ id: string; done: Promise<unknown> } | null>(null);
+  // The session the RPC stream last attached to: a later attach for the same id is a reattach.
+  const rpcAttachedRef = useRef<string | null>(null);
   const preferredViewAppliedRef = useRef<string | null>(null);
   const handledUiRef = useRef(new Set<string>());
   const mcpListWaitRef = useRef(false);
@@ -396,6 +401,8 @@ export function SessionView({
     actions: SessionMessageDraft["pendingActions"];
     entryId: string;
     attachments: DraftAttachment[];
+    /** Also in `queuedFollowUpsRef`, which a refusal must leave. */
+    queued?: boolean;
   } | null>(null);
   const chatRef = useRef(chat);
   chatRef.current = chat;
@@ -1136,7 +1143,14 @@ export function SessionView({
         chatRef.current = applied.state;
         setChat(applied.state);
         if (sent && applied.entryId) {
-          pendingSendRef.current = { commandId: sent.commandId, draft: caption, actions, entryId: applied.entryId, attachments };
+          pendingSendRef.current = {
+            commandId: sent.commandId,
+            draft: caption,
+            actions,
+            entryId: applied.entryId,
+            attachments,
+            queued: busy && plan.optimisticKind === "follow_up",
+          };
         }
         if (busy && plan.optimisticKind === "follow_up") {
           const nextQueue = [...queuedFollowUpsRef.current, { text: caption, attachments: queuedAttachments }];
@@ -1387,8 +1401,26 @@ export function SessionView({
   useEffect(() => {
     if (!liveRpc) return;
     let cancelled = false;
-    chatAttachIdRef.current += 1;
-    const attachId = chatAttachIdRef.current;
+    const attachId = ipc.nextAttachId();
+    // Live stream closed mid-turn (see `ipc.onStreamClosed`): reattach while still live in RPC.
+    const stopClosed = ipc.onStreamClosed(
+      id,
+      attachId,
+      () => {
+        ipc.sessionStatus(id, taskSlug || null).then(
+          (next) => {
+            if (!cancelled && next.transport === "rpc" && next.lifecycle.state === "live") setChatAttachEpoch((epoch) => epoch + 1);
+          },
+          // Unreadable status: reattach anyway; the attach itself reports a dead session.
+          () => {
+            if (!cancelled) setChatAttachEpoch((epoch) => epoch + 1);
+          },
+        );
+      },
+      () => {
+        if (!cancelled) setTerminalConnection("failed");
+      },
+    );
     // The session-id effect already clears the transcript on a real session change. Do not
     // emptyTranscript() here: a liveRpc flap would wipe visible history. The poll catch above
     // keeps the last observation so a transient error does not re-enter; a later successful
@@ -1403,12 +1435,26 @@ export function SessionView({
         const refused = pending ? matchingSendFailure(value, pending.commandId) : null;
         if (refused !== null && pending) {
           pendingSendRef.current = null;
+          // The composer takes the text back unless something else is being written there: then the row
+          // stays, marked not sent, and neither message is lost.
+          const draft = messageDraftRef.current;
+          const blank = draft.body.trim() === "" && (draft.attachments ?? []).length === 0 && draft.pendingActions.length === 0;
+          const restore = blank || (draft.body !== "" && draft.body === pending.draft);
           setChat((current) => {
-            const next = removeOptimisticSend(applyRpcLine(current, value), pending.entryId);
+            const next = settleRefusedSend(applyRpcLine(current, value), pending.entryId, pending.draft, restore);
             chatRef.current = next;
             return next;
           });
-          updateMessageDraft({ body: pending.draft, pendingActions: pending.actions, attachments: pending.attachments });
+          if (restore) updateMessageDraft({ body: pending.draft, pendingActions: pending.actions, attachments: pending.attachments });
+          if (pending.queued) {
+            // OMP never queued it, and a reattach would otherwise re-add its row from this list.
+            const at = queuedFollowUpsRef.current.map((item) => item.text).lastIndexOf(pending.draft);
+            if (at >= 0) {
+              const remaining = queuedFollowUpsRef.current.filter((_, index) => index !== at);
+              queuedFollowUpsRef.current = remaining;
+              onQueuedFollowUpsChange?.(remaining);
+            }
+          }
           toast.error(refused);
           setMessageError(refused);
         } else {
@@ -1485,8 +1531,24 @@ export function SessionView({
         /* ignore non-JSON */
       }
     };
-    void seedOmpJournal()
-
+    // A reattach (dropped stream, back from Terminal) rebuilds from a fresh journal read, as chat does.
+    // The first seed is stale by then: turns that closed while detached are in neither it nor the
+    // replay, and a turn left open in the old transcript reads Running forever.
+    const reattach = rpcAttachedRef.current === id;
+    rpcAttachedRef.current = id;
+    const journal = reattach
+      ? readJournalThrough((end, want) => ipc.readSessionOmp({ id, taskSlug: taskSlug || null, end: end ?? null, want }), chatRef.current.fileStart)
+          .then((built) => {
+            if (cancelled) return;
+            setChat((current) => {
+              const next = carryOver(current, built);
+              chatRef.current = next;
+              return next;
+            });
+          })
+          .catch(() => undefined)
+      : seedOmpJournal();
+    void journal
       .then(() => {
         if (cancelled) return;
         const missing = queuedTextsNotInEntries(
@@ -1501,7 +1563,10 @@ export function SessionView({
             return next;
           });
         }
-        return ipc.rpcAttachSession({ id, attachId, streamToken: attachId, onLine: apply });
+        // A detach sent before this attach lands is lost, so detach again once it has, as chat does.
+        return ipc.rpcAttachSession({ id, attachId, streamToken: attachId, onLine: apply }).then(() => {
+          if (cancelled) void ipc.detachSession(id, attachId).catch(() => undefined);
+        });
       })
 
       .then(async () => {
@@ -1548,6 +1613,7 @@ export function SessionView({
       });
     return () => {
       cancelled = true;
+      stopClosed();
       void ipc.detachSession(id, attachId);
     };
   }, [liveRpc, rpcProcessLive, id, taskSlug, seedOmpJournal, chatAttachEpoch]);
@@ -1673,12 +1739,7 @@ export function SessionView({
       agentState: observation?.state?.agent?.state,
     });
     if (active) {
-      const ok = await confirmDanger(
-        target === "pty" ? "Switch to Terminal?" : "Switch to Chat?",
-        target === "pty" ? "Stop the agent’s current work and switch to Terminal?" : "Stop the agent’s current work and switch to Chat?",
-        "Stop and switch",
-      );
-      if (!ok) return false;
+      if (!(await confirmStopAndSwitch(target))) return false;
       if (liveRpc) await ipc.rpcWriteSession(id, abortCommand()).catch(() => undefined);
       else await ipc.writeSession(id, OMP_INTERRUPT_DATA).catch(() => undefined);
     }
@@ -1741,15 +1802,17 @@ export function SessionView({
     (messageDraft.body.trim().length > 0 || (messageDraft.attachments?.length ?? 0) > 0 || latestQueuedFollowUp(queuedFollowUps) !== undefined);
   const uiPrompt = chat.pendingUi.find((request) => request.method === "select" || request.method === "input" || request.method === "editor");
   const queuedMeta = chat.sessionMeta.queuedMessageCount ?? queuedFollowUps.length;
-  const chatMeta = [
-    chat.sessionMeta.model || model,
-    chat.sessionMeta.thinking,
+  const chatMetaHead = chat.sessionMeta.model || model;
+  const chatMetaTail = [
     `${chat.entries.length} event${chat.entries.length === 1 ? "" : "s"}`,
     formatContextUsage(chat.sessionMeta.contextUsage?.tokens, chat.sessionMeta.contextUsage?.contextWindow),
     queuedMeta > 0 ? `${queuedMeta} queued` : "",
   ]
     .filter((part) => part && part.length > 0)
     .join(" · ");
+  const pickThinking = (level: string) => {
+    void ipc.rpcWriteSession(id, setThinkingLevelCommand(level)).catch((error) => toast(String(error), "error"));
+  };
 
   const replyExtensionValue = async (requestId: string, value: string) => {
     handledUiRef.current.add(requestId);
@@ -2050,7 +2113,21 @@ export function SessionView({
                 <>
                   {chatVisibility.showMeta ? (
                     <div className="chat-meta">
-                      <p>{chatMeta}</p>
+                      <p>
+                        {chatMetaHead ? `${chatMetaHead} · ` : null}
+                        {chat.sessionMeta.thinking ? (
+                          <>
+                            <ThinkingSelect
+                              level={chat.sessionMeta.thinking}
+                              levels={chat.sessionMeta.thinkingLevels}
+                              disabledReason={rpcProcessLive ? null : "The session is not running, so its thinking level cannot change"}
+                              onPick={pickThinking}
+                            />
+                            {" · "}
+                          </>
+                        ) : null}
+                        {chatMetaTail}
+                      </p>
                     </div>
                   ) : null}
                   <div className="terminal-frame">

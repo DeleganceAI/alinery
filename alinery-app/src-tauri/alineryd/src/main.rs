@@ -14,6 +14,7 @@
 
 // Use alinery-core for all pure FS/path/harness/phase/status logic (pty bits stay local to alineryd).
 mod execution;
+mod idle_inhibit;
 mod ui_control;
 use alinery_core::daemon_client::{control_request_size_error, MAX_CONTROL_BODY_BYTES, MAX_CONTROL_HEADER_BYTES};
 use alinery_core::execution::{CompletionOutcome, ExecutionLifecycle};
@@ -256,7 +257,10 @@ impl ClientSink {
         let Some(queued_bytes) = queue.queued_bytes.checked_add(bytes.len()) else {
             return false;
         };
-        if queue.closed || queued_bytes > CLIENT_BACKLOG_BYTES {
+        // A caught-up client always takes the next line, however large: one RPC line can be a
+        // multi-MB image echo, and refusing it dropped every attached view at once. The budget
+        // bounds how far *behind* a client may fall.
+        if queue.closed || (queue.queued_bytes > 0 && queued_bytes > CLIENT_BACKLOG_BYTES) {
             return false;
         }
         let coalesce = queue.chunks.back().and_then(|last| last.len().checked_add(bytes.len())).is_some_and(|len| len <= 8192);
@@ -414,6 +418,10 @@ fn main() {
     let message_budget: MessageBudget = Arc::new(AtomicUsize::new(0));
     let control_body_budget: MessageBudget = Arc::new(AtomicUsize::new(0));
     start_auto_advance_reconciler(repo.clone(), reg.clone(), daemon_namespace.to_string(), app_config.as_ref().clone(), protected_host.clone());
+    let idle_inhibit = {
+        let reg = reg.clone();
+        idle_inhibit::start(app_config.as_ref().clone(), move || idle_inhibit_sessions(&reg))
+    };
 
     // Signal self-pipe: handler writes one byte; main loop reads and graceful_exits.
     let mut signal_rx = install_signal_self_pipe();
@@ -424,7 +432,7 @@ fn main() {
             let mut buf = [0u8; 8];
             match rx.read(&mut buf) {
                 Ok(n) if n > 0 => {
-                    graceful_exit(&reg, &socket_path);
+                    graceful_exit(&reg, &socket_path, &idle_inhibit);
                 }
                 _ => {}
             }
@@ -443,6 +451,7 @@ fn main() {
                 let app_config = app_config.clone();
                 let app_config_identity = app_config_identity.clone();
                 let protected_host = protected_host.clone();
+                let idle_inhibit = idle_inhibit.clone();
                 std::thread::spawn(move || {
                     handle_conn(
                         stream,
@@ -457,6 +466,7 @@ fn main() {
                         &app_config_identity,
                         &app_config,
                         &protected_host,
+                        &idle_inhibit,
                     );
                 });
             }
@@ -545,12 +555,22 @@ extern "C" fn signal_handler(_sig: libc::c_int) {
     }
 }
 
-/// Kill every live session, stamp any stragglers, unlink socket (never lock), exit.
-fn graceful_exit(reg: &Registry, socket_path: &Path) -> ! {
+/// Kill every live session, stamp any stragglers, drop the idle inhibit, unlink socket (never lock), exit.
+fn graceful_exit(reg: &Registry, socket_path: &Path, idle_inhibit: &idle_inhibit::Handle) -> ! {
     kill_all_sessions(reg);
+    idle_inhibit.release();
     let _ = fs::remove_file(socket_path);
     // Drop lock by process exit — do NOT unlink lock_path.
     process::exit(0);
+}
+
+/// Registry rows that keep the computer awake (`idle_inhibit::session_holds`). Same lock order
+/// as the `list` op: registry, then each session's inner, both dropped before returning.
+fn idle_inhibit_sessions(reg: &Registry) -> usize {
+    let map = reg.lock().unwrap_or_else(|e| e.into_inner());
+    map.iter()
+        .filter(|(id, sess)| idle_inhibit::session_holds(id, &sess.inner.lock().unwrap_or_else(|e| e.into_inner()).state))
+        .count()
 }
 
 /// (session id, harness pid, shared inner state, meta path) — snapshot for teardown.
@@ -834,6 +854,9 @@ fn accept_phase_completion(
     meta_path: &Path,
     _app_config: &Path,
 ) -> Result<CompletionOutcome, String> {
+    if task_slug.is_empty() {
+        return Err("session has no v2 execution".into());
+    }
     let source = read_session_meta_full(meta_path).ok_or("missing-session-meta")?;
     if source.execution_id.is_empty() {
         return Err("session has no v2 execution".into());
@@ -1046,6 +1069,10 @@ fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Pa
 
     let completion = match (&envelope.event, completion_action) {
         (_, CompletionEventAction::InFlight) => Err("completion-in-progress".to_string()),
+        (RunnerEvent::PhaseCompleted { .. }, CompletionEventAction::Attempt) if task_slug.is_empty() => {
+            inner.lock().unwrap_or_else(|error| error.into_inner()).completion_in_flight = false;
+            Ok(None)
+        }
         (RunnerEvent::PhaseCompleted { omp_session_id, omp_turn_id }, CompletionEventAction::Attempt) => {
             let result = accept_phase_completion(reg, repo, &envelope.session_id, &task_slug, omp_session_id, *omp_turn_id, &meta_path, app_config);
             inner.lock().unwrap_or_else(|error| error.into_inner()).completion_in_flight = false;
@@ -1092,6 +1119,7 @@ fn handle_conn(
     app_config_identity: &str,
     app_config: &Path,
     protected_host: &ProtectedHost,
+    idle_inhibit: &idle_inhibit::Handle,
 ) {
     // The listener is non-blocking so the accept loop can poll the signal pipe.
     // On macOS accept() inherits O_NONBLOCK; a temporary gap must not be EOF.
@@ -1545,6 +1573,7 @@ fn handle_conn(
             // Never unlink the lock file — flock is the only singleton truth.
             let _ = lock_path; // retained in signature for protocol stability
             kill_all_sessions(reg);
+            idle_inhibit.release();
             let _ = fs::remove_file(socket_path);
             reply(&mut stream, json!({"ok": true}));
             process::exit(0);
@@ -1671,9 +1700,14 @@ fn resume_or_attach(
     }
     let task_slug = req.get("task_slug").and_then(|v| v.as_str()).unwrap_or("").to_string();
     if task_slug.trim().is_empty() {
-        return Err("sessions must be attached to a task".into());
+        match read_session_meta_full(&session_meta_path(repo, &task_slug, &id)) {
+            None => return Err("missing-session-meta".into()),
+            Some(meta) if meta.generic && meta.harness == alinery_core::DEFAULT_HARNESS_KEY && meta.execution_id.is_empty() => {}
+            Some(_) => return Err("sessions must be attached to a task".into()),
+        }
+    } else {
+        execution::task_for_owner(repo, &task_slug, daemon_namespace)?;
     }
-    execution::task_for_owner(repo, &task_slug, daemon_namespace)?;
     if let Some(meta) = read_session_meta_full(&session_meta_path(repo, &task_slug, &id)) {
         if !meta.execution_id.is_empty() || (!meta.generic && meta.harness != NO_HARNESS_KEY) {
             return Err("graph owners cannot be resumed; recover proven-stopped unfinished execution explicitly".into());
@@ -1887,8 +1921,15 @@ fn spawn_session(
     if transport == SessionTransport::Rpc {
         child_args.push("--mode".into());
         child_args.push("rpc".into());
-        child_args.push("--thinking".into());
-        child_args.push("high".into());
+        // The flag seeds a new thread. OMP records the level in the session journal on every
+        // change, and a resumed thread keeps the one the user chose, which the flag would override.
+        // The seed is read from disk here so a settings change applies without a daemon restart,
+        // and the lenient read keeps a malformed config from failing a spawn.
+        let resuming = (resume && !token.is_empty()) || restate_jsonl.is_some();
+        if !resuming {
+            child_args.push("--thinking".into());
+            child_args.push(alinery_core::thinking_launch_level(&alinery_core::read_scoped_settings(app_config, repo).effective.defaults).into());
+        }
     }
     if let Some(path) = &restate_jsonl {
         child_args.push("--resume".into());
@@ -1956,8 +1997,8 @@ fn spawn_session(
         cmd.env("ALINERY_DAEMON_NAMESPACE", daemon_namespace);
         cmd.env("ALINERY_EVENT_PROTOCOL_VERSION", RUNNER_EVENT_PROTOCOL_VERSION.to_string());
         cmd.env("ALINERY_EVENT_TOKEN", &event_token);
-        if !launch.task_slug.is_empty() {
-            cmd.env("ALINERY_SESSION_NAMING", "1");
+        if let Some(mode) = session_naming_mode(&launch.id, &launch.task_slug) {
+            cmd.env("ALINERY_SESSION_NAMING", mode);
         }
         if let Some(host) = protected_host.as_ref() {
             cmd.env("ALINERY_HOST_EXECUTABLE", host);
@@ -2305,6 +2346,8 @@ enum RpcLineKind {
     Ready,
     /// Closes a turn. Everything buffered before it is committed to OMP's journal.
     TurnEnd,
+    /// Closes the agent loop: a `TurnEnd` that also means OMP is idle.
+    AgentEnd,
     /// A reply to a history request. The client that asked correlates it against its own walk;
     /// replaying it to a different client resurrects a dead cursor.
     HistoryResponse,
@@ -2317,9 +2360,23 @@ fn classify_rpc_line(line: &[u8]) -> RpcLineKind {
     };
     match value.get("type").and_then(Value::as_str) {
         Some("ready") => RpcLineKind::Ready,
-        Some("agent_end") | Some("turn_end") => RpcLineKind::TurnEnd,
+        Some("agent_end") => RpcLineKind::AgentEnd,
+        Some("turn_end") => RpcLineKind::TurnEnd,
         Some("response") if matches!(value.get("command").and_then(Value::as_str), Some("get_messages") | Some("get_messages_page")) => RpcLineKind::HistoryResponse,
         _ => RpcLineKind::Other,
+    }
+}
+
+/// OMP's own `agent_end` settles the agent axis to Idle. The extension's `idle` event is the usual
+/// source, but it is fire-and-forget (a 250ms ack, no retry): one lost emit left the session Busy,
+/// and the UI on Running, until the next turn. A late `idle` then reduces to the same status.
+fn settle_idle_on_agent_end(inner: &mut Inner, meta_path: &Path) {
+    if inner.state.agent == alinery_core::AgentState::Idle || !process_accepts_runner_events(&inner.state.process) {
+        return;
+    }
+    let reduced = reduce_runner_event(&inner.state, &RunnerEvent::Idle { omp_turn_id: None });
+    if let Err(error) = publish_live_transition(inner, meta_path, reduced.state) {
+        eprintln!("agent_end idle stamp {}: {error}", meta_path.display());
     }
 }
 
@@ -2340,7 +2397,7 @@ fn push_rpc_line(inner: &mut Inner, line: Vec<u8>, kind: RpcLineKind) {
             inner.rpc_ready = Some(line);
         }
         RpcLineKind::HistoryResponse => {}
-        RpcLineKind::TurnEnd => {
+        RpcLineKind::TurnEnd | RpcLineKind::AgentEnd => {
             inner.rpc_pending.clear();
             inner.rpc_pending_bytes = 0;
         }
@@ -2371,6 +2428,32 @@ mod rpc_ring_tests {
             reaped_and_drained: false,
             state: SessionState::default(),
         }
+    }
+
+    #[test]
+    fn agent_end_settles_busy_to_idle_and_leaves_a_pending_question() {
+        let meta_path = std::env::temp_dir().join(format!("alinery-agent-end-{}.meta.json", uuid::Uuid::new_v4()));
+        fs::write(
+            &meta_path,
+            serde_json::to_vec(&alinery_core::SessionMeta {
+                id: "s1".into(),
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let mut inner = empty_inner();
+        inner.state.process = ProcessState::Alive;
+        inner.state.agent = alinery_core::AgentState::Busy;
+        assert_eq!(classify_rpc_line(br#"{"type":"agent_end"}"#), RpcLineKind::AgentEnd);
+        settle_idle_on_agent_end(&mut inner, &meta_path);
+        assert_eq!(inner.state.agent, alinery_core::AgentState::Idle);
+
+        let waiting = alinery_core::AgentState::WaitingForInput { correlation_id: "q1".into() };
+        inner.state.agent = waiting.clone();
+        settle_idle_on_agent_end(&mut inner, &meta_path);
+        assert_eq!(inner.state.agent, waiting);
+        let _ = fs::remove_file(meta_path);
     }
 
     #[test]
@@ -2642,6 +2725,19 @@ mod rpc_ring_tests {
     }
 }
 
+/// What the OMP extension may do about names. Task sessions name themselves through a tool; chat
+/// threads (taskless roots) get a model-written title at turn ends. The reserved setup session is
+/// neither: it has no metadata to name.
+fn session_naming_mode(session_id: &str, task_slug: &str) -> Option<&'static str> {
+    if !task_slug.is_empty() {
+        Some("1")
+    } else if session_id != OMP_SETUP_SESSION_ID {
+        Some("chat")
+    } else {
+        None
+    }
+}
+
 fn apply_rpc_command_env(
     cmd: &mut process::Command,
     harness: &Harness,
@@ -2673,8 +2769,8 @@ fn apply_rpc_command_env(
         cmd.env("ALINERY_DAEMON_NAMESPACE", daemon_namespace);
         cmd.env("ALINERY_EVENT_PROTOCOL_VERSION", RUNNER_EVENT_PROTOCOL_VERSION.to_string());
         cmd.env("ALINERY_EVENT_TOKEN", event_token);
-        if !launch.task_slug.is_empty() {
-            cmd.env("ALINERY_SESSION_NAMING", "1");
+        if let Some(mode) = session_naming_mode(&launch.id, &launch.task_slug) {
+            cmd.env("ALINERY_SESSION_NAMING", mode);
         }
         if let Some(host) = protected_host.as_ref() {
             cmd.env("ALINERY_HOST_EXECUTABLE", host);
@@ -2960,7 +3056,7 @@ fn spawn_rpc_session(
     resume: bool,
     seeded: Option<String>,
 ) -> Result<(), String> {
-    let stderr_path = sessions_dir(repo, &launch.task_slug).join(format!("{}.stderr.log", launch.id));
+    let stderr_path = session_meta_path(repo, &launch.task_slug, &launch.id).with_file_name(format!("{}.stderr.log", launch.id));
     let stderr = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -3153,8 +3249,11 @@ fn spawn_rpc_session(
                                 {
                                     let mut inner = inner_t.lock().unwrap_or_else(|error| error.into_inner());
                                     push_rpc_line(&mut inner, complete, kind);
+                                    if kind == RpcLineKind::AgentEnd && !replacing_reader.load(Ordering::SeqCst) {
+                                        settle_idle_on_agent_end(&mut inner, &meta_path_reader);
+                                    }
                                 }
-                                if kind == RpcLineKind::TurnEnd
+                                if matches!(kind, RpcLineKind::TurnEnd | RpcLineKind::AgentEnd)
                                     && alinery_core::execution::read_execution_state(&execution_reader.0, &execution_reader.1).is_ok_and(|state| {
                                         state
                                             .executions
@@ -3505,6 +3604,26 @@ mod status_transitions {
 }
 
 #[cfg(test)]
+mod naming_mode {
+    use super::*;
+
+    #[test]
+    fn task_sessions_name_themselves_with_the_tool() {
+        assert_eq!(session_naming_mode("s01234567", "some-task"), Some("1"));
+    }
+
+    #[test]
+    fn taskless_root_sessions_are_chat_threads() {
+        assert_eq!(session_naming_mode("s01234567", ""), Some("chat"));
+    }
+
+    #[test]
+    fn the_reserved_setup_session_gets_no_naming_mode() {
+        assert_eq!(session_naming_mode(OMP_SETUP_SESSION_ID, ""), None);
+    }
+}
+
+#[cfg(test)]
 mod request_limits {
     use super::*;
     use std::io::Write;
@@ -3558,6 +3677,7 @@ mod request_limits {
                 "",
                 Path::new(""),
                 &Arc::new(None),
+                &idle_inhibit::Handle::noop(),
             );
         });
         // No newline or EOF: the header cap, not JSON parsing or the 100s timeout,
@@ -3802,19 +3922,28 @@ mod client_sink {
 
     // The old 256-message cap drops healthy streams under chatty redraws long before the intended
     // ~2 MiB backlog is used. The replacement sink is byte-budgeted, so many tiny chunks are valid
-    // while one oversized chunk is rejected.
+    // while one oversized chunk is rejected once the client is behind.
     #[test]
     fn byte_budget_accepts_more_than_256_small_chunks_and_rejects_oversized_chunk() {
         let (sock, _reader) = UnixStream::pair().expect("socketpair");
         let sink = ClientSink::new(sock);
-
         for chunk in burst_chunks(320) {
             assert!(sink.try_enqueue(chunk), "small chunk below the byte budget must be accepted");
         }
 
+        let (caught_up_sock, _caught_up_reader) = UnixStream::pair().expect("socketpair");
         assert!(
-            !sink.try_enqueue(vec![0u8; CLIENT_BACKLOG_BYTES + 1]),
-            "a single chunk larger than the per-client byte budget must be rejected"
+            ClientSink::new(caught_up_sock).try_enqueue(vec![0u8; CLIENT_BACKLOG_BYTES + 1]),
+            "a caught-up client takes one line larger than the budget"
+        );
+
+        // An unread initial replay far past the socket buffer parks the writer, so live bytes queue.
+        let (behind_sock, _behind_reader) = UnixStream::pair().expect("socketpair");
+        let behind = ClientSink::with_initial(behind_sock, vec![vec![0u8; 4 * 1024 * 1024]]);
+        assert!(behind.try_enqueue(b"queued\n".to_vec()));
+        assert!(
+            !behind.try_enqueue(vec![0u8; CLIENT_BACKLOG_BYTES]),
+            "a client already behind must not take a chunk past the per-client byte budget"
         );
     }
 

@@ -1,8 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_APPEARANCE } from "../appearance";
+import { DEFAULT_APPEARANCE, normalizeChatView } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
-import type { GlobalSettings } from "../types";
+import type { AppearancePrefs, GlobalSettings, RepoOverrides, ScopedSettings } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
 
 const baseGlobal: GlobalSettings = {
@@ -32,11 +32,35 @@ const baseGlobal: GlobalSettings = {
   model_favorites: {},
   telemetry: { enabled: true, prompted: false, install_id: "", endpoint: "https://telemetry.alinery.ai" },
   updates: { check_enabled: true },
+  // The Chat settings section only exists while the experimental Chat tab is on.
+  experiments: { show_chat: true },
 };
+
+// A repo scope on top of `global`: `overrides` is what the repo file holds, and each field's provenance follows it.
+function scopedFor(global: GlobalSettings, overrides: RepoOverrides): ScopedSettings {
+  const thinking = overrides.defaults.thinking;
+  return {
+    global,
+    overrides,
+    effective: {
+      notifications: global.notifications,
+      github: global.github,
+      defaults: { ...global.defaults, thinking: thinking ?? global.defaults.thinking },
+      provenance: {
+        github_token: "global",
+        defaults: { harness: "global", model: "global", thinking: thinking == null ? "global" : "repository", playbook: "global", draft_autosave: "global" },
+      },
+      backup: global.backup,
+      telemetry: global.telemetry,
+    },
+  };
+}
 
 const mocks = vi.hoisted(() => ({
   writeGlobalSettings: vi.fn(),
   readGlobalSettings: vi.fn(),
+  readScopedSettingsForRepo: vi.fn(),
+  writeRepoOverridesForRepo: vi.fn(),
   checkOmpUpdate: vi.fn(),
   writeAppearance: vi.fn(),
   updateOmp: vi.fn(),
@@ -47,6 +71,8 @@ vi.mock("../ipc", () =>
   mockIpc({
     readGlobalSettings: mocks.readGlobalSettings,
     writeGlobalSettings: mocks.writeGlobalSettings,
+    readScopedSettingsForRepo: mocks.readScopedSettingsForRepo,
+    writeRepoOverridesForRepo: mocks.writeRepoOverridesForRepo,
     checkOmpUpdate: mocks.checkOmpUpdate,
     updateOmp: mocks.updateOmp,
     storageInfo: () => new Promise(() => {}),
@@ -75,15 +101,31 @@ const mcp: McpStatusHandle = {
   refresh: () => {},
 };
 
-function renderHarnessSection() {
+function renderSection(initialSection: "harness" | "sessionsView" | "chat", appearance: AppearancePrefs = DEFAULT_APPEARANCE) {
   render(
-    <Settings mcp={mcp} activeRepo="/r" knownRepos={["/r"]} appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} onNotificationsChange={() => {}} initialSection="chat" />,
+    <Settings
+      mcp={mcp}
+      activeRepo="/r"
+      knownRepos={["/r"]}
+      appearance={appearance}
+      onAppearanceChange={() => {}}
+      onNotificationsChange={() => {}}
+      initialSection={initialSection}
+    />,
   );
+}
+
+const renderHarnessSection = () => renderSection("harness");
+
+function lastSavedAppearance(): AppearancePrefs {
+  return mocks.writeAppearance.mock.calls[mocks.writeAppearance.mock.calls.length - 1]?.[0];
 }
 
 beforeEach(() => {
   mocks.writeGlobalSettings.mockReset().mockImplementation(async (next: GlobalSettings) => next);
   mocks.readGlobalSettings.mockReset().mockResolvedValue(baseGlobal);
+  mocks.readScopedSettingsForRepo.mockReset().mockResolvedValue(scopedFor(baseGlobal, { github: {}, defaults: {}, backup: {} }));
+  mocks.writeRepoOverridesForRepo.mockReset().mockImplementation(async (_repo: string, overrides: RepoOverrides) => scopedFor(baseGlobal, overrides));
   vi.stubGlobal("localStorage", {
     getItem: vi.fn(() => null),
     setItem: vi.fn(),
@@ -123,14 +165,152 @@ describe("Harness settings model default", () => {
     expect(saved.defaults.harness).toBe("omp");
     expect(saved.defaults.model).toBe("gpt-5");
   });
+});
 
-  it("persists the chat copy button toggle", async () => {
+describe("Harness settings thinking default", () => {
+  // By role: in a repo scope the label also holds the badge's "Use global value" button, which label text queries match too.
+  const thinkingSelect = async () => (await screen.findByRole("combobox", { name: /Default thinking level/ })) as HTMLSelectElement;
+
+  it("shows high while the setting is unset", async () => {
     renderHarnessSection();
+    const select = await thinkingSelect();
+    expect(select.value).toBe("high");
+    expect(Array.from(select.options, (option) => option.value)).toEqual(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+  });
+
+  it("shows high for a stored value the daemon would not launch with", async () => {
+    mocks.readGlobalSettings.mockResolvedValue({ ...baseGlobal, defaults: { ...baseGlobal.defaults, thinking: "turbo" } });
+    renderHarnessSection();
+    expect((await thinkingSelect()).value).toBe("high");
+  });
+
+  it("shows a stored valid value", async () => {
+    mocks.readGlobalSettings.mockResolvedValue({ ...baseGlobal, defaults: { ...baseGlobal.defaults, thinking: "medium" } });
+    renderHarnessSection();
+    expect((await thinkingSelect()).value).toBe("medium");
+  });
+
+  it("writes a global change as defaults.thinking", async () => {
+    renderHarnessSection();
+    fireEvent.change(await thinkingSelect(), { target: { value: "low" } });
+    await waitFor(() => expect(mocks.writeGlobalSettings).toHaveBeenCalled());
+    const saved = mocks.writeGlobalSettings.mock.calls[mocks.writeGlobalSettings.mock.calls.length - 1][0] as GlobalSettings;
+    expect(saved.defaults.thinking).toBe("low");
+    expect(saved.defaults.model).toBe("");
+    expect(mocks.writeRepoOverridesForRepo).not.toHaveBeenCalled();
+  });
+
+  it("writes a repo change as a repository override and labels it", async () => {
+    renderHarnessSection();
+    fireEvent.click(await screen.findByRole("button", { name: "r" }));
+    const field = async () => (await thinkingSelect()).closest(".field") as HTMLElement;
+    expect(within(await field()).getByText("Global")).toBeTruthy();
+    fireEvent.change(await thinkingSelect(), { target: { value: "low" } });
+    await waitFor(() => expect(mocks.writeRepoOverridesForRepo).toHaveBeenCalled());
+    const [repo, overrides] = mocks.writeRepoOverridesForRepo.mock.calls[0] as [string, RepoOverrides];
+    expect(repo).toBe("/r");
+    expect(overrides.defaults.thinking).toBe("low");
+    expect(mocks.writeGlobalSettings).not.toHaveBeenCalled();
+    await waitFor(async () => expect(within(await field()).getByText(/Repository override/)).toBeTruthy());
+    expect((await thinkingSelect()).value).toBe("low");
+  });
+});
+
+describe("Sessions view and Chat tabs", () => {
+  // Each tab edits its own copy: the Sessions view writes the flat chat_* fields, Chat writes ava_chat.
+  const avaChat = normalizeChatView({ chat_max_width: "600", chat_font_size: 18, chat_show_copy_buttons: true });
+  const split: AppearancePrefs = { ...DEFAULT_APPEARANCE, chat_max_width: "1200", chat_font_size: 12, chat_show_copy_buttons: true, ava_chat: avaChat };
+
+  it("Sessions view persists the copy button toggle into the flat chat_* fields and leaves ava_chat untouched", async () => {
+    renderSection("sessionsView", split);
     const toggle = await screen.findByLabelText(/Show copy buttons/);
     expect((toggle as HTMLInputElement).checked).toBe(true);
     fireEvent.click(toggle);
     await waitFor(() => expect(mocks.writeAppearance).toHaveBeenCalled());
-    expect(mocks.writeAppearance.mock.calls[mocks.writeAppearance.mock.calls.length - 1]?.[0]).toMatchObject({ chat_show_copy_buttons: false });
+    const saved = lastSavedAppearance();
+    expect(saved).toMatchObject({ chat_show_copy_buttons: false, chat_max_width: "1200", chat_font_size: 12 });
+    expect(saved.ava_chat).toEqual(avaChat);
+  });
+
+  it("Chat renders its own values, not the flat chat_* fields", async () => {
+    renderSection("chat", { ...split, chat_show_copy_buttons: false, chat_max_width: "none" });
+    expect(((await screen.findByLabelText(/Show copy buttons/)) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByRole("button", { name: "600px" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "None" }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("Chat persists a toggle into ava_chat and leaves the flat chat_* fields untouched", async () => {
+    renderSection("chat", split);
+    fireEvent.click(await screen.findByLabelText(/Show copy buttons/));
+    await waitFor(() => expect(mocks.writeAppearance).toHaveBeenCalled());
+    const saved = lastSavedAppearance();
+    expect(saved.ava_chat).toEqual({ ...avaChat, chat_show_copy_buttons: false });
+    expect(saved).toMatchObject({ chat_show_copy_buttons: true, chat_max_width: "1200", chat_font_size: 12 });
+  });
+
+  it("Chat persists a choice card into ava_chat only", async () => {
+    renderSection("chat", split);
+    fireEvent.click(await screen.findByRole("button", { name: "Dense" }));
+    await waitFor(() => expect(mocks.writeAppearance).toHaveBeenCalled());
+    const saved = lastSavedAppearance();
+    expect(saved.ava_chat?.chat_rail_density).toBe("dense");
+    expect(saved.chat_rail_density).toBe("normal");
+  });
+
+  it("Chat falls back to the defaults when ava_chat was never saved", async () => {
+    renderSection("chat", { ...DEFAULT_APPEARANCE, chat_show_copy_buttons: false });
+    expect(((await screen.findByLabelText(/Show copy buttons/)) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByRole("button", { name: "900px" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  // The journal rows both tabs start with: thinking, tools and turn markers hidden; harness notices,
+  // subagent rows and drawer, date, time and the per-message copy icon shown; no actor labels,
+  // agent bubbles or block copy buttons.
+  const JOURNAL_DEFAULTS: [RegExp, boolean][] = [
+    [/Show thinking/, false],
+    [/Expand thinking by default/, false],
+    [/Show tool use/, false],
+    [/Expand tools by default/, false],
+    [/Show harness events/, true],
+    [/Show turn markers/, false],
+    [/Show subagent rows/, true],
+    [/Show subagent drawer/, true],
+    [/Show date/, true],
+    [/Show time/, true],
+    [/Show You \/ Agent labels/, false],
+    [/Show agent reply bubbles/, false],
+    [/Show block copy buttons/, false],
+    [/Show copy buttons/, true],
+  ];
+
+  it.each(["sessionsView", "chat"] as const)("%s starts with the shared journal defaults", async (section) => {
+    renderSection(section, DEFAULT_APPEARANCE);
+    await screen.findByLabelText(/Show thinking/);
+    for (const [label, checked] of JOURNAL_DEFAULTS) expect((screen.getByLabelText(label) as HTMLInputElement).checked, String(label)).toBe(checked);
+  });
+
+  it("Chat describes the meta strip and column width for Ava", async () => {
+    renderSection("chat");
+    expect(await screen.findByText("— repo · branch · thinking · status line under the thread title")).toBeTruthy();
+    expect(screen.getByText("Limits the width of the message thread, composer and notices.")).toBeTruthy();
+    expect(screen.getByText("Which journal rows appear in the Chat view. Global-only.")).toBeTruthy();
+    expect(screen.getByText("Density, sizing and behavior of the Chat view. Global-only.")).toBeTruthy();
+    expect(screen.getByText("Chat view column width")).toBeTruthy();
+    expect(screen.getByText("Chat view text")).toBeTruthy();
+    expect(screen.queryByText(/model · thinking · event count/)).toBeNull();
+    expect(screen.queryByText(/Limits journal thread width/)).toBeNull();
+  });
+
+  it("Sessions view keeps the journal descriptions for the session thread", async () => {
+    renderSection("sessionsView");
+    expect(await screen.findByText("— model · thinking · event count · context above the chat")).toBeTruthy();
+    expect(screen.getByText("Limits journal thread width; meta and composer stay full width.")).toBeTruthy();
+    expect(screen.getByText("Which journal rows appear in session chats. Global-only.")).toBeTruthy();
+    expect(screen.getByText("Density, sizing and behavior of session chats. Global-only.")).toBeTruthy();
+    expect(screen.getByText("Session chat column width")).toBeTruthy();
+    expect(screen.getByText("Session chat text")).toBeTruthy();
+    expect(screen.queryByText(/status line under the thread title/)).toBeNull();
+    expect(screen.queryByText(/message thread, composer and notices/)).toBeNull();
   });
 });
 

@@ -14,7 +14,7 @@ describe("formatDuration", () => {
 
 describe("formatContextUsage", () => {
   it("renders used/window in thousands", () => {
-    expect(formatContextUsage(19200, 128000)).toBe("19.2k/128k");
+    expect(formatContextUsage(19200, 128000)).toBe("19.2k/128k (15%)");
     expect(formatContextUsage(undefined, 128000)).toBe("");
   });
 

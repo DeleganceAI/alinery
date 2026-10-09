@@ -74,7 +74,7 @@ describe("Settings experimental features", () => {
         onAppearanceChange={() => {}}
         onGlobalSettingsChange={onGlobalSettingsChange}
         onNotificationsChange={() => {}}
-        initialSection="experimental"
+        initialSection="general"
       />,
     );
 
@@ -87,5 +87,51 @@ describe("Settings experimental features", () => {
     const saved = vi.mocked(ipc.writeGlobalSettings).mock.calls[0][0] as GlobalSettings;
     expect(saved.experiments?.show_original_kanban).toBe(false);
     await waitFor(() => expect(onGlobalSettingsChange).toHaveBeenCalledWith(saved));
+  });
+
+  it("keeps the Chat tab off until opted in, and leaves the Kanban flag alone", async () => {
+    render(
+      <Settings
+        mcp={mcp}
+        activeRepo="/r"
+        knownRepos={["/r"]}
+        appearance={DEFAULT_APPEARANCE}
+        onAppearanceChange={() => {}}
+        onGlobalSettingsChange={() => {}}
+        onNotificationsChange={() => {}}
+        initialSection="general"
+      />,
+    );
+
+    const checkbox = (await screen.findByRole("checkbox", { name: /^Chat/ })) as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+    fireEvent.click(checkbox);
+
+    await waitFor(() => expect(ipc.writeGlobalSettings).toHaveBeenCalled());
+    const saved = vi.mocked(ipc.writeGlobalSettings).mock.calls[0][0] as GlobalSettings;
+    expect(saved.experiments?.show_chat).toBe(true);
+    expect(saved.experiments?.show_original_kanban).not.toBe(false);
+  });
+
+  it("shows the Chat settings section only while the Chat flag is on", async () => {
+    render(
+      <Settings
+        mcp={mcp}
+        activeRepo="/r"
+        knownRepos={["/r"]}
+        appearance={DEFAULT_APPEARANCE}
+        onAppearanceChange={() => {}}
+        onGlobalSettingsChange={() => {}}
+        onNotificationsChange={() => {}}
+        initialSection="chat"
+      />,
+    );
+
+    // Off by default: no Chat section, and a request to open it lands on General.
+    const checkbox = (await screen.findByRole("checkbox", { name: /^Chat/ })) as HTMLInputElement;
+    expect(screen.queryByRole("button", { name: "Chat" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Sessions view" })).toBeTruthy();
+    fireEvent.click(checkbox);
+    expect(await screen.findByRole("button", { name: "Chat" })).toBeTruthy();
   });
 });

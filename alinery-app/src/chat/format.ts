@@ -44,7 +44,7 @@ export function formatContextUsage(tokens?: number, window?: number): string {
   const used = formatTokenCount(tokens);
   // OMP sends contextWindow 0 when the provider has no known limit. Still show accumulated tokens.
   if (window == null || !Number.isFinite(window) || window <= 0) return `${used}/?`;
-  return `${used}/${formatTokenCount(window)}`;
+  return `${used}/${formatTokenCount(window)} (${Math.round((tokens / window) * 100)}%)`;
 }
 
 /** Composer footer: `128 chars`. */

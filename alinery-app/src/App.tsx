@@ -6,6 +6,7 @@ import {
   FolderPlus,
   Grid3X3,
   List,
+  MessageSquare,
   Play,
   Plus,
   RefreshCw,
@@ -24,9 +25,10 @@ import { applyAppearance, DEFAULT_APPEARANCE } from "./appearance";
 import alineryIcon from "./assets/alinery-icon-white-plain.png";
 import { GlobalSearch, type SearchItem } from "./CommandPalette";
 import type { QueuedFollowUp } from "./chat/queue";
+import { chatVisibilityFromAppearance } from "./chat/visibility";
 import { askConfirm, ConfirmHost, confirmDanger } from "./confirm";
 import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner } from "./DaemonConflictBanner";
-import { ACTIVE_GRID_VIEW_STORAGE_KEY, DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute } from "./gridViews";
+import { ACTIVE_GRID_VIEW_STORAGE_KEY, DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute, trailingTabDigit } from "./gridViews";
 import { HotkeyBar } from "./HotkeyBar";
 import { ORB_SPEED } from "./Indicators";
 import * as ipc from "./ipc";
@@ -35,7 +37,7 @@ import { BrandMark } from "./Logo";
 import { PRIORITY_SESSION_SORT, type SessionSort } from "./sessionAttention";
 import { EMPTY_SESSION_MESSAGE_DRAFT, type SessionMessageDraft, sessionMessageDraftKey } from "./sessionMessage";
 import { ALL_REPOS, isDevelopmentProductName, LoadingState, RepoPicker, repoName, TopBar } from "./shared";
-import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, TerminalDrawer } from "./TerminalDrawer";
+import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, type DrawerTab, TerminalDrawer } from "./TerminalDrawer";
 import { gridViewIdOf, isPrimaryTab, primaryTabOf, viewFadeClass } from "./tabMotion";
 import * as taskMutationGuard from "./taskMutationGuard";
 import { shouldAskTelemetryConsent, TELEMETRY_CONSENT_CHOICES, telemetryConsentWrite } from "./telemetry-consent";
@@ -67,6 +69,7 @@ import { useOmpUpdateStatus } from "./useOmpUpdateStatus";
 import { useSessionNoticeSnapshot } from "./useSessionNoticeSnapshot";
 import { readStoredTaskSessionSort, writeStoredTaskSessionSort } from "./useSessionSort";
 import { useUpdateStatus } from "./useUpdateStatus";
+import { ChatView } from "./views/ChatView";
 import { CreateSessionPage } from "./views/CreateSessionPage";
 import { CreateTaskPage } from "./views/CreateTaskPage";
 import { Grid } from "./views/Grid";
@@ -128,11 +131,27 @@ function sharedGridStorageKey(gridViewId: string, legacyScopeKey: string): strin
   return storageKey;
 }
 
+type DrawerHandle = {
+  tabs: DrawerTab[];
+  activeId: string;
+  nextOrdinal: number;
+};
+
+function drawerAfterClose(handle: DrawerHandle, id: string): DrawerHandle | null {
+  const index = handle.tabs.findIndex((tab) => tab.id === id);
+  if (index < 0) return handle;
+  const tabs = handle.tabs.filter((tab) => tab.id !== id);
+  if (tabs.length === 0) return null;
+  if (handle.activeId !== id) return { ...handle, tabs };
+  const next = tabs[index] ?? tabs[index - 1];
+  return { ...handle, tabs, activeId: next.id };
+}
 export default function App() {
   const [view, setView] = useState<View>(initialView);
   const [navInstant, setNavInstant] = useState(true);
   const playbooksReturnView = useRef<View | null>(null);
   const [playbooksVisited, setPlaybooksVisited] = useState(false);
+  const [chatVisited, setChatVisited] = useState(false);
   const [scope, setScope] = useState<RepoScope>("active");
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   // Repo open is the first moment we can ask whether this install can actually run an agent:
@@ -182,16 +201,29 @@ export default function App() {
   // Global left terminal drawer — ephemeral; not persisted.
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerWidth, setDrawerWidth] = useState(DRAWER_DEFAULT_WIDTH);
-  const [drawerSession, setDrawerSession] = useState<{ id: string; cwd: string } | null>(null);
-  // Keep kill/clear handlers stable for TerminalDrawer EOF poll without stale closures.
-  const drawerSessionRef = useRef(drawerSession);
-  drawerSessionRef.current = drawerSession;
+  const [drawer, setDrawer] = useState<DrawerHandle | null>(null);
+  const [drawerCreating, setDrawerCreating] = useState(false);
+  // Kill, switch, and EOF must not close over a stale tab list.
+  const drawerRef = useRef(drawer);
+  drawerRef.current = drawer;
+  const drawerGeneration = useRef(0);
+  const creatingDrawer = useRef(false);
+  const inFlightDrawerId = useRef<string | null>(null);
+  // Creates that resolve after a switch has snapshotted ids, but before it
+  // clears the handle, must wait. Inserting in that window leaks the pty on
+  // the previous repo: the id is in neither the kill list nor drawerRef yet.
+  const repoSwitchDepth = useRef(0);
+  const repoSwitchWaiters = useRef<Array<() => void>>([]);
   // Same reason for the close-requested handler: it is registered once, but must see the
   // repo list as it is at quit time.
   const appConfigRef = useRef(appConfig);
   appConfigRef.current = appConfig;
   const gridViews = useMemo(() => normalizeGridViews(appConfig?.global?.grid_views), [appConfig?.global?.grid_views]);
   const showOriginalKanban = appConfig?.global?.experiments?.show_original_kanban ?? true;
+  const showChat = appConfig?.global?.experiments?.show_chat ?? false;
+  useEffect(() => {
+    if (view.kind === "chat") setChatVisited(true);
+  }, [view.kind]);
   const repoKey = appConfig?.active_repo ? `${scope}:${appConfig.active_repo}:${appConfig.known_repos.join("|")}:${reloadNonce}` : "";
   const activeGridViewId = view.kind === "grid" && gridViews.some((gridView) => gridView.id === view.gridViewId) ? view.gridViewId : undefined;
   const [mountedGridViews, setMountedGridViews] = useState<{ repoKey: string; ids: string[] }>({ repoKey: "", ids: [] });
@@ -209,10 +241,12 @@ export default function App() {
   useEffect(() => {
     if (!appConfig) return;
     setView((current) => {
+      // Turning the Chat tab off while it is open sends you to the first Grid view.
+      if (current.kind === "chat" && !showChat) return { kind: "grid", gridViewId: gridViews[0].id };
       if (current.kind !== "grid" && current.kind !== "kanban") return current;
       return resolveGridTopLevelRoute(current, showOriginalKanban, gridViews);
     });
-  }, [appConfig, gridViews, showOriginalKanban]);
+  }, [appConfig, gridViews, showOriginalKanban, showChat]);
 
   const selectedGridViewId = gridViewIdOf(view);
   useEffect(() => {
@@ -241,21 +275,141 @@ export default function App() {
   const isFullscreen = useWindowFullscreen();
 
   const clearDrawerUi = useCallback(() => {
+    drawerGeneration.current += 1;
+    drawerRef.current = null;
     setDrawerOpen(false);
-    setDrawerSession(null);
+    setDrawer(null);
   }, []);
 
-  const killDrawer = useCallback(async () => {
-    const sess = drawerSessionRef.current;
-    clearDrawerUi();
-    if (sess) {
+  // Every tab-list change composes from the ref, which is advanced synchronously, so two
+  // exits (or a create and an exit) in one batch cannot overwrite each other from a stale
+  // render. The kill side effects stay outside, in the callers.
+  const updateDrawer = useCallback((fn: (handle: DrawerHandle) => DrawerHandle | null) => {
+    const handle = drawerRef.current;
+    if (!handle) return;
+    const next = fn(handle);
+    drawerRef.current = next;
+    setDrawer(next);
+  }, []);
+  const removeDrawerTab = useCallback(
+    (id: string) => {
+      const handle = drawerRef.current;
+      if (!handle) return;
+      if (drawerAfterClose(handle, id) === null) clearDrawerUi();
+      else updateDrawer((h) => drawerAfterClose(h, id));
+    },
+    [clearDrawerUi, updateDrawer],
+  );
+
+  const drawerIds = (claimInFlight = true) => {
+    const ids = drawerRef.current?.tabs.map((tab) => tab.id) ?? [];
+    const pending = inFlightDrawerId.current;
+    if (pending && !ids.includes(pending)) ids.push(pending);
+    if (claimInFlight) inFlightDrawerId.current = null;
+    return ids;
+  };
+
+  const beginRepoSwitch = () => {
+    repoSwitchDepth.current += 1;
+  };
+  const endRepoSwitch = () => {
+    repoSwitchDepth.current -= 1;
+    if (repoSwitchDepth.current > 0) return;
+    repoSwitchDepth.current = 0;
+    const waiters = repoSwitchWaiters.current;
+    repoSwitchWaiters.current = [];
+    for (const release of waiters) release();
+  };
+  const waitForRepoSwitch = () => {
+    if (repoSwitchDepth.current === 0) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      repoSwitchWaiters.current.push(resolve);
+    });
+  };
+
+  // A tab leaves the drawer only once its shell is confirmed stopped (kill acknowledged, or
+  // an independently observed exit). Otherwise the handle stays so the user can retry.
+  const stopDrawerTab = useCallback(async (id: string): Promise<boolean> => {
+    try {
+      await ipc.killSession(id, "");
+      return true;
+    } catch {
       try {
-        await ipc.killSession(sess.id, "");
+        const state = (await ipc.sessionStatus(id, "")).lifecycle.state;
+        return state !== "live" && state !== "never_started";
       } catch {
-        // Idempotent — already exited / daemon offline.
+        return false;
       }
     }
-  }, [clearDrawerUi]);
+  }, []);
+
+  const reportStuck = (ids: string[]) => {
+    const handle = drawerRef.current;
+    const names = ids.map((id) => handle?.tabs.find((tab) => tab.id === id)?.ordinal ?? id).join(", ");
+    toast.error(`Couldn't stop terminal ${names}. It may still be running; close it again to retry.`);
+  };
+
+  const killDrawer = useCallback(async () => {
+    const ids = drawerIds();
+    // A create still in flight must not land in a drawer that is being killed.
+    drawerGeneration.current += 1;
+    const stuck: string[] = [];
+    for (const id of ids) {
+      if (await stopDrawerTab(id)) removeDrawerTab(id);
+      else stuck.push(id);
+    }
+    if (stuck.length > 0) reportStuck(stuck);
+  }, [stopDrawerTab, removeDrawerTab]);
+
+  const addDrawerTab = useCallback(async () => {
+    if (creatingDrawer.current) return;
+    const repoAtCreate = appConfigRef.current?.active_repo;
+    if (!repoAtCreate) return;
+    creatingDrawer.current = true;
+    setDrawerCreating(true);
+    const generation = drawerGeneration.current;
+    try {
+      const meta = await ipc.ensureDrawerTerminal();
+      inFlightDrawerId.current = meta.id;
+      while (repoSwitchDepth.current > 0) await waitForRepoSwitch();
+      if (drawerGeneration.current !== generation || inFlightDrawerId.current !== meta.id) {
+        if (inFlightDrawerId.current === meta.id) {
+          inFlightDrawerId.current = null;
+          try {
+            await ipc.killSessionForRepo(repoAtCreate, meta.id, "");
+          } catch {
+            // The id belongs to the repo that created it, which may no longer be active.
+          }
+        }
+        return;
+      }
+      inFlightDrawerId.current = null;
+      const cwd = meta.worktree || repoAtCreate;
+      const current = drawerRef.current;
+      const nextOrdinal = current?.nextOrdinal ?? 1;
+      const tab = { id: meta.id, ordinal: nextOrdinal, cwd };
+      const next = { tabs: [...(current?.tabs ?? []), tab], activeId: meta.id, nextOrdinal: nextOrdinal + 1 };
+      drawerRef.current = next;
+      setDrawer(next);
+      setDrawerOpen(true);
+    } catch (e) {
+      toast(String(e), "error");
+    } finally {
+      creatingDrawer.current = false;
+      setDrawerCreating(false);
+    }
+  }, []);
+
+  const closeDrawerTab = useCallback(
+    async (id: string) => {
+      if (!drawerRef.current?.tabs.some((tab) => tab.id === id)) return;
+      if (await stopDrawerTab(id)) removeDrawerTab(id);
+      else reportStuck([id]);
+    },
+    [stopDrawerTab, removeDrawerTab],
+  );
+
+  const selectDrawerTab = useCallback((id: string) => updateDrawer((handle) => (handle.tabs.some((tab) => tab.id === id) ? { ...handle, activeId: id } : handle)), [updateDrawer]);
 
   useEffect(() => {
     ipc
@@ -274,7 +428,7 @@ export default function App() {
         if (shouldAskTelemetryConsent(cfg.global?.telemetry)) {
           void askConfirm({
             title: "Share anonymous usage?",
-            body: "Alinery can send anonymized product-usage events (app open, tasks, sessions, settings). Never paths, task names, prompts, artifacts, or tokens. Change anytime in Settings → Telemetry.",
+            body: "Alinery can send anonymized product-usage events (app open, tasks, sessions, settings). Never paths, task names, prompts, artifacts, or tokens. Change anytime in Settings → General.",
             choices: TELEMETRY_CONSENT_CHOICES,
             defaultKey: "opt-out",
             cancelKey: "later",
@@ -367,6 +521,7 @@ export default function App() {
   const refreshBoards = () => setReloadNonce((n) => n + 1);
 
   const appearance = appConfig?.appearance ?? DEFAULT_APPEARANCE;
+  const chatViewVisibility = useMemo(() => chatVisibilityFromAppearance(appearance.ava_chat ?? {}), [appearance.ava_chat]);
   const isDev = isDevelopmentProductName(productName);
   const update = useUpdateStatus({ enabled: !isDev });
   const ompUpdate = useOmpUpdateStatus();
@@ -382,14 +537,20 @@ export default function App() {
     [noticeSnapshot.requestRefresh],
   );
 
-  // The backend reserves the candidate before it kills the old repo's drawer session.
-  // Clear the drawer UI only after that transactional switch succeeds.
+  // The backend reserves the candidate before it kills the old repo's drawer sessions.
+  // Clear the drawer UI only after that transactional switch succeeds. Do not claim the
+  // in-flight id here: a thrown switch must still be able to insert it.
   const switchActiveRepo = async (path: string): Promise<AppConfig> => {
     const previousRepo = appConfigRef.current?.active_repo;
-    const drawerSessionId = drawerSessionRef.current?.id ?? null;
-    const cfg = await ipc.setActiveRepo(path, drawerSessionId);
-    if (cfg.active_repo !== previousRepo) clearDrawerUi();
-    return { ...cfg, appearance: applyAppearance(cfg.appearance) };
+    beginRepoSwitch();
+    const drawerSessionIds = drawerIds(false);
+    try {
+      const cfg = await ipc.setActiveRepo(path, drawerSessionIds);
+      if (cfg.active_repo !== previousRepo) clearDrawerUi();
+      return { ...cfg, appearance: applyAppearance(cfg.appearance) };
+    } finally {
+      endRepoSwitch();
+    }
   };
 
   // A repository or all-repos switch keeps the page. A page bound to one task
@@ -428,22 +589,16 @@ export default function App() {
   };
 
   const toggleTerminalDrawer = async () => {
-    if (!appConfig?.active_repo) return;
+    if (!appConfigRef.current?.active_repo) return;
     if (drawerOpen) {
-      setDrawerOpen(false); // CSS hide only — no kill, no clear
+      setDrawerOpen(false);
       return;
     }
-    try {
-      let sess = drawerSession;
-      if (!sess) {
-        const meta = await ipc.ensureDrawerTerminal();
-        sess = { id: meta.id, cwd: meta.worktree || appConfig.active_repo };
-        setDrawerSession(sess);
-      }
+    if (drawerRef.current) {
       setDrawerOpen(true);
-    } catch (e) {
-      toast(String(e), "error");
+      return;
     }
+    await addDrawerTab();
   };
 
   const switchTop = (kind: Tab, opts?: { instant?: boolean; gridViewId?: string }) => {
@@ -456,7 +611,7 @@ export default function App() {
       setView({ kind: "grid", gridViewId });
       return;
     }
-    if (kind === "kanban" && !showOriginalKanban) {
+    if ((kind === "kanban" && !showOriginalKanban) || (kind === "chat" && !showChat)) {
       setView({ kind: "grid", gridViewId: gridViews[0].id });
       return;
     }
@@ -940,6 +1095,9 @@ export default function App() {
     openCreate: () => {
       if (hasRepo) openCreate();
     },
+    gridCount: gridViews.length,
+    showKanban: showOriginalKanban,
+    showChat,
     goList: () => {
       if (hasRepo) switchTop("list", { instant: true });
     },
@@ -949,6 +1107,9 @@ export default function App() {
     goGrid: (slot) => {
       const gridView = gridViews[slot];
       if (hasRepo && gridView) switchTop("grid", { instant: true, gridViewId: gridView.id });
+    },
+    goChat: () => {
+      if (hasRepo) switchTop("chat", { instant: true });
     },
     goSessions: () => {
       if (hasRepo) switchTop("sessions", { instant: true });
@@ -995,12 +1156,17 @@ export default function App() {
       ? [
           action("run", pi(Play), "Run session on selected", "⌘↵", () => navRef.current?.openSelected()),
           action("new-task", pi(Plus), "New task", "⌘N", openCreate),
-          action("tasks", pi(List), "Go to Tasks", "⌘1", () => switchTop("list", { instant: true })),
           ...gridViews.map((gridView, index) =>
             action(`grid-${gridView.id}`, pi(Grid3X3), `Go to ${gridView.name}`, gridViewShortcut(index), () => switchTop("grid", { instant: true, gridViewId: gridView.id })),
           ),
-          ...(showOriginalKanban ? [action("kanban", pi(SquareKanban), "Go to Kanban", "⌘3", () => switchTop("kanban", { instant: true }))] : []),
-          action("sessions", pi(SquareTerminal), "Go to Sessions", "⌘7", () => switchTop("sessions", { instant: true })),
+          action("tasks", pi(List), "Go to Tasks", `⌘${trailingTabDigit(gridViews.length, "tasks")}`, () => switchTop("list", { instant: true })),
+          action("sessions", pi(SquareTerminal), "Go to Sessions", `⌘${trailingTabDigit(gridViews.length, "sessions")}`, () => switchTop("sessions", { instant: true })),
+          ...(showOriginalKanban
+            ? [action("kanban", pi(SquareKanban), "Go to Kanban", `⌘${trailingTabDigit(gridViews.length, "kanban")}`, () => switchTop("kanban", { instant: true }))]
+            : []),
+          ...(showChat
+            ? [action("chat", pi(MessageSquare), "Go to Chat", `⌘${trailingTabDigit(gridViews.length, "chat", showOriginalKanban)}`, () => switchTop("chat", { instant: true }))]
+            : []),
           action("notifications", pi(Bell), "Go to Notifications", "⌘8", () => switchTop("notifications", { instant: true })),
           action("settings", pi(SettingsIcon), "Open Settings", "⌘9", () => openSettings(undefined, { instant: true })),
           ...SETTINGS_SECTIONS.map((section) =>
@@ -1087,17 +1253,20 @@ export default function App() {
       <ResizeHandles />
       <div className="app-shell">
         <div className={drawerOpen ? "app app-with-drawer" : "app"} style={drawerOpen ? ({ ["--drawer-width" as string]: `${drawerWidth}px` } as CSSProperties) : undefined}>
-          {(drawerOpen || drawerSession) && (
+          {(drawerOpen || (drawer?.tabs.length ?? 0) > 0) && (
             <TerminalDrawer
               open={drawerOpen}
               width={drawerWidth}
               onWidthChange={(w) => setDrawerWidth(clampDrawerWidth(w))}
-              session={drawerSession}
+              tabs={drawer?.tabs ?? []}
+              activeId={drawer?.activeId ?? null}
               terminalFontSize={appearance.terminal_font_size}
-              onKilled={clearDrawerUi}
-              onExited={() => {
-                void killDrawer();
-              }}
+              onSelect={selectDrawerTab}
+              creating={drawerCreating}
+              onClose={(id) => void closeDrawerTab(id)}
+              onNew={() => void addDrawerTab()}
+              onKillAll={() => void killDrawer()}
+              onTabExited={removeDrawerTab}
               view={view}
               scope={scope}
               activeRepo={appConfig?.active_repo}
@@ -1123,6 +1292,13 @@ export default function App() {
               {playbooksVisited && (
                 <div className="view playbooks-view" hidden={view.kind !== "playbooks" || daemon.repo_busy}>
                   <Playbooks repoPath={appConfig?.active_repo || undefined} onCreateTask={(reference) => openCreate(reference)} />
+                </div>
+              )}
+              {/* Kept mounted once visited, like Playbooks: the open thread, per-thread drafts and the
+                reading position survive a trip to Tasks or Settings. Hidden, it stops polling. */}
+              {showChat && (chatVisited || view.kind === "chat") && (
+                <div className="view" hidden={view.kind !== "chat" || daemon.repo_busy}>
+                  <ChatView active={view.kind === "chat" && !daemon.repo_busy} terminalFontSize={appearance.terminal_font_size} visibility={chatViewVisibility} />
                 </div>
               )}
             </main>
@@ -1198,6 +1374,7 @@ export default function App() {
       appConfig={appConfig}
       gridViews={gridViews}
       showOriginalKanban={showOriginalKanban}
+      showChat={showChat}
       instant={navInstant}
       onSwitch={switchTop}
       onSwitchGrid={(gridViewId) => switchTop("grid", { gridViewId })}
@@ -1211,7 +1388,7 @@ export default function App() {
       onUpgrade={onUpgrade}
       updating={updating}
       ompUpdate={ompUpdate.status}
-      onOmpUpdateClick={() => openSettings("chat")}
+      onOmpUpdateClick={() => openSettings("harness")}
     />
   );
 
