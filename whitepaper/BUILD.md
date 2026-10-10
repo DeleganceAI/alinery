@@ -37,6 +37,7 @@ per-system instructions. The [companion comparison PDF](https://raw.githubuserco
 describes the comparison and verification scope. Fixture checks are not
 live-model validation.
 
-The publication source was taken from the same commit. Packaging changes only
-update include paths and explain where the reproduction assets are archived.
+The initial publication source was taken from the same commit, with include
+paths adjusted for this folder. Subsequent manuscript revisions are maintained
+here.
 Earlier paper versions and working notes remain on the `whitepaper` branch.

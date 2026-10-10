@@ -482,6 +482,309 @@ closing report. Figure~\ref{fig:fam-literature-concrete-rollout} shows one
 possible rollout with three sources in the first round, two in the second,
 and one in the third before the review concludes.
 
+\section{The Playbook Engine in Alinery}
+\label{sec:playbook-engine}
+
+Alinery implements a FAM as a Playbook whose authored steps are instantiated
+as executions over particular artifacts. A task retains the selected
+Playbook, a shared repository worktree, and the execution history. A session
+is the agent process and conversation carrying out an execution. Separating
+steps, executions, and sessions allows one reading step to serve many
+discovered sources while the engine records which inputs each invocation
+received, what it published, and whether its process has stopped.
+
+The filename-set model in Section~\ref{sec:fam-definition-execution} describes
+completed agentic transitions. Implementing those transitions requires
+additional decisions about input binding, publication, concurrency, and
+recovery. Alinery makes those decisions for a local system in which humans
+can inspect artifacts and steer ongoing work. Its restrictions on input
+modes, workspace access, and recovery are implementation policies rather
+than requirements of every FAM.\footnote{The engine and accompanying design
+guidance described here are available in the Alinery source at revision
+\texttt{054fb36}: \url{https://github.com/DeleganceAI/alinery/tree/054fb36}.}
+
+\subsection{Authored Processes and Agent Judgment}
+
+A Playbook fixes the available step definitions and their dependencies,
+while agents determine the concrete work performed within those definitions.
+In the literature-review example, an agent chooses which sources merit
+reading and whether the accumulated evidence warrants another round. The
+engine instantiates the declared reading and continuation steps as the
+corresponding artifacts become available. The engine performs no planning
+search and does not invent additional collaboration structures. Keeping the
+available operations fixed makes the permitted process available for review
+before execution, without requiring the author to enumerate the sources,
+branches, or number of iterations in advance.
+
+Alinery places domain judgments in agent instructions and artifacts. A
+general engine-level condition language would require authors to express
+additional decision logic alongside those instructions; the current engine
+instead uses declared artifact dependencies to determine readiness. Every
+listed input is required, so listing a review and a request creates an AND
+dependency. Output declarations describe possible publications, and an
+agent can enable different continuations by choosing which outputs to
+publish. The engine does not enforce an exclusive choice between two valid
+outcomes. If the review procedure requires either a continuation request or
+a closing report, the agent instructions must establish that exclusivity.
+
+\subsection{Artifact Identity and Causal Dependencies}
+
+Repeated work requires the engine to distinguish an artifact's logical role
+from a particular publication of that role. A logical role such as
+\texttt{review.md} identifies a kind of output in the Playbook; an
+\emph{artifact occurrence} records one execution's accepted publication,
+including its concrete path and producer. Two publications remain distinct
+even if they have the same logical role and identical contents. Alinery
+assigns separate physical paths to occurrences, while generated depth
+numbers and collision suffixes help people navigate the files. Scheduling
+uses the recorded occurrences and relationships, independently of those
+presentation conventions.
+
+Before starting an execution, the engine binds its inputs to particular
+occurrences. Suppose two follow-up requests were derived from different
+reviews and the next discovery step requires both a request and its review.
+Selecting the most recently written review could give one request evidence
+from the other investigation. Alinery uses the recorded relationships
+between what executions read and what they published to associate companion
+inputs. Missing required inputs leave an execution waiting. When available
+inputs leave competing companion pairings unresolved, the engine reports
+an ambiguity instead of guessing from timestamps,
+zipping files by position, or generating every possible combination.
+Authors must supply a dependency structure that makes the intended
+relationship recoverable. Once an ordinary input binding has been
+scheduled, observing the same binding again does not create duplicate work.
+
+Several steps may publish the same exact logical role, allowing different
+routes to enable the same kind of continuation. Each eligible occurrence
+retains its own producer and can enable separate work. Wildcard outputs have
+a stricter ownership rule: declarations that overlap a wildcard family are
+rejected, including an exact output that matches another step's wildcard.
+Unique wildcard ownership keeps the attribution of an expanding collection
+unambiguous. Sharing an exact role and owning a collection consequently
+have different rules, even though both ultimately produce individual
+artifact occurrences.
+
+\subsection{Publication, Acceptance, and Process Shutdown}
+
+An artifact file can exist before the engine permits another execution to
+consume it. Agents write ordinary files at their assigned paths and then
+request completion. The engine checks the requesting execution's ownership
+and permission, inspects the assigned outputs, and requires at least one
+valid assigned artifact overall. Artifact validation checks for nonempty
+regular files at permitted assigned paths; it does not evaluate the claims
+in those files or validate their contents against a domain schema.
+Additional declared outputs may be
+omitted. A source-discovery execution can therefore conclude with a
+truthful search report even when it produces no source requests, provided
+the report is among its declared outputs. Requiring some accepted evidence
+gives successful executions a recorded result without forcing agents to
+fabricate a source or continuation merely to fill every output declaration.
+
+Acceptance is atomic across the outputs presented for completion. A present
+invalid assigned output rejects the attempt even when another output is
+valid, leaving the execution able to repair its files and request completion
+again. On acceptance, the engine records the actual publication set in an
+immutable receipt. Repeating an accepted completion request returns the same
+receipt; files created later cannot enlarge the accepted set. A fixed
+receipt makes the result of a lost or repeated completion call inspectable
+without interpreting a changing directory as a new publication.
+
+The receipt fixes the publication record, while artifact contents remain
+ordinary mutable files. Alinery does not provide immutable byte snapshots
+or an operating-system sandbox that intercepts every write. Assigned paths
+give agents concrete places to work, and the engine validates publication
+against those assignments, but cooperative agents must still respect other
+executions' files. Structural acceptance establishes neither the quality of
+a source assessment nor compliance with every substantive instruction.
+Keeping artifacts directly accessible accommodates existing file-based
+tools and human inspection, at the cost of relying on that cooperation for
+the integrity of their contents.
+
+Accepted completion also differs from process shutdown. After accepting the
+outputs, the engine arranges for the session to finish and waits for
+confirmed exit and output drain before launching dependent work. A
+completion response therefore acknowledges durable acceptance; it does not
+mean that successors have already started. The interval between acceptance
+and confirmed shutdown remains visible as finishing work, during which the
+session retains its capacity and any coding ownership. Waiting through that
+interval prevents the scheduler from treating a still-active producer as
+having relinquished its workspace access, although it does not make the
+files inaccessible to other tools before exit.
+
+\subsection{Parallel Work and Collection Completeness}
+
+Alinery provides three input modes. A \texttt{single} input binds one exact
+artifact occurrence, \texttt{each} creates work for individual collection
+members, and \texttt{complete} supplies a completed nonempty collection to
+one execution. In the review example, source requests enable separate
+reading executions, while synthesis consumes the resulting assessments
+together. A step may use at most one collection input, together with any
+required exact inputs. Authors who need to relate several collections must
+introduce explicit intermediate work rather than relying on an implicit
+cross-product join whose intended pairings the engine cannot infer.
+
+Wildcard publication is a batch operation. A producer's files enter the
+accepted collection through completion and become available to downstream
+work after the producer exits; matching files are not streamed into new
+executions as they appear in the directory. Once reading work has been
+created, the engine records which contributions are expected. Collection
+closure requires those producer and source obligations to be satisfied.
+For example, if discovery produced three source requests and only two
+readers have finished, two assessment files do not establish that synthesis
+is ready. Queued, paused, failed, and finishing work remains accountable.
+Waiting for the recorded obligations avoids silently presenting a partial
+investigation as the completed collection, while allowing a failed branch
+to hold up synthesis until its failure is addressed.
+
+Omitting an intermediate output does not automatically cancel all the work
+that would have followed it. Consider two source requests whose readers
+may publish triggers for a further extraction step. If one reader publishes
+a trigger and the other omits it, the resulting extraction family can remain
+incomplete. The engine checks coverage against the relevant members of the
+recorded upstream source collection, and no extraction producer represents the source member whose
+trigger was omitted. The successful reader has not discharged that downstream
+obligation. Where every source needs a downstream disposition, the reader
+can instead publish a trigger explaining that a source is unusable, and the
+extraction worker can publish a corresponding disposition for synthesis.
+The worker and synthesis instructions must define how to handle that outcome.
+The engine does not infer branch pruning from missing files or flatten
+nested collections into an assumed set of results. Explicit dispositions
+require more authoring care, but keep the reason a branch contributes or
+stops available in the process itself.
+
+An empty collection also has a specific meaning. A discovery execution may
+publish a search summary outside its source-request wildcard and no members
+inside the wildcard. Once the relevant obligations close, the collection
+is empty: it creates no \texttt{each} workers and does not start an empty
+\texttt{complete} consumer. The summary can instead enable an exact handler
+or document why the search stopped. A no-result file placed inside the
+wildcard is different: it is an ordinary member and enables the corresponding
+worker. The engine follows declared membership rather than interpreting
+the prose as a signal to suppress execution, so the author must choose
+whether a no-result record should itself route work.
+
+\subsection{Iteration, Fresh Evidence, and Stopping}
+
+A loop reuses authored steps through fresh accepted artifact occurrences.
+When \emph{Assess next step} publishes another investigation request,
+the new request can enable discovery again even though its logical role
+has appeared before. Overwriting an earlier request or incrementing a
+filename does not by itself create another engine-recognized trigger.
+Occurrence-based recurrence distinguishes a new pass from repeated
+observation of an existing input binding, allowing the execution history
+to grow while the Playbook definition remains fixed.
+
+Freshness also depends on how the author draws the repeated dependencies.
+If the next request depends on evaluating a newly synthesized review,
+\emph{Assess next step} must consume that review within the repeated
+dependency chain. A decision step left dependent on an earlier review can
+retain stale evidence even when the Playbook passes syntactic validation.
+An unchanged research question may legitimately remain available across
+rounds, while an evaluation of changing findings must be renewed. Agents
+must also carry
+useful accumulated evidence into their handoffs: Alinery records the
+execution history but does not automatically summarize that history for
+each new session.
+
+The engine imposes no predetermined number of loop passes. The authored
+process can continue through fresh publications, produce a stopping report,
+or pause for direction. An absence of eligible work establishes only that
+the current dependencies enable no further execution; it does not prove
+that the investigation answered its question. A closing report can expose
+the evidence and reasons for stopping, leaving the human able to distinguish
+a supported conclusion from exhaustion, an unresolved dependency, or a need
+to revise the investigation. Termination and substantive success remain
+separate properties.
+
+\subsection{Shared Workspace and Controlled Concurrency}
+
+Each task has one shared repository worktree. Alinery serializes
+engine-managed coding executions within that worktree, avoiding a separate
+workspace and subsequent code-merge procedure for every execution.
+Independent non-coding investigations can still proceed concurrently.
+A coding execution holds exclusive engine-managed access through review,
+accepted completion, and confirmed shutdown, because acceptance alone does
+not establish that its process has stopped modifying the repository.
+The exclusivity rule governs sessions scheduled by the engine; it does not
+prevent a user from deliberately editing the repository or starting
+auxiliary work.
+
+Coding steps accept exact \texttt{single} inputs. Results from a parallel
+investigation must therefore be consolidated into an exact handoff before
+they drive coding, giving the coding execution a specific account of the
+work to perform. Coding steps may still publish collections for subsequent
+non-coding work. Separately, a task-level limit controls the number of live
+sessions, with a current default of ten. Additional ready work queues;
+starting, waiting-for-human, and finishing sessions continue to occupy
+capacity until shutdown or failure to start is confirmed. Capacity and
+coding ownership impose different constraints: a free session slot does
+not authorize overlapping coding, and a session awaiting human input has
+not ceased to be a live process.
+
+\subsection{Human Steering and Explicit Recovery}
+
+Alinery permits useful stretches of automatic progression while retaining
+human control over when an execution may finish. When completion requires
+human permission, the session stays interactive until the permission is
+granted. The grant applies to the particular execution and its owner; the
+agent must still finish its work and submit valid outputs for acceptance.
+Permission to finish is not approval of immutable artifact bytes, and does
+not enable automatic completion for later executions. Keeping permission
+separate from acceptance allows a human to review and direct ongoing work
+before the agent closes its session.
+
+Failures require explicit recovery. The scheduler does not automatically
+retry an execution or transfer its ownership to a replacement session.
+An interrupted launch or lost reply may leave uncertainty about whether a
+process is still active, so creating another session cannot safely stand in
+for establishing what happened to the first. Replacement requires an
+explicit ownership transition and evidence that the previous owner stopped.
+Recovery can use the existing session and MCP interfaces, including an
+external agent acting through MCP, while remaining subject to the same
+ownership and permission rules. The cost is that some failures require
+attention before work can progress; the engine preserves the unfinished
+state instead of selecting a recovery policy on the author's behalf.
+
+Manual publications remain distinct from ordinary graph results. A person
+can inspect files, add evidence, or work through an auxiliary session, but
+the presence of a matching file does not automatically satisfy an execution's
+missing output or discharge an expected worker. Recorded completion must
+still attribute the publication to an authorized execution. Keeping manual
+work separate preserves the meaning of the graph's execution history while
+leaving the task open to human intervention.
+
+\subsection{Durable Execution and Stable Definitions}
+
+The per-repository daemon owns authoritative execution state and scheduling.
+The app and MCP act as clients of those operations, while shared core code
+implements parsing, validation, and execution rules. Session metadata and
+the interface's view of progress are repairable projections of durable
+execution records. Centralizing authority in the daemon gives each task's
+assignments, permissions, and process lifecycle one governing account,
+including when the interface disconnects or restarts.
+
+Alinery persists execution records in local files. Before launching work,
+the engine reserves the execution and its output assignments, leaving
+inspectable intent if creation or launch fails partway through. A reserved
+execution is not proof that its process started; recovery must reconcile
+the durable record with the process lifecycle. File-backed persistence
+keeps execution state within the local task's storage and backup boundary
+without requiring a separate database or distributed execution coordinator.
+The implementation must still coordinate reservations and durable writes;
+ordinary files do not remove the need to handle partial failure.
+
+A task retains the validated Playbook definition selected at creation.
+Later library edits affect future selections, so an investigation does not
+silently acquire different instructions or dependencies halfway through a
+run. Unknown fields and unsupported syntax are rejected explicitly, keeping
+the accepted definition's meaning tied to implemented rules. A missing or
+corrupt retained definition is an error rather than permission to substitute
+another library version. Current graph execution supports the OMP harness
+with configurable model selection. Broader harness support, different
+persistence mechanisms, and other resource policies could be implemented
+without changing the abstract FAM definition; the behavior described here
+is the concrete contract provided by Alinery.
+
 \section{Background}
 \label{sec:background}
 
@@ -832,8 +1135,8 @@ and may request follow-up research. Its keyed collections and
 \texttt{fulfills} relationships associate requests with results, while
 \texttt{complete-set} and \texttt{when} express the intended merge conditions.
 The listing is preserved schematic notation, not the current supported
-Playbook serialization. Appendix~\ref{app:engine-design-decisions} records the
-implementation decisions separately. Neither a schematic example nor an
+Playbook serialization. Section~\ref{sec:playbook-engine} explains the
+implemented coordination rules and their design tradeoffs. Neither a schematic example nor an
 execution trace establishes general correctness, scalability, termination
 under failure, operational security, or the quality of agent outputs.
 
@@ -892,60 +1195,6 @@ as the first member of \texttt{followup-research}; later Design executions may
 emit another member or an explicitly empty collection.}
 \label{lst:playbook}
 \end{listing}
-
-\clearpage
-\section{Engine Design Decisions}
-\label{app:engine-design-decisions}
-
-This appendix records the engine decisions and associated authoring conventions.
-
-\begin{enumerate}
-  \item \textbf{No planning search:} the engine rolls out a fixed authored policy rather than searching for plans or inventing collaboration structures.
-  \item \textbf{Fixed process, variable work:} the same Playbook can produce different numbers of executions, branches, and loop passes.
-  \item \textbf{Intelligent transitions:} agents interpret evidence and choose outcomes, allowing the engine's structural rules to stay small.
-  \item \textbf{No general condition language:} domain decisions live in agent instructions and artifacts rather than engine-level expressions.
-  \item \textbf{Artifact-driven dependencies:} declared inputs and outputs determine readiness, independently of document order.
-  \item \textbf{AND-only inputs:} every declared input is required; listing alternatives does not create an OR condition.
-  \item \textbf{At least one output:} successful completion requires one valid assigned artifact, while any additional declared outputs are optional.
-  \item \textbf{No engine-enforced XOR:} publishing two valid alternative outcomes is allowed; instructions must establish any required exclusivity.
-  \item \textbf{Structural validation:} the engine checks publication validity, ownership, and permission without deciding whether the substantive work is good.
-  \item \textbf{Atomic acceptance:} one invalid present assigned output rejects the whole completion attempt rather than accepting a partial subset.
-  \item \textbf{Immutable receipts:} acceptance freezes the publication set, so repeated completion returns the same receipt and late files cannot extend it.
-  \item \textbf{Ordinary mutable files:} accepted artifacts are not protected by immutable byte snapshots or an operating-system write sandbox.
-  \item \textbf{Occurrence identity:} two publications count as distinct events even when their logical names and contents match.
-  \item \textbf{Shared exact roles:} several steps may publish the same exact role, with each eligible occurrence enabling its own continuation.
-  \item \textbf{Unique wildcard ownership:} overlapping wildcard output declarations are rejected to keep collection attribution unambiguous.
-  \item \textbf{Causal input pairing:} companion artifacts must belong together through recorded provenance, not timestamps, filename order, or ``latest wins.''
-  \item \textbf{Explicit ambiguity errors:} the engine rejects uncertain pairings rather than guessing, zipping alternatives, or trying every combination.
-  \item \textbf{Binding-based deduplication:} observing the same ordinary input binding again does not schedule duplicate work.
-  \item \textbf{Three input modes:} \texttt{single} binds one occurrence, \texttt{each} creates per-member work, and \texttt{complete} consumes a completed nonempty collection.
-  \item \textbf{One collection input per step:} combining multiple collections requires explicit intermediate steps rather than implicit cross-product joins.
-  \item \textbf{Batch publication:} collections become usable after accepted publication and producer shutdown, rather than streaming files into downstream work.
-  \item \textbf{Accountable completeness:} queued, paused, failed, and finishing workers remain obligations instead of silently disappearing from a merge.
-  \item \textbf{No implicit branch pruning:} an omitted intermediate output does not automatically discharge downstream work that was expected.
-  \item \textbf{No empty consumers:} empty collections create neither item workers nor an empty \texttt{complete} execution.
-  \item \textbf{Explicit no-result routing:} a disposition inside a wildcard becomes a member; one outside it can stop or route elsewhere.
-  \item \textbf{Artifact-triggered recurrence:} another pass requires a fresh accepted trigger, not an overwritten file or incremented filename.
-  \item \textbf{No predetermined iteration limit:} loops may continue through fresh publications, with stopping determined by the authored process.
-  \item \textbf{Explicit freshness structure:} authors must put changing work inside the repeated dependency chain; parser acceptance alone does not prove freshness.
-  \item \textbf{Explicit accumulated context:} agents carry useful earlier findings into new handoffs; the engine does not automatically summarize task history.
-  \item \textbf{No automatic success inference:} having no eligible work does not prove that the human's objective was achieved.
-  \item \textbf{Execution-scoped completion permission:} a human grant authorizes that execution and owner to finish, not particular immutable artifact contents.
-  \item \textbf{Completion differs from shutdown:} downstream work waits for confirmed producer exit and output drain after acceptance.
-  \item \textbf{One shared task worktree:} engine-managed coding is serialized instead of giving every execution an isolated workspace and later merging changes.
-  \item \textbf{Exact coding inputs:} collection results must be consolidated before coding, although coding steps may publish collections for subsequent work.
-  \item \textbf{Task-level concurrency:} the default cap is ten live sessions; excess work queues, and waiting or finishing sessions retain capacity.
-  \item \textbf{No automatic retries or takeover:} recovery requires explicit ownership changes and proof that the previous owner stopped.
-  \item \textbf{Manual work stays separate:} manual publications do not automatically satisfy ordinary graph dependencies or missing worker obligations.
-  \item \textbf{Pinned task definitions:} library edits affect future selections rather than silently changing an existing task's Playbook.
-  \item \textbf{Daemon-owned execution truth:} durable execution records drive scheduling; session metadata and UI state are repairable projections.
-  \item \textbf{File-backed persistence:} the engine uses durable local records rather than adding a database or distributed execution coordinator.
-  \item \textbf{Persist intent before effects:} executions and output paths are reserved before launch, while partial creation failures remain inspectable.
-  \item \textbf{Names are presentation:} depth numbers and collision suffixes help people navigate artifacts but never determine provenance or scheduling.
-  \item \textbf{Strict definitions:} unknown fields and unsupported syntax fail explicitly rather than acquiring guessed meanings or compatibility fallbacks.
-  \item \textbf{Narrow harness support:} model selection is configurable, but current graph execution supports OMP rather than arbitrary harness integrations.
-\end{enumerate}
-
 
 \clearpage
 \onecolumn
