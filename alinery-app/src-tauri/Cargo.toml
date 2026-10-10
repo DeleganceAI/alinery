@@ -1,6 +1,6 @@
 [package]
 name = "alinery-app"
-version = "0.22.0"
+version = "0.22.1"
 license = "Apache-2.0"
 description = "Local-first desktop app for task-centric AI coding playbooks: kanban boards, git worktrees, and multi-session terminal harnesses."
 authors = ["delegance.ai"]
@@ -35,6 +35,7 @@ toml = "0.8"
 portable-pty = "0.9"
 alinery-core = { path = "alinery-core" }
 uuid = { version = "1", features = ["v4"] }
+pulldown-cmark = { version = "0.13", default-features = false }
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }

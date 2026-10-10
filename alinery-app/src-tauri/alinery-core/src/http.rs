@@ -65,6 +65,119 @@ pub fn download(url: &str, dest: &Path, connect_timeout: Duration, total_timeout
     Ok(())
 }
 
+/// Fetch an imported image without sending the Linear credential to another origin.
+/// Redirects are handled here so every destination is checked before connecting.
+pub fn download_image(url: &str, authorization: &str) -> Result<(Vec<u8>, String), String> {
+    use std::net::ToSocketAddrs;
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(5))
+        .timeout_read(Duration::from_secs(15))
+        .timeout(Duration::from_secs(30))
+        .try_proxy_from_env(false)
+        .redirects(0)
+        .resolver(|host: &str| {
+            let addresses: Vec<_> = host.to_socket_addrs()?.collect();
+            if addresses.is_empty() || addresses.iter().any(|address| !public_image_address(address.ip())) {
+                return Err(std::io::Error::other("image destination is not a public address"));
+            }
+            Ok(addresses)
+        })
+        .build();
+    download_image_with(&agent, url, authorization, crate::MAX_ATTACHMENT_BYTES)
+}
+
+fn public_image_address(address: std::net::IpAddr) -> bool {
+    match address {
+        std::net::IpAddr::V4(ip) => {
+            let [a, b, _, _] = ip.octets();
+            !(ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_documentation()
+                || a == 0
+                || a >= 224
+                || (a == 100 && (64..=127).contains(&b))
+                || (a == 192 && b == 0)
+                || (a == 198 && (18..=19).contains(&b)))
+        }
+        std::net::IpAddr::V6(ip) => {
+            let segments = ip.segments();
+            // Only global unicast; exclude documentation and IPv4 tunnelling ranges.
+            (segments[0] & 0xe000) == 0x2000 && segments[0] != 0x2002 && !(segments[0] == 0x2001 && (segments[1] < 0x200 || segments[1] == 0xdb8))
+        }
+    }
+}
+
+fn image_url(raw: &str) -> Result<url::Url, String> {
+    let url = url::Url::parse(raw).map_err(|_| "invalid image URL")?;
+    if !matches!(url.scheme(), "http" | "https") || !url.username().is_empty() || url.password().is_some() || url.host_str().is_none() {
+        return Err("image URL must be HTTP(S) without credentials".into());
+    }
+    Ok(url)
+}
+
+fn linear_image_origin(url: &url::Url) -> bool {
+    url.scheme() == "https" && url.host_str() == Some("uploads.linear.app") && url.port_or_known_default() == Some(443)
+}
+
+fn download_image_with(agent: &ureq::Agent, raw: &str, authorization: &str, limit: u64) -> Result<(Vec<u8>, String), String> {
+    let mut url = image_url(raw)?;
+    for hop in 0..=5 {
+        let mut request = agent.get(url.as_str());
+        if linear_image_origin(&url) {
+            request = request.set("Authorization", authorization);
+        }
+        let response = match request.call() {
+            Ok(response) => response,
+            Err(ureq::Error::Status(status, _)) => return Err(format!("image download failed: HTTP {status}")),
+            Err(_) => return Err("image download failed (network, timeout, or blocked destination)".into()),
+        };
+        if matches!(response.status(), 301 | 302 | 303 | 307 | 308) {
+            if hop == 5 {
+                return Err("image download exceeded five redirects".into());
+            }
+            let location = response.header("Location").ok_or("image redirect has no destination")?;
+            let next = image_url(url.join(location).map_err(|_| "invalid image redirect")?.as_str())?;
+            if url.scheme() == "https" && next.scheme() != "https" {
+                return Err("image redirect would downgrade HTTPS".into());
+            }
+            url = next;
+            continue;
+        }
+        if !(200..300).contains(&response.status()) {
+            return Err(format!("image download failed: HTTP {}", response.status()));
+        }
+        let media_type = response.header("Content-Type").unwrap_or("").split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+        let extension = match media_type.as_str() {
+            "image/png" => "png",
+            "image/jpeg" => "jpg",
+            "image/gif" => "gif",
+            "image/webp" => "webp",
+            "image/avif" => "avif",
+            "image/bmp" => "bmp",
+            "image/tiff" => "tiff",
+            "image/heic" => "heic",
+            "image/heif" => "heif",
+            "image/x-icon" | "image/vnd.microsoft.icon" => "ico",
+            "image/svg+xml" => "svg",
+            _ => return Err("download did not return a supported image Content-Type".into()),
+        };
+        if response
+            .header("Content-Length")
+            .and_then(|value| value.parse::<u64>().ok())
+            .is_some_and(|size| size > limit)
+        {
+            return Err(format!("image exceeded {limit} bytes"));
+        }
+        let body = read_limited(response, limit)?.body;
+        if body.is_empty() {
+            return Err("download returned an empty image".into());
+        }
+        return Ok((body, extension.into()));
+    }
+    unreachable!("redirect limit is checked before continuing")
+}
+
 fn agent(url: &str, connect_timeout: Duration, total_timeout: Duration) -> ureq::Agent {
     // timeout() is a deadline for the call, but ureq then resets the socket read
     // timeout to timeout_read for the body. Without timeout_read a server that
@@ -211,6 +324,82 @@ mod tests {
             let _ = stream.write_all(handler(&req).as_bytes());
         });
         (format!("http://{address}"), server)
+    }
+
+    #[test]
+    fn image_download_follows_redirects_without_external_authorization() {
+        let (image_url, image_server) = serve(|request| {
+            assert!(!request.to_ascii_lowercase().contains("authorization:"));
+            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 4\r\nConnection: close\r\n\r\nPNG!".into()
+        });
+        let (redirect_url, redirect_server) = serve(move |request| {
+            assert!(!request.to_ascii_lowercase().contains("authorization:"));
+            format!("HTTP/1.1 302 Found\r\nLocation: {image_url}/image\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        });
+        let agent = ureq::AgentBuilder::new().redirects(0).build();
+        let (bytes, extension) = download_image_with(&agent, &redirect_url, "Bearer private-token", 4).unwrap();
+        assert_eq!(bytes, b"PNG!");
+        assert_eq!(extension, "png");
+        redirect_server.join().unwrap();
+        image_server.join().unwrap();
+    }
+
+    #[test]
+    fn image_download_rejects_error_pages_and_bounded_bodies() {
+        for response in [
+            "HTTP/1.1 403 Forbidden\r\nContent-Length: 6\r\n\r\nsecret",
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 6\r\n\r\nsecret",
+            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 0\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 6\r\n\r\nsecret",
+            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nsecret\r\n0\r\n\r\n",
+        ] {
+            let (url, server) = serve(move |_| response.into());
+            let agent = ureq::AgentBuilder::new().redirects(0).build();
+            let error = download_image_with(&agent, &url, "Bearer private-token", 4).unwrap_err();
+            assert!(!error.contains("secret"));
+            assert!(!error.contains("private-token"));
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn image_credentials_require_exact_https_linear_origin() {
+        assert!(linear_image_origin(&image_url("https://uploads.linear.app/a").unwrap()));
+        for url in [
+            "https://uploads.linear.app.evil.example/a",
+            "https://evil.example/uploads.linear.app/a",
+            "http://uploads.linear.app/a",
+            "https://uploads.linear.app:444/a",
+        ] {
+            assert!(!linear_image_origin(&image_url(url).unwrap()), "{url}");
+        }
+        for url in ["file:///etc/passwd", "data:image/png;base64,aA==", "https://user:pass@uploads.linear.app/a"] {
+            assert!(image_url(url).is_err(), "{url}");
+        }
+    }
+
+    #[test]
+    fn image_download_blocks_private_destinations_before_connecting() {
+        for address in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "::1",
+            "::ffff:127.0.0.1",
+            "fc00::1",
+        ] {
+            assert!(!public_image_address(address.parse().unwrap()), "{address}");
+        }
+        assert!(public_image_address("8.8.8.8".parse().unwrap()));
+        assert!(public_image_address("2606:4700:4700::1111".parse().unwrap()));
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/image.png", listener.local_addr().unwrap());
+        assert!(download_image(&url, "Bearer private-token").is_err());
+        listener.set_nonblocking(true).unwrap();
+        assert_eq!(listener.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
     }
 
     #[test]

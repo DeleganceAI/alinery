@@ -1052,11 +1052,15 @@ export type CreateTaskResult = {
   attachment_errors?: string[];
 };
 
+export type LinearImage = TaskAttachment & { source_url: string };
+
 /** Mirrors Rust `LinearTicket` (src/imports.rs). Was an inline literal at the call site. */
 export type LinearTicket = {
   identifier: string;
   title: string;
   description: string;
+  images: LinearImage[];
+  image_errors: string[];
 };
 
 /** Mirrors Rust `GitHubIssue` (src/imports.rs). Was an inline literal at the call site. */

@@ -8,6 +8,7 @@ import type {
   BoardTask,
   Config,
   CreateTaskResult,
+  LinearTicket,
   PlaybookCatalog,
   PlaybookRef,
   PreparedTaskAttachments,
@@ -596,6 +597,126 @@ describe("OMP model default", () => {
   });
 });
 
+describe("Linear description images", () => {
+  const image = { name: "linear-image-one.png", bytes: "AP8=", source_url: "https://uploads.linear.app/one.png" };
+  const imageError = "https://uploads.linear.app/missing.png — download failed";
+  const description = `Before\n\n![One](<attachments/${image.name}>)\n\nBetween\n\n![Missing](https://uploads.linear.app/missing.png)\n\nAfter`;
+  const ticket: LinearTicket = { identifier: "ABC-1", title: "Imported", description, images: [image], image_errors: [imageError] };
+  const beginImport = () => {
+    fireEvent.click(screen.getByRole("button", { name: "Linear" }));
+    fireEvent.change(screen.getByPlaceholderText(/Linear ticket/), { target: { value: "ABC-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  };
+
+  it("submits successful images first while preserving surrounding text, failed links, and URL attachments", async () => {
+    vi.mocked(ipc.importLinearForRepo).mockResolvedValueOnce(ticket);
+    vi.mocked(ipc.prepareTaskAttachments).mockResolvedValueOnce({
+      attachments: [{ name: "manual.txt", bytes: "AQ==" }],
+      attachment_urls: ["https://example.test/manual.png"],
+      attachment_errors: ["Could not read missing.txt"],
+    });
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("checkbox", { name: "Build" });
+    const entries = screen.getByPlaceholderText(/Paste file paths/);
+    fireEvent.change(entries, { target: { value: "/manual.txt, https://example.test/manual.png" } });
+    fireEvent.keyDown(entries, { key: "Enter" });
+    beginImport();
+    await screen.findByText(image.name);
+    expect(screen.getByText(imageError)).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+    const request = vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request;
+    expect(request.description).toBe(description);
+    expect(request.attachments).toEqual([
+      { name: image.name, bytes: image.bytes },
+      { name: "manual.txt", bytes: "AQ==" },
+    ]);
+    expect(request.attachment_urls).toEqual(["https://example.test/manual.png"]);
+    expect(request.attachment_errors).toEqual([imageError, "Could not read missing.txt"]);
+  });
+
+  it("saves remote references in drafts and restores them when an imported image is removed", async () => {
+    vi.mocked(ipc.importLinearForRepo).mockResolvedValueOnce(ticket);
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("checkbox", { name: "Build" });
+    beginImport();
+    await screen.findByText(image.name);
+    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited import" } });
+    const restored = description.replace(`attachments/${image.name}`, image.source_url);
+    await waitFor(() => expect(ipc.writeDraftForRepo).toHaveBeenCalledWith(expect.objectContaining({ description: restored })));
+    expect(screen.getByPlaceholderText(/Describe the feature/)).toHaveProperty("value", description);
+    fireEvent.click(screen.getByRole("button", { name: `Remove ${image.name}` }));
+    expect(screen.getByPlaceholderText(/Describe the feature/)).toHaveProperty("value", restored);
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+    expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request).toMatchObject({ description: restored, attachments: [] });
+  });
+
+  it("replaces Linear images on reimport and clears them after a successful GitHub import without removing manual files", async () => {
+    const replacement = { name: "linear-image-two.png", bytes: "Ag==", source_url: "https://uploads.linear.app/two.png" };
+    vi.mocked(ipc.importLinearForRepo)
+      .mockResolvedValueOnce(ticket)
+      .mockResolvedValueOnce({
+        ...ticket,
+        description: `![Two](<attachments/${replacement.name}>)`,
+        images: [replacement],
+        image_errors: [],
+      });
+    vi.mocked(ipc.importGithubForRepo).mockResolvedValueOnce({ reference: "org/repo#1", title: "GitHub title", description: "GitHub body" });
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("checkbox", { name: "Build" });
+    const entries = screen.getByPlaceholderText(/Paste file paths/);
+    fireEvent.change(entries, { target: { value: "/manual.txt" } });
+    fireEvent.keyDown(entries, { key: "Enter" });
+    beginImport();
+    await screen.findByText(image.name);
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    await screen.findByText(replacement.name);
+    expect(screen.queryByText(image.name)).toBeNull();
+    expect(screen.queryByText(imageError)).toBeNull();
+    expect(screen.getByText("/manual.txt")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "GitHub" }));
+    fireEvent.change(screen.getByPlaceholderText(/GitHub issue or pull request URL/), { target: { value: "org/repo#1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    await screen.findByDisplayValue("GitHub body");
+    expect(screen.queryByText(replacement.name)).toBeNull();
+    expect(screen.getByText("/manual.txt")).toBeDefined();
+  });
+
+  it.each(["clear", "repo roundtrip", "new import", "unmount"] as const)("ignores obsolete imports after %s and blocks creation while pending", async (end) => {
+    const pending = deferred<LinearTicket>();
+    vi.mocked(ipc.importLinearForRepo).mockReturnValueOnce(pending.promise);
+    const props = { activeRepo: "/repo", knownRepos: ["/repo", "/other"], initialDraft: draftTask, onCancel: () => {}, onCreated: () => {} };
+    const view = render(<CreateTaskPage {...props} />);
+    await screen.findByRole("checkbox", { name: "Build" });
+    beginImport();
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
+    fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    if (end === "clear") {
+      vi.mocked(ipc.deleteDraftForRepo).mockResolvedValueOnce();
+      fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
+      await waitFor(() => expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", ""));
+    } else if (end === "repo roundtrip") {
+      fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/other" } });
+      fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/repo" } });
+    } else if (end === "new import") {
+      vi.mocked(ipc.importLinearForRepo).mockResolvedValueOnce({ ...ticket, title: "Latest", images: [], description: "Latest body", image_errors: [] });
+      fireEvent.keyDown(screen.getByPlaceholderText(/Linear ticket/), { key: "Enter" });
+      await screen.findByDisplayValue("Latest body");
+    } else {
+      view.unmount();
+      render(<CreateTaskPage {...props} />);
+      await screen.findByRole("checkbox", { name: "Build" });
+    }
+    await act(async () => pending.resolve(ticket));
+    expect(screen.queryByText(image.name)).toBeNull();
+    expect(screen.queryByText(imageError)).toBeNull();
+    expect(screen.getByPlaceholderText("New task name…")).not.toHaveProperty("value", "Imported");
+    if (end === "new import") expect(screen.getByPlaceholderText(/Describe the feature/)).toHaveProperty("value", "Latest body");
+  });
+});
+
 describe("starting branch contract", () => {
   it("resets source only on repository changes or successful clear", async () => {
     render(
@@ -627,7 +748,7 @@ describe("starting branch contract", () => {
 
   it.each(["GitHub", "Linear"] as const)("keeps the source and import autosave semantics for %s", async (provider) => {
     vi.mocked(ipc.importGithubForRepo).mockResolvedValue({ reference: "org/repo#1", title: "Imported", description: "Body" });
-    vi.mocked(ipc.importLinearForRepo).mockResolvedValue({ identifier: "ABC-1", title: "Imported", description: "Body" });
+    vi.mocked(ipc.importLinearForRepo).mockResolvedValue({ identifier: "ABC-1", title: "Imported", description: "Body", images: [], image_errors: [] });
     vi.useFakeTimers();
     try {
       await act(async () => render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />));
