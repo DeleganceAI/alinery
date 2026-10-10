@@ -14,8 +14,8 @@ export function HostGuardWarning({ visible }: { visible: boolean }) {
   );
 }
 
-// Ownership conflicts are informational: only an explicit stop in the owning app
-// releases the project. The daemon status poll retries opening automatically.
+// Ownership conflicts are informational: recovery stays in the owning app or on disk.
+// The daemon status poll retries opening automatically.
 export function DaemonConflictBanner({ conflict }: { conflict: DaemonConflict | null }) {
   if (!conflict) return null;
 
@@ -42,9 +42,17 @@ export function DaemonConflictBanner({ conflict }: { conflict: DaemonConflict | 
         )}
         {conflict.detail && <p>{conflict.detail}</p>}
         <p>
-          Tasks cannot be adopted and sessions cannot be launched here until every previous daemon owner has stopped. Finish your work in the owning Alinery, then explicitly stop
-          its daemon from <em>Settings → Chat</em>. This app retries automatically; it will not stop another daemon for you.
+          If another Alinery still owns this project, finish your work there, close its window, and choose <em>Quit &amp; close all repos</em> in the confirmation dialog. This
+          stops sessions in all its open repositories; save your work before confirming. Settings → Chat restarts the daemon, and quitting with sessions left running does not
+          release the project.
         </p>
+        {conflict.reason === "ownership" && (
+          <p>
+            If all previous owners have stopped but inspection still fails, use the error details to resolve access to the reported path, or get help restoring valid ownership
+            records. Do not delete lock or ownership files to force access.
+          </p>
+        )}
+        <p>This app retries automatically once ownership can be verified; it will not stop another daemon for you.</p>
       </div>
     </div>
   );
