@@ -2412,7 +2412,7 @@ fn rpc_value_is_activity(value: &Value) -> bool {
 fn record_rpc_activity(inner: &mut Inner, meta_path: &Path, kind: RpcLineKind, now: u64) {
     if kind == RpcLineKind::Activity {
         if let Err(error) = record_activity(inner, meta_path, now) {
-            eprintln!("rpc activity stamp {}: {error}", meta_path.display());
+            eprintln!("rpc activity stamp failed: {error}");
         }
     }
 }
