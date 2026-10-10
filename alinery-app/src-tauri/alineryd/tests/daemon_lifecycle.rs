@@ -699,21 +699,29 @@ fn t1_two_spawns_one_survivor() {
 
 // --- T2: delete live lock file; second spawn exits; first still serves ---
 
-// --- T6b: two namespaces can both run; each answers version on its own socket ---
+// Lane identities remain distinct, but repository ownership is exclusive.
 #[test]
-fn t6b_two_namespace_lanes() {
+fn t6b_namespace_lanes_require_previous_owner_to_stop() {
     let _g = test_lock();
     let repo = TempRepo::new();
     let prod = Daemon::spawn(&repo, None).expect("prod");
-    let dev = Daemon::spawn(&repo, Some("devlane")).expect("dev");
-    let vp = prod.rpc(json!({"op": "version"})).expect("prod version");
-    let vd = dev.rpc(json!({"op": "version"})).expect("dev version");
-    assert!(vp.get("build_id").is_some());
-    assert!(vd.get("build_id").is_some());
-    // Distinct sockets
-    assert_ne!(prod.socket, dev.socket);
-    prod.shutdown().ok();
-    dev.shutdown().ok();
+    let mut blocked = Command::new(alineryd_bin())
+        .arg("--repo")
+        .arg(&repo.root)
+        .arg("--socket-namespace")
+        .arg("devlane")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    assert!(!blocked.wait().unwrap().success());
+    assert!(!repo.socket(Some("devlane")).exists());
+    assert!(prod.rpc(json!({"op": "version"})).unwrap().get("build_id").is_some());
+    prod.shutdown().unwrap();
+    let dev = Daemon::spawn(&repo, Some("devlane")).expect("dev after prod stops");
+    assert!(dev.rpc(json!({"op": "version"})).unwrap().get("build_id").is_some());
+    assert_eq!(dev.socket, repo.socket(Some("devlane")));
+    dev.shutdown().unwrap();
 }
 #[test]
 fn t2_delete_lock_second_spawn_fails() {

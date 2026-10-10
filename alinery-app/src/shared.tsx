@@ -472,7 +472,7 @@ export function ExecutionAvailabilityNotice({ live, controls = false }: { live: 
   return (
     <InlineStatus tone="info">
       {executionAvailabilityLabel(live)}. Showing saved progress, not confirmed live status.
-      {controls && " Execution controls are disabled until the correct owner is reachable."}
+      {controls && " Execution controls are disabled until project ownership and live status are available."}
       <details>
         <summary>Technical details</summary>
         <pre className="inline-status-detail">{live?.detail ?? "Owner availability could not be determined."}</pre>

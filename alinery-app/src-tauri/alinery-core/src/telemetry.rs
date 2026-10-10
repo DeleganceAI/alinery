@@ -240,9 +240,6 @@ pub enum TelemetryEvent {
     DaemonStop {
         source: TelemetrySource,
     },
-    DaemonTakeover {
-        source: TelemetrySource,
-    },
     StoragePurge {
         source: TelemetrySource,
     },
@@ -316,7 +313,6 @@ pub fn event_name(event: &TelemetryEvent) -> &'static str {
         TelemetryEvent::RepoRemove { .. } => "repo.remove",
         TelemetryEvent::McpToggle { .. } => "mcp.toggle",
         TelemetryEvent::DaemonStop { .. } => "daemon.stop",
-        TelemetryEvent::DaemonTakeover { .. } => "daemon.takeover",
         TelemetryEvent::StoragePurge { .. } => "storage.purge",
     }
 }
@@ -441,7 +437,6 @@ pub fn event_props(event: &TelemetryEvent) -> Map<String, Value> {
         | TelemetryEvent::GitWorktreeRemove { source }
         | TelemetryEvent::RepoActivate { source }
         | TelemetryEvent::DaemonStop { source }
-        | TelemetryEvent::DaemonTakeover { source }
         | TelemetryEvent::StoragePurge { source } => {
             insert_str(&mut props, "source", source.as_str());
         }

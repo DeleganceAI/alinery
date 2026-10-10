@@ -61,7 +61,7 @@ fn mcp_stem(namespace: Option<&str>) -> String {
     }
 }
 
-/// Cross-lane auto-advance reconciler lock (one per repo, not namespaced).
+/// Reconciler transaction lock (one per repo, separate from daemon ownership).
 pub fn alineryd_reconciler_lock_path(repo: &Path) -> PathBuf {
     alinery_dir(repo).join(".alineryd-reconciler.lock")
 }
@@ -70,10 +70,9 @@ pub fn alineryd_reconciler_lock_path(repo: &Path) -> PathBuf {
 /// repo is its active repo, so a second alinery opening the same folder can refuse-and-
 /// explain instead of silently running two GUIs over one working tree.
 ///
-/// Deliberately **not namespaced**, unlike the alineryd lane lock: the lane namespace
-/// (`alineryd_socket_path`) is a debug escape hatch that lets `npm run tauri dev` keep its
-/// own daemon, but two *windows* over one repo is the same hazard whatever channel they
-/// were built from. Same reasoning as `alineryd_reconciler_lock_path`.
+/// Deliberately **not namespaced**, unlike lane-specific daemon sockets. A daemon
+/// separately holds repository ownership, so build lanes retain distinct identities
+/// without allowing concurrent daemons over the same project.
 pub fn alinery_app_lock_path(repo: &Path) -> PathBuf {
     alinery_dir(repo).join(".alinery-app.lock")
 }

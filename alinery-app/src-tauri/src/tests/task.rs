@@ -6,6 +6,111 @@ use crate::{artifacts_dir, chat_file_stat, copy_chat_attachments_in, read_chat_i
 use std::collections::BTreeSet;
 
 #[test]
+fn task_updated_ignores_observation_and_bookkeeping_files() {
+    let repo = activity_repo("task-updated-observation");
+    write_activity_task(&repo, "task", "build", false);
+    let task = read_task(&repo, "task").unwrap();
+    let old = task.created + 10;
+    let task_path = task_dir(&repo, "task").join("task.md");
+    fs::File::options()
+        .write(true)
+        .open(&task_path)
+        .unwrap()
+        .set_modified(UNIX_EPOCH + Duration::from_secs(old))
+        .unwrap();
+    let session = SessionMeta {
+        id: "session".into(),
+        created: old,
+        started_at: Some(old + 1),
+        ended_at: Some(old + 2),
+        status_changed_at: Some(old + 2),
+        ..Default::default()
+    };
+    write_activity_session(&repo, "task", session.clone());
+    let expected = old + 2;
+    let updated = || board_tasks_for_repo(&repo, &repo.display().to_string()).unwrap()[0].updated;
+    assert_eq!(updated(), expected, "metadata mtime is not task activity");
+    crate::stamp_meta(&session_meta_path(&repo, "task", "session"), |value| {
+        value["notification_read_at"] = serde_json::json!(expected + 100);
+        value["exit_notification_read_at"] = serde_json::json!(expected + 100);
+        value["execution_revision"] = serde_json::json!(999);
+        value["harness_resume_token"] = serde_json::json!("reconnected");
+    })
+    .unwrap();
+    fs::write(sessions_dir(&repo, "task").join("session.scrollback"), "spinner redraw").unwrap();
+    fs::write(sessions_dir(&repo, "task").join("session.stderr.log"), "heartbeat").unwrap();
+    fs::create_dir_all(sessions_dir(&repo, "task").join("session.omp")).unwrap();
+    fs::write(task_dir(&repo, "task").join("execution.json"), "{}").unwrap();
+    for _ in 0..3 {
+        let _ = read_task(&repo, "task").unwrap();
+        let _ = crate::list_sessions_for_repo(&repo, "task").unwrap();
+        assert_eq!(updated(), expected);
+    }
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn task_updated_tracks_content_and_semantic_session_activity() {
+    let repo = activity_repo("task-updated-content");
+    write_activity_task(&repo, "task", "build", false);
+    let set_time = |path: &Path, seconds| {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(UNIX_EPOCH + Duration::from_secs(seconds))
+            .unwrap();
+    };
+    let task_path = task_dir(&repo, "task").join("task.md");
+    set_time(&task_path, 10);
+    let updated = || board_tasks_for_repo(&repo, &repo.display().to_string()).unwrap()[0].updated;
+    assert_eq!(updated(), 10);
+
+    // Saving an unchanged name must not make a task appear newly active.
+    alinery_core::rename_task(&repo, "task", "task").unwrap();
+    assert_eq!(updated(), 10);
+    alinery_core::rename_task(&repo, "task", "Renamed").unwrap();
+    assert!(updated() > 10);
+    set_time(&task_path, 20);
+
+    let session_path = session_meta_path(&repo, "task", "task-session");
+    for field in ["started_at", "status_changed_at", "activity_at", "ended_at"] {
+        let old = updated();
+        crate::stamp_meta(&session_path, |value| value[field] = serde_json::json!(old + 10)).unwrap();
+        assert_eq!(updated(), old + 10, "{field} contributes without using metadata mtime");
+    }
+    crate::stamp_meta(&session_path, |value| value["semantic"] = serde_json::json!({"phase_completed_at":70})).unwrap();
+    assert_eq!(updated(), 70);
+
+    let artifacts = artifacts_dir(&repo, "task");
+    let ticket = artifacts.join("00-ticket.md");
+    fs::write(&ticket, "Edited description").unwrap();
+    set_time(&ticket, 80);
+    assert_eq!(updated(), 80);
+    let nested = artifacts.join("design/result.md");
+    fs::create_dir_all(nested.parent().unwrap()).unwrap();
+    fs::write(&nested, "Agent result").unwrap();
+    set_time(&nested, 90);
+    assert_eq!(updated(), 90, "nested artifact content counts, not directory mtime");
+    fs::write(&nested, "Revised result").unwrap();
+    set_time(&nested, 100);
+    assert_eq!(updated(), 100);
+
+    fs::create_dir_all(artifacts.join("attachments")).unwrap();
+    fs::write(artifacts.join("attachments/evidence.png"), "not an artifact").unwrap();
+    fs::create_dir_all(artifacts.join("subtasks")).unwrap();
+    fs::write(artifacts.join("subtasks/snapshot.md"), "not an owned artifact").unwrap();
+    fs::write(artifacts.join("result.comments.json"), "{}").unwrap();
+    fs::write(artifacts.join("result.handoff.json"), "{}").unwrap();
+    fs::write(artifacts.join("result.review-pending.json"), "{}").unwrap();
+    assert_eq!(updated(), 100, "artifact bookkeeping and excluded trees do not count");
+    let _ = fs::read_to_string(&nested).unwrap();
+    let _ = list_artifacts_for(&repo, "task").unwrap();
+    assert_eq!(updated(), 100, "reading artifacts does not count");
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
 fn durable_board_discovery_keeps_offline_and_archived_owners_and_retained_titles() {
     let repo = activity_repo("durable-board");
     for (slug, lane, archived) in [
@@ -437,6 +542,57 @@ fn write_draft_in_updates_same_slug() {
     assert_eq!(tasks[0].slug, first.slug);
     assert!(tasks[0].draft);
     let _ = fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn draft_autosave_only_updates_age_when_content_changes() {
+    let repo = activity_repo("draft-activity");
+    let save = |description: &str| {
+        write_draft_in_with_slug(
+            &repo,
+            None,
+            "",
+            "",
+            "Draft".into(),
+            description.into(),
+            String::new(),
+            String::new(),
+            String::new(),
+            alinery_core::playbook::PlaybookRef {
+                scope: alinery_core::playbook::PlaybookScope::Bundled,
+                key: default_playbook_key(),
+            },
+            "omp".into(),
+            String::new(),
+            None,
+            10,
+            String::new(),
+            String::new(),
+            None,
+        )
+        .unwrap()
+    };
+    let mut task = save("Original description");
+    task.created = 1;
+    write_task(&repo, &task).unwrap();
+    for path in [task_dir(&repo, &task.slug).join("task.md"), artifacts_dir(&repo, &task.slug).join("00-ticket.md")] {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(UNIX_EPOCH + Duration::from_secs(100))
+            .unwrap();
+    }
+    let updated = || board_tasks_for_repo(&repo, &repo.display().to_string()).unwrap()[0].updated;
+    assert_eq!(updated(), 100);
+    save("Original description");
+    assert_eq!(updated(), 100, "an unchanged autosave is not new work");
+    save("Revised description");
+    assert!(updated() > 100);
+    assert!(fs::read_to_string(artifacts_dir(&repo, &task.slug).join("00-ticket.md"))
+        .unwrap()
+        .contains("Revised description"));
+    let _ = fs::remove_dir_all(repo);
 }
 
 #[test]

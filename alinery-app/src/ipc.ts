@@ -221,7 +221,6 @@ export const closeAllRepos = () => invoke<number>("close_all_repos");
 export const daemonStatus = () => invoke<DaemonStatus>("daemon_status");
 export const repoLiveSessions = (path: string) => invoke<number>("repo_live_sessions", { path });
 export const stopDaemon = (path: string | null) => invoke<void>("stop_daemon", { path });
-export const takeoverRepoDaemon = (path: string | null) => invoke<void>("takeover_repo_daemon", { path });
 
 // ── git_ops.rs ────────────────────────────────────────────────────────
 export const commitWorktree = (slug: string, message: string) => invoke<void>("commit_worktree", { slug, message });

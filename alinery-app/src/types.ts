@@ -414,6 +414,7 @@ export type SessionMeta = {
   // ---- session durability & resume (issue #24) ----
   started_at?: number | null;
   status_changed_at?: number | null;
+  activity_at?: number | null;
   status_revision?: number;
   ended_at?: number | null;
   exit_code?: number | null;
@@ -750,6 +751,7 @@ export type TaskExecutionState = {
   creation: string;
   creation_error: string | null;
   owning_lane: string;
+  owning_app_config_identity?: string;
   definition_identity: string;
   reference: PlaybookRef;
   max_live_sessions: number;
@@ -987,11 +989,12 @@ export type ArtifactReviewPendingStatus = {
   review: string;
 };
 
-// Mirrors Rust `DaemonConflict`: a responding daemon failed a hard reuse gate.
+// Mirrors Rust `DaemonConflict`: daemon reuse or exclusive project ownership is blocked.
 // Nothing was killed to discover this.
 export type DaemonConflict = {
   repo: string;
-  reason: "protocol" | "app_config";
+  reason: "protocol" | "app_config" | "ownership";
+  detail?: string;
   /** null when the running daemon predates protocol versioning. */
   daemon_protocol: number | null;
   app_protocol: number;

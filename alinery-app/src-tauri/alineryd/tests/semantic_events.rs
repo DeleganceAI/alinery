@@ -837,11 +837,11 @@ fn status_changed_at_runner_transitions_are_normalized() {
     seeded["sentinel"] = json!({"keep": true});
     fs::write(&meta_path, serde_json::to_vec(&seeded).unwrap()).unwrap();
 
-    let before_busy = fs::read(&meta_path).unwrap();
-    let before_busy_modified = fs::metadata(&meta_path).unwrap().modified().unwrap();
     send(json!({"type": "busy"}));
-    assert_eq!(fs::read(&meta_path).unwrap(), before_busy, "Alive/Unknown and Busy are both In progress");
-    assert_eq!(fs::metadata(&meta_path).unwrap().modified().unwrap(), before_busy_modified);
+    let busy: Value = serde_json::from_slice(&fs::read(&meta_path).unwrap()).unwrap();
+    assert_eq!(busy["status_changed_at"], seeded["status_changed_at"], "Alive/Unknown and Busy are both In progress");
+    assert_eq!(busy["status_revision"], seeded["status_revision"]);
+    assert!(busy["activity_at"].as_u64().unwrap() >= initial, "agent start is meaningful activity");
 
     send(json!({"type": "waiting_for_input", "correlation_id": "ask-1"}));
     let waiting: Value = serde_json::from_slice(&fs::read(&meta_path).unwrap()).unwrap();
@@ -857,6 +857,8 @@ fn status_changed_at_runner_transitions_are_normalized() {
     send(json!({"type": "waiting_for_input", "correlation_id": "ask-2"}));
     assert_eq!(fs::read(&meta_path).unwrap(), before_correlation, "wait correlation changes are payload-only");
     assert_eq!(fs::metadata(&meta_path).unwrap().modified().unwrap(), before_correlation_modified);
+    send(json!({"type": "busy", "correlation_id": "stale-question"}));
+    assert_eq!(fs::read(&meta_path).unwrap(), before_correlation, "a stale resolution is not live work");
 
     send(json!({"type": "busy", "correlation_id": "ask-2"}));
     assert_eq!(fixture.rpc(json!({"op": "status", "id": id}))["agent"]["state"], "busy");

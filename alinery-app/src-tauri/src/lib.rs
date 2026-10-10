@@ -294,7 +294,6 @@ pub fn run() {
             notify_session_attention,
             stop_daemon,
             repo_live_sessions,
-            takeover_repo_daemon,
             close_all_repos,
             cancel_quit,
             mcp_status,

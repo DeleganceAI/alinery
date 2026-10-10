@@ -261,6 +261,58 @@ describe("TaskList empty", () => {
 describe("Task List column sorting", () => {
   const names = () => [...document.querySelectorAll(".task-name-text")].map((node) => node.textContent);
 
+  it("keeps tied Updated rows and selection stable across reordered polls, but follows real activity", async () => {
+    vi.useFakeTimers();
+    const epoch = 1_700_000_000;
+    vi.setSystemTime(epoch * 1000);
+    try {
+      window.localStorage.setItem("alinery:task-list:sort", JSON.stringify({ field: "updated", direction: "desc" }));
+      const alpha = task("alpha", { created: epoch - 120, updated: epoch - 60 });
+      const beta = task("beta", { created: epoch - 120, updated: epoch - 60 });
+      scenario.tasks = [beta, alpha];
+      let nav: BoardNav | null = null;
+      const onOpen = vi.fn();
+      render(
+        <TaskList
+          allRepos={false}
+          onOpen={onOpen}
+          onDuplicate={() => {}}
+          onOpenActiveSession={() => {}}
+          onCreate={() => {}}
+          registerNav={(next) => {
+            nav = next;
+          }}
+        />,
+      );
+      await navReady(() => nav);
+      expect(names()).toEqual(["ALPHA", "BETA"]);
+      fireEvent.click(screen.getByText("BETA"));
+      for (const tasks of [
+        [alpha, beta],
+        [beta, alpha],
+      ]) {
+        scenario.tasks = tasks;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(30_000);
+        });
+        expect(names()).toEqual(["ALPHA", "BETA"]);
+        expect(document.querySelector("tr.sel .task-name-text")?.textContent).toBe("BETA");
+      }
+      expect([...document.querySelectorAll(".age-cell:last-child")].map((cell) => cell.textContent)).toEqual(["2m", "2m"]);
+
+      scenario.tasks = [alpha, { ...beta, updated: epoch + 60 }];
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(names()).toEqual(["BETA", "ALPHA"]);
+      act(() => requireNav(nav).openSelected());
+      expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ slug: "beta" }));
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
+  });
+
   it("restores the selected column and direction after leaving and remounting the task list", async () => {
     scenario.tasks = [task("alpha", { created: 1, session_count: 2 }), task("beta", { created: 2, session_count: 10 })];
     const list = <TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />;

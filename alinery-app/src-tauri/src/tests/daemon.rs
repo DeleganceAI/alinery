@@ -373,8 +373,7 @@ fn a_guest_alinery_cannot_tear_down_the_owners_repo() {
 
 #[test]
 fn wait_for_daemon_gone_ok_when_socket_quiet() {
-    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_nanos()).unwrap_or(0);
-    let repo = std::env::temp_dir().join(format!("alinery-wait-gone-{n}"));
+    let repo = activity_repo("wait-gone");
     fs::create_dir_all(repo.join(".alinery")).unwrap();
     // No listener ⇒ connect fails immediately ⇒ Ok.
     wait_for_daemon_gone(&repo).expect("quiet socket is success");
@@ -1067,6 +1066,58 @@ fn ensure_daemon_adoption_uses_reported_host_guard_readiness() {
         let _ = fs::remove_dir_all(repo);
     }
 }
+
+#[test]
+fn project_open_refuses_a_live_foreign_lock_without_seizing_the_gui() {
+    use std::os::unix::fs::MetadataExt;
+    let repo = activity_repo("foreign-live-owner");
+    fs::create_dir_all(repo.join(".alinery")).unwrap();
+    let config = repo.join(".alinery/app.toml");
+    let lock_path = alinery_core::alineryd_lock_path(&repo, Some("old-checkout"));
+    let lease = alinery_core::lockfile::try_lock_exclusive(&lock_path).unwrap().unwrap();
+    let inode = fs::metadata(&lock_path).unwrap().ino();
+    let state = AppState::default();
+    crate::attach_repo_daemon(&state, &repo, &config);
+    let conflict = state.daemon_conflict(&repo).expect("live foreign owner must be visible");
+    assert_eq!(conflict.reason, "ownership");
+    assert!(state.daemon_for(&repo).is_none());
+    assert!(!state.owns_repo(&repo));
+    assert!(crate::require_repo_owned(&state, &repo).is_err());
+    assert_eq!(fs::metadata(&lock_path).unwrap().ino(), inode, "refusal must never replace a held lock");
+    assert!(!crate::current_alineryd_socket_path(&repo).exists());
+    let owner_window = AppState::default();
+    assert!(owner_window.claim_repo(&repo), "the original owner's GUI must still be able to reopen");
+    drop(owner_window);
+    drop(lease);
+    fs::remove_dir_all(repo).unwrap();
+}
+
+#[test]
+fn project_open_reports_unknown_lock_state_without_starting_a_daemon() {
+    let repo = activity_repo("unknown-owner");
+    fs::create_dir_all(repo.join(".alinery")).unwrap();
+    let lock_path = alinery_core::alineryd_lock_path(&repo, Some("unreadable"));
+    fs::create_dir(&lock_path).unwrap();
+    let state = AppState::default();
+    crate::attach_repo_daemon(&state, &repo, &repo.join(".alinery/app.toml"));
+    assert_eq!(state.daemon_conflict(&repo).unwrap().reason, "ownership");
+    assert!(state.daemon_for(&repo).is_none());
+    assert!(!state.owns_repo(&repo));
+    assert!(!crate::current_alineryd_socket_path(&repo).exists());
+    assert!(lock_path.is_dir());
+    fs::remove_dir_all(repo).unwrap();
+}
+
+#[test]
+fn daemon_exit_wait_does_not_accept_a_missing_socket_with_a_live_lock() {
+    let repo = activity_repo("exit-live-lock");
+    fs::create_dir_all(repo.join(".alinery")).unwrap();
+    let lease = alinery_core::lockfile::try_lock_exclusive(&crate::current_alineryd_lock_path(&repo)).unwrap().unwrap();
+    assert!(crate::wait_for_daemon_gone(&repo).is_err());
+    drop(lease);
+    crate::wait_for_daemon_gone(&repo).unwrap();
+    fs::remove_dir_all(repo).unwrap();
+}
 #[test]
 fn host_guard_warning_is_repo_scoped_replaced_and_cleared() {
     let warned = PathBuf::from("/tmp/alinery-warning-repo");
@@ -1083,6 +1134,7 @@ fn host_guard_warning_is_repo_scoped_replaced_and_cleared() {
         DaemonConflict {
             repo: conflicted.display().to_string(),
             reason: "protocol".into(),
+            detail: None,
             daemon_protocol: None,
             app_protocol: PROTOCOL_VERSION,
             daemon_app_config_identity: None,

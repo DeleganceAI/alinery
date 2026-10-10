@@ -1,9 +1,4 @@
-//! T7b: two alineryd lanes over one repo — prod holds the reconciler lease, dev defers
-//! instead of dying. Needs real processes, so it lives here.
-//!
-//! Pure flock mutual exclusion (T7) is `alinery_core::lockfile::tests` — deterministic, and
-//! deliberately not in this binary, which forks subprocesses that can transiently inherit
-//! a lock fd and make a same-process re-lock spuriously fail.
+//! Repository owner exclusion and legacy checkpoint compatibility with real daemons.
 
 use std::fs;
 use std::path::PathBuf;
@@ -16,9 +11,9 @@ use alinery_core::{read_task, SemanticCheckpoint, SessionMeta, Task};
 
 static BIN: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from(env!("CARGO_BIN_EXE_alineryd")));
 
-/// T7b smoke: prod holds lease; dev lane does not die (it just skips reconcile).
+/// Concurrent lane startups elect one owner; the loser can restart after it exits.
 #[test]
-fn t7b_prod_and_dev_both_live() {
+fn t7b_concurrent_prod_and_dev_elect_one_repo_owner() {
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let root = PathBuf::from("/tmp").join(format!("al-t7b-{n}"));
     fs::create_dir_all(root.join(".alinery")).unwrap();
@@ -44,24 +39,50 @@ fn t7b_prod_and_dev_both_live() {
         .spawn()
         .unwrap();
 
-    // Both should stay alive for a few seconds (dev defers lease, does not exit).
-    thread::sleep(Duration::from_millis(500));
-    assert!(prod.try_wait().ok().flatten().is_none(), "prod alive");
-    assert!(dev.try_wait().ok().flatten().is_none(), "dev alive");
-
-    // Kill prod → lock released; dev can take lease (we only assert it stays alive).
-    let _ = prod.kill();
-    let _ = prod.wait();
-    let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(6) {
-        if dev.try_wait().ok().flatten().is_some() {
-            panic!("dev should keep running after prod death");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let prod_won = loop {
+        if let Some(status) = prod.try_wait().unwrap() {
+            assert!(!status.success());
+            break false;
         }
-        thread::sleep(Duration::from_millis(100));
+        if let Some(status) = dev.try_wait().unwrap() {
+            assert!(!status.success());
+            break true;
+        }
+        assert!(Instant::now() < deadline, "two owners remained alive");
+        thread::sleep(Duration::from_millis(20));
+    };
+    let (winner, namespace) = if prod_won { (&mut prod, None) } else { (&mut dev, Some("devlane")) };
+    let client = alinery_core::daemon_client::DaemonClient {
+        socket_path: alinery_core::alineryd_socket_path(&root, namespace),
+    };
+    while client.version_checked().is_err() {
+        assert!(Instant::now() < deadline, "winner did not bind");
+        thread::sleep(Duration::from_millis(20));
     }
-    let _ = dev.kill();
-    let _ = dev.wait();
-    let _ = fs::remove_dir_all(&root);
+    winner.kill().unwrap();
+    winner.wait().unwrap();
+    let mut replacement = Command::new(&*BIN)
+        .arg("--repo")
+        .arg(&root)
+        .arg("--socket-namespace")
+        .arg("replacement")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let client = alinery_core::daemon_client::DaemonClient {
+        socket_path: alinery_core::alineryd_socket_path(&root, Some("replacement")),
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while client.version_checked().is_err() {
+        assert!(replacement.try_wait().unwrap().is_none(), "replacement failed");
+        assert!(Instant::now() < deadline, "replacement did not bind");
+        thread::sleep(Duration::from_millis(20));
+    }
+    replacement.kill().unwrap();
+    replacement.wait().unwrap();
+    fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]

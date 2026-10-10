@@ -35,11 +35,10 @@ done
 # The ONLY deliberate session-kill origins. Add a name here only together with a
 # user-facing confirmation that names the repo and the live session count:
 #   stop_daemon           Settings → Harness → "Quit & stop all sessions" (B1)
-#   takeover_repo_daemon  reclaim banner's danger button (B3)
 #   close_repo_daemon     close-repo confirmation (B4)
 #   restore_backup        destructive restore, confirmed in the UI (the daemon holds the
 #                         data being replaced, so it is not restarted afterwards)
-ALLOWED="stop_daemon takeover_repo_daemon close_repo_daemon restore_backup"
+ALLOWED="stop_daemon close_repo_daemon restore_backup"
 
 # `close_repo_daemon` is a plain fn, so a NEW CALLER of it would end every live session in
 # a repo without adding a `shutdown` sender for the scan above to notice. Its callers are
