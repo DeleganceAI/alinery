@@ -260,3 +260,32 @@ it("keeps wildcard fan-out and merge illustrations when reduced ordering links a
 it("handles graphs without ordering connections", () => {
   expect(reduceFlowConnections([])).toEqual([]);
 });
+
+it("keeps producer output footers clear of edges and later ranks, including terminal outputs", () => {
+  const heights = new Map([
+    ["root", 144],
+    ["left", 216],
+    ["join", 168],
+  ]);
+  const layout = layoutDefinitionGraph(
+    ["root", "left", "right", "join"],
+    [
+      { from: "root", to: "left" },
+      { from: "root", to: "right" },
+      { from: "left", to: "join" },
+      { from: "right", to: "join" },
+    ],
+    undefined,
+    undefined,
+    heights,
+  );
+  const nodes = Object.fromEntries(layout.nodes.map((node) => [node.key, node]));
+  expect(nodes.left.y).toBe(nodes.right.y);
+  expect(nodes.left.y).toBeGreaterThan(nodes.root.y + 144);
+  expect(nodes.join.y).toBeGreaterThan(nodes.left.y + 216);
+  expect(layout.height).toBeGreaterThan(nodes.join.y + 168);
+  for (const edge of layout.edges) {
+    const from = nodes[edge.from];
+    expect(edge.paths[0].startsWith(`M ${from.x + GRAPH_NODE_WIDTH / 2} ${from.y + (heights.get(edge.from) ?? GRAPH_NODE_HEIGHT)} `)).toBe(true);
+  }
+});
