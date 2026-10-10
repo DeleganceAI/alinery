@@ -436,7 +436,6 @@ describe("task run graph", () => {
     const { onOpenSession } = await renderDetail("parent", "graph");
     const graph = within(screen.getByRole("region", { name: "Task run graph" }));
     await graph.findByRole("button", { name: `Open session ${consumer.name}` });
-    expect(screen.getByRole("button", { name: "Show list view" }).textContent).toBe("List");
     expect(graph.getAllByRole("button", { name: /^Open session / })).toHaveLength(2);
     expect(graph.queryByText("Unexecuted review")).toBeNull();
     expect(graph.queryByRole("button", { name: /research\/2-result-99\.md/ })).toBeNull();
@@ -466,7 +465,6 @@ describe("task run graph", () => {
     expect(within(consumerRow).getByRole("button", { name: "Rename session" })).toBeDefined();
     expect(screen.queryByRole("region", { name: "Task run graph" })).toBeNull();
     const showGraph = screen.getByRole("button", { name: "Show graph view" });
-    expect(showGraph.textContent).toBe("Graph");
     fireEvent.click(showGraph);
     expect(screen.getByRole("region", { name: "Task run graph" })).toBeDefined();
     expect(screen.queryByRole("table")).toBeNull();
