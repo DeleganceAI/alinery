@@ -16,6 +16,7 @@ uuid = { version = "1", features = ["v4"] }
 # Blocking HTTP. OpenObserve ingest stays in telemetry.rs; everything else goes
 # through http.rs. Do not add ureq to alinery-app / alineryd / alinery-mcp.
 ureq = "2"
+url = "2"
 # Backup archives (issue #79). Pure-Rust deflate via flate2/miniz_oxide; default features
 # are off so we do not pull aes/bzip2/zstd/lzma or a second `time` version alongside the
 # 0.3.51 pin in Cargo.lock.

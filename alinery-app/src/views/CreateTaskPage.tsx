@@ -6,7 +6,18 @@ import { PlaybookGraph } from "../PlaybookGraph";
 import { Checkbox, InlineStatus, ModelInput, ompDefaultModel, orderPlaybookCandidates, playbookRefKey, samePlaybookRef } from "../shared";
 import * as taskMutationGuard from "../taskMutationGuard";
 import { toast } from "../toast";
-import type { BoardTask, DraftOrigin, PickerPreferences, PlaybookCandidate, PlaybookRef, ScopedPlaybook, TargetedCreateResult, TaskAttachment, TaskSourceBranches } from "../types";
+import type {
+  BoardTask,
+  DraftOrigin,
+  LinearImage,
+  PickerPreferences,
+  PlaybookCandidate,
+  PlaybookRef,
+  ScopedPlaybook,
+  TargetedCreateResult,
+  TaskAttachment,
+  TaskSourceBranches,
+} from "../types";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 type ErrState = { msg: string; detail: string } | null;
@@ -50,6 +61,17 @@ function encodeImage(file: File): Promise<string> {
     };
     reader.readAsDataURL(file);
   });
+}
+
+function restoreLinearImageUrls(text: string, images: LinearImage[]): string {
+  for (const image of images) {
+    const sourceUrl = image.source_url
+      .replace(/&/g, "&amp;")
+      .replace(/\\/g, "\\\\")
+      .replace(/[<>\r\n]/g, (character) => encodeURIComponent(character));
+    text = text.split(`attachments/${image.name}`).join(sourceUrl);
+  }
+  return text;
 }
 
 const slugifyTaskName = (value: string) => {
@@ -98,6 +120,10 @@ export function CreateTaskPage({
   const [attachments, setAttachments] = useState<string[]>([]);
   const [images, setImages] = useState<PastedImage[]>([]);
   const imagesRef = useRef<PastedImage[]>([]);
+  const [linearImages, setLinearImages] = useState<LinearImage[]>([]);
+  const [linearImageErrors, setLinearImageErrors] = useState<string[]>([]);
+  const importGeneration = useRef(0);
+  const importingRef = useRef(false);
   const attachmentGeneration = useRef(0);
   const [pasteErrors, setPasteErrors] = useState<string[]>([]);
   const [attachmentDraft, setAttachmentDraft] = useState("");
@@ -165,6 +191,7 @@ export function CreateTaskPage({
   useEffect(
     () => () => {
       attachmentGeneration.current += 1;
+      importGeneration.current += 1;
       for (const image of imagesRef.current) URL.revokeObjectURL(image.previewUrl);
       imagesRef.current = [];
     },
@@ -383,7 +410,7 @@ export function CreateTaskPage({
             repoPath: target,
             draftSlug: draftIdentities.current.get(target) ?? "",
             name: n,
-            description: desc,
+            description: restoreLinearImageUrls(desc, linearImages),
             evidence,
             linearId,
             githubIssue,
@@ -414,6 +441,7 @@ export function CreateTaskPage({
     name,
     desc,
     evidence,
+    linearImages,
     linearId,
     githubIssue,
     playbook,
@@ -480,7 +508,7 @@ export function CreateTaskPage({
           : "Choose an available committed starting branch."
         : "";
   const create = () => {
-    if (clearingRef.current || branchSnapshotRequest.current !== branchRequest.current) return;
+    if (importingRef.current || clearingRef.current || branchSnapshotRequest.current !== branchRequest.current) return;
     const n = name.trim();
     if (!n || !taskSlug || !sourceReady || !selectedSource || !startingBranchReady || baseRef === null || modelNeedsReselection || !validCap) return;
     if (creatingRef.current) {
@@ -492,6 +520,7 @@ export function CreateTaskPage({
     creatingRef.current = true;
     draftWriteGeneration.current += 1;
     attachmentGeneration.current += 1;
+    importGeneration.current += 1;
     dirtyRef.current = false;
     const target = repoPath;
     const capturedBaseRef = baseRef;
@@ -516,7 +545,8 @@ export function CreateTaskPage({
           repoPath: target,
           request: {
             ...prepared,
-            attachments: [...prepared.attachments, ...encodedImages],
+            attachments: [...linearImages.map(({ name, bytes }) => ({ name, bytes })), ...prepared.attachments, ...encodedImages],
+            attachment_errors: [...linearImageErrors, ...prepared.attachment_errors],
             draft_slug: draftIdentities.current.get(target) || undefined,
             name: n,
             description: desc,
@@ -608,43 +638,56 @@ export function CreateTaskPage({
 
   const importLinear = () => {
     const r = ref.trim();
-    if (!r) return;
+    if (!r || creatingRef.current || clearingRef.current) return;
     const target = repoPath;
+    const generation = ++importGeneration.current;
+    importingRef.current = true;
     setImporting(true);
     setErr(null);
-    setLinearId("");
-    setGithubIssue("");
+    draftWriteGeneration.current += 1;
     // Import populates fields without marking dirty — no draft until user edits.
     dirtyRef.current = false;
     ipc
       .importLinearForRepo(target, r)
       .then((t) => {
-        if (repoRef.current !== target) return;
+        if (generation !== importGeneration.current) return;
         setName(t.title);
         if (!slugEdited) setTaskSlug(slugifyTaskName(t.title));
         setDesc(t.description);
         setLinearId(t.identifier);
+        setGithubIssue("");
+        setLinearImages(t.images);
+        setLinearImageErrors(t.image_errors);
         dirtyRef.current = false;
       })
       .catch((e) => {
-        if (repoRef.current === target) setErr({ msg: "Couldn't import the Linear ticket.", detail: String(e) });
+        if (generation === importGeneration.current) setErr({ msg: "Couldn't import the Linear ticket.", detail: String(e) });
       })
       .finally(() => {
-        if (repoRef.current === target) setImporting(false);
+        if (generation === importGeneration.current) {
+          importingRef.current = false;
+          setImporting(false);
+        }
       });
   };
 
   const importGitHub = (reference = ref) => {
     const r = reference.trim();
-    if (!r) return;
+    if (!r || creatingRef.current || clearingRef.current) return;
     const target = repoPath;
+    const generation = ++importGeneration.current;
+    importingRef.current = true;
+    draftWriteGeneration.current += 1;
+    dirtyRef.current = false;
     setImporting(true);
     setErr(null);
     ipc
       .importGithubForRepo(target, r)
       .then((i) => {
-        if (repoRef.current !== target) return;
+        if (generation !== importGeneration.current) return;
         setLinearId("");
+        setLinearImages([]);
+        setLinearImageErrors([]);
         setName(i.title);
         if (!slugEdited) setTaskSlug(slugifyTaskName(i.title));
         setDesc(i.description);
@@ -652,10 +695,13 @@ export function CreateTaskPage({
         dirtyRef.current = false;
       })
       .catch((e) => {
-        if (repoRef.current === target) setErr({ msg: "Couldn't import the GitHub issue or pull request.", detail: String(e) });
+        if (generation === importGeneration.current) setErr({ msg: "Couldn't import the GitHub issue or pull request.", detail: String(e) });
       })
       .finally(() => {
-        if (repoRef.current === target) setImporting(false);
+        if (generation === importGeneration.current) {
+          importingRef.current = false;
+          setImporting(false);
+        }
       });
   };
 
@@ -672,6 +718,8 @@ export function CreateTaskPage({
 
   const selectRepo = (nextRepo: string) => {
     if (nextRepo === repoPath || clearingRef.current || creatingRef.current) return;
+    importGeneration.current += 1;
+    importingRef.current = false;
     invalidateStartingBranches(true);
     repoRef.current = nextRepo;
     dirtyRef.current = false;
@@ -684,6 +732,9 @@ export function CreateTaskPage({
   const clearDraft = () => {
     if (creatingRef.current || clearingRef.current) return;
     clearingRef.current = true;
+    importGeneration.current += 1;
+    importingRef.current = false;
+    setImporting(false);
     setClearing(true);
     const slug = draftSlug;
     draftWriteGeneration.current += 1;
@@ -692,6 +743,8 @@ export function CreateTaskPage({
       invalidateStartingBranches(true);
       for (const image of imagesRef.current) URL.revokeObjectURL(image.previewUrl);
       updateImages([]);
+      setLinearImages([]);
+      setLinearImageErrors([]);
       setPasteErrors([]);
       dirtyRef.current = false;
       setDraftSlug("");
@@ -989,6 +1042,32 @@ export function CreateTaskPage({
                 </button>
               </div>
             ))}
+            {linearImages.map((image) => (
+              <div key={image.name} className="attachment-row">
+                <span className="attachment-row-name" title={image.source_url}>
+                  {image.name}
+                </span>
+                <button
+                  className="btn ghost small"
+                  type="button"
+                  disabled={creatingRef.current}
+                  aria-label={`Remove ${image.name}`}
+                  onClick={() => {
+                    if (creatingRef.current) return;
+                    dirtyRef.current = true;
+                    setDesc((current) => restoreLinearImageUrls(current, [image]));
+                    setLinearImages((current) => current.filter((item) => item.name !== image.name));
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            {linearImageErrors.map((error) => (
+              <InlineStatus key={error} tone="warning">
+                {error}
+              </InlineStatus>
+            ))}
             {images.map((image) => (
               <div key={image.id} className="attachment-row">
                 {image.previewUnavailable ? (
@@ -1029,7 +1108,9 @@ export function CreateTaskPage({
             ))}
             {pasteErrors.length > 0 && <InlineStatus tone="error">{pasteErrors.join("\n")}</InlineStatus>}
             <div className="hint">Paste images in Description, Evidence / pointers, or Attachments. Images attach on Create and are not saved with the draft.</div>
-            <div className="hint">Local files are copied into the task. URLs are recorded, never fetched. Drop files anywhere on this form.</div>
+            <div className="hint">
+              Local files are copied into the task. Attachment URLs are recorded, never fetched. Linear description images download on import. Drop files anywhere on this form.
+            </div>
           </div>
           {!!selectedSource?.definition.step.length && (
             <div className="create-field">
@@ -1159,7 +1240,7 @@ export function CreateTaskPage({
                 Open task
               </button>
             ) : (
-              <button type="button" className="btn" disabled={creating || clearing || creatingRef.current || !!createBlockedReason || !taskSlug} onClick={create}>
+              <button type="button" className="btn" disabled={creating || clearing || importing || creatingRef.current || !!createBlockedReason || !taskSlug} onClick={create}>
                 {creating ? "Creating…" : "Create task"}
               </button>
             )}
