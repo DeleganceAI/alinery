@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_GRID_VIEW_ID, gridViewShortcut, MAX_GRID_VIEWS, nextGridViewName, normalizeGridViews, resolveGridTopLevelRoute, withGridViewSlots } from "./gridViews";
+import {
+  DEFAULT_GRID_VIEW_ID,
+  gridViewShortcut,
+  MAX_GRID_VIEWS,
+  nextGridViewName,
+  normalizeGridViews,
+  resolveGridTopLevelRoute,
+  trailingTabDigit,
+  withGridViewSlots,
+} from "./gridViews";
 
 describe("Grid view definitions", () => {
   it("seeds exactly one Kanban+ view for missing or invalid settings", () => {
@@ -36,8 +45,12 @@ describe("Grid view definitions", () => {
     expect(nextGridViewName(views)).toBe("Grid view 2");
   });
 
-  it("assigns ⌘2 / ⌘4 / ⌘5 so ⌘3 stays free for classic Kanban", () => {
-    expect([0, 1, 2].map(gridViewShortcut)).toEqual(["⌘2", "⌘4", "⌘5"]);
+  it("numbers Grid views ⌘1 / ⌘2 / ⌘3, then Tasks, Sessions, and Kanban", () => {
+    expect([0, 1, 2].map(gridViewShortcut)).toEqual(["⌘1", "⌘2", "⌘3"]);
+    expect(trailingTabDigit(1, "tasks")).toBe(2);
+    expect(trailingTabDigit(3, "tasks")).toBe(4);
+    expect(trailingTabDigit(3, "sessions")).toBe(5);
+    expect(trailingTabDigit(3, "kanban")).toBe(6);
   });
 
   it("falls back safely for hidden classic Kanban and stale Grid IDs", () => {

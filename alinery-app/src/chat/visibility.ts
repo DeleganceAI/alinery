@@ -52,9 +52,9 @@ export const DEFAULT_CHAT_VISIBILITY: ChatPrefs = {
   maxWidth: "900",
   showDate: true,
   showTime: true,
-  showActorLabels: true,
-  showAgentBubbles: true,
-  showBlockCopyButtons: true,
+  showActorLabels: false,
+  showAgentBubbles: false,
+  showBlockCopyButtons: false,
   showCopyButtons: true,
 };
 
@@ -87,9 +87,9 @@ export function chatVisibilityFromAppearance(input: AppearancePrefs | Record<str
     maxWidth: normalizeMaxWidth(input.chat_max_width),
     showDate: input.chat_show_date !== false,
     showTime: input.chat_show_time !== false,
-    showActorLabels: input.chat_show_actor_labels !== false,
-    showAgentBubbles: input.chat_show_agent_bubbles !== false,
-    showBlockCopyButtons: input.chat_show_block_copy_buttons !== false,
+    showActorLabels: input.chat_show_actor_labels === true,
+    showAgentBubbles: input.chat_show_agent_bubbles === true,
+    showBlockCopyButtons: input.chat_show_block_copy_buttons === true,
     showCopyButtons: input.chat_show_copy_buttons !== false,
   };
 }

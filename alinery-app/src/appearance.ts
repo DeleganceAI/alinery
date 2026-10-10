@@ -1,4 +1,4 @@
-import type { AppearanceMode, AppearancePrefs, ChatMaxWidth, ChatRailDensity, SessionDefaultView } from "./types";
+import type { AppearanceMode, AppearancePrefs, ChatMaxWidth, ChatRailDensity, ChatViewPrefs, SessionDefaultView } from "./types";
 
 export const DEFAULT_ACCENT_COLOR = "#315bff";
 export const ARTIFACT_VIEWER_WIDTH_DEFAULT = 360;
@@ -37,9 +37,9 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   chat_max_width: "900",
   chat_show_date: true,
   chat_show_time: true,
-  chat_show_actor_labels: true,
-  chat_show_agent_bubbles: true,
-  chat_show_block_copy_buttons: true,
+  chat_show_actor_labels: false,
+  chat_show_agent_bubbles: false,
+  chat_show_block_copy_buttons: false,
   chat_show_copy_buttons: true,
   session_default_view: "chat",
   mode: "system",
@@ -95,6 +95,35 @@ function normalizeAccent(value: string | undefined): string {
   return normalized;
 }
 
+/** The chat_* settings of one chat surface (Sessions view = the flat fields, Chat = `ava_chat`), each coerced to a valid value. */
+export function normalizeChatView(raw: Partial<ChatViewPrefs>): ChatViewPrefs {
+  return {
+    chat_show_thinking: raw.chat_show_thinking === true,
+    chat_expand_thinking: raw.chat_expand_thinking === true,
+    chat_show_tools: raw.chat_show_tools === true,
+    chat_expand_tools: raw.chat_expand_tools === true,
+    chat_show_harness: raw.chat_show_harness !== false,
+    chat_show_turn_markers: raw.chat_show_turn_markers === true,
+    chat_show_subagent_rows: raw.chat_show_subagent_rows !== false,
+    chat_show_subagent_drawer: raw.chat_show_subagent_drawer !== false,
+    chat_auto_collapse_thinking: raw.chat_auto_collapse_thinking !== false,
+    chat_auto_compaction: raw.chat_auto_compaction !== false,
+    chat_auto_scroll: raw.chat_auto_scroll !== false,
+    chat_rail_density: normalizeChatRailDensity(raw.chat_rail_density),
+    chat_font_size: normalizeChatFontSize(raw.chat_font_size),
+    chat_rail_font_size: normalizeChatRailFontSize(raw.chat_rail_font_size),
+    chat_show_meta: raw.chat_show_meta !== false,
+    chat_show_composer_hints: raw.chat_show_composer_hints !== false,
+    chat_max_width: normalizeChatMaxWidth(raw.chat_max_width),
+    chat_show_date: raw.chat_show_date !== false,
+    chat_show_time: raw.chat_show_time !== false,
+    chat_show_actor_labels: raw.chat_show_actor_labels === true,
+    chat_show_agent_bubbles: raw.chat_show_agent_bubbles === true,
+    chat_show_block_copy_buttons: raw.chat_show_block_copy_buttons === true,
+    chat_show_copy_buttons: raw.chat_show_copy_buttons !== false,
+  };
+}
+
 export function normalizeAppearance(input: AppearancePrefs): AppearancePrefs {
   const raw = input ?? DEFAULT_APPEARANCE;
   const requestedScale = Number.isFinite(raw.ui_scale) ? raw.ui_scale : DEFAULT_APPEARANCE.ui_scale;
@@ -115,31 +144,10 @@ export function normalizeAppearance(input: AppearancePrefs): AppearancePrefs {
     terminal_font_size,
     artifact_font_size,
     artifact_viewer_width: normalizeArtifactViewerWidth(raw.artifact_viewer_width),
-    chat_show_thinking: raw.chat_show_thinking === true,
-    chat_expand_thinking: raw.chat_expand_thinking === true,
-    chat_show_tools: raw.chat_show_tools === true,
-    chat_expand_tools: raw.chat_expand_tools === true,
-    chat_show_harness: raw.chat_show_harness !== false,
-    chat_show_turn_markers: raw.chat_show_turn_markers === true,
-    chat_show_subagent_rows: raw.chat_show_subagent_rows !== false,
-    chat_show_subagent_drawer: raw.chat_show_subagent_drawer !== false,
-    chat_auto_collapse_thinking: raw.chat_auto_collapse_thinking !== false,
-    chat_auto_compaction: raw.chat_auto_compaction !== false,
-    chat_auto_scroll: raw.chat_auto_scroll !== false,
-    chat_rail_density: normalizeChatRailDensity(raw.chat_rail_density),
-    chat_font_size: normalizeChatFontSize(raw.chat_font_size),
-    chat_rail_font_size: normalizeChatRailFontSize(raw.chat_rail_font_size),
-    chat_show_meta: raw.chat_show_meta !== false,
-    chat_show_composer_hints: raw.chat_show_composer_hints !== false,
-    chat_max_width: normalizeChatMaxWidth(raw.chat_max_width),
-    chat_show_date: raw.chat_show_date !== false,
-    chat_show_time: raw.chat_show_time !== false,
-    chat_show_actor_labels: raw.chat_show_actor_labels !== false,
-    chat_show_agent_bubbles: raw.chat_show_agent_bubbles !== false,
-    chat_show_block_copy_buttons: raw.chat_show_block_copy_buttons !== false,
-    chat_show_copy_buttons: raw.chat_show_copy_buttons !== false,
+    ...normalizeChatView(raw),
     session_default_view: normalizeSessionDefaultView(raw.session_default_view),
     mode,
+    ava_chat: normalizeChatView(raw.ava_chat ?? {}),
   };
 }
 

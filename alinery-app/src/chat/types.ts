@@ -35,7 +35,13 @@ type Base = {
 };
 
 export type ChatEntry =
-  | (Base & { type: "prompt" | "follow_up"; text: string; attachments?: UserRowAttachment[] })
+  | (Base & {
+      type: "prompt" | "follow_up";
+      text: string;
+      attachments?: UserRowAttachment[];
+      /** OMP refused this send and the composer could not take the text back, so the row stays as "not sent". */
+      failed?: boolean;
+    })
   | (Base & { type: "slash"; name: string; args?: string; local?: boolean })
   | (Base & {
       type: "thinking";
@@ -76,6 +82,8 @@ export type ChatEntry =
       requestId: string;
       action: string;
       detail: string;
+      /** Browser-opening approvals must display the destination literally, without clickable Markdown. */
+      detailFormat?: "plain";
       scope?: string;
       options?: string[];
       disabled?: boolean;

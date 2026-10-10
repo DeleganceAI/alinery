@@ -26,7 +26,8 @@ export { defaultFocusKey };
 
 export type ConfirmRequest = {
   title: string;
-  body: ReactNode;
+  /** A render function can place actions beside the content they apply to. */
+  body: ReactNode | ((answer: (key: string) => void) => ReactNode);
   /** Left-to-right buttons. Defaults to a danger Confirm + ghost Cancel. */
   choices?: ConfirmChoice[];
   /** Returned on Esc, scrim click and ✕. Defaults to "cancel". */
@@ -77,6 +78,13 @@ export function confirmDanger(title: string, body: ReactNode, acceptLabel = "Con
 }
 
 /** Mounted once at App level, next to <Toast/>. */
+/** Switching Chat <-> Terminal restarts OMP on the same journal, so a running turn is stopped first. */
+export function confirmStopAndSwitch(target: "pty" | "rpc"): Promise<boolean> {
+  return target === "pty"
+    ? confirmDanger("Switch to Terminal?", "Stop the agent’s current work and switch to Terminal?", "Stop and switch")
+    : confirmDanger("Switch to Chat?", "Stop the agent’s current work and switch to Chat?", "Stop and switch");
+}
+
 export function ConfirmHost() {
   const [pending, setPending] = useState<Pending | null>(null);
 
@@ -117,7 +125,7 @@ export function ConfirmHost() {
           <X size={14} strokeWidth={1.5} aria-hidden="true" />
         </button>
       </div>
-      <div className="mb confirm-body">{req.body}</div>
+      <div className="mb confirm-body">{typeof req.body === "function" ? req.body(answer) : req.body}</div>
       <div className="mfoot">
         {choices.map((c) => (
           <button

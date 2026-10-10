@@ -39,6 +39,20 @@ pub fn omp_default_model(defaults: &HarnessChoice) -> String {
     }
 }
 
+pub const THINKING_LEVELS: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/// Level a fresh OMP launch passes as `--thinking`. Unset or invalid falls back to `high`, the
+/// old hardcoded default, and the check lives here because OMP silently ignores an invalid
+/// flag. OMP itself clamps a valid level to what the model supports.
+pub fn thinking_launch_level(defaults: &HarnessChoice) -> &str {
+    let level = defaults.thinking.trim();
+    if THINKING_LEVELS.contains(&level) {
+        level
+    } else {
+        "high"
+    }
+}
+
 // Scan only authored text: escaped candidates and inserted values are literal.
 fn expand_prompt_tokens(raw: &str, prompt_extra: &str, mut expand: impl FnMut(&str, &mut String) -> bool) -> String {
     let mut out = String::with_capacity(raw.len());
@@ -326,6 +340,10 @@ pub fn resolve_launch_prompt(repo: &Path, launch: &LaunchFields) -> Result<Optio
         if let Some(prompt) = &launch.prompt {
             return Ok((!prompt.is_empty()).then(|| compose_prompt_extra(prompt, &launch.prompt_extra)));
         }
+    }
+    // A taskless chat has no ticket to seed. The first turn is the RPC prompt.
+    if launch.task_slug.is_empty() {
+        return Ok(None);
     }
     let task = read_task(repo, &launch.task_slug).ok_or_else(|| format!("read task {}: missing task.md", launch.task_slug))?;
     let playbook = launch.playbook.clone();
@@ -765,17 +783,20 @@ fn resolve_choice(global: &HarnessChoice, overrides: &crate::types::RepoHarnessC
         Some(reference) => (reference.clone(), SettingSource::Repository),
         None => (global.playbook.clone(), SettingSource::Global),
     };
+    let (thinking, thinking_source) = string_value(&global.thinking, &overrides.thinking);
     let (draft_autosave, draft_autosave_source) = bool_value(global.draft_autosave, &overrides.draft_autosave);
     (
         HarnessChoice {
             harness,
             model,
+            thinking,
             playbook,
             draft_autosave,
         },
         ChoiceProvenance {
             harness: harness_source,
             model: model_source,
+            thinking: thinking_source,
             playbook: playbook_source,
             draft_autosave: draft_autosave_source,
         },
@@ -840,6 +861,7 @@ pub fn clear_repo_override(overrides: &mut RepoOverrides, field: &str) -> Result
             overrides.defaults.model = None;
             overrides.defaults.harness = None;
         }
+        "defaults.thinking" => overrides.defaults.thinking = None,
         "defaults.playbook" => overrides.defaults.playbook = None,
         "defaults.draft_autosave" => overrides.defaults.draft_autosave = None,
         "backup.destination" => overrides.backup.destination = None,
@@ -1446,6 +1468,73 @@ mod tests {
     }
 
     #[test]
+    fn thinking_launch_level_falls_back_to_high_unless_valid() {
+        let level = |thinking: &str| {
+            thinking_launch_level(&HarnessChoice {
+                thinking: thinking.into(),
+                ..Default::default()
+            })
+            .to_string()
+        };
+        for valid in THINKING_LEVELS {
+            assert_eq!(level(valid), valid);
+        }
+        assert_eq!(level(" low "), "low", "surrounding whitespace is trimmed");
+        assert_eq!(level(""), "high", "unset");
+        assert_eq!(level("auto"), "high", "not a level OMP accepts");
+        assert_eq!(level("Low"), "high", "levels are case-sensitive");
+    }
+
+    #[test]
+    fn repo_thinking_override_beats_global_with_provenance() {
+        let global = GlobalSettings {
+            defaults: HarnessChoice {
+                thinking: "medium".into(),
+                ..Default::default()
+            },
+            ..default_global_settings()
+        };
+        let inherited = resolve_effective_config(&global, &RepoOverrides::default());
+        assert_eq!(inherited.defaults.thinking, "medium");
+        assert_eq!(inherited.provenance.defaults.thinking, SettingSource::Global);
+
+        let overrides = RepoOverrides {
+            defaults: crate::RepoHarnessChoiceOverrides {
+                thinking: Some("low".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let effective = resolve_effective_config(&global, &overrides);
+        assert_eq!(effective.defaults.thinking, "low");
+        assert_eq!(effective.provenance.defaults.thinking, SettingSource::Repository);
+    }
+
+    #[test]
+    fn clear_defaults_thinking_drops_only_the_repo_override() {
+        let mut overrides = RepoOverrides {
+            defaults: crate::RepoHarnessChoiceOverrides {
+                model: Some("g".into()),
+                thinking: Some("low".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        clear_repo_override(&mut overrides, "defaults.thinking").unwrap();
+        assert_eq!(overrides.defaults.thinking, None);
+        assert_eq!(overrides.defaults.model.as_deref(), Some("g"));
+    }
+
+    #[test]
+    fn settings_written_before_thinking_existed_still_parse() {
+        let global: GlobalSettings = toml::from_str("[defaults]\nharness = \"omp\"\nmodel = \"sonnet\"\n").unwrap();
+        assert_eq!(global.defaults.thinking, "");
+        assert_eq!(thinking_launch_level(&global.defaults), "high");
+        let overrides: RepoOverrides = toml::from_str("[defaults]\nmodel = \"sonnet\"\n").unwrap();
+        assert_eq!(overrides.defaults.thinking, None);
+    }
+
+    #[test]
     fn clear_defaults_model_also_clears_paired_harness() {
         let mut overrides = RepoOverrides {
             defaults: crate::RepoHarnessChoiceOverrides {
@@ -1786,6 +1875,7 @@ adapter = "unsupported"
                 defaults: HarnessChoice {
                     harness: "claude".into(),
                     model: "sonnet".into(),
+                    thinking: String::new(),
                     playbook: crate::playbook::PlaybookRef {
                         scope: crate::playbook::PlaybookScope::Bundled,
                         key: "superdevelop".into(),
@@ -2609,6 +2699,13 @@ prompt_injection = "arg"
             assert_eq!(meta.exit_notification_read_at, None);
             let explicit_null: SessionMeta = serde_json::from_str(r#"{"id":"s1","worktree":"/wt","created":5,"status_changed_at":null}"#).unwrap();
             assert_eq!(explicit_null.status_changed_at, None);
+        }
+
+        #[test]
+        fn session_meta_missing_pinned_defaults_false() {
+            let old = r#"{"id":"s1","worktree":"/wt","created":5}"#;
+            let meta: SessionMeta = serde_json::from_str(old).unwrap();
+            assert!(!meta.pinned);
         }
 
         #[test]

@@ -79,6 +79,7 @@ mod account;
 mod app_config;
 mod artifacts;
 mod backup;
+mod chat;
 mod community_playbooks;
 mod connections;
 mod daemon;
@@ -87,6 +88,7 @@ mod hosted;
 mod imports;
 mod mcp;
 mod notify;
+mod omp_customizations;
 mod omp_update;
 mod paths;
 mod playbook;
@@ -102,6 +104,7 @@ use account::*;
 use app_config::*;
 use artifacts::*;
 use backup::*;
+use chat::*;
 use community_playbooks::*;
 use connections::*;
 use daemon::*;
@@ -110,6 +113,7 @@ use hosted::*;
 use imports::*;
 use mcp::*;
 use notify::*;
+use omp_customizations::*;
 use omp_update::*;
 use paths::*;
 use playbook::*;
@@ -169,12 +173,31 @@ pub fn run() {
             create_session,
             create_session_for_repo,
             ensure_drawer_terminal,
+            list_chat_repos,
+            list_chat_threads,
+            chat_thread_name,
+            create_chat_thread,
+            start_chat_thread,
+            set_chat_pinned,
+            archive_chat_thread,
+            remove_chat_worktree,
+            resume_chat_thread,
+            chat_branch_label,
+            chat_rpc_write,
+            chat_rpc_attach,
+            chat_detach,
+            chat_session_status,
+            chat_restate,
+            chat_pty_attach,
+            chat_pty_write,
+            chat_pty_resize,
+            read_chat_omp,
             list_sessions,
             rename_session,
             rename_task,
             get_session_display,
             list_session_items,
-            get_task_execution,
+            observe_task_executions,
             start_session,
             allow_execution_completion,
             session_list_statuses,
@@ -285,6 +308,7 @@ pub fn run() {
             remove_worktree,
             remove_worktree_for_repo,
             worktree_exists,
+            task_source_branches_for_repo,
             push_and_compare_url,
             push_and_compare_url_for_repo,
             set_pr_url,
@@ -316,6 +340,9 @@ pub fn run() {
             omp_agent_sessions_dir,
             read_omp_model_roles,
             write_omp_model_roles,
+            open_omp_config_dir,
+            omp_customization_prompt,
+            read_omp_customizations,
         ])
         .build(context)
         .expect("error while building tauri application")
@@ -327,6 +354,11 @@ pub fn run() {
             }
             // alineryd remains detached (on purpose)
         });
+}
+
+#[cfg(test)]
+pub(crate) fn observation_dispatch_builder(builder: tauri::Builder<tauri::test::MockRuntime>) -> tauri::Builder<tauri::test::MockRuntime> {
+    builder.invoke_handler(tauri::generate_handler![observe_task_executions, ping])
 }
 
 #[cfg(test)]

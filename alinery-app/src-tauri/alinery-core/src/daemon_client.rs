@@ -6,11 +6,12 @@ use crate::{alineryd_socket_path, app_config_identity, daemon_compat, login_shel
 use serde_json::{json, Value};
 use std::fs;
 use std::io::{Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub use crate::task_creation::{
     AllowExecutionCompletionRequest, CreateExecutionSessionReply, CreateExecutionSessionRequest, CreateTaskReply, CreateTaskRequest, ExecutionSessionTarget,
@@ -337,6 +338,210 @@ fn read_reply_line(stream: &mut UnixStream, timeout: Duration) -> Result<String,
         SocketReadError::Closed => "daemon closed".to_string(),
         SocketReadError::TimedOut => format!("daemon not responding after {}", format_daemon_timeout(timeout)),
     })
+}
+
+struct ObservationDeadline {
+    end: Instant,
+}
+
+impl ObservationDeadline {
+    fn start(budget: Duration) -> Self {
+        Self { end: Instant::now() + budget }
+    }
+
+    fn remaining(&self) -> std::io::Result<Duration> {
+        self.end
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::TimedOut, "observation deadline"))
+    }
+
+    fn poll_timeout_ms(&self) -> std::io::Result<i32> {
+        let millis = self.remaining()?.as_millis();
+        if millis == 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "observation deadline"));
+        }
+        Ok(millis.min(i32::MAX as u128) as i32)
+    }
+}
+
+fn wait_socket(fd: std::os::fd::RawFd, events: i16, deadline: &ObservationDeadline) -> std::io::Result<()> {
+    loop {
+        let timeout_ms = deadline.poll_timeout_ms()?;
+        let mut pollfd = libc::pollfd { fd, events, revents: 0 };
+        let ready = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
+        if ready == 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "observation deadline"));
+        }
+        if ready < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+        if pollfd.revents & events != 0 {
+            return Ok(());
+        }
+        if pollfd.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::ConnectionReset, "observation socket closed"));
+        }
+        return Err(std::io::Error::other("observation poll returned no event"));
+    }
+}
+
+fn connect_until(path: &Path, deadline: &ObservationDeadline) -> std::io::Result<UnixStream> {
+    let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: socket() returned an owned descriptor that no other owner has.
+    let owned = unsafe { OwnedFd::from_raw_fd(fd) };
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let descriptor_flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if descriptor_flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, descriptor_flags | libc::FD_CLOEXEC) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let bytes = std::os::unix::ffi::OsStrExt::as_bytes(path.as_os_str());
+    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    if bytes.len() + 1 > address.sun_path.len() {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "socket path too long"));
+    }
+    address.sun_family = libc::AF_UNIX as _;
+    for (index, byte) in bytes.iter().enumerate() {
+        address.sun_path[index] = *byte as libc::c_char;
+    }
+    let length = (std::mem::offset_of!(libc::sockaddr_un, sun_path) + bytes.len() + 1) as libc::socklen_t;
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    ))]
+    {
+        address.sun_len = length as u8;
+    }
+    let connected = unsafe { libc::connect(fd, &address as *const libc::sockaddr_un as *const libc::sockaddr, length) };
+    if connected < 0 {
+        let error = std::io::Error::last_os_error();
+        let in_progress = error.kind() == std::io::ErrorKind::WouldBlock || error.raw_os_error() == Some(libc::EINPROGRESS);
+        if !in_progress {
+            return Err(error);
+        }
+        wait_socket(fd, libc::POLLOUT, deadline)?;
+        let mut so_error: libc::c_int = 0;
+        let mut so_len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+        let queried = unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, libc::SO_ERROR, &mut so_error as *mut libc::c_int as *mut libc::c_void, &mut so_len) };
+        if queried < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if so_error != 0 {
+            return Err(std::io::Error::from_raw_os_error(so_error));
+        }
+    }
+    Ok(UnixStream::from(owned))
+}
+
+fn write_until(stream: &mut (impl Write + AsRawFd), mut bytes: &[u8], deadline: &ObservationDeadline) -> std::io::Result<()> {
+    while !bytes.is_empty() {
+        deadline.remaining()?;
+        match stream.write(bytes) {
+            Ok(0) => return Err(std::io::Error::new(std::io::ErrorKind::WriteZero, "observation write")),
+            Ok(count) => bytes = &bytes[count..],
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => wait_socket(stream.as_raw_fd(), libc::POLLOUT, deadline)?,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    deadline.remaining()?;
+    Ok(())
+}
+
+fn read_line_until(stream: &mut (impl Read + AsRawFd), deadline: &ObservationDeadline) -> std::io::Result<Vec<u8>> {
+    let mut line = Vec::new();
+    let mut chunk = [0u8; 8 * 1024];
+    loop {
+        deadline.remaining()?;
+        match stream.read(&mut chunk) {
+            Ok(0) => return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "observation socket closed")),
+            Ok(count) => {
+                if let Some(end) = chunk[..count].iter().position(|byte| *byte == b'\n') {
+                    line.extend_from_slice(&chunk[..end]);
+                    if line.is_empty() {
+                        return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "empty observation reply"));
+                    }
+                    deadline.remaining()?;
+                    return Ok(line);
+                }
+                line.extend_from_slice(&chunk[..count]);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => wait_socket(stream.as_raw_fd(), libc::POLLIN, deadline)?,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn close_observed(stream: UnixStream) {
+    let _ = stream.shutdown(std::net::Shutdown::Both);
+}
+
+/// One passive version or execution exchange. The 250 ms budget starts before connect
+/// and is not restarted by a trickle of bytes. Deadline expiry closes the socket.
+pub fn observe_exchange(socket_path: &Path, request: &Value) -> Result<Value, DaemonClientError> {
+    let deadline = ObservationDeadline::start(DAEMON_OBSERVATION_TIMEOUT);
+    let encoded = request.to_string();
+    if encoded.len() > MAX_CONTROL_HEADER_BYTES {
+        return Err(DaemonClientError::Malformed(control_request_size_error()));
+    }
+    let mut stream = match connect_until(socket_path, &deadline) {
+        Ok(stream) => stream,
+        Err(error) => {
+            return Err(DaemonClientError::Unreachable {
+                socket_path: socket_path.to_path_buf(),
+                detail: error.to_string(),
+            })
+        }
+    };
+    let exchanged = (|| {
+        let mut payload = encoded.into_bytes();
+        payload.push(b'\n');
+        write_until(&mut stream, &payload, &deadline)?;
+        let line = read_line_until(&mut stream, &deadline)?;
+        serde_json::from_slice(&line).map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    })();
+    close_observed(stream);
+    exchanged.map_err(|error| DaemonClientError::Malformed(error.to_string()))
+}
+
+pub fn classify_observed_version(reply: &DaemonVersionReply, build_id: &str, expected_identity: &str) -> Result<DaemonCompat, DaemonClientError> {
+    match classify_version_reply(reply, build_id, expected_identity) {
+        compatible @ (DaemonCompat::Current | DaemonCompat::BuildDrift) => Ok(compatible),
+        DaemonCompat::ProtocolMismatch => Err(DaemonClientError::ProtocolMismatch {
+            observed_protocol: reply.protocol,
+            expected_protocol: PROTOCOL_VERSION,
+            observed_build_id: reply.build_id.clone(),
+        }),
+        DaemonCompat::AppConfigMismatch => Err(DaemonClientError::AppConfigMismatch {
+            observed_identity: reply.app_config_identity.clone(),
+            expected_identity: expected_identity.to_string(),
+            observed_build_id: reply.build_id.clone(),
+        }),
+    }
+}
+
+pub fn observe_compatible(socket_path: &Path, build_id: &str, expected_identity: &str) -> Result<DaemonCompat, DaemonClientError> {
+    let value = observe_exchange(socket_path, &version_request())?;
+    classify_observed_version(&parse_version_reply(&value), build_id, expected_identity)
+}
+
+pub fn observe_task_execution(socket_path: &Path, task_slug: &str) -> Result<TaskExecutionReply, String> {
+    typed_reply(observe_exchange(socket_path, &json!({"op":"get_task_execution","request":{"task_slug":task_slug}})).map_err(|error| error.to_string())?)
 }
 
 fn format_socket_write_error(error: std::io::Error) -> String {
@@ -710,7 +915,7 @@ pub fn spawn_daemon_detached(repo: &Path, app_config: &Path, namespace: Option<&
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{BufRead, BufReader};
+    use std::io::{BufRead, BufReader, Read};
     use std::os::unix::net::UnixListener;
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -971,5 +1176,249 @@ mod tests {
         ));
         assert_eq!(mismatch_server.join().unwrap(), version_request());
         let _ = fs::remove_file(mismatch_path);
+    }
+    struct DeadlineCrossingIo<'a> {
+        stream: UnixStream,
+        deadline: &'a ObservationDeadline,
+        operations_before_expiry: usize,
+        interrupt_on_expiry: bool,
+    }
+
+    impl DeadlineCrossingIo<'_> {
+        fn before_io(&mut self) -> std::io::Result<()> {
+            if self.operations_before_expiry > 0 {
+                self.operations_before_expiry -= 1;
+                if self.operations_before_expiry == 0 {
+                    // Cross expiry deliberately, rather than racing a peer or assuming
+                    // a sleep lands inside a narrow interval before the deadline.
+                    while let Ok(remaining) = self.deadline.remaining() {
+                        thread::sleep(remaining);
+                    }
+                    if self.interrupt_on_expiry {
+                        return Err(std::io::ErrorKind::Interrupted.into());
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+
+    impl AsRawFd for DeadlineCrossingIo<'_> {
+        fn as_raw_fd(&self) -> std::os::fd::RawFd {
+            self.stream.as_raw_fd()
+        }
+    }
+
+    impl Read for DeadlineCrossingIo<'_> {
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+            self.before_io()?;
+            let length = bytes.len().min(1);
+            self.stream.read(&mut bytes[..length])
+        }
+    }
+
+    impl Write for DeadlineCrossingIo<'_> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.before_io()?;
+            self.stream.write(&bytes[..bytes.len().min(1)])
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.stream.flush()
+        }
+    }
+
+    #[test]
+    fn observation_expired_deadline_rejects_buffered_complete_reply() {
+        let (mut stream, mut peer) = UnixStream::pair().unwrap();
+        stream.set_nonblocking(true).unwrap();
+        peer.write_all(b"{}\n").unwrap();
+        let deadline = ObservationDeadline::start(Duration::ZERO);
+
+        assert_eq!(read_line_until(&mut stream, &deadline).unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        let mut buffered = [0; 3];
+        stream.read_exact(&mut buffered).unwrap();
+        assert_eq!(&buffered, b"{}\n", "an expired exchange must not consume buffered bytes");
+    }
+
+    #[test]
+    fn observation_deadline_stops_successful_reads_at_expiry() {
+        // Cover both continued progress and a complete reply returned by the
+        // operation that crosses expiry.
+        for reply in [b"xy\n".as_slice(), b"x\n".as_slice()] {
+            let (stream, mut peer) = UnixStream::pair().unwrap();
+            stream.set_nonblocking(true).unwrap();
+            peer.write_all(reply).unwrap();
+            peer.shutdown(std::net::Shutdown::Write).unwrap();
+            let deadline = ObservationDeadline::start(DAEMON_OBSERVATION_TIMEOUT);
+            let mut stream = DeadlineCrossingIo {
+                stream,
+                deadline: &deadline,
+                operations_before_expiry: 2,
+                interrupt_on_expiry: false,
+            };
+
+            assert_eq!(read_line_until(&mut stream, &deadline).unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+            let mut unread = Vec::new();
+            stream.stream.read_to_end(&mut unread).unwrap();
+            assert_eq!(unread, reply[2..], "no further read may run after successful progress crosses expiry");
+        }
+    }
+
+    #[test]
+    fn observation_deadline_stops_successful_writes_at_expiry() {
+        // Cover a partial write and the final write completing after expiry.
+        for payload in [b"xyz".as_slice(), b"xy".as_slice()] {
+            let (stream, mut peer) = UnixStream::pair().unwrap();
+            stream.set_nonblocking(true).unwrap();
+            let deadline = ObservationDeadline::start(DAEMON_OBSERVATION_TIMEOUT);
+            let mut stream = DeadlineCrossingIo {
+                stream,
+                deadline: &deadline,
+                operations_before_expiry: 2,
+                interrupt_on_expiry: false,
+            };
+
+            assert_eq!(write_until(&mut stream, payload, &deadline).unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+            drop(stream);
+            let mut written = Vec::new();
+            peer.read_to_end(&mut written).unwrap();
+            assert_eq!(written, b"xy", "no further write may run after successful progress crosses expiry");
+        }
+    }
+
+    #[test]
+    fn observation_deadline_stops_interrupted_read_and_write_retries() {
+        for reading in [true, false] {
+            let (stream, mut peer) = UnixStream::pair().unwrap();
+            stream.set_nonblocking(true).unwrap();
+            peer.write_all(b"{}\n").unwrap();
+            let deadline = ObservationDeadline::start(DAEMON_OBSERVATION_TIMEOUT);
+            let mut stream = DeadlineCrossingIo {
+                stream,
+                deadline: &deadline,
+                operations_before_expiry: 1,
+                interrupt_on_expiry: true,
+            };
+
+            let error = if reading {
+                read_line_until(&mut stream, &deadline).unwrap_err()
+            } else {
+                write_until(&mut stream, b"{}\n", &deadline).unwrap_err()
+            };
+            assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        }
+    }
+
+    fn assert_deadline(started: Instant, error: DaemonClientError) {
+        let elapsed = started.elapsed();
+        assert!(matches!(error, DaemonClientError::Malformed(_)), "{error:?}");
+        assert!(elapsed >= Duration::from_millis(200), "deadline returned too early: {elapsed:?}");
+        assert!(elapsed < Duration::from_millis(500), "trickle or silence restarted the budget: {elapsed:?}");
+    }
+
+    #[test]
+    fn observation_deadline_bounds_connect_silence_trickle_and_full_reply() {
+        let missing = socket_path("observe-missing");
+        let started = Instant::now();
+        let missing_error = observe_exchange(&missing, &version_request()).unwrap_err();
+        assert!(matches!(missing_error, DaemonClientError::Unreachable { .. }), "{missing_error:?}");
+        assert!(started.elapsed() < Duration::from_millis(250), "missing socket used the control timeout");
+
+        let silent_path = socket_path("observe-silent");
+        let silent_listener = UnixListener::bind(&silent_path).unwrap();
+        let silent_server = thread::spawn(move || {
+            let (mut stream, _) = silent_listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
+            thread::sleep(Duration::from_millis(600));
+            stream.write_all(b"late\n").is_err()
+        });
+        let started = Instant::now();
+        let silent = observe_exchange(&silent_path, &version_request()).unwrap_err();
+        assert_deadline(started, silent);
+        assert!(silent_server.join().unwrap(), "deadline must close the silent socket");
+        let trickle_path = socket_path("observe-trickle");
+        let trickle_listener = UnixListener::bind(&trickle_path).unwrap();
+        let trickle_server = thread::spawn(move || {
+            let (mut stream, _) = trickle_listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
+            let mut closed = false;
+            for _ in 0..20 {
+                thread::sleep(Duration::from_millis(30));
+                if stream.write_all(b"x").is_err() {
+                    closed = true;
+                    break;
+                }
+            }
+            closed
+        });
+        let started = Instant::now();
+        let trickle = observe_exchange(&trickle_path, &version_request()).unwrap_err();
+        assert_deadline(started, trickle);
+        assert!(trickle_server.join().unwrap(), "bytes must not reset the deadline or keep the socket");
+        let _ = fs::remove_file(&trickle_path);
+
+        let blocked_path = socket_path("observe-write-backpressure");
+        let blocked_listener = UnixListener::bind(&blocked_path).unwrap();
+        let blocked_server = thread::spawn(move || {
+            let (mut stream, _) = blocked_listener.accept().unwrap();
+            thread::sleep(Duration::from_millis(600));
+            let mut buf = [0u8; 1];
+            let _ = stream.read(&mut buf);
+            stream.write_all(b"\n").is_err()
+        });
+        let started = Instant::now();
+        let blocked = observe_exchange(&blocked_path, &json!({"op": "version", "pad": "y".repeat(8 * 1024 * 1024)})).unwrap_err();
+        assert_deadline(started, blocked);
+        assert!(blocked_server.join().unwrap(), "write deadline must close the socket");
+        let _ = fs::remove_file(&blocked_path);
+
+        let playbook = include_str!("../../playbooks/systematic-evidence-review/playbook.md");
+        let reply = json!({"protocol": PROTOCOL_VERSION, "build_id": "fixture", "definition": playbook}).to_string();
+        let healthy_path = socket_path("observe-healthy");
+        let healthy_listener = UnixListener::bind(&healthy_path).unwrap();
+        let healthy_reply = reply.clone();
+        let healthy_server = thread::spawn(move || {
+            let (mut stream, _) = healthy_listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
+            stream.write_all(healthy_reply.as_bytes()).unwrap();
+            stream.write_all(b"\n").unwrap();
+        });
+        let started = Instant::now();
+        let healthy = observe_exchange(&healthy_path, &version_request()).unwrap();
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < DAEMON_OBSERVATION_TIMEOUT,
+            "healthy retained definition exceeded 250 ms: {elapsed:?}; reply bytes {}",
+            reply.len()
+        );
+        assert_eq!(healthy["definition"], playbook);
+        healthy_server.join().unwrap();
+        let _ = fs::remove_file(&healthy_path);
+
+        let near_path = socket_path("observe-near-deadline");
+        let near_listener = UnixListener::bind(&near_path).unwrap();
+        let near_reply = reply;
+        let near_server = thread::spawn(move || {
+            let (mut stream, _) = near_listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
+            thread::sleep(Duration::from_millis(150));
+            stream.write_all(near_reply.as_bytes()).unwrap();
+            stream.write_all(b"\n").unwrap();
+        });
+        let started = Instant::now();
+        let near = observe_exchange(&near_path, &version_request()).unwrap();
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(150) && elapsed < DAEMON_OBSERVATION_TIMEOUT,
+            "near-boundary retained reply: {elapsed:?}"
+        );
+        assert_eq!(near["definition"].as_str().unwrap().len(), playbook.len());
+        near_server.join().unwrap();
+        let _ = fs::remove_file(&near_path);
     }
 }

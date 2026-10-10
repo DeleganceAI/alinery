@@ -545,7 +545,8 @@ pub fn parse_playbook_md(source: &str) -> Result<NormalizedPlaybook, Vec<Playboo
                         ));
                     }
                     for (other_key, other_path, other) in &outputs {
-                        if selector.overlaps(other) {
+                        let shared_exact = *other_key != step.key && !selector.wildcard && !other.wildcard && *other_path == output.path;
+                        if selector.overlaps(other) && !shared_exact {
                             errors.push(PlaybookValidationError::new(
                                 "overlapping_outputs",
                                 format!("step {} output {:?} overlaps step {} output {:?}", step.key, output.path, other_key, other_path),
@@ -899,6 +900,104 @@ mod tests {
         definition.step[1].outputs[0].path = "ticket.md".into();
         definition.step[1].inputs[0].path = "result.md".into();
         assert!(parse_playbook_md(&render_playbook_md(&definition)).is_ok(), "cycles are valid");
+    }
+
+    #[test]
+    fn shared_exact_outputs_retain_both_step_declarations() {
+        for path in ["request.md", "requests/design.md"] {
+            let mut definition = parse_playbook_md(&fixture()).unwrap();
+            definition.step[0].outputs[0].path = path.into();
+            let mut other = definition.step[0].clone();
+            other.key = "other".into();
+            definition.step.push(other);
+            let parsed = parse_playbook_md(&render_playbook_md(&definition)).expect("distinct steps may share an exact output");
+            assert_eq!(parsed.step, definition.step);
+        }
+    }
+
+    #[test]
+    fn shared_exact_paths_preserve_case_and_directory_distinctions() {
+        let mut definition = parse_playbook_md(&fixture()).unwrap();
+        let output = definition.step[0].outputs[0].clone();
+        definition.step[0].outputs = ["request.md", "Request.md", "requests/design.md", "Requests/design.md", "other/design.md"]
+            .into_iter()
+            .map(|path| {
+                let mut output = output.clone();
+                output.path = path.into();
+                output
+            })
+            .collect();
+        let parsed = parse_playbook_md(&render_playbook_md(&definition)).unwrap();
+        assert_eq!(parsed.step[0].outputs, definition.step[0].outputs);
+    }
+
+    #[test]
+    fn shared_exact_same_step_duplicates_remain_invalid() {
+        for path in ["request.md", "requests/design.md"] {
+            let mut definition = parse_playbook_md(&fixture()).unwrap();
+            definition.step[0].outputs[0].path = path.into();
+            let duplicate = definition.step[0].outputs[0].clone();
+            definition.step[0].outputs.push(duplicate);
+            let errors = parse_playbook_md(&render_playbook_md(&definition)).unwrap_err();
+            assert!(
+                errors.iter().any(|error| error.code == "overlapping_outputs"
+                    && error.message.contains("run")
+                    && error.message.contains(path)
+                    && error.field.as_deref() == Some("step[run].outputs[1].path")),
+                "{errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn shared_exact_wildcard_intersections_reject_both_declaration_orders() {
+        for (left, right) in [
+            ("request.md", "request*.md"),
+            ("requests/design.md", "requests/*.md"),
+            ("requests/design*.md", "requests/*sign.md"),
+        ] {
+            for (first, second) in [(left, right), (right, left)] {
+                let mut definition = parse_playbook_md(&fixture()).unwrap();
+                definition.step[0].outputs[0].path = first.into();
+                let mut other = definition.step[0].clone();
+                other.key = "other".into();
+                other.outputs[0].path = second.into();
+                definition.step.push(other);
+                let errors = parse_playbook_md(&render_playbook_md(&definition)).unwrap_err();
+                assert!(
+                    errors.iter().any(|error| error.code == "overlapping_outputs"
+                        && error.message.contains("run")
+                        && error.message.contains("other")
+                        && error.message.contains(first)
+                        && error.message.contains(second)),
+                    "{first}, {second}: {errors:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shared_exact_later_wildcard_reports_both_exact_owners() {
+        let mut definition = parse_playbook_md(&fixture()).unwrap();
+        definition.step[0].outputs[0].path = "requests/design.md".into();
+        let mut other = definition.step[0].clone();
+        other.key = "other".into();
+        definition.step.push(other);
+        let mut wildcard = definition.step[0].clone();
+        wildcard.key = "wildcard".into();
+        wildcard.outputs[0].path = "requests/*.md".into();
+        definition.step.push(wildcard);
+        let errors = parse_playbook_md(&render_playbook_md(&definition)).unwrap_err();
+        for owner in ["run", "other"] {
+            assert!(
+                errors.iter().any(|error| error.code == "overlapping_outputs"
+                    && error.message.contains(owner)
+                    && error.message.contains("wildcard")
+                    && error.message.contains("requests/design.md")
+                    && error.message.contains("requests/*.md")),
+                "missing wildcard conflict with {owner}: {errors:?}"
+            );
+        }
     }
 
     #[test]

@@ -6,6 +6,189 @@ use crate::*;
 // alinery-core/src/git.rs for why `-C <dir>` alone targets the wrong repository.
 pub(crate) use alinery_core::git_cmd;
 
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub(crate) struct TaskSourceBranch {
+    pub(crate) full_ref: String,
+    pub(crate) name: String,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub(crate) enum TaskSourceHead {
+    Branch { full_ref: String, name: String },
+    Detached { oid: String },
+    Unborn { full_ref: String, name: String },
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct TaskSourceSelection {
+    pub(crate) base_ref: String,
+    pub(crate) available: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct TaskSourceBranches {
+    pub(crate) branches: Vec<TaskSourceBranch>,
+    pub(crate) head: TaskSourceHead,
+    pub(crate) selected: Option<TaskSourceSelection>,
+}
+
+// Discovery cannot treat warnings (notably skipped broken refs) as an empty success.
+fn task_source_output(output: std::process::Output, operation: &str, allowed_codes: &[i32]) -> Result<(i32, String), String> {
+    let stderr = String::from_utf8(output.stderr).map_err(|error| format!("git {operation}: invalid UTF-8 in stderr: {error}"))?;
+    let stdout = String::from_utf8(output.stdout).map_err(|error| format!("git {operation}: invalid UTF-8 in stdout: {error}"))?;
+    let code = output.status.code().filter(|code| allowed_codes.contains(code));
+    if !stderr.is_empty() || code.is_none() {
+        return Err(format!("git {operation}: {}: {stderr}", output.status));
+    }
+    Ok((code.unwrap(), stdout))
+}
+
+fn task_source_git(repo: &Path, args: &[&str], allowed_codes: &[i32]) -> Result<(i32, String), String> {
+    let output = git_cmd(repo).args(args).output().map_err(|error| format!("git {}: {error}", args[0]))?;
+    task_source_output(output, args[0], allowed_codes)
+}
+
+fn task_source_line(output: &str) -> Result<&str, String> {
+    output
+        .strip_suffix('\n')
+        .filter(|line| !line.is_empty() && !line.contains(['\n', '\r', '\0']))
+        .ok_or_else(|| "malformed Git source identity output".to_string())
+}
+
+fn task_source_oid(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn task_source_local_ref(repo: &Path, full_ref: &str) -> Result<bool, String> {
+    if !full_ref.starts_with("refs/heads/") || full_ref.contains('\0') {
+        return Ok(false);
+    }
+    let (code, output) = task_source_git(repo, &["check-ref-format", full_ref], &[0, 1])?;
+    if !output.is_empty() {
+        return Err("malformed Git ref validation output".into());
+    }
+    Ok(code == 0)
+}
+
+fn task_source_commit_exists(repo: &Path, oid: &str) -> Result<bool, String> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    // A SHA-1-sized value can resolve as an abbreviation in a SHA-256 repository.
+    let (_, format) = task_source_git(repo, &["rev-parse", "--show-object-format"], &[0])?;
+    let oid_len = match task_source_line(&format)? {
+        "sha1" => 40,
+        "sha256" => 64,
+        _ => return Err("unsupported Git object format".into()),
+    };
+    if oid.len() != oid_len {
+        return Ok(false);
+    }
+
+    let mut child = git_cmd(repo)
+        .args(["cat-file", "--batch-check=%(objectname) %(objecttype)"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("git cat-file: {error}"))?;
+    let write_result = writeln!(child.stdin.take().expect("piped Git stdin"), "{oid}");
+    let output = child.wait_with_output().map_err(|error| format!("git cat-file: {error}"))?;
+    let (_, output) = task_source_output(output, "cat-file", &[0])?;
+    write_result.map_err(|error| format!("git cat-file input: {error}"))?;
+    let line = task_source_line(&output)?;
+    let (actual, kind) = line.split_once(' ').ok_or_else(|| "malformed Git object output".to_string())?;
+    if !actual.eq_ignore_ascii_case(oid) {
+        return Err("Git object output did not match the requested identity".into());
+    }
+    match kind {
+        "commit" => Ok(true),
+        "missing" | "blob" | "tree" | "tag" => Ok(false),
+        _ => Err("malformed Git object type output".into()),
+    }
+}
+
+pub(crate) fn task_source_branches_in(repo: &Path, selected_base_ref: Option<&str>) -> Result<TaskSourceBranches, String> {
+    let (_, output) = task_source_git(
+        repo,
+        &["for-each-ref", "--sort=refname", "--format=%(refname)%00%(objecttype)%00%(objectname)", "refs/heads/"],
+        &[0],
+    )?;
+    let mut branches: Vec<TaskSourceBranch> = Vec::new();
+    if !output.is_empty() {
+        let rows = output.strip_suffix('\n').ok_or_else(|| "malformed Git branch output".to_string())?;
+        for row in rows.split('\n') {
+            let mut fields = row.split('\0');
+            let (Some(full_ref), Some(kind), Some(oid), None) = (fields.next(), fields.next(), fields.next(), fields.next()) else {
+                return Err("malformed Git branch output".into());
+            };
+            if kind != "commit" || !task_source_oid(oid) || !task_source_local_ref(repo, full_ref)? {
+                return Err("Git local branch did not identify a valid commit".into());
+            }
+            if branches.last().is_some_and(|previous| previous.full_ref.as_str() >= full_ref) {
+                return Err("Git local branches were not in unique ref-name order".into());
+            }
+            branches.push(TaskSourceBranch {
+                full_ref: full_ref.into(),
+                name: full_ref["refs/heads/".len()..].into(),
+            });
+        }
+    }
+
+    let (symbolic_code, symbolic) = task_source_git(repo, &["symbolic-ref", "--quiet", "HEAD"], &[0, 1])?;
+    let head = if symbolic_code == 0 {
+        let full_ref = task_source_line(&symbolic)?;
+        if !task_source_local_ref(repo, full_ref)? {
+            return Err("Git HEAD did not identify a local branch".into());
+        }
+        // Exact existence distinguishes an unborn branch from a present broken ref.
+        let (exists, output) = task_source_git(repo, &["show-ref", "--verify", "--quiet", full_ref], &[0, 1])?;
+        if !output.is_empty() {
+            return Err("malformed Git HEAD ref output".into());
+        }
+        let listed = branches.iter().any(|branch| branch.full_ref == full_ref);
+        let name = full_ref["refs/heads/".len()..].to_string();
+        match (exists, listed) {
+            (0, true) => TaskSourceHead::Branch { full_ref: full_ref.into(), name },
+            (1, false) => TaskSourceHead::Unborn { full_ref: full_ref.into(), name },
+            _ => return Err("Git HEAD changed during source discovery; refresh and try again".into()),
+        }
+    } else {
+        if !symbolic.is_empty() {
+            return Err("malformed Git detached HEAD output".into());
+        }
+        let (_, output) = task_source_git(repo, &["rev-parse", "--verify", "HEAD"], &[0])?;
+        let oid = task_source_line(&output)?;
+        if !task_source_oid(oid) || !task_source_commit_exists(repo, oid)? {
+            return Err("Git detached HEAD did not identify a commit".into());
+        }
+        TaskSourceHead::Detached { oid: oid.into() }
+    };
+    let selected = selected_base_ref
+        .map(|base_ref| -> Result<TaskSourceSelection, String> {
+            let available = if task_source_oid(base_ref) {
+                task_source_commit_exists(repo, base_ref)?
+            } else {
+                branches.iter().any(|branch| branch.full_ref == base_ref)
+            };
+            Ok(TaskSourceSelection {
+                base_ref: base_ref.into(),
+                available,
+            })
+        })
+        .transpose()?;
+    Ok(TaskSourceBranches { branches, head, selected })
+}
+
+#[tauri::command]
+pub(crate) async fn task_source_branches_for_repo(app: AppHandle, repo_path: String, selected_base_ref: Option<String>) -> Result<TaskSourceBranches, String> {
+    let repo = target_repo_for_app(&app, &repo_path)?;
+    tauri::async_runtime::spawn_blocking(move || task_source_branches_in(&repo, selected_base_ref.as_deref()))
+        .await
+        .map_err(|error| format!("task source discovery worker: {error}"))?
+}
+
 // ---- M5 remove worktree ------------------------------------------------------
 // End the task's live sessions (a running pty holds the worktree), then git worktree remove
 // --force, then clear task.worktree. The branch, sessions, artifacts, pr_url all survive.

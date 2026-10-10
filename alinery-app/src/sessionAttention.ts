@@ -20,6 +20,7 @@ export type SessionNoticeRow = { item: SessionListItem; notice: SessionNotice };
 
 export type SessionSort = { field: "priority" } | { field: "started" | "updated"; direction: "desc" | "asc" };
 export const PRIORITY_SESSION_SORT: SessionSort = { field: "priority" };
+export const DEFAULT_TASK_SESSION_SORT: SessionSort = { field: "updated", direction: "desc" };
 
 export function selectSessionSort(current: SessionSort, field: SessionSort["field"]): SessionSort {
   if (field === "priority") return PRIORITY_SESSION_SORT;

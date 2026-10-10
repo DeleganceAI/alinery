@@ -78,6 +78,12 @@ This is task-owned execution input, not a library version-history product or an 
 
 Keep `bundled/<key>`, `global/<key>` and `repo/<key>` distinct. Same keys in different scopes do not shadow each other. Another independent playbook/worktree belongs in a subtask. Auxiliary sessions do not redefine the task's graph.
 
+### Publication-contract rollout
+
+The corrected owning daemon treats declarations as possible publications with at least one valid assigned artifact overall. Retained definition bytes and identities are not migrated. Fresh launches append the current authoritative assignment after retained prose; its publication rules supersede both older blanket all-output requirements and older zero-evidence guidance, without waiving substantive work, verification or human decisions.
+
+New bundled stopping declarations affect future selections only. An old continuation-only retained step does not acquire an undeclared report: it still needs truthful evidence within its actual assignments. Already-running and resumed conversations are not reliably reseeded, and a running old daemon does not gain new behavior merely because source files changed. Do not rewrite retained files, replace live daemons or manipulate sessions to simulate rollout.
+
 ## Validation should reject bad definitions
 
 The approved v2 file is one `playbook.md`: TOML `+++` frontmatter, required metadata and step records, and standalone `<!-- alinery:step key -->` prompt delimiters. Markdown heading levels are not structural execution markers.
@@ -92,13 +98,13 @@ The approved v2 file is one `playbook.md`: TOML `+++` frontmatter, required meta
 - Unknown fields and unescaped unknown prompt tokens are errors. Do not invent a token in prompt code without updating the shared parser/runtime contract.
 - No YAML/v1 runtime fallback, step-kind enum, `human_approval`, retry/attempts or `on_failure` policy fields.
 
-### Conflicting producers are invalid playbooks
+### Exact roles may be shared; wildcard ownership is unique
 
-Two distinct producer steps claiming `result-*.md` are not a runtime arbitration problem. Reject ambiguous output ownership at authoring/import/save and validate again before execution. Check overlapping patterns, not just identical strings: `result-*.md` can overlap an exact `result-summary.md`.
+Different steps may declare the same exact logical output role, including directory-qualified paths. Every distinct eligible accepted occurrence enables its own continuation with separate physical assignments, even when the bytes are identical. Same-step duplicate declarations remain invalid.
 
-Use actionable diagnostics identifying the steps and selectors. Do not add “latest producer wins”, silently pick a file, or weaken validation to import an invalid legacy example.
+Any overlap involving a wildcard remains invalid at authoring/import/save and before execution. Two steps cannot both claim `result-*.md`; intersecting patterns and `result-*.md` versus `result-summary.md` also conflict. Diagnostics identify both owning steps and selectors, and an invalid replacement leaves the saved definition unchanged.
 
-**Repeated executions of one valid step are different.** Fan-out and loops intentionally reuse authored roles; the engine gives instances distinct concrete assignments and records lineage. Producer validation must not prohibit that supported behavior.
+Repeated executions and shared exact roles retain concrete occurrence and producer identity. Do not choose a “latest” or winning producer, merge requests by content, or rename alternative requests into separate required inputs: several listed inputs still form an AND join.
 
 ## Scheduling comes from execution records
 
@@ -108,13 +114,23 @@ The daemon binds concrete inputs before launching an execution and records the p
 | --- | --- |
 | `single` | Bind the intended exact occurrence in this execution's context. Several required inputs form an AND join. |
 | `each` | Create one ordinary execution per bound input occurrence, plus its required exact inputs. |
-| `complete` | Supply the full required accepted collection, accounting for every expected producer/worker. |
+| `complete` | Supply the nonempty selector-matching accepted collection, accounting for every expected producer/worker and source obligation. |
 
 Repeated reconciliation of the same ordinary binding must not create duplicate work. A new loop-pass occurrence is different input even if its logical name is unchanged.
 
+Suppose a designer needs a request and a project brief. Two requests using the same brief produce two designer sessions, one per request. Each can start once its required files are accepted, their producing sessions have exited, and capacity is available. A missing required file makes that session wait; a step that might publish another request does not. Coding sessions still run one at a time.
+
+When requests have different briefs or findings, the engine keeps the matching files together by tracking what each step read and produced. Files do not belong together merely because they are in the same task.
+
+If there are two requests and two briefs but no recorded relationship showing which brief goes with which request, the engine reports a playbook error and identifies the step, conflicting files and their producers. It does not guess from their order, try every combination or leave the step waiting indefinitely. Work already scheduled with a clear match is not undone.
+
 A merge cannot silently omit a running, paused or failed worker. The engine knows which contributions are expected because it recorded the upstream set and worker assignments—not because three matching files exist or nothing has changed recently.
 
-An empty required wildcard collection alerts the human. Do not add an empty-set merge, silently skip the branch or treat missing expected work as successful completion. This uses ordinary failure/attention handling; it is not a separate empty-result workflow.
+A successful producer may leave meaningful evidence outside a wildcard family and publish zero members. That family can close empty after all its expected producers have accepted and exited successfully and its source obligations are satisfied. Closed-empty does not mean eligible `complete` input: no empty merge starts. Zero matching source members start no `each` workers, and no result family is manufactured for nonexistent workers. A narrowed selector matching nothing likewise starts no consumer.
+
+Direct workers that declare both a result and a separate disposition may publish either. All expected workers must still complete and exit before their family closes; a mixed family supplies only actual selector-matching result occurrences to its merge, while an all-disposition family closes empty without a merge. Queued, Running/awaiting-input, Finishing, failed or interrupted work cannot discharge an obligation.
+
+**Unsupported conditional fan-in:** omission of an intermediate does not prove a downstream worker ran. If a source member has no represented downstream producer because its trigger was omitted, an existing downstream family remains incomplete under its source-coverage rule. A nested empty expansion may close its own child collection while an outer result obligation remains unmet. Do not infer automatic branch pruning, flatten nested collections or relax AND inputs to make such a design finish. Route meaningful disposition records through consumers when their participation is needed.
 
 ### Loops are an engine responsibility
 
@@ -138,7 +154,7 @@ A: Draft -> B: Request another pass -> A
 D consumes both A's draft and C's analysis.
 ```
 
-Here A and B form the loop, but C and D are outside it. The current scheduler blocks inherited results from producers inside the loop's strongly connected component; it can still inherit results from producers outside it. After A2 finishes, D can therefore bind draft A2 with analysis C1 while C2 is still queued or running. When C2 finishes, another D binding can become eligible. A later correct execution does not undo the earlier decision based on stale evidence.
+Here A and B form the loop, but C and D are outside it. Legacy side-branch graphs have allowed D to inherit analysis C1 after draft A2 arrives while C2 is pending. A later correct execution does not undo an earlier stale decision. Shared-role scheduling now checks actual occurrence provenance and must not mix changing evidence from sibling requests or prior passes; this correction is not a general guarantee for every legacy side-branch shape.
 
 Instead, put the repeat decision after the work that must finish for this pass:
 
@@ -155,7 +171,7 @@ All four steps now belong to the same loop component. On the second pass, D need
 
 A fixed requirements artifact may remain outside the loop when it genuinely applies unchanged to every pass. An analysis of a changing draft is not such an invariant merely because its producer is drawn outside the cycle.
 
-This is an authoring constraint, not a new validator guarantee: the current validator accepts the problematic side-branch shape. Prefer the complete-loop pattern when designing playbooks; do not rely on the scheduler to infer freshness obligations for arbitrary downstream side branches. This does not move occurrence selection into prompts or filenames—the engine still owns concrete input bindings.
+The validator accepts the side-branch shape; parser acceptance alone does not prove freshness. Prefer the complete-loop pattern rather than relying on inferred freshness obligations for arbitrary downstream side branches. This warning does not waive branch/pass isolation on shared-request paths or move occurrence selection into prompts or filenames.
 
 ### Artifact-triggered loop entry
 
@@ -178,19 +194,21 @@ Initial task ticket (seed occurrence, ancestry depth 0)
 
 The prefix makes the pass understandable to people. The trigger is the daemon accepting and recording a fresh output occurrence and confirming its producer's shutdown—not a filesystem watcher noticing `4-ticket-1.md`, a higher number, or changed bytes. Repeated observation of an already-used binding does not create another execution.
 
-The initial task input is supplied by task creation, not by a competing authored step. A single designated loop-producing step can emit later ticket occurrences without introducing two ambiguous step producers. If multiple authored steps compete to produce the same trigger role, fix that playbook rather than adding runtime arbitration.
+Task creation supplies the initial ticket. Several authored steps may publish the same exact trigger role, and each distinct eligible occurrence requests an independent continuation. Compound loop entry still requires one complete, compatible set of fresh entry roles: partial publication cannot borrow a missing role from an older pass. Genuine invariants and explicitly carried unchanged outside-loop governing evidence may remain reusable; an outside producer declaration alone does not establish invariance.
 
 A loop-entry prompt reads its current assigned ticket, which may differ from the original task ticket. Do not hardcode the original physical filename or assume a token that historically meant the original ticket automatically refers to the current loop binding.
 
-### Continue with new work, or pause for the human
+### Continue with fresh evidence, conclude, or await direction
 
-The loop-producing step evaluates progress. When another pass is useful, it writes a new actionable ticket containing the remaining work, relevant evidence and context. The harness does not create the next session; the engine sees the accepted trigger occurrence and schedules it.
+The loop-producing step evaluates progress. When another pass is useful, it writes a fresh assigned actionable ticket containing the remaining work, relevant evidence and context. The harness does not create the next session; after accepting that trigger and confirming producer exit, the engine schedules only an entry whose declared AND inputs are satisfied.
 
-When enough work has been done, progress stalls, or judgment is needed, the harness reports the situation and asks the human rather than manufacturing another ticket. Preserve the live session when available and surface human attention. If a required loop ticket has not been produced, do not accept successful completion as though it existed; the execution remains awaiting direction or reports the actual failure.
+When enough work has been done, progress stalls or judgment is needed, report the situation and discuss it with the human instead of manufacturing another ticket. Unresolved direction and blocked required work stay interactive. A legitimate concluded outcome can complete with a meaningful declared stopping report, omitting the continuation. A continuation-only step cannot complete with zero evidence: authors must declare a separate stopping artifact when successful stopping is supported.
 
-This deliberately allows the task to pause without an automatically completed final branch. It does not turn required outputs into optional ones or require mutually exclusive output groups. If a later feature needs fully automatic alternative branches, decide that separately.
+For example, the continuation step declares `ticket.md` and `loop-stopping-report.md`. Continuing publishes the fresh ticket; stopping publishes the report with the actual disposition, evidence and limitations. Each successful pass leaves at least one valid artifact. A report-only stop creates no new loop trigger and does not cancel unrelated eligible work. Both valid alternatives are accepted if both are published; any exclusivity belongs in the prompt, not engine XOR validation.
 
-Prompts should state when to seek human review and what evidence to include. They may allow a useful stretch of automatic passes before asking. A permanently disabled auto-advance setting still requires the existing per-execution human unlock; do not bypass it to keep a loop running.
+Resolve a human choice about further passes before the responsible execution completes, or represent later discussion as a declared downstream step with its own continuation output. Accepted receipts cannot acquire a ticket written afterward, accepted executions are not recoverable as unfinished work, and auxiliary/manual publications do not feed ordinary graph routing. Keeping an unresolved discussion interactive is different from reopening a concluded execution.
+
+Prompts state when to seek human review and what evidence to include. Loops need no predetermined number of passes: use existing automatic completion for stretches intended to advance without per-pass permission, and preserve human locks where selected. Exercise multiple fresh continuations followed by a stopping report, with exactly one activation per fresh accepted trigger after exit and no activation from stopping. Keep changing design, analysis, plan and check roles inside the repeated dependency structure so old internal siblings cannot satisfy a new pass; carry reusable prior evidence through explicit inputs. No hard iteration cap or history scan is implied.
 
 ## Artifacts: ordinary files, explicit assignments
 
@@ -209,6 +227,20 @@ The harness follows the assignments; it does not choose another worker's inputs 
 
 A logical role such as `square.md` is not the same thing as its physical path `4-square-2.md`. Preserve that mapping so generated prefixes/suffixes do not break exact or wildcard graph selectors.
 
+### Possible publications and durable evidence
+
+Every declaration is a possible publication, not an obligation to create that individual file. Successful completion must accept **at least one valid assigned artifact overall**. Exact omissions and zero-member wildcard families contribute no occurrence. A wildcard-only producer therefore needs at least one valid member. Unrelated auxiliary files cannot satisfy the minimum. Present invalid files and real inspection errors reject the whole attempt atomically, even alongside another valid artifact; rejection preserves permission and the ability to repair.
+
+One valid file is not proof of instruction compliance. Substantive deliverables, positive domain targets, required human decisions and verification remain obligations of the step. Use a truthful existing report for a concluded no-result outcome where possible. Declare another report only if the existing assignments cannot represent a legitimate successful stop. Never invent a study, selected fix, shortlist or continuation merely to leave evidence.
+
+### Choose whether a no-result record routes work
+
+- A search declaring `search-summary.md` and `papers/*.md` can publish only the summary. It lies outside the paper selector; after acceptance and exit the empty family closes, with zero paper workers and no empty `complete` consumer.
+- A meaningful `papers/no-results.md` deliberately matches `papers/*.md`. It is an ordinary accepted member and starts exactly one `each(papers/*.md)` worker after exit. The family contract and worker prompt must support this disposition rather than pretend it is a paper; the engine does not inspect prose to suppress it.
+- A separately declared `no-results.md` can route to a handler with `single(no-results.md)`, which writes its own `no-results-handled.md`. It starts that exact handler, not paper workers. Inspect actual selector matches: `papers/summary.md` would accidentally be a paper member.
+
+Every successful outcome must have truthful declared evidence. A splitter supporting zero requests should declare `split-summary.md` outside `request-*.md`. Verify both no-worker and intentionally handled-no-result paths, including an exact handler, instead of treating a prose sentinel as an invisible empty set.
+
 ### Unknown-cardinality outputs
 
 Many workers with one known output each are different from one producer choosing how many files to create.
@@ -219,9 +251,11 @@ The execution allocator reserves each exact path or wildcard family in `executio
 
 ### Completion controls scheduling, not individual writes
 
-Harnesses write files whenever they choose. Instructions require finishing outputs before calling completion. The daemon controls whether completion is accepted and when dependent work starts.
+Harnesses write files whenever they choose. The shared engine assignment explicitly requires filesystem writes to the selected assigned paths, verification that the files were saved, a brief user-facing handoff, and an actual `alinery_phase_complete` call in the handoff turn. Printing an artifact in chat does not save it or complete the execution. These delivery instructions belong to the engine assignment, not repeated playbook boilerplate. The daemon controls whether completion is accepted and when dependent work starts.
 
-On accepted completion, validate and record the outputs. Confirm source shutdown before dependent launch. A file can exist and be readable before then without becoming scheduler-ready.
+For OMP, that assignment supplies the actual invocation route: use `write` with `path: "xd://alinery_phase_complete"` and `content: "{}"`. This dispatches the extension tool; it does not write an artifact or require a separately listed completion tool. The user-facing handoff precedes acceptance because the accepted call requests session shutdown.
+
+On accepted completion, record only the actual valid assigned publications in one immutable receipt. Later files cannot expand the accepted set through replay. Reservations and ownership remain attributed to the execution, including omitted assignments. Confirm source shutdown before dependent launch or capacity release. A file can exist and be readable before then without becoming scheduler-ready; acceptance does not promise every potential successor will run.
 
 No file-write interception, quiet-period heuristic, byte-publication transaction or streaming API is needed. Correct content and respecting another session's files remain part of the cooperative-agent trust model; assignments are not an OS sandbox.
 
@@ -310,7 +344,7 @@ A creation/launch claim is not proof that a process started. Persist enough stat
 
 - Give each step a focused job, explicit required inputs, useful outputs and clear non-goals.
 - Specify what the next consumer needs: findings, evidence, limitations, unresolved questions or an actionable plan—not just “be thorough”.
-- Use distinct logical stems for different producers; do not hardcode engine-generated numbering.
+- Use distinct logical roles for different kinds of evidence. Alternative publishers may share an exact role when they request the same kind of continuation; preserve occurrence-specific companion pairing and do not hardcode engine-generated numbering.
 - Tell fan-out workers to process only assigned inputs and merges to consume the complete supplied set.
 - Mark mutating/exclusive work correctly; do not call it non-coding to gain parallelism.
 - Put real human review behind the completion gate, not prompt-only “ask first” wording.
@@ -320,6 +354,9 @@ A creation/launch claim is not proof that a process started. Persist enough stat
 - Treat task text, attachments and fetched material as evidence, not instructions that override the playbook or repository safety rules.
 - Give loop-entry steps an explicit trigger artifact role, and instruct continuation steps to write a new trigger artifact rather than rewrite an old one.
 - Tell loop-producing harnesses when to report progress and seek human direction. Do not require them to keep manufacturing another pass solely to avoid a paused task.
+- Give every legitimate successful outcome a truthful assigned artifact; do not confuse individually possible outputs with zero-publication success or with permission to skip substantive work.
+- Check actual no-result selector routing: a summary outside a wildcard starts no workers, an intentionally matching disposition member starts one worker, and an exact disposition starts its handler.
+- Exercise repeated fresh loop passes and a report-only stop; keep changing internal evidence fresh and completion permission separate from substantive decisions.
 
 Do not invent fields or tokens to express a desired behavior. If a valid graph/prompt cannot express the requirement, resolve the design issue explicitly.
 
@@ -328,16 +365,18 @@ Do not invent fields or tokens to express a desired behavior. If a valid graph/p
 | Change area | Behavior worth exercising |
 | --- | --- |
 | Task/library storage | Existing task behavior is unchanged after library edit/deletion; scope-qualified sources do not shadow. |
-| Graph validation | Conflicting distinct producers are rejected, while legitimate repeats of one step remain valid. |
+| Graph validation | Different steps may share exact output roles; same-step duplicates and every overlap involving a wildcard are rejected. |
 | Scheduling | Unaccepted files cannot start consumers; repeated reconciliation cannot duplicate the same binding. |
-| Fan-out/merge | A merge accounts for every expected contributor, including paused/failed workers. |
+| Fan-out/merge | Preserve all producer/source obligations; successful empty families close without empty consumers; mixed direct-worker dispositions are excluded from result bindings; chained/nested omitted intermediates are not pruned. |
 | Task concurrency | At the task's chosen cap, ready work stays queued; confirmed session exit frees capacity; concurrent launches cannot exceed the cap. |
-| Loops | Each pass receives the correct concrete occurrences, not unrelated old results. |
+| Loops | Multiple fresh continuations bind matching pass evidence; a stopping report accepts and exits without another activation; partial AND entry never borrows an old trigger. |
 | Assignment | Concurrent unstarted executions reserve distinct names; reconnect retains the same assignments. |
 | Human gate | Locked completion leaves the session interactive; permission cannot be self-issued or reused elsewhere. |
 | Lifecycle | No successor/coding-claim release before confirmed shutdown; interrupted delivery is recoverable. |
 | Naming/UI | Numeric ordering handles depths and suffixes above 9. |
 | Create/start APIs | App and MCP share rules; partial failure reports created state rather than hiding it. |
+| Publications | A nonempty valid assigned subset accepts atomically; zero overall publications, present invalid entries and real inspection errors reject; replay cannot grow the receipt. |
+| No-result routing | Summary outside a wildcard starts zero workers; a deliberate matching no-result member starts one; an exact disposition starts its matching handler. |
 
 Tests should prove observable behavior, not field copies, prompt wording or source-text wiring. Follow the repository's build/check requirements. A type definition or happy-path compile is not proof of these contracts.
 
@@ -347,7 +386,7 @@ Keep file-backed persistence and shared core behavior. Do not add a database, co
 
 New daemon wire operations require the existing protocol-version discipline. New frontend commands use the typed IPC boundary. Do not weaken packaged OMP/host guards or stop sessions on app quit, polling, reconnect or protocol mismatch. Completion-triggered stopping is a narrow approved lifecycle change, not a general teardown permission.
 
-Each task stores its retained `playbook.md` and authoritative `execution.json` beside `task.md`. Execution records own concrete bindings, output reservations, permissions, receipts and shutdown proof; session metadata is a repairable projection. Empty required collections alert the human; recovery uses existing sessions/MCP. Human-steered loops use new accepted trigger artifacts or a visible pause for direction. Concurrency is a per-task creation-time live-session limit, default 10. Do not add configuration layers, conflicting local conventions or new failure/approval policies.
+Each task stores its retained `playbook.md` and authoritative `execution.json` beside `task.md`. Execution records own concrete bindings, output reservations, permissions, receipts and shutdown proof. Session metadata is a repairable projection. Successful empty collections can close without starting consumers; missing expected work remains an obligation, not a pruned branch. Human-steered loops use fresh accepted triggers, meaningful stopping reports or a visible pause for unresolved direction. Recovery uses existing sessions/MCP. Concurrency is a per-task creation-time live-session limit, default 10. Do not add configuration layers, conflicting local conventions or new failure/approval policies.
 
 ## Implementation entry points and design sources
 

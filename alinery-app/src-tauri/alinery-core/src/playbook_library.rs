@@ -24,6 +24,7 @@ pub const BUNDLED_PLAYBOOKS: &[(&str, &str)] = &[
     ("build-playbook", include_str!("../../playbooks/build-playbook/playbook.md")),
     ("academic-survey", include_str!("../../playbooks/academic-survey/playbook.md")),
     ("spec", include_str!("../../playbooks/spec/playbook.md")),
+    ("solution-exploration", include_str!("../../playbooks/solution-exploration/playbook.md")),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -986,6 +987,117 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), before);
         save(&sandbox.roots, PlaybookScope::Repo, "Confirmed", true).unwrap();
         assert_eq!(parse_playbook_md(&fs::read_to_string(path).unwrap()).unwrap().title, "Confirmed");
+    }
+
+    fn shared_exact_definition(outputs: &[&str]) -> NormalizedPlaybook {
+        let mut definition = parse_playbook_md(&source("Shared exact outputs")).unwrap();
+        definition.step.truncate(outputs.len());
+        definition.section_order.truncate(outputs.len());
+        for (step, output) in definition.step.iter_mut().zip(outputs) {
+            step.inputs.truncate(1);
+            step.outputs[0].path = (*output).into();
+        }
+        definition
+    }
+
+    const SHARED_EXACT_WILDCARD_CONFLICTS: &[&[&str]] = &[
+        &["design/solution*.md", "design/solution*.md"],
+        &["design/solution*.md", "design/*-review.md"],
+        &["design/solution.md", "design/sol*.md"],
+        &["design/sol*.md", "design/solution.md"],
+        &["design/solution.md", "design/solution.md", "design/sol*.md"],
+    ];
+
+    fn shared_exact_assert_conflict(error: PlaybookSaveError, definition: &NormalizedPlaybook) {
+        let PlaybookSaveError::Invalid { diagnostics } = error else {
+            panic!("expected invalid overlapping outputs, got {error:?}");
+        };
+        let conflicting = definition.step.last().unwrap();
+        for owner in &definition.step[..definition.step.len() - 1] {
+            assert!(
+                diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code == "overlapping_outputs"
+                        && diagnostic.message.contains(&owner.key)
+                        && diagnostic.message.contains(&owner.outputs[0].path)
+                        && diagnostic.message.contains(&conflicting.key)
+                        && diagnostic.message.contains(&conflicting.outputs[0].path)
+                }),
+                "missing owners/selectors for {} and {}: {diagnostics:?}",
+                owner.key,
+                conflicting.key
+            );
+        }
+    }
+
+    #[test]
+    fn shared_exact_saves_and_resolves_in_global_and_repo_scopes() {
+        let sandbox = Sandbox::new();
+        let definition = shared_exact_definition(&["design/solution.md", "design/solution.md"]);
+        for scope in [PlaybookScope::Global, PlaybookScope::Repo] {
+            let target = reference(scope);
+            let saved = save_playbook(
+                &sandbox.roots,
+                SavePlaybookRequest {
+                    target: target.clone(),
+                    source: render_playbook_md(&definition),
+                    overwrite: false,
+                },
+            )
+            .unwrap();
+            assert_eq!(saved.definition, definition);
+            let resolved = resolve_playbook(&sandbox.roots, &target).unwrap();
+            assert_eq!(resolved.definition, definition);
+            assert_eq!(resolved.source.reference, target);
+            assert_eq!(fs::read_to_string(saved.source.path.unwrap()).unwrap(), resolved.source_text);
+        }
+    }
+
+    #[test]
+    fn shared_exact_wildcard_conflicts_create_no_library_or_definition() {
+        for scope in [PlaybookScope::Global, PlaybookScope::Repo] {
+            for outputs in SHARED_EXACT_WILDCARD_CONFLICTS {
+                let sandbox = Sandbox::new();
+                let definition = shared_exact_definition(outputs);
+                let target = reference(scope);
+                let error = save_playbook(
+                    &sandbox.roots,
+                    SavePlaybookRequest {
+                        target: target.clone(),
+                        source: render_playbook_md(&definition),
+                        overwrite: false,
+                    },
+                )
+                .unwrap_err();
+                shared_exact_assert_conflict(error, &definition);
+                assert!(!source_for(&sandbox.roots, &target).path.unwrap().exists());
+                assert!(!root(&sandbox.roots, scope).unwrap().exists());
+            }
+        }
+    }
+
+    #[test]
+    fn shared_exact_wildcard_conflicts_preserve_saved_bytes_on_overwrite() {
+        for scope in [PlaybookScope::Global, PlaybookScope::Repo] {
+            let sandbox = Sandbox::new();
+            let original = save(&sandbox.roots, scope, "Original", false).unwrap();
+            let path = original.source.path.unwrap();
+            let before = fs::read(&path).unwrap();
+            for outputs in SHARED_EXACT_WILDCARD_CONFLICTS {
+                let definition = shared_exact_definition(outputs);
+                let error = save_playbook(
+                    &sandbox.roots,
+                    SavePlaybookRequest {
+                        target: reference(scope),
+                        source: render_playbook_md(&definition),
+                        overwrite: true,
+                    },
+                )
+                .unwrap_err();
+                shared_exact_assert_conflict(error, &definition);
+                assert_eq!(fs::read(&path).unwrap(), before);
+                assert_eq!(resolve_playbook(&sandbox.roots, &reference(scope)).unwrap().definition, original.definition);
+            }
+        }
     }
 
     #[test]

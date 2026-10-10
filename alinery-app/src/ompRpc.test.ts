@@ -15,6 +15,7 @@ import {
   setAutoCompactionCommand,
   setModelCommand,
   setSubagentSubscriptionCommand,
+  setThinkingLevelCommand,
   TRANSPORT_LIMIT_HINT,
   transportLimitMessage,
 } from "./ompRpc";
@@ -25,6 +26,7 @@ describe("ompRpc", () => {
     expect(getStateCommand("c6")).toEqual({ id: "c6", type: "get_state" });
     expect(getAvailableModelsCommand("c7")).toEqual({ id: "c7", type: "get_available_models" });
     expect(setModelCommand("xai", "grok-4.6", "c8")).toEqual({ id: "c8", type: "set_model", provider: "xai", modelId: "grok-4.6" });
+    expect(setThinkingLevelCommand("low", "c15")).toEqual({ id: "c15", type: "set_thinking_level", level: "low" });
     expect(compactCommand("keep the API", "c9")).toEqual({ id: "c9", type: "compact", customInstructions: "keep the API" });
     expect(compactCommand(undefined, "c10")).toEqual({ id: "c10", type: "compact" });
     expect(setAutoCompactionCommand(false, "c14")).toEqual({ id: "c14", type: "set_auto_compaction", enabled: false });

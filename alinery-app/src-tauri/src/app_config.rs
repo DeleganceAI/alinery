@@ -89,11 +89,11 @@ pub(crate) struct AppearancePrefs {
     pub(crate) chat_show_date: bool,
     #[serde(default = "default_true")]
     pub(crate) chat_show_time: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub(crate) chat_show_actor_labels: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub(crate) chat_show_agent_bubbles: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub(crate) chat_show_block_copy_buttons: bool,
     #[serde(default = "default_true")]
     pub(crate) chat_show_copy_buttons: bool,
@@ -102,6 +102,11 @@ pub(crate) struct AppearancePrefs {
     /// "system" | "light" | "dark" — absent in pre-reskin configs (serde default).
     #[serde(default = "default_appearance_mode")]
     pub(crate) mode: String,
+    /// The Chat view's own copy of the `chat_*` settings above (those drive the Sessions view).
+    /// The frontend owns the names and the value ranges (`normalizeChatView`), so this only keeps
+    /// scalar `chat_*` entries. Last field: TOML needs tables after plain values.
+    #[serde(default)]
+    pub(crate) ava_chat: BTreeMap<String, toml::Value>,
 }
 
 impl Default for AppearancePrefs {
@@ -131,12 +136,13 @@ impl Default for AppearancePrefs {
             chat_max_width: default_chat_max_width(),
             chat_show_date: true,
             chat_show_time: true,
-            chat_show_actor_labels: true,
-            chat_show_agent_bubbles: true,
-            chat_show_block_copy_buttons: true,
+            chat_show_actor_labels: false,
+            chat_show_agent_bubbles: false,
+            chat_show_block_copy_buttons: false,
             chat_show_copy_buttons: true,
             session_default_view: default_session_default_view(),
             mode: default_appearance_mode(),
+            ava_chat: BTreeMap::new(),
         }
     }
 }
@@ -248,6 +254,11 @@ pub(crate) fn sanitize_appearance(prefs: AppearancePrefs) -> AppearancePrefs {
             _ => default_session_default_view(),
         },
         mode,
+        ava_chat: prefs
+            .ava_chat
+            .into_iter()
+            .filter(|(key, value)| key.starts_with("chat_") && matches!(value, toml::Value::Boolean(_) | toml::Value::Integer(_) | toml::Value::String(_)))
+            .collect(),
     }
 }
 
@@ -341,7 +352,18 @@ pub(crate) fn read_app_config(app: AppHandle) -> Result<AppConfig, String> {
 }
 
 #[tauri::command]
-pub(crate) fn set_active_repo<R: tauri::Runtime>(app: AppHandle<R>, state: State<'_, AppState>, path: String, drawer_session_id: Option<String>) -> Result<AppConfig, String> {
+pub(crate) async fn set_active_repo(app: AppHandle, path: String, drawer_session_ids: Vec<String>) -> Result<AppConfig, String> {
+    // Killing each drawer shell waits on the daemon; a sync command would run that on the main thread.
+    // The whole switch moves together so reservation, config write, kill, commit stay in order.
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        set_active_repo_sync(app.clone(), state, path, drawer_session_ids)
+    })
+    .await
+    .map_err(|e| format!("set active repo task: {e}"))?
+}
+
+pub(crate) fn set_active_repo_sync<R: tauri::Runtime>(app: AppHandle<R>, state: State<'_, AppState>, path: String, drawer_session_ids: Vec<String>) -> Result<AppConfig, String> {
     let repo = alinery_core::require_working_tree(Path::new(path.trim()))?;
     let reservation = state.reserve_repo(&repo)?.ok_or_else(|| {
         let name = repo
@@ -363,10 +385,12 @@ pub(crate) fn set_active_repo<R: tauri::Runtime>(app: AppHandle<R>, state: State
     cfg = sanitize_app_config(cfg);
     write_app_config(&app, &cfg)?;
 
-    if let (Some(previous), Some(id)) = (previous_repo.as_ref(), drawer_session_id.as_deref()) {
+    if let Some(previous) = previous_repo.as_ref() {
         if previous != &repo && state.owns_repo(previous) {
-            let _ = with_session_client(&state, previous, "", id, |daemon| daemon.kill_session(id));
-            state.clear_session_route(id);
+            for id in &drawer_session_ids {
+                let _ = with_session_client(&state, previous, "", id, |daemon| daemon.kill_session(id));
+                state.clear_session_route(id);
+            }
         }
     }
 

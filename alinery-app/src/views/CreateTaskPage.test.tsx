@@ -4,8 +4,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Webview } from "../ipc";
 import * as taskMutationGuard from "../taskMutationGuard";
 import { mockIpc } from "../test/mockIpc";
-import type { BoardTask, Config, CreateTaskResult, PlaybookCatalog, PlaybookRef, PreparedTaskAttachments, ScopedPlaybook, TargetedCreateResult, Task } from "../types";
+import type {
+  BoardTask,
+  Config,
+  CreateTaskResult,
+  PlaybookCatalog,
+  PlaybookRef,
+  PreparedTaskAttachments,
+  ScopedPlaybook,
+  TargetedCreateResult,
+  Task,
+  TaskSourceBranches,
+} from "../types";
 import { CreateTaskPage } from "./CreateTaskPage";
+
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+};
 
 const sources: ScopedPlaybook[] = [
   { scope: "bundled", key: "superdevelop", title: "SuperDevelop" },
@@ -108,8 +129,11 @@ const readConfigForRepo = vi.hoisted(() =>
   ),
 );
 
+const taskSourceBranchesForRepo = vi.hoisted(() => vi.fn<(repoPath: string, selectedBaseRef?: string | null) => Promise<TaskSourceBranches>>());
+
 vi.mock("../ipc", () =>
   mockIpc({
+    taskSourceBranchesForRepo,
     readConfigForRepo,
     listPlaybookCatalog: vi.fn(async () => structuredClone(catalog)),
     readPlaybook: vi.fn(),
@@ -149,6 +173,14 @@ beforeEach(() => {
   readConfigForRepo.mockResolvedValue({
     defaults: { harness: "claude", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
   } as Config);
+  taskSourceBranchesForRepo.mockReset().mockImplementation(async (_repoPath: string, selectedBaseRef?: string | null) => ({
+    branches: [
+      { full_ref: "refs/heads/main", name: "main" },
+      { full_ref: "refs/heads/release", name: "release" },
+    ],
+    head: { kind: "branch", full_ref: "refs/heads/main", name: "main" },
+    selected: selectedBaseRef == null ? null : { base_ref: selectedBaseRef, available: ["refs/heads/main", "refs/heads/release"].includes(selectedBaseRef) },
+  }));
   vi.mocked(ipc.listPlaybookCatalog).mockImplementation(async () => structuredClone(catalog));
   vi.mocked(ipc.accountStatus).mockResolvedValue({ signedIn: false, email: null, plan: null, paid: false, unavailable: false });
   vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => {
@@ -564,6 +596,311 @@ describe("OMP model default", () => {
   });
 });
 
+describe("starting branch contract", () => {
+  it("resets source only on repository changes or successful clear", async () => {
+    render(
+      <CreateTaskPage
+        initialDraft={{ ...draftTask, draft_base_ref: "refs/heads/release" }}
+        activeRepo="/repo"
+        knownRepos={["/repo", "/other"]}
+        onCancel={() => {}}
+        onCreated={() => {}}
+      />,
+    );
+    await screen.findByRole("checkbox", { name: "Build" });
+    expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/release");
+    fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/other" } });
+    await waitFor(() => expect(screen.getByLabelText("Starting branch")).toHaveProperty("disabled", false));
+    fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/repo" } });
+    await waitFor(() => expect(screen.getByLabelText("Starting branch")).toHaveProperty("disabled", false));
+    expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/main");
+    fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/release" } });
+    vi.mocked(ipc.deleteDraftForRepo).mockRejectedValueOnce(new Error("denied"));
+    fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
+    await screen.findByText(/Couldn't clear the draft/);
+    expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/release");
+    vi.mocked(ipc.deleteDraftForRepo).mockResolvedValueOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
+    await waitFor(() => expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/main"));
+    expect(taskSourceBranchesForRepo).toHaveBeenLastCalledWith("/repo", null);
+  });
+
+  it.each(["GitHub", "Linear"] as const)("keeps the source and import autosave semantics for %s", async (provider) => {
+    vi.mocked(ipc.importGithubForRepo).mockResolvedValue({ reference: "org/repo#1", title: "Imported", description: "Body" });
+    vi.mocked(ipc.importLinearForRepo).mockResolvedValue({ identifier: "ABC-1", title: "Imported", description: "Body" });
+    vi.useFakeTimers();
+    try {
+      await act(async () => render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />));
+      fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/release" } });
+      fireEvent.click(screen.getByRole("button", { name: provider }));
+      fireEvent.change(screen.getByPlaceholderText(provider === "GitHub" ? /GitHub issue or pull request URL/ : /Linear ticket/), {
+        target: { value: provider === "GitHub" ? "org/repo#1" : "ABC-1" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Import" }));
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Imported");
+      expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/release");
+      expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+      fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited import" } });
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      expect(ipc.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ draftBaseRef: "refs/heads/release" }));
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
+  });
+
+  const branchSnapshot = (current = "main", names = ["main", "release"], selected: string | null = null): TaskSourceBranches => ({
+    branches: names.map((name) => ({ name, full_ref: `refs/heads/${name}` })),
+    head: { kind: "branch", name: current, full_ref: `refs/heads/${current}` },
+    selected: selected === null ? null : { base_ref: selected, available: names.some((name) => `refs/heads/${name}` === selected) },
+  });
+
+  it("retries branch discovery without bypassing submission guards", async () => {
+    taskSourceBranchesForRepo.mockRejectedValueOnce(new Error("Git unavailable"));
+    render(
+      <CreateTaskPage initialDraft={{ ...draftTask, draft_base_ref: "refs/heads/release" }} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />,
+    );
+    await screen.findByRole("button", { name: "Retry starting branches" });
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
+    const title = screen.getByPlaceholderText("New task name…");
+    fireEvent.keyDown(title, { key: "Enter", metaKey: true });
+    fireEvent.keyDown(title, { key: "Enter", ctrlKey: true });
+    expect(ipc.prepareTaskAttachments).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Retry starting branches" }));
+    await waitFor(() => expect(screen.getByLabelText("Starting branch")).toHaveProperty("disabled", false));
+    expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/release");
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await screen.findByRole("button", { name: "Open task" });
+    expect(ipc.createTaskForRepo).toHaveBeenCalledOnce();
+  });
+
+  it("ignores obsolete branch responses across A B A", async () => {
+    const reads = Array.from({ length: 3 }, () => deferred<TaskSourceBranches>());
+    for (const read of reads) taskSourceBranchesForRepo.mockReturnValueOnce(read.promise);
+    render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo", "/other"]} onCancel={() => {}} onCreated={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/other" } });
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
+    fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/repo" } });
+    await act(async () => reads[2].resolve(branchSnapshot()));
+    fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/release" } });
+    await act(async () => {
+      reads[0].resolve(branchSnapshot("stale", ["stale"]));
+      reads[1].reject(new Error("stale failure"));
+    });
+    expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/release");
+    expect(screen.queryByText(/stale failure/)).toBeNull();
+    expect(screen.queryByRole("option", { name: /stale/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false);
+    expect(taskSourceBranchesForRepo.mock.calls.map(([repo]) => repo)).toEqual(["/repo", "/other", "/repo"]);
+  });
+
+  it("invalidates branch reads on unmount and StrictMode replay", async () => {
+    const stale = deferred<TaskSourceBranches>();
+    taskSourceBranchesForRepo.mockReturnValueOnce(stale.promise);
+    const view = render(
+      <StrictMode>
+        <CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />
+      </StrictMode>,
+    );
+    await waitFor(() => expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/main"));
+    fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/release" } });
+    await act(async () => stale.resolve(branchSnapshot("stale", ["stale"])));
+    expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/release");
+    view.unmount();
+    const abandoned = deferred<TaskSourceBranches>();
+    taskSourceBranchesForRepo.mockReturnValueOnce(abandoned.promise);
+    const abandonedView = render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    abandonedView.unmount();
+    await act(async () => abandoned.resolve(branchSnapshot("abandoned", ["abandoned"])));
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await waitFor(() => expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/main"));
+    expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+  });
+
+  it("restores a detached source after HEAD moves and submits its full OID", async () => {
+    const oid = "a".repeat(40);
+    taskSourceBranchesForRepo.mockResolvedValueOnce({ ...branchSnapshot(), head: { kind: "detached", oid } });
+    const view = render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("option", { name: /Detached HEAD/ });
+    view.unmount();
+    taskSourceBranchesForRepo.mockResolvedValueOnce({ ...branchSnapshot(), selected: { base_ref: oid, available: true } });
+    render(<CreateTaskPage initialDraft={{ ...draftTask, draft_base_ref: oid }} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("option", { name: /Selected detached commit/ });
+    expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", oid);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false));
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await screen.findByRole("button", { name: "Open task" });
+    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ base_ref: oid }) }));
+  });
+
+  it.each(["", "release", "refs/heads/deleted", "b".repeat(40)])("blocks unavailable saved identity %j without substitution", async (base) => {
+    taskSourceBranchesForRepo.mockResolvedValueOnce({ ...branchSnapshot(), selected: { base_ref: base, available: false } });
+    render(<CreateTaskPage initialDraft={{ ...draftTask, draft_base_ref: base }} activeRepo="/other" knownRepos={["/repo", "/other"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("checkbox", { name: "Build" });
+    expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", base);
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
+    fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/main" } });
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false);
+  });
+
+  it("requires an explicit committed alternative on an unborn checkout", async () => {
+    const unborn: TaskSourceBranches = { branches: [], head: { kind: "unborn", name: "empty", full_ref: "refs/heads/empty" }, selected: null };
+    taskSourceBranchesForRepo.mockResolvedValueOnce(unborn);
+    const view = render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("option", { name: /empty — no commits/ });
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
+    view.unmount();
+    taskSourceBranchesForRepo.mockResolvedValueOnce({ ...unborn, branches: branchSnapshot().branches, selected: { base_ref: "refs/heads/empty", available: false } });
+    render(
+      <CreateTaskPage initialDraft={{ ...draftTask, draft_base_ref: "refs/heads/empty" }} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />,
+    );
+    await waitFor(() => expect(screen.getByLabelText("Starting branch")).toHaveProperty("disabled", false));
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
+    fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/release" } });
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false);
+  });
+
+  it("saves source edits and restores them in the draft repository without rewriting on reopen", async () => {
+    vi.useFakeTimers();
+    try {
+      const view = await act(async () =>
+        render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo", "/other"]} onCancel={() => {}} onCreated={() => {}} />),
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+      fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/release" } });
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      expect(ipc.writeDraftForRepo).toHaveBeenCalledWith(expect.objectContaining({ repoPath: "/repo", draftBaseRef: "refs/heads/release" }));
+      view.unmount();
+      vi.mocked(ipc.writeDraftForRepo).mockClear();
+      await act(async () =>
+        render(
+          <CreateTaskPage
+            initialDraft={{ ...draftTask, draft_base_ref: "refs/heads/release" }}
+            activeRepo="/other"
+            knownRepos={["/repo", "/other"]}
+            onCancel={() => {}}
+            onCreated={() => {}}
+          />,
+        ),
+      );
+      expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/release");
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+      expect(taskSourceBranchesForRepo).toHaveBeenLastCalledWith("/repo", "refs/heads/release");
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves raw saved source during pending validation and saves a late default after editing", async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = deferred<TaskSourceBranches>();
+      taskSourceBranchesForRepo.mockReturnValueOnce(pending.promise);
+      const view = await act(async () =>
+        render(
+          <CreateTaskPage
+            initialDraft={{ ...draftTask, draft_base_ref: "refs/heads/deleted" }}
+            activeRepo="/repo"
+            knownRepos={["/repo"]}
+            onCancel={() => {}}
+            onCreated={() => {}}
+          />,
+        ),
+      );
+      fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited" } });
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      expect(ipc.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ draftBaseRef: "refs/heads/deleted" }));
+      await act(async () => pending.reject(new Error("read failed")));
+      fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited again" } });
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      expect(ipc.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ draftBaseRef: "refs/heads/deleted" }));
+      view.unmount();
+      const fresh = deferred<TaskSourceBranches>();
+      taskSourceBranchesForRepo.mockReturnValueOnce(fresh.promise);
+      await act(async () => render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />));
+      fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Fresh edit" } });
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      expect(ipc.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ draftBaseRef: null }));
+      await act(async () => fresh.resolve(branchSnapshot()));
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      expect(ipc.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ draftBaseRef: "refs/heads/main" }));
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
+  });
+  it("blocks creation while starting branch discovery is pending", async () => {
+    taskSourceBranchesForRepo.mockReturnValue(Promise.race([]));
+    const onOpened = vi.fn();
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onOpened={onOpened} onCancel={() => {}} onCreated={() => {}} />);
+      });
+      expect(onOpened).toHaveBeenCalledOnce();
+      expect(screen.getByRole("checkbox", { name: "Build" })).toBeDefined();
+      const title = screen.getByPlaceholderText("New task name…");
+      fireEvent.change(title, { target: { value: "Choose a starting branch" } });
+      expect(title).toHaveProperty("value", "Choose a starting branch");
+      expect.soft(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
+      fireEvent.keyDown(title, { key: "Enter", metaKey: true });
+      await act(async () => vi.advanceTimersByTimeAsync(1_000));
+      expect.soft(ipc.prepareTaskAttachments).not.toHaveBeenCalled();
+      expect.soft(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
+  });
+
+  it("creates from the saved starting branch rather than an implicit HEAD", async () => {
+    vi.mocked(ipc.readArtifactForRepo).mockResolvedValueOnce("Saved description");
+    const saved = { ...draftTask, branch: "new-task-branch", draft_base_ref: "refs/heads/release" };
+    render(<CreateTaskPage initialDraft={saved} activeRepo="/other" knownRepos={["/other", "/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("checkbox", { name: "Build" });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await screen.findByRole("button", { name: "Open task" });
+    expect(ipc.createTaskForRepo).toHaveBeenCalledOnce();
+    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoPath: "/repo",
+        request: expect.objectContaining({ base_ref: "refs/heads/release", branch_name: "new-task-branch" }),
+      }),
+    );
+  });
+
+  it.each(["title", "session cap"] as const)("does not rewrite a reopened draft until a %s edit", async (field) => {
+    vi.mocked(ipc.readArtifactForRepo).mockResolvedValueOnce("Saved description");
+    const saved = { ...draftTask, draft_base_ref: "refs/heads/release" };
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        render(<CreateTaskPage initialDraft={saved} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+      });
+      expect(screen.getByRole("checkbox", { name: "Build" })).toBeDefined();
+      expect(screen.getByPlaceholderText(/Describe the feature/)).toHaveProperty("value", "Saved description");
+      await act(async () => vi.advanceTimersByTimeAsync(1_000));
+      expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+      if (field === "title") fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited draft" } });
+      else fireEvent.change(screen.getByRole("spinbutton", { name: "Maximum live sessions" }), { target: { value: "7" } });
+      await act(async () => vi.advanceTimersByTimeAsync(1_000));
+      expect(ipc.writeDraftForRepo).toHaveBeenCalledOnce();
+      expect(ipc.writeDraftForRepo).toHaveBeenCalledWith(
+        expect.objectContaining({ draftBaseRef: "refs/heads/release", ...(field === "title" ? { name: "Edited draft" } : { maxLiveSessions: 7 }) }),
+      );
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("v2 task creation", () => {
   it("requires a positive u32 cap and always creates a dedicated worktree", async () => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
@@ -674,9 +1011,12 @@ describe("v2 task creation", () => {
     await screen.findByRole("checkbox", { name: "Build" });
     expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
     expect(screen.getByRole("radio", { name: /Repository SuperDevelop/ })).toHaveProperty("checked", false);
+    fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/release" } });
+    fireEvent.change(screen.getByLabelText("New task branch"), { target: { value: "destination" } });
     await waitFor(() => expect(ipc.writeDraftForRepo).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Late edit" } });
+    fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/main" } });
     expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
     await act(async () => resolveSave({ slug: "stable-draft" } as Task));
     await screen.findByRole("button", { name: "Open task" });
@@ -686,7 +1026,15 @@ describe("v2 task creation", () => {
     expect(ipc.writeDraftForRepo).toHaveBeenCalledTimes(1);
     expect(ipc.createTaskForRepo).toHaveBeenCalledTimes(1);
     expect(ipc.createTaskForRepo).toHaveBeenCalledWith(
-      expect.objectContaining({ request: expect.objectContaining({ draft_slug: "stable-draft", requested_slug: "final-task", name: "Draft task" }) }),
+      expect.objectContaining({
+        request: expect.objectContaining({
+          draft_slug: "stable-draft",
+          requested_slug: "final-task",
+          name: "Draft task",
+          base_ref: "refs/heads/release",
+          branch_name: "destination",
+        }),
+      }),
     );
   });
 
@@ -915,15 +1263,6 @@ describe("clipboard task attachments", () => {
         } as unknown as Webview);
     });
 
-    const deferred = <T,>() => {
-      let resolve!: (value: T) => void;
-      let reject!: (reason: Error) => void;
-      const promise = new Promise<T>((done, fail) => {
-        resolve = done;
-        reject = fail;
-      });
-      return { promise, resolve, reject };
-    };
     const image = (bytes: number[], name = "image.png", size?: number) => {
       const file = new File([new Uint8Array(bytes)], name, { type: "image/png" });
       // Admission uses metadata; encoding still reads real tiny binary bytes.
@@ -1095,6 +1434,7 @@ describe("clipboard task attachments", () => {
       paste(screen.getByPlaceholderText(/Describe the feature/), [image([0, 255]), image([128, 1])]);
       fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/other" } });
       await screen.findByRole("checkbox", { name: "Build" });
+      fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/release" } });
       fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
       fireEvent.change(screen.getByPlaceholderText(/Paste file paths/), { target: { value: "/pending.txt" } });
       const initialPreviews = screen.getAllByRole("img").map((element) => element.getAttribute("src"));
@@ -1105,6 +1445,8 @@ describe("clipboard task attachments", () => {
         for (const remove of screen.getAllByRole("button", { name: /remove/i })) fireEvent.click(remove);
         act(() => dropFiles(["/late-drop.txt"]));
         fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+        fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/repo" } });
+        fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/main" } });
       };
       const expectFrozen = () => {
         expect(screen.getByText("/captured.bin")).toBeDefined();
@@ -1126,6 +1468,7 @@ describe("clipboard task attachments", () => {
       await act(async () => preparation.resolve({ attachments: [{ name: "captured.bin", bytes: "/wA=" }], attachment_urls: [], attachment_errors: [] }));
       await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
       expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].repoPath).toBe("/other");
+      expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.base_ref).toBe("refs/heads/release");
       expect(submittedBytes()).toEqual([
         [255, 0],
         [0, 255],

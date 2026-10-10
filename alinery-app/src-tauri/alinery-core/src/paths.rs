@@ -171,7 +171,8 @@ pub fn session_meta_path(repo: &Path, task_slug: &str, id: &str) -> PathBuf {
 }
 
 pub fn session_name_path(repo: &Path, task_slug: &str, id: &str) -> PathBuf {
-    sessions_dir(repo, task_slug).join(format!("{id}.name.json"))
+    let dir = if task_slug.is_empty() { root_sessions_dir(repo) } else { sessions_dir(repo, task_slug) };
+    dir.join(format!("{id}.name.json"))
 }
 
 /// Verify retained storage without following repository-controlled directory/file links.
@@ -244,6 +245,10 @@ fn collect_meta_files(dir: &Path, out: &mut Vec<PathBuf>) {
 
 pub fn worktrees_dir(repo: &Path) -> PathBuf {
     alinery_dir(repo).join("worktrees")
+}
+
+pub fn chat_worktrees_dir(repo: &Path) -> PathBuf {
+    alinery_dir(repo).join("chat-worktrees")
 }
 
 // task_dir moved to task.rs to avoid glob import ambiguity

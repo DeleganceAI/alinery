@@ -35,6 +35,8 @@ import type {
   BackupListItem,
   BackupMeta,
   BoardTask,
+  ChatBranch,
+  ChatThread,
   CommunityImportRow,
   CommunityMineResult,
   CommunityPlaybookPage,
@@ -55,6 +57,7 @@ import type {
   LinearTicket,
   McpStatus,
   NormalizedPlaybook,
+  OmpCustomizations,
   OmpUpdateStatus,
   PickerPreferences,
   PlaybookCatalog,
@@ -88,12 +91,15 @@ import type {
   TaskActivityRef,
   TaskActivitySummary,
   TaskExecutionReply,
+  TaskSourceBranches,
   UpdateResult,
   UpdateStatus,
 } from "./types";
 
 export { getName, getVersion } from "@tauri-apps/api/app";
-export { listen } from "@tauri-apps/api/event";
+
+import { listen } from "@tauri-apps/api/event";
+
 export { homeDir } from "@tauri-apps/api/path";
 export type { Webview } from "@tauri-apps/api/webview";
 export { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -102,7 +108,7 @@ export { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 // ── platform (non-command Tauri APIs) ─────────────────────────────────
 // Re-exported rather than imported directly by consumers, so the boundary gate has a
 // single file to police and tests have a single module to mock.
-export { Channel };
+export { Channel, listen };
 
 // ── app_config.rs ─────────────────────────────────────────────────────
 export type PickedFolder = { kind: "checkout"; root: string } | { kind: "absent"; path: string } | { kind: "refused"; message: string };
@@ -115,7 +121,7 @@ export const classifyPickedFolder = (path: string) => invoke<PickedFolder>("clas
 export const initPickedFolder = (path: string) => invoke<InitializedFolder>("init_picked_folder", { path });
 export const readAppConfig = () => invoke<AppConfig>("read_app_config");
 export const removeRepo = (path: string) => invoke<AppConfig>("remove_repo", { path });
-export const setActiveRepo = (path: string, drawerSessionId: string | null) => invoke<AppConfig>("set_active_repo", { path, drawerSessionId });
+export const setActiveRepo = (path: string, drawerSessionIds: string[]) => invoke<AppConfig>("set_active_repo", { path, drawerSessionIds });
 export const writeAppearance = (appearance: AppearancePrefs) => invoke<AppConfig>("write_appearance", { appearance });
 
 // ── artifacts.rs ──────────────────────────────────────────────────────
@@ -267,13 +273,46 @@ export const discardSubtask = (taskSlug: string, managerSessionId: string) => in
 // ── session.rs ────────────────────────────────────────────────────────
 
 export const renameSession = (a: { repoPath: string; taskSlug: string; sessionId: string; name: string }) => invoke<SessionName>("rename_session", a);
+/** Repos open in this window (owned, daemon connected): the only repos chat lists or offers. */
+export const listChatRepos = () => invoke<string[]>("list_chat_repos");
+export const listChatThreads = (includeArchived: boolean) => invoke<ChatThread[]>("list_chat_threads", { includeArchived });
+export const chatThreadName = (repoPath: string, sessionId: string) => invoke<string | null>("chat_thread_name", { repoPath, sessionId });
+export const createChatThread = (a: { repoPath: string; model?: string | null; createWorktree: boolean }) => invoke<CreateExecutionSessionReply>("create_chat_thread", a);
+export const startChatThread = (repoPath: string, sessionId: string) => invoke<CreateExecutionSessionReply>("start_chat_thread", { repoPath, sessionId });
+export const setChatPinned = (repoPath: string, sessionId: string, pinned: boolean) => invoke<void>("set_chat_pinned", { repoPath, sessionId, pinned });
+export const archiveChatThread = (repoPath: string, sessionId: string, removeWorktree: boolean) => invoke<void>("archive_chat_thread", { repoPath, sessionId, removeWorktree });
+export const removeChatWorktree = (repoPath: string, sessionId: string) => invoke<void>("remove_chat_worktree", { repoPath, sessionId });
+export const resumeChatThread = (repoPath: string, sessionId: string) => invoke<SessionMeta>("resume_chat_thread", { repoPath, sessionId });
+export const chatBranchLabel = (repoPath: string, sessionId: string) => invoke<ChatBranch>("chat_branch_label", { repoPath, sessionId });
+export const chatRpcWrite = (repoPath: string, id: string, payload: unknown) => invoke<void>("chat_rpc_write", { repoPath, id, payload });
+export const chatDetach = (repoPath: string, id: string, attachId: number) => invoke<void>("chat_detach", { repoPath, id, attachId });
+export const chatSessionStatus = (repoPath: string, id: string) => invoke<SessionObservation>("chat_session_status", { repoPath, id });
+export const chatRestate = (repoPath: string, id: string, transport: "pty" | "rpc") => invoke<void>("chat_restate", { repoPath, id, transport });
+export const chatPtyAttach = (a: {
+  repoPath: string;
+  id: string;
+  attachId: number;
+  streamToken: number;
+  cols?: number | null;
+  rows?: number | null;
+  onBytes: Channel<ArrayBuffer>;
+}) => invoke<void>("chat_pty_attach", a);
+export const chatPtyWrite = (repoPath: string, id: string, data: string) => invoke<void>("chat_pty_write", { repoPath, id, data });
+export const chatPtyResize = (repoPath: string, id: string, cols: number, rows: number) => invoke<void>("chat_pty_resize", { repoPath, id, cols, rows });
+export const readChatOmp = (a: { repoPath: string; id: string; end?: number | null; want?: number | null }) => invoke<ArrayBuffer>("read_chat_omp", a);
+export const chatRpcAttach = (a: { repoPath: string; id: string; attachId: number; streamToken: number; onLine: (line: string) => void }) => {
+  const onLine = new Channel<string>();
+  onLine.onmessage = a.onLine;
+  return invoke<void>("chat_rpc_attach", { repoPath: a.repoPath, id: a.id, attachId: a.attachId, streamToken: a.streamToken, onLine });
+};
 export const renameTask = (repoPath: string, taskSlug: string, name: string) => invoke<Task>("rename_task", { repoPath, taskSlug, name });
 export const getSessionDisplay = (repoPath: string, taskSlug: string, sessionId: string) => invoke<SessionDisplayContext>("get_session_display", { repoPath, taskSlug, sessionId });
 export const archiveSession = (taskSlug: string, id: string) => invoke<void>("archive_session", { taskSlug, id });
 export const archiveSessionForRepo = (repoPath: string, taskSlug: string, id: string) => invoke<void>("archive_session_for_repo", { repoPath, taskSlug, id });
 export const createSession = (request: CreateExecutionSessionRequest) => invoke<CreateExecutionSessionReply>("create_session", { request });
 export const createSessionForRepo = (a: { repoPath: string; request: CreateExecutionSessionRequest }) => invoke<CreateExecutionSessionReply>("create_session_for_repo", a);
-export const getTaskExecution = (taskSlug: string, repoPath?: string) => invoke<TaskExecutionReply>("get_task_execution", { taskSlug, repoPath });
+export type TaskExecutionOutcome = { repo_path: string; task_slug: string; execution?: TaskExecutionReply; error?: string };
+export const observeTaskExecutions = (tasks: { repoPath: string; taskSlug: string }[]) => invoke<TaskExecutionOutcome[]>("observe_task_executions", { tasks });
 export const allowExecutionCompletion = (taskSlug: string, executionId: string, sessionId: string, repoPath?: string) =>
   invoke<void>("allow_execution_completion", { taskSlug, executionId, sessionId, repoPath });
 export const startSession = (taskSlug: string, sessionId: string, repoPath?: string) => invoke<CreateExecutionSessionReply>("start_session", { taskSlug, sessionId, repoPath });
@@ -343,6 +382,8 @@ export const writeRepoOverridesForRepo = (repoPath: string, overrides: RepoOverr
 export const archiveTaskForRepo = (repoPath: string, slug: string) => invoke<void>("archive_task_for_repo", { repoPath, slug });
 export const restoreTaskForRepo = (repoPath: string, slug: string) => invoke<void>("restore_task_for_repo", { repoPath, slug });
 export const createTaskForRepo = (a: { repoPath: string; request: CreateTaskRequest }) => invoke<CreateTaskResult>("create_task_for_repo", a);
+export const taskSourceBranchesForRepo = (repoPath: string, selectedBaseRef?: string | null) =>
+  invoke<TaskSourceBranches>("task_source_branches_for_repo", { repoPath, selectedBaseRef: selectedBaseRef ?? null });
 export const prepareTaskAttachments = (entries: string[]) => invoke<PreparedTaskAttachments>("prepare_task_attachments", { entries });
 export const duplicateTaskForRepo = (repoPath: string, sourceSlug: string) => invoke<CreateTaskResult>("duplicate_task_for_repo", { repoPath, sourceSlug });
 export const deleteDraftForRepo = (repoPath: string, slug: string) => invoke<void>("delete_draft_for_repo", { repoPath, slug });
@@ -368,6 +409,7 @@ export const writeDraftForRepo = (a: {
   branchName: string;
   worktreeName: string;
   draftSlug: string;
+  draftBaseRef?: string | null;
 }) => invoke<Task>("write_draft_for_repo", a);
 export type ChatFileStat = { name: string; bytes: number };
 export type CopyChatAttachmentsResult = { copied: string[]; failures: string[] };
@@ -407,3 +449,47 @@ export const updateOmp = () => invoke<string>("update_omp");
 export const ompAgentSessionsDir = () => invoke<string>("omp_agent_sessions_dir");
 export const readOmpModelRoles = () => invoke<Record<string, string>>("read_omp_model_roles");
 export const writeOmpModelRoles = (roles: Record<string, string>) => invoke<Record<string, string>>("write_omp_model_roles", { roles });
+export const openOmpConfigDir = () => invoke<void>("open_omp_config_dir");
+export const ompCustomizationPrompt = () => invoke<string>("omp_customization_prompt");
+
+// ── omp_customizations.rs ─────────────────────────────────────────────
+export const readOmpCustomizations = () => invoke<OmpCustomizations>("read_omp_customizations");
+
+// One attach-id space per daemon session, shared by every pane that can attach to it (terminal,
+// chat, session chat). Per-pane counters collided: one pane's detach dropped another's stream.
+let attachIdSeq = 1;
+export const nextAttachId = () => attachIdSeq++;
+
+const STREAM_RECOVERY_WINDOW_MS = 30_000;
+const STREAM_RECOVERY_MAX = 6;
+const streamCloses = new Map<string, number[]>();
+
+/**
+ * An attach's reader emits `session_stream_closed` whenever it stops: the daemon dropped a client
+ * more than 2 MB behind (so it can never block OMP), the socket failed or ended, or the view's
+ * channel closed. The event carries no cause, so a view says the connection closed, never why.
+ * Without a listener the view keeps showing a running turn that never prints again while OMP works
+ * on. `onClosed` fires for this attach only; `onGiveUp` replaces it after STREAM_RECOVERY_MAX
+ * closes in 30s, so a stream that keeps closing stops instead of re-reading the journal in a loop.
+ * Returns the unlisten.
+ */
+export function onStreamClosed(id: string, attachId: number, onClosed: () => void, onGiveUp: () => void): () => void {
+  let disposed = false;
+  let stop: (() => void) | null = null;
+  void listen<{ id: string; attach_id: number }>("session_stream_closed", (event) => {
+    if (disposed || event.payload.id !== id || event.payload.attach_id !== attachId) return;
+    const now = Date.now();
+    const recent = (streamCloses.get(id) ?? []).filter((at) => now - at < STREAM_RECOVERY_WINDOW_MS);
+    recent.push(now);
+    streamCloses.set(id, recent);
+    if (recent.length > STREAM_RECOVERY_MAX) onGiveUp();
+    else onClosed();
+  }).then((unlisten) => {
+    if (disposed) unlisten();
+    else stop = unlisten;
+  });
+  return () => {
+    disposed = true;
+    stop?.();
+  };
+}

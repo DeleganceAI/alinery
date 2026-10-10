@@ -27,9 +27,18 @@ export function normalizeGridViews(views: readonly GridViewDefinition[] | null |
   return normalized.length > 0 ? normalized : DEFAULT_GRID_VIEWS.map((view) => ({ ...view }));
 }
 
-/** Digit badges for Grid slots: ⌘2, ⌘4, ⌘5 (⌘3 reserved for classic Kanban). */
+/** Top-bar shortcut digits run left to right: Grid view 1 is ⌘1, view 2 is ⌘2, view 3 is ⌘3.
+ *  Tasks, Sessions, and classic Kanban take the digits after the last Grid view
+ *  (`trailingTabDigit`), and ⌘8 / ⌘9 stay Notifications and Settings. */
 export function gridViewShortcutDigit(index: number): number {
-  return index === 0 ? 2 : index + 3;
+  return index + 1;
+}
+
+/** The digit of a tab that follows the Grid views. `gridCount` is how many Grid views are shown;
+ *  Chat comes last, so its digit moves up by one only while classic Kanban is on the bar. */
+export function trailingTabDigit(gridCount: number, tab: "tasks" | "sessions" | "kanban" | "chat", showKanban = true): number {
+  if (tab === "chat") return gridCount + (showKanban ? 4 : 3);
+  return gridCount + { tasks: 1, sessions: 2, kanban: 3 }[tab];
 }
 
 export function gridViewShortcut(index: number): string {

@@ -73,6 +73,7 @@ const summary = (overrides: Partial<TaskActivitySummary> = {}): TaskActivitySumm
 });
 
 beforeEach(() => {
+  window.localStorage.clear();
   scenario.tasks = [];
   scenario.error = "";
   activity = {};
@@ -80,6 +81,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
   scenario.tasks = [];
   activity = {};
   vi.clearAllMocks();
@@ -253,5 +255,125 @@ describe("TaskList empty", () => {
     const { container } = render(<TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
     await screen.findByText("A task");
     expect(container.querySelector("tbody tr td:nth-child(3)")?.textContent).toBe("—");
+  });
+});
+
+describe("Task List column sorting", () => {
+  const names = () => [...document.querySelectorAll(".task-name-text")].map((node) => node.textContent);
+
+  it("restores the selected column and direction after leaving and remounting the task list", async () => {
+    scenario.tasks = [task("alpha", { created: 1, session_count: 2 }), task("beta", { created: 2, session_count: 10 })];
+    const list = <TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />;
+    const { rerender } = render(list);
+    await screen.findByText("ALPHA");
+    fireEvent.click(screen.getByRole("button", { name: "Sort by Sessions" }));
+    expect(names()).toEqual(["BETA", "ALPHA"]);
+
+    rerender(<div>Settings</div>);
+    rerender(list);
+    await screen.findByText("ALPHA");
+    expect(names()).toEqual(["BETA", "ALPHA"]);
+    expect(screen.getByRole("button", { name: "Sort by Sessions" }).closest("th")?.getAttribute("aria-sort")).toBe("descending");
+
+    fireEvent.click(screen.getByRole("button", { name: "Sort by Sessions" }));
+    rerender(<div>Playbooks</div>);
+    rerender(list);
+    await screen.findByText("ALPHA");
+    expect(names()).toEqual(["ALPHA", "BETA"]);
+    expect(screen.getByRole("button", { name: "Sort by Sessions" }).closest("th")?.getAttribute("aria-sort")).toBe("ascending");
+  });
+
+  it("ignores an obsolete saved column and still allows choosing a valid sort", async () => {
+    window.localStorage.setItem("alinery:task-list:sort", JSON.stringify({ field: "removed-column", direction: "desc" }));
+    scenario.tasks = [task("alpha", { created: 1 }), task("beta", { created: 2 })];
+    render(<TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
+    await screen.findByText("ALPHA");
+    expect(names()).toEqual(["ALPHA", "BETA"]);
+    fireEvent.click(screen.getByRole("button", { name: "Sort by Created" }));
+    expect(names()).toEqual(["BETA", "ALPHA"]);
+  });
+
+  it("sorts every column in both directions using displayed values, numeric counts, and missing activity last", async () => {
+    scenario.tasks = [
+      task("zulu", { name: "Zulu", created: 10, updated: 0, session_count: 2, playbook_title: "Charlie" }),
+      task("alpha", { name: "Alpha", created: 20, updated: 5, session_count: 10, playbook_title: "", playbook: "Alpha" }),
+      task("beta", { name: "Beta", created: 30, updated: 15, session_count: 1, playbook_title: "Bravo" }),
+    ];
+    activity = {
+      "/r:zulu": summary({ status: "running" }),
+      "/r:alpha": summary({
+        status: "failed",
+        active_session: { id: "build", worktree: "/w/alpha", phase: "build", harness: "omp", model: "", playbook: "superdevelop", generic: false, step_title: "Build" },
+      }),
+    };
+    const onOpen = vi.fn();
+    render(<TaskList allRepos={false} onOpen={onOpen} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
+    await screen.findByRole("button", { name: "Build" });
+    expect(names()).toEqual(["Zulu", "Alpha", "Beta"]);
+
+    const cases = [
+      { label: "Name", direction: "ascending", first: ["Alpha", "Beta", "Zulu"], second: ["Zulu", "Beta", "Alpha"] },
+      { label: "Playbook", direction: "ascending", first: ["Alpha", "Beta", "Zulu"], second: ["Zulu", "Beta", "Alpha"] },
+      { label: "Active session", direction: "ascending", first: ["Alpha", "Zulu", "Beta"], second: ["Zulu", "Alpha", "Beta"] },
+      { label: "Status", direction: "ascending", first: ["Alpha", "Zulu", "Beta"], second: ["Zulu", "Alpha", "Beta"] },
+      { label: "Sessions", direction: "descending", first: ["Alpha", "Zulu", "Beta"], second: ["Beta", "Zulu", "Alpha"] },
+      { label: "Created", direction: "descending", first: ["Beta", "Alpha", "Zulu"], second: ["Zulu", "Alpha", "Beta"] },
+      { label: "Updated", direction: "descending", first: ["Beta", "Zulu", "Alpha"], second: ["Alpha", "Zulu", "Beta"] },
+    ];
+    for (const { label, direction, first, second } of cases) {
+      const header = screen.getByRole("button", { name: `Sort by ${label}` });
+      fireEvent.click(header);
+      expect(names()).toEqual(first);
+      expect(header.closest("th")?.getAttribute("aria-sort")).toBe(direction);
+      expect(document.querySelectorAll("th[aria-sort]")).toHaveLength(1);
+      fireEvent.click(header);
+      expect(names()).toEqual(second);
+      expect(header.closest("th")?.getAttribute("aria-sort")).toBe(direction === "ascending" ? "descending" : "ascending");
+    }
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("sorts siblings within their parents and preserves selection and sorted navigation after reload", async () => {
+    scenario.tasks = [
+      task("zulu", { created: 1 }),
+      task("child-10", { parent_task: "zulu", created: 2 }),
+      task("child-2", { parent_task: "zulu", created: 3 }),
+      task("alpha", { created: 4 }),
+      task("archived", { parent_task: "zulu", archived: true, created: 5 }),
+    ];
+    let nav: BoardNav | null = null;
+    const onOpen = vi.fn();
+    render(
+      <TaskList
+        allRepos={false}
+        onOpen={onOpen}
+        onDuplicate={() => {}}
+        onOpenActiveSession={() => {}}
+        registerNav={(next) => {
+          if (next) nav = next;
+        }}
+        onCreate={() => {}}
+      />,
+    );
+    await screen.findByText("ZULU");
+    await navReady(() => nav);
+    fireEvent.click(screen.getByRole("button", { name: "Sort by Name" }));
+    expect(names()).toEqual(["ALPHA", "ZULU", "CHILD-2", "CHILD-10"]);
+    act(() => requireNav(nav).openSelected());
+    expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ slug: "zulu" }));
+    act(() => requireNav(nav).moveRow(1));
+    act(() => requireNav(nav).openSelected());
+    expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ slug: "child-2" }));
+
+    fireEvent.click(screen.getByText("Show archived"));
+    await screen.findByText("ARCHIVED");
+    expect(names()).toEqual(["ALPHA", "ZULU", "ARCHIVED", "CHILD-2", "CHILD-10"]);
+    act(() => requireNav(nav).openSelected());
+    expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ slug: "child-2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sort by Name" }));
+    expect(names()).toEqual(["ZULU", "CHILD-10", "CHILD-2", "ARCHIVED", "ALPHA"]);
+    act(() => requireNav(nav).moveRow(-1));
+    act(() => requireNav(nav).openSelected());
+    expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ slug: "child-10" }));
   });
 });

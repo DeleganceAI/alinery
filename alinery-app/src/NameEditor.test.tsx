@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { awaitingSessionName, NameEditor, PendingSessionName } from "./NameEditor";
+import { awaitingSessionName, NameEditor } from "./NameEditor";
 
 afterEach(cleanup);
 
@@ -121,23 +121,18 @@ describe("work name editor", () => {
 });
 
 describe("pending session name", () => {
-  const live = { lifecycle: { state: "live" }, state: { process: { state: "alive" } } };
+  const live = { lifecycle: { state: "live" }, state: { process: { state: "alive" }, agent: { state: "busy" } } };
 
-  it("waits only while a live OMP session has no name", () => {
+  it("waits only while a non-idle live OMP session has no name", () => {
     expect(awaitingSessionName({ harness: "omp" }, live)).toBe(true);
-    expect(awaitingSessionName({ harness: "omp" }, { lifecycle: { state: "live" }, state: { process: { state: "starting" } } })).toBe(true);
+    expect(awaitingSessionName({ harness: "omp" }, { ...live, state: { ...live.state, process: { state: "starting" } } })).toBe(true);
+    expect(awaitingSessionName({ harness: "omp" }, { ...live, state: { ...live.state, agent: { state: "idle" } } })).toBe(false);
     expect(awaitingSessionName({ harness: "omp", name: "Repair cache" }, live)).toBe(false);
     expect(awaitingSessionName({ harness: "omp", name_error: "unreadable" }, live)).toBe(false);
     expect(awaitingSessionName({ harness: "omp", archived: true }, live)).toBe(false);
     expect(awaitingSessionName({ harness: "no-harness" }, live)).toBe(false);
     expect(awaitingSessionName({ harness: "omp" }, { lifecycle: { state: "exited" }, state: null })).toBe(false);
-    expect(awaitingSessionName({ harness: "omp" }, { lifecycle: { state: "live" }, state: { process: { state: "exited" } } })).toBe(false);
+    expect(awaitingSessionName({ harness: "omp" }, { ...live, state: { ...live.state, process: { state: "exited" } } })).toBe(false);
     expect(awaitingSessionName({ harness: "omp" }, null)).toBe(false);
-  });
-
-  it("names the wait without replacing the rename affordance's text", () => {
-    render(<PendingSessionName />);
-    const status = screen.getByRole("status", { name: "Waiting for session name" });
-    expect(status.querySelector(".pending-session-name-dots")?.textContent).toBe("...");
   });
 });

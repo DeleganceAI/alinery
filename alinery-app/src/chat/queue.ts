@@ -30,3 +30,11 @@ export function queuedTextsNotInEntries(texts: string[], entries: ChatEntry[]): 
   const present = new Set(entries.flatMap((entry) => (entry.type === "follow_up" ? [entry.text] : [])));
   return texts.filter((text) => !present.has(text));
 }
+
+/** Keep only the newest `count` follow-up rows: OMP delivers its queue oldest first. */
+export function trimQueuedFollowUps(entries: ChatEntry[], count: number): ChatEntry[] {
+  const queued = entries.filter((entry) => entry.type === "follow_up");
+  if (queued.length <= count) return entries;
+  const delivered = new Set(queued.slice(0, queued.length - count));
+  return entries.filter((entry) => !delivered.has(entry));
+}

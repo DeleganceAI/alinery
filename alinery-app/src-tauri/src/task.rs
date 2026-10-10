@@ -594,6 +594,7 @@ pub(crate) fn write_draft_in_with_slug(
     max_live_sessions: u32,
     branch_name: String,
     worktree_name: String,
+    draft_base_ref: Option<String>,
 ) -> Result<Task, String> {
     alinery_core::with_task_mutation_lock_waiting(repo, "write draft", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
         write_draft_in_with_slug_unlocked(
@@ -613,6 +614,7 @@ pub(crate) fn write_draft_in_with_slug(
             max_live_sessions,
             branch_name,
             worktree_name,
+            draft_base_ref,
         )
     })
 }
@@ -634,6 +636,7 @@ fn write_draft_in_with_slug_unlocked(
     max_live_sessions: u32,
     branch_name: String,
     worktree_name: String,
+    draft_base_ref: Option<String>,
 ) -> Result<Task, String> {
     if max_live_sessions == 0 {
         return Err("maximum live sessions must be positive".into());
@@ -697,6 +700,7 @@ fn write_draft_in_with_slug_unlocked(
         launch_defaults: alinery_core::execution::LaunchChoices { harness, model },
         auto_advance: auto_advance.unwrap_or_default(),
         draft: true,
+        draft_base_ref,
         parent_task: String::new(),
         active_subtask: String::new(),
         subtask_outcome: String::new(),
@@ -748,6 +752,7 @@ pub(crate) fn write_draft(
     branch_name: String,
     worktree_name: String,
     draft_slug: String,
+    draft_base_ref: Option<String>,
 ) -> Result<Task, String> {
     let repo = require_owned_active_repo(&state)?;
     write_draft_in_with_slug(
@@ -767,6 +772,7 @@ pub(crate) fn write_draft(
         max_live_sessions,
         branch_name,
         worktree_name,
+        draft_base_ref,
     )
 }
 
@@ -789,6 +795,7 @@ pub(crate) fn write_draft_for_repo(
     branch_name: String,
     worktree_name: String,
     draft_slug: String,
+    draft_base_ref: Option<String>,
 ) -> Result<Task, String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
@@ -809,6 +816,7 @@ pub(crate) fn write_draft_for_repo(
         max_live_sessions,
         branch_name,
         worktree_name,
+        draft_base_ref,
     )
 }
 

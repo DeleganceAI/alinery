@@ -16,8 +16,9 @@ const SIGNED_OUT: AccountStatus = { signedIn: false, email: null, plan: null, pa
  *  UserRound keeps the same neutral treatment in every resting state, so the slot
  *  always reads as "account"; only an in-flight sign-in swaps in X to cancel.
  *  Session is in auth.json; the pairing nonce is never persisted.
- *  Settings lives here (not the top-bar tabs); ⌘9 / , still open it via hotkeys. */
-export function AccountMenu({ onOpenSettings }: { onOpenSettings: () => void }) {
+ *  Notifications and Settings live here (not the top-bar tabs); ⌘8 and ⌘9 / , still open
+ *  them via hotkeys. */
+export function AccountMenu({ onOpenNotifications, onOpenSettings }: { onOpenNotifications: () => void; onOpenSettings: () => void }) {
   const [status, setStatus] = useState<AccountStatus | null>(null);
   const [credits, setCredits] = useState<DesktopCreditsView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -200,13 +201,21 @@ export function AccountMenu({ onOpenSettings }: { onOpenSettings: () => void }) 
         {credits.upsell === "buy-credits" || credits.balanceCents <= 0 || credits.cutoff ? "Buy credits" : `Credits ${formatCreditUsd(credits.balanceCents)}`}
       </button>
     ) : null;
-  const settingsItem = (
-    <button type="button" role="menuitem" className="account-chip-action" disabled={busy} onClick={run(onOpenSettings)}>
-      Settings
-      <span className="k" aria-hidden="true">
-        9
-      </span>
-    </button>
+  const navItems = (
+    <>
+      <button type="button" role="menuitem" className="account-chip-action" disabled={busy} onClick={run(onOpenNotifications)}>
+        Notifications
+        <span className="k" aria-hidden="true">
+          8
+        </span>
+      </button>
+      <button type="button" role="menuitem" className="account-chip-action" disabled={busy} onClick={run(onOpenSettings)}>
+        Settings
+        <span className="k" aria-hidden="true">
+          9
+        </span>
+      </button>
+    </>
   );
 
   return (
@@ -236,14 +245,14 @@ export function AccountMenu({ onOpenSettings }: { onOpenSettings: () => void }) 
                 {status.plan ? <span className="account-chip-plan">{status.plan}</span> : null}
               </button>
               {creditsItem}
-              {settingsItem}
+              {navItems}
               <button type="button" role="menuitem" className="account-chip-action" disabled={busy} onClick={run(signOut)}>
                 Sign out
               </button>
             </>
           ) : (
             <>
-              {settingsItem}
+              {navItems}
               <button type="button" role="menuitem" className="account-chip-action" disabled={busy} onClick={run(signIn)}>
                 Sign in
               </button>

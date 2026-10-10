@@ -351,7 +351,9 @@ pub(crate) fn output_with_timeout(mut cmd: Command, timeout: Duration) -> std::i
     });
     let deadline = Instant::now() + timeout;
     loop {
-        if let Some(status) = child.try_wait()? {
+        // A descendant may keep a pipe open after the direct child exits. Do not
+        // join either reader until it finishes; the same deadline still applies.
+        if let Some(status) = child.try_wait()?.filter(|_| stdout_reader.is_finished() && stderr_reader.is_finished()) {
             return Ok(std::process::Output {
                 status,
                 stdout: stdout_reader.join().map_err(|_| std::io::Error::other("stdout reader panicked"))??,

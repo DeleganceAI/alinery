@@ -3,6 +3,7 @@ import { Check, Copy, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 
 // Read the Markdown tree, not the DOM: nested copy controls must never enter copied text.
@@ -14,7 +15,7 @@ function markdownText(node: Element | ElementContent): string {
 }
 
 /** Chat bubble markdown: GFM formatting, no comment anchors/diff/mermaid machinery. */
-export function ChatMarkdown({ text, showBlockCopyButtons = true }: { text: string; showBlockCopyButtons?: boolean }) {
+export function ChatMarkdown({ text, showBlockCopyButtons = true, preserveLineBreaks = false }: { text: string; showBlockCopyButtons?: boolean; preserveLineBreaks?: boolean }) {
   const components = useMemo<Components>(
     () => ({
       a: ({ node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
@@ -41,7 +42,7 @@ export function ChatMarkdown({ text, showBlockCopyButtons = true }: { text: stri
   );
   return (
     <div className="md chat-md">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown remarkPlugins={preserveLineBreaks ? [remarkGfm, remarkBreaks] : [remarkGfm]} components={components}>
         {text}
       </ReactMarkdown>
     </div>

@@ -71,17 +71,22 @@ const LABEL_LINE_HEIGHT = 16;
 const LABEL_CHARACTER_WIDTH = 7.3;
 const LABEL_MAX_WIDTH = 240;
 
-function measureLabel(label: string) {
+function measureLabel(label: string, lineHeight: number) {
   if (!label) return { width: 0, height: 0 };
   const lines = label.split("\n");
-  const width = Math.min(LABEL_MAX_WIDTH, Math.max(...lines.map((line) => line.length)) * LABEL_CHARACTER_WIDTH + LABEL_PADDING);
+  const width = Math.max(lineHeight + LABEL_PADDING, Math.min(LABEL_MAX_WIDTH, Math.max(...lines.map((line) => line.length)) * LABEL_CHARACTER_WIDTH + LABEL_PADDING));
   const charactersPerLine = Math.max(1, Math.floor((width - LABEL_PADDING) / LABEL_CHARACTER_WIDTH));
   const lineCount = lines.reduce((count, line) => count + Math.max(1, Math.ceil(line.length / charactersPerLine)), 0);
-  return { width, height: lineCount * LABEL_LINE_HEIGHT + LABEL_PADDING };
+  return { width, height: lineCount * lineHeight + LABEL_PADDING };
 }
 
 /** Layer canonical dependencies; repeated boxes illustrate multiplicity, not execution cardinality. */
-export function layoutDefinitionGraph(keys: string[], connections: Connection[], repeatedKeys: ReadonlySet<string> = new Set()): DefinitionGraphLayout {
+export function layoutDefinitionGraph(
+  keys: string[],
+  connections: Connection[],
+  repeatedKeys: ReadonlySet<string> = new Set(),
+  labelLineHeight = LABEL_LINE_HEIGHT,
+): DefinitionGraphLayout {
   const combined = new Map<string, { from: string; to: string; labels: Set<string> }>();
   for (const connection of connections) {
     const pair = JSON.stringify([connection.from, connection.to]);
@@ -142,7 +147,7 @@ export function layoutDefinitionGraph(keys: string[], connections: Connection[],
       ...link,
       feedback: isFeedback,
       side: isFeedback ? -1 : ranks[link.to] > ranks[link.from] + 1 ? 1 : 0,
-      ...measureLabel(link.label),
+      ...measureLabel(link.label, labelLineHeight),
       labelX: 0,
       gapY: 0,
       track: 0,

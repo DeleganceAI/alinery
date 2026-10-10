@@ -1,12 +1,19 @@
 import { useState } from "react";
+import { ChatMarkdown } from "../chat/CopyMessage";
 import type { PendingUi } from "../chatTranscript";
 
 export function ChatExtensionPrompt({ request, onSubmit, onCancel }: { request: PendingUi; onSubmit: (value: string) => void; onCancel: () => void }) {
   const [value, setValue] = useState("");
+  const heading = (
+    <>
+      <p className="chat-msg-title">{request.title || (request.method === "select" ? "Choose an option" : "Input required")}</p>
+      {request.instructions ? <ChatMarkdown text={request.instructions} showBlockCopyButtons={false} preserveLineBreaks /> : null}
+    </>
+  );
   if (request.method === "select") {
     return (
       <div className="chat-ui-prompt">
-        <p className="chat-msg-title">{request.title || request.instructions || "Choose an option"}</p>
+        {heading}
         <div className="chat-ui-prompt-options">
           {(request.options ?? []).map((option, index) => (
             <button key={option} type="button" className="btn small" onClick={() => onSubmit(option)}>
@@ -30,7 +37,7 @@ export function ChatExtensionPrompt({ request, onSubmit, onCancel }: { request: 
         if (value.trim()) onSubmit(value);
       }}
     >
-      <p className="chat-msg-title">{request.title || request.instructions || "Input required"}</p>
+      {heading}
       <input
         className="field-input"
         value={value}

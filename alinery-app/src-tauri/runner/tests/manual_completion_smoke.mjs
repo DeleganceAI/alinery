@@ -63,7 +63,7 @@ const server = createServer((connection) => {
 
     completionAttempts += 1;
     if (completionAttempts === 1) {
-      connection.end('{"ok":true,"completion":{"status":"invalid_outputs","diagnostics":["Missing required output"]}}\n');
+      connection.end('{"ok":true,"completion":{"status":"invalid_outputs","diagnostics":["At least one valid assigned artifact must be published"]}}\n');
     } else if (completionAttempts === 2) {
       // Deliberately leave the connection unanswered. alinery-runner must time out,
       // and the OMP tool must render delivery_failed rather than false success.
@@ -118,7 +118,7 @@ async function selfTest() {
         code: 0,
         result: {
           status: "invalid_outputs",
-          diagnostics: ["Missing required output"],
+          diagnostics: ["At least one valid assigned artifact must be published"],
         },
         stderr: "",
       },
@@ -142,7 +142,7 @@ async function runOmpSmoke() {
   process.stdout.write(
     [
       "Starting real OMP with a deterministic fake alineryd acknowledgement sequence:",
-      "  1. invalid_outputs: Missing required output",
+      "  1. invalid_outputs: At least one valid assigned artifact must be published",
       "  2. delivery_failed: acknowledgement timeout",
       "  3. accepted",
       "Inspect the tool results and ordinary automatic exit. This fake-daemon smoke does not prove durable acceptance or successor gating.\n",

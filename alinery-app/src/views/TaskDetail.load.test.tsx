@@ -78,6 +78,7 @@ vi.mock("../ipc", () =>
 );
 
 beforeEach(() => {
+  localStorage.removeItem("alinery.taskSessionView");
   mocks.getTask.mockReset().mockResolvedValue(null);
   mocks.getTaskExecution.mockReset().mockResolvedValue(executionReply([]));
   mocks.listSessions.mockReset().mockResolvedValue([]);
@@ -127,6 +128,7 @@ describe("an unreadable saved execution state", () => {
     expect(screen.getByText(fixture.name)).toBeDefined();
     expect(screen.getByText(fixture.branch)).toBeDefined();
 
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     // Sessions still render with historical metadata when execution state is unavailable.
     await waitFor(() => expect(screen.getByRole("row", { name: "Open session superdevelop · research" })).toBeDefined());
 
@@ -150,6 +152,7 @@ describe("saved execution state without live access", () => {
     mocks.listSessions.mockResolvedValue([session({ id: "s1" })]);
     mocks.listArtifactsWithMetadata.mockResolvedValue([artifactItem({ name: "00-ticket.md" })]);
     renderDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
 
     await screen.findByRole("row", { name: "Open session Retained playbook · Retained worker" });
     expect(screen.queryByRole("alert")).toBeNull();
@@ -170,6 +173,7 @@ describe("a removed library definition", () => {
     mocks.getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "current" })]));
     mocks.listSessions.mockResolvedValue([session({ id: "current", phase: "worker" }), session({ id: "historical", playbook: "removed-playbook", phase: "old-phase" })]);
     renderDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
 
     expect(await screen.findByRole("row", { name: "Open session Retained playbook · Retained worker" })).toBeDefined();
     expect(screen.getByRole("row", { name: "Open session removed-playbook · old-phase" })).toBeDefined();
@@ -188,6 +192,7 @@ describe("a failing artifact scan on an unseeded related-task route", () => {
 
     // Nothing is seeded synchronously; everything comes from getTask resolving.
     await waitFor(() => expect(screen.getByText("Related Task")).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     expect(screen.getByText("related-branch")).toBeDefined();
     expect(screen.getByText("/w/related-task")).toBeDefined();
     expect(screen.getByRole("row", { name: "Open session superdevelop · research" })).toBeDefined();
@@ -293,6 +298,7 @@ it("older_poll_cannot_undo_name_commit_but_newer_poll_can_update_it", async () =
   await act(async () => {
     await vi.advanceTimersByTimeAsync(0);
   });
+  fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
   let release!: (value: (typeof current)[]) => void;
   mocks.listSessions.mockImplementationOnce(
     () =>

@@ -13,7 +13,14 @@ function browsableUrl(raw: string | undefined): string | null {
 }
 
 /** Acknowledge whether the browser actually opened, including invalid URLs and opener failures. */
-export async function settleOpenUrl(sessionId: string, requestId: string, raw: string | undefined, reportError: (error: string) => void): Promise<void> {
+export async function settleOpenUrl(
+  sessionId: string,
+  requestId: string,
+  raw: string | undefined,
+  reportError: (error: string) => void,
+  // Task sessions answer over the session RPC; a chat thread passes its own writer.
+  write: (payload: object) => Promise<unknown> = (payload) => ipc.rpcWriteSession(sessionId, payload),
+): Promise<void> {
   const url = browsableUrl(raw);
   if (!url) reportError("Blocked that link: only http and https links can be opened.");
   const opened = url
@@ -25,5 +32,5 @@ export async function settleOpenUrl(sessionId: string, requestId: string, raw: s
         },
       )
     : false;
-  await ipc.rpcWriteSession(sessionId, extensionUiConfirm(requestId, opened));
+  await write(extensionUiConfirm(requestId, opened));
 }

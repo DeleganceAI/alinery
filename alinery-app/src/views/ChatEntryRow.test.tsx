@@ -53,6 +53,19 @@ describe("ChatEntryRow", () => {
     expect(html).toContain("Continue.");
   });
 
+  it("marks a refused send as not sent and keeps its Copy button even where copy buttons are hidden", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const { container } = render(<ChatEntryRow entry={{ id: "p1", at: Date.now(), actor: ACTOR.you, type: "prompt", text: "Continue.", failed: true }} showCopyButton={false} />);
+    expect(container.querySelector(".chat-status-bad")?.textContent).toBe("not sent");
+    fireEvent.click(screen.getByRole("button", { name: "Copy message" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("Continue."));
+    cleanup();
+    const sent = render(<ChatEntryRow entry={{ id: "p2", at: Date.now(), actor: ACTOR.you, type: "prompt", text: "Continue." }} showCopyButton={false} />).container;
+    expect(sent.textContent).not.toContain("not sent");
+    expect(sent.querySelector("button[title='Copy message']")).toBeNull();
+  });
+
   it("does not put the queued kicker on a prompt", () => {
     const html = render(<ChatEntryRow entry={{ id: "p1", at: Date.now(), actor: ACTOR.you, type: "prompt", text: "Continue." }} showActorLabels={false} />).container.innerHTML;
     expect(html).not.toContain("queued · after this turn");
@@ -126,6 +139,43 @@ describe("ChatEntryRow markdown + copy", () => {
     expect(html).toContain("<h2>Heading</h2>");
     expect(html).toContain("<li>");
     expect(html).toContain("<strong>bold</strong>");
+  });
+
+  it("formats an incoming question while copying its original text and preserving reply controls", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const onApprove = vi.fn();
+    const detail =
+      "Review this proposal.\nBefore proceeding:\n\n- **Scope:** this task\n- Use `review`\n\n1. Inspect\n2. Approve\n\n<script>window.injected = true</script>\n\n[unsafe](javascript:void%280%29)";
+    const state = applyRpcLine(emptyTranscript(), { type: "extension_ui_request", id: "rich-question", method: "confirm", title: "Create child?", message: detail });
+    const { container } = render(<ChatEntryRow entry={state.entries[0]} onApprove={onApprove} />);
+
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Scope: this task", "Use review", "Inspect", "Approve"]);
+    expect(container.querySelector("strong")?.textContent).toBe("Scope:");
+    expect(container.querySelector("code")?.textContent).toBe("review");
+    expect(screen.getByText(/Review this proposal/).querySelector("br")).not.toBeNull();
+    expect(container.querySelector("script")).toBeNull();
+    expect(screen.getByText("unsafe").getAttribute("href") ?? "").not.toMatch(/^javascript:/);
+    fireEvent.click(screen.getByRole("button", { name: "Copy message" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`Create child?\n${detail}`));
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    expect(onApprove).toHaveBeenCalledWith("rich-question", true);
+    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+    expect(onApprove).toHaveBeenCalledWith("rich-question", false);
+  });
+
+  it("keeps a browser destination literal and non-clickable until approved", () => {
+    const state = applyRpcLine(emptyTranscript(), {
+      type: "extension_ui_request",
+      id: "browser-question",
+      method: "open_url",
+      url: "https://accounts.google.com@evil.example/path",
+      title: "**Trusted login**",
+    });
+    render(<ChatEntryRow entry={state.entries[0]} />);
+    expect(screen.getByText("https://evil.example/path")).toBeTruthy();
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.queryByText("Trusted login")).toBeNull();
   });
 
   it("streaming agent text stays plain and has no copy button", () => {

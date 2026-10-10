@@ -74,7 +74,7 @@ function renderAppearanceSection(onAppearanceChange = vi.fn(), appearance: Appea
       appearance={appearance}
       onAppearanceChange={onAppearanceChange}
       onNotificationsChange={() => {}}
-      initialSection="appearance"
+      initialSection="general"
     />,
   );
   return onAppearanceChange;
@@ -86,12 +86,14 @@ afterEach(() => {
 });
 
 describe("settings sections", () => {
-  it("keeps Chat and omits Distill, Harnesses, and a top-level Harness section", () => {
-    expect(SECTIONS.map((section) => section.label)).toContain("Chat");
-    expect(SECTIONS.map((section) => section.label)).not.toContain("Harness");
-    expect(SECTIONS.map((section) => section.label)).not.toContain("Distill to Wiki");
-    expect(SECTIONS.map((section) => section.label)).not.toContain("Harnesses");
-    expect(SECTIONS.map((section) => section.label)).not.toContain("Sessions");
+  it("lists Harness second, Chat right after Sessions view, and omits Distill and Harnesses", () => {
+    const labels = SECTIONS.map((section) => section.label);
+    expect(labels[1]).toBe("Harness");
+    expect(labels).toContain("Sessions view");
+    expect(labels.indexOf("Chat")).toBe(labels.indexOf("Sessions view") + 1);
+    expect(labels).not.toContain("Distill to Wiki");
+    expect(labels).not.toContain("Harnesses");
+    expect(labels).not.toContain("Sessions");
   });
 });
 

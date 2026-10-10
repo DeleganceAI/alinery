@@ -109,6 +109,11 @@ vi.mock("./ipc", () =>
     getCurrentWindow: (() => ({ onCloseRequested: mocks.onCloseRequested, destroy: vi.fn() })) as never,
     getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) as unknown as ReturnType<typeof import("./ipc").getCurrentWebview>,
     readConfigForRepo: mocks.readConfigForRepo,
+    taskSourceBranchesForRepo: async () => ({
+      branches: [{ full_ref: "refs/heads/main", name: "main" }],
+      head: { kind: "branch", full_ref: "refs/heads/main", name: "main" },
+      selected: null,
+    }),
     listPlaybookCatalog: async () => ({ candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [] }),
     listHarnessModelsForRepo: async () => [],
     connectionStatuses: async () => [],
@@ -240,7 +245,7 @@ describe("App duplicate coordinator", () => {
     fireEvent.click(await screen.findByText("duplicate-source"));
 
     await screen.findByText("task:source-2");
-    expect(mocks.setActiveRepo).toHaveBeenCalledWith("/repo-b", null);
+    expect(mocks.setActiveRepo).toHaveBeenCalledWith("/repo-b", []);
     expect(mocks.startSession).not.toHaveBeenCalled();
     expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining("binary missing"));
     expect(mocks.toastSuccess).not.toHaveBeenCalled();
@@ -280,11 +285,11 @@ describe("App duplicate coordinator", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Repository" }));
     fireEvent.click(screen.getByTitle("/repo-a"));
-    await waitFor(() => expect(mocks.setActiveRepo).toHaveBeenCalledWith("/repo-a", null));
+    await waitFor(() => expect(mocks.setActiveRepo).toHaveBeenCalledWith("/repo-a", []));
 
     resolveDuplicate(duplicateResult());
     await screen.findByText("task:source-2");
-    expect(mocks.setActiveRepo).toHaveBeenLastCalledWith("/repo-b", null);
+    expect(mocks.setActiveRepo).toHaveBeenLastCalledWith("/repo-b", []);
     expect(mocks.startSession).not.toHaveBeenCalled();
   });
 
@@ -348,7 +353,7 @@ describe("App duplicate coordinator", () => {
     await screen.findByText("task:source-2");
   });
 
-  it("shows opening toast until the create form is ready, then hides it", async () => {
+  it("hides the opening toast when the form appears, without waiting for configuration", async () => {
     let resolveConfig: (config: Config) => void = () => {};
     const config = await mocks.readConfigForRepo();
     mocks.readConfigForRepo.mockReturnValue(
@@ -365,8 +370,7 @@ describe("App duplicate coordinator", () => {
     expect(notifications.querySelector(".toast.loading")).not.toBeNull();
 
     await screen.findByPlaceholderText("New task name…");
-    expect(notifications.querySelector(".toast.loading")).not.toBeNull();
-    resolveConfig(config);
     await waitFor(() => expect(notifications.querySelector(".toast.loading")).toBeNull());
+    resolveConfig(config);
   });
 });

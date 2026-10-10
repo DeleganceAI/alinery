@@ -88,3 +88,36 @@ export function executionReply(records: ExecutionRecord[] = [executionRecord()])
     },
   };
 }
+
+export function partiallyPublishedExecution(ownerSessionId = "owner-a"): TaskExecutionReply {
+  const reply = executionReply([
+    executionRecord({
+      owner_session_id: ownerSessionId,
+      lifecycle: "finishing",
+      receipt_id: "receipt-a",
+      outputs: [
+        { selector: "resolution-options.md", relative_path: "2-resolution-options-10.md", discriminator: 10 },
+        { selector: "selected-fix.md", relative_path: "2-selected-fix-11.md", discriminator: 11 },
+        { selector: "papers/*.md", relative_path: "papers/2-*-12.md", discriminator: 12 },
+        { selector: "notes/*.md", relative_path: "notes/2-*-13.md", discriminator: 13 },
+      ],
+    }),
+  ]);
+  for (const [id, producer, selector, relativePath] of [
+    ["options", "execution-a", "resolution-options.md", "2-resolution-options-10.md"],
+    ["paper-a", "execution-a", "papers/*.md", "papers/2-a-12.md"],
+    ["paper-b", "execution-a", "papers/*.md", "papers/2-b-12.md"],
+    ["other-fix", "execution-b", "selected-fix.md", "2-selected-fix-20.md"],
+    ["other-note", "execution-b", "notes/*.md", "notes/2-other-21.md"],
+  ]) {
+    reply.state.occurrences[id] = {
+      ...reply.state.occurrences["input-a"],
+      id,
+      producer_execution_id: producer,
+      selector,
+      logical_path: selector,
+      relative_path: relativePath,
+    };
+  }
+  return reply;
+}

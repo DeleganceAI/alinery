@@ -1,0 +1,830 @@
+{
+  "snapshots": [
+    {
+      "artifacts": {
+        "00-ticket.md": "2 3 5",
+        "1-request-1.md": "request",
+        "2-left-1.md": "left"
+      },
+      "expected_input_producers": {
+        "left.md": [
+          "db6c4960-1aa6-464b-bc53-eb607c0506c0"
+        ],
+        "right.md": [
+          "128185f8-7771-48b9-b849-0686c87da6a6"
+        ]
+      },
+      "name": "ordinary",
+      "next_step": "join",
+      "queued_execution": "128185f8-7771-48b9-b849-0686c87da6a6",
+      "queued_output": "right.md",
+      "source": "+++\nversion = 2\nkey = \"graph\"\ntitle = \"Graph\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"omp\"\n\n[[step]]\nkey = \"source\"\ntitle = \"source\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = true\ninputs = [{ path = \"ticket.md\", mode = \"single\" }]\noutputs = [{ path = \"request.md\" }]\n\n[[step]]\nkey = \"left\"\ntitle = \"left\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = true\ninputs = [{ path = \"request.md\", mode = \"single\" }]\noutputs = [{ path = \"left.md\" }]\n\n[[step]]\nkey = \"right\"\ntitle = \"right\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = true\ninputs = [{ path = \"request.md\", mode = \"single\" }]\noutputs = [{ path = \"right.md\" }]\n\n[[step]]\nkey = \"join\"\ntitle = \"join\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = true\ninputs = [{ path = \"left.md\", mode = \"single\" }, { path = \"right.md\", mode = \"single\" }]\noutputs = [{ path = \"answer.md\" }]\n+++\n<!-- alinery:step source -->\nWrite the assigned output.\n<!-- alinery:step left -->\nWrite the assigned output.\n<!-- alinery:step right -->\nWrite the assigned output.\n<!-- alinery:step join -->\nWrite the assigned output.\n",
+      "state": {
+        "collections": {},
+        "contexts": {
+          "root": {
+            "bindings": {
+              "left.md": [
+                "dc1ad11b-f9ed-4032-9f3a-69ca84900fd2"
+              ],
+              "request.md": [
+                "15517fc2-9be8-4c8e-a570-a944f56eab24"
+              ],
+              "ticket.md": [
+                "fdd89010-4b64-4c6f-8529-0c8ed55a7d1b"
+              ]
+            },
+            "cause": {
+              "kind": "root"
+            },
+            "id": "root",
+            "parent_id": null
+          }
+        },
+        "creation": "ready",
+        "creation_error": null,
+        "definition_identity": "3be15ca03b1e4961",
+        "enabled_steps": [
+          "join",
+          "left",
+          "right",
+          "source"
+        ],
+        "executions": {
+          "128185f8-7771-48b9-b849-0686c87da6a6": {
+            "binding_key": "{\"step_key\":\"right\",\"context_id\":\"root\",\"inputs\":{\"request.md\":[\"15517fc2-9be8-4c8e-a570-a944f56eab24\"]},\"complete_collection_id\":null,\"each_collection_id\":null,\"each_member_id\":null,\"manual\":false}",
+            "candidate": {
+              "complete_collection_id": null,
+              "context_id": "root",
+              "each_collection_id": null,
+              "each_member_id": null,
+              "inputs": {
+                "request.md": [
+                  "15517fc2-9be8-4c8e-a570-a944f56eab24"
+                ]
+              },
+              "manual": false,
+              "step_key": "right"
+            },
+            "depth": 2,
+            "error": null,
+            "exit_code": null,
+            "id": "128185f8-7771-48b9-b849-0686c87da6a6",
+            "is_coding_step": false,
+            "launch": {
+              "harness": "omp",
+              "model": ""
+            },
+            "lifecycle": "queued",
+            "outputs": [
+              {
+                "discriminator": 1,
+                "relative_path": "2-right-1.md",
+                "selector": "right.md"
+              }
+            ],
+            "owner_session_id": "s92422f71-f5c0-4b5f-a96e-f55ee6112892",
+            "parent_execution_ids": [
+              "cd0cd982-2f3e-4343-8d3a-0c4830d3506a"
+            ],
+            "permission": {
+              "kind": "automatic"
+            },
+            "previous_session_ids": [],
+            "receipt_id": null,
+            "shutdown_confirmed": false,
+            "start_requested": true
+          },
+          "cd0cd982-2f3e-4343-8d3a-0c4830d3506a": {
+            "binding_key": "{\"step_key\":\"source\",\"context_id\":\"root\",\"inputs\":{\"ticket.md\":[\"fdd89010-4b64-4c6f-8529-0c8ed55a7d1b\"]},\"complete_collection_id\":null,\"each_collection_id\":null,\"each_member_id\":null,\"manual\":false}",
+            "candidate": {
+              "complete_collection_id": null,
+              "context_id": "root",
+              "each_collection_id": null,
+              "each_member_id": null,
+              "inputs": {
+                "ticket.md": [
+                  "fdd89010-4b64-4c6f-8529-0c8ed55a7d1b"
+                ]
+              },
+              "manual": false,
+              "step_key": "source"
+            },
+            "depth": 1,
+            "error": null,
+            "exit_code": 0,
+            "id": "cd0cd982-2f3e-4343-8d3a-0c4830d3506a",
+            "is_coding_step": false,
+            "launch": {
+              "harness": "omp",
+              "model": ""
+            },
+            "lifecycle": "completed",
+            "outputs": [
+              {
+                "discriminator": 1,
+                "relative_path": "1-request-1.md",
+                "selector": "request.md"
+              }
+            ],
+            "owner_session_id": "sfb81acfd-5dfc-40ed-bb49-f85c64052422",
+            "parent_execution_ids": [],
+            "permission": {
+              "kind": "consumed"
+            },
+            "previous_session_ids": [],
+            "receipt_id": "7c6ec536-5bb8-4776-875a-6f73d8fefee2",
+            "shutdown_confirmed": true,
+            "start_requested": true
+          },
+          "db6c4960-1aa6-464b-bc53-eb607c0506c0": {
+            "binding_key": "{\"step_key\":\"left\",\"context_id\":\"root\",\"inputs\":{\"request.md\":[\"15517fc2-9be8-4c8e-a570-a944f56eab24\"]},\"complete_collection_id\":null,\"each_collection_id\":null,\"each_member_id\":null,\"manual\":false}",
+            "candidate": {
+              "complete_collection_id": null,
+              "context_id": "root",
+              "each_collection_id": null,
+              "each_member_id": null,
+              "inputs": {
+                "request.md": [
+                  "15517fc2-9be8-4c8e-a570-a944f56eab24"
+                ]
+              },
+              "manual": false,
+              "step_key": "left"
+            },
+            "depth": 2,
+            "error": null,
+            "exit_code": 0,
+            "id": "db6c4960-1aa6-464b-bc53-eb607c0506c0",
+            "is_coding_step": false,
+            "launch": {
+              "harness": "omp",
+              "model": ""
+            },
+            "lifecycle": "completed",
+            "outputs": [
+              {
+                "discriminator": 1,
+                "relative_path": "2-left-1.md",
+                "selector": "left.md"
+              }
+            ],
+            "owner_session_id": "sd52586cb-32d4-4adc-9c59-57f8af3231e4",
+            "parent_execution_ids": [
+              "cd0cd982-2f3e-4343-8d3a-0c4830d3506a"
+            ],
+            "permission": {
+              "kind": "consumed"
+            },
+            "previous_session_ids": [],
+            "receipt_id": "103f1e2d-7f72-4429-8314-46292d2263c8",
+            "shutdown_confirmed": true,
+            "start_requested": true
+          }
+        },
+        "initial_start_requested": false,
+        "launch_defaults": {
+          "harness": "",
+          "model": ""
+        },
+        "max_live_sessions": 10,
+        "occurrences": {
+          "15517fc2-9be8-4c8e-a570-a944f56eab24": {
+            "collection_ids": [],
+            "context_id": "root",
+            "depth": 1,
+            "discriminator": 1,
+            "id": "15517fc2-9be8-4c8e-a570-a944f56eab24",
+            "logical_path": "request.md",
+            "producer_execution_id": "cd0cd982-2f3e-4343-8d3a-0c4830d3506a",
+            "relative_path": "1-request-1.md",
+            "selector": "request.md"
+          },
+          "dc1ad11b-f9ed-4032-9f3a-69ca84900fd2": {
+            "collection_ids": [],
+            "context_id": "root",
+            "depth": 2,
+            "discriminator": 1,
+            "id": "dc1ad11b-f9ed-4032-9f3a-69ca84900fd2",
+            "logical_path": "left.md",
+            "producer_execution_id": "db6c4960-1aa6-464b-bc53-eb607c0506c0",
+            "relative_path": "2-left-1.md",
+            "selector": "left.md"
+          },
+          "fdd89010-4b64-4c6f-8529-0c8ed55a7d1b": {
+            "collection_ids": [],
+            "context_id": "root",
+            "depth": 0,
+            "discriminator": 0,
+            "id": "fdd89010-4b64-4c6f-8529-0c8ed55a7d1b",
+            "logical_path": "ticket.md",
+            "producer_execution_id": null,
+            "relative_path": "00-ticket.md",
+            "selector": "ticket.md"
+          }
+        },
+        "owning_app_config_identity": "",
+        "owning_lane": "test-lane",
+        "reference": {
+          "key": "graph",
+          "scope": "repo"
+        },
+        "revision": 0,
+        "version": 1
+      }
+    },
+    {
+      "artifacts": {
+        "00-ticket.md": "2 3 5",
+        "1-design-1.md": "first design",
+        "2-ticket-1.md": "next request"
+      },
+      "expected_input_producers": {
+        "design.md": [
+          "ac270c34-3e6b-44a9-9323-a468bcb5eee8"
+        ]
+      },
+      "name": "loop",
+      "next_step": "continue",
+      "queued_execution": "ac270c34-3e6b-44a9-9323-a468bcb5eee8",
+      "queued_output": "design.md",
+      "source": "+++\nversion = 2\nkey = \"graph\"\ntitle = \"Graph\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"omp\"\n\n[[step]]\nkey = \"design\"\ntitle = \"design\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = true\ninputs = [{ path = \"ticket.md\", mode = \"single\" }]\noutputs = [{ path = \"design.md\" }]\n\n[[step]]\nkey = \"continue\"\ntitle = \"continue\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = true\ninputs = [{ path = \"design.md\", mode = \"single\" }]\noutputs = [{ path = \"ticket.md\" }, { path = \"stop.md\" }]\n+++\n<!-- alinery:step design -->\nWrite the assigned output.\n<!-- alinery:step continue -->\nWrite the assigned output.\n",
+      "state": {
+        "collections": {},
+        "contexts": {
+          "[\"loop\",[[\"continue\",\"design\"],[\"324c4dcf-642a-44dc-accc-4009ebfe6dd6\"]]]": {
+            "bindings": {
+              "ticket.md": [
+                "324c4dcf-642a-44dc-accc-4009ebfe6dd6"
+              ]
+            },
+            "cause": {
+              "component_steps": [
+                "continue",
+                "design"
+              ],
+              "kind": "loop",
+              "trigger_occurrences": [
+                "324c4dcf-642a-44dc-accc-4009ebfe6dd6"
+              ]
+            },
+            "id": "[\"loop\",[[\"continue\",\"design\"],[\"324c4dcf-642a-44dc-accc-4009ebfe6dd6\"]]]",
+            "parent_id": "root"
+          },
+          "root": {
+            "bindings": {
+              "design.md": [
+                "904f13f9-8937-4d81-aacc-6368cad8d478"
+              ],
+              "ticket.md": [
+                "d0d34062-3132-4818-be4c-dcafe7dbe09b"
+              ]
+            },
+            "cause": {
+              "kind": "root"
+            },
+            "id": "root",
+            "parent_id": null
+          }
+        },
+        "creation": "ready",
+        "creation_error": null,
+        "definition_identity": "62e35409a7896be1",
+        "enabled_steps": [
+          "continue",
+          "design"
+        ],
+        "executions": {
+          "ac270c34-3e6b-44a9-9323-a468bcb5eee8": {
+            "binding_key": "{\"step_key\":\"design\",\"context_id\":\"[\\\"loop\\\",[[\\\"continue\\\",\\\"design\\\"],[\\\"324c4dcf-642a-44dc-accc-4009ebfe6dd6\\\"]]]\",\"inputs\":{\"ticket.md\":[\"324c4dcf-642a-44dc-accc-4009ebfe6dd6\"]},\"complete_collection_id\":null,\"each_collection_id\":null,\"each_member_id\":null,\"manual\":false}",
+            "candidate": {
+              "complete_collection_id": null,
+              "context_id": "[\"loop\",[[\"continue\",\"design\"],[\"324c4dcf-642a-44dc-accc-4009ebfe6dd6\"]]]",
+              "each_collection_id": null,
+              "each_member_id": null,
+              "inputs": {
+                "ticket.md": [
+                  "324c4dcf-642a-44dc-accc-4009ebfe6dd6"
+                ]
+              },
+              "manual": false,
+              "step_key": "design"
+            },
+            "depth": 3,
+            "error": null,
+            "exit_code": null,
+            "id": "ac270c34-3e6b-44a9-9323-a468bcb5eee8",
+            "is_coding_step": false,
+            "launch": {
+              "harness": "omp",
+              "model": ""
+            },
+            "lifecycle": "queued",
+            "outputs": [
+              {
+                "discriminator": 1,
+                "relative_path": "3-design-1.md",
+                "selector": "design.md"
+              }
+            ],
+            "owner_session_id": "s2d8ad1b3-9ee1-40f6-93ea-991d0b51f0b8",
+            "parent_execution_ids": [
+              "af0b850b-8764-4192-8963-5354760efb08"
+            ],
+            "permission": {
+              "kind": "automatic"
+            },
+            "previous_session_ids": [],
+            "receipt_id": null,
+            "shutdown_confirmed": false,
+            "start_requested": true
+          },
+          "af0b850b-8764-4192-8963-5354760efb08": {
+            "binding_key": "{\"step_key\":\"continue\",\"context_id\":\"root\",\"inputs\":{\"design.md\":[\"904f13f9-8937-4d81-aacc-6368cad8d478\"]},\"complete_collection_id\":null,\"each_collection_id\":null,\"each_member_id\":null,\"manual\":false}",
+            "candidate": {
+              "complete_collection_id": null,
+              "context_id": "root",
+              "each_collection_id": null,
+              "each_member_id": null,
+              "inputs": {
+                "design.md": [
+                  "904f13f9-8937-4d81-aacc-6368cad8d478"
+                ]
+              },
+              "manual": false,
+              "step_key": "continue"
+            },
+            "depth": 2,
+            "error": null,
+            "exit_code": 0,
+            "id": "af0b850b-8764-4192-8963-5354760efb08",
+            "is_coding_step": false,
+            "launch": {
+              "harness": "omp",
+              "model": ""
+            },
+            "lifecycle": "completed",
+            "outputs": [
+              {
+                "discriminator": 1,
+                "relative_path": "2-ticket-1.md",
+                "selector": "ticket.md"
+              },
+              {
+                "discriminator": 1,
+                "relative_path": "2-stop-1.md",
+                "selector": "stop.md"
+              }
+            ],
+            "owner_session_id": "s5f5341c4-2b27-4807-913a-be2bb1d332aa",
+            "parent_execution_ids": [
+              "bb1f719e-02eb-436a-b81c-1308230df014"
+            ],
+            "permission": {
+              "kind": "consumed"
+            },
+            "previous_session_ids": [],
+            "receipt_id": "a9b729ee-ec08-426f-847d-c010c4f24f2c",
+            "shutdown_confirmed": true,
+            "start_requested": true
+          },
+          "bb1f719e-02eb-436a-b81c-1308230df014": {
+            "binding_key": "{\"step_key\":\"design\",\"context_id\":\"root\",\"inputs\":{\"ticket.md\":[\"d0d34062-3132-4818-be4c-dcafe7dbe09b\"]},\"complete_collection_id\":null,\"each_collection_id\":null,\"each_member_id\":null,\"manual\":false}",
+            "candidate": {
+              "complete_collection_id": null,
+              "context_id": "root",
+              "each_collection_id": null,
+              "each_member_id": null,
+              "inputs": {
+                "ticket.md": [
+                  "d0d34062-3132-4818-be4c-dcafe7dbe09b"
+                ]
+              },
+              "manual": false,
+              "step_key": "design"
+            },
+            "depth": 1,
+            "error": null,
+            "exit_code": 0,
+            "id": "bb1f719e-02eb-436a-b81c-1308230df014",
+            "is_coding_step": false,
+            "launch": {
+              "harness": "omp",
+              "model": ""
+            },
+            "lifecycle": "completed",
+            "outputs": [
+              {
+                "discriminator": 1,
+                "relative_path": "1-design-1.md",
+                "selector": "design.md"
+              }
+            ],
+            "owner_session_id": "s363927a0-aa62-4623-88ce-f92015ed5dc0",
+            "parent_execution_ids": [],
+            "permission": {
+              "kind": "consumed"
+            },
+            "previous_session_ids": [],
+            "receipt_id": "b05bbd5b-3b1c-4766-a354-4cbd0c60fad2",
+            "shutdown_confirmed": true,
+            "start_requested": true
+          }
+        },
+        "initial_start_requested": false,
+        "launch_defaults": {
+          "harness": "",
+          "model": ""
+        },
+        "max_live_sessions": 10,
+        "occurrences": {
+          "324c4dcf-642a-44dc-accc-4009ebfe6dd6": {
+            "collection_ids": [],
+            "context_id": "root",
+            "depth": 2,
+            "discriminator": 1,
+            "id": "324c4dcf-642a-44dc-accc-4009ebfe6dd6",
+            "logical_path": "ticket.md",
+            "producer_execution_id": "af0b850b-8764-4192-8963-5354760efb08",
+            "relative_path": "2-ticket-1.md",
+            "selector": "ticket.md"
+          },
+          "904f13f9-8937-4d81-aacc-6368cad8d478": {
+            "collection_ids": [],
+            "context_id": "root",
+            "depth": 1,
+            "discriminator": 1,
+            "id": "904f13f9-8937-4d81-aacc-6368cad8d478",
+            "logical_path": "design.md",
+            "producer_execution_id": "bb1f719e-02eb-436a-b81c-1308230df014",
+            "relative_path": "1-design-1.md",
+            "selector": "design.md"
+          },
+          "d0d34062-3132-4818-be4c-dcafe7dbe09b": {
+            "collection_ids": [],
+            "context_id": "root",
+            "depth": 0,
+            "discriminator": 0,
+            "id": "d0d34062-3132-4818-be4c-dcafe7dbe09b",
+            "logical_path": "ticket.md",
+            "producer_execution_id": null,
+            "relative_path": "00-ticket.md",
+            "selector": "ticket.md"
+          }
+        },
+        "owning_app_config_identity": "",
+        "owning_lane": "test-lane",
+        "reference": {
+          "key": "graph",
+          "scope": "repo"
+        },
+        "revision": 0,
+        "version": 1
+      }
+    },
+    {
+      "artifacts": {
+        "00-ticket.md": "2 3 5",
+        "1-request-a-1.md": "a",
+        "1-request-b-1.md": "b",
+        "2-result-1.md": "first result"
+      },
+      "expected_input_producers": {
+        "result*.md": [
+          "dcff369a-1e4f-4150-9ff7-ebd0255a0eb8",
+          "18770be2-8c2e-4453-a054-f31a03903f1d"
+        ]
+      },
+      "name": "collection",
+      "next_step": "collect",
+      "queued_execution": "18770be2-8c2e-4453-a054-f31a03903f1d",
+      "queued_output": "result.md",
+      "source": "+++\nversion = 2\nkey = \"graph\"\ntitle = \"Graph\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"omp\"\n\n[[step]]\nkey = \"source\"\ntitle = \"source\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = true\ninputs = [{ path = \"ticket.md\", mode = \"single\" }]\noutputs = [{ path = \"request-*.md\" }]\n\n[[step]]\nkey = \"worker\"\ntitle = \"worker\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = true\ninputs = [{ path = \"request-*.md\", mode = \"each\" }]\noutputs = [{ path = \"result.md\" }]\n\n[[step]]\nkey = \"collect\"\ntitle = \"collect\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = true\ninputs = [{ path = \"result*.md\", mode = \"complete\" }]\noutputs = [{ path = \"answer.md\" }]\n+++\n<!-- alinery:step source -->\nWrite the assigned output.\n<!-- alinery:step worker -->\nWrite the assigned output.\n<!-- alinery:step collect -->\nWrite the assigned output.\n",
+      "state": {
+        "collections": {
+          "[\"family\",[\"root\",\"[\\\"output\\\",[\\\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\\\",\\\"request-*.md\\\"]]\",\"worker\",\"result.md\"]]": {
+            "context_id": "root",
+            "expected_execution_ids": [
+              "18770be2-8c2e-4453-a054-f31a03903f1d",
+              "dcff369a-1e4f-4150-9ff7-ebd0255a0eb8"
+            ],
+            "id": "[\"family\",[\"root\",\"[\\\"output\\\",[\\\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\\\",\\\"request-*.md\\\"]]\",\"worker\",\"result.md\"]]",
+            "member_occurrence_ids": [
+              "c88236ce-220e-45f8-b9e0-1143cd05a784"
+            ],
+            "membership_closed": false,
+            "producer_step": "worker",
+            "selector": "result.md",
+            "source_collection_id": "[\"output\",[\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\",\"request-*.md\"]]"
+          },
+          "[\"output\",[\"18770be2-8c2e-4453-a054-f31a03903f1d\",\"result.md\"]]": {
+            "context_id": "[\"member\",[\"[\\\"output\\\",[\\\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\\\",\\\"request-*.md\\\"]]\",\"f25c77c8-329f-4c16-8848-dca4cd2922d4\"]]",
+            "expected_execution_ids": [
+              "18770be2-8c2e-4453-a054-f31a03903f1d"
+            ],
+            "id": "[\"output\",[\"18770be2-8c2e-4453-a054-f31a03903f1d\",\"result.md\"]]",
+            "member_occurrence_ids": [],
+            "membership_closed": false,
+            "producer_step": "worker",
+            "selector": "result.md",
+            "source_collection_id": null
+          },
+          "[\"output\",[\"dcff369a-1e4f-4150-9ff7-ebd0255a0eb8\",\"result.md\"]]": {
+            "context_id": "[\"member\",[\"[\\\"output\\\",[\\\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\\\",\\\"request-*.md\\\"]]\",\"a1e0efb4-16e5-49d7-88e4-ed359e59630c\"]]",
+            "expected_execution_ids": [
+              "dcff369a-1e4f-4150-9ff7-ebd0255a0eb8"
+            ],
+            "id": "[\"output\",[\"dcff369a-1e4f-4150-9ff7-ebd0255a0eb8\",\"result.md\"]]",
+            "member_occurrence_ids": [
+              "c88236ce-220e-45f8-b9e0-1143cd05a784"
+            ],
+            "membership_closed": true,
+            "producer_step": "worker",
+            "selector": "result.md",
+            "source_collection_id": null
+          },
+          "[\"output\",[\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\",\"request-*.md\"]]": {
+            "context_id": "root",
+            "expected_execution_ids": [
+              "fbf56faa-d012-42a0-9e76-d5e1c274c5f4"
+            ],
+            "id": "[\"output\",[\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\",\"request-*.md\"]]",
+            "member_occurrence_ids": [
+              "a1e0efb4-16e5-49d7-88e4-ed359e59630c",
+              "f25c77c8-329f-4c16-8848-dca4cd2922d4"
+            ],
+            "membership_closed": true,
+            "producer_step": "source",
+            "selector": "request-*.md",
+            "source_collection_id": null
+          }
+        },
+        "contexts": {
+          "[\"member\",[\"[\\\"output\\\",[\\\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\\\",\\\"request-*.md\\\"]]\",\"a1e0efb4-16e5-49d7-88e4-ed359e59630c\"]]": {
+            "bindings": {
+              "request-b.md": [
+                "a1e0efb4-16e5-49d7-88e4-ed359e59630c"
+              ],
+              "result.md": [
+                "c88236ce-220e-45f8-b9e0-1143cd05a784"
+              ]
+            },
+            "cause": {
+              "collection_id": "[\"output\",[\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\",\"request-*.md\"]]",
+              "kind": "member",
+              "occurrence_id": "a1e0efb4-16e5-49d7-88e4-ed359e59630c"
+            },
+            "id": "[\"member\",[\"[\\\"output\\\",[\\\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\\\",\\\"request-*.md\\\"]]\",\"a1e0efb4-16e5-49d7-88e4-ed359e59630c\"]]",
+            "parent_id": "root"
+          },
+          "[\"member\",[\"[\\\"output\\\",[\\\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\\\",\\\"request-*.md\\\"]]\",\"f25c77c8-329f-4c16-8848-dca4cd2922d4\"]]": {
+            "bindings": {
+              "request-a.md": [
+                "f25c77c8-329f-4c16-8848-dca4cd2922d4"
+              ]
+            },
+            "cause": {
+              "collection_id": "[\"output\",[\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\",\"request-*.md\"]]",
+              "kind": "member",
+              "occurrence_id": "f25c77c8-329f-4c16-8848-dca4cd2922d4"
+            },
+            "id": "[\"member\",[\"[\\\"output\\\",[\\\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\\\",\\\"request-*.md\\\"]]\",\"f25c77c8-329f-4c16-8848-dca4cd2922d4\"]]",
+            "parent_id": "root"
+          },
+          "root": {
+            "bindings": {
+              "request-a.md": [
+                "f25c77c8-329f-4c16-8848-dca4cd2922d4"
+              ],
+              "request-b.md": [
+                "a1e0efb4-16e5-49d7-88e4-ed359e59630c"
+              ],
+              "ticket.md": [
+                "b037621c-3902-4689-8cef-41d6f93beb7e"
+              ]
+            },
+            "cause": {
+              "kind": "root"
+            },
+            "id": "root",
+            "parent_id": null
+          }
+        },
+        "creation": "ready",
+        "creation_error": null,
+        "definition_identity": "48b83e41603c6edf",
+        "enabled_steps": [
+          "collect",
+          "source",
+          "worker"
+        ],
+        "executions": {
+          "18770be2-8c2e-4453-a054-f31a03903f1d": {
+            "binding_key": "{\"step_key\":\"worker\",\"context_id\":\"[\\\"member\\\",[\\\"[\\\\\\\"output\\\\\\\",[\\\\\\\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\\\\\\\",\\\\\\\"request-*.md\\\\\\\"]]\\\",\\\"f25c77c8-329f-4c16-8848-dca4cd2922d4\\\"]]\",\"inputs\":{\"request-*.md\":[\"f25c77c8-329f-4c16-8848-dca4cd2922d4\"]},\"complete_collection_id\":null,\"each_collection_id\":\"[\\\"output\\\",[\\\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\\\",\\\"request-*.md\\\"]]\",\"each_member_id\":\"f25c77c8-329f-4c16-8848-dca4cd2922d4\",\"manual\":false}",
+            "candidate": {
+              "complete_collection_id": null,
+              "context_id": "[\"member\",[\"[\\\"output\\\",[\\\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\\\",\\\"request-*.md\\\"]]\",\"f25c77c8-329f-4c16-8848-dca4cd2922d4\"]]",
+              "each_collection_id": "[\"output\",[\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\",\"request-*.md\"]]",
+              "each_member_id": "f25c77c8-329f-4c16-8848-dca4cd2922d4",
+              "inputs": {
+                "request-*.md": [
+                  "f25c77c8-329f-4c16-8848-dca4cd2922d4"
+                ]
+              },
+              "manual": false,
+              "step_key": "worker"
+            },
+            "depth": 2,
+            "error": null,
+            "exit_code": null,
+            "id": "18770be2-8c2e-4453-a054-f31a03903f1d",
+            "is_coding_step": false,
+            "launch": {
+              "harness": "omp",
+              "model": ""
+            },
+            "lifecycle": "queued",
+            "outputs": [
+              {
+                "discriminator": 2,
+                "relative_path": "2-result-2.md",
+                "selector": "result.md"
+              }
+            ],
+            "owner_session_id": "s50eb8b34-5a4b-4914-a3e9-05e06d0dfe90",
+            "parent_execution_ids": [
+              "fbf56faa-d012-42a0-9e76-d5e1c274c5f4"
+            ],
+            "permission": {
+              "kind": "automatic"
+            },
+            "previous_session_ids": [],
+            "receipt_id": null,
+            "shutdown_confirmed": false,
+            "start_requested": true
+          },
+          "dcff369a-1e4f-4150-9ff7-ebd0255a0eb8": {
+            "binding_key": "{\"step_key\":\"worker\",\"context_id\":\"[\\\"member\\\",[\\\"[\\\\\\\"output\\\\\\\",[\\\\\\\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\\\\\\\",\\\\\\\"request-*.md\\\\\\\"]]\\\",\\\"a1e0efb4-16e5-49d7-88e4-ed359e59630c\\\"]]\",\"inputs\":{\"request-*.md\":[\"a1e0efb4-16e5-49d7-88e4-ed359e59630c\"]},\"complete_collection_id\":null,\"each_collection_id\":\"[\\\"output\\\",[\\\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\\\",\\\"request-*.md\\\"]]\",\"each_member_id\":\"a1e0efb4-16e5-49d7-88e4-ed359e59630c\",\"manual\":false}",
+            "candidate": {
+              "complete_collection_id": null,
+              "context_id": "[\"member\",[\"[\\\"output\\\",[\\\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\\\",\\\"request-*.md\\\"]]\",\"a1e0efb4-16e5-49d7-88e4-ed359e59630c\"]]",
+              "each_collection_id": "[\"output\",[\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\",\"request-*.md\"]]",
+              "each_member_id": "a1e0efb4-16e5-49d7-88e4-ed359e59630c",
+              "inputs": {
+                "request-*.md": [
+                  "a1e0efb4-16e5-49d7-88e4-ed359e59630c"
+                ]
+              },
+              "manual": false,
+              "step_key": "worker"
+            },
+            "depth": 2,
+            "error": null,
+            "exit_code": 0,
+            "id": "dcff369a-1e4f-4150-9ff7-ebd0255a0eb8",
+            "is_coding_step": false,
+            "launch": {
+              "harness": "omp",
+              "model": ""
+            },
+            "lifecycle": "completed",
+            "outputs": [
+              {
+                "discriminator": 1,
+                "relative_path": "2-result-1.md",
+                "selector": "result.md"
+              }
+            ],
+            "owner_session_id": "s233f4d9e-bcc9-4649-b2ef-ed7786270477",
+            "parent_execution_ids": [
+              "fbf56faa-d012-42a0-9e76-d5e1c274c5f4"
+            ],
+            "permission": {
+              "kind": "consumed"
+            },
+            "previous_session_ids": [],
+            "receipt_id": "8d33e7df-7ad7-4c9e-8668-c37d197774a4",
+            "shutdown_confirmed": true,
+            "start_requested": true
+          },
+          "fbf56faa-d012-42a0-9e76-d5e1c274c5f4": {
+            "binding_key": "{\"step_key\":\"source\",\"context_id\":\"root\",\"inputs\":{\"ticket.md\":[\"b037621c-3902-4689-8cef-41d6f93beb7e\"]},\"complete_collection_id\":null,\"each_collection_id\":null,\"each_member_id\":null,\"manual\":false}",
+            "candidate": {
+              "complete_collection_id": null,
+              "context_id": "root",
+              "each_collection_id": null,
+              "each_member_id": null,
+              "inputs": {
+                "ticket.md": [
+                  "b037621c-3902-4689-8cef-41d6f93beb7e"
+                ]
+              },
+              "manual": false,
+              "step_key": "source"
+            },
+            "depth": 1,
+            "error": null,
+            "exit_code": 0,
+            "id": "fbf56faa-d012-42a0-9e76-d5e1c274c5f4",
+            "is_coding_step": false,
+            "launch": {
+              "harness": "omp",
+              "model": ""
+            },
+            "lifecycle": "completed",
+            "outputs": [
+              {
+                "discriminator": 1,
+                "relative_path": "1-request-*-1.md",
+                "selector": "request-*.md"
+              }
+            ],
+            "owner_session_id": "se6a006ca-8668-46ba-af01-c7154647a546",
+            "parent_execution_ids": [],
+            "permission": {
+              "kind": "consumed"
+            },
+            "previous_session_ids": [],
+            "receipt_id": "0f6cc012-29b5-46f6-8a16-1e7e2bc541c7",
+            "shutdown_confirmed": true,
+            "start_requested": true
+          }
+        },
+        "initial_start_requested": false,
+        "launch_defaults": {
+          "harness": "",
+          "model": ""
+        },
+        "max_live_sessions": 10,
+        "occurrences": {
+          "a1e0efb4-16e5-49d7-88e4-ed359e59630c": {
+            "collection_ids": [
+              "[\"output\",[\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\",\"request-*.md\"]]"
+            ],
+            "context_id": "root",
+            "depth": 1,
+            "discriminator": 1,
+            "id": "a1e0efb4-16e5-49d7-88e4-ed359e59630c",
+            "logical_path": "request-b.md",
+            "producer_execution_id": "fbf56faa-d012-42a0-9e76-d5e1c274c5f4",
+            "relative_path": "1-request-b-1.md",
+            "selector": "request-*.md"
+          },
+          "b037621c-3902-4689-8cef-41d6f93beb7e": {
+            "collection_ids": [],
+            "context_id": "root",
+            "depth": 0,
+            "discriminator": 0,
+            "id": "b037621c-3902-4689-8cef-41d6f93beb7e",
+            "logical_path": "ticket.md",
+            "producer_execution_id": null,
+            "relative_path": "00-ticket.md",
+            "selector": "ticket.md"
+          },
+          "c88236ce-220e-45f8-b9e0-1143cd05a784": {
+            "collection_ids": [
+              "[\"family\",[\"root\",\"[\\\"output\\\",[\\\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\\\",\\\"request-*.md\\\"]]\",\"worker\",\"result.md\"]]",
+              "[\"output\",[\"dcff369a-1e4f-4150-9ff7-ebd0255a0eb8\",\"result.md\"]]"
+            ],
+            "context_id": "[\"member\",[\"[\\\"output\\\",[\\\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\\\",\\\"request-*.md\\\"]]\",\"a1e0efb4-16e5-49d7-88e4-ed359e59630c\"]]",
+            "depth": 2,
+            "discriminator": 1,
+            "id": "c88236ce-220e-45f8-b9e0-1143cd05a784",
+            "logical_path": "result.md",
+            "producer_execution_id": "dcff369a-1e4f-4150-9ff7-ebd0255a0eb8",
+            "relative_path": "2-result-1.md",
+            "selector": "result.md"
+          },
+          "f25c77c8-329f-4c16-8848-dca4cd2922d4": {
+            "collection_ids": [
+              "[\"output\",[\"fbf56faa-d012-42a0-9e76-d5e1c274c5f4\",\"request-*.md\"]]"
+            ],
+            "context_id": "root",
+            "depth": 1,
+            "discriminator": 1,
+            "id": "f25c77c8-329f-4c16-8848-dca4cd2922d4",
+            "logical_path": "request-a.md",
+            "producer_execution_id": "fbf56faa-d012-42a0-9e76-d5e1c274c5f4",
+            "relative_path": "1-request-a-1.md",
+            "selector": "request-*.md"
+          }
+        },
+        "owning_app_config_identity": "",
+        "owning_lane": "test-lane",
+        "reference": {
+          "key": "graph",
+          "scope": "repo"
+        },
+        "revision": 0,
+        "version": 1
+      }
+    }
+  ],
+  "generator_revision": "bf011c2e54be407202648a850c9137a4210f777b",
+  "generator_method": "Pre-change scheduler Fixture via real parse/new state/seed/reconcile/reserve/start/accept/confirmed exit; no scheduler or persisted state mutation.",
+  "source_sha256": {
+    "alinery-core/src/playbook_scheduler.rs": "feea17ea9b276496fb4c55cb6df21bd0f7b6cbcfb056049478608f26e6c7c412",
+    "alinery-core/src/execution.rs": "d37bffa9f7ed240a3667e9b151e53e7172bb805926ff9e25ba73eda709e7bd31"
+  },
+  "generator_sha256": "a846d5829f9eaa4eab2c2926eec57dc7f80d170560b2b0d2c0e13aa1b581cda0"
+}

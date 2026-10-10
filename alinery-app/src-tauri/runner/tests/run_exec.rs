@@ -163,8 +163,8 @@ fn emit_result_preserves_typed_completion_outcomes_and_protocol_errors() {
             0,
         ),
         (
-            json!({"ok": true, "completion": {"status": "invalid_outputs", "diagnostics": ["Missing nested/report.md", &"λ".repeat(800)]}}),
-            json!({"status": "invalid_outputs", "diagnostics": ["Missing nested/report.md", &"λ".repeat(800)]}),
+            json!({"ok": true, "completion": {"status": "invalid_outputs", "diagnostics": ["nested/report.md must not be empty", &"λ".repeat(800)]}}),
+            json!({"status": "invalid_outputs", "diagnostics": ["nested/report.md must not be empty", &"λ".repeat(800)]}),
             0,
         ),
         (

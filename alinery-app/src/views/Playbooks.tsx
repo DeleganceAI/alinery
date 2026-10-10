@@ -45,6 +45,7 @@ const blankDefinition: NormalizedPlaybook = {
   section_order: ["work"],
 };
 const scopeLabels = { repo: "Repository", global: "Global", bundled: "Bundled" };
+const catalogContains = (catalog: PlaybookCatalog, reference: PlaybookRef) => catalog.candidates.some((candidate) => samePlaybookRef(candidate.source.reference, reference));
 // The accounts contract's label rule (^[a-z0-9][a-z0-9-]{1,31}$), one home for both
 // the client-side guard and the field's own state.
 const labelPattern = /^[a-z0-9][a-z0-9-]{1,31}$/;
@@ -476,15 +477,78 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     try {
       const parsed = await validate();
       if (!parsed) return;
-      const target = selected?.source.reference || { scope, key };
-      // Only save-as changes the document identity. Ordinary editing preserves exact authored bytes.
+      let target = selected?.source.reference || { scope, key };
       if (selected && parsed.key !== target.key) {
         setError("The document key must match this library entry. Use Make a copy to save under another key.");
         return;
       }
+      if (!selected && parsed.key !== target.key) {
+        const current = await ipc.listPlaybookCatalog(owner);
+        const documentTarget = { scope, key: parsed.key };
+        const documentConflict = catalogContains(current, documentTarget);
+        const destinationConflict = catalogContains(current, target);
+        const choice = await askConfirm({
+          title: "Choose playbook key",
+          body: (answer) => (
+            <div className="playbooks-key-choice">
+              <p>
+                Both choices save to <strong>{scope === "repo" ? "Repository scope" : "Global scope"}</strong>.{scope === "repo" && <code>{owner}</code>}
+              </p>
+              <dl>
+                <div>
+                  <dt>Document key</dt>
+                  <dd>
+                    <code>{parsed.key}</code>
+                    <small>Keep the key from your source.</small>
+                  </dd>
+                  <dd className="playbooks-key-action">
+                    <button type="button" className={`btn small${documentConflict ? " danger" : ""}`} onClick={() => answer("document")}>
+                      {documentConflict ? "Overwrite existing playbook" : "Use document key"}
+                    </button>
+                  </dd>
+                  {documentConflict && (
+                    <dd className="playbooks-key-conflict">
+                      <InlineStatus tone="warning">{playbookRefKey(documentTarget)} already exists. Overwrite confirmation required.</InlineStatus>
+                    </dd>
+                  )}
+                </div>
+                <div>
+                  <dt>Save key</dt>
+                  <dd>
+                    <code>{target.key}</code>
+                    <small>Rewrite the saved document key to match.</small>
+                  </dd>
+                  <dd className="playbooks-key-action">
+                    <button type="button" className={`btn small${destinationConflict ? " danger" : ""}`} onClick={() => answer("destination")}>
+                      {destinationConflict ? "Overwrite existing playbook" : "Keep Save key"}
+                    </button>
+                  </dd>
+                  {destinationConflict && (
+                    <dd className="playbooks-key-conflict">
+                      <InlineStatus tone="warning">{playbookRefKey(target)} already exists. Overwrite confirmation required.</InlineStatus>
+                    </dd>
+                  )}
+                </div>
+              </dl>
+              {(documentConflict || destinationConflict) && (
+                <p>
+                  To save a separate playbook, cancel and change the top-level <strong>key</strong> value in the editor, then choose <strong>Use document key</strong>.
+                </p>
+              )}
+            </div>
+          ),
+          choices: [{ key: "cancel", label: "Cancel", tone: "ghost" }],
+          cancelKey: "cancel",
+          defaultKey: "cancel",
+        });
+        if (choice === "document") target = documentTarget;
+        else if (choice !== "destination") return;
+      }
+      // Pass matching source through; only an acknowledged save-as rewrites its key here.
       const content = parsed.key === target.key ? source : await ipc.renderPlaybookSource({ ...parsed, key: target.key });
+      // The library may have changed while the key-choice dialog was open.
       const latest = await ipc.listPlaybookCatalog(owner);
-      const exists = latest.candidates.some((candidate) => playbookRefKey(candidate.source.reference) === playbookRefKey(target));
+      const exists = catalogContains(latest, target);
       if (
         exists &&
         (await askConfirm({

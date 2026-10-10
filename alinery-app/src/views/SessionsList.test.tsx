@@ -324,7 +324,7 @@ describe("SessionsList time sorting and presentation", () => {
   it("accepts StaleSource failure-class transitions without leaving Updated sort", async () => {
     vi.useFakeTimers();
     sessionItems = [
-      session({ id: "target", task_name: "Target task", created: 10, status_changed_at: 100 }),
+      session({ id: "target", name: "Target session", task_name: "Target task", created: 10, status_changed_at: 100 }),
       session({ id: "other", task_name: "Other task", created: 20, status_changed_at: 200 }),
     ];
     const targetKey = "/r:a-task:target";
@@ -343,19 +343,19 @@ describe("SessionsList time sorting and presentation", () => {
     mocks.sessionListStatuses.mockImplementation(async () => ({ [targetKey]: targetObservation }));
 
     const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
-    await vi.waitFor(() => expect(renderedNames(container)).toEqual(["Other task", "..."]));
+    await vi.waitFor(() => expect(renderedNames(container)).toEqual(["Other task", "Target session"]));
     expect(screen.getByText("Stale")).toBeDefined();
 
     targetObservation = failedObservation("boom");
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
-    await vi.waitFor(() => expect(renderedNames(container)).toEqual(["...", "Other task"]));
+    await vi.waitFor(() => expect(renderedNames(container)).toEqual(["Target session", "Other task"]));
     expect(screen.getByText("Failed")).toBeDefined();
 
     const updated = screen.getByRole("button", { name: /^Updated:/ });
     fireEvent.click(updated);
-    expect(renderedNames(container)).toEqual(["Other task", "..."]);
+    expect(renderedNames(container)).toEqual(["Other task", "Target session"]);
 
     targetObservation = failedObservation("StaleSource");
     await act(async () => {
@@ -363,7 +363,7 @@ describe("SessionsList time sorting and presentation", () => {
     });
     await vi.waitFor(() => expect(screen.getByText("Stale")).toBeDefined());
     expect(screen.queryByText("Failed")).toBeNull();
-    expect(renderedNames(container)).toEqual(["Other task", "..."]);
+    expect(renderedNames(container)).toEqual(["Other task", "Target session"]);
     expect(updated.getAttribute("aria-pressed")).toBe("true");
     expect(updated.getAttribute("aria-label")).toContain("newest first");
   });

@@ -152,19 +152,19 @@ describe("retained execution session selection", () => {
   });
 
   it("does not replace another task's binding with a late query response", async () => {
-    let resolve!: (value: TaskExecutionReply) => void;
-    const pending = new Promise<TaskExecutionReply>((accept) => {
+    let resolve: (value: TaskExecutionReply) => void = () => {};
+    const promise = new Promise<TaskExecutionReply>((accept) => {
       resolve = accept;
     });
     mocks.listBoardTasks.mockResolvedValue([task, { ...task, name: "B task", slug: "b-task", worktree: "/w/b-task" }]);
     mocks.getTaskExecution.mockImplementation((slug: string) =>
-      slug === "a-task" ? pending : Promise.resolve(executionReply([executionRecord({ id: "b-only", lifecycle: "queued", owner_session_id: "owner-b" })])),
+      slug === "a-task" ? promise : Promise.resolve(executionReply([executionRecord({ id: "b-only", lifecycle: "queued", owner_session_id: "owner-b" })])),
     );
     const created = renderPage();
     const b = (await screen.findByRole("option", { name: "B task" })) as HTMLOptionElement;
     fireEvent.change(screen.getByLabelText("Task"), { target: { value: b.value } });
+    await act(async () => resolve(executionReply([executionRecord({ id: "execution-a", lifecycle: "queued" })])));
     await screen.findByRole("option", { name: /Start queued.*b-only/ });
-    await act(async () => resolve(executionReply()));
     expect(screen.queryByRole("option", { name: /execution-a/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
     await waitFor(() => expect(created).toHaveBeenCalledWith(expect.objectContaining({ slug: "b-task" }), { kind: "existing", session_id: "owner-b" }, "omp", "", undefined));

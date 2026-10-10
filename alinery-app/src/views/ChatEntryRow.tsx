@@ -350,7 +350,15 @@ function ChatEntryRowImpl({
       return (
         <Msg at={entry.at} actor={entry.actor} type="approval" stamp={stamp} showActorLabels={showActorLabels} copyText={copyText} kicker={<Status tone="wait">waiting</Status>}>
           <p className="chat-msg-title">{entry.action}</p>
-          {entry.detail ? <p className="chat-msg-muted">{entry.detail}</p> : null}
+          {entry.detail ? (
+            entry.detailFormat === "plain" ? (
+              <p className="chat-msg-muted">{entry.detail}</p>
+            ) : (
+              <div className="chat-msg-muted">
+                <ChatMarkdown text={entry.detail} showBlockCopyButtons={showBlockCopyButtons} preserveLineBreaks />
+              </div>
+            )
+          ) : null}
           {entry.scope ? <p className="chat-work-meta">{entry.scope}</p> : null}
           <div className="chat-msg-actions">
             <button type="button" className="btn primary small" disabled={entry.disabled} onClick={() => onApprove?.(entry.requestId, true)}>
@@ -388,8 +396,17 @@ function ChatEntryRowImpl({
         </Msg>
       );
     case "prompt":
+      // A refused send is the only copy of the text once the composer has moved on, so Copy stays even when the setting hides it.
       return (
-        <Msg at={entry.at} actor={entry.actor} type={entry.type} stamp={stamp} showActorLabels={showActorLabels} copyText={copyText}>
+        <Msg
+          at={entry.at}
+          actor={entry.actor}
+          type={entry.type}
+          stamp={stamp}
+          showActorLabels={showActorLabels}
+          copyText={entry.failed ? copyTextForEntry(entry) : copyText}
+          kicker={entry.failed ? <Status tone="bad">not sent</Status> : undefined}
+        >
           <UserRowBody entry={entry} />
         </Msg>
       );
