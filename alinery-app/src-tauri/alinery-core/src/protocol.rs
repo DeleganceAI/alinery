@@ -12,7 +12,7 @@
 ///
 /// A protocol bump means every user with live sessions has to stop them deliberately
 /// before installing, so treat it as a real cost.
-pub const PROTOCOL_VERSION: u32 = 12;
+pub const PROTOCOL_VERSION: u32 = 15;
 
 /// How a running daemon relates to this build of the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,18 +52,16 @@ pub fn daemon_compat(daemon_protocol: Option<u32>, daemon_build: Option<&str>, d
 
 /// What the background daemon poller may do about a repo.
 ///
-/// There is deliberately no kill/restart variant: reclaiming a repo from an
-/// incompatible daemon is an express user click (B3 takeover), never a timer's
-/// decision. A poller that kills-and-respawns on mismatch reintroduces the original bug
-/// every few seconds.
+/// There is deliberately no kill/restart variant: a conflicting owner must be
+/// stopped explicitly. Automatic retries may adopt the repo only after all owners stop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PollerAction {
     /// Nothing answers the socket — start a daemon.
     Spawn,
     /// A usable daemon is serving the repo.
     Leave,
-    /// A daemon answers but fails a hard reuse gate: surface the takeover banner.
-    SurfaceTakeover,
+    /// A daemon answers but fails a hard reuse gate: surface the ownership conflict.
+    SurfaceConflict,
 }
 
 /// `None` = nothing answered the socket.
@@ -71,6 +69,6 @@ pub fn poller_action(compat: Option<DaemonCompat>) -> PollerAction {
     match compat {
         None => PollerAction::Spawn,
         Some(c) if c.usable() => PollerAction::Leave,
-        Some(_) => PollerAction::SurfaceTakeover,
+        Some(_) => PollerAction::SurfaceConflict,
     }
 }

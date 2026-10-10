@@ -9,7 +9,7 @@ struct Fixture {
 }
 impl Fixture {
     fn new(outputs: &str, coding: bool, automatic: bool, cap: u32) -> Self {
-        let repo = std::env::temp_dir().join(format!("alinery-v2-execution-{}", uuid::Uuid::new_v4()));
+        let repo = PathBuf::from("/tmp").join(format!("alinery-v2-execution-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(crate::artifacts_dir(&repo, "task")).unwrap();
         let source = format!("+++\nversion = 2\nkey = \"fixture\"\ntitle = \"Fixture\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"omp\"\n[[step]]\nkey = \"work\"\ntitle = \"Work\"\nshort = \"\"\ninputs = []\noutputs = [{outputs}]\nmodel = \"\"\nharness = \"\"\nis_coding_step = {coding}\nauto_advance_default = {automatic}\n+++\n<!-- alinery:step work -->\nWrite the assigned outputs.\n");
         let definition = parse_playbook_md(&source).unwrap();
@@ -71,6 +71,181 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.repo);
     }
+}
+
+fn persist_owner_fixture(f: &mut Fixture) {
+    let task = crate::Task {
+        name: "Task".into(),
+        slug: "task".into(),
+        engine_version: 2,
+        ..Default::default()
+    };
+    fs::write(crate::task_dir(&f.repo, "task").join("task.md"), toml::to_string(&task).unwrap()).unwrap();
+    fs::write(task_playbook_path(&f.repo, "task").unwrap(), &f.source).unwrap();
+    write_execution_state_unlocked(&f.repo, "task", &mut f.state).unwrap();
+}
+
+#[test]
+fn repo_adoption_preserves_evidence_and_does_not_recover_execution_owners() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, true, 10);
+    let completed = f.reserve(true);
+    let owner = f.run(&completed);
+    f.write_output(&completed, 0, None);
+    accept_execution_completion(&f.repo, "task", &mut f.state, &completed, &owner).unwrap();
+    confirm_execution_exit(&mut f.state, &completed, &owner, Some(0)).unwrap();
+    let uncertain = f.reserve(true);
+    f.run(&uncertain);
+    let finishing = f.reserve(true);
+    let finishing_owner = f.run(&finishing);
+    f.write_output(&finishing, 0, None);
+    accept_execution_completion(&f.repo, "task", &mut f.state, &finishing, &finishing_owner).unwrap();
+    let queued = f.reserve(true);
+    persist_owner_fixture(&mut f);
+    let artifact = crate::artifacts_dir(&f.repo, "task").join(&f.state.executions[&completed].outputs[0].relative_path);
+    let bytes = fs::read(&artifact).unwrap();
+    let _ownership = crate::repo_ownership::acquire(&f.repo, "new-lane", "new-config").unwrap();
+    let mut transferred = read_execution_state(&f.repo, "task").unwrap();
+    assert_eq!(transferred.owning_lane, "new-lane");
+    assert_eq!(transferred.owning_app_config_identity, "new-config");
+    assert_eq!(transferred.executions[&completed], f.state.executions[&completed]);
+    assert_eq!(transferred.executions[&queued], f.state.executions[&queued]);
+    let mut expected = f.state.executions[&uncertain].clone();
+    expected.lifecycle = ExecutionLifecycle::Interrupted;
+    expected.error = transferred.executions[&uncertain].error.clone();
+    assert_eq!(transferred.executions[&uncertain], expected);
+    let mut expected_finishing = f.state.executions[&finishing].clone();
+    assert!(expected_finishing.receipt_id.is_some());
+    assert!(!expected_finishing.shutdown_confirmed);
+    expected_finishing.lifecycle = ExecutionLifecycle::Interrupted;
+    expected_finishing.error = transferred.executions[&finishing].error.clone();
+    assert_eq!(transferred.executions[&finishing], expected_finishing);
+    assert_eq!(transferred.occurrences, f.state.occurrences);
+    assert_eq!(transferred.contexts, f.state.contexts);
+    assert_eq!(transferred.collections, f.state.collections);
+    assert_eq!(fs::read(&artifact).unwrap(), bytes);
+    assert!(recover_execution_owner(&mut transferred, &uncertain).is_err());
+    assert!(recover_execution_owner(&mut transferred, &completed).is_err());
+    assert!(recover_execution_owner(&mut transferred, &finishing).is_err());
+    assert!(!claim_execution_launch(&mut transferred, &uncertain).unwrap());
+    let persisted = fs::read(execution_state_path(&f.repo, "task").unwrap()).unwrap();
+    assert!(crate::repo_ownership::acquire(&f.repo, "third-lane", "third-config").is_err());
+    assert_eq!(fs::read(execution_state_path(&f.repo, "task").unwrap()).unwrap(), persisted);
+}
+
+#[test]
+fn repo_adoption_refuses_live_lock_invalid_lane_and_lock_io_errors() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, false, 1);
+    persist_owner_fixture(&mut f);
+    let lock_path = crate::alineryd_lock_path(&f.repo, Some("lane"));
+    let lease = crate::lockfile::try_lock_exclusive(&lock_path).unwrap().unwrap();
+    assert!(!crate::alineryd_socket_path(&f.repo, Some("lane")).exists());
+    let before = fs::read(execution_state_path(&f.repo, "task").unwrap()).unwrap();
+    assert!(crate::repo_ownership::acquire(&f.repo, "next", "config").is_err());
+    assert_eq!(fs::read(execution_state_path(&f.repo, "task").unwrap()).unwrap(), before);
+    drop(lease);
+    fs::remove_file(&lock_path).unwrap();
+    fs::create_dir(&lock_path).unwrap();
+    assert!(crate::repo_ownership::acquire(&f.repo, "next", "config").is_err());
+    assert_eq!(fs::read(execution_state_path(&f.repo, "task").unwrap()).unwrap(), before);
+    fs::remove_dir(&lock_path).unwrap();
+    for lane in ["../escape", "bad lane", "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"] {
+        f.state.owning_lane = lane.into();
+        write_execution_state_unlocked(&f.repo, "task", &mut f.state).unwrap();
+        assert!(crate::repo_ownership::acquire(&f.repo, "next", "config").is_err());
+    }
+}
+
+#[test]
+fn repo_preflight_checks_every_owner_before_writes_and_releases_leases() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, false, 1);
+    persist_owner_fixture(&mut f);
+    let before = fs::read(execution_state_path(&f.repo, "task").unwrap()).unwrap();
+    let second = crate::task_dir(&f.repo, "archived");
+    fs::create_dir_all(&second).unwrap();
+    let task = crate::Task {
+        name: "Archived".into(),
+        slug: "archived".into(),
+        archived: true,
+        engine_version: 2,
+        ..Default::default()
+    };
+    fs::write(second.join("task.md"), toml::to_string(&task).unwrap()).unwrap();
+    fs::write(second.join("playbook.md"), &f.source).unwrap();
+    let mut state = f.state.clone();
+    state.owning_lane = "another".into();
+    write_execution_state_unlocked(&f.repo, "archived", &mut state).unwrap();
+    let lease = crate::lockfile::try_lock_exclusive(&crate::alineryd_lock_path(&f.repo, Some("another"))).unwrap().unwrap();
+    assert!(crate::repo_ownership::check_available(&f.repo).is_err());
+    assert!(crate::repo_ownership::acquire(&f.repo, "next", "config").is_err());
+    assert_eq!(fs::read(execution_state_path(&f.repo, "task").unwrap()).unwrap(), before);
+    drop(lease);
+    crate::repo_ownership::check_available(&f.repo).unwrap();
+    assert_eq!(fs::read(execution_state_path(&f.repo, "task").unwrap()).unwrap(), before);
+    let ownership = crate::repo_ownership::acquire(&f.repo, "next", "config").unwrap();
+    assert_eq!(read_execution_state(&f.repo, "archived").unwrap().owning_lane, "next");
+    assert!(crate::lockfile::try_lock_exclusive(&crate::alineryd_lock_path(&f.repo, Some("another"))).unwrap().is_none());
+    drop(ownership);
+    fs::write(second.join("execution.json"), "malformed").unwrap();
+    assert!(crate::repo_ownership::acquire(&f.repo, "third", "config").is_err());
+    fs::remove_file(second.join("execution.json")).unwrap();
+    assert!(crate::repo_ownership::check_available(&f.repo).is_err());
+}
+
+#[test]
+fn repo_unknown_socket_and_malformed_task_evidence_block_without_adoption() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, false, 1);
+    persist_owner_fixture(&mut f);
+    let before = fs::read(execution_state_path(&f.repo, "task").unwrap()).unwrap();
+    let socket = crate::alineryd_socket_path(&f.repo, Some("unknown"));
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    assert!(crate::repo_ownership::acquire(&f.repo, "next", "config").is_err());
+    assert_eq!(fs::read(execution_state_path(&f.repo, "task").unwrap()).unwrap(), before);
+    drop(listener);
+    fs::remove_file(&socket).unwrap();
+    fs::write(&socket, "not a socket").unwrap();
+    assert!(crate::repo_ownership::check_available(&f.repo).is_err());
+    fs::remove_file(socket).unwrap();
+    fs::write(crate::task_dir(&f.repo, "task").join("task.md"), "malformed").unwrap();
+    assert!(crate::repo_ownership::acquire(&f.repo, "next", "config").is_err());
+    assert_eq!(fs::read(execution_state_path(&f.repo, "task").unwrap()).unwrap(), before);
+}
+
+#[test]
+fn concurrent_repo_starts_have_exactly_one_owner() {
+    let f = Fixture::new("{path=\"result.md\"}", false, false, 1);
+    // This scenario has no task records; it exercises the startup race itself.
+    fs::remove_dir_all(crate::tasks_dir(&f.repo)).unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let workers: Vec<_> = ["prod", "dev"]
+        .into_iter()
+        .map(|lane| {
+            let repo = f.repo.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                let result = crate::repo_ownership::acquire(&repo, lane, "config");
+                barrier.wait();
+                result.is_ok()
+            })
+        })
+        .collect();
+    assert_eq!(workers.into_iter().filter_map(|worker| worker.join().unwrap().then_some(())).count(), 1);
+}
+
+#[test]
+fn legacy_task_without_execution_can_be_adopted_but_v2_cannot() {
+    let f = Fixture::new("{path=\"result.md\"}", false, false, 1);
+    let mut task = crate::Task {
+        name: "Legacy".into(),
+        slug: "task".into(),
+        ..Default::default()
+    };
+    let path = crate::task_dir(&f.repo, "task").join("task.md");
+    fs::write(&path, toml::to_string(&task).unwrap()).unwrap();
+    drop(crate::repo_ownership::acquire(&f.repo, "next", "config").unwrap());
+    task.engine_version = 2;
+    fs::write(&path, toml::to_string(&task).unwrap()).unwrap();
+    assert!(crate::repo_ownership::acquire(&f.repo, "next", "config").is_err());
 }
 
 fn assert_rejected_without_publication(f: &mut Fixture, id: &str, owner: &str) {

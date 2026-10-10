@@ -1,4 +1,4 @@
-//! UI completion authority is tied to a kernel-authenticated Unix connection.
+//! UI authority is tied to a kernel-authenticated Unix connection.
 use super::*;
 use std::os::fd::AsRawFd;
 
@@ -61,7 +61,7 @@ pub(super) fn serve(stream: &mut UnixStream, repo: &Path, lane: &str, host: &Pro
         let host = host.as_ref().as_ref().ok_or("protected UI host unavailable")?;
         let pid = peer_pid(stream)?;
         if executable(pid)? != *host {
-            return Err("completion permission requires the protected UI host".into());
+            return Err("UI control requires the protected UI host".into());
         }
         Ok::<_, String>(pid)
     };
@@ -81,14 +81,16 @@ pub(super) fn serve(stream: &mut UnixStream, repo: &Path, lane: &str, host: &Pro
                 return Err("UI executable changed".into());
             }
             let value: Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
-            if value.get("op").and_then(Value::as_str) != Some("allow_execution_completion") {
-                return Err("operation unavailable on UI control channel".into());
+            match value.get("op").and_then(Value::as_str) {
+                Some("allow_execution_completion") => {
+                    let request: alinery_core::task_creation::AllowExecutionCompletionRequest =
+                        serde_json::from_value(value.get("request").cloned().ok_or("missing request")?).map_err(|e| e.to_string())?;
+                    alinery_core::execution::mutate_execution_state(repo, &request.task_slug, lane, execution_config_identity(), "human completion authorization", |_, state| {
+                        alinery_core::execution::grant_execution_completion(state, &request.execution_id, &request.session_id)
+                    })
+                }
+                _ => Err("operation unavailable on UI control channel".into()),
             }
-            let request: alinery_core::task_creation::AllowExecutionCompletionRequest =
-                serde_json::from_value(value.get("request").cloned().ok_or("missing request")?).map_err(|e| e.to_string())?;
-            alinery_core::execution::mutate_execution_state(repo, &request.task_slug, lane, execution_config_identity(), "human completion authorization", |_, state| {
-                alinery_core::execution::grant_execution_completion(state, &request.execution_id, &request.session_id)
-            })
         })();
         match result {
             Ok(()) => reply(stream, json!({"ok":true})),

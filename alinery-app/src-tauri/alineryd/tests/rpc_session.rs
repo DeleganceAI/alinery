@@ -111,6 +111,10 @@ if [ "$rpc" = 1 ]; then
     typ=`printf '%s' "$line" | sed -n 's/.*"type":"\([^"]*\)".*/\1/p'`
     method=`printf '%s' "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p'`
     rid=`printf '%s' "$line" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p'`
+    case "$rid" in
+      activity-rejected) printf '%s\n' "{\"type\":\"response\",\"id\":\"$rid\",\"command\":\"$typ\",\"success\":false,\"error\":\"refused\"}" ;;
+      activity-accepted|activity-observer) printf '%s\n' "{\"type\":\"response\",\"id\":\"$rid\",\"command\":\"$typ\",\"success\":true}" ;;
+    esac
     if [ "$typ" = "get_messages" ] || [ "$method" = "get_messages" ]; then
       printf '%s\n' "{\"type\":\"response\",\"id\":\"$rid\",\"command\":\"get_messages\",\"success\":true,\"data\":{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"hydrated thought\"},{\"type\":\"text\",\"text\":\"hydrated text\"}]}]}}"
       printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"thinking_start","contentIndex":0},"message":{"role":"assistant","content":[{"type":"thinking","thinking":""}]}}'
@@ -374,6 +378,40 @@ resume_args = ["--resume={{resume_token}}"]
         wait_until(Duration::from_secs(5), || self.root.join(format!("argv.{id}")).is_file());
         fs::read_to_string(self.root.join(format!("argv.{id}"))).unwrap()
     }
+}
+
+#[test]
+fn activity_requires_accepted_send_and_ignores_attach_and_observers() {
+    let fixture = Fixture::new();
+    let id = fixture.spawn_omp();
+    let mut reader = fixture.rpc_attach(id);
+    assert!(Fixture::read_lines(&mut reader, 1).iter().any(|line| line.contains("\"ready\"")));
+    assert_eq!(fixture.meta(id).activity_at, None);
+    for (request_id, command, accepted) in [
+        ("activity-observer", "get_state", false),
+        ("activity-rejected", "prompt", false),
+        ("activity-accepted", "follow_up", true),
+    ] {
+        let reply = fixture.rpc(json!({"op":"rpc_write","id":id,"payload":{"id":request_id,"type":command,"message":"work"}}));
+        assert_eq!(reply["ok"], true);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let lines = Fixture::read_lines(&mut reader, 1);
+            if lines.iter().any(|line| serde_json::from_str::<Value>(line).is_ok_and(|value| value["id"] == request_id)) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "missing response for {request_id}");
+        }
+        assert_eq!(fixture.meta(id).activity_at.is_some(), accepted, "{request_id}");
+    }
+    let path = alinery_core::session_meta_path(&fixture.root, "task", id);
+    let before = fs::read(&path).unwrap();
+    let mut reattached = fixture.rpc_attach(id);
+    // The ready and retained response frames replay, but never pass through the
+    // ingestion/activity path again.
+    let replay = Fixture::read_lines(&mut reattached, 4);
+    assert!(replay.iter().any(|line| line.contains("activity-accepted")));
+    assert_eq!(fs::read(&path).unwrap(), before);
 }
 
 impl Drop for Fixture {

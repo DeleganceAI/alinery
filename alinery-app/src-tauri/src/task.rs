@@ -4,7 +4,7 @@ use crate::*;
 use alinery_core::task_creation::{
     unique_attachment_name, CreateTaskReply, CreateTaskRequest, TaskAttachment, TaskPlaybookPackage, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_SET_BYTES,
 };
-pub(crate) use alinery_core::Task;
+pub(crate) use alinery_core::{write_task_unlocked, Task};
 use std::io::Read;
 
 #[derive(Serialize, Clone)]
@@ -120,12 +120,6 @@ pub(crate) async fn get_task(app: AppHandle, slug: String, repo_path: Option<Str
         None => active_repo()?,
     };
     read_task_opt(&repo, &slug)
-}
-
-pub(crate) fn write_task_unlocked(repo: &Path, task: &Task) -> Result<(), String> {
-    let p = task_dir(repo, &task.slug).join("task.md");
-    let s = toml::to_string(task).map_err(|e| e.to_string())?;
-    write_bytes_atomic(&p, s.as_bytes()).map_err(|e| format!("write {}: {e}", p.display()))
 }
 
 // M0: prove one JS -> Rust -> JS command round-trip.
@@ -729,7 +723,10 @@ fn write_draft_in_with_slug_unlocked(
     let ticket = alinery_core::compose_ticket(&name, &description, &evidence, &[], &[], &[]);
     if !ticket.is_empty() {
         fs::create_dir_all(artifacts_dir(repo, &slug)).map_err(|e| e.to_string())?;
-        fs::write(artifacts_dir(repo, &slug).join("00-ticket.md"), ticket).map_err(|e| e.to_string())?;
+        let path = artifacts_dir(repo, &slug).join("00-ticket.md");
+        if fs::read_to_string(&path).ok().as_deref() != Some(ticket.as_str()) {
+            write_bytes_atomic(&path, ticket.as_bytes())?;
+        }
     }
     Ok(task)
 }
@@ -906,21 +903,37 @@ pub(crate) fn is_primary_playbook_session(_repo: &Path, task: &Task, session: &S
         }
 }
 
-pub(crate) fn task_updated_at(repo: &Path, task: &Task, sessions: &[SessionMeta]) -> u64 {
+pub(crate) fn task_updated_at(repo: &Path, task: &Task, sessions: &[SessionMeta]) -> Result<u64, String> {
     let mut updated = task.created;
     if let Some(ts) = file_mtime_secs(task_dir(repo, &task.slug).join("task.md")) {
         updated = updated.max(ts);
     }
-    if let Some(ts) = dir_latest_mtime_secs(sessions_dir(repo, &task.slug)) {
-        updated = updated.max(ts);
+    for name in list_artifacts_for(repo, &task.slug)? {
+        if name.ends_with(".review-pending.json") {
+            continue;
+        }
+        if let Some(ts) = file_mtime_secs(artifacts_dir(repo, &task.slug).join(name)) {
+            updated = updated.max(ts);
+        }
     }
-    if let Some(ts) = dir_latest_mtime_secs(artifacts_dir(repo, &task.slug)) {
-        updated = updated.max(ts);
-    }
+    // Session files are projections: polling, replay, and acknowledgments can rewrite
+    // them without work happening. Only durable semantic timestamps count as activity.
     for session in sessions {
         updated = updated.max(session.created);
+        for ts in [
+            session.started_at,
+            session.ended_at,
+            session.status_changed_at,
+            session.semantic.phase_completed_at,
+            session.activity_at,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            updated = updated.max(ts);
+        }
     }
-    updated
+    Ok(updated)
 }
 
 pub(crate) fn board_task(repo: &Path, repo_path: &str, task: Task) -> Result<BoardTask, String> {
@@ -948,7 +961,7 @@ pub(crate) fn board_task(repo: &Path, repo_path: &str, task: Task) -> Result<Boa
             .map(|session| if session.generic { "Generic".into() } else { title(&session.phase) })
             .unwrap_or_else(|| "No sessions".into())
     };
-    let updated = task_updated_at(repo, &task, &sessions);
+    let updated = task_updated_at(repo, &task, &sessions)?;
     let playbook_title = definition.as_ref().map(|definition| definition.title.clone()).unwrap_or_else(|| task.playbook.clone());
     let playbook_steps = definition
         .into_iter()

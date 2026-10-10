@@ -67,27 +67,40 @@ export function CreateSessionPage({
 
   useEffect(() => {
     let alive = true;
+    let timer: number | undefined;
+    let initial = true;
     setExecutionView(null);
     setLoadedTaskId("");
     setExecutionError("");
     setSelection("auxiliary");
     setModel("");
     if (!task) return;
-    readTaskExecution(task.repo_path, task.slug)
-      .then((value) => {
-        if (!alive) return;
-        setExecutionView(value);
-        setLoadedTaskId(taskKey(task));
-        const queued = Object.values(value.state.executions).find((record) => record.lifecycle === "queued");
-        if (queued) setSelection(`existing:${queued.id}`);
-      })
-      .catch((cause) => {
-        if (!alive) return;
-        setLoadedTaskId(taskKey(task));
-        setExecutionError(String(cause));
-      });
+    const refresh = () => {
+      readTaskExecution(task.repo_path, task.slug)
+        .then((value) => {
+          if (!alive) return;
+          setExecutionView(value);
+          setLoadedTaskId(taskKey(task));
+          setExecutionError("");
+          if (initial) {
+            const queued = Object.values(value.state.executions).find((record) => record.lifecycle === "queued");
+            if (queued) setSelection(`existing:${queued.id}`);
+          }
+          initial = false;
+          if (value.live?.status !== "available") timer = window.setTimeout(refresh, 3000);
+        })
+        .catch((cause) => {
+          if (!alive) return;
+          setLoadedTaskId(taskKey(task));
+          setExecutionError(String(cause));
+          initial = false;
+          timer = window.setTimeout(refresh, 3000);
+        });
+    };
+    refresh();
     return () => {
       alive = false;
+      window.clearTimeout(timer);
     };
   }, [task?.repo_path, task?.slug]);
 
@@ -120,7 +133,7 @@ export function CreateSessionPage({
     }
   };
 
-  const disabled = busy || decisionPending || !task?.worktree || !exactTaskLoaded || (!auxiliary && (!execution || !executionAvailable));
+  const disabled = busy || decisionPending || !task?.worktree || !exactTaskLoaded || !executionAvailable || (!auxiliary && !execution);
   const launch = async () => {
     if (disabled || !task) return;
     let choice: SessionTypeChoice;
@@ -322,7 +335,7 @@ export function CreateSessionPage({
         </p>
         {executionError && (
           <InlineStatus tone="error" detail={executionError}>
-            Could not load retained execution state. Graph session creation is unavailable.
+            Could not load retained execution state. Session creation is unavailable.
           </InlineStatus>
         )}
         {error && (
