@@ -544,7 +544,7 @@ fn malformed_defaults_reject_provisioning_but_legacy_defaults_allow_it() {
 }
 
 #[test]
-fn foreign_lane_cannot_create_auxiliary_sessions_on_an_owned_v2_task() {
+fn project_startup_requires_stopped_owner_and_preserves_uncertain_execution() {
     struct Lane {
         child: Child,
         client: DaemonClient,
@@ -555,30 +555,32 @@ fn foreign_lane_cannot_create_auxiliary_sessions_on_an_owned_v2_task() {
             let _ = self.child.wait();
         }
     }
-    let fixture = Fixture::new();
-    fixture.create(false, true);
-    let child = Command::new(env!("CARGO_BIN_EXE_alineryd"))
-        .args([
-            "--repo",
-            fixture.root.to_str().unwrap(),
-            "--app-config",
-            fixture.root.join("app.toml").to_str().unwrap(),
-            "--socket-namespace",
-            "other",
-        ])
-        .env("ALINERY_RUNNER_PATH", fixture.root.join("runner"))
-        .env("ALINERY_HOST_EXECUTABLE", std::env::current_exe().unwrap())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .unwrap();
-    let other = Lane {
-        child,
-        client: DaemonClient {
-            socket_path: alinery_core::alineryd_socket_path(&fixture.root, Some("other")),
-        },
+    let mut fixture = Fixture::new();
+    let created = fixture.create(false, true);
+    let first = created.executions.iter().find(|record| record.candidate.step_key == "first").unwrap();
+    fixture.start(first);
+    fixture.accept(first);
+    let spawn_other = || {
+        Command::new(env!("CARGO_BIN_EXE_alineryd"))
+            .args([
+                "--repo",
+                fixture.root.to_str().unwrap(),
+                "--app-config",
+                fixture.root.join("app.toml").to_str().unwrap(),
+                "--socket-namespace",
+                "other",
+            ])
+            .env("ALINERY_RUNNER_PATH", fixture.root.join("runner"))
+            .env("ALINERY_HOST_EXECUTABLE", std::env::current_exe().unwrap())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap()
     };
-    wait(|| other.client.version_checked().is_ok());
+    let state = fixture.persisted();
+    let mut blocked = spawn_other();
+    assert!(!blocked.wait().unwrap().success());
+    assert!(!alinery_core::alineryd_socket_path(&fixture.root, Some("other")).exists());
     let sessions = || {
         fs::read_dir(fixture.root.join(".alinery/tasks/fixture/sessions"))
             .unwrap()
@@ -586,24 +588,69 @@ fn foreign_lane_cannot_create_auxiliary_sessions_on_an_owned_v2_task() {
             .collect::<std::collections::BTreeSet<_>>()
     };
     let before = sessions();
-    let result = other.client.create_execution_session(&CreateExecutionSessionRequest {
-        task_slug: "fixture".into(),
-        target: ExecutionSessionTarget::Auxiliary {
-            harness: "no-harness".into(),
-            model: None,
-            prompt: None,
+    fs::remove_file(&fixture.client.socket_path).unwrap();
+    let mut blocked_without_socket = spawn_other();
+    assert!(!blocked_without_socket.wait().unwrap().success(), "live lock must block even without socket");
+    assert_eq!(fixture.persisted().owning_lane, state.owning_lane);
+    fixture.child.kill().unwrap();
+    fixture.child.wait().unwrap();
+    fixture.release(&first.owner_session_id);
+    let other = Lane {
+        child: spawn_other(),
+        client: DaemonClient {
+            socket_path: alinery_core::alineryd_socket_path(&fixture.root, Some("other")),
         },
-        launch_override: None,
-        prompt_extra: None,
-        handoff_artifact: None,
-        start: false,
-    });
-    assert!(result.is_err(), "wrong lane created task-owned auxiliary state: {result:?}");
+    };
+    wait(|| other.client.version_checked().is_ok());
+    let transferred = fixture.persisted();
+    assert_eq!(transferred.owning_lane, "other");
+    assert_eq!(transferred.executions[&first.id].lifecycle, ExecutionLifecycle::Interrupted);
+    assert_eq!(transferred.executions[&first.id].receipt_id, state.executions[&first.id].receipt_id);
+    assert!(!transferred.executions[&first.id].shutdown_confirmed);
+    assert_eq!(transferred.executions[&first.id].owner_session_id, first.owner_session_id);
+    assert_eq!(transferred.occurrences, state.occurrences);
+    assert_eq!(transferred.collections, state.collections);
     assert_eq!(sessions(), before);
+    let auxiliary = other
+        .client
+        .create_execution_session(&CreateExecutionSessionRequest {
+            task_slug: "fixture".into(),
+            target: ExecutionSessionTarget::Auxiliary {
+                harness: "no-harness".into(),
+                model: None,
+                prompt: None,
+            },
+            launch_override: None,
+            prompt_extra: None,
+            handoff_artifact: None,
+            start: true,
+        })
+        .unwrap();
+    assert_eq!(auxiliary.session.daemon_namespace, "other");
+    assert_eq!(auxiliary.start, "started", "new sessions must launch under the transferred owner");
+    assert!(other
+        .client
+        .create_execution_session(&CreateExecutionSessionRequest {
+            task_slug: "fixture".into(),
+            target: ExecutionSessionTarget::Primary {
+                step_key: "first".into(),
+                execution_id: Some(first.id.clone()),
+                input_occurrence_ids: None,
+            },
+            launch_override: None,
+            prompt_extra: None,
+            handoff_artifact: None,
+            start: false,
+        })
+        .is_err());
+    // Querying/reconciling on the new lane must not rewrite historical routing.
+    other.client.get_task_execution(&GetTaskExecutionRequest { task_slug: "fixture".into() }).unwrap();
+    let metadata = alinery_core::read_session_meta_full(&alinery_core::session_meta_path(&fixture.root, "fixture", &first.owner_session_id)).unwrap();
+    assert_eq!(metadata.daemon_namespace, state.owning_lane);
 }
 
 #[test]
-fn replacement_configuration_cannot_start_an_existing_auxiliary_owner() {
+fn replacement_configuration_adopts_stopped_tasks_and_can_start_queued_auxiliary() {
     let mut fixture = Fixture::new();
     fixture.create(false, true);
     let auxiliary = fixture
@@ -643,9 +690,9 @@ fn replacement_configuration_cannot_start_an_existing_auxiliary_owner() {
             task_slug: "fixture".into(),
             session_id: auxiliary.session.id.clone(),
         })
-        .is_err());
+        .is_ok());
     let metadata: alinery_core::SessionMeta = serde_json::from_slice(&fs::read(alinery_core::session_meta_path(&fixture.root, "fixture", &auxiliary.session.id)).unwrap()).unwrap();
-    assert!(metadata.started_at.is_none());
+    assert!(metadata.started_at.is_some());
 }
 
 #[test]

@@ -447,6 +447,10 @@ fn connect_until(path: &Path, deadline: &ObservationDeadline) -> std::io::Result
     Ok(UnixStream::from(owned))
 }
 
+pub(crate) fn connect_for_ownership_probe(path: &Path) -> std::io::Result<UnixStream> {
+    connect_until(path, &ObservationDeadline::start(DAEMON_OBSERVATION_TIMEOUT))
+}
+
 fn write_until(stream: &mut (impl Write + AsRawFd), mut bytes: &[u8], deadline: &ObservationDeadline) -> std::io::Result<()> {
     while !bytes.is_empty() {
         deadline.remaining()?;

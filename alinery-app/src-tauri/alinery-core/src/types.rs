@@ -318,6 +318,9 @@ pub struct SessionMeta {
     pub started_at: Option<u64>,
     #[serde(default)]
     pub status_changed_at: Option<u64>,
+    /// Last accepted message or substantive live agent output (epoch seconds).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity_at: Option<u64>,
     #[serde(default)]
     pub status_revision: u64,
     #[serde(default)]

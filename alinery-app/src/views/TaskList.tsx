@@ -16,6 +16,7 @@ import {
   TaskActivityIndicators,
   taskKey,
   useBoardTaskActivity,
+  useMinuteNow,
 } from "../shared";
 import type { BoardNav, BoardTask, TaskActivitySession, TaskActivitySummary } from "../types";
 
@@ -117,6 +118,7 @@ export function TaskList({
     return { column: TASK_COLUMNS[5], direction: "asc" };
   });
   const activity = useBoardTaskActivity(tasks);
+  const now = useMinuteNow();
   // Sort roots and siblings, never separate children from their parent.
   const rows = flattenTaskRows(tasks, (left, right) => {
     const a = sort.column.value(left, activity[taskKey(left)] ?? EMPTY_TASK_ACTIVITY);
@@ -315,10 +317,10 @@ export function TaskList({
                     </td>
                     <td className="num-col">{t.session_count}</td>
                     <td className="age-cell age-col" title={formatAbsolute(t.created)}>
-                      {formatAge(t.created)}
+                      {formatAge(t.created, now)}
                     </td>
                     <td className="age-cell age-col" title={formatAbsolute(updated)}>
-                      {formatAge(updated)}
+                      {formatAge(updated, now)}
                     </td>
                   </tr>
                 );

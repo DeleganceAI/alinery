@@ -1274,7 +1274,7 @@ export default function App() {
           )}
           <div className={drawerOpen ? "app-main-column" : undefined} style={drawerOpen ? undefined : { display: "contents" }}>
             {daemon.repo_busy && appConfig?.active_repo && <RepoBusyBanner repo={appConfig.active_repo} onPickRepo={() => void addRepo()} />}
-            <DaemonConflictBanner conflict={daemon.conflict} onReclaimed={() => setReloadNonce((n) => n + 1)} />
+            <DaemonConflictBanner conflict={daemon.conflict} />
             <HostGuardWarning visible={daemon.host_guard_warning} />
             {repoErr && appConfig?.active_repo && (
               <div className="daemon-conflict" role="alert">

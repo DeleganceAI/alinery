@@ -27,7 +27,7 @@ use alinery_core::{
     RUNNER_EVENT_PROTOCOL_VERSION,
 };
 
-use alinery_core::lockfile::{try_lock_exclusive, LockFile};
+use alinery_core::lockfile::try_lock_exclusive;
 
 use std::collections::{HashMap, VecDeque};
 use std::env;
@@ -97,6 +97,8 @@ struct Inner {
     rpc_ready: Option<Vec<u8>>,
     completion_in_flight: bool,
     state: SessionState,
+    // Last durable activity second: streaming tokens within it need no disk write.
+    activity_at: Option<u64>,
     reaped_and_drained: bool,
 }
 
@@ -361,9 +363,8 @@ fn main() {
 
     let _ = fs::create_dir_all(&alinery);
 
-    // Real flock singleton (Fix 1 / RC4). Hold for process life; kernel releases on any death.
-    // Policy: never unlink the lock file — flock is the only truth.
-    let _lane_lock = match acquire_lane_lock(&lock_path, &socket_path) {
+    // Keep every ownership lease until exit; failed adoption never reaches bind/reconcile.
+    let _ownership = match alinery_core::repo_ownership::acquire(&repo, &daemon_namespace, &app_config_identity) {
         Ok(l) => l,
         Err(msg) => {
             alinery_core::append_exception(app_config.as_ref(), &format!("daemon.lane-lock-failed err={}", alinery_core::quote_log_value(&msg)));
@@ -371,6 +372,14 @@ fn main() {
             process::exit(1);
         }
     };
+    match fs::remove_file(&socket_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            eprintln!("cannot reclaim stale daemon socket {}: {error}", socket_path.display());
+            process::exit(1);
+        }
+    }
 
     let listener = match UnixListener::bind(&socket_path) {
         Ok(l) => l,
@@ -408,7 +417,6 @@ fn main() {
     // classified Interrupted) so it can't masquerade as still-running. Per-file tolerant.
     // Must finish before we accept connections (T9).
     let swept = boot_sweep(&repo, &daemon_namespace);
-    execution::boot(&repo, &daemon_namespace);
     if swept > 0 {
         eprintln!("boot sweep: marked {swept} interrupted session(s)");
         alinery_core::append_info(app_config.as_ref(), &format!("daemon.boot-sweep interrupted={swept}"));
@@ -476,34 +484,6 @@ fn main() {
             Err(_) => std::thread::sleep(Duration::from_millis(50)),
         }
     }
-}
-
-/// tmux-style lane acquire: connect-before-unlink, flock held across reclaim→bind fence.
-fn acquire_lane_lock(lock_path: &Path, socket_path: &Path) -> Result<LockFile, String> {
-    // 1. Unconditional connect probe — live socket ⇒ another daemon owns this lane.
-    if UnixStream::connect(socket_path).is_ok() {
-        return Err("daemon already running for repo".into());
-    }
-
-    // 2. Exclusive flock with short retries (startup races with a dying peer).
-    let mut lock = None;
-    for _ in 0..10 {
-        match try_lock_exclusive(lock_path) {
-            Ok(Some(l)) => {
-                lock = Some(l);
-                break;
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-            Err(e) => return Err(format!("lock {}: {e}", lock_path.display())),
-        }
-    }
-    let Some(lock) = lock else {
-        return Err("daemon already running for repo (lock held)".into());
-    };
-
-    // 3. Socket is now-provably stale (or absent) — reclaim and let caller bind.
-    let _ = fs::remove_file(socket_path);
-    Ok(lock)
 }
 
 /// SIGTERM/SIGINT/SIGHUP → write one byte on a pipe the main loop polls.
@@ -960,6 +940,20 @@ fn publish_live_transition(inner: &mut Inner, meta_path: &Path, candidate: Sessi
     Ok(())
 }
 
+fn record_activity(inner: &mut Inner, meta_path: &Path, now: u64) -> Result<(), String> {
+    if inner.activity_at.is_some_and(|previous| previous >= now) {
+        return Ok(());
+    }
+    let mut durable = now;
+    stamp_meta(meta_path, |value| {
+        durable = durable.max(value["activity_at"].as_u64().unwrap_or(0));
+        value["activity_at"] = json!(durable);
+    })?;
+    // Failed persistence must remain retryable, not masquerade as durable activity.
+    inner.activity_at = Some(durable);
+    Ok(())
+}
+
 struct PendingPtySeed {
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     inner: Arc<Mutex<Inner>>,
@@ -1059,6 +1053,12 @@ fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Pa
             return Err("unsupported-adapter".into());
         }
         let reduced = reduce_runner_event(&state.state, &envelope.event);
+        // The extension emits Busy on agent_start/continuation and resolved tools,
+        // never on polling. A stale correlation must not turn an outstanding wait
+        // into apparent work. Other runner events already have lifecycle stamps.
+        if matches!(envelope.event, RunnerEvent::Busy { .. }) && reduced.state.agent == alinery_core::AgentState::Busy {
+            record_activity(&mut state, &meta_path, now_secs())?;
+        }
         publish_live_transition(&mut state, &meta_path, reduced.state)?;
         if matches!(envelope.event, RunnerEvent::PhaseCompleted { .. }) {
             completion_event_action(true, &mut state.completion_in_flight)
@@ -1309,7 +1309,7 @@ fn handle_conn(
                     None => None,
                     Some(session) => match &session.io {
                         SessionIo::Rpc { .. } => Some(Err(WRONG_TRANSPORT)),
-                        SessionIo::Pty { writer, .. } => Some(Ok((writer.clone(), session.inner.clone()))),
+                        SessionIo::Pty { writer, .. } => Some(Ok((writer.clone(), session.inner.clone(), session.meta_path.clone()))),
                     },
                 }
             };
@@ -1324,7 +1324,7 @@ fn handle_conn(
                 }
                 Some(Ok(handles)) => handles,
             };
-            let (writer, inner) = handles;
+            let (writer, inner, meta_path) = handles;
             let mut writer = writer.lock().unwrap_or_else(|error| error.into_inner());
             let adapter = {
                 let inner = inner.lock().unwrap_or_else(|error| error.into_inner());
@@ -1349,9 +1349,14 @@ fn handle_conn(
                 reply_message_error(&mut stream, error, "not_sent");
                 return;
             }
-            let result = write_and_flush_message(&mut **writer, adapter, &body.bytes);
-            match result {
-                Ok(()) => reply(&mut stream, json!({"ok": true})),
+            match write_and_flush_message(&mut **writer, adapter, &body.bytes) {
+                Ok(()) => {
+                    if let Err(error) = record_activity(&mut inner.lock().unwrap_or_else(|error| error.into_inner()), &meta_path, now_secs()) {
+                        // The message was delivered; a timestamp failure must not invite a duplicate send.
+                        eprintln!("message activity stamp {}: {error}", meta_path.display());
+                    }
+                    reply(&mut stream, json!({"ok": true}));
+                }
                 Err(error) => reply_message_error(&mut stream, error, "unknown"),
             }
         }
@@ -2081,6 +2086,7 @@ fn spawn_session(
         rpc_pending_bytes: 0,
         rpc_ready: None,
         completion_in_flight: false,
+        activity_at: None,
         reaped_and_drained: false,
         state: SessionState {
             process: ProcessState::Starting,
@@ -2351,6 +2357,8 @@ enum RpcLineKind {
     /// A reply to a history request. The client that asked correlates it against its own walk;
     /// replaying it to a different client resurrects a dead cursor.
     HistoryResponse,
+    /// Live meaningful output or an accepted send; retained like any other event.
+    Activity,
     Other,
 }
 
@@ -2363,7 +2371,49 @@ fn classify_rpc_line(line: &[u8]) -> RpcLineKind {
         Some("agent_end") => RpcLineKind::AgentEnd,
         Some("turn_end") => RpcLineKind::TurnEnd,
         Some("response") if matches!(value.get("command").and_then(Value::as_str), Some("get_messages") | Some("get_messages_page")) => RpcLineKind::HistoryResponse,
+        _ if rpc_value_is_activity(&value) => RpcLineKind::Activity,
         _ => RpcLineKind::Other,
+    }
+}
+
+fn rpc_value_is_activity(value: &Value) -> bool {
+    match value.get("type").and_then(Value::as_str) {
+        // A pipe write is not acceptance: OMP can still refuse the command.
+        Some("response") => {
+            value.get("success").and_then(Value::as_bool) == Some(true)
+                && matches!(value.get("command").and_then(Value::as_str), Some("prompt" | "steer" | "follow_up" | "abort_and_prompt"))
+        }
+        Some("message_update") if value["message"]["role"] == "assistant" => {
+            let event = &value["assistantMessageEvent"];
+            match event["type"].as_str() {
+                Some("text_delta" | "thinking_delta" | "toolcall_delta") => event["delta"].as_str().is_some_and(|delta| !delta.is_empty()),
+                Some("text_end" | "thinking_end") => event["content"].as_str().is_some_and(|content| !content.is_empty()),
+                Some("toolcall_end") => event["toolCall"].is_object(),
+                _ => false,
+            }
+        }
+        Some("message_end") => match value["message"]["role"].as_str() {
+            Some("assistant") => value["message"]["content"].as_array().is_some_and(|content| {
+                content.iter().any(|block| match block["type"].as_str() {
+                    Some("text") => block["text"].as_str().is_some_and(|text| !text.is_empty()),
+                    Some("thinking") => block["thinking"].as_str().is_some_and(|text| !text.is_empty()),
+                    Some("toolCall") => true,
+                    _ => false,
+                })
+            }),
+            Some("toolResult") => true,
+            _ => false,
+        },
+        Some("tool_execution_start" | "tool_execution_update" | "tool_execution_end") => true,
+        _ => false,
+    }
+}
+
+fn record_rpc_activity(inner: &mut Inner, meta_path: &Path, kind: RpcLineKind, now: u64) {
+    if kind == RpcLineKind::Activity {
+        if let Err(error) = record_activity(inner, meta_path, now) {
+            eprintln!("rpc activity stamp failed: {error}");
+        }
     }
 }
 
@@ -2401,7 +2451,7 @@ fn push_rpc_line(inner: &mut Inner, line: Vec<u8>, kind: RpcLineKind) {
             inner.rpc_pending.clear();
             inner.rpc_pending_bytes = 0;
         }
-        RpcLineKind::Other => {
+        RpcLineKind::Other | RpcLineKind::Activity => {
             while inner.rpc_pending_bytes.saturating_add(line.len()) > RPC_PENDING_MAX_BYTES && !inner.rpc_pending.is_empty() {
                 if let Some(old) = inner.rpc_pending.pop_front() {
                     inner.rpc_pending_bytes = inner.rpc_pending_bytes.saturating_sub(old.len());
@@ -2425,9 +2475,89 @@ mod rpc_ring_tests {
             rpc_pending_bytes: 0,
             rpc_ready: None,
             completion_in_flight: false,
+            activity_at: None,
             reaped_and_drained: false,
             state: SessionState::default(),
         }
+    }
+
+    #[test]
+    fn activity_tracks_live_work_but_not_observer_or_noise_frames() {
+        let path = std::env::temp_dir().join(format!("alinery-activity-{}.meta.json", uuid::Uuid::new_v4()));
+        fs::write(
+            &path,
+            br#"{"id":"s1","created":1,"worktree":"","activity_at":40,"archived":true,"notification_read_at":39}"#,
+        )
+        .unwrap();
+        let mut inner = empty_inner();
+        inner.state.agent = alinery_core::AgentState::Busy;
+        let noise = [
+            json!({"type":"ready"}),
+            json!({"type":"response","command":"get_state","success":true,"data":{"isStreaming":true}}),
+            json!({"type":"response","command":"get_messages","success":true,"data":{"messages":[{"role":"assistant","content":[{"type":"text","text":"old"}]}]}}),
+            json!({"type":"response","command":"get_messages_page","success":true,"data":{"messages":[]}}),
+            json!({"type":"response","command":"set_model","success":true}),
+            json!({"type":"response","command":"prompt","success":false,"error":"refused"}),
+            json!({"type":"message_start","message":{"role":"assistant","content":[]}}),
+            json!({"type":"message_update","message":{"role":"assistant"},"assistantMessageEvent":{"type":"thinking_start"}}),
+            json!({"type":"message_update","message":{"role":"assistant"},"assistantMessageEvent":{"type":"text_delta","delta":""}}),
+            json!({"type":"heartbeat"}),
+            json!({"type":"extension_ui_request","method":"setStatus","text":"spinner"}),
+        ];
+        let before = fs::read(&path).unwrap();
+        for frame in noise {
+            let kind = classify_rpc_line(&serde_json::to_vec(&frame).unwrap());
+            record_rpc_activity(&mut inner, &path, kind, 50);
+        }
+        record_rpc_activity(&mut inner, &path, classify_rpc_line(b"\x1b[2Kspinner\r"), 50);
+        assert_eq!(fs::read(&path).unwrap(), before);
+        for (offset, frame) in [
+            json!({"type":"response","command":"prompt","success":true}),
+            json!({"type":"response","command":"steer","success":true}),
+            json!({"type":"response","command":"follow_up","success":true}),
+            json!({"type":"response","command":"abort_and_prompt","success":true}),
+            json!({"type":"message_update","message":{"role":"assistant"},"assistantMessageEvent":{"type":"text_delta","delta":"hello"}}),
+            json!({"type":"message_update","message":{"role":"assistant"},"assistantMessageEvent":{"type":"thinking_delta","delta":"reasoning"}}),
+            json!({"type":"tool_execution_start","toolCallId":"t1","toolName":"read"}),
+            json!({"type":"tool_execution_update","toolCallId":"t1","partialResult":{"content":[{"type":"text","text":"output"}]}}),
+            json!({"type":"tool_execution_end","toolCallId":"t1","result":{"content":[]}}),
+            json!({"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}),
+            json!({"type":"message_end","message":{"role":"toolResult","toolCallId":"t1","content":[]}}),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let at = 51 + offset as u64;
+            record_rpc_activity(&mut inner, &path, classify_rpc_line(&serde_json::to_vec(&frame).unwrap()), at);
+            let meta = read_session_meta_full(&path).unwrap();
+            assert_eq!(meta.activity_at, Some(at), "{frame}");
+            assert!(meta.archived);
+            assert_eq!(meta.notification_read_at, Some(39));
+            assert_eq!(inner.state.agent, alinery_core::AgentState::Busy);
+        }
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn activity_is_monotonic_coalesced_and_failed_writes_remain_retryable() {
+        let path = std::env::temp_dir().join(format!("alinery-activity-retry-{}.meta.json", uuid::Uuid::new_v4()));
+        let mut inner = empty_inner();
+        assert!(record_activity(&mut inner, &path, 10).is_err());
+        assert_eq!(inner.activity_at, None);
+        fs::write(&path, br#"{"id":"s1","created":1,"worktree":"","activity_at":20}"#).unwrap();
+        record_activity(&mut inner, &path, 10).unwrap();
+        assert_eq!(read_session_meta_full(&path).unwrap().activity_at, Some(20));
+        // Removing the file proves same-second/older tokens don't even attempt I/O.
+        fs::remove_file(&path).unwrap();
+        record_activity(&mut inner, &path, 20).unwrap();
+        record_activity(&mut inner, &path, 19).unwrap();
+        assert!(record_activity(&mut inner, &path, 21).is_err());
+        fs::write(&path, br#"{"id":"s1","created":1,"worktree":"","activity_at":20,"pinned":true}"#).unwrap();
+        record_activity(&mut inner, &path, 21).unwrap();
+        let meta = read_session_meta_full(&path).unwrap();
+        assert_eq!(meta.activity_at, Some(21));
+        assert!(meta.pinned);
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -2884,6 +3014,7 @@ fn spawn_omp_setup_session(reg: &Registry, repo: &Path, app_config: &Path, daemo
         rpc_pending_bytes: 0,
         rpc_ready: None,
         completion_in_flight: false,
+        activity_at: None,
         reaped_and_drained: false,
         state: SessionState {
             process: ProcessState::Starting,
@@ -3113,6 +3244,7 @@ fn spawn_rpc_session(
         rpc_pending_bytes: 0,
         rpc_ready: None,
         completion_in_flight: false,
+        activity_at: None,
         reaped_and_drained: false,
         state: SessionState {
             process: ProcessState::Starting,
@@ -3190,6 +3322,9 @@ fn spawn_rpc_session(
                             Ok(Some(complete)) => {
                                 let kind = classify_rpc_line(&complete);
                                 let mut inner = inner_t.lock().unwrap_or_else(|error| error.into_inner());
+                                if !replacing_reader.load(Ordering::SeqCst) {
+                                    record_rpc_activity(&mut inner, &meta_path_reader, kind, now_secs());
+                                }
                                 push_rpc_line(&mut inner, complete, kind);
                             }
                             Ok(None) => {}
@@ -3248,6 +3383,9 @@ fn spawn_rpc_session(
                                 let kind = classify_rpc_line(&complete);
                                 {
                                     let mut inner = inner_t.lock().unwrap_or_else(|error| error.into_inner());
+                                    if !replacing_reader.load(Ordering::SeqCst) {
+                                        record_rpc_activity(&mut inner, &meta_path_reader, kind, now_secs());
+                                    }
                                     push_rpc_line(&mut inner, complete, kind);
                                     if kind == RpcLineKind::AgentEnd && !replacing_reader.load(Ordering::SeqCst) {
                                         settle_idle_on_agent_end(&mut inner, &meta_path_reader);

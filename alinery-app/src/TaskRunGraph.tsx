@@ -1,12 +1,45 @@
-import { type CSSProperties, useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH, layoutDefinitionGraph } from "./playbookGraphLayout";
+import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH, layoutDefinitionGraph, reduceFlowConnections } from "./playbookGraphLayout";
 import type { RunGraphNode } from "./runGraphModel";
 import { buildTaskRunGraph, occurrenceLabel } from "./runGraphModel";
 import { classifySessionNotice, hasAcknowledgedExit, hasUnacknowledgedExit } from "./sessionAttention";
 import { StatusDot } from "./shared";
-import type { SessionMeta, SessionObservation, TaskExecutionState } from "./types";
+import type { ArtifactOccurrence, SessionMeta, SessionObservation, TaskExecutionState } from "./types";
 import { type PanZoomView, usePanZoom } from "./usePanZoom";
 import "./TaskRunGraph.css";
+
+const MIN_ZOOM = 0.01;
+const ARTIFACT_ROW_HEIGHT = 24;
+const ARTIFACTS_GAP = 8;
+
+function ArtifactLink({
+  artifact,
+  onOpenArtifact,
+  onHoverArtifact,
+  onFocusArtifact,
+}: {
+  artifact: ArtifactOccurrence;
+  onOpenArtifact: (relativePath: string) => void;
+  onHoverArtifact: (id: string | null) => void;
+  onFocusArtifact: (id: string | null) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="task-run-artifact"
+      style={{ height: ARTIFACT_ROW_HEIGHT }}
+      title={`${artifact.relative_path}\nOccurrence: ${artifact.id}\nProducer execution: ${artifact.producer_execution_id ?? "seed input"}`}
+      aria-label={`Open artifact ${artifact.relative_path}, occurrence ${artifact.id}`}
+      onClick={() => onOpenArtifact(artifact.relative_path)}
+      onMouseEnter={() => onHoverArtifact(artifact.id)}
+      onMouseLeave={() => onHoverArtifact(null)}
+      onFocus={() => onFocusArtifact(artifact.id)}
+      onBlur={() => onFocusArtifact(null)}
+    >
+      <span>{artifact.relative_path.slice(artifact.relative_path.lastIndexOf("/") + 1)}</span>
+    </button>
+  );
+}
 
 function nodeName(node: RunGraphNode) {
   return "session" in node ? node.session.name || node.session.id : node.label;
@@ -26,42 +59,79 @@ export function TaskRunGraph({
   onOpenArtifact: (relativePath: string) => void;
 }) {
   const [zoom, setZoom] = useState(1);
-  const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
-  const [focusedEdge, setFocusedEdge] = useState<string | null>(null);
+  const [displayMode, setDisplayMode] = useState<"flow" | "dependencies">("flow");
+  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
+  const [hoveredArtifactId, setHoveredArtifactId] = useState<string | null>(null);
+  const [focusedArtifactId, setFocusedArtifactId] = useState<string | null>(null);
   const arrowId = `${useId()}-run-arrow`;
   const graph = useMemo(() => buildTaskRunGraph(sessions, state), [sessions, state]);
-  // Keep artifact targets at least 24 screen pixels high even at minimum graph zoom.
-  const artifactLineHeight = 24 / Math.min(zoom, 1);
-  const layout = useMemo(
+  const { artifacts, artifactsBySource, externalArtifacts, nodeHeights } = useMemo(() => {
+    const unique = new Map<string, ArtifactOccurrence>();
+    const bySource = new Map<string, ArtifactOccurrence[]>();
+    const external: ArtifactOccurrence[] = [];
+    for (const connection of graph.connections) {
+      const source = graph.nodes.get(connection.from);
+      for (const artifact of connection.artifacts) {
+        if (unique.has(artifact.id)) continue;
+        unique.set(artifact.id, artifact);
+        if (source && "session" in source) {
+          const outputs = bySource.get(source.key);
+          if (outputs) outputs.push(artifact);
+          else bySource.set(source.key, [artifact]);
+        } else {
+          external.push(artifact);
+        }
+      }
+    }
+    return {
+      artifacts: [...unique.values()],
+      artifactsBySource: bySource,
+      externalArtifacts: external,
+      nodeHeights: new Map([...bySource].map(([key, outputs]) => [key, GRAPH_NODE_HEIGHT + ARTIFACTS_GAP + outputs.length * ARTIFACT_ROW_HEIGHT])),
+    };
+  }, [graph]);
+  const selectedArtifact = artifacts.find((artifact) => artifact.id === selectedArtifactId) ?? artifacts[0];
+  const visibleConnections = useMemo(() => {
+    if (displayMode === "dependencies") {
+      return graph.connections.filter((connection) => connection.artifacts.some((artifact) => artifact.id === selectedArtifact?.id));
+    }
+    const sessionConnections = graph.connections.filter((connection) => {
+      const from = graph.nodes.get(connection.from);
+      const to = graph.nodes.get(connection.to);
+      return from && "session" in from && to && "session" in to;
+    });
+    const reduced = new Set(reduceFlowConnections(sessionConnections));
+    // Resume history is a distinct relationship, even when an ordering path also exists.
+    return sessionConnections.filter((connection) => reduced.has(connection) || connection.resumed);
+  }, [graph, displayMode, selectedArtifact?.id]);
+  const layout = useMemo(() => {
+    const keys =
+      displayMode === "flow"
+        ? [...graph.nodes.values()].filter((node) => "session" in node).map((node) => node.key)
+        : [...new Set(visibleConnections.flatMap((connection) => [connection.from, connection.to]))];
+    // Fixed-size output labels belong to their producer, never to an arbitrary consumer edge.
+    return layoutDefinitionGraph(keys, visibleConnections, undefined, undefined, displayMode === "flow" ? nodeHeights : undefined);
+  }, [graph, displayMode, visibleConnections, nodeHeights]);
+  const visualNodes = useMemo(() => [...layout.nodes].sort((left, right) => left.y - right.y || left.x - right.x || left.key.localeCompare(right.key)), [layout]);
+  const resumedPairs = useMemo(
+    () => new Set(visibleConnections.filter((connection) => connection.resumed).map((connection) => JSON.stringify([connection.from, connection.to]))),
+    [visibleConnections],
+  );
+  const activeArtifactId = hoveredArtifactId ?? focusedArtifactId;
+  const highlightedPairs = useMemo(
     () =>
-      layoutDefinitionGraph(
-        [...graph.nodes.keys()],
-        graph.connections.map((connection) => ({
-          from: connection.from,
-          to: connection.to,
-          label: [...connection.artifacts.map(occurrenceLabel), ...(connection.resumed ? ["Resumed session (not an artifact)"] : [])].join("\n"),
-        })),
-        undefined,
-        artifactLineHeight,
+      new Set(
+        visibleConnections
+          .filter((connection) => connection.artifacts.some((artifact) => artifact.id === activeArtifactId))
+          .map((connection) => JSON.stringify([connection.from, connection.to])),
       ),
-    [graph, artifactLineHeight],
+    [visibleConnections, activeArtifactId],
   );
-  const visualItems = useMemo(
-    () =>
-      [
-        ...layout.nodes.map((position) => ({ key: position.key, x: position.x, y: position.y, position })),
-        ...layout.edges.map((edge) => ({ key: JSON.stringify([edge.from, edge.to]), x: edge.labelX, y: edge.labelY, edge })),
-      ].sort((left, right) => left.y - right.y || left.x - right.x || left.key.localeCompare(right.key)),
-    [layout],
-  );
-  const activeEdge = hoveredEdge ?? focusedEdge;
-  const highlightedEdge = activeEdge ? layout.edges.find((edge) => JSON.stringify([edge.from, edge.to]) === activeEdge) : undefined;
-  const connections = new Map(graph.connections.map((connection) => [JSON.stringify([connection.from, connection.to]), connection]));
   const viewportRef = useRef<HTMLDivElement>(null);
   const panButtonRef = useRef<HTMLButtonElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
-  const enabled = graph.nodes.size > 0;
+  const enabled = layout.nodes.length > 0;
   const paintView = useCallback(({ scale, tx, ty }: PanZoomView) => {
     if (stageRef.current) stageRef.current.style.transform = `translate(${tx}px, ${ty}px)`;
     if (canvasRef.current) canvasRef.current.style.zoom = `calc(${scale} * var(--ui-scale))`;
@@ -70,7 +140,7 @@ export function TaskRunGraph({
   const { viewRef, panning, setView, zoomBy, onPointerDown, onFocusCapture } = usePanZoom({
     viewportRef,
     paint: paintView,
-    minScale: 0.25,
+    minScale: MIN_ZOOM,
     maxScale: 2,
     enabled,
   });
@@ -81,17 +151,81 @@ export function TaskRunGraph({
     const width = canvas.getBoundingClientRect().width / viewRef.current.scale;
     setView({ scale: 1, tx: Math.max(0, (viewport.clientWidth - width) / 2), ty: 0 });
   }, [setView, viewRef]);
+  const viewKey = JSON.stringify([displayMode, displayMode === "dependencies" ? selectedArtifact?.id : null]);
+  const previousViewKey = useRef<string | null>(null);
   useLayoutEffect(() => {
-    if (enabled) resetView();
-  }, [enabled, resetView]);
+    if (!enabled) {
+      previousViewKey.current = null;
+    } else if (previousViewKey.current !== viewKey) {
+      previousViewKey.current = viewKey;
+      resetView();
+    }
+  }, [enabled, resetView, viewKey]);
 
   return (
-    <section className="task-run-graph" aria-label="Task run graph" style={{ "--artifact-line-height": `${artifactLineHeight}px` } as CSSProperties}>
+    <section className="task-run-graph" aria-label="Task run graph">
       {sessions.length === 0 && <p className="dim">No sessions yet.</p>}
-      {graph.nodes.size > 0 && (
+      <div className="task-run-modes" role="group" aria-label="Run graph display mode">
+        <button type="button" className="btn ghost small" aria-pressed={displayMode === "flow"} onClick={() => setDisplayMode("flow")}>
+          Flow
+        </button>
+        <button type="button" className="btn ghost small" aria-pressed={displayMode === "dependencies"} onClick={() => setDisplayMode("dependencies")}>
+          Artifact dependencies
+        </button>
+        {displayMode === "flow" && <p className="dim task-run-flow-hint">Session ordering · dashed links indicate resumed sessions.</p>}
+      </div>
+      {displayMode === "flow" && externalArtifacts.length > 0 && (
+        <div className="task-run-shared-artifacts" role="group" aria-label="Seed inputs and artifacts whose producer is not shown">
+          <span className="dim">Inputs &amp; other artifacts</span>
+          {externalArtifacts.map((artifact) => (
+            <ArtifactLink key={artifact.id} artifact={artifact} onOpenArtifact={onOpenArtifact} onHoverArtifact={setHoveredArtifactId} onFocusArtifact={setFocusedArtifactId} />
+          ))}
+        </div>
+      )}
+      {displayMode === "dependencies" && (
+        <div className="task-run-artifact-details">
+          {selectedArtifact ? (
+            <>
+              <label>
+                Artifact occurrence
+                <select value={selectedArtifact.id} onChange={(event) => setSelectedArtifactId(event.target.value)}>
+                  {artifacts.map((artifact) => (
+                    <option key={artifact.id} value={artifact.id}>
+                      {occurrenceLabel(artifact)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <ArtifactLink artifact={selectedArtifact} onOpenArtifact={onOpenArtifact} onHoverArtifact={setHoveredArtifactId} onFocusArtifact={setFocusedArtifactId} />
+              <div className="task-run-provenance" role="group" aria-label="Artifact provenance">
+                <span>Producer execution: {selectedArtifact.producer_execution_id ?? "seed input"}</span>
+              </div>
+            </>
+          ) : (
+            <p className="dim">No published artifacts.</p>
+          )}
+        </div>
+      )}
+      <ul className={displayMode === "flow" ? "sr-only" : "task-run-provenance"} aria-label="Displayed connections">
+        {visibleConnections.map((connection) => {
+          const from = graph.nodes.get(connection.from);
+          const to = graph.nodes.get(connection.to);
+          if (!from || !to) return null;
+          const provenance = `${nodeName(from)} → ${nodeName(to)}`;
+          return (
+            <li
+              key={JSON.stringify([connection.from, connection.to])}
+              aria-label={`${displayMode === "dependencies" ? "Artifact" : connection.resumed ? "Resumed session (not an artifact)" : "Ordering"}: ${provenance}`}
+            >
+              {provenance}
+            </li>
+          );
+        })}
+      </ul>
+      {enabled && (
         <>
           <div className="task-run-toolbar" role="group" aria-label="Run graph zoom controls">
-            <button type="button" className="btn ghost small" aria-label="Zoom out run graph" disabled={zoom <= 0.25} onClick={() => zoomBy(1 / 1.25)}>
+            <button type="button" className="btn ghost small" aria-label="Zoom out run graph" disabled={zoom <= MIN_ZOOM} onClick={() => zoomBy(1 / 1.25)}>
               −
             </button>
             <output aria-label="Run graph zoom">{Math.round(zoom * 100)}%</output>
@@ -149,56 +283,31 @@ export function TaskRunGraph({
                   {layout.edges.map((edge) => (
                     <g key={JSON.stringify([edge.from, edge.to])}>
                       {edge.paths.map((path) => (
-                        <path key={path} className="task-run-path" d={path} markerEnd={`url(#${arrowId})`} />
+                        <path
+                          key={path}
+                          className={`task-run-path${displayMode === "flow" && resumedPairs.has(JSON.stringify([edge.from, edge.to])) ? " resumed" : ""}`}
+                          d={path}
+                          markerEnd={`url(#${arrowId})`}
+                        />
                       ))}
                     </g>
                   ))}
-                  {highlightedEdge?.paths.map((path) => (
-                    <path key={path} className="task-run-path highlighted" d={path} markerEnd={`url(#${arrowId}-active)`} />
-                  ))}
+                  {layout.edges
+                    .filter((edge) => highlightedPairs.has(JSON.stringify([edge.from, edge.to])))
+                    .flatMap((edge) =>
+                      edge.paths.map((path) => (
+                        <path
+                          key={JSON.stringify([edge.from, edge.to, path])}
+                          className={`task-run-path highlighted${displayMode === "flow" && resumedPairs.has(JSON.stringify([edge.from, edge.to])) ? " resumed" : ""}`}
+                          d={path}
+                          markerEnd={`url(#${arrowId}-active)`}
+                        />
+                      )),
+                    )}
                 </svg>
-                {visualItems.map((item) => {
-                  if ("edge" in item) {
-                    const { edge, key } = item;
-                    const connection = connections.get(key);
-                    if (!connection) return null;
-                    const from = graph.nodes.get(edge.from);
-                    const to = graph.nodes.get(edge.to);
-                    if (!from || !to) return null;
-                    const provenance = `${nodeName(from)} → ${nodeName(to)}`;
-                    return (
-                      <div
-                        key={key}
-                        className="task-run-labels"
-                        role="group"
-                        aria-label={provenance}
-                        style={{ left: edge.labelX, top: edge.labelY, width: edge.labelWidth }}
-                        onMouseEnter={() => setHoveredEdge(key)}
-                        onMouseLeave={() => setHoveredEdge(null)}
-                        onFocus={() => setFocusedEdge(key)}
-                        onBlur={(event) => {
-                          if (!event.currentTarget.contains(event.relatedTarget)) setFocusedEdge(null);
-                        }}
-                      >
-                        {connection.artifacts.map((occurrence) => (
-                          <button
-                            type="button"
-                            key={occurrence.id}
-                            className="task-run-artifact"
-                            title={`${occurrence.relative_path}\nOccurrence: ${occurrence.id}\nProducer execution: ${occurrence.producer_execution_id ?? "seed input"}\n${provenance}\n${edge.from} → ${edge.to}`}
-                            aria-label={`Open artifact ${occurrence.relative_path}, occurrence ${occurrence.id}`}
-                            onClick={() => onOpenArtifact(occurrence.relative_path)}
-                          >
-                            {occurrence.relative_path.slice(occurrence.relative_path.lastIndexOf("/") + 1)}
-                          </button>
-                        ))}
-                        {connection.resumed && <span className="task-run-resume">Resumed session (not an artifact)</span>}
-                      </div>
-                    );
-                  }
-                  const { position } = item;
+                {visualNodes.map((position) => {
                   const node = graph.nodes.get(position.key);
-                  if (!node || (!("session" in node) && node.anchorOnly)) return null;
+                  if (!node) return null;
                   const style = { left: position.x, top: position.y, width: GRAPH_NODE_WIDTH, height: GRAPH_NODE_HEIGHT };
                   if (!("session" in node))
                     return (
@@ -216,33 +325,51 @@ export function TaskRunGraph({
                     ? "Previous attempt"
                     : (execution?.lifecycle.replace(/_/g, " ") ?? (session.ended_at != null ? "Exited" : "Status unavailable"));
                   return (
-                    <button
-                      type="button"
+                    <div
                       key={node.key}
-                      className="task-run-node"
-                      style={style}
-                      aria-label={`Open session ${nodeName(node)}`}
-                      title={`${nodeName(node)}\nSession: ${session.id}${execution ? `\nExecution: ${execution.id}` : ""}\n${savedStatus}${session.archived ? " · archived" : ""}`}
-                      onClick={() => onOpenSession(session)}
+                      className="task-run-session"
+                      style={{ ...style, height: displayMode === "flow" ? (nodeHeights.get(node.key) ?? GRAPH_NODE_HEIGHT) : GRAPH_NODE_HEIGHT }}
                     >
-                      <strong>{nodeName(node)}</strong>
-                      <span className="task-run-node-status">
-                        {observation || unreadCompletion || hasUnacknowledgedExit(session) || exitAcknowledged ? (
-                          <StatusDot
-                            id={session.id}
-                            observation={observation ?? null}
-                            superseded={previousAttempt}
-                            unreadCompletion={unreadCompletion}
-                            exitCode={session.exit_code}
-                            exitAcknowledged={exitAcknowledged}
-                            notifyTransitions={false}
-                          />
-                        ) : (
-                          savedStatus
-                        )}
-                        {session.archived && " · archived"}
-                      </span>
-                    </button>
+                      <button
+                        type="button"
+                        className="task-run-node"
+                        style={{ width: GRAPH_NODE_WIDTH, height: GRAPH_NODE_HEIGHT }}
+                        aria-label={`Open session ${nodeName(node)}`}
+                        title={`${nodeName(node)}\nSession: ${session.id}${execution ? `\nExecution: ${execution.id}` : ""}\n${savedStatus}${session.archived ? " · archived" : ""}`}
+                        onClick={() => onOpenSession(session)}
+                      >
+                        <strong>{nodeName(node)}</strong>
+                        <span className="task-run-node-status">
+                          {observation || unreadCompletion || hasUnacknowledgedExit(session) || exitAcknowledged ? (
+                            <StatusDot
+                              id={session.id}
+                              observation={observation ?? null}
+                              superseded={previousAttempt}
+                              unreadCompletion={unreadCompletion}
+                              exitCode={session.exit_code}
+                              exitAcknowledged={exitAcknowledged}
+                              notifyTransitions={false}
+                            />
+                          ) : (
+                            savedStatus
+                          )}
+                          {session.archived && " · archived"}
+                        </span>
+                      </button>
+                      {displayMode === "flow" && artifactsBySource.has(node.key) && (
+                        <div className="task-run-output-labels" style={{ paddingTop: ARTIFACTS_GAP }} role="group" aria-label={`Artifacts published by ${nodeName(node)}`}>
+                          {artifactsBySource.get(node.key)?.map((artifact) => (
+                            <ArtifactLink
+                              key={artifact.id}
+                              artifact={artifact}
+                              onOpenArtifact={onOpenArtifact}
+                              onHoverArtifact={setHoveredArtifactId}
+                              onFocusArtifact={setFocusedArtifactId}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
               </div>

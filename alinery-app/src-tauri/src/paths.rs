@@ -33,6 +33,9 @@ pub(crate) fn gui_lock_held_elsewhere(repo: &Path) -> bool {
 /// Backend ownership gate (B6): every repository this window mutates must have a retained
 /// GUI flock. Claim a free repository atomically; refuse one held by another Alinery.
 pub(crate) fn require_repo_owned(state: &AppState, repo: &Path) -> Result<(), String> {
+    if let Some(conflict) = state.daemon_conflict(repo) {
+        return Err(EnsureDaemonError::Mismatch(Box::new(conflict)).to_string());
+    }
     match state.reserve_repo(repo)? {
         Some(reservation) => {
             reservation.commit(state);
@@ -165,21 +168,4 @@ pub(crate) fn file_mtime_secs(path: impl AsRef<Path>) -> Option<u64> {
         .and_then(|m| m.modified().ok())
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_secs())
-}
-
-pub(crate) fn dir_latest_mtime_secs(path: impl AsRef<Path>) -> Option<u64> {
-    let mut latest: Option<u64> = None;
-    let entries = fs::read_dir(path).ok()?;
-    for entry in entries.flatten() {
-        let modified = entry
-            .metadata()
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_secs());
-        if let Some(ts) = modified {
-            latest = Some(latest.map_or(ts, |cur| cur.max(ts)));
-        }
-    }
-    latest
 }

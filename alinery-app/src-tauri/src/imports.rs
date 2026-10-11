@@ -1,5 +1,6 @@
 //! imports: extracted from lib.rs. See AGENTS.md for the module map.
 use crate::*;
+use pulldown_cmark::{Event, LinkType, Parser, Tag, TagEnd};
 
 // ---- M5 Linear import (opt-in, one-way) --------------------------------------
 // Extract a Linear identifier ("ENG-123") from a bare id or a Linear URL
@@ -23,6 +24,115 @@ pub(crate) struct LinearTicket {
     pub(crate) identifier: String,
     pub(crate) title: String,
     pub(crate) description: String,
+    pub(crate) images: Vec<LinearImage>,
+    pub(crate) image_errors: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct LinearImage {
+    pub(crate) name: String,
+    #[serde(with = "alinery_core::rpc_chunk::base64_bytes")]
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) source_url: String,
+}
+
+pub(crate) const MAX_LINEAR_IMAGE_DOWNLOADS: usize = 20;
+pub(crate) const MAX_LINEAR_IMAGE_BYTES: usize = 100 * 1024 * 1024;
+
+fn escape_image_text(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch.is_ascii_punctuation() {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
+}
+
+/// Rewrite only parsed images; retain all other authored Markdown byte-for-byte.
+pub(crate) fn import_linear_images(description: &str, mut download: impl FnMut(&str) -> Result<(Vec<u8>, String), String>) -> (String, Vec<LinearImage>, Vec<String>) {
+    let mut images = Vec::<LinearImage>::new();
+    let mut errors = Vec::new();
+    let mut downloaded = HashMap::<String, Option<usize>>::new();
+    let mut total_bytes = 0usize;
+    let mut attempts = 0usize;
+    let mut rewritten = String::with_capacity(description.len());
+    let mut copied_until = 0;
+    let mut events = Parser::new(description).into_offset_iter();
+    while let Some((event, range)) = events.next() {
+        let Event::Start(Tag::Image { dest_url, title, link_type, .. }) = event else {
+            continue;
+        };
+        let mut alt = String::new();
+        let mut depth = 1;
+        for (event, _) in events.by_ref() {
+            match event {
+                Event::Start(Tag::Image { .. }) => depth += 1,
+                Event::End(TagEnd::Image) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                Event::Text(text) | Event::Code(text) => alt.push_str(&text),
+                Event::SoftBreak | Event::HardBreak => alt.push(' '),
+                _ => {}
+            }
+        }
+        let source_url = dest_url.as_ref();
+        let image_index = *downloaded.entry(source_url.to_owned()).or_insert_with(|| {
+            let result = if attempts >= MAX_LINEAR_IMAGE_DOWNLOADS {
+                Err("image download limit reached".to_string())
+            } else if total_bytes >= MAX_LINEAR_IMAGE_BYTES {
+                Err("100 MiB image attachment limit reached".to_string())
+            } else {
+                attempts += 1;
+                // The HTTP helper returns sanitized reasons without credentials or response bodies.
+                match download(source_url) {
+                    Ok((bytes, extension)) => {
+                        if bytes.len() > MAX_LINEAR_IMAGE_BYTES - total_bytes {
+                            Err("100 MiB image attachment limit reached".to_string())
+                        } else if extension.is_empty() || extension.len() > 10 || !extension.bytes().all(|b| b.is_ascii_alphanumeric()) {
+                            Err("unsupported image file type".to_string())
+                        } else {
+                            total_bytes += bytes.len();
+                            let index = images.len();
+                            images.push(LinearImage {
+                                name: format!("linear-image-{}.{}", uuid::Uuid::new_v4(), extension),
+                                bytes,
+                                source_url: source_url.to_owned(),
+                            });
+                            Ok(index)
+                        }
+                    }
+                    Err(reason) => Err(reason),
+                }
+            };
+            match result {
+                Ok(index) => Some(index),
+                Err(reason) => {
+                    errors.push(format!("{source_url}: {reason}"));
+                    None
+                }
+            }
+        });
+        if let Some(index) = image_index {
+            rewritten.push_str(&description[copied_until..range.start]);
+            rewritten.push_str(&format!("![{}](<attachments/{}>", escape_image_text(&alt), images[index].name));
+            if !title.is_empty() {
+                rewritten.push_str(&format!(" \"{}\"", escape_image_text(&title)));
+            }
+            rewritten.push(')');
+            copied_until = range.end;
+            // pulldown-cmark's collapsed-reference span excludes the consumed `[]`.
+            if link_type == LinkType::Collapsed && description[copied_until..].starts_with("[]") {
+                copied_until += 2;
+            }
+        }
+    }
+    rewritten.push_str(&description[copied_until..]);
+    (rewritten, images, errors)
 }
 
 // Import through the current OAuth connection.
@@ -55,6 +165,7 @@ pub(crate) fn import_linear_in(app_config: &Path, _repo: &Path, reference: &str)
         _ => return Err(format!("Linear issue not found: {id}")),
     };
     let get = |k: &str| issue.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let (description, images, image_errors) = import_linear_images(&get("description"), |url| alinery_core::http::download_image(url, &authorization));
     let ticket = LinearTicket {
         identifier: {
             let i = get("identifier");
@@ -65,7 +176,9 @@ pub(crate) fn import_linear_in(app_config: &Path, _repo: &Path, reference: &str)
             }
         },
         title: get("title"),
-        description: get("description"),
+        description,
+        images,
+        image_errors,
     };
     emit_at(
         app_config,
@@ -79,7 +192,7 @@ pub(crate) fn import_linear_in(app_config: &Path, _repo: &Path, reference: &str)
 
 #[tauri::command]
 pub(crate) async fn import_linear(app: AppHandle, state: State<'_, AppState>, reference: String) -> Result<LinearTicket, String> {
-    // Linear's HTTP call waits up to 15s. A sync command runs that on the main thread.
+    // Issue and image downloads are blocking; keep them off the main thread.
     let app_config = app_config_path(&app)?;
     let repo = require_owned_active_repo(&state)?;
     tauri::async_runtime::spawn_blocking(move || import_linear_in(&app_config, &repo, &reference))

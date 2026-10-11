@@ -16,7 +16,7 @@ vi.mock("../ipc", () =>
   mockIpc({
     listBoardTasks: async () => {
       if (scenario.error) throw new Error(scenario.error);
-      return scenario.tasks;
+      return structuredClone(scenario.tasks);
     },
     listTaskActivity: async () => activity,
   }),
@@ -261,6 +261,58 @@ describe("TaskList empty", () => {
 describe("Task List column sorting", () => {
   const names = () => [...document.querySelectorAll(".task-name-text")].map((node) => node.textContent);
 
+  it("keeps tied Updated rows and selection stable across reordered polls, but follows real activity", async () => {
+    vi.useFakeTimers();
+    const epoch = 1_700_000_000;
+    vi.setSystemTime(epoch * 1000);
+    try {
+      window.localStorage.setItem("alinery:task-list:sort", JSON.stringify({ field: "updated", direction: "desc" }));
+      const alpha = task("alpha", { created: epoch - 120, updated: epoch - 60 });
+      const beta = task("beta", { created: epoch - 120, updated: epoch - 60 });
+      scenario.tasks = [beta, alpha];
+      let nav: BoardNav | null = null;
+      const onOpen = vi.fn();
+      render(
+        <TaskList
+          allRepos={false}
+          onOpen={onOpen}
+          onDuplicate={() => {}}
+          onOpenActiveSession={() => {}}
+          onCreate={() => {}}
+          registerNav={(next) => {
+            nav = next;
+          }}
+        />,
+      );
+      await navReady(() => nav);
+      expect(names()).toEqual(["ALPHA", "BETA"]);
+      fireEvent.click(screen.getByText("BETA"));
+      for (const tasks of [
+        [alpha, beta],
+        [beta, alpha],
+      ]) {
+        scenario.tasks = tasks;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(30_000);
+        });
+        expect(names()).toEqual(["ALPHA", "BETA"]);
+        expect(document.querySelector("tr.sel .task-name-text")?.textContent).toBe("BETA");
+      }
+      expect([...document.querySelectorAll(".age-cell:last-child")].map((cell) => cell.textContent)).toEqual(["2m", "2m"]);
+
+      scenario.tasks = [alpha, { ...beta, updated: epoch + 60 }];
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(names()).toEqual(["BETA", "ALPHA"]);
+      act(() => requireNav(nav).openSelected());
+      expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ slug: "beta" }));
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
+  });
+
   it("restores the selected column and direction after leaving and remounting the task list", async () => {
     scenario.tasks = [task("alpha", { created: 1, session_count: 2 }), task("beta", { created: 2, session_count: 10 })];
     const list = <TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />;
@@ -375,5 +427,55 @@ describe("Task List column sorting", () => {
     act(() => requireNav(nav).moveRow(-1));
     act(() => requireNav(nav).openSelected());
     expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ slug: "child-10" }));
+  });
+});
+
+describe("Task List age refresh", () => {
+  it("ages Created and Updated through unchanged polls without changing their timestamps", async () => {
+    const epoch = 1_700_000_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(epoch * 1000);
+    try {
+      scenario.tasks = [task({ created: epoch, updated: epoch })];
+      const onOpen = vi.fn();
+      let nav: BoardNav | null = null;
+      render(
+        <TaskList
+          allRepos={false}
+          onOpen={onOpen}
+          onDuplicate={() => {}}
+          onOpenActiveSession={() => {}}
+          onCreate={() => {}}
+          registerNav={(next) => {
+            nav = next;
+          }}
+        />,
+      );
+      await navReady(() => nav);
+      const row = screen.getByText("A task").closest("tr");
+      const ages = () => [...(row?.querySelectorAll(".age-cell") ?? [])].map((cell) => cell.textContent);
+      const absolute = new Date(epoch * 1000).toLocaleString();
+      expect(ages()).toEqual(["now", "now"]);
+      expect([...(row?.querySelectorAll(".age-cell") ?? [])].map((cell) => cell.getAttribute("title"))).toEqual([absolute, absolute]);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(59_000);
+      });
+      expect(ages()).toEqual(["now", "now"]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect.soft(ages()).toEqual(["1m", "1m"]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect.soft(ages()).toEqual(["2m", "2m"]);
+      expect([...(row?.querySelectorAll(".age-cell") ?? [])].map((cell) => cell.getAttribute("title"))).toEqual([absolute, absolute]);
+      act(() => requireNav(nav).openSelected());
+      expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ repo_path: "/r", slug: "a-task", created: epoch, updated: epoch }));
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
   });
 });

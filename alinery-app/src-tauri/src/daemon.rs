@@ -649,12 +649,13 @@ pub(crate) fn list_task_activity_for_refs(refs: &[TaskActivityRef], app_config_i
     activity
 }
 
-/// A repo whose running daemon this app cannot talk to. Carries everything the banner
-/// (A5/B3) and the takeover warning need — never a reason to kill anything.
+/// A repo whose daemon ownership or compatibility cannot be established safely.
 #[derive(Clone, Debug, serde::Serialize)]
 pub(crate) struct DaemonConflict {
     pub(crate) repo: String,
     pub(crate) reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) detail: Option<String>,
     /// `None` when the running daemon predates protocol versioning.
     pub(crate) daemon_protocol: Option<u32>,
     pub(crate) app_protocol: u32,
@@ -664,14 +665,22 @@ pub(crate) struct DaemonConflict {
 }
 
 pub(crate) enum EnsureDaemonError {
-    /// A responding daemon failed a hard compatibility gate. Nothing was killed or spawned.
-    Mismatch(DaemonConflict),
+    /// Ownership or compatibility could not be established. No owner is killed.
+    Mismatch(Box<DaemonConflict>),
     Failed(String),
 }
 
 impl std::fmt::Display for EnsureDaemonError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            EnsureDaemonError::Mismatch(c) if c.reason == "ownership" => {
+                write!(
+                    f,
+                    "project ownership unavailable for {}: {}",
+                    c.repo,
+                    c.detail.as_deref().unwrap_or("previous owner has not stopped")
+                )
+            }
             EnsureDaemonError::Mismatch(c) if c.reason == "app_config" => {
                 write!(f, "daemon for {} uses a different app configuration ({} live session(s))", c.repo, c.live_sessions)
             }
@@ -693,9 +702,8 @@ impl std::fmt::Display for EnsureDaemonError {
 //
 // INVARIANT: this function never kills a live session. It does not send `shutdown` —
 // not conditionally, not "only when stale". Reuse requires matching protocol and app-config
-// identity; a mismatch is reported and left alone. The four deliberate teardown origins are
-// `stop_daemon` (B1), `takeover_repo_daemon` (B3), `close_repo_daemon` (B4), and
-// `restore_backup`, each behind a user click carrying a loss-of-work warning.
+// identity; a mismatch is reported and left alone. Deliberate teardown is confined to
+// `stop_daemon`, `close_repo_daemon`, and `restore_backup`, each behind an explicit click.
 // (Guarded by scripts/tests/check-no-auto-session-kill.sh.)
 /// Probe a connected client's hard reuse fields. Used on *every* successful connect —
 /// including post-spawn — so a race that attaches a pre-existing foreign daemon
@@ -719,15 +727,16 @@ pub(crate) fn classify_version(
         DaemonCompat::AppConfigMismatch => "app_config",
         DaemonCompat::Current | DaemonCompat::BuildDrift => unreachable!(),
     };
-    Err(EnsureDaemonError::Mismatch(DaemonConflict {
+    Err(EnsureDaemonError::Mismatch(Box::new(DaemonConflict {
         repo: repo.display().to_string(),
         reason: reason.into(),
+        detail: None,
         daemon_protocol: version.protocol,
         app_protocol: PROTOCOL_VERSION,
         daemon_app_config_identity: version.app_config_identity.clone(),
         app_config_identity: Some(app_config_identity.to_string()),
         live_sessions: live_sessions(),
-    }))
+    })))
 }
 
 pub(crate) fn classify_connected_daemon(client: &DaemonClient, repo: &Path, app_config_identity: &str) -> Result<(DaemonCompat, bool), EnsureDaemonError> {
@@ -744,6 +753,18 @@ pub(crate) fn ensure_daemon(repo: &Path, app_config: &Path) -> Result<(DaemonCli
         let (compat, host_guard_warning) = classify_connected_daemon(&client, repo, &app_config_identity)?;
         return Ok((client, compat, app_config_identity, host_guard_warning));
     }
+    alinery_core::repo_ownership::check_available(repo).map_err(|detail| {
+        EnsureDaemonError::Mismatch(Box::new(DaemonConflict {
+            repo: repo.display().to_string(),
+            reason: "ownership".into(),
+            detail: Some(detail),
+            daemon_protocol: None,
+            app_protocol: PROTOCOL_VERSION,
+            daemon_app_config_identity: None,
+            app_config_identity: Some(app_config_identity.clone()),
+            live_sessions: 0,
+        }))
+    })?;
     spawn_daemon_detached(repo, app_config).map_err(EnsureDaemonError::Failed)?;
     for _ in 0..40 {
         if let Ok(client) = DaemonClient::connect_path_checked(current_alineryd_socket_path(repo)) {
@@ -756,9 +777,8 @@ pub(crate) fn ensure_daemon(repo: &Path, app_config: &Path) -> Result<(DaemonCli
 }
 
 /// Bring up (or reconnect to) `repo`'s daemon and record the outcome on `AppState`.
-/// A hard reuse mismatch is remembered so `daemon_status` can raise the blocking banner
-/// (A5/B3) — nothing is killed, nothing is spawned, session ops simply stay refused
-/// until the user stops the sessions (B1) or takes the repo over (B3).
+/// Conflicts are remembered for the blocking banner; the poller retries without
+/// stopping another owner or replacing a held lock.
 pub(crate) fn attach_repo_daemon(state: &AppState, repo: &Path, app_config: &Path) {
     // Single choke point for bringing a daemon up, so one check covers the poller, the
     // footer poll and every command: once "close all repos" has run, nothing resurrects.
@@ -812,7 +832,7 @@ pub(crate) fn attach_repo_daemon(state: &AppState, repo: &Path, app_config: &Pat
                     conflict.live_sessions
                 ),
             );
-            state.set_daemon_conflict(repo, conflict);
+            state.set_daemon_conflict(repo, *conflict);
         }
         Err(e) => {
             eprintln!("daemon start failed for {}: {e}", repo.display());
@@ -1000,10 +1020,7 @@ pub(crate) fn spawn_daemon_detached(repo: &Path, app_config: &Path) -> Result<()
     daemon_client::spawn_daemon_detached(repo, app_config, namespace.as_deref(), host_executable.as_deref())
 }
 
-// DELIBERATE TEARDOWN ORIGIN (B1). One of exactly three places allowed to end live
-// sessions — the others are `takeover_repo_daemon` (B3) and `close_repo_daemon` (B4).
-// Each is behind a user click naming the repo and warning about in-flight work; no code
-// path reaches a kill on its own (see `ensure_daemon`, and the poller in `spawn_daemon_poller`).
+// DELIBERATE TEARDOWN ORIGIN (B1). Settings explicitly stops this daemon's sessions.
 //
 // Ends EVERY live session for the TARGET repo and stops its daemon, then brings a fresh
 // daemon back up for that repo: "stop the sessions" must not also mean "leave this repo
@@ -1020,17 +1037,23 @@ pub(crate) fn stop_daemon(app: AppHandle, state: State<'_, AppState>, path: Opti
         Some(p) if !p.is_empty() => PathBuf::from(p),
         _ => active_repo()?,
     };
-    require_repo_owned(&state, &repo)?;
+    // Explicit Settings stop remains available for an incompatible daemon on this
+    // build's lane, but never while another GUI holds the project.
+    let reservation = state.reserve_repo(&repo)?.ok_or("repo-busy: another Alinery window owns this project")?;
+    let daemon = connect_current_daemon(&repo)?;
+    reservation.commit(&state);
+    let closing = state.mark_closing(&repo);
     // The MCP child is bound to the active repo only; stopping another repo's sessions
     // must not take it down with them.
     let is_active = active_repo().ok().as_deref() == Some(repo.as_path());
     if is_active {
         state.kill_mcp(); // R2
     }
-    let daemon = state.daemon_for(&repo).ok_or("daemon not running")?;
     daemon.call(&daemon_client::shutdown_request()).map(|_| ())?;
+    wait_for_daemon_gone(&repo)?;
     // Own-lane teardown — drops cached foreign session routes too.
     state.clear_daemon(&repo);
+    drop(closing);
 
     // Restart what we just stopped, for this repo only.
     let app_config = app_config_path(&app)?;
@@ -1047,76 +1070,37 @@ pub(crate) fn stop_daemon(app: AppHandle, state: State<'_, AppState>, path: Opti
     Ok(())
 }
 
-/// Live (running + idle) sessions on `repo`'s daemon, whether or not the app has a
-/// client for it. Powers the loss-of-work warnings on close-repo (B4) and takeover (B3),
-/// which can both act on a repo that is not the active one. Unreachable ⇒ 0.
+/// Live sessions on this app's lane, for explicit close/stop warnings. Not ownership proof.
 #[tauri::command]
 pub(crate) fn repo_live_sessions(path: String) -> u32 {
     connect_current_daemon(Path::new(path.trim())).map(|client| client.live_session_count()).unwrap_or(0)
 }
 
-/// Wait until nothing answers `repo`'s socket. `shutdown` unlinks the socket before it
-/// acks and exits, but the process still has to go; spawning over a half-dead daemon
-/// would just lose the lock race.
-///
-/// Fail-closed: timeout ⇒ `Err` so callers never treat a still-live daemon as gone.
+/// A quiet socket is not exit proof: wait for the daemon's process lease as well.
 pub(crate) fn wait_for_daemon_gone(repo: &Path) -> Result<(), String> {
     for _ in 0..40 {
-        if connect_current_daemon(repo).is_err() {
-            return Ok(());
+        match UnixStream::connect(current_alineryd_socket_path(repo)) {
+            Ok(_) => {}
+            Err(error) if matches!(error.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused) => {
+                if alinery_core::lockfile::try_lock_exclusive(&current_alineryd_lock_path(repo))
+                    .map_err(|error| format!("cannot establish daemon exit: {error}"))?
+                    .is_some()
+                {
+                    return Ok(());
+                }
+            }
+            Err(error) => return Err(format!("cannot establish daemon exit: {error}")),
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    Err(format!("daemon for {} is still answering after shutdown", repo.display()))
-}
-
-// DELIBERATE TEARDOWN ORIGIN (B3). Reclaim a repo from a daemon this app cannot use —
-// a protocol/config mismatch, or a wedged owner holding the lock with a dead socket. Reached
-// only from the banner's danger button, behind an express click carrying the live
-// session count. NEVER automatic: the poller surfaces this state, it never takes it.
-#[tauri::command]
-pub(crate) fn takeover_repo_daemon(app: AppHandle, state: State<'_, AppState>, path: Option<String>) -> Result<(), String> {
-    let repo = match path.as_deref().map(str::trim) {
-        Some(p) if !p.is_empty() => PathBuf::from(p),
-        _ => active_repo()?,
-    };
-    // Talk to whoever answers the socket — that process is the owner by definition. A
-    // protocol-mismatched daemon still understands `shutdown` (it predates the gate).
-    if let Ok(prior) = connect_current_daemon(&repo) {
-        let _ = prior.call(&daemon_client::shutdown_request());
-        // Hostile reclaim: proceed to unlink even if wait times out; attach failure
-        // below is the user-visible error if the prior daemon never lets go.
-        let _ = wait_for_daemon_gone(&repo);
-    }
-    // The lock FILE is a permanent 0-byte marker, never the lock itself. Unlinking it
-    // lets the fresh daemon flock a new inode; a wedged holder keeps its flock on the
-    // now-unlinked inode, which no longer guards this path (see alineryd/src/lockfile.rs).
-    let _ = fs::remove_file(current_alineryd_lock_path(&repo));
-    state.clear_daemon(&repo);
-
-    let app_config = app_config_path(&app)?;
-    attach_repo_daemon(&state, &repo, &app_config);
-    if state.daemon_for(&repo).is_none() {
-        return Err(format!("could not take over {} — its daemon is still holding the repo", repo.display()));
-    }
-    if active_repo().ok().as_deref() == Some(repo.as_path()) {
-        ensure_mcp_server(&app, &repo);
-    }
-    emit(
-        &app,
-        alinery_core::TelemetryEvent::DaemonTakeover {
-            source: alinery_core::TelemetrySource::App,
-        },
-    );
-    Ok(())
+    Err(format!("daemon for {} has not released its socket and process lock", repo.display()))
 }
 
 // DELIBERATE TEARDOWN ORIGIN (B4). Stop one repo's daemon and sessions without deciding
 // when the app-level repository ownership ends. `remove_repo` releases the flock only
 // after delisting succeeds; `close_all_repos` releases each successfully closed repo.
 //
-// Fail-closed: if a daemon still answers after shutdown+wait, do NOT clear state (and
-// never unlink the alineryd lock on ordinary close — only takeover's hostile path may).
+// Fail-closed: if a daemon still answers after shutdown+wait, do NOT clear state.
 pub(crate) fn close_repo_daemon(state: &AppState, repo: &Path) -> Result<(), String> {
     // Shutdown opens a window in which the repo is still listed and its socket is going
     // away — indistinguishable, to the poller, from a daemon that just crashed. Hold the
@@ -1129,8 +1113,7 @@ pub(crate) fn close_repo_daemon(state: &AppState, repo: &Path) -> Result<(), Str
             .map_err(|e| format!("shutdown failed for {}: {e}", repo.display()))?;
         wait_for_daemon_gone(repo)?;
     }
-    // Ordinary close does NOT unlink the alineryd lock file — the daemon unlinks its
-    // own lock on clean exit; hostile reclaim is takeover_repo_daemon only.
+    // Lock markers are permanent; only releasing the kernel lock ends ownership.
     state.clear_daemon(repo);
     Ok(())
 }
@@ -1295,12 +1278,13 @@ pub(crate) fn spawn_daemon_poller(app: AppHandle) {
                     }
                 }
                 PollerAction::Spawn => attach_repo_daemon(&state, &repo, &app_config),
-                PollerAction::SurfaceTakeover => {
-                    // Surface only. Reclaiming is B3's express user click.
+                PollerAction::SurfaceConflict => {
+                    // A live incompatible owner is never replaced by this app.
                     state.set_daemon_conflict(
                         &repo,
                         DaemonConflict {
                             repo: repo.display().to_string(),
+                            detail: None,
                             reason: match compat {
                                 Some(DaemonCompat::AppConfigMismatch) => "app_config".into(),
                                 _ => "protocol".into(),
@@ -1363,7 +1347,7 @@ pub(crate) async fn daemon_status(state: State<'_, AppState>) -> Result<DaemonSt
     // Re-attempt on every poll so the banner clears by itself the moment the other
     // alinery quits — no relaunch, no button. Not while quitting: `close_all_repos` just
     // handed the flock back and a poll in flight must not take it again.
-    let repo_busy = !state.is_quitting() && active.as_ref().is_some_and(|r| !state.claim_repo(r));
+    let repo_busy = !state.is_quitting() && conflict.is_none() && active.as_ref().is_some_and(|r| !state.claim_repo(r));
     let build_drift = active.as_ref().and_then(|r| state.daemon_compat(r)) == Some(DaemonCompat::BuildDrift);
     let host_guard_warning = active.as_ref().is_some_and(|repo| state.daemon_host_guard_warning(repo));
     let offline = || DaemonStatus {

@@ -61,10 +61,13 @@ const mocks = vi.hoisted(() => ({
   getTask: vi.fn(),
   getTaskExecution: vi.fn(),
   listSessions: vi.fn(),
+  confirmDanger: vi.fn(),
   listArtifactsWithMetadata: vi.fn(),
   sessionStatuses: vi.fn(),
   renameSession: vi.fn(),
 }));
+
+vi.mock("../confirm", () => ({ confirmDanger: mocks.confirmDanger }));
 
 vi.mock("../ipc", () =>
   mockIpc({
@@ -82,6 +85,7 @@ beforeEach(() => {
   mocks.getTask.mockReset().mockResolvedValue(null);
   mocks.getTaskExecution.mockReset().mockResolvedValue(executionReply([]));
   mocks.listSessions.mockReset().mockResolvedValue([]);
+  mocks.confirmDanger.mockReset().mockResolvedValue(true);
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
   mocks.sessionStatuses.mockReset().mockResolvedValue({});
   mocks.renameSession.mockReset();

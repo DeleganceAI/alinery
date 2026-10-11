@@ -18,6 +18,112 @@
   color: var(--text);
 }
 
+.task-run-modes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+
+.task-run-flow-hint {
+  margin: 0;
+  font-size: 12px;
+}
+
+.task-run-path.resumed {
+  stroke-dasharray: 5 4;
+}
+.task-run-artifact-details {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.task-run-artifact-details label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.task-run-artifact-details select {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-run-provenance {
+  margin: 4px 0;
+  max-height: 96px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.task-run-artifact-details .task-run-provenance {
+  flex-basis: 100%;
+}
+
+.task-run-session {
+  position: absolute;
+}
+
+.task-run-session > .task-run-node {
+  position: relative;
+}
+
+.task-run-artifact {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+  padding: 0 6px;
+  border: 0;
+  background: var(--surface);
+  color: var(--accent);
+  font-family: monospace;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.task-run-artifact > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-run-artifact:hover {
+  text-decoration: underline;
+}
+
+.task-run-artifact:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.task-run-shared-artifacts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  max-height: 96px;
+  overflow: auto;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.task-run-shared-artifacts > .task-run-artifact,
+.task-run-artifact-details > .task-run-artifact {
+  width: auto;
+  max-width: 240px;
+}
+
 .task-run-toolbar {
   position: absolute;
   bottom: 12px;
@@ -89,6 +195,15 @@
   stroke-width: 1.5;
 }
 
+.task-run-path.highlighted {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.task-run-paths marker.highlighted {
+  fill: var(--accent);
+}
+
 .task-run-node {
   position: absolute;
   display: flex;
@@ -148,14 +263,6 @@
   height: 14px;
 }
 
-.task-run-path.highlighted {
-  stroke: var(--accent);
-  stroke-width: 3;
-}
-
-.task-run-paths marker.highlighted {
-  fill: var(--accent);
-}
 
 .task-run-endpoint {
   border-style: dashed;
@@ -163,43 +270,6 @@
   cursor: default;
 }
 
-.task-run-labels {
-  position: absolute;
-  box-sizing: border-box;
-  padding: 0;
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-}
-
-.task-run-artifact,
-.task-run-resume {
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 0 6px;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  font-family: monospace;
-  font-size: 12px;
-  line-height: var(--artifact-line-height);
-  text-align: center;
-  overflow-wrap: anywhere;
-}
-
-.task-run-artifact {
-  min-width: 24px;
-  min-height: 24px;
-  cursor: pointer;
-}
-
-.task-run-artifact:hover {
-  text-decoration: underline;
-}
-
-.task-run-resume {
-  color: var(--text-muted);
-}
 
 button.task-run-node:hover {
   border-color: var(--border-strong);
@@ -214,11 +284,6 @@ button.task-run-node:hover {
 button.task-run-node:focus-visible {
   border-color: var(--accent);
   background: var(--accent-subtle);
-  outline: calc(var(--artifact-line-height) / 12) solid var(--accent);
-  outline-offset: calc(var(--artifact-line-height) / 12);
-}
-
-.task-run-artifact:focus-visible {
-  outline: calc(var(--artifact-line-height) / 12) solid var(--accent);
-  outline-offset: calc(var(--artifact-line-height) / -12);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }

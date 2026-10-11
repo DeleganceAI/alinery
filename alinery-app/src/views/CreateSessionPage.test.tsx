@@ -45,6 +45,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 function renderPage(onCreated = vi.fn(async () => {})) {
@@ -112,17 +113,18 @@ describe("retained execution session selection", () => {
     );
   });
 
-  it("keeps auxiliary Terminal separate when graph state cannot be loaded", async () => {
+  it("blocks auxiliary launch when task ownership cannot be loaded", async () => {
     mocks.getTaskExecution.mockRejectedValue(new Error("pre-v2 task has no execution state"));
     const created = renderPage();
     await screen.findByText(/Could not load retained execution state/);
     expect(screen.queryByRole("option", { name: /Retained worker/ })).toBeNull();
     fireEvent.change(screen.getByLabelText("Auxiliary harness"), { target: { value: "no-harness" } });
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
-    await waitFor(() => expect(created).toHaveBeenCalledWith(task, { kind: "auxiliary" }, "no-harness", "", undefined));
+    expect((screen.getByRole("button", { name: "Launch" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(created).not.toHaveBeenCalled();
   });
 
-  it.each(["offline", "foreign_owner", undefined] as const)("keeps saved bindings browsable but blocks graph launches when live status is %s", async (status) => {
+  it.each(["offline", "foreign_owner", undefined] as const)("keeps saved bindings browsable but blocks all launches when live status is %s", async (status) => {
     const saved = executionReply([executionRecord({ lifecycle: "queued" }), executionRecord({ id: "stopped", lifecycle: "failed", shutdown_confirmed: true })]);
     mocks.getTaskExecution.mockResolvedValue({ ...saved, live: status ? { status, detail: "Owner cannot be queried" } : undefined });
     const created = renderPage();
@@ -148,7 +150,31 @@ describe("retained execution session selection", () => {
     fireEvent.click(screen.getByText("Retained playbook instructions"));
     expect(screen.getByText("Use the exact assigned request, not the newest filename.")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
-    await waitFor(() => expect(created).toHaveBeenCalledWith(task, { kind: "auxiliary" }, "no-harness", "", undefined));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Launch" }), { key: "Enter", ctrlKey: true });
+    expect((screen.getByRole("button", { name: "Launch" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(created).not.toHaveBeenCalled();
+  });
+
+  it("enables launch after automatic project adoption without discarding drafted instructions or assuming child shutdown", async () => {
+    vi.useFakeTimers();
+    const retained = executionReply([executionRecord({ lifecycle: "interrupted" })]);
+    retained.live = { status: "offline", detail: "Previous owner cannot be queried" };
+    mocks.getTaskExecution.mockResolvedValue(retained);
+    const created = renderPage();
+    await act(async () => {});
+    expect((screen.getByRole("button", { name: "Launch" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Additional instructions"), { target: { value: "Keep my draft" } });
+
+    mocks.getTaskExecution.mockResolvedValue(executionReply([executionRecord({ lifecycle: "interrupted" })]));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+
+    expect((screen.getByRole("button", { name: "Launch" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByRole("option", { name: /Recover.*execution-a/ })).toBeNull();
+    expect((screen.getByLabelText("Additional instructions") as HTMLTextAreaElement).value).toBe("Keep my draft");
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    expect(created).toHaveBeenCalledWith(task, { kind: "auxiliary" }, "omp", "", "Keep my draft");
   });
 
   it("does not replace another task's binding with a late query response", async () => {

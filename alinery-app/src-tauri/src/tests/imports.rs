@@ -3,8 +3,8 @@
 //! `use super::*` reaches the shared imports and fixtures in tests/mod.rs.
 use super::*;
 use crate::imports::{
-    compose_github_description, import_github_with, GitHubClient, GitHubDiscussionItem, GitHubIssueRef, GitHubRequester, GitHubResource, GitHubResourceKind, GitHubTransport,
-    MAX_GITHUB_COMMENTS, MAX_GITHUB_IMPORT_BYTES,
+    compose_github_description, import_github_with, import_linear_images, GitHubClient, GitHubDiscussionItem, GitHubIssueRef, GitHubRequester, GitHubResource, GitHubResourceKind,
+    GitHubTransport, MAX_GITHUB_COMMENTS, MAX_GITHUB_IMPORT_BYTES, MAX_LINEAR_IMAGE_BYTES, MAX_LINEAR_IMAGE_DOWNLOADS,
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
@@ -152,6 +152,136 @@ fn parse_linear_ref_id_and_url() {
     assert_eq!(parse_linear_ref("just some text"), None);
     assert_eq!(parse_linear_ref("123-ABC"), None); // letters then digits, not reversed
     assert_eq!(parse_linear_ref(""), None);
+}
+
+#[test]
+fn linear_images_preserve_surrounding_markdown_and_keep_failures_between_successes() {
+    let description =
+        "Before **bold**\n\n![first](https://example.com/one.png \"First title\")\n\nBetween\n![broken](https://example.com/broken)\n\n![last](https://example.com/two)\nAfter";
+    let mut calls = Vec::new();
+    let (rewritten, images, errors) = import_linear_images(description, |url| {
+        calls.push(url.to_owned());
+        if url.ends_with("broken") {
+            Err("HTTP 404".into())
+        } else {
+            Ok((vec![1, 2, 3], "png".into()))
+        }
+    });
+    assert_eq!(calls, ["https://example.com/one.png", "https://example.com/broken", "https://example.com/two"]);
+    assert_eq!(images.len(), 2);
+    assert_eq!(errors, ["https://example.com/broken: HTTP 404"]);
+    assert_eq!(
+        rewritten,
+        format!(
+            "Before **bold**\n\n![first](<attachments/{}> \"First title\")\n\nBetween\n![broken](https://example.com/broken)\n\n![last](<attachments/{}>)\nAfter",
+            images[0].name, images[1].name
+        )
+    );
+    for image in &images {
+        let uuid = image.name.strip_prefix("linear-image-").unwrap().strip_suffix(".png").unwrap();
+        assert!(uuid::Uuid::parse_str(uuid).is_ok());
+        assert_eq!(image.bytes, [1, 2, 3]);
+    }
+    assert_ne!(images[0].name, images[1].name);
+    assert_eq!(images[0].source_url, "https://example.com/one.png");
+    let serialized = serde_json::to_value(&images[0]).unwrap();
+    assert_eq!(serialized["bytes"], "AQID");
+}
+
+#[test]
+fn linear_images_resolve_references_without_touching_links_or_code() {
+    let description = "![a\\]b][shot]\n![shot][]\n![shot]\n[ordinary][shot]\n`![inline](https://example.com/code)`\n\n```md\n![fenced][shot]\n```\n\n[shot]: https://example.com/a.png \"A title\"\n";
+    let mut calls = Vec::new();
+    let (rewritten, images, errors) = import_linear_images(description, |url| {
+        calls.push(url.to_owned());
+        Ok((vec![1], "png".into()))
+    });
+    assert_eq!(calls, ["https://example.com/a.png"]);
+    assert_eq!(images.len(), 1);
+    assert!(errors.is_empty());
+    assert_eq!(
+        rewritten,
+        format!(
+            "![a\\]b](<attachments/{0}> \"A title\")\n![shot](<attachments/{0}> \"A title\")\n![shot](<attachments/{0}> \"A title\")\n[ordinary][shot]\n`![inline](https://example.com/code)`\n\n```md\n![fenced][shot]\n```\n\n[shot]: https://example.com/a.png \"A title\"\n",
+            images[0].name
+        )
+    );
+}
+
+#[test]
+fn linear_images_reuse_successes_and_do_not_retry_failed_urls() {
+    let description = "![one](https://example.com/a)\n![two](https://example.com/a)\n![bad](https://example.com/b)\n![also bad](https://example.com/b)";
+    let mut calls = Vec::new();
+    let (rewritten, images, errors) = import_linear_images(description, |url| {
+        calls.push(url.to_owned());
+        if url.ends_with("/a") {
+            Ok((vec![42], "webp".into()))
+        } else {
+            Err("unsupported image type".into())
+        }
+    });
+    assert_eq!(calls, ["https://example.com/a", "https://example.com/b"]);
+    assert_eq!(images.len(), 1);
+    assert_eq!(errors, ["https://example.com/b: unsupported image type"]);
+    assert_eq!(
+        rewritten,
+        format!(
+            "![one](<attachments/{0}>)\n![two](<attachments/{0}>)\n![bad](https://example.com/b)\n![also bad](https://example.com/b)",
+            images[0].name
+        )
+    );
+}
+
+#[test]
+fn linear_images_bound_network_attempts_including_failed_downloads() {
+    let description = (0..=MAX_LINEAR_IMAGE_DOWNLOADS)
+        .map(|index| format!("![image](https://example.com/{index})\n"))
+        .collect::<String>();
+    let mut calls = 0;
+    let (rewritten, images, errors) = import_linear_images(&description, |_| {
+        calls += 1;
+        Err("HTTP 404".into())
+    });
+    assert_eq!(calls, MAX_LINEAR_IMAGE_DOWNLOADS);
+    assert_eq!(rewritten, description);
+    assert!(images.is_empty());
+    assert_eq!(errors.len(), MAX_LINEAR_IMAGE_DOWNLOADS + 1);
+    assert_eq!(
+        errors.last().unwrap(),
+        &format!("https://example.com/{MAX_LINEAR_IMAGE_DOWNLOADS}: image download limit reached")
+    );
+}
+
+#[test]
+fn linear_images_enforce_aggregate_limit_without_discarding_successes() {
+    let description = "![first](https://example.com/first)\n![too large](https://example.com/large)\n![fits](https://example.com/fits)\n![over](https://example.com/over)";
+    let mut calls = Vec::new();
+    let (rewritten, images, errors) = import_linear_images(description, |url| {
+        calls.push(url.to_owned());
+        let size = match url.rsplit('/').next().unwrap() {
+            "first" => MAX_LINEAR_IMAGE_BYTES / 2,
+            "large" => MAX_LINEAR_IMAGE_BYTES / 2 + 1,
+            "fits" => MAX_LINEAR_IMAGE_BYTES / 2,
+            other => panic!("must not download after reaching the aggregate limit: {other}"),
+        };
+        Ok((vec![0; size], "png".into()))
+    });
+    assert_eq!(calls, ["https://example.com/first", "https://example.com/large", "https://example.com/fits"]);
+    assert_eq!(images.iter().map(|image| image.bytes.len()).sum::<usize>(), MAX_LINEAR_IMAGE_BYTES);
+    assert_eq!(
+        errors,
+        [
+            "https://example.com/large: 100 MiB image attachment limit reached",
+            "https://example.com/over: 100 MiB image attachment limit reached"
+        ]
+    );
+    assert_eq!(
+        rewritten,
+        format!(
+            "![first](<attachments/{}>)\n![too large](https://example.com/large)\n![fits](<attachments/{}>)\n![over](https://example.com/over)",
+            images[0].name, images[1].name
+        )
+    );
 }
 
 #[test]

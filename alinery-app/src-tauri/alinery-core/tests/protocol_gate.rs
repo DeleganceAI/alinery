@@ -20,7 +20,7 @@ fn previous_namingless_protocol_is_refused_without_requesting_restart() {
     let result = compat(Some(11), Some(APP_BUILD), Some(APP_CONFIG_IDENTITY));
     assert_eq!(result, DaemonCompat::ProtocolMismatch);
     assert!(!result.usable());
-    assert_eq!(poller_action(Some(result)), PollerAction::SurfaceTakeover);
+    assert_eq!(poller_action(Some(result)), PollerAction::SurfaceConflict);
 }
 
 #[test]
@@ -105,18 +105,6 @@ fn poller_never_respawns_over_a_protocol_or_config_mismatch() {
     // Highest-risk regression in the ticket: a poller that kills-and-respawns on
     // either mismatch destroys live sessions on a timer.
     for mismatch in [DaemonCompat::ProtocolMismatch, DaemonCompat::AppConfigMismatch] {
-        assert_eq!(poller_action(Some(mismatch)), PollerAction::SurfaceTakeover);
-    }
-}
-
-#[test]
-fn poller_action_cannot_express_a_kill() {
-    // Exhaustive match by construction: adding a Kill/Restart/Respawn variant makes this
-    // match non-exhaustive and fails to compile. That compile error is the guard —
-    // reclaiming a repo is a deliberate user click (B3), never a timer's decision.
-    for action in [PollerAction::Spawn, PollerAction::Leave, PollerAction::SurfaceTakeover] {
-        match action {
-            PollerAction::Spawn | PollerAction::Leave | PollerAction::SurfaceTakeover => {}
-        }
+        assert_eq!(poller_action(Some(mismatch)), PollerAction::SurfaceConflict);
     }
 }

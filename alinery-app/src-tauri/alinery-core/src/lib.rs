@@ -19,6 +19,7 @@ pub mod playbook_library;
 pub mod playbook_scheduler;
 pub mod prompts;
 pub mod protocol;
+pub mod repo_ownership;
 pub mod rpc_chunk;
 pub mod session_name;
 pub mod settings;

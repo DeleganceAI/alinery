@@ -41,7 +41,11 @@ fn project(
     meta.phase = step.key.clone();
     meta.harness = record.launch.harness.clone();
     meta.model = record.launch.model.clone();
-    meta.daemon_namespace = state.owning_lane.clone();
+    // Unlaunched reservations follow task authority; historical and uncertain
+    // process owners keep the lane that actually owned their session.
+    if existing.is_none() || matches!(record.lifecycle, ExecutionLifecycle::Queued | ExecutionLifecycle::Starting) {
+        meta.daemon_namespace = state.owning_lane.clone();
+    }
     meta.playbook.clear();
     meta.generic = false;
     if existing.is_none() {
@@ -496,18 +500,6 @@ pub(super) fn exited(repo: &Path, slug: &str, session_id: &str, lane: &str, code
         confirm_execution_exit(state, &meta.execution_id, session_id, code)
     }) {
         eprintln!("execution exit {slug}/{session_id}: {error}");
-    }
-}
-pub(super) fn boot(repo: &Path, lane: &str) {
-    for task in alinery_core::list_tasks_for_repo(repo) {
-        if read_execution_state(repo, &task.slug).is_ok_and(|s| s.owning_lane == lane && s.owning_app_config_identity == execution_config_identity()) {
-            if let Err(error) = mutate_execution_state(repo, &task.slug, lane, "recover execution owners", |_, state| {
-                interrupt_unproven_owners(state, &BTreeSet::new());
-                Ok(())
-            }) {
-                eprintln!("execution recovery {}: {error}", task.slug);
-            }
-        }
     }
 }
 pub(super) fn reconcile_repo(repo: &Path, reg: &Registry, lane: &str, config: &Path, host: &ProtectedHost) {

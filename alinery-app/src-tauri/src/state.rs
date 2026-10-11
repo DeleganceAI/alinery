@@ -143,6 +143,9 @@ impl AppState {
     }
     pub(crate) fn set_daemon_conflict(&self, repo: &Path, c: DaemonConflict) {
         self.daemons.lock().unwrap_or_else(|e| e.into_inner()).insert(repo.to_path_buf(), RepoDaemon::Conflicted(c));
+        // Do not keep the other owner's GUI out while refusing its daemon.
+        self.release_repo(repo);
+        self.session_routes.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
     /// A6: `BuildDrift` means the running daemon is a different build of the same wire
     /// protocol. Informational for the footer — never a reason to restart or kill it.

@@ -1,8 +1,5 @@
 import { TriangleAlert } from "lucide-react";
-import { useState } from "react";
-import { confirmDanger } from "./confirm";
-import * as ipc from "./ipc";
-import { InlineStatus, repoName } from "./shared";
+import { repoName } from "./shared";
 import type { DaemonConflict } from "./types";
 
 const HOST_GUARD_WARNING =
@@ -17,16 +14,9 @@ export function HostGuardWarning({ visible }: { visible: boolean }) {
   );
 }
 
-// A5 and B3 are the same screen, built once. Under #132's ownership model a daemon that
-// does not speak this app's wire protocol simply belongs to a *different* alinery instance —
-// same condition, same remedy, same danger button.
-//
-// Blocking banner in the shell chrome: not a modal, not a dialog, and deliberately with
-// no "stop them for me" control. This is tmux's refuse-and-explain, plus a pointer at the
-// fix. Reclaiming the repo is an express, intentional click that warns first.
-export function DaemonConflictBanner({ conflict, onReclaimed }: { conflict: DaemonConflict | null; onReclaimed?: () => void }) {
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
+// Ownership conflicts are informational: recovery stays in the owning app or on disk.
+// The daemon status poll retries opening automatically.
+export function DaemonConflictBanner({ conflict }: { conflict: DaemonConflict | null }) {
   if (!conflict) return null;
 
   const name = repoName(conflict.repo);
@@ -36,54 +26,34 @@ export function DaemonConflictBanner({ conflict, onReclaimed }: { conflict: Daem
       : conflict.daemon_protocol === null
         ? "predates protocol versioning"
         : `speaks protocol ${conflict.daemon_protocol}`;
-  const live = conflict.live_sessions;
-
-  const takeover = async () => {
-    const ok = await confirmDanger(
-      `Take over ${name}?`,
-      live > 0 ? (
-        <>
-          <p>The daemon currently serving this repo is stopped and replaced.</p>
-          <p className="confirm-loss">
-            This kills {live} live session{live === 1 ? "" : "s"} owned by the other Alinery instance. In-flight harness work is lost and cannot be recovered.
-          </p>
-        </>
-      ) : (
-        <p>The daemon currently serving this repo is stopped and replaced.</p>
-      ),
-      "Take over",
-    );
-    if (!ok) return;
-    setBusy(true);
-    setErr("");
-    try {
-      await ipc.takeoverRepoDaemon(conflict.repo);
-      onReclaimed?.();
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <div className="daemon-conflict" role="alert">
       <TriangleAlert size={16} strokeWidth={2} aria-hidden="true" className="daemon-conflict-icon" />
       <div>
-        <strong>{name} is served by another Alinery.</strong> Its session daemon {running}
-        {conflict.reason === "protocol" ? `; this app speaks protocol ${conflict.app_protocol}` : ""}. Session actions are refused until one of you lets go.
-        {live > 0 ? ` ${live} live session${live === 1 ? "" : "s"} would be lost.` : ""}
-        <br />
-        Finish your work there, stop the sessions from <em>Settings → Chat</em>, then relaunch — or take the repo over below.
-        {err && (
-          <InlineStatus tone="error" detail={err}>
-            Takeover failed. The other daemon is still serving this repo — try again, or stop it from the other Alinery.
-          </InlineStatus>
+        <strong>{name} cannot be opened here yet.</strong>{" "}
+        {conflict.reason === "ownership" ? (
+          <>A previous daemon owner is still running, or Alinery cannot confirm that every previous owner has stopped.</>
+        ) : (
+          <>
+            Its session daemon {running}
+            {conflict.reason === "protocol" ? `; this app speaks protocol ${conflict.app_protocol}` : ""}.
+          </>
         )}
+        {conflict.detail && <p>{conflict.detail}</p>}
+        <p>
+          If another Alinery still owns this project, finish your work there, close its window, and choose <em>Quit &amp; close all repos</em> in the confirmation dialog. This
+          stops sessions in all its open repositories; save your work before confirming. Settings → Chat restarts the daemon, and quitting with sessions left running does not
+          release the project.
+        </p>
+        {conflict.reason === "ownership" && (
+          <p>
+            If all previous owners have stopped but inspection still fails, use the error details to resolve access to the reported path, or get help restoring valid ownership
+            records. Do not delete lock or ownership files to force access.
+          </p>
+        )}
+        <p>This app retries automatically once ownership can be verified; it will not stop another daemon for you.</p>
       </div>
-      <button type="button" className="btn danger" disabled={busy} onClick={takeover}>
-        {busy ? "Taking over…" : `Take over ${name}`}
-      </button>
     </div>
   );
 }

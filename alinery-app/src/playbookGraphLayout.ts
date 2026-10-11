@@ -86,6 +86,7 @@ export function layoutDefinitionGraph(
   connections: Connection[],
   repeatedKeys: ReadonlySet<string> = new Set(),
   labelLineHeight = LABEL_LINE_HEIGHT,
+  nodeHeights?: ReadonlyMap<string, number>,
 ): DefinitionGraphLayout {
   const combined = new Map<string, { from: string; to: string; labels: Set<string> }>();
   for (const connection of connections) {
@@ -139,6 +140,8 @@ export function layoutDefinitionGraph(
     layers[rank].push(key);
   }
 
+  const nodeHeight = (key: string) => nodeHeights?.get(key) ?? GRAPH_NODE_HEIGHT;
+  const rankHeights = layers.map((layer) => Math.max(...layer.map(nodeHeight)));
   const groupWidth = (key: string) => (repeatedKeys.has(key) ? GRAPH_NODE_WIDTH * 3 + COLUMN_GAP + ELLIPSIS_GAP : GRAPH_NODE_WIDTH);
   const layerWidths = layers.map((layer) => layer.reduce((width, key) => width + groupWidth(key), 0) + (layer.length - 1) * COLUMN_GAP);
   const routes = links.map((link) => {
@@ -219,7 +222,7 @@ export function layoutDefinitionGraph(
   let nextY = PADDING + (leftRoutes.length ? 16 : 0);
   for (let rank = 0; rank < layers.length; rank++) {
     rankY.push(nextY);
-    nextY += GRAPH_NODE_HEIGHT + gapHeights[rank];
+    nextY += rankHeights[rank] + gapHeights[rank];
   }
   const ids = new Set(keys);
   const nodes = layers.flatMap((layer, rank) =>
@@ -241,14 +244,14 @@ export function layoutDefinitionGraph(
     .map((key) => ({
       key,
       x: groups[key].x + GRAPH_NODE_WIDTH * 2 + COLUMN_GAP + ELLIPSIS_GAP / 2,
-      y: rankY[ranks[key]] + GRAPH_NODE_HEIGHT / 2,
+      y: rankY[ranks[key]] + nodeHeight(key) / 2,
     }));
   const edges = routes.map((route) => {
     const from = groups[route.from].centers;
     const to = groups[route.to].centers;
-    const startY = rankY[ranks[route.from]] + GRAPH_NODE_HEIGHT;
+    const startY = rankY[ranks[route.from]] + nodeHeight(route.from);
     const endY = rankY[ranks[route.to]];
-    const labelY = startY + route.gapY;
+    const labelY = rankY[ranks[route.from]] + rankHeights[ranks[route.from]] + route.gapY;
     const middleY = labelY + route.height / 2;
     const labelCenter = route.labelX + route.width / 2;
     const paths: string[] = [];
@@ -283,6 +286,6 @@ export function layoutDefinitionGraph(
     edges,
     ellipses,
     width: PADDING * 2 + leftGutter + contentWidth + rightGutter,
-    height: (lastRank < 0 ? PADDING + GRAPH_NODE_HEIGHT : rankY[lastRank] + GRAPH_NODE_HEIGHT + bottomSpace) + PADDING,
+    height: (lastRank < 0 ? PADDING + GRAPH_NODE_HEIGHT : rankY[lastRank] + rankHeights[lastRank] + bottomSpace) + PADDING,
   };
 }
