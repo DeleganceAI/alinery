@@ -1100,6 +1100,17 @@ main {
   background: var(--danger-subtle);
   font-size: calc(13px * var(--ui-scale));
 }
+.daemon-conflict > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.daemon-owner-evidence {
+  overflow-wrap: anywhere;
+}
+.confirm-body .daemon-owner-evidence {
+  max-height: 40vh;
+  overflow: auto;
+}
 .daemon-host-warning {
   flex: none;
   padding: 8px 12px;

@@ -268,7 +268,7 @@ export default function App() {
     navRef.current = n;
   }, []);
 
-  const daemon = useDaemonStatus();
+  const daemon = useDaemonStatus(appConfig?.active_repo ?? "");
   const mcp = useMcpStatus();
   const noticeSnapshot = useSessionNoticeSnapshot(Boolean(appConfig?.active_repo));
   useDockBadgeCount(noticeSnapshot.rows, appConfig?.global?.notifications, noticeSnapshot.loaded);
@@ -1274,7 +1274,7 @@ export default function App() {
           )}
           <div className={drawerOpen ? "app-main-column" : undefined} style={drawerOpen ? undefined : { display: "contents" }}>
             {daemon.repo_busy && appConfig?.active_repo && <RepoBusyBanner repo={appConfig.active_repo} onPickRepo={() => void addRepo()} />}
-            <DaemonConflictBanner conflict={daemon.conflict} />
+            <DaemonConflictBanner conflict={daemon.conflict} onRefresh={daemon.refresh} />
             <HostGuardWarning visible={daemon.host_guard_warning} />
             {repoErr && appConfig?.active_repo && (
               <div className="daemon-conflict" role="alert">

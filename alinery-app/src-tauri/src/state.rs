@@ -62,6 +62,9 @@ pub(crate) struct AppState {
     // poller and `attach_repo_daemon` skip it, so the user's close cannot be raced into
     // an orphan process the UI no longer has a handle for.
     pub(crate) closing_repos: Mutex<HashSet<PathBuf>>,
+    // Never evict a mutex while a lifecycle waiter can retain its Arc.
+    pub(crate) repo_lifecycles: Mutex<HashMap<PathBuf, std::sync::Arc<Mutex<()>>>>,
+    pub(crate) prepared_takeovers: Mutex<HashMap<String, PreparedTakeover>>,
 }
 
 /// Scope guard for `AppState::closing_repos` — teardown has several fallible steps and an
@@ -97,6 +100,14 @@ impl RepoReservation {
 }
 
 impl AppState {
+    pub(crate) fn repo_lifecycle(&self, repo: &Path) -> std::sync::Arc<Mutex<()>> {
+        self.repo_lifecycles
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .entry(repo.to_path_buf())
+            .or_default()
+            .clone()
+    }
     pub(crate) fn repo_daemon(&self, repo: &Path) -> Option<RepoDaemon> {
         self.daemons.lock().unwrap_or_else(|e| e.into_inner()).get(repo).cloned()
     }
@@ -261,6 +272,14 @@ impl AppState {
         let _ = managed.child.wait();
     }
 
+    pub(crate) fn kill_mcp_for_repo(&self, repo: &Path) {
+        let mut guard = self.mcp_child.lock().unwrap_or_else(|error| error.into_inner());
+        if guard.as_ref().is_some_and(|managed| managed.repo == repo) {
+            if let Some(mut managed) = guard.take() {
+                Self::stop_mcp_child(&mut managed);
+            }
+        }
+    }
     // R2: MCP child management
     pub(crate) fn kill_mcp(&self) {
         if let Ok(mut guard) = self.mcp_child.lock() {

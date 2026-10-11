@@ -1,39 +1,6 @@
 //! UI authority is tied to a kernel-authenticated Unix connection.
 use super::*;
-use std::os::fd::AsRawFd;
-
-fn peer_pid(stream: &UnixStream) -> Result<i32, String> {
-    #[cfg(target_os = "macos")]
-    {
-        let mut uid = 0;
-        let mut gid = 0;
-        if unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) } != 0 || uid != unsafe { libc::geteuid() } {
-            return Err("UI peer identity unavailable".into());
-        }
-        let mut pid: libc::pid_t = 0;
-        let mut size = std::mem::size_of_val(&pid) as libc::socklen_t;
-        if unsafe { libc::getsockopt(stream.as_raw_fd(), 0, 2, (&mut pid as *mut libc::pid_t).cast(), &mut size) } != 0 || pid <= 0 {
-            return Err("UI peer PID unavailable".into());
-        }
-        Ok(pid)
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
-        let mut size = std::mem::size_of_val(&cred) as libc::socklen_t;
-        if unsafe { libc::getsockopt(stream.as_raw_fd(), libc::SOL_SOCKET, libc::SO_PEERCRED, (&mut cred as *mut libc::ucred).cast(), &mut size) } != 0
-            || cred.uid != unsafe { libc::geteuid() }
-        {
-            return Err("UI peer identity unavailable".into());
-        }
-        Ok(cred.pid)
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        let _ = stream;
-        Err("UI peer credentials unsupported on this platform".into())
-    }
-}
+use alinery_core::daemon_client::peer_process_id;
 fn executable(pid: i32) -> Result<PathBuf, String> {
     #[cfg(target_os = "macos")]
     {
@@ -59,7 +26,7 @@ fn executable(pid: i32) -> Result<PathBuf, String> {
 pub(super) fn serve(stream: &mut UnixStream, repo: &Path, lane: &str, host: &ProtectedHost) {
     let authorize = || {
         let host = host.as_ref().as_ref().ok_or("protected UI host unavailable")?;
-        let pid = peer_pid(stream)?;
+        let pid = peer_process_id(stream)?;
         if executable(pid)? != *host {
             return Err("UI control requires the protected UI host".into());
         }

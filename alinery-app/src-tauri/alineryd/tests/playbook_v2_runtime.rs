@@ -74,6 +74,31 @@ impl Fixture {
     fn create_with(&self, source: &str, capacity: u32, enabled: &[&str], start: bool) -> CreateTaskReply {
         self.client.create_task(&serde_json::from_value(json!({"name":"Fixture","requested_slug":"fixture","description":"ticket","playbook":{"reference":{"scope":"bundled","key":"fixture"},"source":source},"max_live_sessions":capacity,"auto_advance_steps":enabled,"start":start})).unwrap()).unwrap()
     }
+    fn create_named(&self, slug: &str) -> CreateTaskReply {
+        self.client.create_task(&serde_json::from_value(json!({"name":slug,"requested_slug":slug,"description":"ticket","playbook":{"reference":{"scope":"bundled","key":"fixture"},"source":definition()},"max_live_sessions":1,"auto_advance_steps":[],"start":false})).unwrap()).unwrap()
+    }
+    fn stop(&mut self) {
+        self.client.call(&json!({"op":"shutdown"})).unwrap();
+        assert!(self.child.wait().unwrap().success());
+    }
+    fn spawn_lane(&mut self, lane: &str, config: &str) {
+        self.client.socket_path = alinery_core::alineryd_socket_path(&self.root, Some(lane));
+        self.child = Command::new(env!("CARGO_BIN_EXE_alineryd"))
+            .args([
+                "--repo",
+                self.root.to_str().unwrap(),
+                "--app-config",
+                self.root.join(config).to_str().unwrap(),
+                "--socket-namespace",
+                lane,
+            ])
+            .env("ALINERY_RUNNER_PATH", self.root.join("runner"))
+            .env("ALINERY_HOST_EXECUTABLE", std::env::current_exe().unwrap())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+    }
     fn state(&self) -> TaskExecutionReply {
         self.client.get_task_execution(&GetTaskExecutionRequest { task_slug: "fixture".into() }).unwrap()
     }
@@ -1206,4 +1231,248 @@ fn shared_exact_queued_manual_bindings_survive_quiescent_restart() {
             1
         );
     }
+}
+
+#[test]
+fn stopped_owner_dev_prod_dev_preserves_task_history_and_queue_policy() {
+    let mut fixture = Fixture::new();
+    fixture.stop();
+    fixture.spawn_lane("dev", "dev.toml");
+    wait(|| fixture.client.version_checked().is_ok());
+    let created = fixture.create(false, false);
+    let completed = created.executions.iter().find(|r| r.candidate.step_key == "first").unwrap();
+    let uncertain = created.executions.iter().find(|r| r.candidate.step_key == "second").unwrap();
+    fixture.start(completed);
+    fixture.finish(completed);
+    fixture.start(uncertain);
+    fixture.accept(uncertain);
+    let queued = fixture.create_named("queued");
+    let archived = fixture.create_named("archived");
+    alinery_core::archive_task_guarded(&fixture.root, "archived").unwrap();
+    let before = fixture.persisted();
+    let artifact = fixture.root.join(".alinery/tasks/fixture/artifacts").join(&completed.outputs[0].relative_path);
+    let artifact_bytes = fs::read(&artifact).unwrap();
+    let scrollback = alinery_core::session_scrollback_path(&fixture.root, "fixture", &completed.owner_session_id);
+    // The RPC shell fixture does not produce terminal scrollback. Seed retained
+    // terminal evidence for this completed historical session before switching.
+    let scrollback_bytes = b"retained terminal output\r\n\x1b[32mcompleted\x1b[0m\r\n".to_vec();
+    fs::write(&scrollback, &scrollback_bytes).unwrap();
+    fixture.child.kill().unwrap();
+    fixture.child.wait().unwrap();
+    fixture.release(&uncertain.owner_session_id);
+    // Persist the same durable request used by start_session, while no daemon
+    // can race scheduling. The other root deliberately remains unrequested.
+    for (slug, record) in [("queued", &queued.executions[0]), ("archived", &archived.executions[0])] {
+        alinery_core::with_task_mutation_lock_waiting(&fixture.root, "fixture queued request", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
+            let mut state = read_execution_state(&fixture.root, slug)?;
+            alinery_core::execution::request_execution_start(&mut state, &record.id)?;
+            alinery_core::execution::write_execution_state_unlocked(&fixture.root, slug, &mut state)
+        })
+        .unwrap();
+    }
+    for (lane, config) in [("", "production.toml"), ("dev", "dev.toml")] {
+        fixture.spawn_lane(lane, config);
+        wait(|| fixture.client.version_checked().is_ok());
+        for slug in ["fixture", "queued", "archived"] {
+            let state = fixture.client.get_task_execution(&GetTaskExecutionRequest { task_slug: slug.into() }).unwrap().state;
+            assert_eq!(state.owning_lane, lane);
+            assert_eq!(state.owning_app_config_identity, alinery_core::app_config_identity(&fixture.root.join(config)));
+        }
+        let state = fixture.persisted();
+        assert_eq!(state.executions[&completed.id], before.executions[&completed.id]);
+        assert_eq!(state.executions[&uncertain.id].receipt_id, before.executions[&uncertain.id].receipt_id);
+        assert_eq!(state.executions[&uncertain.id].lifecycle, ExecutionLifecycle::Interrupted);
+        assert!(!state.executions[&uncertain.id].shutdown_confirmed);
+        assert_eq!(state.executions[&uncertain.id].owner_session_id, uncertain.owner_session_id);
+        assert_eq!(state.occurrences, before.occurrences);
+        assert_eq!(fs::read(&artifact).unwrap(), artifact_bytes);
+        assert_eq!(fs::read(&scrollback).unwrap(), scrollback_bytes);
+        for record in &archived.executions {
+            let state = read_execution_state(&fixture.root, "archived").unwrap();
+            assert_eq!(state.executions[&record.id].lifecycle, ExecutionLifecycle::Queued);
+            assert!(!fixture.root.join(format!("token-{}", record.owner_session_id)).exists());
+        }
+        assert!(alinery_core::read_task(&fixture.root, "archived").unwrap().archived);
+        let held = &queued.executions[1];
+        let queued_state = read_execution_state(&fixture.root, "queued").unwrap();
+        assert!(!queued_state.executions[&held.id].start_requested);
+        assert_eq!(queued_state.executions[&held.id].lifecycle, ExecutionLifecycle::Queued);
+        assert!(!fixture.root.join(format!("token-{}", held.owner_session_id)).exists());
+        if lane.is_empty() {
+            let requested = &queued.executions[0];
+            wait(|| fixture.root.join(format!("token-{}", requested.owner_session_id)).exists());
+            assert_eq!(
+                read_execution_state(&fixture.root, "queued").unwrap().executions[&requested.id].lifecycle,
+                ExecutionLifecycle::Running
+            );
+            let meta = alinery_core::read_session_meta_full(&alinery_core::session_meta_path(&fixture.root, "queued", &requested.owner_session_id)).unwrap();
+            assert_eq!(meta.daemon_namespace, lane);
+        }
+        fixture.stop();
+    }
+    let historical = alinery_core::read_session_meta_full(&alinery_core::session_meta_path(&fixture.root, "fixture", &completed.owner_session_id)).unwrap();
+    assert_eq!(historical.daemon_namespace, "dev");
+}
+
+#[test]
+fn new_owner_routes_new_sessions_but_rejects_foreign_history() {
+    let mut fixture = Fixture::new();
+    let created = fixture.create(false, true);
+    let uncertain = &created.executions[0];
+    fixture.start(uncertain);
+    fixture.accept(uncertain);
+    let targets = || {
+        [
+            ExecutionSessionTarget::Auxiliary {
+                harness: "omp".into(),
+                model: None,
+                prompt: None,
+            },
+            ExecutionSessionTarget::SubtaskManager {
+                subtask_slug: None,
+                recover: false,
+                harness: "omp".into(),
+                model: None,
+            },
+        ]
+    };
+    let mut historical = Vec::new();
+    for target in targets() {
+        let reply = fixture
+            .client
+            .create_execution_session(&CreateExecutionSessionRequest {
+                task_slug: "fixture".into(),
+                target,
+                launch_override: None,
+                prompt_extra: None,
+                handoff_artifact: None,
+                start: true,
+            })
+            .unwrap();
+        assert_eq!(reply.start, "started");
+        wait(|| fixture.root.join(format!("token-{}", reply.session.id)).exists());
+        fixture.release(&reply.session.id);
+        wait(|| {
+            alinery_core::read_session_meta_full(&alinery_core::session_meta_path(&fixture.root, "fixture", &reply.session.id))
+                .unwrap()
+                .ended_at
+                .is_some()
+        });
+        historical.push(reply.session.id);
+    }
+    fixture.child.kill().unwrap();
+    fixture.child.wait().unwrap();
+    fixture.release(&uncertain.owner_session_id);
+    historical.push(uncertain.owner_session_id.clone());
+    let metadata: Vec<Value> = historical
+        .iter()
+        .map(|id| {
+            let mut value: Value = serde_json::from_slice(&fs::read(alinery_core::session_meta_path(&fixture.root, "fixture", id)).unwrap()).unwrap();
+            // Observation projects the current execution revision; it is not
+            // historical identity or completion evidence.
+            value.as_object_mut().unwrap().remove("execution_revision");
+            value
+        })
+        .collect();
+    fixture.spawn_lane("dev", "dev.toml");
+    wait(|| fixture.client.version_checked().is_ok());
+    assert_eq!(fixture.state().state.owning_lane, "dev");
+    for (id, before) in historical.iter().zip(metadata) {
+        assert!(fixture
+            .client
+            .start_session(&StartSessionRequest {
+                task_slug: "fixture".into(),
+                session_id: id.clone()
+            })
+            .is_err());
+        let mut after: Value = serde_json::from_slice(&fs::read(alinery_core::session_meta_path(&fixture.root, "fixture", id)).unwrap()).unwrap();
+        after.as_object_mut().unwrap().remove("execution_revision");
+        assert_eq!(after, before);
+    }
+    assert!(fixture
+        .client
+        .create_execution_session(&CreateExecutionSessionRequest {
+            task_slug: "fixture".into(),
+            target: ExecutionSessionTarget::Primary {
+                step_key: uncertain.candidate.step_key.clone(),
+                execution_id: Some(uncertain.id.clone()),
+                input_occurrence_ids: None
+            },
+            launch_override: None,
+            prompt_extra: None,
+            handoff_artifact: None,
+            start: false,
+        })
+        .is_err());
+    for target in targets() {
+        let reply = fixture
+            .client
+            .create_execution_session(&CreateExecutionSessionRequest {
+                task_slug: "fixture".into(),
+                target,
+                launch_override: None,
+                prompt_extra: None,
+                handoff_artifact: None,
+                start: true,
+            })
+            .unwrap();
+        assert_eq!(reply.start, "started");
+        assert_eq!(reply.session.daemon_namespace, "dev");
+        assert!(!historical.contains(&reply.session.id));
+        wait(|| fixture.root.join(format!("token-{}", reply.session.id)).exists());
+    }
+}
+
+#[test]
+fn adoption_failure_precedes_socket_bind_and_scheduler_start() {
+    let mut fixture = Fixture::new();
+    let created = fixture.create(false, true);
+    fixture.stop();
+    let record = &created.executions[0];
+    alinery_core::with_task_mutation_lock_waiting(&fixture.root, "fixture queued request", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
+        let mut state = fixture.persisted();
+        alinery_core::execution::request_execution_start(&mut state, &record.id)?;
+        alinery_core::execution::write_execution_state_unlocked(&fixture.root, "fixture", &mut state)
+    })
+    .unwrap();
+    let execution = alinery_core::execution::execution_state_path(&fixture.root, "fixture").unwrap();
+    let before = fs::read(&execution).unwrap();
+    let playbook = fixture.root.join(".alinery/tasks/fixture/playbook.md");
+    let valid = fs::read(&playbook).unwrap();
+    fs::write(&playbook, "invalid retained definition").unwrap();
+    fixture.spawn_lane("dev", "dev.toml");
+    wait(|| fixture.child.try_wait().unwrap().is_some());
+    assert!(!fixture.child.wait().unwrap().success());
+    assert!(!fixture.client.socket_path.exists());
+    assert!(!fixture.root.join(format!("token-{}", record.owner_session_id)).exists());
+    assert_eq!(fs::read(&execution).unwrap(), before);
+    fs::write(&playbook, valid).unwrap();
+    fixture.spawn_lane("dev", "dev.toml");
+    wait(|| fixture.client.version_checked().is_ok());
+    wait(|| fixture.root.join(format!("token-{}", record.owner_session_id)).exists());
+    assert_eq!(fixture.persisted().owning_lane, "dev");
+    assert_eq!(fixture.persisted().executions[&record.id].lifecycle, ExecutionLifecycle::Running);
+}
+
+#[test]
+fn compatible_build_drift_preserves_live_session_without_takeover() {
+    let fixture = Fixture::new();
+    let created = fixture.create(false, true);
+    let record = &created.executions[0];
+    fixture.start(record);
+    wait(|| fixture.root.join(format!("token-{}", record.owner_session_id)).exists());
+    let version = fixture.client.version_checked().unwrap();
+    let expected_identity = alinery_core::app_config_identity(&fixture.root.join("app.toml"));
+    let different_build = format!("{:?}-different", version.build_id);
+    assert_eq!(
+        alinery_core::daemon_client::observe_compatible(&fixture.client.socket_path, &different_build, &expected_identity).unwrap(),
+        alinery_core::DaemonCompat::BuildDrift,
+    );
+    let (connected, compatibility) = alinery_core::daemon_client::ensure_compatible_daemon(&fixture.root, &fixture.root.join("app.toml"), None).unwrap();
+    assert!(compatibility.usable());
+    assert_eq!(connected.version_checked().unwrap().build_id, version.build_id);
+    let state = connected.get_task_execution(&GetTaskExecutionRequest { task_slug: "fixture".into() }).unwrap().state;
+    assert_eq!(state.executions[&record.id].lifecycle, ExecutionLifecycle::Running);
+    assert_eq!(state.executions[&record.id].owner_session_id, record.owner_session_id);
+    fixture.finish(record);
 }

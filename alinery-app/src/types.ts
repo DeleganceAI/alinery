@@ -989,19 +989,34 @@ export type ArtifactReviewPendingStatus = {
   review: string;
 };
 
-// Mirrors Rust `DaemonConflict`: daemon reuse or exclusive project ownership is blocked.
-// Nothing was killed to discover this.
+export type TakeoverImpact = { status: "known"; sessions: { id: string; name: string | null }[] } | { status: "unknown"; detail: string };
+
+export type DaemonOwnerConflict = {
+  lane: string;
+  pid: number | null;
+  protocol: number | null;
+  build_id: string | null;
+  app_config_identity: string | null;
+  impact: TakeoverImpact;
+  takeover_unavailable: string | null;
+};
+
+// Observations only: neither conflict discovery nor preview authorizes shutdown.
 export type DaemonConflict = {
   repo: string;
-  reason: "protocol" | "app_config" | "ownership";
-  detail?: string;
-  /** null when the running daemon predates protocol versioning. */
-  daemon_protocol: number | null;
   app_protocol: number;
-  daemon_app_config_identity: string | null;
-  app_config_identity: string | null;
-  live_sessions: number;
+  app_config_identity: string;
+  owners: DaemonOwnerConflict[];
+  issues: string[];
 };
+
+export type TakeoverPreview = {
+  confirmation_id: string;
+  repo: string;
+  owner: DaemonOwnerConflict;
+};
+
+export type TakeoverOutcome = { status: "attached" } | { status: "blocked"; conflict: DaemonConflict } | { status: "reconfirm"; preview: TakeoverPreview };
 
 export type DaemonStatus = {
   reachable: boolean;
