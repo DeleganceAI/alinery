@@ -1070,16 +1070,23 @@ fn bundled_spec_loop_stays_inside_slices() {
     trace.finish_handoff(&design, 1);
     let plan = trace.one("plan-slices");
     assert_eq!(trace.state.executions[&plan].permission, CompletionPermission::Locked);
-    trace.finish_handoff(&plan, 1);
-    assert!(trace
-        .artifacts()
-        .join(&trace.state.occurrences[&trace.output(&plan, "slice-member-0.md")].relative_path)
-        .is_file());
+    // tasks.md order is ledger, then telephony-bind. The ledger names ledger.
+    // The slice family is not an input: collection order is not slice order.
+    trace.start(&plan);
+    trace.write(&plan, "tasks.md", "slice id: ledger\nslice id: telephony-bind\n");
+    trace.write(&plan, "slice-telephony-bind.md", "id: telephony-bind\n");
+    trace.write(&plan, "next-slice.md", "slice id: ledger\n");
+    trace.accepted(&plan);
+    trace.exit(&plan);
 
     let next = trace.one("next-slice");
     assert_eq!(trace.state.executions[&next].permission, CompletionPermission::Automatic);
-    trace.bound(&next, "ticket.md", BTreeSet::from([trace.seed.clone()]));
+    trace.bound(&next, "next-slice.md", BTreeSet::from([trace.output(&plan, "next-slice.md")]));
     trace.bound(&next, "tasks.md", BTreeSet::from([trace.output(&plan, "tasks.md")]));
+    assert!(!trace.state.executions[&next].candidate.inputs.values().flatten().any(|id| id == &trace.seed));
+    let ledger_text = trace.input_text(&next, "next-slice.md").join("\n");
+    assert_eq!(ledger_text.trim(), "slice id: ledger");
+    assert!(!ledger_text.contains("2 3 5"), "seed request must not be the slice source");
     trace.finish_handoff(&next, 1);
     let implement = trace.one("implement");
     assert!(trace.state.executions[&implement].is_coding_step);
@@ -1095,16 +1102,18 @@ fn bundled_spec_loop_stays_inside_slices() {
     let validate = trace.one("validate");
     assert_eq!(trace.state.executions[&validate].permission, CompletionPermission::Automatic);
     trace.start(&validate);
-    trace.write(&validate, "ticket.md", "Validation requests the next planned slice with current review evidence.");
+    // Binding only. The prompt, not the engine, prefers a replacement body over the tasks.md entry.
+    trace.write(&validate, "next-slice.md", "slice id: ledger\nattempt count: 1\nid: ledger\nreplacement body\n");
     trace.accepted(&validate);
     trace.blocked("next-slice");
     trace.exit(&validate);
 
     let again = trace.one("next-slice");
-    trace.bound(&again, "ticket.md", BTreeSet::from([trace.output(&validate, "ticket.md")]));
+    trace.bound(&again, "next-slice.md", BTreeSet::from([trace.output(&validate, "next-slice.md")]));
     trace.bound(&again, "tasks.md", BTreeSet::from([trace.output(&plan, "tasks.md")]));
     assert_ne!(trace.state.executions[&again].candidate.context_id, "root");
-    assert!(!trace.state.executions[&again].candidate.inputs["ticket.md"].contains(&trace.seed));
+    assert!(!trace.state.executions[&again].candidate.inputs.values().flatten().any(|id| id == &trace.seed));
+    assert!(!trace.state.executions[&again].candidate.inputs["next-slice.md"].contains(&trace.output(&plan, "next-slice.md")));
     trace.blocked("implement");
     for step in ["research", "specify", "design", "plan-slices"] {
         let runs = trace.state.executions.values().filter(|execution| execution.candidate.step_key == step).count();
