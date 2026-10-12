@@ -93,6 +93,9 @@ pub struct OutputAssignment {
     pub selector: String,
     pub relative_path: String,
     pub discriminator: u64,
+    /// Missing on records reserved before required outputs existed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -542,6 +545,7 @@ pub fn reserve_execution(
                     selector: output.path.clone(),
                     relative_path,
                     discriminator: instance,
+                    required: output.required,
                 });
                 output_selectors.push(physical);
                 break;
@@ -760,6 +764,14 @@ pub fn accept_execution_completion(repo: &Path, slug: &str, state: &mut TaskExec
             Err(error) => diagnostics.push(error),
         }
     }
+    for assignment in &record.outputs {
+        if assignment.required && !accepted.iter().any(|occurrence| occurrence.selector == assignment.selector) {
+            diagnostics.push(format!(
+                "required output '{}' was not published; completion stays rejected until that nonempty file exists",
+                assignment.selector
+            ));
+        }
+    }
     if diagnostics.is_empty() && accepted.is_empty() {
         diagnostics.push("Completion requires at least one valid assigned artifact overall; no publications were found.".into());
     }
@@ -842,11 +854,18 @@ pub fn execution_assignment_prompt(repo: &Path, slug: &str, state: &TaskExecutio
     for assignment in &record.outputs {
         let _ = writeln!(
             prompt,
-            "Write: {} (logical {}; possible publication{})",
+            "Write: {} (logical {}; {}{})",
             root.join(&assignment.relative_path).display(),
             assignment.selector,
+            if assignment.required {
+                "required publication"
+            } else {
+                "possible publication"
+            },
             if assignment.relative_path.contains('*') {
                 ", wildcard family with zero or finitely many valid members"
+            } else if assignment.required {
+                "; omitting this exact nonempty file rejects completion"
             } else {
                 ""
             }
@@ -871,6 +890,9 @@ pub fn execution_assignment_prompt(repo: &Path, slug: &str, state: &TaskExecutio
         "Correct invalid outputs before retrying. Resolve delivery or ownership failures rather than claiming success. Only an accepted tool result confirms completion. After acceptance, do no further work; allow ordinary shutdown. Only successors whose declared inputs are satisfied by accepted publications become eligible after confirmed process exit; completion does not promise every possible successor will run.\n\n",
         "Do not modify other executions' artifacts.\n",
     ));
+    if record.outputs.iter().any(|assignment| assignment.required) {
+        prompt.push_str("An exact output marked required above is not optional. Omitting it rejects completion and leaves this execution running. That exception supersedes the possible-publication sentence for those paths only.\n");
+    }
     Ok(prompt)
 }
 

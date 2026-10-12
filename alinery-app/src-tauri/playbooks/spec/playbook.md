@@ -47,7 +47,7 @@ title = "Plan Slices"
 short = "plan-slices"
 inputs = [{ path = "research.md", mode = "single" }, { path = "requirements.md", mode = "single" }, { path = "design.md", mode = "single" }]
 # Publishes the first next-slice.md. The seed ticket is the original request and is not a slice.
-outputs = [{ path = "tasks.md" }, { path = "slice-*.md" }, { path = "next-slice.md" }]
+outputs = [{ path = "tasks.md", required = true }, { path = "slice-*.md" }, { path = "next-slice.md", required = true }]
 model = ""
 harness = ""
 is_coding_step = false
@@ -123,7 +123,7 @@ Additional user instructions:
 
 # Research
 
-Read `{{TICKET_FILE}}`. This step has no assigned artifact inputs, so that file is the original task request. Do not treat a later implementation ticket as a reason to research again.
+Read `{{TICKET_FILE}}`. This step has no assigned artifact inputs, so that file is the original task request. Later slices do not rebind it, and a slice ledger is not a reason to research again.
 
 Scan the repository read-only. Write `research.md` covering what exists today, the gap this request opens, constraints, reusable code, and unknowns that would change the requirements. Do not choose a design or draft requirements. Do not modify repository files.
 
@@ -204,9 +204,9 @@ Read the assigned research, requirements, and design. Break the approved design 
 
 Write `tasks.md` as the index: slice ids in order, each followed by that slice's full text. Also write one `slice-<id>.md` per slice, with the same text, as the assigned `slice-*.md` family. Every slice includes its id, the requirement ids it discharges, `_Boundary:` (repository paths it may touch), `_Depends:` (slice ids or interfaces it consumes), and the test that proves it.
 
-Also write `next-slice.md` for the first slice only. Name the first id in `tasks.md` order. That is not the first `slice-*.md` filename, and not an id guessed from the original request. Do not include a slice body or implementation notes. The body stays in `slice-<id>.md` and in the matching `tasks.md` entry. Do not copy the original request, `{{TICKET_FILE}}`, or design notes into this ledger.
+Also write `next-slice.md` for the first slice only. Name the first id in `tasks.md` order. That is not the first `slice-*.md` filename, and not an id guessed from the original request. Include `supersedes: none`. Do not include a slice body or implementation notes. The body stays in `slice-<id>.md` and in the matching `tasks.md` entry. Do not copy the original request, `{{TICKET_FILE}}`, or design notes into this ledger.
 
-Write the index, the slice family, and this ledger before completing. The slice family must be a finite nonempty set. If the work cannot be sliced, ask and do not complete. Stay until the human accepts the slice set. Do not implement. Do not modify repository files.
+`tasks.md` and `next-slice.md` are required publications. Completing without either file is rejected and this session stays running. The slice family is still a possible publication, but it must be a finite nonempty set before you complete. If the work cannot be sliced, ask and do not complete. Stay until the human accepts the slice set. Do not implement. Do not modify repository files.
 
 <!-- alinery:step next-slice -->
 
@@ -231,7 +231,7 @@ Additional user instructions:
 
 Read the assigned `next-slice.md` and the assigned `tasks.md`. Write `current-slice.md` for exactly one slice. Do not read the original task ticket. It is the whole request, not a slice.
 
-If the ledger contains a full replacement slice body, copy that body. A review repair wins over the original slice file. Otherwise the ledger names a slice id: copy that slice from the assigned `tasks.md`. If the ledger names no id, stop and ask. Do not guess a slice from the original request, and do not copy the first embedded slice unless the ledger names that id.
+If the ledger contains `supersedes: slice-<id>.md` and a full replacement slice body, copy that body. That field names the original slice file the repair replaces, and the repair wins over both that file and the `tasks.md` entry. Otherwise the ledger names a slice id and `supersedes: none`: copy that slice from the assigned `tasks.md`. If the ledger names no id, stop and ask. Do not guess a slice from the original request, and do not copy the first embedded slice unless the ledger names that id.
 
 Carry implementation notes only when the ledger contains them. Do not scan the artifacts directory for `slice-*.md`. Those files are the original plan; a repair lives in the ledger. Do not implement. Do not modify repository files.
 
@@ -310,11 +310,11 @@ Additional user instructions:
 
 # Validate
 
-Read the assigned `next-slice.md`, `tasks.md`, review, requirements, and design. The assigned ledger already names a slice id, including on the first pass. This step writes the next ledger at its assigned `next-slice.md` path. That ledger is for the next slice, not a rewrite of the original request. When you write one, include the slice id to bind next, the full slice body when it is not just the next index entry, the completed slice ids, the attempt count for the active slice, and the implementation notes from the review.
+Read the assigned `next-slice.md`, `tasks.md`, review, requirements, and design. The assigned ledger already names a slice id, including on the first pass. This step writes the next ledger at its assigned `next-slice.md` path. That ledger is for the next slice, not a rewrite of the original request. When you write one, include the slice id to bind next, `supersedes: slice-<id>.md` when the ledger carries a replacement body (otherwise `supersedes: none`), the full slice body when it is not just the next index entry, the completed slice ids, the attempt count for the active slice, and the implementation notes from the review.
 
 The assigned ledger's attempt count is the number of rejections already sent back for this slice. A ledger from plan-slices has none.
 
-- The review rejects this slice and the ledger does not already record a rejection of it: write the repair ledger, with the replacement slice from the review and attempt count 1, then complete.
+- The review rejects this slice and the ledger does not already record a rejection of it: write the repair ledger, with the replacement slice from the review, `supersedes: slice-<id>.md` for that slice, and attempt count 1, then complete.
 - The review rejects this slice again: do not write a ledger. Explain the repeated rejection and ask the human.
 - The review accepts and slices remain: write a ledger naming the next slice id and the notes, then complete. Do not repeat the slice body when `tasks.md` already has it.
 - Nothing remains: compare the work with the requirements and the design in `validation-report.md`. Record requirement coverage, boundary violations, evidence references, checks performed and what was not run. End with `GO`, `NO-GO`, or `MANUAL_VERIFY_REQUIRED`, with the actual human disposition. A settled, human-approved terminal disposition may complete with this report and no `next-slice.md`. If the human instead requests a repair, write that actionable ledger and complete.

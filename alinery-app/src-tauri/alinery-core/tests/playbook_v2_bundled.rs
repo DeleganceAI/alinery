@@ -1075,8 +1075,19 @@ fn bundled_spec_loop_stays_inside_slices() {
     trace.start(&plan);
     trace.write(&plan, "tasks.md", "slice id: ledger\nslice id: telephony-bind\n");
     trace.write(&plan, "slice-telephony-bind.md", "id: telephony-bind\n");
-    trace.write(&plan, "next-slice.md", "slice id: ledger\n");
+    trace.authorize(&plan);
+    assert!(
+        matches!(trace.accept(&plan), CompletionOutcome::InvalidOutputs { .. }),
+        "plan-slices must not complete without the required first ledger"
+    );
+    trace.blocked("next-slice");
+    trace.write(&plan, "next-slice.md", "slice id: ledger\nsupersedes: none\n");
     trace.accepted(&plan);
+    let slice = trace.output(&plan, "slice-telephony-bind.md");
+    assert!(
+        trace.artifacts().join(&trace.state.occurrences[&slice].relative_path).is_file(),
+        "slice family member must be materialized"
+    );
     trace.exit(&plan);
 
     let next = trace.one("next-slice");
@@ -1085,7 +1096,7 @@ fn bundled_spec_loop_stays_inside_slices() {
     trace.bound(&next, "tasks.md", BTreeSet::from([trace.output(&plan, "tasks.md")]));
     assert!(!trace.state.executions[&next].candidate.inputs.values().flatten().any(|id| id == &trace.seed));
     let ledger_text = trace.input_text(&next, "next-slice.md").join("\n");
-    assert_eq!(ledger_text.trim(), "slice id: ledger");
+    assert_eq!(ledger_text.trim(), "slice id: ledger\nsupersedes: none");
     assert!(!ledger_text.contains("2 3 5"), "seed request must not be the slice source");
     trace.finish_handoff(&next, 1);
     let implement = trace.one("implement");
@@ -1103,7 +1114,7 @@ fn bundled_spec_loop_stays_inside_slices() {
     assert_eq!(trace.state.executions[&validate].permission, CompletionPermission::Automatic);
     trace.start(&validate);
     // Binding only. The prompt, not the engine, prefers a replacement body over the tasks.md entry.
-    trace.write(&validate, "next-slice.md", "slice id: ledger\nattempt count: 1\nid: ledger\nreplacement body\n");
+    trace.write(&validate, "next-slice.md", "slice id: ledger\nsupersedes: slice-ledger.md\nattempt count: 1\nid: ledger\nreplacement body\n");
     trace.accepted(&validate);
     trace.blocked("next-slice");
     trace.exit(&validate);
@@ -1111,6 +1122,7 @@ fn bundled_spec_loop_stays_inside_slices() {
     let again = trace.one("next-slice");
     trace.bound(&again, "next-slice.md", BTreeSet::from([trace.output(&validate, "next-slice.md")]));
     trace.bound(&again, "tasks.md", BTreeSet::from([trace.output(&plan, "tasks.md")]));
+    assert!(trace.input_text(&again, "next-slice.md").join("\n").contains("supersedes: slice-ledger.md"));
     assert_ne!(trace.state.executions[&again].candidate.context_id, "root");
     assert!(!trace.state.executions[&again].candidate.inputs.values().flatten().any(|id| id == &trace.seed));
     assert!(!trace.state.executions[&again].candidate.inputs["next-slice.md"].contains(&trace.output(&plan, "next-slice.md")));
