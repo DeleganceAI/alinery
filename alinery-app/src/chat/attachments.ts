@@ -82,9 +82,19 @@ export function canStage(existing: Pick<DraftAttachment, "kind" | "bytes">[], in
   });
 }
 
-export function buildPromptMessage(caption: string, copiedFiles: { name: string }[], repoPath: string, slug: string): string {
+/** Task-session copies. Matches `attachments_dir`. */
+export function taskAttachmentDir(repoPath: string, slug: string): string {
+  return `${repoPath}/.alinery/tasks/${slug}/artifacts/attachments`;
+}
+
+/** Taskless chat copies. Matches `chat_attachments_dir`: beside `<id>.omp`, not in the worktree. */
+export function chatThreadAttachmentDir(repoPath: string, sessionId: string): string {
+  return `${repoPath}/.alinery/sessions/${sessionId}.attachments`;
+}
+
+export function buildPromptMessage(caption: string, copiedFiles: { name: string }[], attachmentsDir: string): string {
   if (copiedFiles.length === 0) return caption;
-  const lines = copiedFiles.map((file) => `Attached file: ${repoPath}/.alinery/tasks/${slug}/artifacts/attachments/${file.name}`);
+  const lines = copiedFiles.map((file) => `Attached file: ${attachmentsDir}/${file.name}`);
   if (caption.length === 0) return lines.join("\n");
   return `${caption}\n\n${lines.join("\n")}`;
 }

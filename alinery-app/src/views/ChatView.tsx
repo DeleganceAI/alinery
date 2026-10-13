@@ -18,7 +18,9 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatComposer } from "../ChatComposer";
+import { canStage, chatThreadAttachmentDir, classifyAttachment, type DraftAttachment, draftToRowAttachments, isHttpUrl, revokeDraftPreviewUrls } from "../chat/attachments";
 import { formatContextUsage } from "../chat/format";
+import { prepareChatAttachments } from "../chat/prepareAttachments";
 import { applySendPlan, commandOutputText, planChatSend } from "../chat/send";
 import { type McpServerRow, type ProvidersDialogTab, parseMcpListOutput } from "../chat/slash";
 import type { SessionChatStatus } from "../chat/types";
@@ -38,11 +40,12 @@ import { askConfirm, confirmDanger, confirmStopAndSwitch } from "../confirm";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { NameEditor } from "../NameEditor";
-import { compactCommand, getStateCommand, promptCommand, setAutoCompactionCommand, setThinkingLevelCommand } from "../ompRpc";
+import { compactCommand, getStateCommand, type ImageContent, promptCommand, setAutoCompactionCommand, setThinkingLevelCommand } from "../ompRpc";
 import { SessionTerminal } from "../SessionTerminal";
 import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
 import { isTurnActive, OMP_INTERRUPT_DATA } from "../sessionMessage";
 import { Checkbox, Dialog, InlineStatus, LoadingState, obsLabel, StatusMarker } from "../shared";
+import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatMcpDialog } from "./ChatMcpDialog";
@@ -170,12 +173,41 @@ function interruptedWithoutJournal(thread: ChatThread, transcript: ChatTranscrip
   return thread.session.ended_at != null && thread.session.harness_resume_token.length === 0 && transcript.entries.length === 0;
 }
 
-/** Drops a thread's draft only if it is still the text that was sent: an edit made meanwhile stays. */
-function clearDraft(key: string, text: string) {
-  return (current: Record<string, string>) => {
-    if (current[key] !== text) return current;
-    const { [key]: _sent, ...rest } = current;
-    return rest;
+type ThreadDraft = { body: string; attachments: DraftAttachment[] };
+
+const EMPTY_DRAFT: ThreadDraft = { body: "", attachments: [] };
+
+function threadDraft(drafts: Record<string, ThreadDraft>, key: string): ThreadDraft {
+  return drafts[key] ?? EMPTY_DRAFT;
+}
+
+function threadAttachmentStore(repoPath: string, id: string) {
+  return {
+    stat: (path: string) => ipc.chatFileStat(path),
+    copy: (paths: string[]) => ipc.copyChatThreadAttachments(repoPath, id, paths),
+    writeBytes: (fileName: string, bytes: number[]) => ipc.writeChatThreadAttachmentBytes(repoPath, id, fileName, bytes),
+    readImage: (name: string) => ipc.readChatThreadImage(repoPath, id, name),
+    trailerDir: chatThreadAttachmentDir(repoPath, id),
+  };
+}
+
+/**
+ * Drops the sent text only if the composer still holds it, and drops the sent attachment ids.
+ * An edit or a file added meanwhile stays.
+ */
+function clearSentDraft(key: string, text: string, sentIds: string[]) {
+  return (current: Record<string, ThreadDraft>) => {
+    const draft = current[key];
+    if (!draft) return current;
+    const body = draft.body === text ? "" : draft.body;
+    const sent = new Set(sentIds);
+    const attachments = sent.size === 0 ? draft.attachments : draft.attachments.filter((item) => !sent.has(item.id));
+    if (body === draft.body && attachments.length === draft.attachments.length) return current;
+    if (body === "" && attachments.length === 0) {
+      const { [key]: _sent, ...rest } = current;
+      return rest;
+    }
+    return { ...current, [key]: { body, attachments } };
   };
 }
 
@@ -194,15 +226,17 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
   const [pickedRepo, setRepoPath] = useState("");
   const [createWorktree, setCreateWorktree] = useState(false);
   // Per thread, so a half-written message stays with the thread it was written for.
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [drafts, setDrafts] = useState<Record<string, ThreadDraft>>({});
   // Read where the render's `drafts` could be a tick old: two refusals landing together each see the other's restore.
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
+  const attachmentSeq = useRef(0);
+  const [dropping, setDropping] = useState(false);
   // Sends awaiting OMP's verdict, by command id. The daemon acks the stdin write, not the send: a
   // refusal arrives later as a response and settles only its own send. `entryId` is the row the send
   // added, null until the write is acked. Kept across a thread switch, so a refusal replayed on the
-  // way back still finds its send.
-  const awaitingVerdicts = useRef(new Map<string, { key: string; text: string; entryId: string | null; refused: boolean }>());
+  // way back still finds its send. Attachments stay here until OMP accepts, so a refusal can put them back.
+  const awaitingVerdicts = useRef(new Map<string, { key: string; text: string; attachments: DraftAttachment[]; entryId: string | null; refused: boolean }>());
   const [sendingKey, setSendingKey] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [observed, setObserved] = useState<Keyed<SessionObservation> | null>(null);
@@ -219,7 +253,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
   // A send that had to start or resume its thread first. It is delivered after that thread's
   // handshake and only to that thread; selecting any other thread cancels it, and its text stays
   // in the thread's composer.
-  const pendingPrompt = useRef<{ key: string; text: string } | null>(null);
+  const pendingPrompt = useRef<{ key: string; text: string; attachments: DraftAttachment[] } | null>(null);
   // A fresh attach id per run (`ipc.nextAttachId`): a re-run for the same thread (back from
   // Terminal) must not let the previous run's fire-and-forget detach drop the new attach.
   const [attachEpoch, setAttachEpoch] = useState(0);
@@ -460,11 +494,13 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
                   awaitingVerdicts.current.delete(commandId);
                   // The composer takes the text back unless something else is being written there: then
                   // the row stays, marked not sent, and neither message is lost.
-                  const draft = draftsRef.current[key] ?? "";
-                  const restore = draft.trim() === "" || draft === awaiting.text;
+                  const draft = threadDraft(draftsRef.current, key);
+                  const blank = draft.body.trim() === "" && draft.attachments.length === 0;
+                  const restore = blank || (draft.body !== "" && draft.body === awaiting.text);
                   if (restore) {
-                    draftsRef.current = { ...draftsRef.current, [key]: awaiting.text };
-                    setDrafts((current) => ({ ...current, [key]: awaiting.text }));
+                    const next = { body: awaiting.text, attachments: awaiting.attachments };
+                    draftsRef.current = { ...draftsRef.current, [key]: next };
+                    setDrafts((current) => ({ ...current, [key]: next }));
                   }
                   // The row's id is read in the updater, which runs after the one that added the row.
                   updateTranscript(key, (current) => settleRefusedSend(current, awaiting.entryId, awaiting.text, restore));
@@ -472,6 +508,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
                   break;
                 }
                 if (matchingSendSuccess(value, commandId)) {
+                  revokeDraftPreviewUrls(awaiting.attachments);
                   awaitingVerdicts.current.delete(commandId);
                   break;
                 }
@@ -511,7 +548,17 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
         setLink({ key, value: { state: "ready" } });
         if (!claimed) return;
         try {
-          await writeSend(key, repo, id, sendCommand(claimed.text, false), claimed.text, (current) => applyPlainSend(current, claimed.text, false));
+          const prepared = claimed.attachments.length > 0 ? await prepareChatAttachments(threadAttachmentStore(repo, id), claimed.text, claimed.attachments) : null;
+          const row = prepared ? draftToRowAttachments(claimed.attachments) : undefined;
+          await writeSend(
+            key,
+            repo,
+            id,
+            sendCommand(prepared?.message ?? claimed.text, false, prepared?.images),
+            claimed.text,
+            (current) => applyPlainSend(current, claimed.text, false, row),
+            claimed.attachments,
+          );
         } catch (cause) {
           if (!cancelled) dropClaim(`Not sent: ${errorMessage(cause)}`);
           return;
@@ -577,7 +624,9 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     onError: setError,
   });
   const uiPrompt = uiReplies.prompt;
-  const body = selectionKey ? (drafts[selectionKey] ?? "") : "";
+  const draft = selectionKey ? threadDraft(drafts, selectionKey) : EMPTY_DRAFT;
+  const body = draft.body;
+  const composerAttachments = draft.attachments;
   const sending = selectionKey !== null && sendingKey === selectionKey;
   const pendingUiReply = transcript.pendingUi.some((request) => needsUiReply(request.method));
   const agentState = observation?.state?.agent?.state;
@@ -587,7 +636,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     agentState !== "waiting_for_input" &&
     agentState !== "waiting_for_approval" &&
     !pendingUiReply &&
-    body.trim().length > 0;
+    (body.trim().length > 0 || composerAttachments.length > 0);
 
   // Older rows come off the journal on demand, as in a task session. A page that lands after the
   // reader moved to another thread is dropped by the keyed update.
@@ -616,7 +665,114 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     ipc.chatRpcWrite(selectedRepo, selectedId, setAutoCompactionCommand(visibility.autoCompaction)).catch(() => {});
   }, [visibility.autoCompaction, processLive, selectedRepo, selectedId]);
   const inTerminal = processLive && observation?.transport === "pty";
+  const inTerminalRef = useRef(inTerminal);
+  inTerminalRef.current = inTerminal;
   const terminalIo = useMemo(() => (selectedRepo && selectedId ? chatTerminalIo(selectedRepo, selectedId) : undefined), [selectedRepo, selectedId]);
+
+  const nextAttachmentId = () => {
+    attachmentSeq.current += 1;
+    return `att-${attachmentSeq.current}`;
+  };
+
+  const stageIncoming = (accepted: DraftAttachment[]) => {
+    if (accepted.length === 0 || !selectedKeyRef.current) return;
+    const key = selectedKeyRef.current;
+    setDrafts((current) => {
+      const draft = threadDraft(current, key);
+      return { ...current, [key]: { ...draft, attachments: [...draft.attachments, ...accepted] } };
+    });
+  };
+
+  const stagePaths = async (paths: string[]) => {
+    const incomingPaths = paths.filter((path) => path.length > 0 && !isHttpUrl(path));
+    if (incomingPaths.length === 0) return;
+    const key = selectedKeyRef.current;
+    if (!key) return;
+    const stagedForCaps = [...threadDraft(draftsRef.current, key).attachments];
+    const accepted: DraftAttachment[] = [];
+    for (const path of incomingPaths) {
+      try {
+        const stat = await ipc.chatFileStat(path);
+        const kind = classifyAttachment({ name: stat.name });
+        const verdict = canStage(stagedForCaps, [{ name: stat.name, mimeType: kind === "image" ? "image/png" : "application/octet-stream", bytes: stat.bytes }])[0];
+        if (!verdict || verdict.ok === false) {
+          toast.error(verdict && verdict.ok === false ? verdict.reason : `${stat.name} — could not attach`);
+          continue;
+        }
+        const item: DraftAttachment = {
+          id: nextAttachmentId(),
+          kind,
+          name: stat.name,
+          mimeType: kind === "image" ? "image/png" : "application/octet-stream",
+          bytes: stat.bytes,
+          sourcePath: path,
+        };
+        accepted.push(item);
+        stagedForCaps.push(item);
+      } catch (error) {
+        toast.error(String(error));
+      }
+    }
+    stageIncoming(accepted);
+  };
+
+  const stageBlobs = (files: File[]) => {
+    const key = selectedKeyRef.current;
+    if (!key) return;
+    const stagedForCaps = [...threadDraft(draftsRef.current, key).attachments];
+    const accepted: DraftAttachment[] = [];
+    for (const file of files) {
+      if (isHttpUrl(file.name)) continue;
+      const kind = classifyAttachment({ mimeType: file.type, name: file.name });
+      const mimeType = file.type || (kind === "image" ? "image/png" : "application/octet-stream");
+      const verdict = canStage(stagedForCaps, [{ name: file.name, mimeType, bytes: file.size }])[0];
+      if (!verdict || verdict.ok === false) {
+        toast.error(verdict && verdict.ok === false ? verdict.reason : `${file.name} — could not attach`);
+        continue;
+      }
+      const item: DraftAttachment = {
+        id: nextAttachmentId(),
+        kind,
+        name: file.name,
+        mimeType,
+        bytes: file.size,
+        previewUrl: URL.createObjectURL(file),
+      };
+      accepted.push(item);
+      stagedForCaps.push(item);
+    }
+    stageIncoming(accepted);
+  };
+
+  const stagePathsRef = useRef(stagePaths);
+  stagePathsRef.current = stagePaths;
+
+  useEffect(() => {
+    if (!active) return;
+    const un = ipc.getCurrentWebview().onDragDropEvent((event) => {
+      if (inTerminalRef.current || !selectedKeyRef.current) return;
+      if (event.payload.type === "enter" || event.payload.type === "over") {
+        setDropping(true);
+        return;
+      }
+      if (event.payload.type === "leave") {
+        setDropping(false);
+        return;
+      }
+      const { paths } = event.payload;
+      setDropping(false);
+      void stagePathsRef.current(paths);
+    });
+    return () => {
+      un.then((finish) => finish());
+    };
+  }, [active]);
+
+  useEffect(() => {
+    return () => {
+      for (const item of Object.values(draftsRef.current)) revokeDraftPreviewUrls(item.attachments);
+    };
+  }, []);
 
   /**
    * The escape hatch: restart this thread's OMP on the same journal in its terminal UI, or back
@@ -752,8 +908,9 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     command: { id: string; type: string },
     text: string,
     addRow: (current: ChatTranscriptState) => { state: ChatTranscriptState; entryId: string },
+    attachments: DraftAttachment[] = [],
   ) {
-    const verdict = { key, text, entryId: null as string | null, refused: false };
+    const verdict = { key, text, attachments, entryId: null as string | null, refused: false };
     const judged = command.type === "prompt" || command.type === "follow_up" || command.type === "abort_and_prompt";
     if (judged) awaitingVerdicts.current.set(command.id, verdict);
     try {
@@ -768,7 +925,13 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
       verdict.entryId = added.entryId;
       return added.state;
     });
-    setDrafts(clearDraft(key, text));
+    setDrafts(
+      clearSentDraft(
+        key,
+        text,
+        attachments.map((item) => item.id),
+      ),
+    );
   }
 
   /**
@@ -778,8 +941,14 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
   async function send(override?: string) {
     if (!selected || !selectionKey || sending) return;
     const key = selectionKey;
-    const text = override ?? drafts[key] ?? "";
-    if (!text.trim()) return;
+    const typed = threadDraft(draftsRef.current, key);
+    const text = override ?? typed.body;
+    const attachments = override === undefined ? typed.attachments : [];
+    if (!text.trim() && attachments.length === 0) return;
+    if (text.trim().startsWith("/") && attachments.length > 0) {
+      setError("Remove attachments or clear the slash command");
+      return;
+    }
     const repo = selected.repo_path;
     const id = selected.session.id;
     setError("");
@@ -791,7 +960,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
         // The text moves to the successor, the thread it now belongs to.
         setDrafts((current) => {
           const { [key]: moved, ...rest } = current;
-          return { ...rest, [next]: moved ?? text };
+          return { ...rest, [next]: moved ?? { body: text, attachments } };
         });
         const rows = await ipc.listChatThreads(false);
         setShowArchived(false);
@@ -801,7 +970,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
           setSendingKey(null);
           return;
         }
-        pendingPrompt.current = { key: next, text };
+        pendingPrompt.current = { key: next, text, attachments };
         setSendingKey(next);
         setSelectedKey(next);
       } catch (cause) {
@@ -824,7 +993,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
           setSendingKey(null);
           return;
         }
-        pendingPrompt.current = { key, text };
+        pendingPrompt.current = { key, text, attachments };
         // The first attach found no process; this one runs the handshake and then delivers the text.
         setAttachEpoch((epoch) => epoch + 1);
       } catch (cause) {
@@ -841,29 +1010,39 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     const plan = planChatSend(text, transcript.commands, busy);
     const dispatch = plan.dispatch;
     if (dispatch.kind === "open-providers") {
-      setDrafts(clearDraft(key, text));
+      setDrafts(clearSentDraft(key, text, []));
       setProvidersDialog({ tab: dispatch.tab, preselect: dispatch.args });
       return;
     }
     if (dispatch.kind === "hatch") {
       // Terminal-only in OMP: nothing to write over RPC. The notice points at the terminal button.
       updateTranscript(key, (current) => applySendPlan(current, text, plan).state);
-      setDrafts(clearDraft(key, text));
+      setDrafts(clearSentDraft(key, text, []));
       return;
     }
     // Same routing as a task session's `dispatchChatPlan`: these have typed RPC or a dialog of their own.
-    const command =
-      dispatch.kind === "compact"
-        ? compactCommand(dispatch.customInstructions)
-        : dispatch.kind === "get-tools"
-          ? getStateCommand()
-          : dispatch.kind === "mcp-list"
-            ? promptCommand("/mcp list")
-            : sendCommand(text, busy);
-    if (dispatch.kind === "mcp-list") mcpListWait.current = key;
+    const carriesAttachments = dispatch.kind !== "compact" && dispatch.kind !== "get-tools" && dispatch.kind !== "mcp-list";
     setSendingKey(key);
     try {
-      await writeSend(key, repo, id, command, text, (current) => applySendPlan(current, text, plan));
+      let wire = text;
+      let images: ImageContent[] | undefined;
+      let row: ReturnType<typeof draftToRowAttachments> | undefined;
+      if (attachments.length > 0 && carriesAttachments) {
+        const prepared = await prepareChatAttachments(threadAttachmentStore(repo, id), text, attachments);
+        wire = prepared.message;
+        images = prepared.images;
+        row = draftToRowAttachments(attachments);
+      }
+      const command =
+        dispatch.kind === "compact"
+          ? compactCommand(dispatch.customInstructions)
+          : dispatch.kind === "get-tools"
+            ? getStateCommand()
+            : dispatch.kind === "mcp-list"
+              ? promptCommand("/mcp list")
+              : sendCommand(wire, busy, images);
+      if (dispatch.kind === "mcp-list") mcpListWait.current = key;
+      await writeSend(key, repo, id, command, text, (current) => applySendPlan(current, text, plan, row), carriesAttachments ? attachments : []);
       if (dispatch.kind === "get-tools") setToolsOpen(true);
     } catch (cause) {
       if (mcpListWait.current === key) mcpListWait.current = null;
@@ -874,15 +1053,32 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
   }
 
   async function sendNow() {
-    if (!selected || !selectionKey || !body.trim()) return;
+    if (!selected || !selectionKey) return;
     const key = selectionKey;
-    const text = body;
+    const typed = threadDraft(draftsRef.current, key);
+    const text = typed.body;
+    const attachments = typed.attachments;
+    if (!text.trim() && attachments.length === 0) return;
+    if (text.trim().startsWith("/") && attachments.length > 0) {
+      setError("Remove attachments or clear the slash command");
+      return;
+    }
     setError("");
     try {
-      await writeSend(key, selected.repo_path, selected.session.id, sendNowCommand(text), text, (current) => {
-        const state = appendOptimisticUser(current, text, "prompt");
-        return { state, entryId: state.entries[state.entries.length - 1]?.id ?? "" };
-      });
+      const prepared = attachments.length > 0 ? await prepareChatAttachments(threadAttachmentStore(selected.repo_path, selected.session.id), text, attachments) : null;
+      const row = prepared ? draftToRowAttachments(attachments) : undefined;
+      await writeSend(
+        key,
+        selected.repo_path,
+        selected.session.id,
+        sendNowCommand(prepared?.message ?? text, prepared?.images),
+        text,
+        (current) => {
+          const state = appendOptimisticUser(current, text, "prompt", undefined, row);
+          return { state, entryId: state.entries[state.entries.length - 1]?.id ?? "" };
+        },
+        attachments,
+      );
     } catch (cause) {
       setError(errorMessage(cause));
     }
@@ -1223,9 +1419,39 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
             catalog={transcript.commands}
             sending={sending}
             showHints={visibility.showComposerHints}
-            allowAttach={false}
+            attachments={composerAttachments}
+            dropping={dropping}
+            onAttach={() => {
+              void ipc
+                .pickAttachmentFilesDialog()
+                .then((paths) => void stagePaths(paths))
+                .catch((error: unknown) => toast.error(String(error)));
+            }}
+            onRemoveAttachment={(id) => {
+              if (!selectionKey) return;
+              const removed = threadDraft(draftsRef.current, selectionKey).attachments.find((item) => item.id === id);
+              if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+              setDrafts((existing) => {
+                const draft = threadDraft(existing, selectionKey);
+                const attachments = draft.attachments.filter((item) => item.id !== id);
+                if (draft.body === "" && attachments.length === 0) {
+                  const { [selectionKey]: _dropped, ...rest } = existing;
+                  return rest;
+                }
+                return { ...existing, [selectionKey]: { ...draft, attachments } };
+              });
+            }}
+            onClear={() => {
+              if (!selectionKey) return;
+              revokeDraftPreviewUrls(threadDraft(draftsRef.current, selectionKey).attachments);
+              setDrafts((existing) => {
+                const { [selectionKey]: _dropped, ...rest } = existing;
+                return rest;
+              });
+            }}
+            onPasteFiles={stageBlobs}
             onBodyChange={(next) => {
-              if (selectionKey) setDrafts((current) => ({ ...current, [selectionKey]: next }));
+              if (selectionKey) setDrafts((current) => ({ ...current, [selectionKey]: { body: next, attachments: threadDraft(current, selectionKey).attachments } }));
             }}
             onSend={() => {
               void send();

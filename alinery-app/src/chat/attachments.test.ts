@@ -92,20 +92,21 @@ describe("canStage", () => {
 describe("buildPromptMessage / parseFileTrailers", () => {
   const repo = "/repo";
   const slug = "task";
-  const line = (name: string) => `Attached file: ${repo}/.alinery/tasks/${slug}/artifacts/attachments/${name}`;
+  const dir = `${repo}/.alinery/tasks/${slug}/artifacts/attachments`;
+  const line = (name: string) => `Attached file: ${dir}/${name}`;
 
   it("returns the caption as-is when there are no files", () => {
-    expect(buildPromptMessage("", [], repo, slug)).toBe("");
-    expect(buildPromptMessage("hello", [], repo, slug)).toBe("hello");
+    expect(buildPromptMessage("", [], dir)).toBe("");
+    expect(buildPromptMessage("hello", [], dir)).toBe("hello");
   });
 
   it("joins files-only and caption-plus-files with a blank line before trailers", () => {
-    expect(buildPromptMessage("", [{ name: "a.pdf" }], repo, slug)).toBe(line("a.pdf"));
-    expect(buildPromptMessage("hello", [{ name: "a.pdf" }, { name: "b.pdf" }], repo, slug)).toBe(`hello\n\n${line("a.pdf")}\n${line("b.pdf")}`);
+    expect(buildPromptMessage("", [{ name: "a.pdf" }], dir)).toBe(line("a.pdf"));
+    expect(buildPromptMessage("hello", [{ name: "a.pdf" }, { name: "b.pdf" }], dir)).toBe(`hello\n\n${line("a.pdf")}\n${line("b.pdf")}`);
   });
 
   it("round-trips trailer lines and leaves unrelated body text", () => {
-    const assembled = buildPromptMessage("keep me", [{ name: "a.pdf" }, { name: "b.pdf" }], repo, slug);
+    const assembled = buildPromptMessage("keep me", [{ name: "a.pdf" }, { name: "b.pdf" }], dir);
     expect(parseFileTrailers(assembled)).toEqual({
       caption: "keep me",
       files: [
