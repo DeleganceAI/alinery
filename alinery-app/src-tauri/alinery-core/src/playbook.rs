@@ -37,6 +37,10 @@ pub struct InputSelector {
 #[serde(deny_unknown_fields)]
 pub struct OutputSelector {
     pub path: String,
+    /// Exact outputs only. Completion rejects until this nonempty file exists.
+    /// Absent means optional, matching every playbook written before the field.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,11 +207,14 @@ struct StepMetadata {
 
 fn check_fields(table: &toml::map::Map<String, toml::Value>, fields: &[(&str, &str)], field: &str, errors: &mut Vec<PlaybookValidationError>) {
     for (name, kind) in fields {
+        let optional = kind.ends_with('?');
+        let kind = kind.trim_end_matches('?');
         let path = if field.is_empty() { (*name).to_owned() } else { format!("{field}.{name}") };
         match table.get(*name) {
+            None if optional => {}
             None => errors.push(PlaybookValidationError::new("missing_field", format!("required field {path} is missing"), None, Some(path))),
             Some(value) => {
-                let valid = match *kind {
+                let valid = match kind {
                     "string" => value.is_str(),
                     "integer" => value.is_integer(),
                     "boolean" => value.is_bool(),
@@ -350,7 +357,7 @@ pub fn parse_playbook_md(source: &str) -> Result<NormalizedPlaybook, Vec<Playboo
                                 let fields: &[(&str, &str)] = if name == "inputs" {
                                     &[("path", "string"), ("mode", "string")]
                                 } else {
-                                    &[("path", "string")]
+                                    &[("path", "string"), ("required", "boolean?")]
                                 };
                                 check_fields(selector, fields, &field, &mut errors);
                                 if name == "inputs"
@@ -530,6 +537,14 @@ pub fn parse_playbook_md(source: &str) -> Result<NormalizedPlaybook, Vec<Playboo
         for (index, output) in step.outputs.iter().enumerate() {
             match ArtifactSelector::parse(&output.path) {
                 Ok(selector) => {
+                    if output.required && selector.wildcard {
+                        errors.push(PlaybookValidationError::new(
+                            "required_wildcard",
+                            "required applies only to an exact output; a wildcard family stays optional",
+                            None,
+                            Some(format!("{field}.outputs[{index}].path")),
+                        ));
+                    }
                     // Evidence directories must stay unreachable on case-insensitive filesystems.
                     if output
                         .path
@@ -680,6 +695,9 @@ pub fn render_playbook_md(playbook: &NormalizedPlaybook) -> String {
             }
             result.push_str("{ path = ");
             render_basic_string(&mut result, &output.path);
+            if output.required {
+                result.push_str(", required = true");
+            }
             result.push_str(" }");
         }
         result.push_str("]\n");
@@ -797,6 +815,12 @@ mod tests {
         ] {
             rejects(&fixture().replace("short = \"\"", &format!("short = \"\"\n{field} = \"\"")), "unknown_field");
         }
+        rejects(
+            &fixture().replace("{path = \"result.md\"}", "{path = \"result-*.md\", required = true}"),
+            "required_wildcard",
+        );
+        let required = parse_playbook_md(&fixture().replace("{path = \"result.md\"}", "{path = \"result.md\", required = true}")).unwrap();
+        assert!(required.step[0].outputs[0].required);
         rejects(&fixture().replace("mode = \"single\"", "mode = \"single\", optional = true"), "unknown_field");
         rejects(&fixture().replace("{path = \"result.md\"}", "{path = \"result.md\", mode = \"single\"}"), "unknown_field");
         rejects(&fixture().replace("{path = \"result.md\"}", "\"result.md\""), "invalid_field_type");

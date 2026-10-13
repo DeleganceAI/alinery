@@ -613,7 +613,7 @@ export type NormalizedStep = {
   is_coding_step: boolean;
   auto_advance_default: boolean;
   inputs: InputSelector[];
-  outputs: { path: string }[];
+  outputs: { path: string; required?: boolean }[];
   model: string;
   harness: string;
   prompt: string;
