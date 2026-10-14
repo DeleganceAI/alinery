@@ -1300,7 +1300,14 @@ fn stopped_owner_dev_prod_dev_preserves_task_history_and_queue_policy() {
         assert!(!fixture.root.join(format!("token-{}", held.owner_session_id)).exists());
         if lane.is_empty() {
             let requested = &queued.executions[0];
-            wait(|| fixture.root.join(format!("token-{}", requested.owner_session_id)).exists());
+            // The runner writes the token as soon as the child starts. Lifecycle
+            // stays Starting until the parent records the spawn, so the token
+            // can exist first under a loaded run.
+            wait(|| {
+                let state = read_execution_state(&fixture.root, "queued").unwrap();
+                let starting = state.executions[&requested.id].lifecycle == ExecutionLifecycle::Starting;
+                fixture.root.join(format!("token-{}", requested.owner_session_id)).exists() && !starting
+            });
             assert_eq!(
                 read_execution_state(&fixture.root, "queued").unwrap().executions[&requested.id].lifecycle,
                 ExecutionLifecycle::Running
@@ -1449,7 +1456,11 @@ fn adoption_failure_precedes_socket_bind_and_scheduler_start() {
     fs::write(&playbook, valid).unwrap();
     fixture.spawn_lane("dev", "dev.toml");
     wait(|| fixture.client.version_checked().is_ok());
-    wait(|| fixture.root.join(format!("token-{}", record.owner_session_id)).exists());
+    // Same token/Starting race as the owner-switch test above.
+    wait(|| {
+        let starting = fixture.persisted().executions[&record.id].lifecycle == ExecutionLifecycle::Starting;
+        fixture.root.join(format!("token-{}", record.owner_session_id)).exists() && !starting
+    });
     assert_eq!(fixture.persisted().owning_lane, "dev");
     assert_eq!(fixture.persisted().executions[&record.id].lifecycle, ExecutionLifecycle::Running);
 }
