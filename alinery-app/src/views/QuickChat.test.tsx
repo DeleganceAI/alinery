@@ -160,6 +160,7 @@ describe("QuickChat", () => {
     expect(screen.getByText("Ava")).toBeTruthy();
     expect(screen.getByText("No pinned chats")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Reset to default" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open in Chat" })).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
@@ -271,6 +272,7 @@ describe("QuickChat", () => {
     expect(screen.getByRole("tab", { name: "Beta" })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: "Plain" })).toBeNull();
     expect(screen.getByRole("tab", { name: "Alpha" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("button", { name: "Open in Chat" })).toBeTruthy();
     expect(screen.getByLabelText("Message or /command")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("tab", { name: "Beta" }));

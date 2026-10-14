@@ -1,4 +1,4 @@
-import { ArrowDownRight, MessageSquare, X } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, MessageSquare, X } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, type UIEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ChatComposer } from "../ChatComposer";
@@ -358,7 +358,7 @@ export function QuickChat({ open, visibility, onOpenInChat, onHide }: { open: bo
   return (
     <section
       ref={rootRef}
-      className={gesture === "move" ? "quick-chat is-moving" : "quick-chat"}
+      className={`quick-chat${gesture === "move" ? " is-moving" : gesture ? " is-resizing" : ""}`}
       data-testid="quick-chat"
       aria-label="Ava"
       onScrollCapture={releasePinIfScrolledAway}
@@ -372,6 +372,20 @@ export function QuickChat({ open, visibility, onOpenInChat, onHide }: { open: bo
               <ArrowDownRight size={16} aria-hidden="true" />
             </button>
           )}
+          {resolved && resolvedKey ? (
+            <button
+              type="button"
+              className="chat-icon-btn"
+              aria-label="Open in Chat"
+              title="Open in Chat"
+              onClick={() => {
+                registry.requestOpen(resolvedKey);
+                onOpenInChat();
+              }}
+            >
+              <ArrowUpRight size={16} aria-hidden="true" />
+            </button>
+          ) : null}
           <button type="button" className="chat-icon-btn" aria-label="Hide pinned chats" title="Hide" onClick={onHide}>
             <X size={16} aria-hidden="true" />
           </button>
@@ -471,20 +485,6 @@ export function QuickChat({ open, visibility, onOpenInChat, onHide }: { open: bo
                 queuedCount={chat.transcript.sessionMeta.queuedMessageCount}
               />
             )}
-            {resolved && resolvedKey ? (
-              <div className="quick-chat-foot">
-                <button
-                  type="button"
-                  className="btn ghost small"
-                  onClick={() => {
-                    registry.requestOpen(resolvedKey);
-                    onOpenInChat();
-                  }}
-                >
-                  Open in Chat
-                </button>
-              </div>
-            ) : null}
           </div>
         </>
       )}

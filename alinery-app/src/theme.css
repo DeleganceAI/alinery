@@ -4459,6 +4459,13 @@ dialog.modal::backdrop {
   width: 7px;
   height: 7px;
   border: 2px solid var(--text-faint);
+  opacity: 0;
+  transition: opacity var(--dur-fast) ease;
+}
+.quick-chat:hover .quick-chat-resize::after,
+.quick-chat.is-resizing .quick-chat-resize::after,
+.quick-chat-resize:focus-visible::after {
+  opacity: 1;
 }
 .quick-chat-resize.nw::after {
   top: 3px;
@@ -4557,18 +4564,12 @@ dialog.modal::backdrop {
   max-width: 100%;
 }
 .quick-chat .chat-composer {
-  padding: 8px;
+  padding: 8px 16px 16px;
 }
 .quick-chat .chat-banner,
 .quick-chat .chat-composer,
 .quick-chat .chat-ui-prompt {
   max-width: 100%;
-}
-.quick-chat-foot {
-  flex: 0 0 auto;
-  display: flex;
-  justify-content: flex-end;
-  padding: 0 18px 18px;
 }
 .quick-chat-empty {
   flex: 1 1 auto;
