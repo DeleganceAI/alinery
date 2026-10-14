@@ -50,7 +50,7 @@ vi.mock("../ipc", () =>
     pickAttachmentFilesDialog: mocks.pickAttachmentFilesDialog,
     chatFileStat: mocks.chatFileStat,
     copyChatThreadAttachments: mocks.copyChatThreadAttachments,
-    getCurrentWebview: mocks.getCurrentWebview,
+    getCurrentWebview: mocks.getCurrentWebview as never,
   }),
 );
 
