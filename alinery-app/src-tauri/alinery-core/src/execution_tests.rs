@@ -813,7 +813,10 @@ fn join_depth_uses_all_actual_parents_independent_of_completion_order() {
                     mode: InputMode::Single,
                 })
                 .collect();
-            step.outputs = vec![OutputSelector { path: output.into(), required: false }];
+            step.outputs = vec![OutputSelector {
+                path: output.into(),
+                required: false,
+            }];
             step
         })
         .collect();

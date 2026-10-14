@@ -1114,7 +1114,11 @@ fn bundled_spec_loop_stays_inside_slices() {
     assert_eq!(trace.state.executions[&validate].permission, CompletionPermission::Automatic);
     trace.start(&validate);
     // Binding only. The prompt, not the engine, prefers a replacement body over the tasks.md entry.
-    trace.write(&validate, "next-slice.md", "slice id: ledger\nsupersedes: slice-ledger.md\nattempt count: 1\nid: ledger\nreplacement body\n");
+    trace.write(
+        &validate,
+        "next-slice.md",
+        "slice id: ledger\nsupersedes: slice-ledger.md\nattempt count: 1\nid: ledger\nreplacement body\n",
+    );
     trace.accepted(&validate);
     trace.blocked("next-slice");
     trace.exit(&validate);

@@ -857,11 +857,7 @@ pub fn execution_assignment_prompt(repo: &Path, slug: &str, state: &TaskExecutio
             "Write: {} (logical {}; {}{})",
             root.join(&assignment.relative_path).display(),
             assignment.selector,
-            if assignment.required {
-                "required publication"
-            } else {
-                "possible publication"
-            },
+            if assignment.required { "required publication" } else { "possible publication" },
             if assignment.relative_path.contains('*') {
                 ", wildcard family with zero or finitely many valid members"
             } else if assignment.required {
