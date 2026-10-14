@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as ipc from "./ipc";
 import type { DaemonStatus } from "./types";
 
@@ -22,23 +22,37 @@ const OFFLINE: DaemonStatus = {
   host_guard_warning: false,
 };
 
-// Poll daemon_status() on a 1.5s interval (mirrors StatusDot's cadence). Powers the
-// footer's live mode/running readout (plan §6.2a).
-export function useDaemonStatus(): DaemonStatus {
+export type DaemonStatusHandle = DaemonStatus & { refresh: () => void };
+
+// Each newer request supersedes older polls, including their failure responses.
+export function useDaemonStatus(repo: string): DaemonStatusHandle {
   const [status, setStatus] = useState<DaemonStatus>(OFFLINE);
+  const poll = useRef<() => void>(() => {});
+  const refresh = useCallback(() => poll.current(), []);
   useEffect(() => {
     let alive = true;
-    const tick = () =>
+    let generation = 0;
+    const tick = () => {
+      const request = ++generation;
+      if (!repo) return;
       ipc
         .daemonStatus()
-        .then((s) => alive && setStatus(s))
-        .catch(() => alive && setStatus(OFFLINE));
+        .then((next) => {
+          if (alive && request === generation && next.repo === repo) setStatus(next);
+        })
+        .catch(() => {
+          if (alive && request === generation) setStatus({ ...OFFLINE, repo });
+        });
+    };
+    setStatus({ ...OFFLINE, repo });
+    poll.current = tick;
     tick();
-    const t = setInterval(tick, 1500);
+    const timer = setInterval(tick, 1500);
     return () => {
       alive = false;
-      clearInterval(t);
+      poll.current = () => {};
+      clearInterval(timer);
     };
-  }, []);
-  return status;
+  }, [repo]);
+  return { ...(status.repo === repo ? status : { ...OFFLINE, repo }), refresh };
 }

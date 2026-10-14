@@ -268,6 +268,7 @@ vi.mock("./useDaemonStatus", () => ({
     build_drift: false,
     conflict: null,
     repo_busy: false,
+    refresh: () => {},
   }),
 }));
 vi.mock("./useMcpStatus", () => ({

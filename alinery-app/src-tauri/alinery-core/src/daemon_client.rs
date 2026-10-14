@@ -53,6 +53,227 @@ pub const DAEMON_OBSERVATION_TIMEOUT: Duration = Duration::from_millis(250);
 //         budget: a healthy ack is milliseconds.
 pub const DAEMON_CONTROL_TIMEOUT: Duration = Duration::from_secs(100);
 
+/// A kernel-authenticated local process incarnation; consent never binds to a PID alone.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PeerProcessIdentity {
+    uid: u32,
+    pid: i32,
+    start: (u64, u64),
+}
+
+impl PeerProcessIdentity {
+    pub fn pid(&self) -> i32 {
+        self.pid
+    }
+}
+
+pub fn peer_process_id(stream: &UnixStream) -> Result<i32, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let (mut uid, mut gid) = (0, 0);
+        if unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) } != 0 || uid != unsafe { libc::geteuid() } {
+            return Err("peer same-user credentials unavailable".into());
+        }
+        let mut pid: libc::pid_t = 0;
+        let mut size = std::mem::size_of_val(&pid) as libc::socklen_t;
+        if unsafe { libc::getsockopt(stream.as_raw_fd(), libc::SOL_LOCAL, libc::LOCAL_PEERPID, (&mut pid as *mut libc::pid_t).cast(), &mut size) } != 0
+            || size as usize != std::mem::size_of_val(&pid)
+            || pid <= 0
+        {
+            return Err("peer PID unavailable".into());
+        }
+        Ok(pid)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+        let mut size = std::mem::size_of_val(&cred) as libc::socklen_t;
+        if unsafe { libc::getsockopt(stream.as_raw_fd(), libc::SOL_SOCKET, libc::SO_PEERCRED, (&mut cred as *mut libc::ucred).cast(), &mut size) } != 0
+            || size as usize != std::mem::size_of_val(&cred)
+            || cred.uid != unsafe { libc::geteuid() }
+            || cred.pid <= 0
+        {
+            return Err("peer same-user credentials unavailable".into());
+        }
+        Ok(cred.pid)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = stream;
+        Err("peer process identity unsupported on this platform".into())
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_process_start(stat: &str, pid: i32) -> Result<u64, String> {
+    let (prefix, rest) = stat.split_once(" (").ok_or("missing process comm")?;
+    if pid <= 0 || prefix.parse::<i32>().ok() != Some(pid) {
+        return Err("process PID evidence changed".into());
+    }
+    let (_, fields) = rest.rsplit_once(") ").ok_or("missing process comm terminator")?;
+    // Fields after comm start at 3 (state); starttime is field 22.
+    let start = fields.split_whitespace().nth(19).ok_or("missing process start time")?;
+    let start = start.parse::<u64>().map_err(|_| "invalid process start time")?;
+    if start == 0 {
+        return Err("missing process start time".into());
+    }
+    Ok(start)
+}
+
+#[cfg(target_os = "macos")]
+fn checked_bsd_start(info: &libc::proc_bsdinfo, read: i32, pid: i32, uid: u32) -> Result<(u64, u64), String> {
+    if read != std::mem::size_of_val(info) as i32
+        || pid <= 0
+        || info.pbi_pid != pid as u32
+        || info.pbi_uid != uid
+        || info.pbi_start_tvsec == 0
+        || info.pbi_start_tvusec >= 1_000_000
+    {
+        return Err("peer process start evidence unavailable or inconsistent".into());
+    }
+    Ok((info.pbi_start_tvsec, info.pbi_start_tvusec))
+}
+
+pub fn peer_process_identity(stream: &UnixStream) -> Result<PeerProcessIdentity, String> {
+    let pid = peer_process_id(stream)?;
+    let uid = unsafe { libc::geteuid() };
+    #[cfg(target_os = "macos")]
+    let start = {
+        let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+        let size = std::mem::size_of_val(&info);
+        let read = unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, (&mut info as *mut libc::proc_bsdinfo).cast(), size as i32) };
+        checked_bsd_start(&info, read, pid, uid)?
+    };
+    #[cfg(target_os = "linux")]
+    let start = {
+        use std::os::unix::fs::MetadataExt;
+        let path = format!("/proc/{pid}/stat");
+        let file = fs::File::open(path).map_err(|error| format!("peer process inspection failed: {error}"))?;
+        if file.metadata().map_err(|error| error.to_string())?.uid() != uid {
+            return Err("peer process user evidence changed".into());
+        }
+        let mut stat = String::new();
+        (&file).read_to_string(&mut stat).map_err(|error| error.to_string())?;
+        (parse_process_start(&stat, pid)?, 0)
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let start = return Err("peer process start inspection unsupported".into());
+    if peer_process_id(stream)? != pid {
+        return Err("peer process identity changed during inspection".into());
+    }
+    Ok(PeerProcessIdentity { uid, pid, start })
+}
+
+/// Source-audited shutdown request/ack dialects (9/10/12 historical, 15 current).
+/// Gaps are deliberate: normal protocol compatibility is not shutdown authority.
+pub fn audited_shutdown_protocol(protocol: Option<u32>) -> bool {
+    matches!(protocol, Some(9 | 10 | 12 | 15))
+}
+
+/// One request on one authenticated stream. No operation reconnects or retries.
+pub struct BoundDaemonConnection {
+    stream: UnixStream,
+    identity: PeerProcessIdentity,
+    deadline: ObservationDeadline,
+}
+
+impl BoundDaemonConnection {
+    pub fn connect(socket: &Path, expected: Option<&PeerProcessIdentity>, timeout: Duration) -> Result<Self, String> {
+        let deadline = ObservationDeadline::start(timeout);
+        let stream = connect_until(socket, &deadline).map_err(|error| error.to_string())?;
+        let identity = peer_process_identity(&stream)?;
+        if expected.is_some_and(|expected| *expected != identity) {
+            return Err("stale daemon: peer process incarnation changed".into());
+        }
+        deadline.remaining().map_err(|error| error.to_string())?;
+        Ok(Self { stream, identity, deadline })
+    }
+
+    pub fn identity(&self) -> &PeerProcessIdentity {
+        &self.identity
+    }
+
+    fn exchange(mut self, request: Value, budget: Duration) -> Result<Value, String> {
+        self.deadline.end = self.deadline.end.min(Instant::now() + budget);
+        if peer_process_identity(&self.stream)? != self.identity {
+            return Err("stale daemon: peer process incarnation changed".into());
+        }
+        let mut payload = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
+        payload.push(b'\n');
+        write_until(&mut self.stream, &payload, &self.deadline).map_err(|error| error.to_string())?;
+        let line = read_line_until(&mut self.stream, &self.deadline).map_err(|error| error.to_string())?;
+        serde_json::from_slice(&line).map_err(|error| error.to_string())
+    }
+
+    pub fn version(self) -> Result<DaemonVersionReply, String> {
+        let value = self.exchange(version_request(), DAEMON_OBSERVATION_TIMEOUT)?;
+        if value.get("error").is_some() {
+            return Err("daemon version observation was rejected".into());
+        }
+        let version = parse_version_reply(&value);
+        if version.protocol.is_none()
+            || ["build_id", "app_config_identity"].iter().any(|key| value.get(key).is_some_and(|v| !v.is_string()))
+            || value.get("host_guard_ready").is_some_and(|v| !v.is_boolean())
+        {
+            return Err("daemon version response is malformed or missing protocol".into());
+        }
+        Ok(version)
+    }
+
+    pub fn sessions(self) -> Result<Vec<DaemonSessionStatus>, String> {
+        let value = self.exchange(list_request(), DAEMON_OBSERVATION_TIMEOUT)?;
+        if value.get("error").is_some() {
+            return Err("daemon list observation was rejected".into());
+        }
+        parse_list_reply(&value)
+    }
+
+    pub fn shutdown(self) -> Result<(), String> {
+        expect_ok(self.exchange(shutdown_request(), DAEMON_CONTROL_TIMEOUT)?)
+    }
+}
+
+/// Selected-lane proof only; callers must still acquire repository-wide ownership.
+pub fn wait_for_daemon_gone(repo: &Path, lane: &str) -> Result<(), String> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    crate::repo_ownership::validate_lane(lane)?;
+    let root = repo.join(".alinery");
+    let metadata = fs::symlink_metadata(&root).map_err(|error| error.to_string())?;
+    if !metadata.file_type().is_dir() {
+        return Err("cannot establish daemon exit: invalid ownership directory".into());
+    }
+    let socket = alineryd_socket_path(repo, Some(lane));
+    let lock = crate::alineryd_lock_path(repo, Some(lane));
+    for _ in 0..40 {
+        let before = match fs::symlink_metadata(&lock) {
+            Ok(metadata) if metadata.file_type().is_file() => Some(metadata),
+            Ok(_) => return Err("cannot establish daemon exit: invalid process lock path".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(format!("cannot establish daemon exit: {error}")),
+        };
+        match fs::symlink_metadata(&socket) {
+            Ok(metadata) if !metadata.file_type().is_socket() => return Err("cannot establish daemon exit: invalid socket path".into()),
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(format!("cannot establish daemon exit: {error}")),
+            _ => {}
+        }
+        match connect_for_ownership_probe(&socket) {
+            Ok(_) => {}
+            Err(error) if matches!(error.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused) => {
+                if let Some(_lease) = crate::lockfile::try_lock_exclusive(&lock).map_err(|error| format!("cannot establish daemon exit: {error}"))? {
+                    let after = fs::symlink_metadata(&lock).map_err(|error| error.to_string())?;
+                    if !after.file_type().is_file() || before.is_some_and(|before| before.dev() != after.dev() || before.ino() != after.ino()) {
+                        return Err("cannot establish daemon exit: process lock changed".into());
+                    }
+                    return Ok(());
+                }
+            }
+            Err(error) => return Err(format!("cannot establish daemon exit: {error}")),
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Err(format!("daemon for {} lane {lane:?} has not released its socket and process lock", repo.display()))
+}
+
 /// Serialized JSON bytes, excluding the trailing newline. Four 5 MiB images need
 /// ~27 MiB of base64; even a 4 MiB caption escaped at 6x fits with JSON overhead.
 pub const MAX_CONTROL_HEADER_BYTES: usize = 64 * 1024 * 1024;
@@ -923,6 +1144,85 @@ mod tests {
     use std::os::unix::net::UnixListener;
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn bound_connection_rejects_same_pid_with_different_start() {
+        let root = PathBuf::from(format!("/tmp/ai-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]));
+        fs::create_dir_all(&root).unwrap();
+        let socket = root.join("peer.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let connection = BoundDaemonConnection::connect(&socket, None, DAEMON_OBSERVATION_TIMEOUT).unwrap();
+        let mut expected = connection.identity().clone();
+        drop(connection);
+        expected.start.0 += 1;
+        let result = BoundDaemonConnection::connect(&socket, Some(&expected), DAEMON_OBSERVATION_TIMEOUT);
+        assert!(result.is_err(), "matching PID must not override changed incarnation evidence");
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_nonblocking(false).unwrap();
+            let mut bytes = Vec::new();
+            stream.read_to_end(&mut bytes).unwrap();
+            assert!(bytes.is_empty(), "identity refusal must precede any request bytes");
+        }
+        drop(listener);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn peer_identity_rejects_missing_or_inconsistent_start_evidence() {
+        let fields = ["0"; 18].join(" ");
+        let stat = format!("42 (space (and) parentheses)) S {fields} 123456 999");
+        assert_eq!(parse_process_start(&stat, 42).unwrap(), 123456);
+        for bad in [
+            String::new(),
+            format!("43 (name) S {fields} 123456"),
+            format!("42 name S {fields} 123456"),
+            "42 (name) S 1".into(),
+            format!("42 (name) S {fields} NaN"),
+            format!("42 (name) S {fields} -1"),
+            format!("42 (name) S {fields} 0"),
+            format!("42 (name) S {fields} 18446744073709551616"),
+        ] {
+            assert!(parse_process_start(&bad, 42).is_err(), "{bad}");
+        }
+        let identity = PeerProcessIdentity {
+            uid: 501,
+            pid: 42,
+            start: (123456, 0),
+        };
+        assert_ne!(
+            identity,
+            PeerProcessIdentity {
+                start: (123457, 0),
+                ..identity.clone()
+            }
+        );
+        assert_ne!(
+            identity,
+            PeerProcessIdentity {
+                start: (123456, 1),
+                ..identity.clone()
+            }
+        );
+        #[cfg(target_os = "macos")]
+        {
+            let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+            info.pbi_pid = 42;
+            info.pbi_uid = 501;
+            info.pbi_start_tvsec = 123456;
+            let size = std::mem::size_of_val(&info) as i32;
+            assert_eq!(checked_bsd_start(&info, size, 42, 501).unwrap(), (123456, 0));
+            assert!(checked_bsd_start(&info, size - 1, 42, 501).is_err());
+            assert!(checked_bsd_start(&info, -1, 42, 501).is_err());
+            assert!(checked_bsd_start(&info, size, 43, 501).is_err());
+            assert!(checked_bsd_start(&info, size, 42, 502).is_err());
+            info.pbi_start_tvusec = 1_000_000;
+            assert!(checked_bsd_start(&info, size, 42, 501).is_err());
+            info.pbi_start_tvusec = 0;
+            info.pbi_start_tvsec = 0;
+            assert!(checked_bsd_start(&info, size, 42, 501).is_err());
+        }
+    }
 
     fn socket_path(_name: &str) -> PathBuf {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() % 1_000_000_000;

@@ -3,7 +3,13 @@ use crate::*;
 
 // R2: spawn (or reuse) a managed alinery-mcp child in --serve mode for the active repo.
 // The child lives only as long as the app (or until repo switch). It is killed on app exit.
-pub(crate) fn ensure_mcp_server<R: tauri::Runtime>(app: &AppHandle<R>, repo: &Path) {
+pub(crate) fn ensure_mcp_server<R: tauri::Runtime>(app: &AppHandle<R>, repo: &Path, restart: bool) {
+    // Selection stays stable through check/stop/spawn. A stale caller for A must
+    // never terminate B's MCP after a concurrent repository switch.
+    let active = active_repo_cell().read().unwrap_or_else(|error| error.into_inner());
+    if active.as_deref() != Some(repo) {
+        return;
+    }
     let Some(state) = app.try_state::<AppState>() else {
         return;
     };
@@ -19,6 +25,11 @@ pub(crate) fn ensure_mcp_server<R: tauri::Runtime>(app: &AppHandle<R>, repo: &Pa
     // before the first spawn finishes storing its child, racing each other into
     // spawning duplicate alinery-mcp processes (the "spawned managed alinery-mcp" log loop).
     let mut guard = state.mcp_child.lock().unwrap_or_else(|e| e.into_inner());
+    if restart {
+        if let Some(mut managed) = guard.take() {
+            AppState::stop_mcp_child(&mut managed);
+        }
+    }
     if let Some(managed) = guard.as_mut() {
         if managed.repo == repo {
             match managed.child.try_wait() {
@@ -196,7 +207,7 @@ pub(crate) fn start_mcp_server(app: AppHandle, state: State<'_, AppState>) -> Re
     let mut cfg = load_app_config(&app);
     cfg.mcp_enabled = true;
     write_app_config(&app, &cfg)?;
-    ensure_mcp_server(&app, &repo);
+    ensure_mcp_server(&app, &repo, false);
     emit(
         &app,
         alinery_core::TelemetryEvent::McpToggle {
