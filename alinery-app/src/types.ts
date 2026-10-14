@@ -126,6 +126,8 @@ export type Task = {
   max_live_sessions?: number;
   launch_defaults?: LaunchChoices;
   auto_advance: string[];
+  /** When true, every playbook step may complete automatically. Absent or false keeps `auto_advance`. */
+  auto_approve_all?: boolean;
   step_models?: Record<string, string>;
   /** M6: true while still being drafted on CreateTaskPage. */
   draft: boolean;
@@ -757,6 +759,7 @@ export type TaskExecutionState = {
   reference: PlaybookRef;
   max_live_sessions: number;
   enabled_steps: string[];
+  auto_approve_all?: boolean;
   launch_defaults: LaunchChoices;
   executions: Record<string, ExecutionRecord>;
   occurrences: Record<string, ArtifactOccurrence>;

@@ -156,6 +156,9 @@ pub struct TaskExecutionState {
     pub reference: PlaybookRef,
     pub max_live_sessions: u32,
     pub enabled_steps: BTreeSet<String>,
+    // Live override. Does not rewrite `enabled_steps`; completion checks it separately.
+    #[serde(default)]
+    pub auto_approve_all: bool,
     pub launch_defaults: LaunchChoices,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub step_models: BTreeMap<String, String>,
@@ -260,6 +263,7 @@ pub fn new_execution_state(
         reference,
         max_live_sessions,
         enabled_steps,
+        auto_approve_all: false,
         launch_defaults,
         step_models,
         initial_start_requested: false,
@@ -749,6 +753,10 @@ fn validate_assigned_paths(root: &Path, assignment: &OutputAssignment, physical:
 
 /// The enclosing transaction must commit before returning this outcome to the runner.
 pub fn accept_execution_completion(repo: &Path, slug: &str, state: &mut TaskExecutionState, id: &str, session_id: &str) -> Result<CompletionOutcome, String> {
+    // Read before `owned_execution` borrows `state`. The record keeps the permission
+    // snapshotted from `enabled_steps`, so turning this off restores those devised steps,
+    // including for an execution created while the override was on.
+    let auto_approve_all = state.auto_approve_all;
     let record = owned_execution(state, id, session_id)?;
     if let Some(receipt_id) = &record.receipt_id {
         return Ok(CompletionOutcome::Accepted { receipt_id: receipt_id.clone() });
@@ -756,10 +764,14 @@ pub fn accept_execution_completion(repo: &Path, slug: &str, state: &mut TaskExec
     if record.lifecycle != ExecutionLifecycle::Running {
         return Err("execution owner is not running".into());
     }
-    match &record.permission {
-        CompletionPermission::Automatic => {}
-        CompletionPermission::HumanGranted { execution_id, session_id: owner } if execution_id == id && owner == session_id => {}
-        _ => return Ok(CompletionOutcome::HumanAuthorizationRequired),
+    let authorized = match &record.permission {
+        CompletionPermission::Automatic => true,
+        CompletionPermission::HumanGranted { execution_id, session_id: owner } => execution_id == id && owner == session_id,
+        CompletionPermission::Locked => auto_approve_all,
+        CompletionPermission::Consumed => false,
+    };
+    if !authorized {
+        return Ok(CompletionOutcome::HumanAuthorizationRequired);
     }
     let mut accepted = Vec::new();
     let mut diagnostics = Vec::new();

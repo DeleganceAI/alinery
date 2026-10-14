@@ -714,6 +714,65 @@ fn capacity_and_coding_ownership_survive_review_and_finishing() {
 }
 
 #[test]
+fn auto_approve_all_lets_a_locked_step_complete_and_off_restores_the_gate() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, false, 10);
+    let devised = f.state.enabled_steps.clone();
+    let id = f.reserve(false);
+    let owner = f.run(&id);
+    f.write_output(&id, 0, None);
+    assert!(matches!(f.state.executions[&id].permission, CompletionPermission::Locked));
+    assert_eq!(
+        accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap(),
+        CompletionOutcome::HumanAuthorizationRequired
+    );
+
+    f.state.auto_approve_all = true;
+    assert!(matches!(
+        accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap(),
+        CompletionOutcome::Accepted { .. }
+    ));
+    assert_eq!(f.state.enabled_steps, devised);
+    assert!(matches!(f.state.executions[&id].permission, CompletionPermission::Consumed));
+
+    // A new binding, so this is not the execution already accepted above.
+    f.state.auto_approve_all = false;
+    let again = f.reserve(true);
+    assert_ne!(again, id);
+    let again_owner = f.run(&again);
+    f.write_output(&again, 0, None);
+    assert!(matches!(f.state.executions[&again].permission, CompletionPermission::Locked));
+    assert_eq!(
+        accept_execution_completion(&f.repo, "task", &mut f.state, &again, &again_owner).unwrap(),
+        CompletionOutcome::HumanAuthorizationRequired
+    );
+    f.state.auto_approve_all = true;
+    assert!(matches!(
+        accept_execution_completion(&f.repo, "task", &mut f.state, &again, &again_owner).unwrap(),
+        CompletionOutcome::Accepted { .. }
+    ));
+    assert_eq!(f.state.enabled_steps, devised);
+}
+
+#[test]
+fn auto_approve_all_missing_from_saved_files_stays_off() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, false, 1);
+    persist_owner_fixture(&mut f);
+    let execution_path = execution_state_path(&f.repo, "task").unwrap();
+    let mut execution: serde_json::Value = serde_json::from_slice(&fs::read(&execution_path).unwrap()).unwrap();
+    execution.as_object_mut().unwrap().remove("auto_approve_all");
+    fs::write(&execution_path, serde_json::to_vec_pretty(&execution).unwrap()).unwrap();
+    assert!(!read_execution_state(&f.repo, "task").unwrap().auto_approve_all);
+
+    let task_path = crate::task_dir(&f.repo, "task").join("task.md");
+    let saved = fs::read_to_string(&task_path).unwrap();
+    assert!(saved.contains("auto_approve_all = false"), "saved task should record the default before it is stripped");
+    let task = saved.replace("auto_approve_all = false\n", "");
+    assert!(!task.contains("auto_approve_all"));
+    fs::write(&task_path, task).unwrap();
+    assert!(!crate::read_task(&f.repo, "task").unwrap().auto_approve_all);
+}
+
+#[test]
 fn stopped_owner_recovery_retires_old_permission_without_retrying() {
     let mut f = Fixture::new("{path=\"result.md\"}", true, false, 1);
     let id = f.reserve(false);

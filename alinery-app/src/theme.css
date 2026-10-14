@@ -2996,6 +2996,24 @@ textarea.field-input {
   color: var(--text-strong);
   background: var(--accent-subtle);
 }
+.btn.auto-approve {
+  color: var(--text-faint);
+  border-color: var(--border);
+}
+.btn.auto-approve:hover:not(:disabled) {
+  color: var(--text-muted);
+  border-color: var(--border-strong);
+}
+.btn.auto-approve.on {
+  border-color: var(--success);
+  color: var(--success);
+  background: var(--success-subtle);
+}
+.btn.auto-approve.on:hover:not(:disabled) {
+  border-color: var(--success);
+  color: var(--success);
+  background: var(--success-subtle);
+}
 
 .launch-source-bar {
   flex: 0 0 auto;

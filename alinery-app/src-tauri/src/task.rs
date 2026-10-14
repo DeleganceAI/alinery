@@ -697,6 +697,7 @@ fn write_draft_in_with_slug_unlocked(
         max_live_sessions,
         launch_defaults: alinery_core::execution::LaunchChoices { harness, model },
         auto_advance: auto_advance.unwrap_or_default(),
+        auto_approve_all: false,
         step_models: step_models
             .unwrap_or_default()
             .into_iter()
@@ -1130,6 +1131,38 @@ pub(crate) fn set_related_tasks_in(repo: &Path, slug: String, related: Vec<aline
         alinery_core::sync_related_artifact_links(repo, &task.slug, &task.related_tasks)?;
         Ok(task)
     })
+}
+
+pub(crate) fn set_auto_approve_all_in(repo: &Path, slug: String, enabled: bool) -> Result<Task, String> {
+    alinery_core::with_task_mutation_lock_waiting(repo, "set auto approve all", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
+        let mut task = read_task(repo, &slug)?;
+        if task.archived {
+            return Err("task is archived — read-only".into());
+        }
+        if task.draft {
+            return Err("draft tasks have no execution to override".into());
+        }
+        if task.engine_version < 2 {
+            return Err("pre-v2 tasks have no automatic completion to override".into());
+        }
+        // Completion reads execution.json, not task.md. Write the task first so a failed
+        // execution write leaves the engine off rather than approving while the file says off.
+        let mut state = alinery_core::execution::read_execution_state(repo, &slug)?;
+        task.auto_approve_all = enabled;
+        write_task_unlocked(repo, &task)?;
+        if state.auto_approve_all != enabled {
+            state.auto_approve_all = enabled;
+            alinery_core::execution::write_execution_state_unlocked(repo, &slug, &mut state)?;
+        }
+        Ok(task)
+    })
+}
+
+#[tauri::command]
+pub(crate) fn set_auto_approve_all_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String, enabled: bool) -> Result<Task, String> {
+    let repo = target_repo_for_app(&app, &repo_path)?;
+    require_repo_owned(&state, &repo)?;
+    set_auto_approve_all_in(&repo, slug, enabled)
 }
 
 #[tauri::command]
