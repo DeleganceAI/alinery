@@ -4388,6 +4388,132 @@ dialog.modal::backdrop {
   box-shadow: var(--shadow-menu);
 }
 
+/* Pinned-chat window. Fixed until drag, resize, and a remembered position exist. */
+.quick-chat {
+  position: fixed;
+  z-index: 80;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--canvas);
+  box-shadow: var(--shadow-dialog);
+  --chat-max-width: 100%;
+  --chat-col-max: 100%;
+}
+.quick-chat-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+  padding: 4px 8px 4px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.quick-chat-title {
+  color: var(--text-strong);
+  font-size: calc(13px * var(--ui-scale));
+  font-weight: 600;
+}
+.quick-chat-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.quick-chat-tab {
+  flex: 0 0 auto;
+  max-width: 160px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1.2;
+}
+.quick-chat-tab[aria-selected="true"] {
+  border-color: var(--border-strong);
+  background: var(--surface-raised);
+  color: var(--text-strong);
+}
+.quick-chat-tab-name,
+.quick-chat-tab-repo {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quick-chat-tab-name {
+  font-size: calc(12px * var(--ui-scale));
+}
+.quick-chat-tab-repo {
+  color: var(--text-faint);
+  font-size: calc(10px * var(--ui-scale));
+}
+.quick-chat-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.quick-chat-body .chat-pane {
+  flex: 1 1 auto;
+  height: auto;
+}
+.quick-chat-body .chat-journal,
+.quick-chat-body .chat-empty {
+  min-width: 0;
+  max-width: 100%;
+}
+.quick-chat .chat-composer {
+  padding: 8px;
+}
+.quick-chat .chat-banner,
+.quick-chat .chat-composer,
+.quick-chat .chat-ui-prompt {
+  max-width: 100%;
+}
+.quick-chat-foot {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 8px 8px;
+}
+.quick-chat-empty {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px 16px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.quick-chat-empty p {
+  margin: 0;
+}
+.quick-chat-empty-hint {
+  color: var(--text-faint);
+  font-size: calc(12px * var(--ui-scale));
+}
+
 /* Title bar */
 .chat-titlebar {
   flex: 0 0 auto;
@@ -4729,14 +4855,20 @@ dialog.modal::backdrop {
   flex: 0 0 auto;
   color: var(--accent);
 }
-/* Pin and Archive appear on the hovered (or keyboard-focused) row. The name gives up the space they
-   take instead of sitting under them, so a selected row's tint never shows a mismatched patch. */
+/* Pin and Archive replace the status on hover. Both sit in the same fixed end slot, so the name
+   does not shift when a short status (Idle) gives way to the buttons or a long one (Needs approval)
+   gives way to them. The trail stays in the layout while hidden; removing it was the jump. */
+.chat-thread {
+  --chat-thread-end: 72px;
+}
 .chat-thread-actions {
   position: absolute;
   top: 50%;
-  right: 4px;
+  right: 10px;
   display: none;
+  justify-content: flex-end;
   gap: 2px;
+  width: var(--chat-thread-end);
   transform: translateY(-50%);
 }
 .chat-thread-actions .chat-icon-btn {
@@ -4747,22 +4879,26 @@ dialog.modal::backdrop {
 .chat-thread:focus-within .chat-thread-actions {
   display: flex;
 }
-.chat-thread:hover .chat-thread-btn,
-.chat-thread:focus-within .chat-thread-btn {
-  padding-right: 58px;
-}
 .chat-thread-trail {
-  flex: 0 0 auto;
+  flex: 0 0 var(--chat-thread-end);
+  width: var(--chat-thread-end);
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
   margin-left: auto;
+  overflow: hidden;
   font-size: calc(11px * var(--ui-scale));
   font-weight: 400;
 }
+.chat-thread-trail .statusdot {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
 .chat-thread:hover .chat-thread-trail,
 .chat-thread:focus-within .chat-thread-trail {
-  display: none;
+  visibility: hidden;
 }
 .chat-thread-resume {
   flex: 0 0 auto;

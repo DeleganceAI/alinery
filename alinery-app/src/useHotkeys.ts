@@ -32,6 +32,7 @@ export type Handlers = {
   moveCol: (d: number) => void;
   toggleTerminalDrawer: () => void;
   killTerminalDrawer: () => void;
+  toggleQuickChat: () => void;
 };
 
 // One global keydown listener installed once at App level (plan §5.3). Reads the latest
@@ -46,10 +47,15 @@ export function useHotkeys(handlers: Handlers) {
       const k = e.key;
       const appCommand = e.metaKey;
 
-      // 1. ⌘K always toggles search.
+      // 1. ⌘K always toggles search. ⌘/ always toggles pinned chats, including from a text field.
       if (appCommand && k.toLowerCase() === "k") {
         e.preventDefault();
         H.toggleSearch();
+        return;
+      }
+      if (appCommand && e.code === "Slash" && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        H.toggleQuickChat();
         return;
       }
       // 2. An overlay owns its own keys (search/create modal handle arrows/enter/esc).

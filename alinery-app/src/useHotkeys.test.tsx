@@ -43,6 +43,7 @@ const handlers = (overrides: Partial<Handlers> = {}): Handlers => ({
   moveCol: vi.fn(),
   toggleTerminalDrawer: vi.fn(),
   killTerminalDrawer: vi.fn(),
+  toggleQuickChat: vi.fn(),
   ...overrides,
 });
 
@@ -66,6 +67,7 @@ function commandCallbacks(value: Handlers) {
     value.moveCol,
     value.toggleTerminalDrawer,
     value.killTerminalDrawer,
+    value.toggleQuickChat,
   ];
 }
 
@@ -204,6 +206,27 @@ describe("useHotkeys", () => {
     fireEvent.keyDown(document.body, { key: "5", metaKey: true });
     expect(active.goChat).toHaveBeenCalledOnce();
     expect(active.goKanban).not.toHaveBeenCalled();
+  });
+
+  it.each(["input", "textarea", "editable"])("toggles pinned chats from %s", (label) => {
+    const active = handlers();
+    render(<Probe handlers={active} controls />);
+    const target = screen.getByLabelText(label);
+    const event = createEvent.keyDown(target, { key: "/", code: "Slash", metaKey: true, cancelable: true });
+    fireEvent(target, event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(active.toggleQuickChat).toHaveBeenCalledOnce();
+  });
+
+  it("does not toggle pinned chats from Control-slash or Shift-slash", () => {
+    const active = handlers();
+    render(<Probe handlers={active} />);
+    const ctrl = createEvent.keyDown(document.body, { key: "/", code: "Slash", ctrlKey: true, cancelable: true });
+    fireEvent(document.body, ctrl);
+    const shifted = createEvent.keyDown(document.body, { key: "?", code: "Slash", metaKey: true, shiftKey: true, cancelable: true });
+    fireEvent(document.body, shifted);
+    expect(ctrl.defaultPrevented).toBe(false);
+    expect(active.toggleQuickChat).not.toHaveBeenCalled();
   });
 
   it.each(["input", "textarea", "editable"])("does not open chat from %s", (label) => {
