@@ -1198,12 +1198,13 @@ export function CreateTaskPage({
               Local files are copied into the task. Attachment URLs are recorded, never fetched. Linear description images download on import. Drop files anywhere on this form.
             </div>
           </div>
-          <label className="create-field">
+          <label className="create-field task-default-model">
             <span>Task Default Model</span>
             <ModelInput
               harness="omp"
               repoPath={repoPath}
               ariaLabel="Task Default Model"
+              showPickerButton={false}
               value={model}
               onChange={(v) => {
                 dirtyRef.current = true;
@@ -1217,37 +1218,44 @@ export function CreateTaskPage({
           {!!selectedSource?.definition.step.length && (
             <div className="create-field">
               <span>Automatic completion permission for future executions</span>
-              {selectedSource.definition.step.map((step) => {
-                const display = stepModelDisplay({
-                  stepModel: step.model,
-                  playbookDefaultModel: selectedSource.definition.default_model,
-                  taskModel: model,
-                  productModel,
-                  override: stepModels[step.key],
-                });
-                return (
-                  <div key={step.key}>
-                    <Checkbox
-                      checked={autoAdvance.includes(step.key)}
-                      onChange={(checked) => {
-                        dirtyRef.current = true;
-                        setAutoAdvance((cur) => (checked ? [...cur, step.key] : cur.filter((key) => key !== step.key)));
-                      }}
-                      label={step.title}
-                    />
-                    <ModelInput
-                      harness="omp"
-                      repoPath={repoPath}
-                      prefillRemembered={false}
-                      ariaLabel={`${step.title} model`}
-                      value={display.value}
-                      onChange={(value) => onStepModelChange(step.key, value)}
-                      onOpenPicker={() => setPicking(step.key)}
-                    />
-                    {display.source && <span className="hint">{STEP_MODEL_CAPTION[display.source]}</span>}
-                  </div>
-                );
-              })}
+              <div className="step-model-list">
+                <div className="step-model-head">
+                  <span className="step-model-title">Step model</span>
+                </div>
+                {selectedSource.definition.step.map((step) => {
+                  const display = stepModelDisplay({
+                    stepModel: step.model,
+                    playbookDefaultModel: selectedSource.definition.default_model,
+                    taskModel: model,
+                    productModel,
+                    override: stepModels[step.key],
+                  });
+                  return (
+                    <div key={step.key} className="step-model-row">
+                      <Checkbox
+                        checked={autoAdvance.includes(step.key)}
+                        onChange={(checked) => {
+                          dirtyRef.current = true;
+                          setAutoAdvance((cur) => (checked ? [...cur, step.key] : cur.filter((key) => key !== step.key)));
+                        }}
+                        label={step.title}
+                      />
+                      <ModelInput
+                        harness="omp"
+                        repoPath={repoPath}
+                        prefillRemembered={false}
+                        showPickerButton={false}
+                        placeholder=""
+                        ariaLabel={`${step.title} model`}
+                        value={display.value}
+                        onChange={(value) => onStepModelChange(step.key, value)}
+                        onOpenPicker={() => setPicking(step.key)}
+                      />
+                      <span className={`step-model-badge${display.source === "override" ? " is-override" : ""}`}>{display.source ? STEP_MODEL_CAPTION[display.source] : ""}</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
           {picking && (
@@ -1256,11 +1264,11 @@ export function CreateTaskPage({
               initialTab="models"
               unsignedOpensAccounts
               onPick={(next) => {
+                dirtyRef.current = true;
                 if (picking === "task") {
-                  dirtyRef.current = true;
                   setModel(next);
                   setModelNeedsReselection(false);
-                } else {
+                } else if (picking) {
                   onStepModelChange(picking, next);
                 }
               }}

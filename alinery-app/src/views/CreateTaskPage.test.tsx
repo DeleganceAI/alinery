@@ -644,8 +644,17 @@ describe("per-step default model", () => {
 
   it("gives each permission row its own model control", async () => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
-    expect(screen.getByLabelText("Build model")).toBeTruthy();
+    const checkbox = await screen.findByRole("checkbox", { name: "Build" });
+    const stepModel = screen.getByLabelText("Build model");
+    expect(checkbox.closest(".step-model-row")?.contains(stepModel)).toBe(true);
+    expect(screen.getAllByText("Step model")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Browse models" })).toBeNull();
+    fireEvent.click(stepModel);
+    const stepDialog = await screen.findByRole("dialog", { name: /Models|Providers/ });
+    fireEvent.click(within(stepDialog).getAllByRole("button", { name: "Cancel" })[0]);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /Models|Providers/ })).toBeNull());
+    fireEvent.click(screen.getByLabelText("Task Default Model"));
+    expect(await screen.findByRole("dialog", { name: /Models|Providers/ })).toBeTruthy();
   });
 
   it("shows the task model on untouched steps and follows task-model edits", async () => {
@@ -654,7 +663,7 @@ describe("per-step default model", () => {
     const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
     fireEvent.change(taskModel, { target: { value: "task-model" } });
     expect(stepModel.value).toBe("task-model");
-    expect(screen.getByText("Task default")).toBeTruthy();
+    expect(screen.getByText("Task default").classList.contains("step-model-badge")).toBe(true);
     fireEvent.change(taskModel, { target: { value: "next-task" } });
     expect(stepModel.value).toBe("next-task");
     expect(screen.getByText("Task default")).toBeTruthy();

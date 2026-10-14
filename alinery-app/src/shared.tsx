@@ -1459,6 +1459,8 @@ export function ModelInput({
   prefillRemembered = true,
   onOpenPicker,
   ariaLabel = "Model",
+  showPickerButton = true,
+  placeholder = "Model (empty = harness default)",
 }: {
   harness: string;
   value: string;
@@ -1477,6 +1479,9 @@ export function ModelInput({
    * and this becomes a plain trigger.
    */
   onOpenPicker?: () => void;
+  /** Omit the browse button. With `onOpenPicker`, clicking the field opens that dialog instead. */
+  showPickerButton?: boolean;
+  placeholder?: string;
 }) {
   const [models, setModels] = useState<string[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -1626,27 +1631,38 @@ export function ModelInput({
   const visible = deriveModelRows(models, favorites, q);
   const sel = Math.min(idx, Math.max(0, visible.length - 1));
   const occurrenceByModel = new Map<string, number>();
+  const openFromField = !showPickerButton ? onOpenPicker : undefined;
 
   return (
-    <div className="model-input" style={style}>
+    <div className={`model-input${openFromField ? " is-picker" : ""}`} style={style}>
       <input
         className="field-input"
         aria-label={ariaLabel}
+        aria-haspopup={openFromField ? "dialog" : undefined}
+        title={openFromField ? "Select model" : undefined}
         value={value}
-        placeholder="Model (empty = harness default)"
+        placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
         onBlur={() => onCommit?.(value)}
+        onClick={() => openFromField?.()}
+        onKeyDown={(e) => {
+          if (!openFromField || e.key !== "Enter") return;
+          e.preventDefault();
+          openFromField();
+        }}
       />
-      <button
-        type="button"
-        className="btn ghost small"
-        title={onOpenPicker ? "Browse models" : "Refresh model list"}
-        aria-label={onOpenPicker ? "Browse models" : "Refresh model list"}
-        disabled={busy}
-        onClick={onOpenPicker ?? refresh}
-      >
-        {busy ? "…" : <RotateCw size={14} strokeWidth={1.5} aria-hidden="true" />}
-      </button>
+      {showPickerButton && (
+        <button
+          type="button"
+          className="btn ghost small"
+          title={onOpenPicker ? "Browse models" : "Refresh model list"}
+          aria-label={onOpenPicker ? "Browse models" : "Refresh model list"}
+          disabled={busy}
+          onClick={onOpenPicker ?? refresh}
+        >
+          {busy ? "…" : <RotateCw size={14} strokeWidth={1.5} aria-hidden="true" />}
+        </button>
+      )}
       {!onOpenPicker && pickerOpen && (
         <Dialog onClose={() => setPickerOpen(false)} ariaLabel={`Select model — ${harness}`}>
           <div className="mh">
