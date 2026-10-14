@@ -72,11 +72,13 @@ import { useUpdateStatus } from "./useUpdateStatus";
 import { ChatView } from "./views/ChatView";
 import { CreateSessionPage } from "./views/CreateSessionPage";
 import { CreateTaskPage } from "./views/CreateTaskPage";
+import { ChatSessionProvider } from "./views/chatThreadSession";
 import { Grid } from "./views/Grid";
 import { Kanban } from "./views/Kanban";
 import { NotificationsList } from "./views/NotificationsList";
 import { Playbooks } from "./views/Playbooks";
 import { ProviderSetupDialog } from "./views/ProviderSetupDialog";
+import { QuickChat } from "./views/QuickChat";
 import { SessionsList } from "./views/SessionsList";
 import { SECTIONS as SETTINGS_SECTIONS, Settings } from "./views/Settings";
 import { TaskList } from "./views/TaskList";
@@ -200,6 +202,7 @@ export default function App() {
   };
   // Global left terminal drawer — ephemeral; not persisted.
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [quickChatOpen, setQuickChatOpen] = useState(false);
   const [drawerWidth, setDrawerWidth] = useState(DRAWER_DEFAULT_WIDTH);
   const [drawer, setDrawer] = useState<DrawerHandle | null>(null);
   const [drawerCreating, setDrawerCreating] = useState(false);
@@ -1137,6 +1140,9 @@ export default function App() {
     killTerminalDrawer: () => {
       void killDrawer();
     },
+    toggleQuickChat: () => {
+      if (showChat) setQuickChatOpen((open) => !open);
+    },
   });
 
   // Actions call the same callbacks as their direct shortcuts.
@@ -1179,6 +1185,7 @@ export default function App() {
             toast("Syncing…");
           }),
           action("terminal", pi(Terminal), "Toggle terminal drawer", "⌘`", () => void toggleTerminalDrawer()),
+          ...(showChat ? [action("quick-chat", pi(MessageSquare), "Toggle pinned chats", "⌘/", () => setQuickChatOpen((open) => !open))] : []),
           action("kill-terminal", pi(X), "Kill terminal drawer", "⌘⇧`", () => void killDrawer()),
         ]
       : []),
@@ -1232,97 +1239,100 @@ export default function App() {
   ];
 
   const chrome = (content: ReactNode, header?: ReactNode) => (
-    <>
-      {setupOffer && (
-        <ProviderSetupDialog
-          mode="auto"
-          onClose={(reason) => {
-            setSetupOffer(false);
-            // Only a real dismissal is remembered. Self-closing because the install is already
-            // set up must not suppress the offer if those credentials later go away.
-            if (reason === "dismissed") {
-              try {
-                localStorage.setItem(OMP_SETUP_DISMISSED_KEY, "1");
-              } catch {
-                /* nothing to do: the offer simply comes back next launch */
+    <ChatSessionProvider>
+      <>
+        {setupOffer && (
+          <ProviderSetupDialog
+            mode="auto"
+            onClose={(reason) => {
+              setSetupOffer(false);
+              // Only a real dismissal is remembered. Self-closing because the install is already
+              // set up must not suppress the offer if those credentials later go away.
+              if (reason === "dismissed") {
+                try {
+                  localStorage.setItem(OMP_SETUP_DISMISSED_KEY, "1");
+                } catch {
+                  /* nothing to do: the offer simply comes back next launch */
+                }
               }
-            }
-          }}
-        />
-      )}
-      <ResizeHandles />
-      <div className="app-shell">
-        <div className={drawerOpen ? "app app-with-drawer" : "app"} style={drawerOpen ? ({ ["--drawer-width" as string]: `${drawerWidth}px` } as CSSProperties) : undefined}>
-          {(drawerOpen || (drawer?.tabs.length ?? 0) > 0) && (
-            <TerminalDrawer
-              open={drawerOpen}
-              width={drawerWidth}
-              onWidthChange={(w) => setDrawerWidth(clampDrawerWidth(w))}
-              tabs={drawer?.tabs ?? []}
-              activeId={drawer?.activeId ?? null}
-              terminalFontSize={appearance.terminal_font_size}
-              onSelect={selectDrawerTab}
-              creating={drawerCreating}
-              onClose={(id) => void closeDrawerTab(id)}
-              onNew={() => void addDrawerTab()}
-              onKillAll={() => void killDrawer()}
-              onTabExited={removeDrawerTab}
-              view={view}
-              scope={scope}
-              activeRepo={appConfig?.active_repo}
-            />
-          )}
-          <div className={drawerOpen ? "app-main-column" : undefined} style={drawerOpen ? undefined : { display: "contents" }}>
-            {daemon.repo_busy && appConfig?.active_repo && <RepoBusyBanner repo={appConfig.active_repo} onPickRepo={() => void addRepo()} />}
-            <DaemonConflictBanner conflict={daemon.conflict} />
-            <HostGuardWarning visible={daemon.host_guard_warning} />
-            {repoErr && appConfig?.active_repo && (
-              <div className="daemon-conflict" role="alert">
-                <strong>{repoErr}</strong>
-                <button type="button" className="daemon-conflict-dismiss" aria-label="Dismiss error" title="Dismiss" onClick={() => setRepoErr("")}>
-                  <X size={16} strokeWidth={1.5} aria-hidden="true" />
-                </button>
-              </div>
+            }}
+          />
+        )}
+        <ResizeHandles />
+        <div className="app-shell">
+          <div className={drawerOpen ? "app app-with-drawer" : "app"} style={drawerOpen ? ({ ["--drawer-width" as string]: `${drawerWidth}px` } as CSSProperties) : undefined}>
+            {(drawerOpen || (drawer?.tabs.length ?? 0) > 0) && (
+              <TerminalDrawer
+                open={drawerOpen}
+                width={drawerWidth}
+                onWidthChange={(w) => setDrawerWidth(clampDrawerWidth(w))}
+                tabs={drawer?.tabs ?? []}
+                activeId={drawer?.activeId ?? null}
+                terminalFontSize={appearance.terminal_font_size}
+                onSelect={selectDrawerTab}
+                creating={drawerCreating}
+                onClose={(id) => void closeDrawerTab(id)}
+                onNew={() => void addDrawerTab()}
+                onKillAll={() => void killDrawer()}
+                onTabExited={removeDrawerTab}
+                view={view}
+                scope={scope}
+                activeRepo={appConfig?.active_repo}
+              />
             )}
-            {header}
-            {/* Backend ownership gate is the source of truth; blank main so the busy
+            <div className={drawerOpen ? "app-main-column" : undefined} style={drawerOpen ? undefined : { display: "contents" }}>
+              {daemon.repo_busy && appConfig?.active_repo && <RepoBusyBanner repo={appConfig.active_repo} onPickRepo={() => void addRepo()} />}
+              <DaemonConflictBanner conflict={daemon.conflict} />
+              <HostGuardWarning visible={daemon.host_guard_warning} />
+              {repoErr && appConfig?.active_repo && (
+                <div className="daemon-conflict" role="alert">
+                  <strong>{repoErr}</strong>
+                  <button type="button" className="daemon-conflict-dismiss" aria-label="Dismiss error" title="Dismiss" onClick={() => setRepoErr("")}>
+                    <X size={16} strokeWidth={1.5} aria-hidden="true" />
+                  </button>
+                </div>
+              )}
+              {header}
+              {/* Backend ownership gate is the source of truth; blank main so the busy
               banner is the only actionable surface (defense-in-depth). */}
-            <main>
-              {daemon.repo_busy ? null : content}
-              {playbooksVisited && (
-                <div className="view playbooks-view" hidden={view.kind !== "playbooks" || daemon.repo_busy}>
-                  <Playbooks repoPath={appConfig?.active_repo || undefined} onCreateTask={(reference) => openCreate(reference)} />
-                </div>
-              )}
-              {/* Kept mounted once visited, like Playbooks: the open thread, per-thread drafts and the
+              <main>
+                {daemon.repo_busy ? null : content}
+                {playbooksVisited && (
+                  <div className="view playbooks-view" hidden={view.kind !== "playbooks" || daemon.repo_busy}>
+                    <Playbooks repoPath={appConfig?.active_repo || undefined} onCreateTask={(reference) => openCreate(reference)} />
+                  </div>
+                )}
+                {/* Kept mounted once visited, like Playbooks: the open thread, per-thread drafts and the
                 reading position survive a trip to Tasks or Settings. Hidden, it stops polling. */}
-              {showChat && (chatVisited || view.kind === "chat") && (
-                <div className="view" hidden={view.kind !== "chat" || daemon.repo_busy}>
-                  <ChatView active={view.kind === "chat" && !daemon.repo_busy} terminalFontSize={appearance.terminal_font_size} visibility={chatViewVisibility} />
-                </div>
-              )}
-            </main>
-            <HotkeyBar
-              view={view.kind}
-              daemon={daemon}
-              mcp={mcp}
-              showHints={Boolean(appConfig?.active_repo)}
-              version={appVersion}
-              gridViewName={view.kind === "grid" ? gridViews.find((gridView) => gridView.id === view.gridViewId)?.name : undefined}
-              gridViewShortcut={
-                view.kind === "grid" && gridViews.some((gridView) => gridView.id === view.gridViewId)
-                  ? gridViewShortcut(gridViews.findIndex((gridView) => gridView.id === view.gridViewId))
-                  : undefined
-              }
-            />
+                {showChat && (chatVisited || view.kind === "chat") && (
+                  <div className="view" hidden={view.kind !== "chat" || daemon.repo_busy}>
+                    <ChatView active={view.kind === "chat" && !daemon.repo_busy} terminalFontSize={appearance.terminal_font_size} visibility={chatViewVisibility} />
+                  </div>
+                )}
+              </main>
+              <HotkeyBar
+                view={view.kind}
+                daemon={daemon}
+                mcp={mcp}
+                showHints={Boolean(appConfig?.active_repo)}
+                version={appVersion}
+                gridViewName={view.kind === "grid" ? gridViews.find((gridView) => gridView.id === view.gridViewId)?.name : undefined}
+                gridViewShortcut={
+                  view.kind === "grid" && gridViews.some((gridView) => gridView.id === view.gridViewId)
+                    ? gridViewShortcut(gridViews.findIndex((gridView) => gridView.id === view.gridViewId))
+                    : undefined
+                }
+              />
+            </div>
           </div>
+          {isDev && <LaunchSourceBar sourceRoot={DEV_LAUNCH_ROOT} />}
+          {showChat ? <QuickChat open={quickChatOpen} visibility={chatViewVisibility} onOpenInChat={() => switchTop("chat")} onHide={() => setQuickChatOpen(false)} /> : null}
         </div>
-        {isDev && <LaunchSourceBar sourceRoot={DEV_LAUNCH_ROOT} />}
-      </div>
-      <GlobalSearch open={searchOpen && hasRepo} items={searchItems} loading={searchLoading} error={searchError} onClose={() => setSearchOpen(false)} />
-      <Toast busy={busy} />
-      <ConfirmHost />
-    </>
+        <GlobalSearch open={searchOpen && hasRepo} items={searchItems} loading={searchLoading} error={searchError} onClose={() => setSearchOpen(false)} />
+        <Toast busy={busy} />
+        <ConfirmHost />
+      </>
+    </ChatSessionProvider>
   );
 
   const minimalHeader = (
