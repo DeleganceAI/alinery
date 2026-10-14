@@ -292,6 +292,9 @@ describe("re-render comparators", () => {
     expect(sameBoardTasks([task()], [task()])).toBe(true);
     expect(sameBoardTasks([task()], [task({ current_phase: "review" })])).toBe(false);
     expect(sameBoardTasks([task()], [task({ auto_advance: ["x"] })])).toBe(false);
+    expect(sameBoardTasks([task()], [task({ auto_approve_all: true })])).toBe(false);
+    expect(sameTask(task(), task({ auto_approve_all: true }))).toBe(false);
+    expect(sameTask(task(), task({ auto_approve_all: false }))).toBe(true);
   });
 
   it("sameTask notices a saved starting branch change", () => {

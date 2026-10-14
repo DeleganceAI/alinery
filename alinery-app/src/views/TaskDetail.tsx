@@ -928,6 +928,32 @@ export function TaskDetail({
     );
   };
 
+  const autoApproveAll = task?.auto_approve_all === true;
+  const setAutoApproveAll = (enabled: boolean) => {
+    if (!task || task.archived || task.draft || (task.engine_version ?? 2) < 2 || busy === "auto-approve") return;
+    setBusy("auto-approve");
+    setErr(null);
+    const epoch = taskMutationEpoch.current;
+    ipc
+      .setAutoApproveAllForRepo(repoPath, slug, enabled)
+      .then((updated) => {
+        if (!scope.alive || scopeRef.current !== scope) return;
+        if (epoch === taskMutationEpoch.current) {
+          taskMutationEpoch.current += 1;
+          setTask(updated);
+          setExecutionView((current) => (current ? { ...current, state: { ...current.state, auto_approve_all: updated.auto_approve_all === true } } : current));
+        } else {
+          void load();
+        }
+      })
+      .catch((e) => {
+        if (scope.alive && scopeRef.current === scope && epoch === taskMutationEpoch.current) setErr({ msg: "Couldn't update Auto Approval All.", detail: String(e) });
+      })
+      .finally(() => {
+        if (scope.alive && scopeRef.current === scope) setBusy("");
+      });
+  };
+
   const relatedTags = task?.related_tasks ?? [];
   const relatedCandidates = boardTasks.filter((candidate) => {
     if (candidate.archived || candidate.draft) return false;
@@ -1122,6 +1148,20 @@ export function TaskDetail({
           <div className="crow task-actions-row">
             <button type="button" className="btn ghost small" disabled={!task || duplicating} title="Duplicate task (⌘D)" onClick={() => task && onDuplicate(task)}>
               {duplicating ? "Duplicating…" : "Duplicate Task · ⌘D"}
+            </button>
+            <button
+              type="button"
+              className={`btn ghost small auto-approve${autoApproveAll ? " on" : ""}`}
+              aria-pressed={autoApproveAll}
+              disabled={!task || task.archived || task.draft || (task.engine_version ?? 2) < 2 || busy === "auto-approve"}
+              title={
+                autoApproveAll
+                  ? "Auto Approval All is on. Every playbook step may complete without an approval card. Turn off to restore the steps chosen at creation."
+                  : "Auto Approval All is off. This task keeps the automatic-completion steps chosen at creation."
+              }
+              onClick={() => setAutoApproveAll(!autoApproveAll)}
+            >
+              Auto Approval All
             </button>
             {task?.archived ? (
               task.parent_task ? (
@@ -1756,7 +1796,7 @@ export function TaskDetail({
                   title={executionView?.definition.title ?? "Retained task playbook"}
                   steps={steps}
                   countsByStep={Object.fromEntries(steps.map((step) => [step.key, activeExecutions.filter((execution) => execution.candidate.step_key === step.key).length]))}
-                  selectedAutoAdvance={executionView?.state.enabled_steps}
+                  selectedAutoAdvance={autoApproveAll ? steps.map((step) => step.key) : executionView?.state.enabled_steps}
                 />
               </div>
             ) : sideTab === "history" ? (

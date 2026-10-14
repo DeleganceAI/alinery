@@ -169,6 +169,7 @@ pub fn run() {
             archive_task,
             archive_task_for_repo,
             restore_task_for_repo,
+            set_auto_approve_all_for_repo,
             set_related_tasks_for_repo,
             create_session,
             create_session_for_repo,

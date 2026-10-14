@@ -41,6 +41,7 @@ const ipcSpies = vi.hoisted(() => ({
   archiveSessionForRepo: vi.fn(),
   renameSession: vi.fn(),
   renameTask: vi.fn(),
+  setAutoApproveAllForRepo: vi.fn(),
 }));
 
 const mocks = vi.hoisted(() => ({
@@ -94,6 +95,7 @@ vi.mock("../ipc", () =>
     archiveSessionForRepo: ipcSpies.archiveSessionForRepo,
     renameSession: ipcSpies.renameSession,
     renameTask: ipcSpies.renameTask,
+    setAutoApproveAllForRepo: ipcSpies.setAutoApproveAllForRepo,
     markSessionNotificationRead: mocks.markSessionNotificationRead,
     startSubtaskManager: ipcSpies.startSubtaskManager,
     recoverSubtaskManager: ipcSpies.recoverSubtaskManager,
@@ -270,6 +272,7 @@ beforeEach(() => {
     scenario.sessions = scenario.sessions.map((item) => (item.id === sessionId ? { ...item, name, name_source: "user" } : item));
     return { name, source: "user" };
   });
+  ipcSpies.setAutoApproveAllForRepo.mockReset();
   ipcSpies.renameTask.mockReset().mockImplementation(async (_repo: string, childSlug: string, name: string) => {
     const updated = { ...(scenario.relatedTasks.find((item) => item.slug === childSlug) ?? scenario.task), name };
     if (scenario.task.slug === childSlug) scenario.task = updated;
@@ -1606,6 +1609,41 @@ describe("authoritative task execution", () => {
     expect(screen.getByText("Process disposition unknown")).toBeDefined();
     expect(screen.getByText("Outputs accepted; waiting for confirmed session shutdown.")).toBeDefined();
     expect(screen.queryByRole("button", { name: /Allow this session/ })).toBeNull();
+  });
+});
+
+describe("Task Detail auto approval", () => {
+  it("turns every locked step automatic while on and restores the devised steps when off", async () => {
+    scenario.task = { ...parentTask, engine_version: 2 };
+    const retained = executionReply();
+    retained.state.enabled_steps = [];
+    mocks.getTaskExecution.mockResolvedValue(retained);
+    await renderDetail();
+    const toggle = screen.getByRole("button", { name: "Auto Approval All" });
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle.classList.contains("ghost")).toBe(true);
+    expect(toggle.classList.contains("auto-approve")).toBe(true);
+    expect(toggle.classList.contains("on")).toBe(false);
+    expect(screen.queryByText("Automatic")).toBeNull();
+
+    ipcSpies.setAutoApproveAllForRepo.mockResolvedValue({ ...scenario.task, auto_approve_all: true });
+    fireEvent.click(toggle);
+    await waitFor(() => expect(ipcSpies.setAutoApproveAllForRepo).toHaveBeenCalledWith("/repo", "parent", true));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Auto Approval All" }).getAttribute("aria-pressed")).toBe("true"));
+    expect(screen.getByRole("button", { name: "Auto Approval All" }).classList.contains("on")).toBe(true);
+    expect(screen.getByText("Automatic")).toBeTruthy();
+
+    ipcSpies.setAutoApproveAllForRepo.mockResolvedValue({ ...scenario.task, auto_approve_all: false });
+    fireEvent.click(screen.getByRole("button", { name: "Auto Approval All" }));
+    await waitFor(() => expect(ipcSpies.setAutoApproveAllForRepo).toHaveBeenCalledWith("/repo", "parent", false));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Auto Approval All" }).getAttribute("aria-pressed")).toBe("false"));
+    expect(screen.queryByText("Automatic")).toBeNull();
+  });
+
+  it("keeps Auto Approval All off for an archived task", async () => {
+    scenario.task = { ...parentTask, engine_version: 2, archived: true };
+    await renderDetail();
+    expect((screen.getByRole("button", { name: "Auto Approval All" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
 

@@ -2209,6 +2209,46 @@ fn task_activity_status_matches_by_id_and_uses_session_list_precedence() {
 }
 
 #[test]
+fn set_auto_approve_all_writes_both_files_without_changing_enabled_steps() {
+    let repo = activity_repo("auto-approve-all");
+    let task = write_retained_discovery_task(&repo, "here", "lane", false);
+    let before = alinery_core::execution::read_execution_state(&repo, &task.slug).unwrap();
+    let enabled = before.enabled_steps.clone();
+
+    let updated = crate::set_auto_approve_all_in(&repo, task.slug.clone(), true).unwrap();
+    assert!(updated.auto_approve_all);
+    assert_eq!(updated.auto_advance, task.auto_advance);
+    let on = alinery_core::execution::read_execution_state(&repo, &task.slug).unwrap();
+    assert!(on.auto_approve_all);
+    assert_eq!(on.enabled_steps, enabled);
+    assert!(on.revision > before.revision);
+
+    let updated = crate::set_auto_approve_all_in(&repo, task.slug.clone(), false).unwrap();
+    assert!(!updated.auto_approve_all);
+    let off = alinery_core::execution::read_execution_state(&repo, &task.slug).unwrap();
+    assert!(!off.auto_approve_all);
+    assert_eq!(off.enabled_steps, enabled);
+
+    let archived = write_retained_discovery_task(&repo, "archived", "lane", true);
+    assert!(crate::set_auto_approve_all_in(&repo, archived.slug, true).unwrap_err().contains("archived"));
+    write_task(
+        &repo,
+        &Task {
+            name: "Draft".into(),
+            slug: "draft".into(),
+            draft: true,
+            engine_version: 2,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(crate::set_auto_approve_all_in(&repo, "draft".into(), true).unwrap_err().contains("draft"));
+    let legacy = create_task_for_test(&repo, "Legacy", false, "", "");
+    assert!(crate::set_auto_approve_all_in(&repo, legacy.slug, true).unwrap_err().contains("pre-v2"));
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
 fn set_related_tasks_writes_tags_and_task_dir_symlinks() {
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let repo = std::env::temp_dir().join(format!("alinery-related-src-{n}"));
