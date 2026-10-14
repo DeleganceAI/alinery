@@ -30,7 +30,8 @@ struct TempRepo {
 impl TempRepo {
     fn new() -> Self {
         let token = unique_token();
-        let root = std::env::temp_dir().join(&token);
+        // /tmp, not temp_dir(): the daemon socket has to fit in macOS's 104-byte sun_path.
+        let root = PathBuf::from("/tmp").join(&token);
         fs::create_dir_all(root.join(".alinery")).expect("mkdir .alinery");
         // Overlay the product omp key with a silent sleep stand-in. Extra overlay keys are not
         // launchable; tests that need a different binary rewrite this same-key omp row.

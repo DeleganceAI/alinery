@@ -305,13 +305,19 @@ fn wait_for_daemon_gone_ok_when_socket_quiet() {
     let _ = fs::remove_dir_all(&repo);
 }
 
+// macOS `sockaddr_un.sun_path` is 104 bytes. `temp_dir()` in a nested runner is
+// already long enough that these control sockets do not fit, so they stay in `/tmp`.
+fn control_sock(label: &str, n: u128) -> PathBuf {
+    PathBuf::from(format!("/tmp/alinery-{label}-{n}.sock"))
+}
+
 // T2.1: pins the one behavior change with no branch of its own but a concrete,
 // checkable postcondition — every `send()` must set both timeouts before `write_all`.
 #[test]
 fn daemon_client_send_sets_the_control_timeout() {
     use std::os::unix::net::UnixListener;
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let sock = std::env::temp_dir().join(format!("alinery-t21-{n}.sock"));
+    let sock = control_sock("t21", n);
     let listener = UnixListener::bind(&sock).unwrap();
     let accept_thread = std::thread::spawn(move || {
         // Accept once and just hold the stream open — the assertion is entirely client-side.
@@ -335,7 +341,7 @@ fn read_socket_line_distinguishes_timeout_from_closed() {
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
 
     // Sub-case 1: peer closes without writing anything.
-    let closed_sock = std::env::temp_dir().join(format!("alinery-t22-closed-{n}.sock"));
+    let closed_sock = control_sock("t22-closed", n);
     let listener = UnixListener::bind(&closed_sock).unwrap();
     let server = std::thread::spawn(move || {
         let (stream, _) = listener.accept().unwrap();
@@ -348,7 +354,7 @@ fn read_socket_line_distinguishes_timeout_from_closed() {
 
     // Sub-case 2: peer accepts and never writes, with a short read timeout — not the real
     // 100s constant.
-    let hang_sock = std::env::temp_dir().join(format!("alinery-t22-hang-{n}.sock"));
+    let hang_sock = control_sock("t22-hang", n);
     let listener = UnixListener::bind(&hang_sock).unwrap();
     let server = std::thread::spawn(move || {
         let (stream, _) = listener.accept().unwrap();
@@ -371,7 +377,7 @@ fn call_reports_daemon_not_responding_on_a_real_timeout() {
 
     // Peer accepts and never writes: call_with_timeout with a short timeout must report
     // "not responding", never "closed".
-    let hang_sock = std::env::temp_dir().join(format!("alinery-t23-hang-{n}.sock"));
+    let hang_sock = control_sock("t23-hang", n);
     let listener = UnixListener::bind(&hang_sock).unwrap();
     let server = std::thread::spawn(move || {
         let (stream, _) = listener.accept().unwrap();
@@ -389,7 +395,7 @@ fn call_reports_daemon_not_responding_on_a_real_timeout() {
     let _ = fs::remove_file(&hang_sock);
 
     // Companion case: peer closes instead of hanging — message contains "daemon closed".
-    let closed_sock = std::env::temp_dir().join(format!("alinery-t23-closed-{n}.sock"));
+    let closed_sock = control_sock("t23-closed", n);
     let listener = UnixListener::bind(&closed_sock).unwrap();
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();

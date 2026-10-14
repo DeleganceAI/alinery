@@ -60,7 +60,8 @@ if [ ! -x "$ALINERYD" ]; then
   exit 0
 fi
 
-TMPR="$(mktemp -d "${TMPDIR:-/tmp}/saga-preflight-live.XXXXXX")"
+# /tmp, not $TMPDIR: alineryd's socket has to fit in macOS's 104-byte sun_path.
+TMPR="$(mktemp -d /tmp/saga-preflight-live.XXXXXX)"
 DAEMON_PID=""
 cleanup() {
   # Only ever the daemon this script spawned, and only if it outlived the test.
