@@ -6,7 +6,7 @@ import { stubScrollSize } from "../test/scroll";
 import type { ChatThread, SessionMeta } from "../types";
 import { ChatView } from "./ChatView";
 import { ChatSessionProvider } from "./chatThreadSession";
-import { QUICK_CHAT_HEIGHT, QUICK_CHAT_MARGIN, QUICK_CHAT_WIDTH, QuickChat } from "./QuickChat";
+import { QUICK_CHAT_HEIGHT, QUICK_CHAT_MARGIN, QUICK_CHAT_MIN_HEIGHT, QUICK_CHAT_MIN_WIDTH, QUICK_CHAT_WIDTH, QuickChat } from "./QuickChat";
 
 vi.mock("../confirm", () => ({
   confirmDanger: vi.fn(async () => true),
@@ -159,6 +159,7 @@ describe("QuickChat", () => {
     expect(pane.style.top).toBe(`${home.y}px`);
     expect(screen.getByText("Ava")).toBeTruthy();
     expect(screen.getByText("No pinned chats")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Reset to default" })).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
@@ -186,15 +187,53 @@ describe("QuickChat", () => {
     expect(again.style.left).toBe("0px");
     expect(again.style.top).toBe("0px");
 
-    fireEvent.click(screen.getByRole("button", { name: "Move to bottom right" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset to default" }));
     expect(again.style.left).toBe(`${home.x}px`);
     expect(again.style.top).toBe(`${home.y}px`);
+    expect(again.style.width).toBe(`${QUICK_CHAT_WIDTH}px`);
+    expect(again.style.height).toBe(`${QUICK_CHAT_HEIGHT}px`);
+    expect(screen.queryByRole("button", { name: "Reset to default" })).toBeNull();
     expect(localStorage.getItem("alinery.quickChat.position")).toBeNull();
+    expect(localStorage.getItem("alinery.quickChat.size")).toBeNull();
 
     setViewport(1100, 720);
     const next = corner(1100, 720);
     expect(again.style.left).toBe(`${next.x}px`);
     expect(again.style.top).toBe(`${next.y}px`);
+  });
+
+  it("resizes from the corners, remembers the size, and the default button resets both", async () => {
+    const view = render(windowOf());
+    const pane = await screen.findByTestId("quick-chat");
+    const home = corner();
+    drag(screen.getByLabelText("Resize from top left"), { x: 400, y: 400 }, { x: 320, y: 360 });
+    expect(pane.style.width).toBe(`${QUICK_CHAT_WIDTH + 80}px`);
+    expect(pane.style.height).toBe(`${QUICK_CHAT_HEIGHT + 40}px`);
+    expect(pane.style.left).toBe(`${home.x - 80}px`);
+    expect(pane.style.top).toBe(`${home.y - 40}px`);
+    expect(screen.getByRole("button", { name: "Reset to default" })).toBeTruthy();
+
+    view.unmount();
+    render(windowOf());
+    const again = await screen.findByTestId("quick-chat");
+    expect(again.style.width).toBe(`${QUICK_CHAT_WIDTH + 80}px`);
+    expect(again.style.height).toBe(`${QUICK_CHAT_HEIGHT + 40}px`);
+    expect(again.style.left).toBe(`${home.x - 80}px`);
+
+    drag(screen.getByLabelText("Resize from bottom right"), { x: 900, y: 700 }, { x: 400, y: 200 });
+    expect(again.style.width).toBe(`${QUICK_CHAT_MIN_WIDTH}px`);
+    expect(again.style.height).toBe(`${QUICK_CHAT_MIN_HEIGHT}px`);
+    expect(again.style.left).toBe(`${home.x - 80}px`);
+    expect(again.style.top).toBe(`${home.y - 40}px`);
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset to default" }));
+    expect(again.style.width).toBe(`${QUICK_CHAT_WIDTH}px`);
+    expect(again.style.height).toBe(`${QUICK_CHAT_HEIGHT}px`);
+    expect(again.style.left).toBe(`${home.x}px`);
+    expect(again.style.top).toBe(`${home.y}px`);
+    expect(screen.queryByRole("button", { name: "Reset to default" })).toBeNull();
+    expect(localStorage.getItem("alinery.quickChat.size")).toBeNull();
+    expect(localStorage.getItem("alinery.quickChat.position")).toBeNull();
   });
 
   it("remembers the selected tab and opens it at the bottom", async () => {

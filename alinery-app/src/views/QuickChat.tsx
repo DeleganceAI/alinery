@@ -12,35 +12,102 @@ import { repoLabel } from "./ChatView";
 import { threadKey, threadLabel, useChatRegistry, useChatThread } from "./chatThreadSession";
 
 /**
- * 350 by 600. Drag the title bar to move it; the place and the selected tab are remembered
- * across launches. Reopening lands at the bottom of that tab. Resize is still a follow-up.
+ * 350 by 600 until dragged or resized. The place, the size, and the selected tab are remembered
+ * across launches. Reopening lands at the bottom of that tab.
  */
 export const QUICK_CHAT_WIDTH = 350;
 export const QUICK_CHAT_HEIGHT = 600;
+export const QUICK_CHAT_MIN_WIDTH = 280;
+export const QUICK_CHAT_MIN_HEIGHT = 360;
 export const QUICK_CHAT_MARGIN = 16;
 
 const POSITION_KEY = "alinery.quickChat.position";
+const SIZE_KEY = "alinery.quickChat.size";
 const TAB_KEY = "alinery.quickChat.tab";
 
+const CORNERS = ["nw", "ne", "sw", "se"] as const;
+type Corner = (typeof CORNERS)[number];
+const RESIZE_LABEL: Record<Corner, string> = {
+  nw: "Resize from top left",
+  ne: "Resize from top right",
+  sw: "Resize from bottom left",
+  se: "Resize from bottom right",
+};
+
 type Point = { x: number; y: number };
+type Size = { width: number; height: number };
+type Box = Point & Size;
 type Viewport = { width: number; height: number };
+type Gesture = "move" | Corner;
 
 function viewport(): Viewport {
   return { width: window.innerWidth, height: window.innerHeight };
 }
 
-function clampPosition(point: Point, size: Viewport): Point {
-  const maxX = Math.max(0, size.width - QUICK_CHAT_WIDTH);
-  const maxY = Math.max(0, size.height - QUICK_CHAT_HEIGHT);
+function minSize(frame: Viewport): Size {
   return {
-    x: Math.min(Math.max(0, point.x), maxX),
-    y: Math.min(Math.max(0, point.y), maxY),
+    width: Math.min(QUICK_CHAT_MIN_WIDTH, Math.max(0, frame.width)),
+    height: Math.min(QUICK_CHAT_MIN_HEIGHT, Math.max(0, frame.height)),
   };
 }
 
-/** Bottom-right, inset by the margin. A viewport smaller than the window pins to the origin. */
-function defaultPosition(size: Viewport): Point {
-  return clampPosition({ x: size.width - QUICK_CHAT_WIDTH - QUICK_CHAT_MARGIN, y: size.height - QUICK_CHAT_HEIGHT - QUICK_CHAT_MARGIN }, size);
+function clampBox(box: Box, frame: Viewport): Box {
+  const min = minSize(frame);
+  const width = Math.round(Math.min(Math.max(box.width, min.width), Math.max(min.width, frame.width)));
+  const height = Math.round(Math.min(Math.max(box.height, min.height), Math.max(min.height, frame.height)));
+  const maxX = Math.max(0, frame.width - width);
+  const maxY = Math.max(0, frame.height - height);
+  return {
+    width,
+    height,
+    x: Math.round(Math.min(Math.max(box.x, 0), maxX)),
+    y: Math.round(Math.min(Math.max(box.y, 0), maxY)),
+  };
+}
+
+/** Bottom-right, inset by the margin, at the default size. A viewport smaller than the window pins to the origin. */
+function defaultBox(frame: Viewport): Box {
+  return clampBox(
+    {
+      x: frame.width - QUICK_CHAT_WIDTH - QUICK_CHAT_MARGIN,
+      y: frame.height - QUICK_CHAT_HEIGHT - QUICK_CHAT_MARGIN,
+      width: QUICK_CHAT_WIDTH,
+      height: QUICK_CHAT_HEIGHT,
+    },
+    frame,
+  );
+}
+
+function placedBox(point: Point | null, size: Size | null, frame: Viewport): Box {
+  const width = size?.width ?? QUICK_CHAT_WIDTH;
+  const height = size?.height ?? QUICK_CHAT_HEIGHT;
+  return clampBox(
+    {
+      x: point?.x ?? frame.width - width - QUICK_CHAT_MARGIN,
+      y: point?.y ?? frame.height - height - QUICK_CHAT_MARGIN,
+      width,
+      height,
+    },
+    frame,
+  );
+}
+
+function sameBox(a: Box, b: Box): boolean {
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
+
+/** The edge opposite the dragged corner stays put, and the window does not cross the screen. */
+function resizeFromCorner(start: Box, dx: number, dy: number, corner: Corner, frame: Viewport): Box {
+  const right = start.x + start.width;
+  const bottom = start.y + start.height;
+  const growE = corner === "ne" || corner === "se";
+  const growS = corner === "sw" || corner === "se";
+  const min = minSize(frame);
+  const maxW = Math.max(min.width, growE ? frame.width - start.x : right);
+  const maxH = Math.max(min.height, growS ? frame.height - start.y : bottom);
+  const width = Math.min(Math.max(start.width + (growE ? dx : -dx), min.width), maxW);
+  const height = Math.min(Math.max(start.height + (growS ? dy : -dy), min.height), maxH);
+  return clampBox({ x: growE ? start.x : right - width, y: growS ? start.y : bottom - height, width, height }, frame);
 }
 
 function readStoredPosition(): Point | null {
@@ -71,6 +138,34 @@ function clearStoredPosition() {
   }
 }
 
+function readStoredSize(): Size | null {
+  try {
+    const raw = localStorage.getItem(SIZE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { width?: unknown; height?: unknown };
+    if (typeof parsed.width !== "number" || typeof parsed.height !== "number" || !Number.isFinite(parsed.width) || !Number.isFinite(parsed.height)) return null;
+    return { width: parsed.width, height: parsed.height };
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredSize(size: Size) {
+  try {
+    localStorage.setItem(SIZE_KEY, JSON.stringify(size));
+  } catch {
+    // A storage failure must not stop the window from resizing.
+  }
+}
+
+function clearStoredSize() {
+  try {
+    localStorage.removeItem(SIZE_KEY);
+  } catch {
+    // The in-memory size still returns to the default.
+  }
+}
+
 function readStoredTab(): string | null {
   try {
     return localStorage.getItem(TAB_KEY) || null;
@@ -90,10 +185,12 @@ function writeStoredTab(key: string) {
 export function QuickChat({ open, visibility, onOpenInChat, onHide }: { open: boolean; visibility: ChatPrefs; onOpenInChat: () => void; onHide: () => void }) {
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [tab, setTab] = useState<string | null>(readStoredTab);
-  // null keeps the default corner, including when the viewport resizes. A drag stores a fixed point.
+  // null keeps the default corner for the current size, including when the viewport resizes.
   const [point, setPoint] = useState<Point | null>(readStoredPosition);
+  // null keeps 350 by 600.
+  const [size, setSize] = useState<Size | null>(readStoredSize);
   const [frame, setFrame] = useState(viewport);
-  const [dragging, setDragging] = useState(false);
+  const [gesture, setGesture] = useState<Gesture | null>(null);
   const rootRef = useRef<HTMLElement>(null);
   const pinToEnd = useRef(true);
   const frameRef = useRef(frame);
@@ -140,7 +237,8 @@ export function QuickChat({ open, visibility, onOpenInChat, onHide }: { open: bo
     },
   });
 
-  const placed = clampPosition(point ?? defaultPosition(frame), frame);
+  const box = placedBox(point, size, frame);
+  const atDefault = sameBox(box, defaultBox(frame));
   // The journal usually arrives a frame after the pane. Stay armed until there is something to land on,
   // then stop so a later message follows the auto-scroll setting instead of this reopen.
   useLayoutEffect(() => {
@@ -164,13 +262,13 @@ export function QuickChat({ open, visibility, onOpenInChat, onHide }: { open: bo
   }, []);
 
   useEffect(() => {
-    if (!dragging) return;
+    if (!gesture) return;
     const previous = document.body.style.cursor;
-    document.body.style.cursor = "grabbing";
+    document.body.style.cursor = gesture === "move" ? "grabbing" : gesture === "nw" || gesture === "se" ? "nwse-resize" : "nesw-resize";
     return () => {
       document.body.style.cursor = previous;
     };
-  }, [dragging]);
+  }, [gesture]);
 
   if (!open) return null;
 
@@ -182,27 +280,70 @@ export function QuickChat({ open, visibility, onOpenInChat, onHide }: { open: bo
     writeStoredTab(key);
   };
 
-  const resetPlace = () => {
+  const resetToDefault = () => {
     setPoint(null);
+    setSize(null);
     clearStoredPosition();
+    clearStoredSize();
+  };
+
+  // A gesture keeps an explicit box while the pointer is down. Releasing on the default corner and size
+  // drops the stored override so the window follows the viewport again.
+  const remember = (next: Box, persist: boolean) => {
+    const frameNow = frameRef.current;
+    const clamped = clampBox(next, frameNow);
+    if (!persist) {
+      setPoint({ x: clamped.x, y: clamped.y });
+      setSize({ width: clamped.width, height: clamped.height });
+      return;
+    }
+    const nextSize = clamped.width === QUICK_CHAT_WIDTH && clamped.height === QUICK_CHAT_HEIGHT ? null : { width: clamped.width, height: clamped.height };
+    const anchored = placedBox(null, nextSize, frameNow);
+    const nextPoint = clamped.x === anchored.x && clamped.y === anchored.y ? null : { x: clamped.x, y: clamped.y };
+    setPoint(nextPoint);
+    setSize(nextSize);
+    if (nextPoint) writeStoredPosition(nextPoint);
+    else clearStoredPosition();
+    if (nextSize) writeStoredSize(nextSize);
+    else clearStoredSize();
   };
 
   const onBarPointerDown = (event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
-    if (event.target instanceof Element && event.target.closest("button")) return;
+    if (event.target instanceof Element && event.target.closest("button, .quick-chat-resize")) return;
     event.preventDefault();
-    const origin = placed;
+    const origin = box;
     const startX = event.clientX;
     const startY = event.clientY;
-    const moved = (ev: PointerEvent) => clampPosition({ x: origin.x + ev.clientX - startX, y: origin.y + ev.clientY - startY }, frameRef.current);
-    setDragging(true);
+    const moved = (ev: PointerEvent) =>
+      clampBox({ x: origin.x + ev.clientX - startX, y: origin.y + ev.clientY - startY, width: origin.width, height: origin.height }, frameRef.current);
+    setGesture("move");
     startDrag(event, {
-      onMove: (ev) => setPoint(moved(ev)),
-      onComplete: (ev) => {
-        setDragging(false);
+      onMove: (ev) => {
         const next = moved(ev);
-        setPoint(next);
-        writeStoredPosition(next);
+        setPoint({ x: next.x, y: next.y });
+      },
+      onComplete: (ev) => {
+        setGesture(null);
+        remember(moved(ev), true);
+      },
+    });
+  };
+
+  const onResizePointerDown = (corner: Corner) => (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const origin = box;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const resized = (ev: PointerEvent) => resizeFromCorner(origin, ev.clientX - startX, ev.clientY - startY, corner, frameRef.current);
+    setGesture(corner);
+    startDrag(event, {
+      onMove: (ev) => remember(resized(ev), false),
+      onComplete: (ev) => {
+        setGesture(null);
+        remember(resized(ev), true);
       },
     });
   };
@@ -217,23 +358,28 @@ export function QuickChat({ open, visibility, onOpenInChat, onHide }: { open: bo
   return (
     <section
       ref={rootRef}
-      className={dragging ? "quick-chat is-dragging" : "quick-chat"}
+      className={gesture === "move" ? "quick-chat is-moving" : "quick-chat"}
       data-testid="quick-chat"
       aria-label="Ava"
       onScrollCapture={releasePinIfScrolledAway}
-      style={{ width: QUICK_CHAT_WIDTH, height: QUICK_CHAT_HEIGHT, left: placed.x, top: placed.y }}
+      style={{ width: box.width, height: box.height, left: box.x, top: box.y }}
     >
       <header className="quick-chat-bar" onPointerDown={onBarPointerDown}>
         <span className="quick-chat-title">Ava</span>
         <div className="quick-chat-actions">
-          <button type="button" className="chat-icon-btn" aria-label="Move to bottom right" title="Bottom right" onClick={resetPlace}>
-            <ArrowDownRight size={16} aria-hidden="true" />
-          </button>
+          {atDefault ? null : (
+            <button type="button" className="chat-icon-btn" aria-label="Reset to default" title="Default" onClick={resetToDefault}>
+              <ArrowDownRight size={16} aria-hidden="true" />
+            </button>
+          )}
           <button type="button" className="chat-icon-btn" aria-label="Hide pinned chats" title="Hide" onClick={onHide}>
             <X size={16} aria-hidden="true" />
           </button>
         </div>
       </header>
+      {CORNERS.map((corner) => (
+        <button key={corner} type="button" className={`quick-chat-resize ${corner}`} aria-label={RESIZE_LABEL[corner]} onPointerDown={onResizePointerDown(corner)} />
+      ))}
       {pinned.length === 0 ? (
         <div className="quick-chat-empty">
           <MessageSquare size={22} aria-hidden="true" />

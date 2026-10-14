@@ -4388,7 +4388,7 @@ dialog.modal::backdrop {
   box-shadow: var(--shadow-menu);
 }
 
-/* Pinned-chat window. left/top are inline; resize is still a follow-up. */
+/* Pinned-chat window. left/top/width/height are inline. */
 .quick-chat {
   position: fixed;
   z-index: 80;
@@ -4411,15 +4411,78 @@ dialog.modal::backdrop {
   justify-content: space-between;
   gap: 8px;
   min-height: 36px;
-  padding: 4px 8px 4px 12px;
+  /* Clear the corner grips so they don't cover the title or the buttons. */
+  padding: 4px 18px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   cursor: grab;
   user-select: none;
   touch-action: none;
 }
-.quick-chat.is-dragging .quick-chat-bar {
+.quick-chat.is-moving .quick-chat-bar {
   cursor: grabbing;
+}
+.quick-chat-resize {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  touch-action: none;
+}
+.quick-chat-resize.nw {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+.quick-chat-resize.ne {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+.quick-chat-resize.sw {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+.quick-chat-resize.se {
+  bottom: 0;
+  right: 0;
+  cursor: nwse-resize;
+}
+.quick-chat-resize::after {
+  content: "";
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--text-faint);
+}
+.quick-chat-resize.nw::after {
+  top: 3px;
+  left: 3px;
+  border-right: 0;
+  border-bottom: 0;
+}
+.quick-chat-resize.ne::after {
+  top: 3px;
+  right: 3px;
+  border-left: 0;
+  border-bottom: 0;
+}
+.quick-chat-resize.sw::after {
+  bottom: 3px;
+  left: 3px;
+  border-right: 0;
+  border-top: 0;
+}
+.quick-chat-resize.se::after {
+  right: 3px;
+  bottom: 3px;
+  border-left: 0;
+  border-top: 0;
 }
 .quick-chat-title {
   color: var(--text-strong);
@@ -4505,7 +4568,7 @@ dialog.modal::backdrop {
   flex: 0 0 auto;
   display: flex;
   justify-content: flex-end;
-  padding: 0 8px 8px;
+  padding: 0 18px 18px;
 }
 .quick-chat-empty {
   flex: 1 1 auto;
