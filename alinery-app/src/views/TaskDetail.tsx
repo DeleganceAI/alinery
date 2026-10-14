@@ -1151,7 +1151,7 @@ export function TaskDetail({
             </button>
             <button
               type="button"
-              className={`btn small auto-approve${autoApproveAll ? " on" : ""}`}
+              className={`btn ghost small auto-approve${autoApproveAll ? " on" : ""}`}
               aria-pressed={autoApproveAll}
               disabled={!task || task.archived || task.draft || (task.engine_version ?? 2) < 2 || busy === "auto-approve"}
               title={

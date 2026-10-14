@@ -2999,10 +2999,13 @@ textarea.field-input {
 .btn.auto-approve {
   color: var(--text-faint);
   border-color: var(--border);
+  background: transparent;
 }
-.btn.auto-approve:hover:not(:disabled) {
+.btn.auto-approve:hover:not(:disabled),
+.btn.auto-approve:active:not(:disabled) {
   color: var(--text-muted);
   border-color: var(--border-strong);
+  background: var(--surface-subtle);
 }
 .btn.auto-approve.on {
   border-color: var(--success);

@@ -1621,6 +1621,7 @@ describe("Task Detail auto approval", () => {
     await renderDetail();
     const toggle = screen.getByRole("button", { name: "Auto Approval All" });
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle.classList.contains("ghost")).toBe(true);
     expect(toggle.classList.contains("auto-approve")).toBe(true);
     expect(toggle.classList.contains("on")).toBe(false);
     expect(screen.queryByText("Automatic")).toBeNull();
