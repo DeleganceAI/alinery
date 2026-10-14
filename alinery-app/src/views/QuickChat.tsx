@@ -182,6 +182,16 @@ function writeStoredTab(key: string) {
   }
 }
 
+/** The floater's composer, when the window is open and has a field. The caret goes to the end of the draft. */
+export function focusQuickChatComposer(): boolean {
+  const field = document.querySelector(".quick-chat .chat-composer-field");
+  if (!(field instanceof HTMLTextAreaElement) || field.disabled) return false;
+  field.focus();
+  const end = field.value.length;
+  field.setSelectionRange(end, end);
+  return document.activeElement === field;
+}
+
 export function QuickChat({ open, visibility, onOpenInChat, onHide }: { open: boolean; visibility: ChatPrefs; onOpenInChat: () => void; onHide: () => void }) {
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [tab, setTab] = useState<string | null>(readStoredTab);

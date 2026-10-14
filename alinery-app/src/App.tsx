@@ -78,7 +78,7 @@ import { Kanban } from "./views/Kanban";
 import { NotificationsList } from "./views/NotificationsList";
 import { Playbooks } from "./views/Playbooks";
 import { ProviderSetupDialog } from "./views/ProviderSetupDialog";
-import { QuickChat } from "./views/QuickChat";
+import { focusQuickChatComposer, QuickChat } from "./views/QuickChat";
 import { SessionsList } from "./views/SessionsList";
 import { SECTIONS as SETTINGS_SECTIONS, Settings } from "./views/Settings";
 import { TaskList } from "./views/TaskList";
@@ -1143,6 +1143,7 @@ export default function App() {
     toggleQuickChat: () => {
       if (showChat) setQuickChatOpen((open) => !open);
     },
+    focusQuickChat: () => showChat && quickChatOpen && focusQuickChatComposer(),
   });
 
   // Actions call the same callbacks as their direct shortcuts.
@@ -1186,6 +1187,7 @@ export default function App() {
           }),
           action("terminal", pi(Terminal), "Toggle terminal drawer", "⌘`", () => void toggleTerminalDrawer()),
           ...(showChat ? [action("quick-chat", pi(MessageSquare), "Toggle pinned chats", "⌘/", () => setQuickChatOpen((open) => !open))] : []),
+          ...(showChat && quickChatOpen ? [action("quick-chat-focus", pi(MessageSquare), "Focus pinned chat", "⌘>", () => focusQuickChatComposer())] : []),
           action("kill-terminal", pi(X), "Kill terminal drawer", "⌘⇧`", () => void killDrawer()),
         ]
       : []),

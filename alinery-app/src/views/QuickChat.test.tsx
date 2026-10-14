@@ -6,7 +6,7 @@ import { stubScrollSize } from "../test/scroll";
 import type { ChatThread, SessionMeta } from "../types";
 import { ChatView } from "./ChatView";
 import { ChatSessionProvider } from "./chatThreadSession";
-import { QUICK_CHAT_HEIGHT, QUICK_CHAT_MARGIN, QUICK_CHAT_MIN_HEIGHT, QUICK_CHAT_MIN_WIDTH, QUICK_CHAT_WIDTH, QuickChat } from "./QuickChat";
+import { focusQuickChatComposer, QUICK_CHAT_HEIGHT, QUICK_CHAT_MARGIN, QUICK_CHAT_MIN_HEIGHT, QUICK_CHAT_MIN_WIDTH, QUICK_CHAT_WIDTH, QuickChat } from "./QuickChat";
 
 vi.mock("../confirm", () => ({
   confirmDanger: vi.fn(async () => true),
@@ -162,6 +162,7 @@ describe("QuickChat", () => {
     expect(screen.queryByRole("button", { name: "Reset to default" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Open in Chat" })).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
+    expect(focusQuickChatComposer()).toBe(false);
   });
 
   it("drags from the title bar, remembers the spot, and the corner button puts it back", async () => {
@@ -273,7 +274,16 @@ describe("QuickChat", () => {
     expect(screen.queryByRole("tab", { name: "Plain" })).toBeNull();
     expect(screen.getByRole("tab", { name: "Alpha" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByRole("button", { name: "Open in Chat" })).toBeTruthy();
-    expect(screen.getByLabelText("Message or /command")).toBeTruthy();
+    const field = screen.getByLabelText("Message or /command");
+    fireEvent.change(field, { target: { value: "hello" } });
+    const other = document.createElement("input");
+    document.body.append(other);
+    other.focus();
+    expect(focusQuickChatComposer()).toBe(true);
+    expect(document.activeElement).toBe(field);
+    expect((field as HTMLTextAreaElement).selectionStart).toBe("hello".length);
+    expect((field as HTMLTextAreaElement).selectionEnd).toBe("hello".length);
+    other.remove();
 
     fireEvent.click(screen.getByRole("tab", { name: "Beta" }));
     expect(screen.getByRole("tab", { name: "Beta" }).getAttribute("aria-selected")).toBe("true");
