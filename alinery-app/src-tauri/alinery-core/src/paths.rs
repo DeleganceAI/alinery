@@ -204,6 +204,12 @@ pub fn session_omp_dir(repo: &Path, task_slug: &str, id: &str) -> PathBuf {
     dir.join(format!("{id}.omp"))
 }
 
+// Files a taskless chat thread attached. Sibling of `<id>.omp`, not inside the worktree,
+// so removing that worktree does not delete them and they are not untracked git files.
+pub fn chat_attachments_dir(repo: &Path, id: &str) -> PathBuf {
+    root_sessions_dir(repo).join(format!("{id}.attachments"))
+}
+
 // The daemon appends raw session output to this single-file sidecar.
 pub fn session_scrollback_path(repo: &Path, task_slug: &str, id: &str) -> PathBuf {
     let dir = if task_slug.is_empty() { root_sessions_dir(repo) } else { sessions_dir(repo, task_slug) };
@@ -491,6 +497,13 @@ mod tests {
         assert_eq!(session_omp_dir(repo, "my-task", "s1"), sessions_dir(repo, "my-task").join("s1.omp"));
         // Sibling of meta, not nested under it, not a worktree path, not ~/.omp.
         assert_eq!(session_omp_dir(repo, "my-task", "s1").parent(), session_meta_path(repo, "my-task", "s1").parent());
+    }
+
+    #[test]
+    fn chat_attachments_dir_sits_beside_the_session() {
+        let repo = Path::new("/repo");
+        assert_eq!(chat_attachments_dir(repo, "s1"), root_sessions_dir(repo).join("s1.attachments"));
+        assert_eq!(chat_attachments_dir(repo, "s1").parent(), session_omp_dir(repo, "", "s1").parent());
     }
 
     #[test]

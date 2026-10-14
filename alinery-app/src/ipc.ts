@@ -424,6 +424,11 @@ export const copyChatAttachments = (taskSlug: string, paths: string[]) => invoke
 export const writeChatAttachmentBytes = (taskSlug: string, fileName: string, bytes: number[] | Uint8Array) =>
   invoke<string>("write_chat_attachment_bytes", { taskSlug, fileName, bytes });
 export const readChatImage = (taskSlug: string, name: string) => invoke<ChatImage>("read_chat_image", { taskSlug, name });
+export const copyChatThreadAttachments = (repoPath: string, id: string, paths: string[]) =>
+  invoke<CopyChatAttachmentsResult>("copy_chat_thread_attachments", { repoPath, id, paths });
+export const writeChatThreadAttachmentBytes = (repoPath: string, id: string, fileName: string, bytes: number[] | Uint8Array) =>
+  invoke<string>("write_chat_thread_attachment_bytes", { repoPath, id, fileName, bytes });
+export const readChatThreadImage = (repoPath: string, id: string, name: string) => invoke<ChatImage>("read_chat_thread_image", { repoPath, id, name });
 export const readAttachmentImage = (taskSlug: string, name: string, nodeId?: string) => invoke<ArrayBuffer>("read_attachment_image", { taskSlug, name, nodeId });
 
 // ── playbook.rs ───────────────────────────────────────────────────────
