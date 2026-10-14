@@ -4462,7 +4462,9 @@ dialog.modal::backdrop {
   opacity: 0;
   transition: opacity var(--dur-fast) ease;
 }
-.quick-chat:hover .quick-chat-resize::after,
+/* A corner mark shows only under that grip. A move or resize shows every corner, because the pointer can leave the 14px target mid-gesture. */
+.quick-chat-resize:hover::after,
+.quick-chat.is-moving .quick-chat-resize::after,
 .quick-chat.is-resizing .quick-chat-resize::after,
 .quick-chat-resize:focus-visible::after {
   opacity: 1;
