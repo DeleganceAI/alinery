@@ -54,7 +54,7 @@ impl Trace {
             key: definition.key.clone(),
         };
         let enabled = definition.step.iter().filter(|s| s.auto_advance_default).map(|s| s.key.clone()).collect();
-        let state = new_execution_state(reference, source, "trace-lane".into(), 10, enabled, LaunchChoices::default()).unwrap();
+        let state = new_execution_state(reference, source, "trace-lane".into(), 10, enabled, LaunchChoices::default(), BTreeMap::new()).unwrap();
         let mut trace = Self {
             repo,
             roots,
@@ -1114,7 +1114,11 @@ fn bundled_spec_loop_stays_inside_slices() {
     assert_eq!(trace.state.executions[&validate].permission, CompletionPermission::Automatic);
     trace.start(&validate);
     // Binding only. The prompt, not the engine, prefers a replacement body over the tasks.md entry.
-    trace.write(&validate, "next-slice.md", "slice id: ledger\nsupersedes: slice-ledger.md\nattempt count: 1\nid: ledger\nreplacement body\n");
+    trace.write(
+        &validate,
+        "next-slice.md",
+        "slice id: ledger\nsupersedes: slice-ledger.md\nattempt count: 1\nid: ledger\nreplacement body\n",
+    );
     trace.accepted(&validate);
     trace.blocked("next-slice");
     trace.exit(&validate);

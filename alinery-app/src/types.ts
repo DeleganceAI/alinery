@@ -126,6 +126,7 @@ export type Task = {
   max_live_sessions?: number;
   launch_defaults?: LaunchChoices;
   auto_advance: string[];
+  step_models?: Record<string, string>;
   /** M6: true while still being drafted on CreateTaskPage. */
   draft: boolean;
   draft_base_ref?: string | null;
@@ -797,6 +798,7 @@ export type CreateTaskRequest = {
   base_ref?: string | null;
   launch_defaults?: LaunchChoices;
   auto_advance_steps?: string[] | null;
+  step_models?: Record<string, string>;
   max_live_sessions?: number | null;
   start: boolean;
 };

@@ -82,6 +82,52 @@ const slugifyTaskName = (value: string) => {
   return slug || (value.trim() ? "task" : "");
 };
 
+export type StepModelSource = "playbook-step" | "playbook-default" | "task-default" | "product-default" | "override";
+
+const STEP_MODEL_CAPTION: Record<StepModelSource, string> = {
+  "playbook-step": "Playbook step",
+  "playbook-default": "Playbook default",
+  "task-default": "Task default",
+  "product-default": "Product default",
+  override: "Override",
+};
+
+export function stepModelDisplay(args: { stepModel: string; playbookDefaultModel: string; taskModel: string; productModel: string; override: string | undefined }): {
+  value: string;
+  source: StepModelSource | null;
+} {
+  const inherited = [
+    ["playbook-step", args.stepModel],
+    ["playbook-default", args.playbookDefaultModel],
+    ["task-default", args.taskModel],
+    ["product-default", args.productModel],
+  ] as const;
+  const hit = inherited.find(([, value]) => value.trim() !== "");
+  const inheritedValue = hit ? hit[1].trim() : "";
+  const override = args.override?.trim() ?? "";
+  if (override && override !== inheritedValue) return { value: override, source: "override" };
+  if (!hit) return { value: "", source: null };
+  return { value: inheritedValue, source: hit[0] };
+}
+
+function persistedStepModels(source: ScopedPlaybook | null, stepModels: Record<string, string>, taskModel: string, productModel: string): Record<string, string> {
+  if (!source) return {};
+  const next: Record<string, string> = {};
+  for (const step of source.definition.step) {
+    const raw = stepModels[step.key];
+    if (raw === undefined) continue;
+    const inherited = stepModelDisplay({
+      stepModel: step.model,
+      playbookDefaultModel: source.definition.default_model,
+      taskModel,
+      productModel,
+      override: undefined,
+    }).value;
+    const trimmed = raw.trim();
+    if (trimmed && trimmed !== inherited) next[step.key] = trimmed;
+  }
+  return next;
+}
 export function CreateTaskPage({
   onCancel,
   onCreated,
@@ -111,7 +157,7 @@ export function CreateTaskPage({
   const [branchRevision, setBranchRevision] = useState(0);
   const branchRequest = useRef(0);
   const branchSnapshotRequest = useRef(-1);
-  const [pickModel, setPickModel] = useState(false);
+  const [picking, setPicking] = useState<null | "task" | string>(null);
   const [name, setName] = useState(initialDraft?.name ?? "");
   const [taskSlug, setTaskSlug] = useState(initialTaskSlug);
   const [slugEdited, setSlugEdited] = useState(!!initialDraft?.requested_slug && initialDraft.requested_slug !== slugifyTaskName(initialDraft.name));
@@ -152,6 +198,8 @@ export function CreateTaskPage({
   const [catalogRevision, setCatalogRevision] = useState(0);
   const resetAutoAdvance = useRef(!initialDraft);
   const [autoAdvance, setAutoAdvance] = useState<string[]>(initialDraft?.auto_advance ?? []);
+  const [stepModels, setStepModels] = useState<Record<string, string>>(initialDraft?.step_models ?? {});
+  const [productModel, setProductModel] = useState("");
   const harness = "omp";
   const [model, setModel] = useState("");
   const [defaultModel, setDefaultModel] = useState("");
@@ -322,6 +370,7 @@ export function CreateTaskPage({
         );
         setPlaybookQuery("");
         const resolvedDefaultModel = ompDefaultModel(c.defaults) || (account?.signedIn ? "alinery/DeepSeek-V4.1-Flash" : "");
+        setProductModel(ompDefaultModel(c.defaults));
         setDefaultModel(resolvedDefaultModel);
         if (catalog.diagnostics.length) {
           setErr({ msg: "Some playbook sources could not be loaded.", detail: catalog.diagnostics.map((diagnostic) => diagnostic.message).join("\n") });
@@ -394,6 +443,37 @@ export function CreateTaskPage({
     };
   }, [repoPath, playbook, catalogLoading, playbookNeedsReselection, catalogRevision]);
 
+  useEffect(() => {
+    if (!selectedSource) return;
+    setStepModels((current) => {
+      const next = persistedStepModels(selectedSource, current, model, productModel);
+      const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(next);
+      if (currentKeys.length === nextKeys.length && nextKeys.every((key) => current[key] === next[key])) return current;
+      return next;
+    });
+  }, [selectedSource, model, productModel]);
+
+  const onStepModelChange = (stepKey: string, value: string) => {
+    dirtyRef.current = true;
+    const step = selectedSource?.definition.step.find((item) => item.key === stepKey);
+    const inherited = step
+      ? stepModelDisplay({
+          stepModel: step.model,
+          playbookDefaultModel: selectedSource?.definition.default_model ?? "",
+          taskModel: model,
+          productModel,
+          override: undefined,
+        }).value
+      : "";
+    const trimmed = value.trim();
+    setStepModels((current) => {
+      const next = { ...current };
+      if (!trimmed || trimmed === inherited) delete next[stepKey];
+      else next[stepKey] = trimmed;
+      return next;
+    });
+  };
   // Debounced draft write — only after user edit and when setting is on.
   useEffect(() => {
     if (!draftAutosave || !dirtyRef.current || creatingRef.current || taskMutationGuard.currentKind() || !validCap) return;
@@ -418,6 +498,7 @@ export function CreateTaskPage({
             harness,
             model,
             autoAdvance,
+            stepModels: persistedStepModels(selectedSource, stepModels, model, productModel),
             maxLiveSessions: cap,
             branchName: branchName.trim(),
             worktreeName: worktreeName.trim(),
@@ -455,6 +536,9 @@ export function CreateTaskPage({
     draftAutosave,
     maxLiveSessions,
     mutationKind,
+    stepModels,
+    productModel,
+    selectedSource,
   ]);
 
   // onDragDropEvent carries `paths` on "enter" and "drop" only, and "enter" fires first —
@@ -557,6 +641,7 @@ export function CreateTaskPage({
             playbook: { reference: selectedSource.source.reference, source: selectedSource.source_text },
             launch_defaults: { harness, model },
             auto_advance_steps: autoAdvance,
+            step_models: persistedStepModels(selectedSource, stepModels, model, productModel),
             max_live_sessions: cap,
             start,
             branch_name: branchName.trim() || undefined,
@@ -767,6 +852,7 @@ export function CreateTaskPage({
       setPlaybook(null);
       setSelectedSource(null);
       setAutoAdvance([]);
+      setStepModels({});
       setModel("");
       setPlaybookNeedsReselection(false);
       setModelNeedsReselection(false);
@@ -1112,50 +1198,75 @@ export function CreateTaskPage({
               Local files are copied into the task. Attachment URLs are recorded, never fetched. Linear description images download on import. Drop files anywhere on this form.
             </div>
           </div>
-          {!!selectedSource?.definition.step.length && (
-            <div className="create-field">
-              <span>Automatic completion permission for future executions</span>
-              {selectedSource.definition.step.map((step) => (
-                <Checkbox
-                  key={step.key}
-                  checked={autoAdvance.includes(step.key)}
-                  onChange={(checked) => {
-                    dirtyRef.current = true;
-                    setAutoAdvance((cur) => (checked ? [...cur, step.key] : cur.filter((key) => key !== step.key)));
-                  }}
-                  label={step.title}
-                />
-              ))}
-            </div>
-          )}
           <label className="create-field">
-            <span>Model</span>
+            <span>Task Default Model</span>
             <ModelInput
               harness="omp"
               repoPath={repoPath}
+              ariaLabel="Task Default Model"
               value={model}
               onChange={(v) => {
                 dirtyRef.current = true;
                 setModel(v);
                 setModelNeedsReselection(false);
               }}
-              onOpenPicker={() => setPickModel(true)}
+              onOpenPicker={() => setPicking("task")}
             />
-            {pickModel && (
-              <ProviderSetupDialog
-                mode="manual"
-                initialTab="models"
-                unsignedOpensAccounts
-                onPick={(next) => {
+            {modelNeedsReselection && <InlineStatus tone="error">Select a model available in this repository.</InlineStatus>}
+          </label>
+          {!!selectedSource?.definition.step.length && (
+            <div className="create-field">
+              <span>Automatic completion permission for future executions</span>
+              {selectedSource.definition.step.map((step) => {
+                const display = stepModelDisplay({
+                  stepModel: step.model,
+                  playbookDefaultModel: selectedSource.definition.default_model,
+                  taskModel: model,
+                  productModel,
+                  override: stepModels[step.key],
+                });
+                return (
+                  <div key={step.key}>
+                    <Checkbox
+                      checked={autoAdvance.includes(step.key)}
+                      onChange={(checked) => {
+                        dirtyRef.current = true;
+                        setAutoAdvance((cur) => (checked ? [...cur, step.key] : cur.filter((key) => key !== step.key)));
+                      }}
+                      label={step.title}
+                    />
+                    <ModelInput
+                      harness="omp"
+                      repoPath={repoPath}
+                      prefillRemembered={false}
+                      ariaLabel={`${step.title} model`}
+                      value={display.value}
+                      onChange={(value) => onStepModelChange(step.key, value)}
+                      onOpenPicker={() => setPicking(step.key)}
+                    />
+                    {display.source && <span className="hint">{STEP_MODEL_CAPTION[display.source]}</span>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {picking && (
+            <ProviderSetupDialog
+              mode="manual"
+              initialTab="models"
+              unsignedOpensAccounts
+              onPick={(next) => {
+                if (picking === "task") {
                   dirtyRef.current = true;
                   setModel(next);
                   setModelNeedsReselection(false);
-                }}
-                onClose={() => setPickModel(false)}
-              />
-            )}
-            {modelNeedsReselection && <InlineStatus tone="error">Select a model available in this repository.</InlineStatus>}
-          </label>
+                } else {
+                  onStepModelChange(picking, next);
+                }
+              }}
+              onClose={() => setPicking(null)}
+            />
+          )}
           <div className="crow worktree-row">
             <span>Dedicated task worktree</span>
             <label className="create-field grow">

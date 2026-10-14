@@ -310,6 +310,7 @@ pub fn create_subtask(repo: &Path, lane: &str, app_config_identity: &str, input:
     }
     let base_ref = task_head(repo, &manager.parent, true, "parent")?;
     let inherited_definition = input.playbook.is_none();
+    let step_models = if inherited_definition { state.step_models.clone() } else { BTreeMap::new() };
     let request = CreateTaskRequest {
         name: input.name.clone(),
         draft_slug: None,
@@ -334,6 +335,7 @@ pub fn create_subtask(repo: &Path, lane: &str, app_config_identity: &str, input:
         launch_defaults: state.launch_defaults,
         auto_advance_steps: inherited_definition.then(|| state.enabled_steps.into_iter().collect()),
         max_live_sessions: Some(input.max_live_sessions.unwrap_or(state.max_live_sessions)),
+        step_models,
         start: input.start,
     };
     let provisioning = provision_task_with_reservation(
@@ -921,7 +923,16 @@ mod tests {
         write_task_unlocked(&repo, &parent).unwrap();
         let source = retained_source();
         fs::write(crate::execution::task_playbook_path(&repo, "a").unwrap(), source).unwrap();
-        let mut state = crate::execution::new_execution_state(parent.playbook_ref.clone().unwrap(), source, "lane".into(), 10, BTreeSet::new(), Default::default()).unwrap();
+        let mut state = crate::execution::new_execution_state(
+            parent.playbook_ref.clone().unwrap(),
+            source,
+            "lane".into(),
+            10,
+            BTreeSet::new(),
+            Default::default(),
+            BTreeMap::new(),
+        )
+        .unwrap();
         state.creation = "ready".into();
         state.owning_app_config_identity = "config".into();
         crate::execution::write_execution_state_unlocked(&repo, "a", &mut state).unwrap();
@@ -1304,6 +1315,41 @@ mod tests {
         write_task_unlocked(&repo, &unrelated).unwrap();
         archive_task_guarded(&repo, "u").unwrap();
         assert!(read_task(&repo, "u").unwrap().archived);
+        let _ = fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn step_model_inherited_definition_copies_parent_map() {
+        let (repo, _, _) = lifecycle_repo("step-model-inherit");
+        let mut state = crate::execution::read_execution_state(&repo, "a").unwrap();
+        state.step_models.insert("left".into(), "parent-override".into());
+        crate::execution::write_execution_state_unlocked(&repo, "a", &mut state).unwrap();
+        create_subtask(&repo, "lane", "config", create_input()).unwrap();
+        let child = crate::execution::read_execution_state(&repo, "b").unwrap();
+        assert_eq!(child.step_models.get("left").map(String::as_str), Some("parent-override"));
+        let _ = fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn step_model_child_playbook_does_not_copy_parent_map() {
+        let (repo, _, _) = lifecycle_repo("step-model-own-playbook");
+        let mut state = crate::execution::read_execution_state(&repo, "a").unwrap();
+        state.step_models.insert("left".into(), "parent-override".into());
+        crate::execution::write_execution_state_unlocked(&repo, "a", &mut state).unwrap();
+        let mut input = create_input();
+        input.slug = "own".into();
+        input.name = "Own Playbook".into();
+        input.playbook = Some(TaskPlaybookPackage {
+            reference: crate::playbook::PlaybookRef {
+                scope: crate::playbook::PlaybookScope::Repo,
+                key: "solo".into(),
+            },
+            source: "+++\nversion = 2\nkey = \"solo\"\ntitle = \"Solo\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"omp\"\n[[step]]\nkey = \"solo\"\ntitle = \"Solo\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\nmodel = \"\"\nharness = \"\"\ninputs = [{path=\"ticket.md\", mode=\"single\"}]\noutputs = [{path=\"solo.md\"}]\n+++\n<!-- alinery:step solo -->\nDo the assigned work.\n".into(),
+        });
+        let created = create_subtask(&repo, "lane", "config", input).unwrap();
+        assert_eq!(created.provisioning.creation, "ready", "{:?}", created.provisioning.errors);
+        let child = crate::execution::read_execution_state(&repo, "own").unwrap();
+        assert!(child.step_models.is_empty(), "{:?}", child.step_models);
         let _ = fs::remove_dir_all(repo);
     }
 }

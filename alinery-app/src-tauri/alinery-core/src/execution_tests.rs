@@ -24,6 +24,7 @@ impl Fixture {
             cap,
             enabled,
             LaunchChoices::default(),
+            BTreeMap::new(),
         )
         .unwrap();
         state.creation = "ready".into();
@@ -760,6 +761,7 @@ fn task_rejects_unsupported_graph_harness_before_provisioning() {
         1,
         BTreeSet::new(),
         LaunchChoices::default(),
+        BTreeMap::new(),
     )
     .is_err());
 }
@@ -813,7 +815,10 @@ fn join_depth_uses_all_actual_parents_independent_of_completion_order() {
                     mode: InputMode::Single,
                 })
                 .collect();
-            step.outputs = vec![OutputSelector { path: output.into(), required: false }];
+            step.outputs = vec![OutputSelector {
+                path: output.into(),
+                required: false,
+            }];
             step
         })
         .collect();
@@ -827,6 +832,7 @@ fn join_depth_uses_all_actual_parents_independent_of_completion_order() {
             10,
             f.definition.step.iter().map(|step| step.key.clone()).collect(),
             LaunchChoices::default(),
+            BTreeMap::new(),
         )
         .unwrap();
         f.state.creation = "ready".into();
@@ -984,4 +990,187 @@ fn possible_outputs_minimum_rejects_auxiliary_only_then_accepts_one_wildcard_mem
     let accepted = accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap();
     assert!(matches!(accepted, CompletionOutcome::Accepted { .. }), "{accepted:?}");
     assert_eq!(f.state.occurrences.values().map(|o| o.logical_path.as_str()).collect::<Vec<_>>(), ["papers/found.md"]);
+}
+
+fn reserve_work(f: &mut Fixture, product_model: &str) -> String {
+    reserve_execution(
+        &f.repo,
+        "task",
+        &f.definition,
+        &mut f.state,
+        ExecutionCandidate {
+            step_key: "work".into(),
+            context_id: "root".into(),
+            inputs: BTreeMap::new(),
+            complete_collection_id: None,
+            each_collection_id: None,
+            each_member_id: None,
+            manual: true,
+        },
+        &LaunchChoices {
+            harness: "omp".into(),
+            model: product_model.into(),
+        },
+        None,
+        true,
+    )
+    .unwrap()
+}
+
+#[test]
+fn reserved_launch_keeps_playbook_pin_when_execution_state_has_no_step_models() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, true, 1);
+    f.definition.step[0].model = "step-pin".into();
+    f.state.launch_defaults = LaunchChoices {
+        harness: "omp".into(),
+        model: "task-model".into(),
+    };
+    let id = reserve_work(&mut f, "product-model");
+    assert_eq!(f.state.executions[&id].launch.harness, "omp");
+    assert_eq!(f.state.executions[&id].launch.model, "step-pin");
+}
+
+#[test]
+fn reserved_launch_uses_persisted_step_model_ahead_of_playbook_pin() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, true, 1);
+    f.definition.step[0].model = "step-pin".into();
+    f.state.launch_defaults = LaunchChoices {
+        harness: "omp".into(),
+        model: "task-model".into(),
+    };
+    let mut value = serde_json::to_value(&f.state).unwrap();
+    value["step_models"] = serde_json::json!({ "work": "task-override" });
+    let path = execution_state_path(&f.repo, "task").unwrap();
+    fs::write(&path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+    f.state = read_execution_state(&f.repo, "task").unwrap();
+    let id = reserve_work(&mut f, "product-model");
+    assert_eq!(f.state.executions[&id].launch.harness, "omp");
+    assert_eq!(
+        f.state.executions[&id].launch.model, "task-override",
+        "persisted step_models must beat playbook pin step-pin, task-model, and product-model"
+    );
+}
+
+fn chain_source(default_model: &str, plan_model: &str) -> String {
+    format!(
+        "+++\nversion = 2\nkey = \"fixture\"\ntitle = \"Fixture\"\ndescription = \"\"\ndefault_model = \"{default_model}\"\ndefault_harness = \"omp\"\n[[step]]\nkey = \"clarify\"\ntitle = \"Clarify\"\nshort = \"\"\ninputs = []\noutputs = [{{path=\"clarify.md\"}}]\nmodel = \"step-pin\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = false\n[[step]]\nkey = \"plan\"\ntitle = \"Plan\"\nshort = \"\"\ninputs = []\noutputs = [{{path=\"plan.md\"}}]\nmodel = \"{plan_model}\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = false\n+++\n<!-- alinery:step clarify -->\nClarify.\n<!-- alinery:step plan -->\nPlan.\n"
+    )
+}
+
+fn launch_model(
+    default_model: &str,
+    plan_model: &str,
+    step_key: &str,
+    task_model: &str,
+    product_model: &str,
+    explicit: Option<&LaunchChoices>,
+    step_models: &BTreeMap<String, String>,
+) -> Result<LaunchChoices, String> {
+    let definition = parse_playbook_md(&chain_source(default_model, plan_model)).unwrap();
+    let step = definition.step.iter().find(|step| step.key == step_key).unwrap();
+    let task = LaunchChoices {
+        harness: "omp".into(),
+        model: task_model.into(),
+    };
+    let product = LaunchChoices {
+        harness: "omp".into(),
+        model: product_model.into(),
+    };
+    resolve_execution_launch(&definition, step, &task, &product, explicit, step_models)
+}
+
+#[test]
+fn step_model_override_beats_playbook_pin_and_task_model() {
+    let mut map = BTreeMap::new();
+    map.insert("clarify".into(), "task-override".into());
+    let launch = launch_model("playbook-wide", "", "clarify", "task-model", "product-model", None, &map).unwrap();
+    assert_eq!(launch.model, "task-override");
+    assert_eq!(launch.harness, "omp");
+}
+
+#[test]
+fn step_model_absent_keeps_playbook_pin_over_task_model() {
+    let launch = launch_model("playbook-wide", "", "clarify", "task-model", "product-model", None, &BTreeMap::new()).unwrap();
+    assert_eq!(launch.model, "step-pin");
+}
+
+#[test]
+fn step_model_absent_empty_playbook_uses_task_model() {
+    let launch = launch_model("", "", "plan", "task-model", "product-model", None, &BTreeMap::new()).unwrap();
+    assert_eq!(launch.model, "task-model");
+}
+
+#[test]
+fn step_model_absent_empty_chain_uses_product_model() {
+    let launch = launch_model("", "", "plan", "", "product-model", None, &BTreeMap::new()).unwrap();
+    assert_eq!(launch.model, "product-model");
+}
+
+#[test]
+fn step_model_explicit_nonempty_beats_map() {
+    let mut map = BTreeMap::new();
+    map.insert("clarify".into(), "task-override".into());
+    let once = LaunchChoices {
+        harness: "omp".into(),
+        model: "once".into(),
+    };
+    let launch = launch_model("playbook-wide", "", "clarify", "task-model", "product-model", Some(&once), &map).unwrap();
+    assert_eq!(launch.model, "once");
+    assert_eq!(launch.harness, "omp");
+}
+
+#[test]
+fn step_model_empty_explicit_does_not_win() {
+    let mut map = BTreeMap::new();
+    map.insert("clarify".into(), "task-override".into());
+    let empty = LaunchChoices {
+        harness: "omp".into(),
+        model: String::new(),
+    };
+    let launch = launch_model("playbook-wide", "", "clarify", "task-model", "product-model", Some(&empty), &map).unwrap();
+    assert_eq!(launch.model, "task-override");
+}
+
+#[test]
+fn step_model_explicit_none_does_not_win() {
+    let mut map = BTreeMap::new();
+    map.insert("plan".into(), "task-override".into());
+    let launch = launch_model("", "", "plan", "task-model", "product-model", None, &map).unwrap();
+    assert_eq!(launch.model, "task-override");
+}
+
+#[test]
+fn step_model_whitespace_does_not_win() {
+    let mut map = BTreeMap::new();
+    map.insert("clarify".into(), "  ".into());
+    let launch = launch_model("playbook-wide", "", "clarify", "task-model", "product-model", None, &map).unwrap();
+    assert_eq!(launch.model, "step-pin");
+}
+
+#[test]
+fn step_model_other_step_does_not_affect_this_step() {
+    let mut map = BTreeMap::new();
+    map.insert("plan".into(), "task-override".into());
+    let launch = launch_model("playbook-wide", "", "clarify", "task-model", "product-model", None, &map).unwrap();
+    assert_eq!(launch.model, "step-pin");
+}
+
+#[test]
+fn step_model_non_omp_explicit_harness_still_errors() {
+    let once = LaunchChoices {
+        harness: "no-harness".into(),
+        model: "once".into(),
+    };
+    let err = launch_model("playbook-wide", "", "clarify", "task-model", "product-model", Some(&once), &BTreeMap::new()).unwrap_err();
+    assert!(err.contains("unsupported graph harness"), "{err}");
+}
+
+#[test]
+fn step_model_missing_field_parses_as_empty_map() {
+    let f = Fixture::new("{path=\"result.md\"}", false, true, 1);
+    let mut value = serde_json::to_value(&f.state).unwrap();
+    value.as_object_mut().unwrap().remove("step_models");
+    let state: TaskExecutionState = serde_json::from_value(value).unwrap();
+    assert_eq!(state.version, 1);
+    assert!(state.step_models.is_empty());
 }

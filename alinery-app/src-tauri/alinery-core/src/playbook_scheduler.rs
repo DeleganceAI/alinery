@@ -814,7 +814,13 @@ mod tests {
                     mode: *mode,
                 })
                 .collect(),
-            outputs: outputs.iter().map(|path| OutputSelector { path: (*path).into(), required: false }).collect(),
+            outputs: outputs
+                .iter()
+                .map(|path| OutputSelector {
+                    path: (*path).into(),
+                    required: false,
+                })
+                .collect(),
             model: String::new(),
             harness: String::new(),
             prompt: "Write the assigned output.\n".into(),
@@ -857,6 +863,7 @@ mod tests {
                 10,
                 definition.step.iter().map(|s| s.key.clone()).collect(),
                 LaunchChoices::default(),
+                BTreeMap::new(),
             )
             .unwrap();
             state.creation = "ready".into();
