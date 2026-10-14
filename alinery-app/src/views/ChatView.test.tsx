@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import uiConfirm from "../chat/fixtures/live-extension_ui_confirm.json";
 import uiWidget from "../chat/fixtures/live-extension_ui_request.json";
@@ -38,6 +38,12 @@ const mocks = vi.hoisted(() => ({
   sessionListStatuses: vi.fn(),
   chatThreadName: vi.fn(),
   startChatThread: vi.fn(),
+  pickAttachmentFilesDialog: vi.fn(),
+  chatFileStat: vi.fn(),
+  copyChatThreadAttachments: vi.fn(),
+  writeChatThreadAttachmentBytes: vi.fn(),
+  readChatThreadImage: vi.fn(),
+  getCurrentWebview: vi.fn(() => ({ onDragDropEvent: async () => () => {} })),
 }));
 
 vi.mock("../ipc", () =>
@@ -59,6 +65,12 @@ vi.mock("../ipc", () =>
     sessionListStatuses: mocks.sessionListStatuses,
     chatThreadName: mocks.chatThreadName,
     startChatThread: mocks.startChatThread,
+    pickAttachmentFilesDialog: mocks.pickAttachmentFilesDialog,
+    chatFileStat: mocks.chatFileStat,
+    copyChatThreadAttachments: mocks.copyChatThreadAttachments,
+    writeChatThreadAttachmentBytes: mocks.writeChatThreadAttachmentBytes,
+    readChatThreadImage: mocks.readChatThreadImage,
+    getCurrentWebview: mocks.getCurrentWebview as never,
   }),
 );
 function chat(visibility: ChatPrefs = DEFAULT_CHAT_VISIBILITY) {
@@ -130,6 +142,12 @@ beforeEach(() => {
   mocks.listChatThreads.mockResolvedValue([]);
   mocks.listChatRepos.mockResolvedValue(["/repo"]);
   mocks.chatThreadName.mockResolvedValue(null);
+  mocks.pickAttachmentFilesDialog.mockReset().mockResolvedValue([]);
+  mocks.chatFileStat.mockReset().mockImplementation(async (path: string) => ({ name: path.split("/").pop() ?? path, bytes: 4 }));
+  mocks.copyChatThreadAttachments.mockReset().mockResolvedValue({ copied: [], failures: [] });
+  mocks.writeChatThreadAttachmentBytes.mockReset().mockImplementation(async (_repo: string, _id: string, fileName: string) => fileName);
+  mocks.readChatThreadImage.mockReset().mockResolvedValue({ mime_type: "image/png", data: "aa" });
+  mocks.getCurrentWebview.mockReset().mockReturnValue({ onDragDropEvent: async () => () => {} });
 });
 
 /** A rail row's name is the thread label, then its status: "Chat s-live, Idle". */
@@ -424,6 +442,106 @@ describe("ChatView", () => {
     await waitFor(() => expect((screen.getByLabelText("Message or /command") as HTMLTextAreaElement).value).toBe("add an HNSW index"));
     expect(screen.getByText(/Not sent: model busy/)).toBeTruthy();
     expect(screen.queryAllByText("add an HNSW index").filter((element) => element.tagName !== "TEXTAREA")).toHaveLength(0);
+  });
+
+  describe("attachments", () => {
+    const dir = "/repo/.alinery/sessions/s-live.attachments";
+
+    async function attachNotes() {
+      mocks.pickAttachmentFilesDialog.mockResolvedValueOnce(["/tmp/notes.pdf"]);
+      mocks.copyChatThreadAttachments.mockResolvedValueOnce({ copied: ["notes.pdf"], failures: [] });
+      fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
+      expect(await screen.findByRole("button", { name: "Remove notes.pdf" })).toBeTruthy();
+    }
+
+    it("shows the paperclip and sends a picked file as a trailer on this thread's repo", async () => {
+      await openLive(observed("idle", "alive", "rpc"));
+      expect(screen.getByRole("button", { name: "Attach files" })).toBeTruthy();
+      await attachNotes();
+      fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: "see" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(mocks.copyChatThreadAttachments).toHaveBeenCalledWith("/repo", "s-live", ["/tmp/notes.pdf"]));
+      await waitFor(() =>
+        expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "prompt", message: `see\n\nAttached file: ${dir}/notes.pdf` })),
+      );
+      expect(screen.queryByRole("button", { name: "Remove notes.pdf" })).toBeNull();
+      expect(screen.getByText("notes.pdf")).toBeTruthy();
+    });
+
+    it("sends a pasted image on the prompt and not as a file trailer", async () => {
+      vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:shot");
+      vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({ arrayBuffer: async () => new Uint8Array([1, 2]).buffer })),
+      );
+      try {
+        await openLive(observed("idle", "alive", "rpc"));
+        const file = new File(["png"], "shot.png", { type: "image/png" });
+        const field = screen.getByLabelText("Message or /command");
+        const event = createEvent.paste(field, {
+          clipboardData: { items: [{ kind: "file", type: "image/png", getAsFile: () => file }], files: [file] },
+        });
+        fireEvent(field, event);
+        expect(await screen.findByRole("button", { name: "Remove shot.png" })).toBeTruthy();
+        fireEvent.click(screen.getByRole("button", { name: "Send" }));
+        await waitFor(() => expect(mocks.writeChatThreadAttachmentBytes).toHaveBeenCalledWith("/repo", "s-live", "shot.png", [1, 2]));
+        await waitFor(() => expect(mocks.readChatThreadImage).toHaveBeenCalledWith("/repo", "s-live", "shot.png"));
+        const prompt = mocks.chatRpcWrite.mock.calls
+          .map((call) => call[2] as { type?: string; message?: string; images?: unknown })
+          .find((payload) => payload.type === "prompt" && payload.message === "");
+        expect(prompt?.images).toEqual([{ type: "image", data: "aa", mimeType: "image/png" }]);
+        expect(prompt?.message ?? "").not.toContain("Attached file:");
+      } finally {
+        vi.mocked(URL.createObjectURL).mockRestore();
+        vi.mocked(URL.revokeObjectURL).mockRestore();
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("refuses a slash command that still has attachments", async () => {
+      await openLive(observed("idle", "alive", "rpc"));
+      await attachNotes();
+      fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: "/compact" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      expect(await screen.findByText("Remove attachments or clear the slash command")).toBeTruthy();
+      expect(mocks.copyChatThreadAttachments).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Remove notes.pdf" })).toBeTruthy();
+    });
+
+    it("puts the file back when OMP refuses the send", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      await attachNotes();
+      fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: "see" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(mocks.chatRpcWrite.mock.calls.some((call) => (call[2] as { message?: string }).message?.includes("notes.pdf"))).toBe(true));
+      const sent = mocks.chatRpcWrite.mock.calls.map((call) => call[2] as { id: string; type: string; message?: string }).find((payload) => payload.message?.includes("notes.pdf"));
+      emit({ type: "response", id: sent?.id, command: "prompt", success: false, error: "model busy" });
+      expect(await screen.findByRole("button", { name: "Remove notes.pdf" })).toBeTruthy();
+      expect((screen.getByLabelText("Message or /command") as HTMLTextAreaElement).value).toBe("see");
+    });
+
+    it("copies onto the successor when a resumed thread sends", async () => {
+      mocks.listChatThreads.mockResolvedValueOnce([thread("s-old")]).mockResolvedValue([live("s-next")]);
+      mocks.resumeChatThread.mockResolvedValue(meta("s-next", liveMeta));
+      mocks.chatSessionStatus.mockResolvedValue(observed("idle"));
+      mocks.pickAttachmentFilesDialog.mockResolvedValueOnce(["/tmp/notes.pdf"]);
+      mocks.copyChatThreadAttachments.mockResolvedValueOnce({ copied: ["notes.pdf"], failures: [] });
+      render(chat());
+      fireEvent.click(await screen.findByRole("button", { name: threadRow("s-old") }));
+      await waitFor(() => expect(link()).toBe("offline"));
+      fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
+      expect(await screen.findByRole("button", { name: "Remove notes.pdf" })).toBeTruthy();
+      sendIdle("hello");
+      await waitFor(() => expect(mocks.copyChatThreadAttachments).toHaveBeenCalledWith("/repo", "s-next", ["/tmp/notes.pdf"]));
+      await waitFor(() =>
+        expect(mocks.chatRpcWrite).toHaveBeenCalledWith(
+          "/repo",
+          "s-next",
+          expect.objectContaining({ type: "prompt", message: "hello\n\nAttached file: /repo/.alinery/sessions/s-next.attachments/notes.pdf" }),
+        ),
+      );
+    });
   });
 
   // OMP's verdict on a send arrives after the daemon acked the write, by command id.

@@ -17,7 +17,7 @@ export type ChatComposerProps = {
   showHints?: boolean;
   /** History view: the same composer shell, inert. A finished session has nothing to send to. */
   readOnly?: boolean;
-  /** Chat view has no task attachment store. Default keeps the paperclip. */
+  /** Hide the paperclip and ignore pasted files. Default keeps the paperclip. */
   allowAttach?: boolean;
   onBodyChange: (body: string) => void;
   onCompositionChange?: (composing: boolean) => void;

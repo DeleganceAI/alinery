@@ -30,6 +30,7 @@ import { SessionTerminal } from "../SessionTerminal";
 import type { ObservationDisplayKind } from "../sessionAttention";
 import { OMP_INTERRUPT_DATA } from "../sessionMessage";
 import { Checkbox, Dialog, InlineStatus, LoadingState, obsLabel, StatusMarker } from "../shared";
+import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatPane } from "./ChatPane";
@@ -266,6 +267,31 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
   const abort = () => {
     chat.abort();
   };
+  const [dropping, setDropping] = useState(false);
+  const inTerminalRef = useRef(inTerminal);
+  inTerminalRef.current = inTerminal;
+  const stagePathsRef = useRef(chat.stagePaths);
+  stagePathsRef.current = chat.stagePaths;
+  useEffect(() => {
+    if (!active || !selectionKey) return;
+    const un = ipc.getCurrentWebview().onDragDropEvent((event) => {
+      if (inTerminalRef.current) return;
+      if (event.payload.type === "enter" || event.payload.type === "over") {
+        setDropping(true);
+        return;
+      }
+      if (event.payload.type === "leave") {
+        setDropping(false);
+        return;
+      }
+      const { paths } = event.payload;
+      setDropping(false);
+      stagePathsRef.current(paths);
+    });
+    return () => {
+      un.then((finish) => finish());
+    };
+  }, [active, selectionKey]);
   const turnWasActive = useRef(false);
   const selectedId = selected?.session.id;
   const selectedRepo = selected?.repo_path;
@@ -754,7 +780,17 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
             catalog={transcript.commands}
             sending={sending}
             showHints={visibility.showComposerHints}
-            allowAttach={false}
+            attachments={chat.attachments}
+            dropping={dropping}
+            onAttach={() => {
+              void ipc
+                .pickAttachmentFilesDialog()
+                .then((paths) => chat.stagePaths(paths))
+                .catch((error: unknown) => toast.error(String(error)));
+            }}
+            onRemoveAttachment={(id) => chat.removeAttachment(id)}
+            onClear={() => chat.clearComposer()}
+            onPasteFiles={chat.stageBlobs}
             onBodyChange={(next) => {
               if (selectionKey) chat.setDraft(next);
             }}

@@ -348,9 +348,14 @@ fn attachment_dir_bytes(dir: &Path) -> u64 {
 // Infallible by construction: a bad attachment is data, never control flow. Runs strictly after
 // the git block so it can never reach a rollback_task_dir call site.
 pub(crate) fn copy_task_attachments(repo: &Path, slug: &str, entries: &[String]) -> (Vec<String>, Vec<String>, Vec<String>) {
-    let dir = alinery_core::attachments_dir(repo, slug);
+    copy_attachments_into(&alinery_core::attachments_dir(repo, slug), entries)
+}
+
+/// Copy local files into `dir`. `http(s)` entries are recorded and never fetched.
+/// Returns `(urls, copied names, failures)`.
+pub(crate) fn copy_attachments_into(dir: &Path, entries: &[String]) -> (Vec<String>, Vec<String>, Vec<String>) {
     let (mut urls, mut copied, mut failures) = (vec![], vec![], vec![]);
-    let mut batch_bytes: u64 = attachment_dir_bytes(&dir);
+    let mut batch_bytes: u64 = attachment_dir_bytes(dir);
     for entry in entries {
         let entry = entry.trim();
         if entry.is_empty() {
@@ -385,11 +390,11 @@ pub(crate) fn copy_task_attachments(repo: &Path, slug: &str, entries: &[String])
             failures.push(format!("{entry} — unusable file name"));
             continue;
         };
-        if let Err(e) = fs::create_dir_all(&dir) {
+        if let Err(e) = fs::create_dir_all(dir) {
             failures.push(format!("{entry} — {e}"));
             continue;
         }
-        let Some(target) = unique_attachment_name(&dir, base) else {
+        let Some(target) = unique_attachment_name(dir, base) else {
             failures.push(format!("{entry} — too many name collisions"));
             continue;
         };
@@ -461,18 +466,21 @@ pub(crate) fn copy_chat_attachments(task_slug: String, paths: Vec<String>) -> Re
 
 pub(crate) fn write_chat_attachment_bytes_in(repo: &Path, task_slug: &str, file_name: &str, bytes: &[u8]) -> Result<String, String> {
     let slug = alinery_core::safe_component(task_slug).ok_or("invalid task slug")?;
+    write_attachment_bytes_into(&alinery_core::attachments_dir(repo, slug), file_name, bytes)
+}
+
+pub(crate) fn write_attachment_bytes_into(dir: &Path, file_name: &str, bytes: &[u8]) -> Result<String, String> {
     let base = alinery_core::safe_component(file_name).ok_or_else(|| format!("invalid attachment name: {file_name}"))?;
     let len = bytes.len() as u64;
     if len > MAX_ATTACHMENT_BYTES {
         return Err(format!("{file_name} — larger than 25 MB"));
     }
-    let dir = alinery_core::attachments_dir(repo, slug);
-    let batch_bytes = attachment_dir_bytes(&dir);
+    let batch_bytes = attachment_dir_bytes(dir);
     if batch_bytes + len > MAX_ATTACHMENT_SET_BYTES {
         return Err(format!("{file_name} — attachment set would exceed 100 MB"));
     }
-    fs::create_dir_all(&dir).map_err(|e| format!("{file_name} — {e}"))?;
-    let Some(target) = unique_attachment_name(&dir, base) else {
+    fs::create_dir_all(dir).map_err(|e| format!("{file_name} — {e}"))?;
+    let Some(target) = unique_attachment_name(dir, base) else {
         return Err(format!("{file_name} — too many name collisions"));
     };
     fs::write(dir.join(&target), bytes).map_err(|e| format!("{file_name} — {e}"))?;
@@ -484,18 +492,22 @@ pub(crate) fn write_chat_attachment_bytes(task_slug: String, file_name: String, 
     write_chat_attachment_bytes_in(&active_repo()?, &task_slug, &file_name, &bytes)
 }
 
-pub(crate) fn read_chat_image_in(repo: &Path, task_slug: &str, name: &str) -> Result<ChatImage, String> {
-    let path = attachment_path_in(repo, task_slug, name)?;
-    let meta = fs::metadata(&path).map_err(|e| format!("{name} — {e}"))?;
+pub(crate) fn read_chat_image_file(path: &Path, name: &str) -> Result<ChatImage, String> {
+    let meta = fs::metadata(path).map_err(|e| format!("{name} — {e}"))?;
     if meta.len() > MAX_CHAT_IMAGE_BYTES {
         return Err(format!("{name} — larger than 5 MB"));
     }
     let mime_type = chat_image_mime(name)?;
-    let bytes = fs::read(&path).map_err(|e| format!("{name} — {e}"))?;
+    let bytes = fs::read(path).map_err(|e| format!("{name} — {e}"))?;
     Ok(ChatImage {
         mime_type,
         data: alinery_core::rpc_chunk::encode_base64(&bytes),
     })
+}
+
+pub(crate) fn read_chat_image_in(repo: &Path, task_slug: &str, name: &str) -> Result<ChatImage, String> {
+    let path = attachment_path_in(repo, task_slug, name)?;
+    read_chat_image_file(Path::new(&path), name)
 }
 
 #[tauri::command]

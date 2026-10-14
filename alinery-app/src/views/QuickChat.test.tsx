@@ -42,6 +42,7 @@ vi.mock("../ipc", () =>
     readChatOmp: mocks.readChatOmp,
     sessionListStatuses: mocks.sessionListStatuses,
     chatThreadName: mocks.chatThreadName,
+    getCurrentWebview: (() => ({ onDragDropEvent: async () => () => {} })) as never,
   }),
 );
 

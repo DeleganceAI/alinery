@@ -9,12 +9,13 @@ import { AttachmentPreview } from "../AttachmentPreview";
 import type { ArtifactPaneTab } from "../artifactClassification";
 import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassification";
 import { ChatComposer } from "../ChatComposer";
-import { buildPromptMessage, canStage, classifyAttachment, type DraftAttachment, draftToRowAttachments, isHttpUrl, revokeDraftPreviewUrls } from "../chat/attachments";
+import { canStage, classifyAttachment, type DraftAttachment, draftToRowAttachments, isHttpUrl, revokeDraftPreviewUrls, taskAttachmentDir } from "../chat/attachments";
 import { CopyArtifactButton, CopyTextButton } from "../chat/CopyMessage";
 import { formatContextUsage } from "../chat/format";
 import type { ModelRolesMap } from "../chat/modelRoles";
 import { decodeOmpPage } from "../chat/ompFile";
 import { settleOpenUrl as settleBrowserUrl } from "../chat/openUrl";
+import { prepareChatAttachments } from "../chat/prepareAttachments";
 import { isInteractivePromptLoginError, shouldOfferProviderSetup } from "../chat/providers";
 import { latestQueuedFollowUp, type QueuedFollowUp, queuedCountFromGetState, queuedTextsNotInEntries, reconcileQueuedFollowUps } from "../chat/queue";
 import { applySendPlan, commandOutputText, loginReply, planChatSend, setModelReply } from "../chat/send";
@@ -113,68 +114,18 @@ type ArtifactReviewPendingStatus = {
   review: string;
 };
 
-type PreparedChatSend = {
-  message: string;
-  images: ImageContent[];
-  copied: DraftAttachment[];
-};
-
-async function blobBytes(previewUrl: string): Promise<number[]> {
-  const response = await fetch(previewUrl);
-  return Array.from(new Uint8Array(await response.arrayBuffer()));
-}
-
-async function prepareChatSend(taskSlug: string, repoPath: string, caption: string, attachments: DraftAttachment[]): Promise<PreparedChatSend> {
-  const restated: DraftAttachment[] = [];
-  for (const item of attachments) {
-    if (item.sourcePath) {
-      const stat = await ipc.chatFileStat(item.sourcePath);
-      restated.push({ ...item, name: stat.name, bytes: stat.bytes });
-    } else {
-      restated.push(item);
-    }
-  }
-  const staged = canStage(
-    [],
-    restated.map((item) => ({ name: item.name, mimeType: item.mimeType, bytes: item.bytes })),
+function prepareChatSend(taskSlug: string, repoPath: string, caption: string, attachments: DraftAttachment[]) {
+  return prepareChatAttachments(
+    {
+      stat: (path) => ipc.chatFileStat(path),
+      copy: (paths) => ipc.copyChatAttachments(taskSlug, paths),
+      writeBytes: (fileName, bytes) => ipc.writeChatAttachmentBytes(taskSlug, fileName, bytes),
+      readImage: (name) => ipc.readChatImage(taskSlug, name),
+      trailerDir: taskAttachmentDir(repoPath, taskSlug),
+    },
+    caption,
+    attachments,
   );
-  const failed = staged.find((item) => item.ok === false);
-  if (failed && failed.ok === false) throw new Error(failed.reason);
-
-  const copiedNames = new Map<string, string>();
-  const pathItems = restated.filter((item) => item.sourcePath && !item.copiedName);
-  const blobItems = restated.filter((item) => !item.sourcePath && item.previewUrl && !item.copiedName);
-  for (const item of restated) {
-    if (item.copiedName) copiedNames.set(item.id, item.copiedName);
-  }
-  if (pathItems.length > 0) {
-    const result = await ipc.copyChatAttachments(
-      taskSlug,
-      pathItems.map((item) => item.sourcePath as string),
-    );
-    if (result.failures.length > 0 || result.copied.length !== pathItems.length) {
-      throw new Error(result.failures[0] ?? "Could not copy attachments");
-    }
-    pathItems.forEach((item, index) => {
-      const name = result.copied[index];
-      if (name) copiedNames.set(item.id, name);
-    });
-  }
-  for (const item of blobItems) {
-    if (!item.previewUrl) continue;
-    copiedNames.set(item.id, await ipc.writeChatAttachmentBytes(taskSlug, item.name, await blobBytes(item.previewUrl)));
-  }
-
-  const copied = restated.map((item) => ({ ...item, copiedName: copiedNames.get(item.id) ?? item.copiedName }));
-  const files = copied.filter((item) => item.kind === "file").map((item) => ({ name: item.copiedName ?? item.name }));
-  const images: ImageContent[] = [];
-  for (const item of copied) {
-    if (item.kind !== "image") continue;
-    const name = item.copiedName ?? item.name;
-    const image = await ipc.readChatImage(taskSlug, name);
-    images.push({ type: "image", data: image.data, mimeType: image.mime_type });
-  }
-  return { message: buildPromptMessage(caption, files, repoPath, taskSlug), images, copied };
 }
 
 export function SessionView({

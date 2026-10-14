@@ -1,5 +1,7 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { canStage, chatThreadAttachmentDir, classifyAttachment, type DraftAttachment, draftToRowAttachments, isHttpUrl, revokeDraftPreviewUrls } from "../chat/attachments";
 import { formatContextUsage } from "../chat/format";
+import { prepareChatAttachments } from "../chat/prepareAttachments";
 import { applySendPlan, commandOutputText, planChatSend } from "../chat/send";
 import { type McpServerRow, type ProvidersDialogTab, parseMcpListOutput } from "../chat/slash";
 import type { SessionChatStatus } from "../chat/types";
@@ -16,10 +18,11 @@ import {
   settleRefusedSend,
 } from "../chatTranscript";
 import * as ipc from "../ipc";
-import { compactCommand, getStateCommand, promptCommand, setAutoCompactionCommand } from "../ompRpc";
+import { compactCommand, getStateCommand, type ImageContent, promptCommand, setAutoCompactionCommand } from "../ompRpc";
 import type { SessionTerminalIo } from "../SessionTerminal";
 import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
 import { isTurnActive } from "../sessionMessage";
+import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
 import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatToolsDialog } from "./ChatToolsDialog";
@@ -92,6 +95,7 @@ export type ChatThreadSnapshot = {
   connection: Connection;
   activity: ReturnType<typeof chatActivity>;
   draft: string;
+  attachments: DraftAttachment[];
   sending: boolean;
   error: string;
   loadingOlder: boolean;
@@ -118,6 +122,10 @@ type ChatThreadApi = {
   loadOlder: () => void;
   setObserved: (value: SessionObservation) => void;
   setDraft: (value: string) => void;
+  stagePaths: (paths: string[]) => void;
+  stageBlobs: (files: File[]) => void;
+  removeAttachment: (id: string) => void;
+  clearComposer: () => void;
   setProvidersDialog: (value: { tab: ProvidersDialogTab; preselect: string } | null) => void;
   setToolsOpen: (value: boolean) => void;
   setMcpDialog: (value: { rows: McpServerRow[]; empty: boolean } | null) => void;
@@ -134,6 +142,7 @@ const EMPTY_SNAPSHOT: ChatThreadSnapshot = {
   connection: { state: "connecting" },
   activity: IDLE_ACTIVITY,
   draft: "",
+  attachments: [],
   sending: false,
   error: "",
   loadingOlder: false,
@@ -160,6 +169,10 @@ const NO_API: ChatThreadApi = {
   loadOlder: () => {},
   setObserved: () => {},
   setDraft: () => {},
+  stagePaths: () => {},
+  stageBlobs: () => {},
+  removeAttachment: () => {},
+  clearComposer: () => {},
   setProvidersDialog: () => {},
   setToolsOpen: () => {},
   setMcpDialog: () => {},
@@ -168,7 +181,7 @@ const NO_API: ChatThreadApi = {
   cancelUi: () => {},
 };
 
-type Verdict = { text: string; entryId: string | null; refused: boolean };
+type Verdict = { text: string; attachments: DraftAttachment[]; entryId: string | null; refused: boolean };
 
 type Sub = {
   id: symbol;
@@ -184,6 +197,7 @@ type Entry = {
   thread?: ChatThread;
   subs: Map<symbol, Sub>;
   draft: string;
+  attachments: DraftAttachment[];
   verdicts: Map<string, Verdict>;
   autoCompaction: boolean;
   kick?: () => void;
@@ -201,7 +215,7 @@ type Registry = {
   listenError: (fn: () => void) => () => void;
   sendingKey: string | null;
   setSending: (key: string | null) => void;
-  pendingPrompt: { key: string; text: string } | null;
+  pendingPrompt: { key: string; text: string; attachments: DraftAttachment[] } | null;
   pendingFocus: string | null;
   focusListeners: Set<() => void>;
   requestOpen: (key: string) => void;
@@ -220,6 +234,7 @@ function createEntry(key: string): Entry {
     key,
     subs: new Map(),
     draft: "",
+    attachments: [],
     verdicts: new Map(),
     autoCompaction: true,
     snapshot: EMPTY_SNAPSHOT,
@@ -263,12 +278,14 @@ function createRegistry(): Registry {
 
   registry.touch = (entry) => {
     const draft = entry.draft;
+    const attachments = entry.attachments;
     const base = entry.snapshot;
     const agent = base.observation?.state?.agent?.state;
     const pendingUiReply = base.transcript.pendingUi.some((request) => needsUiReply(request.method));
     entry.snapshot = {
       ...base,
       draft,
+      attachments,
       sending: registry.sendingKey === entry.key,
       error: registry.error,
       blocked: registry.error === "cannot continue",
@@ -280,7 +297,7 @@ function createRegistry(): Registry {
         agent !== "waiting_for_input" &&
         agent !== "waiting_for_approval" &&
         !pendingUiReply &&
-        draft.trim().length > 0,
+        (draft.trim().length > 0 || attachments.length > 0),
     };
     for (const listener of entry.listeners) listener();
   };
@@ -336,9 +353,12 @@ function createRegistry(): Registry {
   registry.moveDraft = (from, to, fallback) => {
     const src = ensure(from);
     const text = src.draft || fallback;
+    const attachments = src.attachments;
     src.draft = "";
+    src.attachments = [];
     const dest = ensure(to);
     dest.draft = text;
+    dest.attachments = attachments;
     registry.touch(src);
     registry.touch(dest);
   };
@@ -370,6 +390,7 @@ export function ChatSessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     return () => {
       reg.host = () => {};
+      for (const entry of reg.entries.values()) revokeDraftPreviewUrls(entry.attachments);
       reg.entries.clear();
       reg.pendingPrompt = null;
       reg.sendingKey = null;
@@ -414,6 +435,10 @@ export type ChatThreadOptions = {
 
 export type ChatThreadHandle = ChatThreadSnapshot & {
   setDraft: (value: string) => void;
+  stagePaths: (paths: string[]) => void;
+  stageBlobs: (files: File[]) => void;
+  removeAttachment: (id: string) => void;
+  clearComposer: () => void;
   setError: (next: string | ((current: string) => string)) => void;
   send: (override?: string) => void;
   sendNow: () => void;
@@ -505,6 +530,10 @@ export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions
       entry.draft = value;
       registry.touch(entry);
     },
+    stagePaths: (paths) => api.stagePaths(paths),
+    stageBlobs: (files) => api.stageBlobs(files),
+    removeAttachment: (id) => api.removeAttachment(id),
+    clearComposer: () => api.clearComposer(),
     setError: registry.setError,
     send: (override) => {
       if (key) api.send(subId.current, override);
@@ -522,6 +551,23 @@ export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions
     approve: (id, allow) => api.approve(id, allow),
     reply: (id, value) => api.reply(id, value),
     cancelUi: (id) => api.cancelUi(id),
+  };
+}
+
+let attachmentSeq = 0;
+
+function nextAttachmentId() {
+  attachmentSeq += 1;
+  return `att-${attachmentSeq}`;
+}
+
+function threadAttachmentStore(repoPath: string, sessionId: string) {
+  return {
+    stat: (path: string) => ipc.chatFileStat(path),
+    copy: (paths: string[]) => ipc.copyChatThreadAttachments(repoPath, sessionId, paths),
+    writeBytes: (fileName: string, bytes: number[]) => ipc.writeChatThreadAttachmentBytes(repoPath, sessionId, fileName, bytes),
+    readImage: (name: string) => ipc.readChatThreadImage(repoPath, sessionId, name),
+    trailerDir: chatThreadAttachmentDir(repoPath, sessionId),
   };
 }
 
@@ -665,9 +711,11 @@ function ChatThreadController({ entry }: { entry: Entry }) {
                   awaiting.refused = true;
                   entry.verdicts.delete(commandId);
                   const draft = entry.draft;
-                  const restore = draft.trim() === "" || draft === awaiting.text;
+                  const blank = draft.trim() === "" && entry.attachments.length === 0;
+                  const restore = blank || (draft !== "" && draft === awaiting.text);
                   if (restore) {
                     entry.draft = awaiting.text;
+                    entry.attachments = awaiting.attachments;
                     registry.touch(entry);
                   }
                   updateTranscript((current) => settleRefusedSend(current, awaiting.entryId, awaiting.text, restore));
@@ -675,6 +723,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
                   break;
                 }
                 if (matchingSendSuccess(value, commandId)) {
+                  revokeDraftPreviewUrls(awaiting.attachments);
                   entry.verdicts.delete(commandId);
                   break;
                 }
@@ -710,7 +759,14 @@ function ChatThreadController({ entry }: { entry: Entry }) {
         setConnection({ state: "ready" });
         if (!claimed) return;
         try {
-          await writeSend(claimed.text, sendCommand(claimed.text, false), (current) => applyPlainSend(current, claimed.text, false));
+          const prepared = claimed.attachments.length > 0 ? await prepareChatAttachments(threadAttachmentStore(repo, id), claimed.text, claimed.attachments) : null;
+          const row = prepared ? draftToRowAttachments(claimed.attachments) : undefined;
+          await writeSend(
+            claimed.text,
+            sendCommand(prepared?.message ?? claimed.text, false, prepared?.images),
+            (current) => applyPlainSend(current, claimed.text, false, row),
+            claimed.attachments,
+          );
         } catch (cause) {
           if (!cancelled) dropClaim(`Not sent: ${errorMessage(cause)}`);
           return;
@@ -726,8 +782,13 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     };
   }, [epoch, repo, id]);
 
-  async function writeSend(text: string, command: { id: string; type: string }, addRow: (current: ChatTranscriptState) => { state: ChatTranscriptState; entryId: string }) {
-    const verdict: Verdict = { text, entryId: null, refused: false };
+  async function writeSend(
+    text: string,
+    command: { id: string; type: string },
+    addRow: (current: ChatTranscriptState) => { state: ChatTranscriptState; entryId: string },
+    attachments: DraftAttachment[] = [],
+  ) {
+    const verdict: Verdict = { text, attachments, entryId: null, refused: false };
     const judged = command.type === "prompt" || command.type === "follow_up" || command.type === "abort_and_prompt";
     if (judged) entry.verdicts.set(command.id, verdict);
     try {
@@ -742,17 +803,24 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       verdict.entryId = added.entryId;
       return added.state;
     });
-    if (entry.draft === text) {
-      entry.draft = "";
-      registry.touch(entry);
+    if (entry.draft === text) entry.draft = "";
+    if (attachments.length > 0) {
+      const sent = new Set(attachments.map((item) => item.id));
+      entry.attachments = entry.attachments.filter((item) => !sent.has(item.id));
     }
+    registry.touch(entry);
   }
 
   async function send(who: symbol, override?: string) {
     const currentThread = entry.thread;
     if (!currentThread || registry.sendingKey === key) return;
     const text = override ?? entry.draft;
-    if (!text.trim()) return;
+    const attachments = override === undefined ? entry.attachments.slice() : [];
+    if (!text.trim() && attachments.length === 0) return;
+    if (text.trim().startsWith("/") && attachments.length > 0) {
+      registry.setError("Remove attachments or clear the slash command");
+      return;
+    }
     const sub = () => entry.subs.get(who);
     registry.setError("");
     if (currentThread.session.ended_at != null || currentThread.session.archived) {
@@ -769,7 +837,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
           return;
         }
         registry.moveDraft(key, next, text);
-        registry.pendingPrompt = { key: next, text };
+        registry.pendingPrompt = { key: next, text, attachments };
         registry.setSending(next);
         await refresh?.();
         rebind?.(next);
@@ -793,7 +861,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
           registry.setSending(null);
           return;
         }
-        registry.pendingPrompt = { key, text };
+        registry.pendingPrompt = { key, text, attachments };
         setEpoch((value) => value + 1);
       } catch (cause) {
         registry.setSending(null);
@@ -826,18 +894,28 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       }
       return;
     }
-    const command =
-      dispatch.kind === "compact"
-        ? compactCommand(dispatch.customInstructions)
-        : dispatch.kind === "get-tools"
-          ? getStateCommand()
-          : dispatch.kind === "mcp-list"
-            ? promptCommand("/mcp list")
-            : sendCommand(text, busy);
-    if (dispatch.kind === "mcp-list") mcpListWait.current = true;
+    const carriesAttachments = dispatch.kind !== "compact" && dispatch.kind !== "get-tools" && dispatch.kind !== "mcp-list";
     registry.setSending(key);
     try {
-      await writeSend(text, command, (current) => applySendPlan(current, text, plan));
+      let wire = text;
+      let images: ImageContent[] | undefined;
+      let row: ReturnType<typeof draftToRowAttachments> | undefined;
+      if (attachments.length > 0 && carriesAttachments) {
+        const prepared = await prepareChatAttachments(threadAttachmentStore(repo, id), text, attachments);
+        wire = prepared.message;
+        images = prepared.images;
+        row = draftToRowAttachments(attachments);
+      }
+      const command =
+        dispatch.kind === "compact"
+          ? compactCommand(dispatch.customInstructions)
+          : dispatch.kind === "get-tools"
+            ? getStateCommand()
+            : dispatch.kind === "mcp-list"
+              ? promptCommand("/mcp list")
+              : sendCommand(wire, busy, images);
+      if (dispatch.kind === "mcp-list") mcpListWait.current = true;
+      await writeSend(text, command, (current) => applySendPlan(current, text, plan, row), carriesAttachments ? attachments : []);
       if (dispatch.kind === "get-tools") setToolsOpen(true);
     } catch (cause) {
       if (dispatch.kind === "mcp-list") mcpListWait.current = false;
@@ -850,13 +928,25 @@ function ChatThreadController({ entry }: { entry: Entry }) {
   async function sendNow(who: symbol) {
     void who;
     const text = entry.draft;
-    if (!text.trim()) return;
+    const attachments = entry.attachments.slice();
+    if (!text.trim() && attachments.length === 0) return;
+    if (text.trim().startsWith("/") && attachments.length > 0) {
+      registry.setError("Remove attachments or clear the slash command");
+      return;
+    }
     registry.setError("");
     try {
-      await writeSend(text, sendNowCommand(text), (current) => {
-        const state = appendOptimisticUser(current, text, "prompt");
-        return { state, entryId: state.entries[state.entries.length - 1]?.id ?? "" };
-      });
+      const prepared = attachments.length > 0 ? await prepareChatAttachments(threadAttachmentStore(repo, id), text, attachments) : null;
+      const row = prepared ? draftToRowAttachments(attachments) : undefined;
+      await writeSend(
+        text,
+        sendNowCommand(prepared?.message ?? text, prepared?.images),
+        (current) => {
+          const state = appendOptimisticUser(current, text, "prompt", undefined, row);
+          return { state, entryId: state.entries[state.entries.length - 1]?.id ?? "" };
+        },
+        attachments,
+      );
     } catch (cause) {
       registry.setError(errorMessage(cause));
     }
@@ -887,7 +977,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     agentState !== "waiting_for_input" &&
     agentState !== "waiting_for_approval" &&
     !pendingUiReply &&
-    entry.draft.trim().length > 0;
+    (entry.draft.trim().length > 0 || entry.attachments.length > 0);
 
   const olderBusy = useRef(false);
   const loadOlder = useCallback(() => {
@@ -915,6 +1005,69 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     ipc.chatRpcWrite(repo, id, setAutoCompactionCommand(autoCompaction)).catch(() => {});
   }, [autoCompaction, processLive, repo, id, key]);
 
+  const stageIncoming = (accepted: DraftAttachment[]) => {
+    if (accepted.length === 0) return;
+    entry.attachments = [...entry.attachments, ...accepted];
+    registry.touch(entry);
+  };
+
+  const stagePaths = async (paths: string[]) => {
+    const incoming = paths.filter((path) => path.length > 0 && !isHttpUrl(path));
+    if (incoming.length === 0) return;
+    const staged = [...entry.attachments];
+    const accepted: DraftAttachment[] = [];
+    for (const path of incoming) {
+      try {
+        const stat = await ipc.chatFileStat(path);
+        const kind = classifyAttachment({ name: stat.name });
+        const verdict = canStage(staged, [{ name: stat.name, mimeType: kind === "image" ? "image/png" : "application/octet-stream", bytes: stat.bytes }])[0];
+        if (!verdict || verdict.ok === false) {
+          toast.error(verdict && verdict.ok === false ? verdict.reason : `${stat.name} — could not attach`);
+          continue;
+        }
+        const item: DraftAttachment = {
+          id: nextAttachmentId(),
+          kind,
+          name: stat.name,
+          mimeType: kind === "image" ? "image/png" : "application/octet-stream",
+          bytes: stat.bytes,
+          sourcePath: path,
+        };
+        accepted.push(item);
+        staged.push(item);
+      } catch (error) {
+        toast.error(String(error));
+      }
+    }
+    stageIncoming(accepted);
+  };
+
+  const stageBlobs = (files: File[]) => {
+    const staged = [...entry.attachments];
+    const accepted: DraftAttachment[] = [];
+    for (const file of files) {
+      if (isHttpUrl(file.name)) continue;
+      const kind = classifyAttachment({ mimeType: file.type, name: file.name });
+      const mimeType = file.type || (kind === "image" ? "image/png" : "application/octet-stream");
+      const verdict = canStage(staged, [{ name: file.name, mimeType, bytes: file.size }])[0];
+      if (!verdict || verdict.ok === false) {
+        toast.error(verdict && verdict.ok === false ? verdict.reason : `${file.name} — could not attach`);
+        continue;
+      }
+      const item: DraftAttachment = {
+        id: nextAttachmentId(),
+        kind,
+        name: file.name,
+        mimeType,
+        bytes: file.size,
+        previewUrl: URL.createObjectURL(file),
+      };
+      accepted.push(item);
+      staged.push(item);
+    }
+    stageIncoming(accepted);
+  };
+
   entry.api = {
     send: (who, override) => {
       void send(who, override);
@@ -928,6 +1081,24 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     setObserved: (value) => setObservation(value),
     setDraft: (value) => {
       entry.draft = value;
+      registry.touch(entry);
+    },
+    stagePaths: (paths) => {
+      void stagePaths(paths);
+    },
+    stageBlobs: (files) => {
+      stageBlobs(files);
+    },
+    removeAttachment: (attachmentId) => {
+      const removed = entry.attachments.find((item) => item.id === attachmentId);
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+      entry.attachments = entry.attachments.filter((item) => item.id !== attachmentId);
+      registry.touch(entry);
+    },
+    clearComposer: () => {
+      revokeDraftPreviewUrls(entry.attachments);
+      entry.draft = "";
+      entry.attachments = [];
       registry.touch(entry);
     },
     setProvidersDialog,
@@ -944,6 +1115,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     connection,
     activity,
     draft: entry.draft,
+    attachments: entry.attachments,
     sending: registry.sendingKey === key,
     error: registry.error,
     loadingOlder,
