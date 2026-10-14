@@ -1,6 +1,9 @@
 import { TriangleAlert } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { confirmDanger } from "./confirm";
+import * as ipc from "./ipc";
 import { repoName } from "./shared";
-import type { DaemonConflict } from "./types";
+import type { DaemonConflict, DaemonOwnerConflict } from "./types";
 
 const HOST_GUARD_WARNING =
   "OMP sessions are unavailable because Alinery could not validate its executable path. Use the confirmed Restart daemon / Stop all sessions action in Settings → Chat to restore OMP host protection. Terminal sessions remain available.";
@@ -14,45 +17,159 @@ export function HostGuardWarning({ visible }: { visible: boolean }) {
   );
 }
 
-// Ownership conflicts are informational: recovery stays in the owning app or on disk.
-// The daemon status poll retries opening automatically.
-export function DaemonConflictBanner({ conflict }: { conflict: DaemonConflict | null }) {
-  if (!conflict) return null;
+function OwnerEvidence({ owner }: { owner: DaemonOwnerConflict }) {
+  return (
+    <div className="daemon-owner-evidence">
+      <p>
+        <strong>{owner.lane ? `Development lane ${owner.lane}` : "Production"}</strong>
+        {owner.pid !== null && ` · PID ${owner.pid}`}
+        {owner.protocol !== null && ` · Protocol ${owner.protocol}`}
+      </p>
+      {owner.build_id !== null && <p>Build: {owner.build_id}</p>}
+      {owner.app_config_identity !== null && <p>App configuration: {owner.app_config_identity}</p>}
+      {owner.impact.status === "unknown" ? (
+        <p>Session impact unknown: {owner.impact.detail}</p>
+      ) : (
+        <>
+          <p>{owner.impact.sessions.length} listed live task sessions</p>
+          {owner.impact.sessions.length > 0 && (
+            <ul>
+              {owner.impact.sessions.map((session) => (
+                <li key={session.id}>{session.name ? `${session.name} (${session.id})` : session.id}</li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
+export function DaemonConflictBanner({ conflict, onRefresh }: { conflict: DaemonConflict | null; onRefresh: () => void }) {
+  return conflict ? <SelectedRepoConflict key={conflict.repo} conflict={conflict} onRefresh={onRefresh} /> : null;
+}
+
+function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflict; onRefresh: () => void }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [progress, setProgress] = useState("");
+  const [remaining, setRemaining] = useState<{ source: DaemonConflict; value: DaemonConflict | null } | null>(null);
+  const operation = useRef<{ disposed: boolean; confirmationId: string | null; dialog: AbortController } | null>(null);
+  const displayed = remaining?.source === conflict ? remaining.value : conflict;
   const name = repoName(conflict.repo);
-  const running =
-    conflict.reason === "app_config"
-      ? "uses a different app configuration"
-      : conflict.daemon_protocol === null
-        ? "predates protocol versioning"
-        : `speaks protocol ${conflict.daemon_protocol}`;
+
+  useEffect(
+    () => () => {
+      const current = operation.current;
+      if (!current) return;
+      current.disposed = true;
+      current.dialog.abort();
+      if (current.confirmationId) {
+        // Backend expiry remains the backstop if IPC disappears during teardown.
+        void ipc.cancelRepoTakeover(current.confirmationId).catch(() => {});
+        current.confirmationId = null;
+      }
+    },
+    [],
+  );
+
+  const takeOver = async (owner: DaemonOwnerConflict, opener: HTMLButtonElement) => {
+    if (operation.current || owner.takeover_unavailable) return;
+    const current = { disposed: false, confirmationId: null as string | null, dialog: new AbortController() };
+    operation.current = current;
+    setPending(true);
+    setError("");
+    setProgress("");
+    try {
+      let preview = await ipc.prepareRepoTakeover(conflict.repo, owner.lane);
+      for (;;) {
+        current.confirmationId = preview.confirmation_id;
+        if (current.disposed) return;
+        if (preview.repo !== conflict.repo) throw new Error("Takeover preview belongs to another repository. Select the owner again.");
+        const accepted = await confirmDanger(
+          `Take over ${name}?`,
+          <>
+            <OwnerEvidence owner={preview.owner} />
+            <p>All sessions of this daemon will stop, including in-flight work and any setup or new sessions started after this preview. Save your work before continuing.</p>
+            <p>All repository tasks switch together, only after every previous owner has stopped. Other owners require separate confirmation.</p>
+          </>,
+          "Stop daemon and take over",
+          current.dialog.signal,
+        );
+        if (current.disposed) return;
+        if (!accepted) {
+          const id = current.confirmationId;
+          current.confirmationId = null;
+          await ipc.cancelRepoTakeover(id);
+          return;
+        }
+        current.confirmationId = null; // Confirm consumes the handle even on failure.
+        const outcome = await ipc.confirmRepoTakeover(preview.confirmation_id);
+        if (outcome.status === "reconfirm") {
+          preview = outcome.preview;
+          current.confirmationId = preview.confirmation_id;
+        }
+        if (current.disposed) return;
+        onRefresh();
+        if (outcome.status === "reconfirm") continue;
+        if (outcome.status === "blocked") {
+          setRemaining({ source: conflict, value: outcome.conflict });
+          setProgress("The selected daemon stopped. Other owners or ownership evidence still block switching; each remaining owner requires a separate confirmation.");
+        } else {
+          setRemaining({ source: conflict, value: null });
+          setProgress("Repository takeover completed.");
+        }
+        return;
+      }
+    } catch (cause) {
+      if (!current.disposed) {
+        setError(String(cause));
+        onRefresh();
+      }
+    } finally {
+      if (current.confirmationId) {
+        void ipc.cancelRepoTakeover(current.confirmationId).catch(() => {});
+        current.confirmationId = null;
+      }
+      if (!current.disposed) {
+        operation.current = null;
+        setPending(false);
+        // The modal closes while this button is still disabled. Restore focus
+        // after React re-enables it, unless another operation replaced this one.
+        requestAnimationFrame(() => {
+          if (!current.disposed && !operation.current && opener.isConnected) opener.focus();
+        });
+      }
+    }
+  };
 
   return (
     <div className="daemon-conflict" role="alert">
       <TriangleAlert size={16} strokeWidth={2} aria-hidden="true" className="daemon-conflict-icon" />
       <div>
-        <strong>{name} cannot be opened here yet.</strong>{" "}
-        {conflict.reason === "ownership" ? (
-          <>A previous daemon owner is still running, or Alinery cannot confirm that every previous owner has stopped.</>
-        ) : (
-          <>
-            Its session daemon {running}
-            {conflict.reason === "protocol" ? `; this app speaks protocol ${conflict.app_protocol}` : ""}.
-          </>
-        )}
-        {conflict.detail && <p>{conflict.detail}</p>}
-        <p>
-          If another Alinery still owns this project, finish your work there, close its window, and choose <em>Quit &amp; close all repos</em> in the confirmation dialog. This
-          stops sessions in all its open repositories; save your work before confirming. Settings → Chat restarts the daemon, and quitting with sessions left running does not
-          release the project.
-        </p>
-        {conflict.reason === "ownership" && (
-          <p>
-            If all previous owners have stopped but inspection still fails, use the error details to resolve access to the reported path, or get help restoring valid ownership
-            records. Do not delete lock or ownership files to force access.
-          </p>
-        )}
-        <p>This app retries automatically once ownership can be verified; it will not stop another daemon for you.</p>
+        {displayed && <strong>{name} cannot be opened here yet.</strong>}
+        {displayed?.owners.map((owner) => (
+          <section key={owner.lane}>
+            <OwnerEvidence owner={owner} />
+            {owner.takeover_unavailable ? (
+              <>
+                <p>{owner.takeover_unavailable}</p>
+                <p>Stop this owner from its owning app, or resolve the reported access problem. Do not delete lock or ownership files to force access.</p>
+              </>
+            ) : (
+              <button type="button" className="btn small danger" disabled={pending} onClick={(event) => void takeOver(owner, event.currentTarget)}>
+                Take over {name}
+              </button>
+            )}
+          </section>
+        ))}
+        {[...new Set(displayed?.issues)].map((issue) => (
+          <p key={issue}>{issue}</p>
+        ))}
+        {!!displayed?.issues.length && <p>Resolve the reported ownership evidence before switching. Do not delete lock or ownership files to force access.</p>}
+        {pending && <p role="status">Takeover awaiting confirmation or completion…</p>}
+        {progress && <p role="status">{progress}</p>}
+        {error && <p role="alert">{error}</p>}
       </div>
     </div>
   );

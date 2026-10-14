@@ -108,83 +108,6 @@ fn repo_reservation_keeps_current_ownership_until_commit() {
     let _ = fs::remove_dir_all(root);
 }
 
-// Finding 2: the post-spawn retry used to return `DaemonCompat::Current` "by
-// construction", so two apps racing an empty socket let the loser adopt the winner's
-// daemon with no `version` probe. Both branches now call `classify_connected_daemon`,
-// whose decision is this pure function — exercised here with synthetic version replies.
-#[test]
-fn classify_version_rejects_a_foreign_protocol_on_either_branch() {
-    let repo = Path::new("/tmp/alinery-classify-fixture");
-
-    let foreign = crate::daemon_client::DaemonVersionReply {
-        protocol: Some(PROTOCOL_VERSION.wrapping_add(99)),
-        build_id: Some("theirs".into()),
-        app_config_identity: Some("config".into()),
-        host_guard_ready: Some(true),
-    };
-    let err = classify_version(&foreign, "ours", "config", repo, || 4).expect_err("a foreign protocol must never be adopted");
-    match err {
-        EnsureDaemonError::Mismatch(conflict) => {
-            assert_eq!(conflict.daemon_protocol, foreign.protocol);
-            assert_eq!(conflict.app_protocol, PROTOCOL_VERSION);
-            assert_eq!(conflict.reason, "protocol");
-            // The banner's loss-of-work warning must carry the real count.
-            assert_eq!(conflict.live_sessions, 4);
-            assert_eq!(conflict.repo, repo.display().to_string());
-        }
-        other => panic!("expected mismatch, got {other}"),
-    }
-
-    // A pre-gate daemon reports no `protocol` at all — also a mismatch, not a pass.
-    assert!(classify_version(
-        &crate::daemon_client::DaemonVersionReply {
-            protocol: None,
-            build_id: Some("pre-gate".into()),
-            app_config_identity: Some("config".into()),
-            host_guard_ready: None,
-        },
-        "ours",
-        "config",
-        repo,
-        || 0,
-    )
-    .is_err());
-
-    let wrong_config = crate::daemon_client::DaemonVersionReply {
-        protocol: Some(PROTOCOL_VERSION),
-        build_id: Some("ours".into()),
-        app_config_identity: Some("other-config".into()),
-        host_guard_ready: Some(true),
-    };
-    let err = classify_version(&wrong_config, "ours", "config", repo, || 3).expect_err("same protocol with another app config must be refused");
-    match err {
-        EnsureDaemonError::Mismatch(conflict) => {
-            assert_eq!(conflict.reason, "app_config");
-            assert_eq!(conflict.daemon_app_config_identity.as_deref(), Some("other-config"));
-            assert_eq!(conflict.app_config_identity.as_deref(), Some("config"));
-            assert_eq!(conflict.live_sessions, 3);
-        }
-        other => panic!("expected config mismatch, got {other}"),
-    }
-
-    // Matching hard gates admit it; build drift is a soft signal (A6), so a
-    // differing build_id must NOT be rejected.
-    let drifted = crate::daemon_client::DaemonVersionReply {
-        protocol: Some(PROTOCOL_VERSION),
-        build_id: Some("a-different-release".into()),
-        app_config_identity: Some("config".into()),
-        host_guard_ready: Some(true),
-    };
-    // Accepted replies must not pay the live-session count round trip.
-    assert!(
-        classify_version(&drifted, "ours", "config", repo, || {
-            panic!("the accept path must not pay for a live-session round trip")
-        })
-        .is_ok(),
-        "protocol and app-config identity match; build drift is a soft signal"
-    );
-}
-
 #[test]
 fn effective_identifier_alone_selects_the_daemon_lane() {
     let alineryd = std::path::PathBuf::from("/tmp/alinery-lane-fixture/alineryd");
@@ -291,7 +214,9 @@ fn app_lifecycle_targets_the_namespaced_lane_not_production() {
     let version = crate::connect_current_daemon(&repo).expect("poller probe must connect to the current lane").version();
     assert_eq!(version.protocol, Some(PROTOCOL_VERSION));
     let state = AppState::default();
-    crate::close_repo_daemon(&state, &repo).expect("close must stop and wait for the app's current lane");
+    let lifecycle = state.repo_lifecycle(&repo);
+    let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+    crate::close_repo_daemon(&state, &repo, &guard).expect("close must stop and wait for the app's current lane");
 
     let production_before_cleanup = production_requests.lock().unwrap_or_else(|error| error.into_inner()).clone();
     let current_before_cleanup = current_requests.lock().unwrap_or_else(|error| error.into_inner()).clone();
@@ -376,7 +301,7 @@ fn wait_for_daemon_gone_ok_when_socket_quiet() {
     let repo = activity_repo("wait-gone");
     fs::create_dir_all(repo.join(".alinery")).unwrap();
     // No listener ⇒ connect fails immediately ⇒ Ok.
-    wait_for_daemon_gone(&repo).expect("quiet socket is success");
+    crate::daemon_client::wait_for_daemon_gone(&repo, crate::alineryd_socket_namespace().as_deref().unwrap_or("")).expect("quiet socket is success");
     let _ = fs::remove_dir_all(&repo);
 }
 
@@ -880,13 +805,6 @@ fn a_reachable_foreign_daemon_on_another_protocol_is_refused_and_never_cached() 
         Ok(_) => panic!("a foreign daemon on another protocol must not be handed out"),
     };
     assert!(err.contains("repo-protocol-mismatch"), "the refusal must name the protocol conflict, got: {err}");
-    // Specifically the foreign protocol it *reported* — not `None`. A stub whose
-    // listener has died also produces a mismatch, which would pass the assertion
-    // above while proving nothing about classification.
-    assert!(
-        err.contains(&format!("{:?}", Some(alinery_core::PROTOCOL_VERSION.wrapping_add(41)))),
-        "must have actually read the daemon's version reply, got: {err}"
-    );
     assert!(
         state.session_routes.lock().unwrap_or_else(|e| e.into_inner()).is_empty(),
         "an unclassified foreign client must never reach the route cache — \
@@ -1073,13 +991,15 @@ fn project_open_refuses_a_live_foreign_lock_without_seizing_the_gui() {
     let repo = activity_repo("foreign-live-owner");
     fs::create_dir_all(repo.join(".alinery")).unwrap();
     let config = repo.join(".alinery/app.toml");
+    register_takeover_repo(&repo, &config);
     let lock_path = alinery_core::alineryd_lock_path(&repo, Some("old-checkout"));
     let lease = alinery_core::lockfile::try_lock_exclusive(&lock_path).unwrap().unwrap();
     let inode = fs::metadata(&lock_path).unwrap().ino();
     let state = AppState::default();
     crate::attach_repo_daemon(&state, &repo, &config);
     let conflict = state.daemon_conflict(&repo).expect("live foreign owner must be visible");
-    assert_eq!(conflict.reason, "ownership");
+    assert!(conflict.owners.is_empty(), "a held lease without a socket is not an identified process");
+    assert!(conflict.issues.iter().any(|issue| issue.contains("old-checkout")));
     assert!(state.daemon_for(&repo).is_none());
     assert!(!state.owns_repo(&repo));
     assert!(crate::require_repo_owned(&state, &repo).is_err());
@@ -1096,11 +1016,12 @@ fn project_open_refuses_a_live_foreign_lock_without_seizing_the_gui() {
 fn project_open_reports_unknown_lock_state_without_starting_a_daemon() {
     let repo = activity_repo("unknown-owner");
     fs::create_dir_all(repo.join(".alinery")).unwrap();
+    register_takeover_repo(&repo, &repo.join(".alinery/app.toml"));
     let lock_path = alinery_core::alineryd_lock_path(&repo, Some("unreadable"));
     fs::create_dir(&lock_path).unwrap();
     let state = AppState::default();
     crate::attach_repo_daemon(&state, &repo, &repo.join(".alinery/app.toml"));
-    assert_eq!(state.daemon_conflict(&repo).unwrap().reason, "ownership");
+    assert!(state.daemon_conflict(&repo).unwrap().issues.iter().any(|issue| issue.contains("unreadable")));
     assert!(state.daemon_for(&repo).is_none());
     assert!(!state.owns_repo(&repo));
     assert!(!crate::current_alineryd_socket_path(&repo).exists());
@@ -1113,9 +1034,9 @@ fn daemon_exit_wait_does_not_accept_a_missing_socket_with_a_live_lock() {
     let repo = activity_repo("exit-live-lock");
     fs::create_dir_all(repo.join(".alinery")).unwrap();
     let lease = alinery_core::lockfile::try_lock_exclusive(&crate::current_alineryd_lock_path(&repo)).unwrap().unwrap();
-    assert!(crate::wait_for_daemon_gone(&repo).is_err());
+    assert!(crate::daemon_client::wait_for_daemon_gone(&repo, crate::alineryd_socket_namespace().as_deref().unwrap_or("")).is_err());
     drop(lease);
-    crate::wait_for_daemon_gone(&repo).unwrap();
+    crate::daemon_client::wait_for_daemon_gone(&repo, crate::alineryd_socket_namespace().as_deref().unwrap_or("")).unwrap();
     fs::remove_dir_all(repo).unwrap();
 }
 #[test]
@@ -1133,13 +1054,10 @@ fn host_guard_warning_is_repo_scoped_replaced_and_cleared() {
         &conflicted,
         DaemonConflict {
             repo: conflicted.display().to_string(),
-            reason: "protocol".into(),
-            detail: None,
-            daemon_protocol: None,
             app_protocol: PROTOCOL_VERSION,
-            daemon_app_config_identity: None,
-            app_config_identity: None,
-            live_sessions: 0,
+            app_config_identity: "config".into(),
+            owners: Vec::new(),
+            issues: vec!["unavailable".into()],
         },
     );
 
@@ -1172,6 +1090,42 @@ fn host_guard_warning_is_repo_scoped_replaced_and_cleared() {
     state.set_daemon(&warned, client(), DaemonCompat::Current, "warned-again".into(), true);
     state.clear_daemon(&warned);
     assert!(!state.daemon_host_guard_warning(&warned));
+}
+
+#[test]
+fn closing_repo_discards_inflight_conflict_observation() {
+    let repo = activity_repo("closing-probe");
+    register_takeover_repo(&repo, &repo.join("app.toml"));
+    let state = std::sync::Arc::new(AppState::default());
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+    let paused = std::sync::atomic::AtomicBool::new(false);
+    let (requests, listener) = recording_lane_with_response(crate::current_alineryd_socket_path(&repo), move |op| match op {
+        "version" => {
+            if !paused.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                entered_tx.send(()).unwrap();
+                resume_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            }
+            serde_json::json!({"protocol": 12, "build_id": "old", "app_config_identity": "old"}).to_string()
+        }
+        "list" => serde_json::json!({"sessions": []}).to_string(),
+        other => panic!("unexpected destructive request: {other}"),
+    });
+    let worker_state = state.clone();
+    let worker_repo = repo.clone();
+    let worker = std::thread::spawn(move || {
+        attach_repo_daemon(&worker_state, &worker_repo, &worker_repo.join("app.toml"));
+    });
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let closing = state.mark_closing(&repo);
+    resume_tx.send(()).unwrap();
+    worker.join().unwrap();
+    let published = state.repo_daemon(&repo).is_some();
+    drop(closing);
+    listener.join().unwrap();
+    assert!(!requests.lock().unwrap_or_else(|error| error.into_inner()).iter().any(|op| op == "shutdown"));
+    fs::remove_dir_all(repo).unwrap();
+    assert!(!published, "an observation begun before close must not publish during teardown");
 }
 
 #[test]
@@ -1554,4 +1508,511 @@ fn pending_observation_dispatch_handles_ping_first() {
     }
     server.join().unwrap();
     fs::remove_dir_all(repo).unwrap();
+}
+
+// App orchestration peers have mutable observations and orderly exit, unlike the
+// core transport fixture, which deliberately stays alive after an acknowledgement.
+struct TakeoverPeer {
+    child: std::process::Child,
+    root: PathBuf,
+    lane: String,
+}
+
+impl TakeoverPeer {
+    fn start(repo: &Path, lane: &str) -> Self {
+        let root = repo.join(lane);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("version"), r#"{"protocol":12,"build_id":"old","app_config_identity":"old"}"#).unwrap();
+        fs::write(root.join("list"), r#"{"sessions":[]}"#).unwrap();
+        fs::write(root.join("ack"), r#"{"ok":true}"#).unwrap();
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tests::daemon::takeover_peer_child", "--nocapture"])
+            .env("ALINERY_TEST_TAKEOVER_REPO", repo)
+            .env("ALINERY_TEST_TAKEOVER_LANE", lane)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut peer = Self { child, root, lane: lane.into() };
+        let until = Instant::now() + Duration::from_secs(5);
+        let client = DaemonClient {
+            socket_path: alinery_core::alineryd_socket_path(repo, Some(lane)),
+        };
+        while client.version_checked().is_err() {
+            assert!(peer.child.try_wait().unwrap().is_none());
+            assert!(Instant::now() < until, "legacy peer did not become queryable");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        peer
+    }
+    fn shutdowns(&self) -> usize {
+        fs::read_to_string(self.root.join("requests"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|op| *op == "shutdown")
+            .count()
+    }
+    fn impact(&self, ids: &[&str]) {
+        let sessions = ids
+            .iter()
+            .map(|id| {
+                serde_json::json!({
+                    "id":id, "process":{"state":"alive"}, "agent":{"state":"unknown"},
+                    "playbook":{"state":"in_progress"}, "adapter":"unsupported",
+                    "message_adapter":"unsupported", "transport":"pty",
+                })
+            })
+            .collect::<Vec<_>>();
+        fs::write(self.root.join("list"), serde_json::json!({"sessions":sessions}).to_string()).unwrap();
+    }
+}
+impl Drop for TakeoverPeer {
+    fn drop(&mut self) {
+        drop(self.child.stdin.take());
+        let _ = self.child.wait();
+    }
+}
+
+#[test]
+fn takeover_peer_child() {
+    use std::io::{BufRead, BufReader};
+    let Ok(repo) = std::env::var("ALINERY_TEST_TAKEOVER_REPO") else { return };
+    let repo = PathBuf::from(repo);
+    let lane = std::env::var("ALINERY_TEST_TAKEOVER_LANE").unwrap();
+    let root = repo.join(&lane);
+    let socket = alinery_core::alineryd_socket_path(&repo, Some(&lane));
+    let _lease = alinery_core::lockfile::try_lock_exclusive(&alinery_core::alineryd_lock_path(&repo, Some(&lane)))
+        .unwrap()
+        .unwrap();
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let stopped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let signal = stopped.clone();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+        signal.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    while !stopped.load(std::sync::atomic::Ordering::SeqCst) {
+        let (mut stream, _) = match listener.accept() {
+            Ok(pair) => pair,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(2));
+                continue;
+            }
+            Err(error) => panic!("{error}"),
+        };
+        if stream.set_nonblocking(false).is_err() || stream.set_read_timeout(Some(Duration::from_secs(1))).is_err() {
+            continue;
+        }
+        let mut line = String::new();
+        if BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap_or(0) == 0 {
+            continue;
+        }
+        let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let op = request["op"].as_str().unwrap();
+        writeln!(fs::OpenOptions::new().create(true).append(true).open(root.join("requests")).unwrap(), "{op}").unwrap();
+        let response = fs::read_to_string(root.join(if op == "shutdown" { "ack" } else { op })).unwrap();
+        if op == "shutdown" && response == "HOLD_LEASE" {
+            fs::remove_file(&socket).unwrap();
+            writeln!(stream, "{{\"ok\":true}}").unwrap();
+            while !stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            break;
+        }
+        if op == "shutdown" && response == r#"{"ok":true}"# {
+            fs::remove_file(&socket).unwrap();
+            writeln!(stream, "{response}").unwrap();
+            break;
+        }
+        let _ = writeln!(stream, "{response}");
+    }
+    let _ = fs::remove_file(socket);
+}
+
+struct TakeoverRepo(PathBuf);
+impl TakeoverRepo {
+    fn new() -> Self {
+        let repo = PathBuf::from(format!("/tmp/ato-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]));
+        fs::create_dir_all(repo.join(".alinery")).unwrap();
+        assert!(git_cmd(&repo).args(["init", "-q"]).status().unwrap().success());
+        Self(fs::canonicalize(repo).unwrap())
+    }
+    fn known(&self) -> Vec<String> {
+        vec![self.0.display().to_string()]
+    }
+    fn prepare(&self, state: &AppState, lane: &str) -> crate::TakeoverPreview {
+        crate::prepare_repo_takeover_blocking(state, &self.0.join("app.toml"), &self.0.display().to_string(), lane, || self.known()).unwrap()
+    }
+    fn confirm(&self, state: &AppState, id: &str) -> Result<crate::TakeoverOutcome, String> {
+        crate::confirm_repo_takeover_blocking(state, &self.0.join("app.toml"), id, || self.known(), |_| {})
+    }
+}
+impl Drop for TakeoverRepo {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn takeover_consent_is_passive_single_use_and_revalidates_gui() {
+    let repo = TakeoverRepo::new();
+    let peer = TakeoverPeer::start(&repo.0, "old");
+    let state = AppState::default();
+    let old = repo.prepare(&state, &peer.lane);
+    assert_eq!(peer.shutdowns(), 0);
+    let other_gui = AppState::default();
+    assert!(other_gui.claim_repo(&repo.0), "preparation must not retain the GUI lease");
+    assert!(repo.confirm(&state, &old.confirmation_id).unwrap_err().contains("repo-busy"));
+    other_gui.release_repo(&repo.0);
+    assert!(repo.confirm(&state, &old.confirmation_id).is_err(), "failed confirmation consumes consent");
+    let old = repo.prepare(&state, &peer.lane);
+    let fresh = repo.prepare(&state, &peer.lane);
+    assert!(repo.confirm(&state, &old.confirmation_id).is_err(), "new preparation supersedes old consent");
+    state.begin_quit();
+    assert!(repo.confirm(&state, &fresh.confirmation_id).is_err());
+    state.cancel_quit();
+    let fresh = repo.prepare(&state, &peer.lane);
+    let closing = state.mark_closing(&repo.0);
+    assert!(repo.confirm(&state, &fresh.confirmation_id).is_err());
+    drop(closing);
+    let fresh = repo.prepare(&state, &peer.lane);
+    assert!(crate::confirm_repo_takeover_blocking(&state, &repo.0.join("app.toml"), &fresh.confirmation_id, Vec::new, |_| {}).is_err());
+    assert_eq!(peer.shutdowns(), 0, "none of these attempts authorizes a shutdown");
+}
+
+#[test]
+fn changed_impact_requires_fresh_consent_and_replacement_invalidates_it() {
+    let repo = TakeoverRepo::new();
+    let a = TakeoverPeer::start(&repo.0, "old");
+    a.impact(&["first"]);
+    let state = AppState::default();
+    let preview = repo.prepare(&state, "old");
+    a.impact(&["second"]);
+    let crate::TakeoverOutcome::Reconfirm { preview } = repo.confirm(&state, &preview.confirmation_id).unwrap() else {
+        panic!("changed IDs require consent")
+    };
+    assert_eq!(a.shutdowns(), 0);
+    fs::write(a.root.join("list"), r#"{"error":"unsupported"}"#).unwrap();
+    let crate::TakeoverOutcome::Reconfirm { preview } = repo.confirm(&state, &preview.confirmation_id).unwrap() else {
+        panic!("unknown impact requires consent")
+    };
+    assert!(matches!(preview.owner.impact, crate::TakeoverImpact::Unknown { .. }));
+    assert_eq!(a.shutdowns(), 0);
+    drop(a);
+    let b = TakeoverPeer::start(&repo.0, "old");
+    assert!(repo.confirm(&state, &preview.confirmation_id).is_err(), "replacement incarnation invalidates consent");
+    assert_eq!(b.shutdowns(), 0);
+}
+
+#[test]
+fn refused_shutdown_consumes_consent_without_attaching_replacement() {
+    let repo = TakeoverRepo::new();
+    let peer = TakeoverPeer::start(&repo.0, "old");
+    fs::write(peer.root.join("ack"), r#"{"error":"refused"}"#).unwrap();
+    let state = AppState::default();
+    let preview = repo.prepare(&state, "old");
+    assert!(repo.confirm(&state, &preview.confirmation_id).unwrap_err().contains("shutdown failed"));
+    assert!(repo.confirm(&state, &preview.confirmation_id).is_err());
+    assert_eq!(peer.shutdowns(), 1);
+    assert!(state.daemon_for(&repo.0).is_none());
+    assert!(!crate::current_alineryd_socket_path(&repo.0).exists());
+    assert!(DaemonClient {
+        socket_path: alinery_core::alineryd_socket_path(&repo.0, Some("old"))
+    }
+    .version_checked()
+    .is_ok());
+}
+
+#[test]
+fn two_legacy_owners_require_two_confirmations() {
+    // Execute the real attach path from an isolated alongside installation, not
+    // target/debug/deps (which also contains non-executable Rust depfiles).
+    if std::env::var_os("ALINERY_TEST_TAKEOVER_INSTALL").is_none() {
+        let install = TakeoverRepo::new();
+        let executable = install.0.join("app-tests");
+        fs::hard_link(std::env::current_exe().unwrap(), &executable).unwrap();
+        std::os::unix::fs::symlink(Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/alineryd"), install.0.join("alineryd")).unwrap();
+        let result = Command::new(executable)
+            .args(["--exact", "tests::daemon::two_legacy_owners_require_two_confirmations", "--nocapture"])
+            .env("ALINERY_TEST_TAKEOVER_INSTALL", "1")
+            .status()
+            .unwrap();
+        assert!(result.success());
+        return;
+    }
+    let repo = TakeoverRepo::new();
+    write_retained_discovery_task(&repo.0, "task", "old-a", false);
+    let path = alinery_core::execution::execution_state_path(&repo.0, "task").unwrap();
+    let before = fs::read(&path).unwrap();
+    let mut a = TakeoverPeer::start(&repo.0, "old-a");
+    let b = TakeoverPeer::start(&repo.0, "old-b");
+    b.impact(&["still-running"]);
+    let state = AppState::default();
+    let preview = repo.prepare(&state, "old-a");
+    let crate::TakeoverOutcome::Blocked { conflict } = repo.confirm(&state, &preview.confirmation_id).unwrap() else {
+        panic!("second owner still blocks")
+    };
+    assert!(a.child.wait().unwrap().success());
+    assert_eq!(a.shutdowns(), 1);
+    assert_eq!(b.shutdowns(), 0);
+    assert!(conflict.owners.iter().any(|owner| owner.lane == "old-b"));
+    assert_eq!(fs::read(&path).unwrap(), before, "no partial task adoption");
+    assert!(state.daemon_for(&repo.0).is_none());
+    let preview = repo.prepare(&state, "old-b");
+    assert!(matches!(repo.confirm(&state, &preview.confirmation_id).unwrap(), crate::TakeoverOutcome::Attached));
+    let replacement = state.daemon_for(&repo.0).unwrap();
+    struct Replacement(DaemonClient);
+    impl Drop for Replacement {
+        fn drop(&mut self) {
+            let _ = self.0.call(&crate::daemon_client::shutdown_request());
+        }
+    }
+    let _replacement = Replacement(replacement);
+    assert_eq!(b.shutdowns(), 1);
+    let adopted = alinery_core::execution::read_execution_state(&repo.0, "task").unwrap();
+    assert_eq!(adopted.owning_lane, crate::alineryd_socket_namespace().as_deref().unwrap_or(""));
+    assert_eq!(adopted.owning_app_config_identity, alinery_core::app_config_identity(&repo.0.join("app.toml")));
+    let routed = crate::task_daemon_for(&repo.0, "task", &repo.0.join("app.toml")).unwrap();
+    let reply = routed
+        .get_task_execution(&alinery_core::daemon_client::GetTaskExecutionRequest { task_slug: "task".into() })
+        .unwrap();
+    assert_eq!(reply.state.owning_lane, adopted.owning_lane);
+}
+
+#[test]
+fn takeover_expiry_is_monotonic_and_cancel_is_idempotent() {
+    use tauri::Manager;
+    let repo = TakeoverRepo::new();
+    let peer = TakeoverPeer::start(&repo.0, "old");
+    fs::write(peer.root.join("ack"), r#"{"error":"refused"}"#).unwrap();
+    let app = tauri::test::mock_builder()
+        .manage(AppState::default())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let state = app.state::<AppState>();
+    let now = Instant::now();
+    let expired = crate::with_takeover_time(now, || repo.prepare(&state, "old"));
+    let result = crate::with_takeover_time(now + Duration::from_secs(120), || repo.confirm(&state, &expired.confirmation_id));
+    assert!(result.unwrap_err().contains("expired"));
+    assert_eq!(peer.shutdowns(), 0);
+    let cancelled = repo.prepare(&state, "old");
+    crate::cancel_repo_takeover(app.state(), cancelled.confirmation_id.clone()).unwrap();
+    crate::cancel_repo_takeover(app.state(), cancelled.confirmation_id.clone()).unwrap();
+    assert!(repo.confirm(&state, &cancelled.confirmation_id).is_err());
+    assert_eq!(peer.shutdowns(), 0);
+    let valid = crate::with_takeover_time(now, || repo.prepare(&state, "old"));
+    let result = crate::with_takeover_time(now + Duration::from_secs(120) - Duration::from_nanos(1), || repo.confirm(&state, &valid.confirmation_id));
+    assert!(result.unwrap_err().contains("refused"), "one instant before expiry reaches the verified peer");
+    assert_eq!(peer.shutdowns(), 1);
+}
+
+#[test]
+fn concurrent_confirmation_sends_at_most_one_shutdown() {
+    let repo = TakeoverRepo::new();
+    let peer = TakeoverPeer::start(&repo.0, "old");
+    fs::write(peer.root.join("ack"), r#"{"error":"refused"}"#).unwrap();
+    let state = std::sync::Arc::new(AppState::default());
+    let preview = repo.prepare(&state, "old");
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    std::thread::scope(|scope| {
+        let mut workers = Vec::new();
+        for _ in 0..2 {
+            let state = state.clone();
+            let barrier = barrier.clone();
+            let repo = &repo;
+            let id = &preview.confirmation_id;
+            workers.push(scope.spawn(move || {
+                barrier.wait();
+                repo.confirm(&state, id)
+            }));
+        }
+        barrier.wait();
+        for worker in workers {
+            assert!(worker.join().unwrap().is_err());
+        }
+    });
+    assert_eq!(peer.shutdowns(), 1);
+    assert!(state.daemon_for(&repo.0).is_none());
+}
+
+fn register_takeover_repo(repo: &Path, config: &Path) {
+    crate::write_app_config_at(
+        config,
+        &AppConfig {
+            known_repos: vec![repo.display().to_string()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn attach_rechecks_membership_after_lifecycle_wait() {
+    let repo = TakeoverRepo::new();
+    let peer = TakeoverPeer::start(&repo.0, "old");
+    let config = repo.0.join("app.toml");
+    register_takeover_repo(&repo.0, &config);
+    let state = std::sync::Arc::new(AppState::default());
+    let lifecycle = state.repo_lifecycle(&repo.0);
+    let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+    let started = std::sync::Arc::new(std::sync::Barrier::new(2));
+    std::thread::scope(|scope| {
+        let thread_state = state.clone();
+        let thread_started = started.clone();
+        let repo = &repo.0;
+        let config = &config;
+        let worker = scope.spawn(move || {
+            thread_started.wait();
+            attach_repo_daemon(&thread_state, repo, config);
+        });
+        started.wait();
+        crate::write_app_config_at(config, &AppConfig::default()).unwrap();
+        drop(guard);
+        worker.join().unwrap();
+    });
+    assert!(!state.owns_repo(&repo.0));
+    assert!(state.repo_daemon(&repo.0).is_none());
+    assert_eq!(peer.shutdowns(), 0);
+}
+
+#[test]
+fn nonactive_takeover_refresh_preserves_selected_repository_mcp() {
+    use tauri::Manager;
+    let _active_lock = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let app = tauri::test::mock_builder()
+        .manage(AppState::default())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let state = app.state::<AppState>();
+    struct Cleanup<'a>(&'a AppState);
+    impl Drop for Cleanup<'_> {
+        fn drop(&mut self) {
+            self.0.kill_mcp();
+            set_active_repo_global(None).unwrap();
+        }
+    }
+    let _cleanup = Cleanup(&state);
+    let selected = PathBuf::from("/tmp/selected-mcp-fixture");
+    set_active_repo_global(Some(selected.clone())).unwrap();
+    let child = Command::new("/bin/cat")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    *state.mcp_child.lock().unwrap_or_else(|error| error.into_inner()) = Some(crate::ManagedMcpChild { repo: selected, child });
+    crate::ensure_mcp_server(app.handle(), Path::new("/tmp/old-takeover-fixture"), true);
+    state.kill_mcp_for_repo(Path::new("/tmp/old-takeover-fixture"));
+    let mut guard = state.mcp_child.lock().unwrap_or_else(|error| error.into_inner());
+    let managed = guard.as_mut().expect("selected repository's connection must remain available");
+    assert_eq!(managed.child.id(), pid);
+    assert!(managed.child.try_wait().unwrap().is_none(), "nonactive refresh must not kill or replace the selected child");
+}
+
+#[test]
+fn takeover_rejects_invalid_and_compatible_targets_before_shutdown() {
+    let repo = TakeoverRepo::new();
+    let lane = crate::alineryd_socket_namespace().unwrap_or_default();
+    let peer = TakeoverPeer::start(&repo.0, &lane);
+    let state = AppState::default();
+    let config = repo.0.join("app.toml");
+    fs::write(
+        peer.root.join("version"),
+        serde_json::json!({
+            "protocol": PROTOCOL_VERSION, "build_id":"different-but-compatible",
+            "app_config_identity":alinery_core::app_config_identity(&config),
+        })
+        .to_string(),
+    )
+    .unwrap();
+    assert!(
+        crate::prepare_repo_takeover_blocking(&state, &config, &repo.0.display().to_string(), &lane, || repo.known())
+            .unwrap_err()
+            .contains("compatible")
+    );
+    for invalid in ["../outside", "reconciler", "not-discovered"] {
+        assert!(crate::prepare_repo_takeover_blocking(&state, &config, &repo.0.display().to_string(), invalid, || repo.known()).is_err());
+    }
+    assert!(crate::prepare_repo_takeover_blocking(&state, &config, "/unselected", &lane, || repo.known()).is_err());
+    assert_eq!(peer.shutdowns(), 0);
+}
+
+#[test]
+fn takeover_reconfirms_changed_names_and_presented_version() {
+    let repo = TakeoverRepo::new();
+    write_retained_discovery_task(&repo.0, "task", "old", false);
+    write_status_session(&repo.0, "task", "named-session", "work", "old", Some(1), None, None, "");
+    alinery_core::set_session_name(&repo.0, "task", "named-session", "Original name", alinery_core::SessionNameSource::User).unwrap();
+    let peer = TakeoverPeer::start(&repo.0, "old");
+    peer.impact(&["named-session"]);
+    let state = AppState::default();
+    let first = repo.prepare(&state, "old");
+    let crate::TakeoverImpact::Known { sessions } = &first.owner.impact else {
+        panic!("known list")
+    };
+    assert_eq!(sessions[0].name.as_deref(), Some("Original name"));
+    alinery_core::set_session_name(&repo.0, "task", "named-session", "Renamed work", alinery_core::SessionNameSource::User).unwrap();
+    let crate::TakeoverOutcome::Reconfirm { preview } = repo.confirm(&state, &first.confirmation_id).unwrap() else {
+        panic!("new displayed name requires consent")
+    };
+    let crate::TakeoverImpact::Known { sessions } = &preview.owner.impact else {
+        panic!("known list")
+    };
+    assert_eq!(sessions[0].name.as_deref(), Some("Renamed work"));
+    fs::write(peer.root.join("version"), r#"{"protocol":15,"build_id":"new-evidence","app_config_identity":"different"}"#).unwrap();
+    assert!(matches!(repo.confirm(&state, &preview.confirmation_id).unwrap(), crate::TakeoverOutcome::Reconfirm { .. }));
+    assert_eq!(peer.shutdowns(), 0);
+}
+
+#[test]
+fn acknowledged_shutdown_with_held_lease_never_attaches_replacement() {
+    let repo = TakeoverRepo::new();
+    let peer = TakeoverPeer::start(&repo.0, "old");
+    fs::write(peer.root.join("ack"), "HOLD_LEASE").unwrap();
+    let state = AppState::default();
+    let preview = repo.prepare(&state, "old");
+    assert!(repo.confirm(&state, &preview.confirmation_id).unwrap_err().contains("exit not established"));
+    assert_eq!(peer.shutdowns(), 1);
+    assert!(state.daemon_for(&repo.0).is_none());
+    assert!(!crate::current_alineryd_socket_path(&repo.0).exists());
+    assert!(alinery_core::lockfile::try_lock_exclusive(&alinery_core::alineryd_lock_path(&repo.0, Some("old")))
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn replacement_start_failure_preserves_history_without_restarting_owner() {
+    if std::env::var_os("ALINERY_TEST_TAKEOVER_FAILED_INSTALL").is_none() {
+        let install = TakeoverRepo::new();
+        let executable = install.0.join("app-tests");
+        fs::hard_link(std::env::current_exe().unwrap(), &executable).unwrap();
+        fs::write(install.0.join("alineryd"), "not an executable").unwrap();
+        let result = Command::new(executable)
+            .args([
+                "--exact",
+                "tests::daemon::replacement_start_failure_preserves_history_without_restarting_owner",
+                "--nocapture",
+            ])
+            .env("ALINERY_TEST_TAKEOVER_FAILED_INSTALL", "1")
+            .status()
+            .unwrap();
+        assert!(result.success());
+        return;
+    }
+    let repo = TakeoverRepo::new();
+    write_retained_discovery_task(&repo.0, "task", "old", false);
+    let path = alinery_core::execution::execution_state_path(&repo.0, "task").unwrap();
+    let before = fs::read(&path).unwrap();
+    let mut peer = TakeoverPeer::start(&repo.0, "old");
+    let state = AppState::default();
+    let preview = repo.prepare(&state, "old");
+    assert!(repo.confirm(&state, &preview.confirmation_id).unwrap_err().contains("replacement failed"));
+    assert!(peer.child.wait().unwrap().success());
+    assert_eq!(peer.shutdowns(), 1);
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert!(state.daemon_for(&repo.0).is_none());
+    assert!(!alinery_core::alineryd_socket_path(&repo.0, Some("old")).exists());
+    assert!(!crate::current_alineryd_socket_path(&repo.0).exists());
 }

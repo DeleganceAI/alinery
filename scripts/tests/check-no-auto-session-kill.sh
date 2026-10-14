@@ -33,12 +33,13 @@ done
 [ "${#LIBS[@]}" -gt 0 ] || { echo "ERROR: no app-crate sources found under $SRC" >&2; exit 1; }
 
 # The ONLY deliberate session-kill origins. Add a name here only together with a
-# user-facing confirmation that names the repo and the live session count:
+# user-facing confirmation that names the repo and states known or unknown session impact:
 #   stop_daemon           Settings → Harness → "Quit & stop all sessions" (B1)
 #   close_repo_daemon     close-repo confirmation (B4)
 #   restore_backup        destructive restore, confirmed in the UI (the daemon holds the
 #                         data being replaced, so it is not restarted afterwards)
-ALLOWED="stop_daemon close_repo_daemon restore_backup"
+#   confirm_repo_takeover_blocking  consumed one-shot selected-owner confirmation
+ALLOWED="stop_daemon close_repo_daemon restore_backup confirm_repo_takeover_blocking"
 
 # `close_repo_daemon` is a plain fn, so a NEW CALLER of it would end every live session in
 # a repo without adding a `shutdown` sender for the scan above to notice. Its callers are
@@ -61,7 +62,7 @@ senders="$(
     # Two spellings, both matched on purpose: the wire client builds requests through
     # daemon_client::shutdown_request(), but a hand-rolled json!({"op":"shutdown"}) must
     # not slip past this guard just because it bypassed the module.
-    /"op"[[:space:]]*:[[:space:]]*"shutdown"/ || /shutdown_request\(/ { print current }
+    /"op"[[:space:]]*:[[:space:]]*"shutdown"/ || /shutdown_request\(/ || /\.shutdown[[:space:]]*\([[:space:]]*\)/ { print current }
   ' "${LIBS[@]}" | sort -u | tr '\n' ' '
 )"
 senders="$(echo $senders)"
@@ -112,6 +113,34 @@ for fn in $close_callers; do
       ;;
   esac
 done
+
+# Moving the destructive transport into core must not let another app/MCP entry
+# point borrow the confirmation worker or call bound shutdown directly.
+node --input-type=module - "$ROOT" <<'JS'
+import fs from "node:fs";
+import path from "node:path";
+const root = process.argv[2];
+for (const dir of ["src", "mcp/src", "alinery-core/src"]) {
+  const base = path.join(root, "alinery-app/src-tauri", dir);
+  for (const name of fs.readdirSync(base).filter(name => name.endsWith(".rs"))) {
+    const source = fs.readFileSync(path.join(base, name), "utf8").split("#[cfg(test)]\nmod tests")[0];
+    let current = "";
+    for (const line of source.split("\n")) {
+      const declaration = line.match(/^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(\w+)/);
+      if (declaration) current = declaration[1];
+      if (/\bconfirm_repo_takeover_blocking\s*\(/.test(line) && !declaration && current !== "confirm_repo_takeover") {
+        throw new Error(`${dir}/${name}: ${current} bypasses confirmed takeover entry`);
+      }
+      if (/\.shutdown\s*\(\s*\)/.test(line) && !(dir === "src" && current === "confirm_repo_takeover_blocking")) {
+        throw new Error(`${dir}/${name}: ${current} sends bound shutdown outside confirmed takeover`);
+      }
+      if (dir !== "src" && /\bshutdown_request\s*\(/.test(line) && !declaration && !(dir === "alinery-core/src" && name === "daemon_client.rs" && current === "shutdown")) {
+        throw new Error(`${dir}/${name}: ${current} sends shutdown outside checked core transport`);
+      }
+    }
+  }
+}
+JS
 
 case " $senders " in
   *" ensure_daemon "*)

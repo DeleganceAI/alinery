@@ -86,6 +86,131 @@ fn persist_owner_fixture(f: &mut Fixture) {
 }
 
 #[test]
+fn repo_partial_write_failure_is_retryable_without_ownership_guard() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, true, 10);
+    let completed = f.reserve(true);
+    let owner = f.run(&completed);
+    f.write_output(&completed, 0, None);
+    accept_execution_completion(&f.repo, "task", &mut f.state, &completed, &owner).unwrap();
+    confirm_execution_exit(&mut f.state, &completed, &owner, Some(0)).unwrap();
+    let uncertain = f.reserve(true);
+    f.run(&uncertain);
+    let queued = f.reserve(true);
+    persist_owner_fixture(&mut f);
+    let archived = crate::task_dir(&f.repo, "archived");
+    fs::create_dir_all(&archived).unwrap();
+    let task = crate::Task {
+        name: "Archived".into(),
+        slug: "archived".into(),
+        archived: true,
+        engine_version: 2,
+        ..Default::default()
+    };
+    fs::write(archived.join("task.md"), toml::to_string(&task).unwrap()).unwrap();
+    fs::write(archived.join("playbook.md"), &f.source).unwrap();
+    write_execution_state_unlocked(&f.repo, "archived", &mut f.state.clone()).unwrap();
+    let artifact = crate::artifacts_dir(&f.repo, "task").join(&f.state.executions[&completed].outputs[0].relative_path);
+    let output = fs::read(&artifact).unwrap();
+    let result = crate::repo_ownership::with_adoption_write_failure(1, || crate::repo_ownership::acquire(&f.repo, "next", "next-config"));
+    assert!(result.is_err(), "partial adoption must not return a usable guard");
+    let adopted = ["archived", "task"]
+        .into_iter()
+        .filter(|slug| read_execution_state(&f.repo, slug).unwrap().owning_lane == "next")
+        .count();
+    assert_eq!(adopted, 1, "fixture must exercise a real partial durable batch");
+    for path in [
+        crate::alinery_dir(&f.repo).join(".repo-owner.lock"),
+        crate::alineryd_lock_path(&f.repo, Some("lane")),
+        crate::alineryd_lock_path(&f.repo, Some("next")),
+    ] {
+        let lease = crate::lockfile::try_lock_exclusive(&path).unwrap().expect("failed acquire must release every lease");
+        drop(lease);
+    }
+    let _guard = crate::repo_ownership::acquire(&f.repo, "next", "next-config").unwrap();
+    for slug in ["archived", "task"] {
+        let mut state = read_execution_state(&f.repo, slug).unwrap();
+        assert_eq!(state.owning_lane, "next");
+        assert_eq!(state.owning_app_config_identity, "next-config");
+        assert_eq!(state.executions[&completed], f.state.executions[&completed]);
+        assert_eq!(state.executions[&queued], f.state.executions[&queued]);
+        assert_eq!(state.occurrences, f.state.occurrences);
+        assert_eq!(state.executions[&uncertain].lifecycle, ExecutionLifecycle::Interrupted);
+        assert!(!state.executions[&uncertain].shutdown_confirmed);
+        assert_eq!(state.executions[&uncertain].owner_session_id, f.state.executions[&uncertain].owner_session_id);
+        assert!(recover_execution_owner(&mut state, &uncertain).is_err());
+    }
+    assert_eq!(fs::read(artifact).unwrap(), output);
+}
+
+#[test]
+fn repo_round_trip_adopts_active_and_archived_tasks_preserving_evidence() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, true, 10);
+    let completed = f.reserve(true);
+    let owner = f.run(&completed);
+    f.write_output(&completed, 0, None);
+    accept_execution_completion(&f.repo, "task", &mut f.state, &completed, &owner).unwrap();
+    confirm_execution_exit(&mut f.state, &completed, &owner, Some(0)).unwrap();
+    let uncertain = f.reserve(true);
+    f.run(&uncertain);
+    let queued = f.reserve(true);
+    persist_owner_fixture(&mut f);
+    let archived = crate::task_dir(&f.repo, "archived");
+    fs::create_dir_all(&archived).unwrap();
+    let task = crate::Task {
+        name: "Archived".into(),
+        slug: "archived".into(),
+        archived: true,
+        engine_version: 2,
+        ..Default::default()
+    };
+    fs::write(archived.join("task.md"), toml::to_string(&task).unwrap()).unwrap();
+    fs::write(archived.join("playbook.md"), &f.source).unwrap();
+    write_execution_state_unlocked(&f.repo, "archived", &mut f.state.clone()).unwrap();
+    let metadata = fs::read(archived.join("task.md")).unwrap();
+    let artifact = crate::artifacts_dir(&f.repo, "task").join(&f.state.executions[&completed].outputs[0].relative_path);
+    let output = fs::read(&artifact).unwrap();
+    for (lane, config) in [("dev", "dev-config"), ("", "production-config"), ("dev", "second-dev-config")] {
+        let guard = crate::repo_ownership::acquire(&f.repo, lane, config).unwrap();
+        for slug in ["task", "archived"] {
+            let mut state = read_execution_state(&f.repo, slug).unwrap();
+            assert_eq!((state.owning_lane.as_str(), state.owning_app_config_identity.as_str()), (lane, config));
+            assert_eq!(state.executions[&completed], f.state.executions[&completed]);
+            assert_eq!(state.executions[&queued], f.state.executions[&queued]);
+            assert_eq!(state.occurrences, f.state.occurrences);
+            assert_eq!(state.contexts, f.state.contexts);
+            assert_eq!(state.collections, f.state.collections);
+            let record = &state.executions[&uncertain];
+            assert_eq!(record.lifecycle, ExecutionLifecycle::Interrupted);
+            assert_eq!(record.owner_session_id, f.state.executions[&uncertain].owner_session_id);
+            assert!(!record.shutdown_confirmed);
+            assert!(recover_execution_owner(&mut state, &uncertain).is_err());
+            assert!(!claim_execution_launch(&mut state, &uncertain).unwrap());
+        }
+        assert_eq!(fs::read(&artifact).unwrap(), output);
+        assert_eq!(fs::read(archived.join("task.md")).unwrap(), metadata);
+        drop(guard);
+    }
+}
+
+#[test]
+fn repo_failed_preflight_can_retry_without_retaining_leases() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, false, 1);
+    persist_owner_fixture(&mut f);
+    let before = fs::read(execution_state_path(&f.repo, "task").unwrap()).unwrap();
+    let path = crate::task_dir(&f.repo, "task").join("playbook.md");
+    fs::write(&path, "invalid retained playbook").unwrap();
+    assert!(crate::repo_ownership::acquire(&f.repo, "dev", "new-config").is_err());
+    assert_eq!(fs::read(execution_state_path(&f.repo, "task").unwrap()).unwrap(), before);
+    let lease = crate::lockfile::try_lock_exclusive(&crate::alinery_dir(&f.repo).join(".repo-owner.lock")).unwrap().unwrap();
+    drop(lease);
+    fs::write(path, &f.source).unwrap();
+    let _guard = crate::repo_ownership::acquire(&f.repo, "dev", "new-config").unwrap();
+    let state = read_execution_state(&f.repo, "task").unwrap();
+    assert_eq!(state.owning_lane, "dev");
+    assert_eq!(state.owning_app_config_identity, "new-config");
+}
+
+#[test]
 fn repo_adoption_preserves_evidence_and_does_not_recover_execution_owners() {
     let mut f = Fixture::new("{path=\"result.md\"}", false, true, 10);
     let completed = f.reserve(true);
@@ -813,7 +938,10 @@ fn join_depth_uses_all_actual_parents_independent_of_completion_order() {
                     mode: InputMode::Single,
                 })
                 .collect();
-            step.outputs = vec![OutputSelector { path: output.into(), required: false }];
+            step.outputs = vec![OutputSelector {
+                path: output.into(),
+                required: false,
+            }];
             step
         })
         .collect();

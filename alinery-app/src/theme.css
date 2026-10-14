@@ -1091,14 +1091,28 @@ main {
 /* shell-level blocking banner for a repo owned by an incompatible daemon */
 .daemon-conflict {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  max-height: 40vh;
+  overflow: auto;
   padding: 8px 12px;
   border-bottom: 1px solid var(--danger);
   color: var(--danger);
   background: var(--danger-subtle);
   font-size: calc(13px * var(--ui-scale));
+}
+.daemon-conflict > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.daemon-owner-evidence {
+  overflow-wrap: anywhere;
+  max-height: 25vh;
+  overflow: auto;
+}
+.confirm-body .daemon-owner-evidence {
+  max-height: 40vh;
 }
 .daemon-host-warning {
   flex: none;

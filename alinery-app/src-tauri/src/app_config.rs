@@ -274,7 +274,7 @@ pub(crate) fn sanitize_app_config(mut cfg: AppConfig) -> AppConfig {
     cfg
 }
 
-fn read_existing_app_config(path: &Path) -> Result<Option<AppConfig>, String> {
+pub(crate) fn read_existing_app_config(path: &Path) -> Result<Option<AppConfig>, String> {
     let source = match fs::read_to_string(path) {
         Ok(source) => source,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -319,36 +319,48 @@ pub(crate) fn write_app_config<R: tauri::Runtime>(app: &AppHandle<R>, cfg: &AppC
 }
 
 #[tauri::command]
-pub(crate) fn read_app_config(app: AppHandle) -> Result<AppConfig, String> {
-    let cfg = read_existing_app_config(&app_config_path(&app)?)?.unwrap_or_default();
-    let active = (!cfg.active_repo.is_empty()).then(|| PathBuf::from(&cfg.active_repo));
-    let _ = set_active_repo_global(active.clone());
-    if let Some(state) = app.try_state::<AppState>() {
-        // Claim every repository this window has open before the daemon poller can manage
-        // it. Active goes first so a startup collision preserves the selected repo's
-        // existing repo_busy recovery path; inactive busy repos simply remain unattached.
-        if let Some(repo) = active.as_ref().filter(|repo| repo.is_dir()) {
-            let _ = state.claim_repo(repo);
-        }
-        for known in &cfg.known_repos {
-            let repo = PathBuf::from(known);
-            if active.as_ref() == Some(&repo) || !repo.is_dir() {
-                continue;
+pub(crate) async fn read_app_config(app: AppHandle) -> Result<AppConfig, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = read_existing_app_config(&app_config_path(&app)?)?.unwrap_or_default();
+        let active = (!cfg.active_repo.is_empty()).then(|| PathBuf::from(&cfg.active_repo));
+        let _ = set_active_repo_global(active.clone());
+        if let Some(state) = app.try_state::<AppState>() {
+            // Claim every repository this window has open before the daemon poller can manage
+            // it. Active goes first so a startup collision preserves the selected repo's
+            // existing repo_busy recovery path; inactive busy repos simply remain unattached.
+            if let Some(repo) = active.as_ref().filter(|repo| repo.is_dir()) {
+                let lifecycle = state.repo_lifecycle(repo);
+                let _guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+                if !state.is_quitting() && !state.is_closing(repo) && load_app_config(&app).known_repos.iter().any(|known| Path::new(known) == repo) {
+                    let _ = state.claim_repo(repo);
+                }
             }
-            let _ = state.claim_repo(&repo);
-        }
+            for known in &cfg.known_repos {
+                let repo = PathBuf::from(known);
+                if active.as_ref() == Some(&repo) || !repo.is_dir() {
+                    continue;
+                }
+                let lifecycle = state.repo_lifecycle(&repo);
+                let _guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+                if !state.is_quitting() && !state.is_closing(&repo) && load_app_config(&app).known_repos.iter().any(|known| Path::new(known) == repo) {
+                    let _ = state.claim_repo(&repo);
+                }
+            }
 
-        // Bring up the restored active repo immediately. The poller handles the other
-        // owned known repositories without allowing an unowned daemon adoption.
-        if let Some(repo) = active.as_ref().filter(|repo| state.owns_repo(repo)) {
-            if let Ok(app_config) = app_config_path(&app) {
-                attach_repo_daemon(&state, repo, &app_config);
+            // Bring up the restored active repo immediately. The poller handles the other
+            // owned known repositories without allowing an unowned daemon adoption.
+            if let Some(repo) = active.as_ref().filter(|repo| state.owns_repo(repo)) {
+                if let Ok(app_config) = app_config_path(&app) {
+                    attach_repo_daemon(&state, repo, &app_config);
+                }
+                ensure_mcp_server(&app, repo, false);
             }
-            ensure_mcp_server(&app, repo); // R2
         }
-    }
-    emit(&app, alinery_core::TelemetryEvent::AppOpen { cold_start: true });
-    Ok(cfg)
+        emit(&app, alinery_core::TelemetryEvent::AppOpen { cold_start: true });
+        Ok(cfg)
+    })
+    .await
+    .map_err(|error| format!("read app configuration task: {error}"))?
 }
 
 #[tauri::command]
@@ -365,6 +377,11 @@ pub(crate) async fn set_active_repo(app: AppHandle, path: String, drawer_session
 
 pub(crate) fn set_active_repo_sync<R: tauri::Runtime>(app: AppHandle<R>, state: State<'_, AppState>, path: String, drawer_session_ids: Vec<String>) -> Result<AppConfig, String> {
     let repo = alinery_core::require_working_tree(Path::new(path.trim()))?;
+    let lifecycle = state.repo_lifecycle(&repo);
+    let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+    if state.is_quitting() || state.is_closing(&repo) {
+        return Err("project is closing".into());
+    }
     let reservation = state.reserve_repo(&repo)?.ok_or_else(|| {
         let name = repo
             .file_name()
@@ -396,8 +413,8 @@ pub(crate) fn set_active_repo_sync<R: tauri::Runtime>(app: AppHandle<R>, state: 
 
     reservation.commit(&state);
     set_active_repo_global(Some(repo.clone()))?;
-    attach_repo_daemon(&state, &repo, &app_config);
-    ensure_mcp_server(&app, &repo);
+    attach_repo_daemon_locked(&state, &repo, &app_config, &guard);
+    ensure_mcp_server(&app, &repo, false);
     emit(
         &app,
         alinery_core::TelemetryEvent::RepoActivate {
@@ -437,45 +454,52 @@ pub(crate) fn remove_repo_from_config(mut cfg: AppConfig, target: &str) -> Resul
 /// active selection; picking the next one is the caller's job so daemon/MCP bring-up
 /// lives only in `set_active_repo`.
 #[tauri::command]
-pub(crate) fn remove_repo(app: AppHandle, path: String) -> Result<AppConfig, String> {
-    let target = PathBuf::from(path.trim());
-    // Bound once so the closing guard below can borrow from it for the whole function.
-    // `None` only in unit tests, which drive `AppState` directly.
-    let state = app.try_state::<AppState>();
-    // Held across teardown *and* the delisting below, not just teardown: until the repo
-    // is out of `known_repos` the poller still has a reason to spawn for it, so releasing
-    // between the two would leave a last tick free to hand us a daemon that no listed
-    // repo owns. Dropped at the end of the function, after the config write.
-    let _closing = state.as_ref().map(|s| s.mark_closing(&target));
-    // Teardown BEFORE delisting: if the daemon will not stop, keep the repo in
-    // config/UI so the user still has a handle. Never pretend a close succeeded.
-    if let Some(state) = state.as_ref() {
-        // B6: removing a repo shuts its daemon down. That is the owner's call — a second
-        // alinery must not tear down the window that actually holds the folder.
-        require_repo_owned(state, &target)?;
-        close_repo_daemon(state, &target).map_err(|e| format!("{e}. Live sessions may still be running — stop them from Settings → Harness, then try again."))?;
-    }
-    // One source of truth for "was this the active repo": the same normalization the
-    // delist itself uses, computed after teardown so it reflects the config we write.
-    let (cfg, was_active) = remove_repo_from_config(load_app_config(&app), &path)?;
-    write_app_config(&app, &cfg)?;
-    if was_active {
+pub(crate) async fn remove_repo(app: AppHandle, path: String) -> Result<AppConfig, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = PathBuf::from(path.trim());
+        // Bound once so the closing guard below can borrow from it for the whole function.
+        // `None` only in unit tests, which drive `AppState` directly.
+        let state = app.try_state::<AppState>();
+        // Held across teardown *and* the delisting below, not just teardown: until the repo
+        // is out of `known_repos` the poller still has a reason to spawn for it, so releasing
+        // between the two would leave a last tick free to hand us a daemon that no listed
+        // repo owns. Dropped at the end of the function, after the config write.
+        let _closing = state.as_ref().map(|s| s.mark_closing(&target));
+        let lifecycle = state.as_ref().map(|state| state.repo_lifecycle(&target));
+        let guard = lifecycle.as_ref().map(|lock| lock.lock().unwrap_or_else(|error| error.into_inner()));
+        // Teardown BEFORE delisting: if the daemon will not stop, keep the repo in
+        // config/UI so the user still has a handle. Never pretend a close succeeded.
         if let Some(state) = state.as_ref() {
-            state.kill_mcp();
+            // B6: removing a repo shuts its daemon down. That is the owner's call — a second
+            // alinery must not tear down the window that actually holds the folder.
+            require_repo_owned(state, &target)?;
+            close_repo_daemon(state, &target, guard.as_ref().expect("lifecycle guard accompanies state"))
+                .map_err(|e| format!("{e}. Live sessions may still be running — stop them from Settings → Harness, then try again."))?;
         }
-        set_active_repo_global(None)?;
-    }
-    if let Some(state) = state.as_ref() {
-        state.release_repo(&target);
-    }
-    emit(
-        &app,
-        alinery_core::TelemetryEvent::RepoRemove {
-            source: alinery_core::TelemetrySource::App,
-            was_active,
-        },
-    );
-    Ok(cfg)
+        // One source of truth for "was this the active repo": the same normalization the
+        // delist itself uses, computed after teardown so it reflects the config we write.
+        let (cfg, was_active) = remove_repo_from_config(load_app_config(&app), &path)?;
+        write_app_config(&app, &cfg)?;
+        if was_active {
+            if let Some(state) = state.as_ref() {
+                state.kill_mcp_for_repo(&target);
+            }
+            set_active_repo_global(None)?;
+        }
+        if let Some(state) = state.as_ref() {
+            state.release_repo(&target);
+        }
+        emit(
+            &app,
+            alinery_core::TelemetryEvent::RepoRemove {
+                source: alinery_core::TelemetrySource::App,
+                was_active,
+            },
+        );
+        Ok(cfg)
+    })
+    .await
+    .map_err(|error| format!("remove repository task: {error}"))?
 }
 
 #[tauri::command]
