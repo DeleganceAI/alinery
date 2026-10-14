@@ -4388,12 +4388,10 @@ dialog.modal::backdrop {
   box-shadow: var(--shadow-menu);
 }
 
-/* Pinned-chat window. Fixed until drag, resize, and a remembered position exist. */
+/* Pinned-chat window. left/top are inline; resize is still a follow-up. */
 .quick-chat {
   position: fixed;
   z-index: 80;
-  right: 16px;
-  bottom: 16px;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -4416,11 +4414,25 @@ dialog.modal::backdrop {
   padding: 4px 8px 4px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.quick-chat.is-dragging .quick-chat-bar {
+  cursor: grabbing;
 }
 .quick-chat-title {
   color: var(--text-strong);
   font-size: calc(13px * var(--ui-scale));
   font-weight: 600;
+}
+.quick-chat-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.quick-chat-actions .chat-icon-btn {
+  cursor: pointer;
 }
 .quick-chat-tabs {
   flex: 0 0 auto;
