@@ -409,6 +409,7 @@ export const writeDraftForRepo = (a: {
   harness: string;
   model: string;
   autoAdvance?: string[] | null;
+  stepModels?: Record<string, string> | null;
   maxLiveSessions: number;
   branchName: string;
   worktreeName: string;

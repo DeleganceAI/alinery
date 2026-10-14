@@ -17,7 +17,7 @@ import type {
   Task,
   TaskSourceBranches,
 } from "../types";
-import { CreateTaskPage } from "./CreateTaskPage";
+import { CreateTaskPage, stepModelDisplay } from "./CreateTaskPage";
 
 const deferred = <T,>() => {
   let resolve!: (value: T) => void;
@@ -558,17 +558,17 @@ describe("OMP model default", () => {
     } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("radiogroup", { name: "Choose playbook" });
-    await waitFor(() => expect((screen.getByLabelText("Model") as HTMLInputElement).value).toBe(""));
+    await waitFor(() => expect((screen.getByLabelText("Task Default Model") as HTMLInputElement).value).toBe(""));
   });
 
   it("uses hosted Flash when signed in without a settings default, including after changing playbooks", async () => {
     vi.mocked(ipc.accountStatus).mockResolvedValue({ signedIn: true, email: null, plan: null, paid: false, unavailable: false });
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("checkbox", { name: "Build" });
-    expect(screen.getByLabelText("Model")).toHaveProperty("value", "alinery/DeepSeek-V4.1-Flash");
+    expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", "alinery/DeepSeek-V4.1-Flash");
     fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
     await screen.findByRole("checkbox", { name: "Build" });
-    expect(screen.getByLabelText("Model")).toHaveProperty("value", "alinery/DeepSeek-V4.1-Flash");
+    expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", "alinery/DeepSeek-V4.1-Flash");
   });
 
   it("preserves a configured OMP default for signed-in accounts", async () => {
@@ -578,14 +578,14 @@ describe("OMP model default", () => {
     } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("checkbox", { name: "Build" });
-    expect(screen.getByLabelText("Model")).toHaveProperty("value", "anthropic/claude-sonnet-4-6");
+    expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", "anthropic/claude-sonnet-4-6");
   });
 
   it.each(["signed out", "account status unavailable"])("leaves the model unset when %s", async (status) => {
     if (status === "account status unavailable") vi.mocked(ipc.accountStatus).mockRejectedValue(new Error("Account unavailable"));
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("checkbox", { name: "Build" });
-    expect(screen.getByLabelText("Model")).toHaveProperty("value", "");
+    expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", "");
   });
 
   it.each(["anthropic/claude-sonnet-4-6", ""])("preserves the saved draft model %j while signed in", async (model) => {
@@ -593,7 +593,235 @@ describe("OMP model default", () => {
     const initialDraft: BoardTask = { ...draftTask, launch_defaults: { harness: "omp", model } };
     render(<CreateTaskPage initialDraft={initialDraft} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("checkbox", { name: "Build" });
-    expect(screen.getByLabelText("Model")).toHaveProperty("value", model);
+    expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", model);
+  });
+});
+
+describe("per-step default model", () => {
+  it("resolves the displayed chain without storing an equal override", () => {
+    expect(stepModelDisplay({ stepModel: "pin", playbookDefaultModel: "wide", taskModel: "task", productModel: "product", override: " other " })).toEqual({
+      value: "other",
+      source: "override",
+    });
+    expect(stepModelDisplay({ stepModel: "pin", playbookDefaultModel: "wide", taskModel: "task", productModel: "product", override: " pin " })).toEqual({
+      value: "pin",
+      source: "playbook-step",
+    });
+    expect(stepModelDisplay({ stepModel: "pin", playbookDefaultModel: "wide", taskModel: "task", productModel: "product", override: "   " })).toEqual({
+      value: "pin",
+      source: "playbook-step",
+    });
+    expect(stepModelDisplay({ stepModel: " step-pin ", playbookDefaultModel: "wide", taskModel: "task", productModel: "product", override: undefined })).toEqual({
+      value: "step-pin",
+      source: "playbook-step",
+    });
+    expect(stepModelDisplay({ stepModel: "  ", playbookDefaultModel: "playbook-wide", taskModel: "task", productModel: "product", override: undefined })).toEqual({
+      value: "playbook-wide",
+      source: "playbook-default",
+    });
+    expect(stepModelDisplay({ stepModel: "", playbookDefaultModel: "", taskModel: "task-model", productModel: "product", override: undefined })).toEqual({
+      value: "task-model",
+      source: "task-default",
+    });
+    expect(stepModelDisplay({ stepModel: "", playbookDefaultModel: "", taskModel: "", productModel: "product-model", override: undefined })).toEqual({
+      value: "product-model",
+      source: "product-default",
+    });
+    expect(stepModelDisplay({ stepModel: "", playbookDefaultModel: "", taskModel: "", productModel: "", override: undefined })).toEqual({
+      value: "",
+      source: null,
+    });
+  });
+
+  it("places Task Default Model above automatic completion permissions and drops the old Model label", async () => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("checkbox", { name: "Build" });
+    const taskModel = screen.getByLabelText("Task Default Model");
+    const permission = screen.getByText("Automatic completion permission for future executions");
+    expect(taskModel.compareDocumentPosition(permission) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(screen.queryByLabelText("Model")).toBeNull();
+  });
+
+  it("gives each permission row its own model control", async () => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    const checkbox = await screen.findByRole("checkbox", { name: "Build" });
+    const stepModel = screen.getByLabelText("Build model");
+    expect(checkbox.closest(".step-model-row")?.contains(stepModel)).toBe(true);
+    expect(screen.getAllByText("Step model")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Browse models" })).toBeNull();
+    fireEvent.click(stepModel);
+    const stepDialog = await screen.findByRole("dialog", { name: /Models|Providers/ });
+    fireEvent.click(within(stepDialog).getAllByRole("button", { name: "Cancel" })[0]);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /Models|Providers/ })).toBeNull());
+    fireEvent.click(screen.getByLabelText("Task Default Model"));
+    expect(await screen.findByRole("dialog", { name: /Models|Providers/ })).toBeTruthy();
+  });
+
+  it("shows the task model on untouched steps and follows task-model edits", async () => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    const taskModel = await screen.findByLabelText("Task Default Model");
+    const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
+    fireEvent.change(taskModel, { target: { value: "task-model" } });
+    expect(stepModel.value).toBe("task-model");
+    expect(screen.getByText("Task default").classList.contains("step-model-badge")).toBe(true);
+    fireEvent.change(taskModel, { target: { value: "next-task" } });
+    expect(stepModel.value).toBe("next-task");
+    expect(screen.getByText("Task default")).toBeTruthy();
+  });
+
+  it("keeps a playbook step pin when the task model changes", async () => {
+    const pinned = structuredClone(sources[0]);
+    pinned.definition.step[0].model = "step-pin";
+    vi.mocked(ipc.readPlaybook).mockResolvedValue(pinned);
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
+    expect(stepModel.value).toBe("step-pin");
+    expect(screen.getByText("Playbook step")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Task Default Model"), { target: { value: "task-model" } });
+    expect(stepModel.value).toBe("step-pin");
+    expect(screen.getByText("Playbook step")).toBeTruthy();
+  });
+
+  it("keeps a playbook-wide model when the task model changes", async () => {
+    const wide = structuredClone(sources[0]);
+    wide.definition.default_model = "playbook-wide";
+    vi.mocked(ipc.readPlaybook).mockResolvedValue(wide);
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
+    expect(stepModel.value).toBe("playbook-wide");
+    expect(screen.getByText("Playbook default")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Task Default Model"), { target: { value: "task-model" } });
+    expect(stepModel.value).toBe("playbook-wide");
+  });
+
+  it("sends only a user override and drops it when the box returns to the chain", async () => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    fireEvent.change(await screen.findByLabelText("Task Default Model"), { target: { value: "task-model" } });
+    fireEvent.change(await screen.findByLabelText("Build model"), { target: { value: "step-override" } });
+    expect(screen.getByText("Override")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Task Default Model"), { target: { value: "other-task" } });
+    expect((screen.getByLabelText("Build model") as HTMLInputElement).value).toBe("step-override");
+    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Override task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+    expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.step_models).toEqual({ build: "step-override" });
+    expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.playbook.source).toBe(sources[0].source_text);
+    expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.auto_advance_steps).toEqual([]);
+  });
+
+  it("removes the override when the step box returns to the chain", async () => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    fireEvent.change(await screen.findByLabelText("Task Default Model"), { target: { value: "task-model" } });
+    fireEvent.change(await screen.findByLabelText("Build model"), { target: { value: "step-override" } });
+    fireEvent.change(screen.getByLabelText("Build model"), { target: { value: "task-model" } });
+    expect(screen.queryByText("Override")).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Reset task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+    expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.step_models).toEqual({});
+  });
+
+  it("drops an override when the task model catches up and then follows the task model", async () => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    fireEvent.change(await screen.findByLabelText("Task Default Model"), { target: { value: "task-model" } });
+    fireEvent.change(await screen.findByLabelText("Build model"), { target: { value: "caught" } });
+    fireEvent.change(screen.getByLabelText("Task Default Model"), { target: { value: "caught" } });
+    expect((screen.getByLabelText("Build model") as HTMLInputElement).value).toBe("caught");
+    expect(screen.getByText("Task default")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Task Default Model"), { target: { value: "later" } });
+    expect((screen.getByLabelText("Build model") as HTMLInputElement).value).toBe("later");
+    expect(screen.getByText("Task default")).toBeTruthy();
+  });
+
+  it("drops stale keys on playbook switch and does not store the new pin", async () => {
+    const first = structuredClone(sources[0]);
+    first.definition.step = [
+      { ...first.definition.step[0], key: "keep", title: "Keep", model: "" },
+      { ...first.definition.step[0], key: "gone", title: "Gone", model: "" },
+    ];
+    first.definition.section_order = ["keep", "gone"];
+    const oneShot = sources.find((item) => item.source.reference.key === "one-shot");
+    if (!oneShot) throw new Error("missing one-shot fixture");
+    const second = structuredClone(oneShot);
+    second.definition.step = [
+      { ...second.definition.step[0], key: "keep", title: "Keep", model: "" },
+      { ...second.definition.step[0], key: "added", title: "Added", model: "new-pin" },
+    ];
+    second.definition.section_order = ["keep", "added"];
+    vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => structuredClone(reference.key === "one-shot" ? second : first));
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    fireEvent.change(await screen.findByLabelText("Task Default Model"), { target: { value: "task-model" } });
+    fireEvent.change(await screen.findByLabelText("Keep model"), { target: { value: "kept-override" } });
+    fireEvent.change(screen.getByLabelText("Gone model"), { target: { value: "gone-override" } });
+    fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
+    expect(((await screen.findByLabelText("Keep model")) as HTMLInputElement).value).toBe("kept-override");
+    expect((screen.getByLabelText("Added model") as HTMLInputElement).value).toBe("new-pin");
+    expect(screen.getByText("Playbook step")).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Switched" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+    expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.step_models).toEqual({ keep: "kept-override" });
+  });
+
+  it("restores one override and shows the chain on the other steps", async () => {
+    const restored = structuredClone(sources[0]);
+    restored.definition.step = [
+      { ...restored.definition.step[0], key: "build", title: "Build", model: "" },
+      { ...restored.definition.step[0], key: "review", title: "Review", model: "review-pin" },
+    ];
+    vi.mocked(ipc.readPlaybook).mockResolvedValue(restored);
+    render(
+      <CreateTaskPage
+        activeRepo="/repo"
+        knownRepos={["/repo"]}
+        onCancel={() => {}}
+        onCreated={() => {}}
+        initialDraft={{ ...draftTask, launch_defaults: { harness: "omp", model: "task-model" }, step_models: { build: "restored-override" } }}
+      />,
+    );
+    expect(((await screen.findByLabelText("Build model")) as HTMLInputElement).value).toBe("restored-override");
+    expect((screen.getByLabelText("Review model") as HTMLInputElement).value).toBe("review-pin");
+    fireEvent.change(screen.getByLabelText("Task Default Model"), { target: { value: "next-task" } });
+    expect((screen.getByLabelText("Review model") as HTMLInputElement).value).toBe("review-pin");
+    expect(screen.getByText("Override")).toBeTruthy();
+  });
+
+  it("does not fill a step box from the remembered model", async () => {
+    const pinned = structuredClone(sources[0]);
+    pinned.definition.step[0].model = "step-pin";
+    vi.mocked(ipc.readPlaybook).mockResolvedValue(pinned);
+    vi.stubGlobal("localStorage", { getItem: (key: string) => (key.includes("lastmodel") ? "remembered-model" : null), setItem: () => {} });
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
+    expect(stepModel.value).toBe("step-pin");
+    expect(stepModel.value).not.toBe("remembered-model");
+  });
+
+  it("shows the configured omp model as product default only after the task model is cleared", async () => {
+    readConfigForRepo.mockResolvedValue({
+      defaults: { harness: "omp", model: "configured-omp", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
+    } as Config);
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    const taskModel = await screen.findByLabelText("Task Default Model");
+    const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
+    expect(taskModel).toHaveProperty("value", "configured-omp");
+    expect(stepModel.value).toBe("configured-omp");
+    expect(screen.getByText("Task default")).toBeTruthy();
+    expect(screen.queryByText("Product default")).toBeNull();
+    fireEvent.change(taskModel, { target: { value: "" } });
+    expect(stepModel.value).toBe("configured-omp");
+    expect(screen.getByText("Product default")).toBeTruthy();
+  });
+
+  it("leaves a step box blank only when the whole chain is empty", async () => {
+    readConfigForRepo.mockResolvedValue({
+      defaults: { harness: "omp", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
+    } as Config);
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
+    expect(stepModel.value).toBe("");
+    expect(screen.queryByText("Product default")).toBeNull();
+    expect(screen.queryByText("Task default")).toBeNull();
   });
 });
 

@@ -134,7 +134,7 @@ fn write_retained_discovery_task(repo: &Path, slug: &str, lane: &str, archived: 
     };
     fs::create_dir_all(sessions_dir(repo, slug)).unwrap();
     fs::write(alinery_core::execution::task_playbook_path(repo, slug).unwrap(), source).unwrap();
-    let mut execution = alinery_core::execution::new_execution_state(reference, source, lane.into(), 10, Default::default(), Default::default()).unwrap();
+    let mut execution = alinery_core::execution::new_execution_state(reference, source, lane.into(), 10, Default::default(), Default::default(), Default::default()).unwrap();
     execution.creation = "ready".into();
     execution.owning_app_config_identity = "foreign-config".into();
     alinery_core::execution::write_execution_state_unlocked(repo, slug, &mut execution).unwrap();

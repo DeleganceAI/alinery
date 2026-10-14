@@ -250,6 +250,7 @@ pub(crate) fn duplicate_task_package(repo: &Path, source_slug: &str) -> Result<C
         launch_defaults: source.launch_defaults,
         auto_advance_steps: Some(source.auto_advance),
         max_live_sessions: Some(source.max_live_sessions),
+        step_models: source.step_models,
         start: true,
     })
 }
@@ -585,6 +586,7 @@ pub(crate) fn write_draft_in_with_slug(
     harness: String,
     model: String,
     auto_advance: Option<Vec<String>>,
+    step_models: Option<std::collections::BTreeMap<String, String>>,
     max_live_sessions: u32,
     branch_name: String,
     worktree_name: String,
@@ -605,6 +607,7 @@ pub(crate) fn write_draft_in_with_slug(
             harness,
             model,
             auto_advance,
+            step_models,
             max_live_sessions,
             branch_name,
             worktree_name,
@@ -627,6 +630,7 @@ fn write_draft_in_with_slug_unlocked(
     harness: String,
     model: String,
     auto_advance: Option<Vec<String>>,
+    step_models: Option<std::collections::BTreeMap<String, String>>,
     max_live_sessions: u32,
     branch_name: String,
     worktree_name: String,
@@ -693,6 +697,14 @@ fn write_draft_in_with_slug_unlocked(
         max_live_sessions,
         launch_defaults: alinery_core::execution::LaunchChoices { harness, model },
         auto_advance: auto_advance.unwrap_or_default(),
+        step_models: step_models
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(key, value)| {
+                let trimmed = value.trim();
+                (!trimmed.is_empty()).then(|| (key, trimmed.to_string()))
+            })
+            .collect(),
         draft: true,
         draft_base_ref,
         parent_task: String::new(),
@@ -745,6 +757,7 @@ pub(crate) fn write_draft(
     harness: String,
     model: String,
     auto_advance: Option<Vec<String>>,
+    step_models: Option<std::collections::BTreeMap<String, String>>,
     max_live_sessions: u32,
     branch_name: String,
     worktree_name: String,
@@ -766,6 +779,7 @@ pub(crate) fn write_draft(
         harness,
         model,
         auto_advance,
+        step_models,
         max_live_sessions,
         branch_name,
         worktree_name,
@@ -788,6 +802,7 @@ pub(crate) fn write_draft_for_repo(
     harness: String,
     model: String,
     auto_advance: Option<Vec<String>>,
+    step_models: Option<std::collections::BTreeMap<String, String>>,
     max_live_sessions: u32,
     branch_name: String,
     worktree_name: String,
@@ -810,6 +825,7 @@ pub(crate) fn write_draft_for_repo(
         harness,
         model,
         auto_advance,
+        step_models,
         max_live_sessions,
         branch_name,
         worktree_name,

@@ -241,6 +241,8 @@ pub struct Task {
     pub launch_defaults: crate::execution::LaunchChoices,
     #[serde(default)]
     pub auto_advance: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub step_models: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub parent_task: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]

@@ -12,7 +12,7 @@
 ///
 /// A protocol bump means every user with live sessions has to stop them deliberately
 /// before installing, so treat it as a real cost.
-pub const PROTOCOL_VERSION: u32 = 15;
+pub const PROTOCOL_VERSION: u32 = 16;
 
 /// How a running daemon relates to this build of the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,5 +70,15 @@ pub fn poller_action(compat: Option<DaemonCompat>) -> PollerAction {
         None => PollerAction::Spawn,
         Some(c) if c.usable() => PollerAction::Leave,
         Some(_) => PollerAction::SurfaceConflict,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_task_step_models_bumps_protocol() {
+        assert_eq!(PROTOCOL_VERSION, 16, "CreateTaskRequest.step_models is a daemon wire field; an old daemon rejects it");
     }
 }

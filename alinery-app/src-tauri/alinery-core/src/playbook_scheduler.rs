@@ -863,6 +863,7 @@ mod tests {
                 10,
                 definition.step.iter().map(|s| s.key.clone()).collect(),
                 LaunchChoices::default(),
+                BTreeMap::new(),
             )
             .unwrap();
             state.creation = "ready".into();

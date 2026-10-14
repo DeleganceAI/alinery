@@ -2094,6 +2094,78 @@ main {
   font-size: calc(12px * var(--ui-scale));
   font-weight: 500;
 }
+/* Step models are a right-hand column: one title over the fields, checkbox copy
+   stays on the left. Source text hangs off the field as a subscript badge. */
+.step-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.step-model-head,
+.step-model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(10rem, 16rem) 7.5rem;
+  column-gap: 8px;
+  align-items: center;
+}
+.step-model-title {
+  grid-column: 2;
+  justify-self: end;
+  color: var(--text-faint);
+  font-size: calc(10px * var(--ui-scale));
+  font-weight: 600;
+  line-height: 1;
+}
+.step-model-row .opt {
+  min-width: 0;
+  gap: 8px;
+  padding: 2px 0;
+}
+.step-model-row .opt-copy {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.step-model-row .model-input {
+  min-width: 0;
+}
+.createform-page .step-model-row .field-input {
+  font-size: calc(13px * var(--ui-scale));
+  line-height: 1.3;
+  padding: 0 8px;
+  height: calc(20px * var(--ui-scale));
+}
+/* Matches the retired `.btn.small` browse button (26px, 12px type) so the task
+   default field does not sit taller than that control used to. */
+.createform-page .task-default-model .field-input {
+  height: 26px;
+  padding: 0 10px;
+  font-size: calc(12px * var(--ui-scale));
+}
+.step-model-badge {
+  justify-self: end;
+  align-self: end;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: calc(9px * var(--ui-scale));
+  line-height: 1.2;
+  font-weight: 500;
+  color: var(--text-faint);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+.step-model-badge:empty {
+  visibility: hidden;
+}
+.step-model-badge.is-override {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
 /* .create-field is borderless, so a .dropping rule that only set border-color would have
    nothing to colour; the transparent base border plus compensating padding/margin keeps the
    drop highlight from shifting layout. */
@@ -2180,6 +2252,9 @@ textarea.field-input {
   display: flex;
   gap: 6px;
   align-items: stretch;
+}
+.model-input.is-picker .field-input {
+  cursor: pointer;
 }
 .model-input .field-input {
   flex: 1;

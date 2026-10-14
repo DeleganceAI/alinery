@@ -157,6 +157,8 @@ pub struct TaskExecutionState {
     pub max_live_sessions: u32,
     pub enabled_steps: BTreeSet<String>,
     pub launch_defaults: LaunchChoices,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub step_models: BTreeMap<String, String>,
     pub contexts: BTreeMap<String, ExecutionContext>,
     pub executions: BTreeMap<String, ExecutionRecord>,
     pub occurrences: BTreeMap<String, ArtifactOccurrence>,
@@ -218,6 +220,7 @@ pub fn new_execution_state(
     max_live_sessions: u32,
     enabled_steps: BTreeSet<String>,
     launch_defaults: LaunchChoices,
+    step_models: BTreeMap<String, String>,
 ) -> Result<TaskExecutionState, String> {
     if max_live_sessions == 0 {
         return Err("maximum live sessions must be positive".into());
@@ -239,6 +242,7 @@ pub fn new_execution_state(
             return Err(format!("unknown enabled step '{key}'"));
         }
     }
+    let step_models = normalize_step_models(&definition, &step_models)?;
     let root = ExecutionContext {
         id: "root".into(),
         parent_id: None,
@@ -257,12 +261,26 @@ pub fn new_execution_state(
         max_live_sessions,
         enabled_steps,
         launch_defaults,
+        step_models,
         initial_start_requested: false,
         contexts: BTreeMap::from([(root.id.clone(), root)]),
         executions: BTreeMap::new(),
         occurrences: BTreeMap::new(),
         collections: BTreeMap::new(),
     })
+}
+fn normalize_step_models(definition: &NormalizedPlaybook, raw: &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, String> {
+    let mut normalized = BTreeMap::new();
+    for (key, value) in raw {
+        if !definition.step.iter().any(|step| &step.key == key) {
+            return Err(format!("unknown step model '{key}'"));
+        }
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            normalized.insert(key.clone(), trimmed.to_string());
+        }
+    }
+    Ok(normalized)
 }
 
 pub fn install_seed(state: &mut TaskExecutionState, logical_path: &str, relative_path: &str) -> Result<String, String> {
@@ -329,6 +347,7 @@ pub fn resolve_execution_launch(
     task: &LaunchChoices,
     product: &LaunchChoices,
     explicit: Option<&LaunchChoices>,
+    step_models: &BTreeMap<String, String>,
 ) -> Result<LaunchChoices, String> {
     fn first<'a>(values: impl IntoIterator<Item = &'a str>) -> String {
         values.into_iter().find(|s| !s.trim().is_empty()).unwrap_or("").trim().to_string()
@@ -344,6 +363,7 @@ pub fn resolve_execution_launch(
         ]),
         model: first([
             explicit.map_or("", |v| v.model.as_str()),
+            step_models.get(&step.key).map(String::as_str).unwrap_or(""),
             &step.model,
             &definition.default_model,
             &task.model,
@@ -553,7 +573,7 @@ pub fn reserve_execution(
             instance = instance.checked_add(1).ok_or("artifact instance overflow")?;
         }
     }
-    let launch = resolve_execution_launch(definition, step, &state.launch_defaults, product, explicit)?;
+    let launch = resolve_execution_launch(definition, step, &state.launch_defaults, product, explicit, &state.step_models)?;
     let id = uuid::Uuid::new_v4().to_string();
     let record = ExecutionRecord {
         id: id.clone(),
