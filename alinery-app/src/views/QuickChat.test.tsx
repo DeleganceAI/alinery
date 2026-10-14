@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ChatPrefs, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
 import { mockIpc } from "../test/mockIpc";
@@ -29,6 +29,10 @@ const mocks = vi.hoisted(() => ({
   readChatOmp: vi.fn(),
   sessionListStatuses: vi.fn(),
   chatThreadName: vi.fn(),
+  pickAttachmentFilesDialog: vi.fn(),
+  chatFileStat: vi.fn(),
+  copyChatThreadAttachments: vi.fn(),
+  getCurrentWebview: vi.fn(() => ({ onDragDropEvent: async () => () => {} })),
 }));
 
 vi.mock("../ipc", () =>
@@ -43,7 +47,10 @@ vi.mock("../ipc", () =>
     readChatOmp: mocks.readChatOmp,
     sessionListStatuses: mocks.sessionListStatuses,
     chatThreadName: mocks.chatThreadName,
-    getCurrentWebview: (() => ({ onDragDropEvent: async () => () => {} })) as never,
+    pickAttachmentFilesDialog: mocks.pickAttachmentFilesDialog,
+    chatFileStat: mocks.chatFileStat,
+    copyChatThreadAttachments: mocks.copyChatThreadAttachments,
+    getCurrentWebview: mocks.getCurrentWebview,
   }),
 );
 
@@ -125,6 +132,10 @@ beforeEach(() => {
   mocks.readChatOmp.mockRejectedValue(new Error("no journal"));
   mocks.sessionListStatuses.mockResolvedValue({});
   mocks.chatThreadName.mockResolvedValue(null);
+  mocks.pickAttachmentFilesDialog.mockReset().mockResolvedValue([]);
+  mocks.chatFileStat.mockReset().mockImplementation(async (path: string) => ({ name: path.split("/").pop() ?? path, bytes: 4 }));
+  mocks.copyChatThreadAttachments.mockReset().mockResolvedValue({ copied: [], failures: [] });
+  mocks.getCurrentWebview.mockClear();
 });
 
 function windowOf({ open = true, visibility = DEFAULT_CHAT_VISIBILITY }: { open?: boolean; visibility?: ChatPrefs } = {}) {
@@ -287,6 +298,44 @@ describe("QuickChat", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Beta" }));
     expect(screen.getByRole("tab", { name: "Beta" }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("stages a picked file and a pasted image, and does not take window drops", async () => {
+    mocks.listChatThreads.mockResolvedValue([thread("s-a", "/repos/one", { name: "Alpha", session: meta("s-a", { pinned: true }) })]);
+    mocks.pickAttachmentFilesDialog.mockResolvedValueOnce(["/tmp/notes.pdf"]);
+    mocks.copyChatThreadAttachments.mockResolvedValueOnce({ copied: ["notes.pdf"], failures: [] });
+    render(windowOf());
+    await screen.findByRole("button", { name: "Attach files" });
+    await waitFor(() => expect(mocks.chatRpcAttach).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
+    expect(await screen.findByRole("button", { name: "Remove notes.pdf" })).toBeTruthy();
+
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:shot");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    try {
+      const file = new File(["png"], "shot.png", { type: "image/png" });
+      const field = screen.getByLabelText("Message or /command");
+      fireEvent(
+        field,
+        createEvent.paste(field, {
+          clipboardData: { items: [{ kind: "file", type: "image/png", getAsFile: () => file }], files: [file] },
+        }),
+      );
+      expect(await screen.findByRole("button", { name: "Remove shot.png" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Remove shot.png" }));
+      expect(screen.queryByRole("button", { name: "Remove shot.png" })).toBeNull();
+    } finally {
+      vi.mocked(URL.createObjectURL).mockRestore();
+      vi.mocked(URL.revokeObjectURL).mockRestore();
+    }
+
+    fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: "see" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(mocks.copyChatThreadAttachments).toHaveBeenCalledWith("/repos/one", "s-a", ["/tmp/notes.pdf"]));
+    await waitFor(() =>
+      expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repos/one", "s-a", expect.objectContaining({ type: "prompt", message: expect.stringContaining("Attached file:") })),
+    );
+    expect(mocks.getCurrentWebview).not.toHaveBeenCalled();
   });
 
   it("attaches a thread once when Chat and the window both show it", async () => {

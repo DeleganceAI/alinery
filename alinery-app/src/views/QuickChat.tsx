@@ -4,6 +4,7 @@ import { flushSync } from "react-dom";
 import { ChatComposer } from "../ChatComposer";
 import type { ChatPrefs } from "../chat/visibility";
 import * as ipc from "../ipc";
+import { toast } from "../toast";
 import type { ChatThread } from "../types";
 import { usePointerDrag } from "../usePointerDrag";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
@@ -484,7 +485,16 @@ export function QuickChat({ open, visibility, onOpenInChat, onHide }: { open: bo
                 catalog={chat.transcript.commands}
                 sending={chat.sending}
                 showHints={visibility.showComposerHints}
-                allowAttach={false}
+                attachments={chat.attachments}
+                onAttach={() => {
+                  void ipc
+                    .pickAttachmentFilesDialog()
+                    .then((paths) => chat.stagePaths(paths))
+                    .catch((error: unknown) => toast.error(String(error)));
+                }}
+                onRemoveAttachment={(id) => chat.removeAttachment(id)}
+                onClear={() => chat.clearComposer()}
+                onPasteFiles={chat.stageBlobs}
                 onBodyChange={chat.setDraft}
                 onSend={() => {
                   chat.send();
