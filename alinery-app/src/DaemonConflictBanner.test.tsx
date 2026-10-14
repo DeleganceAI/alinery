@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ConfirmHost } from "./confirm";
+import { askConfirm, ConfirmHost } from "./confirm";
 import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner } from "./DaemonConflictBanner";
 import * as ipc from "./ipc";
 import type * as IpcFixtures from "./test/mockIpc";
@@ -217,21 +217,47 @@ describe("selected-owner takeover", () => {
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
-  it("disposes a pending dialog on repo switch and ignores its later acceptance", async () => {
+  it.each(["switch", "clear"])("withdraws a pending dialog on %s and ignores its later acceptance", async (change) => {
     vi.mocked(ipc.prepareRepoTakeover).mockResolvedValue(preview);
     const view = mount();
     const dialog = await open();
     view.rerender(
       <>
-        <DaemonConflictBanner conflict={{ ...conflict, repo: "/next" }} onRefresh={view.refresh} />
+        <DaemonConflictBanner conflict={change === "switch" ? { ...conflict, repo: "/next" } : null} onRefresh={view.refresh} />
         <ConfirmHost />
       </>,
     );
     await waitFor(() => expect(ipc.cancelRepoTakeover).toHaveBeenCalledWith("consent-a"));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
     accept(dialog);
     await act(async () => {});
     expect(ipc.confirmRepoTakeover).not.toHaveBeenCalled();
     expect(view.refresh).not.toHaveBeenCalled();
+  });
+
+  it("does not withdraw a newer unrelated confirmation when the banner unmounts", async () => {
+    const cancellation = deferred<void>();
+    vi.mocked(ipc.prepareRepoTakeover).mockResolvedValue(preview);
+    vi.mocked(ipc.cancelRepoTakeover).mockReturnValue(cancellation.promise);
+    const view = mount();
+    await open();
+    const answered = vi.fn();
+    act(() => {
+      void askConfirm({ title: "Unrelated confirmation", body: "Keep this request open." }).then(answered);
+    });
+    await screen.findByRole("alertdialog", { name: "Unrelated confirmation" });
+    view.rerender(
+      <>
+        <DaemonConflictBanner conflict={null} onRefresh={view.refresh} />
+        <ConfirmHost />
+      </>,
+    );
+    await act(async () => cancellation.resolve());
+    const dialog = screen.getByRole("alertdialog", { name: "Unrelated confirmation" });
+    expect(answered).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(answered).toHaveBeenCalledExactlyOnceWith("confirm"));
+    expect(ipc.confirmRepoTakeover).not.toHaveBeenCalled();
   });
 
   it("disposes reconfirm arriving after unmount instead of showing another dialog", async () => {

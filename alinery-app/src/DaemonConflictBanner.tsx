@@ -54,7 +54,7 @@ function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflic
   const [error, setError] = useState("");
   const [progress, setProgress] = useState("");
   const [remaining, setRemaining] = useState<{ source: DaemonConflict; value: DaemonConflict | null } | null>(null);
-  const operation = useRef<{ disposed: boolean; confirmationId: string | null } | null>(null);
+  const operation = useRef<{ disposed: boolean; confirmationId: string | null; dialog: AbortController } | null>(null);
   const displayed = remaining?.source === conflict ? remaining.value : conflict;
   const name = repoName(conflict.repo);
 
@@ -63,6 +63,7 @@ function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflic
       const current = operation.current;
       if (!current) return;
       current.disposed = true;
+      current.dialog.abort();
       if (current.confirmationId) {
         // Backend expiry remains the backstop if IPC disappears during teardown.
         void ipc.cancelRepoTakeover(current.confirmationId).catch(() => {});
@@ -74,7 +75,7 @@ function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflic
 
   const takeOver = async (owner: DaemonOwnerConflict, opener: HTMLButtonElement) => {
     if (operation.current || owner.takeover_unavailable) return;
-    const current = { disposed: false, confirmationId: null as string | null };
+    const current = { disposed: false, confirmationId: null as string | null, dialog: new AbortController() };
     operation.current = current;
     setPending(true);
     setError("");
@@ -93,6 +94,7 @@ function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflic
             <p>All repository tasks switch together, only after every previous owner has stopped. Other owners require separate confirmation.</p>
           </>,
           "Stop daemon and take over",
+          current.dialog.signal,
         );
         if (current.disposed) return;
         if (!accepted) {

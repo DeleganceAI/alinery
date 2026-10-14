@@ -1091,9 +1091,11 @@ main {
 /* shell-level blocking banner for a repo owned by an incompatible daemon */
 .daemon-conflict {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  max-height: 40vh;
+  overflow: auto;
   padding: 8px 12px;
   border-bottom: 1px solid var(--danger);
   color: var(--danger);
@@ -1106,10 +1108,11 @@ main {
 }
 .daemon-owner-evidence {
   overflow-wrap: anywhere;
+  max-height: 25vh;
+  overflow: auto;
 }
 .confirm-body .daemon-owner-evidence {
   max-height: 40vh;
-  overflow: auto;
 }
 .daemon-host-warning {
   flex: none;
