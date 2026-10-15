@@ -9,7 +9,7 @@ import path from "node:path";
 
 const args = process.argv.slice(2);
 if (args.includes("--help")) {
-  console.log(`Usage: node external_owner_jobs_smoke.mjs [--probe-cancellation]
+  console.log(`Usage: node external_owner_jobs_smoke.mjs [--probe-cancellation] [--probe-spill] [--probe-owned-tail]
 OMP_BIN defaults to /Applications/Alinery.omp/omp (must be v18.1.13).
 Runs real native task children in disposable SDK owner sessions A and B.
 Oracles: watched live A cannot pass the safety join; native delivery stays
@@ -21,15 +21,32 @@ is reported separately). Exit 1: failed oracle/runtime error. Exit 2: missing
 public prerequisite. --probe-cancellation additionally holds a real child's
 tool_result after native write, cancels its actual job, and requires job.promise
 settlement before releasing that hook. This is cleanup-tail, not late-write proof.
-No pre-spill latch, universal late-cleanup drain, revival admission, stock
-launch attachment, or production integration is proven.`);
+--probe-spill uses a native background bash job for A's oversized output and
+holds A's public artifact allocator before the native spill write, then verifies
+the full native result and its delivered artifact reference.
+The allocator decoration is fixture instrumentation, not a production hook.
+--probe-owned-tail includes cancellation and admits the known result callback
+into an external fixture ledger. It writes after the native job promise settles,
+blocks simulated finalization until callback finally, then rejects a native
+extension command using the same gate. This is not automatic all-hook coverage.
+No universal late-cleanup drain, revival admission, stock launch attachment,
+or production integration is proven.`);
   process.exit(0);
 }
 assert.ok(
-  args.every((arg) => arg === "--probe-cancellation"),
+  args.every((arg) => ["--probe-cancellation", "--probe-spill", "--probe-owned-tail"].includes(arg)),
   "Unknown argument; use --help",
 );
 const binary = process.env.OMP_BIN || "/Applications/Alinery.omp/omp";
+const probeSpill = args.includes("--probe-spill");
+const probeOwnedTail = args.includes("--probe-owned-tail");
+const tailLeases = new Map();
+let tailRevision = 0;
+let tailSealed = false;
+let tailSealedProviderStage;
+// Stay below native per-line caps while crossing the 12,000-character sink
+// threshold. Do not disable native output limits to reach the spill path.
+const spillPayload = `SPILL_BEGIN\n${Array.from({ length: 100 }, (_, index) => `${index}: ${"x".repeat(160)}`).join("\n")}\nSPILL_END`;
 const events = [];
 const listeners = new Set();
 const held = new Map();
@@ -92,7 +109,64 @@ const server = createServer(async (request, response) => {
         assert.ok(latch && !latch.response.writableEnded && !latch.response.destroyed, "Native result hook is no longer held");
         assert.ok(!events.some((event) => event.type === "result-hook-returned" && event.owner === "C"), "Native result hook already returned");
       }
+      if (body.type === "spill-accounted") {
+        const latch = held.get("spill-A");
+        const allocation = events.find((event) => event.type === "spill-held");
+        assert.ok(latch && !latch.response.writableEnded && !latch.response.destroyed, "Native allocation is no longer held");
+        assert.ok(allocation && !existsSync(allocation.path), "Native spill already wrote before barrier release");
+      }
       record(body);
+      response.end("{}");
+    } else if (request.url === "/tail-admit") {
+      assert.ok(probeOwnedTail && typeof body.id === "string");
+      if (tailSealed) {
+        record({ type: "tail-admission-rejected", id: body.id, reason: "Callback scope is finishing" });
+        response.end(JSON.stringify({ accepted: false, reason: "Callback scope is finishing" }));
+      } else {
+        assert.ok(!tailLeases.has(body.id), "Duplicate callback admission");
+        const revision = ++tailRevision;
+        tailLeases.set(body.id, revision);
+        record({ type: "tail-admitted", id: body.id, revision });
+        response.end(JSON.stringify({ accepted: true, revision }));
+      }
+    } else if (request.url === "/tail-settle") {
+      assert.equal(tailLeases.get(body.id), body.revision, "Wrong callback lease settled");
+      assert.equal(tailSealed, false, "Finalization overtook admitted callback");
+      tailLeases.delete(body.id);
+      record({ type: "tail-settled", id: body.id, revision: body.revision });
+      response.end("{}");
+    } else if (request.url === "/tail-state") {
+      response.end(JSON.stringify({ revision: tailRevision, sealed: tailSealed, active: [...tailLeases.keys()] }));
+    } else if (request.url === "/tail-finalize") {
+      assert.ok(probeOwnedTail);
+      const status = tailLeases.size ? "waiting" : body.intent !== tailRevision ? "stale" : tailSealed ? "already-sealed" : "accepted";
+      if (status === "accepted") {
+        tailSealed = true;
+        tailSealedProviderStage = providerStages.get("C");
+      }
+      const decision = { status, revision: tailRevision, intent: body.intent, active: [...tailLeases.keys()] };
+      if (status === "waiting") {
+        assert.equal(existsSync(path.join(root, "late-callback-C")), false, "Tail already wrote before unwind release");
+        const latch = held.get("result-C");
+        assert.ok(latch && !latch.response.writableEnded && !latch.response.destroyed, "Callback latch already released");
+      }
+      if (status === "accepted") assert.equal(readFileSync(path.join(root, "late-callback-C"), "utf8"), "owned late callback\n");
+      record({ type: "tail-finalization", ...decision });
+      response.end(JSON.stringify(decision));
+    } else if (request.url === "/tail-written") {
+      assert.ok(
+        events.some((event) => event.type === "cancellation-tail"),
+        "Callback wrote before native job-promise observation",
+      );
+      assert.ok(tailLeases.has(body.id) && !tailSealed, "Callback wrote outside its live lease");
+      assert.equal(readFileSync(path.join(root, "late-callback-C"), "utf8"), "owned late callback\n");
+      record({ type: "tail-write-verified", id: body.id, afterNativeJobPromise: true });
+      response.end("{}");
+    } else if (request.url === "/tail-command-rejected") {
+      assert.ok(tailSealed && tailLeases.size === 0);
+      assert.equal(providerStages.get("C"), tailSealedProviderStage, "Rejected command resumed provider work");
+      assert.equal(existsSync(path.join(root, "rejected-tail-write")), false, "Rejected callback wrote after fence");
+      record({ type: "tail-command-rejected", reason: body.reason, noProviderDispatch: true, noWrite: true });
       response.end("{}");
     } else if (request.url === "/await") {
       const found = await waitFor((event) => Object.entries(body).every(([key, value]) => event[key] === value));
@@ -110,6 +184,20 @@ const server = createServer(async (request, response) => {
       assert.equal(readFileSync(path.join(root, "write-C"), "utf8"), "native-write-C\n");
       held.set("result-C", { response });
       record({ type: "result-held", owner: "C", nativeWriteVerified: true, at: Date.now() });
+    } else if (request.url === "/spill-latch") {
+      assert.equal(body.owner, "A");
+      assert.ok(body.id && body.path.startsWith(`${root}${path.sep}`), "Native spill allocation escaped fixture");
+      assert.equal(existsSync(body.path), false, "Spill write occurred before allocator returned");
+      held.set("spill-A", { response });
+      record({ type: "spill-held", ...body, fileAbsent: true });
+    } else if (request.url === "/verify-spill") {
+      const allocation = events.find((event) => event.type === "spill-held");
+      assert.ok(allocation, "No native spill allocation observed");
+      assert.ok(body.expected.includes(spillPayload), "Native job result omitted oversized payload");
+      const actual = readFileSync(allocation.path, "utf8");
+      assert.equal(actual, body.expected, "Native spill differs from full native job result");
+      record({ type: "spill-verified", id: allocation.id, bytes: Buffer.byteLength(actual), exactNativeResult: true });
+      response.end("{}");
     } else if (request.url === "/v1/chat/completions" || request.url === "/chat/completions") {
       const users = JSON.stringify(body.messages.filter((message) => message.role === "user"));
       const owner = ["A", "B", "C"].find((value) => users.includes(`ROOT_OWNER_${value}`));
@@ -120,6 +208,14 @@ const server = createServer(async (request, response) => {
         const hasDelivery = users.includes("Background job") && users.includes("has completed");
         record({ type: "parent-provider", owner, stage, hasDelivery });
         if (stage === 0) {
+          if (probeSpill && owner === "A") {
+            assert.ok(
+              body.tools.some((tool) => tool.function.name === "bash"),
+              "Native bash tool unavailable",
+            );
+            answer(response, [{ name: "bash", input: { command: `${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(root, "spill-producer.mjs"))}`, async: true } }]);
+            return;
+          }
           const task = { name: `Writer${owner}`, task: `CHILD_OWNER_${owner}: write the assigned disposable file, then yield. No other work.` };
           const schema = body.tools.find((tool) => tool.function.name === "task")?.function.parameters;
           assert.ok(schema, "Native task tool unavailable");
@@ -132,7 +228,12 @@ const server = createServer(async (request, response) => {
         } else if (owner === "A" && hasDelivery && !events.some((event) => event.type === "parent-continuation-held")) {
           held.set("parent-continuation", { response, provider: true });
           const expectedJobId = events.find((event) => event.type === "watched-live")?.jobA.id;
-          record({ type: "parent-continuation-held", hasExpectedJobId: Boolean(expectedJobId && users.includes(expectedJobId)) });
+          const spillId = events.find((event) => event.type === "spill-held")?.id;
+          record({
+            type: "parent-continuation-held",
+            hasExpectedJobId: Boolean(expectedJobId && users.includes(expectedJobId)),
+            hasExpectedSpillId: Boolean(spillId && users.includes(`artifact://${spillId}`)),
+          });
         } else answer(response);
       } else if (childOwner) {
         const key = `child-${childOwner}`;
@@ -204,6 +305,17 @@ function installProbe(api, config) {
           return { content: [{ type: "text", text: "Public SDK unavailable" }] };
         }
         for (const owner of config.cancellation ? ["A", "B", "C"] : ["A", "B"]) {
+          const sessionManager = pi.SessionManager.create(config.root, config.sessionsDir);
+          if (config.spill && owner === "A") {
+            // Fixture-only public method decoration. Preserve the real allocator,
+            // IDs and native sink; hold its return before the sink can write.
+            const allocate = sessionManager.allocateArtifactPath.bind(sessionManager);
+            sessionManager.allocateArtifactPath = async (toolType) => {
+              const allocation = await allocate(toolType);
+              if (toolType === "async") await post("/spill-latch", { owner, ...allocation });
+              return allocation;
+            };
+          }
           const { session } = await pi.createAgentSession({
             cwd: config.root,
             agentDir: config.agentDir,
@@ -214,7 +326,7 @@ function installProbe(api, config) {
             authStorage: ctx.modelRegistry.authStorage,
             settings: await pi.Settings.init(),
             autoApprove: true,
-            sessionManager: pi.SessionManager.create(config.root, config.sessionsDir),
+            sessionManager,
             additionalExtensionPaths: [config.childExtension],
           });
           sessions.push(session);
@@ -253,7 +365,10 @@ function installProbe(api, config) {
         await post("/await", { type: "parent-before-delivery-held" });
         const jobsA = manager.getRunningJobs(filterA);
         const jobsB = manager.getRunningJobs(filterB);
-        check(jobsA.length === 1 && jobsB.length === 1 && jobsA[0].type === "task" && jobsB[0].type === "task", "Expected two real owner-tagged native task jobs");
+        check(
+          jobsA.length === 1 && jobsB.length === 1 && jobsA[0].type === (config.spill ? "bash" : "task") && jobsB[0].type === "task",
+          "Expected real owner-tagged native producer jobs",
+        );
         const jobA = jobsA[0];
         const jobB = jobsB[0];
         manager.watchJobs([jobA.id]);
@@ -275,8 +390,36 @@ function installProbe(api, config) {
         check(!manager.isDeliverySuppressed(jobA.id), "Unwatch did not restore native delivery eligibility");
         await post("/release", { key: "write-A" });
         check(await manager.waitForOwnerJobs(ownerA), "A owner job failed to settle");
-        check(jobA.status === "completed", `A task failed: ${jobA.errorText}`);
-        await post("/await", { type: "native-write-result", owner: "A", isError: false });
+        check(jobA.status === "completed", `A native job failed: ${jobA.errorText}`);
+        await post("/await", { type: config.spill ? "bash-producer-written" : "native-write-result", owner: "A", isError: false });
+        let spill = { status: "not-exercised" };
+        if (config.spill) {
+          const expected = jobA.resultText;
+          await trace({ type: "spill-producer-settled", jobId: jobA.id, resultChars: expected?.length });
+          check(typeof expected === "string" && expected.length > 12000, "Native result did not cross spill threshold");
+          const allocation = await post("/await", { type: "spill-held" });
+          check(!a.yieldQueue.has("async-result"), "Receipt queued before native spill formatting completed");
+          check(manager.hasPendingDeliveries(filterA), "Spill disappeared from delivery ownership");
+          check((await manager.drainDeliveries({ filter: filterA, timeoutMs: 0 })) === false, "Drain bypassed held native spill");
+          check(!attempt(revision).accepted, "Authority released during native spill");
+          await trace({
+            type: "spill-accounted",
+            jobId: jobA.id,
+            jobStatus: jobA.status,
+            deliveryState: manager.getDeliveryState(filterA),
+            authority: attempt(revision),
+          });
+          await post("/release", { key: "spill-A" });
+          // Synchronize queue insertion after release; the held allocator above,
+          // not this bounded poll, is the pre-write ordering oracle.
+          const deadline = Date.now() + 10000;
+          while (!a.yieldQueue.has("async-result")) {
+            check(Date.now() < deadline, "Native spill did not reach receipt queue");
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+          await post("/verify-spill", { expected });
+          spill = { status: "passed", artifactId: allocation.id, exactNativeResult: true };
+        }
         check(manager.hasPendingDeliveries(filterA), "Native delivery disappeared while parent provider was held");
         const deliveryBeforeRelease = manager.getDeliveryState(filterA);
         check((await manager.drainDeliveries({ filter: filterA, timeoutMs: 0 })) === false, "Owner drain completed before native receipt could commit");
@@ -287,11 +430,18 @@ function installProbe(api, config) {
         await post("/release", { key: "parent-before-delivery" });
         const continuation = await post("/await", { type: "parent-continuation-held" });
         check(continuation.hasExpectedJobId, "Resumed native provider input omitted the actual A job ID");
+        if (config.spill) check(continuation.hasExpectedSpillId, "Resumed provider input omitted native spill reference");
         check(await drain, "Native A delivery did not settle");
         check(
           deliveries.some((message) => JSON.stringify(message).includes(jobA.id)),
           "The actual A job result was not committed to its parent",
         );
+        if (config.spill) {
+          check(
+            deliveries.some((message) => JSON.stringify(message).includes(`artifact://${spill.artifactId}`)),
+            "Native delivered message omitted spill artifact reference",
+          );
+        }
         check(!attempt(revision).accepted, "Authority released before resumed parent settled");
         await trace({ type: "continuation-held", nativeJobDelivered: jobA.id, authority: attempt(revision), deliveryState: manager.getDeliveryState(filterA) });
         await post("/release", { key: "parent-continuation" });
@@ -321,10 +471,12 @@ function installProbe(api, config) {
         await b.waitForIdle();
         await b.sessionManager.flush();
         let cancellation = { status: "not-exercised" };
+        let tailOwnership = { status: "not-exercised" };
         if (config.cancellation) {
           const c = sessions[2];
           const ownerC = c.getAgentId();
           check(ownerC && ownerC !== ownerA && ownerC !== ownerB && c.asyncJobManager === manager, "C owner isolation failed");
+          const oldTailIntent = config.ownedTail ? (await post("/tail-state")).revision : undefined;
           const promptC = c.prompt("ROOT_OWNER_C: run one native task child.");
           promptC.catch((error) => void trace({ type: "prompt-error", owner: "C", error: String(error) }));
           const resultHeld = await post("/await", { type: "result-held", owner: "C" });
@@ -349,16 +501,41 @@ function installProbe(api, config) {
             limits: "Native write completed BEFORE cancellation. No late native writer or successful-task cleanup tail demonstrated. No public late-cleanup owner drain exists.",
           };
           await trace({ type: "cancellation-tail", ...cancellation });
+          if (config.ownedTail) {
+            const state = await post("/tail-state");
+            check(state.active.length === 1 && state.revision > oldTailIntent, "Known callback was not admitted");
+            const decision = await post("/tail-finalize", { intent: state.revision });
+            check(decision.status === "waiting", "Native job settlement released active callback ownership");
+          }
           await post("/release", { key: "result-C" });
           await post("/await", { type: "result-hook-returned", owner: "C" });
           await promptC;
           await c.waitForIdle();
+          if (config.ownedTail) {
+            await post("/await", { type: "tail-settled" });
+            await c.sessionManager.flush();
+            const state = await post("/tail-state");
+            check(state.active.length === 0, "Callback finally leaked its lease");
+            check((await post("/tail-finalize", { intent: oldTailIntent })).status === "stale", "Pre-callback intent became valid");
+            check((await post("/tail-finalize", { intent: state.revision })).status === "accepted", "Fresh callback-scope finalization refused");
+            // Native command dispatch invokes the same admission wrapper without
+            // starting a model turn or doing a native write before that wrapper.
+            check((await c.prompt("/probe_owned_tail")) === false, "Native command was not handled before model dispatch");
+            await post("/await", { type: "tail-command-rejected" });
+            tailOwnership = {
+              status: "passed-known-callback-scope",
+              lateWrite: "fixture extension write after native task promise; not a built-in late writer",
+              fence: "same external gate rejected native extension-command callback before effect",
+              limits: "Known callbacks explicitly wrapped; no arbitrary native/third-party hook attachment or whole-session fence",
+            };
+          }
         }
         await trace({
           type: "outcome",
           status: "passed-supported-subset",
           native: [
             "owner-tagged task children",
+            ...(config.spill ? ["native background bash producer", "native oversized-result spill"] : []),
             "real native writes",
             "watched live writer safety join",
             "original native delivery receipt",
@@ -368,8 +545,10 @@ function installProbe(api, config) {
           simulated: ["shared authority lease", "revision freshness", "finalization decision"],
           deployment: "Diagnostic SDK-created sessions only; no stock launcher attachment or production migration",
           cancellation,
+          spill,
+          tailOwnership,
           missing: [
-            "pre-spill latch and spill coverage",
+            ...(config.spill ? [] : ["pre-spill latch and spill coverage"]),
             "late native writer after executor cleanup deadline",
             "universal late-cleanup drain",
             "future IRC/revival admission",
@@ -415,12 +594,49 @@ try {
       },
     }),
   );
+  if (probeSpill) {
+    writeFileSync(
+      path.join(root, "spill-producer.mjs"),
+      `import {writeFileSync} from "node:fs";
+const post = (route, body) => fetch(${JSON.stringify(url)} + route, {method:"POST",body:JSON.stringify(body)});
+await post("/write-latch", {owner:"A",toolCallId:"native-bash-producer"});
+writeFileSync(${JSON.stringify(path.join(root, "write-A"))}, "native-write-A\\n");
+await post("/trace", {type:"bash-producer-written",owner:"A",isError:false});
+console.log(${JSON.stringify(spillPayload)});
+`,
+    );
+  }
   const childExtension = path.join(root, "child-latches.ts");
   writeFileSync(
     childExtension,
-    `export default function(api) {
+    `import {writeFile} from "node:fs/promises";
+export default function(api) {
     const root = ${JSON.stringify(root)}, url = ${JSON.stringify(url)};
     const post = (route, body) => fetch(url + route, {method:"POST",body:JSON.stringify(body)});
+    const ownedTail = ${JSON.stringify(probeOwnedTail)};
+    const runOwnedTail = async (id, body) => {
+      const admission = await (await post("/tail-admit", {id})).json();
+      if (admission.accepted !== true) throw new Error(admission.reason);
+      try {
+        return await body();
+      } finally {
+        // Release only this callback's own execution, never on native job status.
+        await post("/tail-settle", {id,revision:admission.revision});
+      }
+    };
+    if (ownedTail) api.registerCommand("probe_owned_tail", {
+      description:"Probe rejection of an explicitly owned callback after its fence",
+      handler:async () => {
+        try {
+          await runOwnedTail("command:probe_owned_tail", () => writeFile(root + "/rejected-tail-write", "must not write"));
+          throw new Error("Post-fence callback unexpectedly admitted");
+        } catch (error) {
+          if (error.message !== "Callback scope is finishing") throw error;
+          await post("/tail-command-rejected", {reason:error.message});
+          throw error;
+        }
+      }
+    });
     const owner = input => ["A","B","C"].find(value => input?.path === root + "/write-" + value);
     api.on("tool_call", async event => {
       const who = owner(event.input);
@@ -430,7 +646,16 @@ try {
       const who = owner(event.input);
       if (event.toolName === "write" && who) await post("/trace",{type:"native-write-result",owner:who,isError:event.isError ?? false});
       if (event.toolName === "write" && who === "C") {
-        await post("/result-latch",{owner:who});
+        const id = "tool_result:" + event.toolCallId;
+        const body = async () => {
+          await post("/result-latch",{owner:who});
+          if (ownedTail) {
+            await writeFile(root + "/late-callback-C", "owned late callback\\n");
+            await post("/tail-written", {id});
+          }
+        };
+        if (ownedTail) await runOwnedTail(id, body);
+        else await body();
         await post("/trace",{type:"result-hook-returned",owner:who});
       }
     });
@@ -445,7 +670,9 @@ try {
       agentDir: path.join(root, "agent"),
       sessionsDir: path.join(root, "sessions"),
       childExtension,
-      cancellation: args.includes("--probe-cancellation"),
+      cancellation: args.includes("--probe-cancellation") || probeOwnedTail,
+      spill: probeSpill,
+      ownedTail: probeOwnedTail,
     })});`,
   );
   const configPath = path.join(root, "config.yml");
@@ -496,7 +723,25 @@ try {
       {
         ...outcome,
         events: events.filter((event) =>
-          ["watched-live", "delivery-held", "native-delivery", "continuation-held", "fresh-finalization", "native-write-result", "cancellation-tail"].includes(event.type),
+          [
+            "watched-live",
+            "spill-producer-settled",
+            "spill-held",
+            "spill-accounted",
+            "spill-verified",
+            "delivery-held",
+            "native-delivery",
+            "continuation-held",
+            "fresh-finalization",
+            "native-write-result",
+            "cancellation-tail",
+            "tail-admitted",
+            "tail-finalization",
+            "tail-write-verified",
+            "tail-settled",
+            "tail-admission-rejected",
+            "tail-command-rejected",
+          ].includes(event.type),
         ),
       },
       null,

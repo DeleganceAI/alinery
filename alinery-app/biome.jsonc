@@ -10,7 +10,40 @@
       "src-tauri/runner/assets/**/*.ts",
       "src-tauri/runner/assets/**/*.mjs",
       "src-tauri/runner/tests/**/*.mjs",
-      "vite.config.ts"
+      "vite.config.ts",
+      // Frozen OMP v18.1.13 research evidence, not maintained product tests.
+      // Preserve exact bytes: derivative probes verify hashes and source anchors.
+      // Inventory and checksums: docs/research/omp-external-adapter-evidence.md.
+      // Explicit filenames keep all new diagnostics/tests checked by default.
+      "!src-tauri/runner/tests/external_autolearn_descendants_smoke.mjs",
+      "!src-tauri/runner/tests/external_autolearn_smoke.mjs",
+      "!src-tauri/runner/tests/external_cancel_admission_ack_smoke.mjs",
+      "!src-tauri/runner/tests/external_controller_lifecycle_smoke.mjs",
+      "!src-tauri/runner/tests/external_controller_ownership_smoke.mjs",
+      "!src-tauri/runner/tests/external_eval_bridge_smoke.mjs",
+      "!src-tauri/runner/tests/external_forwarded_ack_recovery_smoke.mjs",
+      "!src-tauri/runner/tests/external_hidden_outcome_fatal_interceptor.mjs",
+      "!src-tauri/runner/tests/external_js_ipc_bridge_smoke.mjs",
+      "!src-tauri/runner/tests/external_js_lifecycle_smoke.mjs",
+      "!src-tauri/runner/tests/external_maintenance_lifecycle_smoke.mjs",
+      "!src-tauri/runner/tests/external_maintenance_ownership_smoke.mjs",
+      "!src-tauri/runner/tests/external_owner_jobs_smoke.mjs",
+      "!src-tauri/runner/tests/external_ownership_continuation_controller.mjs",
+      "!src-tauri/runner/tests/external_py_lifecycle_smoke.mjs",
+      "!src-tauri/runner/tests/external_wave_callback_timeouts_probe.mjs",
+      "!src-tauri/runner/tests/external_wave_controller_errors_provider.mjs",
+      "!src-tauri/runner/tests/external_wave_controller_transitions_probe.mjs",
+      "!src-tauri/runner/tests/external_wave_fatal_lifetime_ordering.mjs",
+      "!src-tauri/runner/tests/external_wave_fatal_owner_routes_probe.mjs",
+      "!src-tauri/runner/tests/external_wave_ingress_coverage_nonchat.mjs",
+      "!src-tauri/runner/tests/external_wave_maintenance_manual_lifetimes.mjs",
+      "!src-tauri/runner/tests/external_wave_maintenance_pruning_smoke.mjs",
+      "!src-tauri/runner/tests/external_wave_maintenance_rescue_probe.mjs",
+      "!src-tauri/runner/tests/external_wave_maintenance_transfer_smoke.mjs",
+      "!src-tauri/runner/tests/external_wave_memory_advisor_work_local.mjs",
+      "!src-tauri/runner/tests/external_wave_nested_eval_identity.mjs",
+      "!src-tauri/runner/tests/external_wave_recovery_retry_tail_probe.mjs",
+      "!src-tauri/runner/tests/external_wave_startup_owner_binding_probe.mjs"
     ]
   },
   "formatter": {
