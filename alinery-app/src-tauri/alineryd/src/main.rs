@@ -850,6 +850,7 @@ fn accept_phase_completion(
         |_, state| alinery_core::execution::accept_execution_completion(repo, task_slug, state, &source.execution_id, session_id),
     )?;
     if matches!(outcome, CompletionOutcome::Accepted { .. }) {
+        execution::sync_execution_state(repo, task_slug)?;
         // Projection failures cannot revoke a receipt already durably committed.
         if let Err(error) = stamp_meta(meta_path, |value| {
             value["semantic"] = json!({"phase_completed_at":now_secs(),"omp_session_id":omp_session_id,"omp_turn_id":omp_turn_id});
@@ -2142,12 +2143,15 @@ fn spawn_session(
     }
 
     let mut child_killer = child.clone_killer();
-    if let Err(error) = execution::spawned(repo, &launch.task_slug, &launch.id, daemon_namespace) {
-        let _ = child.kill();
-        let _ = child.wait();
-        reg.lock().unwrap_or_else(|e| e.into_inner()).remove(&launch.id);
-        return Err(error);
-    }
+    let execution_process = match execution::spawned(repo, &launch.task_slug, &launch.id, daemon_namespace) {
+        Ok(process) => process,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            reg.lock().unwrap_or_else(|e| e.into_inner()).remove(&launch.id);
+            return Err(error);
+        }
+    };
     let lifecycle = Arc::new((Mutex::new(SpawnLifecycle::Pending), Condvar::new()));
     let lifecycle_reader = Arc::clone(&lifecycle);
     let (reaped_sender, reaped_receiver) = mpsc::sync_channel(1);
@@ -2194,7 +2198,7 @@ fn spawn_session(
                     inner.reaped_and_drained = reaped && drained;
                     drop(inner);
                     if committed && reaped && drained && !replacing_reader.load(Ordering::SeqCst) {
-                        execution::exited(&execution_reader.0, &execution_reader.1, &execution_reader.2, &execution_reader.3, code);
+                        execution::exited(&execution_reader.0, &execution_reader.1, execution_process.as_ref(), &execution_reader.3, code);
                         start_auto_advance_once(
                             execution_reader.0.clone(),
                             execution_reader.4.clone(),
@@ -3297,12 +3301,15 @@ fn spawn_rpc_session(
         );
     }
 
-    if let Err(error) = execution::spawned(repo, &launch.task_slug, &launch.id, daemon_namespace) {
-        let _ = child.kill();
-        let _ = child.wait();
-        reg.lock().unwrap_or_else(|e| e.into_inner()).remove(&launch.id);
-        return Err(error);
-    }
+    let execution_process = match execution::spawned(repo, &launch.task_slug, &launch.id, daemon_namespace) {
+        Ok(process) => process,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            reg.lock().unwrap_or_else(|e| e.into_inner()).remove(&launch.id);
+            return Err(error);
+        }
+    };
     let lifecycle = Arc::new((Mutex::new(SpawnLifecycle::Pending), Condvar::new()));
     let lifecycle_reader = Arc::clone(&lifecycle);
     let (reaped_sender, reaped_receiver) = mpsc::sync_channel(1);
@@ -3362,7 +3369,7 @@ fn spawn_rpc_session(
                     inner.reaped_and_drained = reaped && drained;
                     drop(inner);
                     if committed && reaped && drained && !replacing_reader.load(Ordering::SeqCst) {
-                        execution::exited(&execution_reader.0, &execution_reader.1, &execution_reader.2, &execution_reader.3, code);
+                        execution::exited(&execution_reader.0, &execution_reader.1, execution_process.as_ref(), &execution_reader.3, code);
                         start_auto_advance_once(
                             execution_reader.0.clone(),
                             execution_reader.4.clone(),
@@ -3528,6 +3535,7 @@ fn restate_session(
         (sess.pid, sess.inner.clone(), sess.meta_path.clone(), sess.task_slug.clone(), sess.replacing.clone())
     };
     execution::task_for_owner(repo, &task_slug, daemon_namespace)?;
+    let execution_process = execution::read_process(repo, &task_slug, id)?;
     {
         let map = reg.lock().unwrap_or_else(|error| error.into_inner());
         let current = map.get(id).ok_or("unknown-session")?;
@@ -3571,8 +3579,8 @@ fn restate_session(
                 "replace stopped execution process",
                 |_, state| {
                     let record = state.executions.get_mut(&meta.execution_id).ok_or("missing execution")?;
-                    if record.receipt_id.is_some() || record.owner_session_id != id {
-                        return Err("execution owner changed".into());
+                    if record.receipt_id.is_some() || record.owner_session_id != id || record.shutdown_confirmed || record.lifecycle != ExecutionLifecycle::Interrupted {
+                        return Err("execution owner or stop confirmation changed".into());
                     }
                     record.lifecycle = ExecutionLifecycle::Starting;
                     Ok(())
@@ -3602,7 +3610,7 @@ fn restate_session(
                         value["exit_code"] = json!(code);
                     });
                     drop(inner);
-                    execution::exited(repo, &task_slug, id, daemon_namespace, code);
+                    execution::exited(repo, &task_slug, execution_process.as_ref(), daemon_namespace, code);
                 }
             }
             return Err(error);

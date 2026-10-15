@@ -3,6 +3,125 @@ use super::*;
 use alinery_core::{execution::*, playbook_scheduler::reconcile_graph, task_creation::*};
 use std::collections::BTreeSet;
 
+/// Captured at spawn, never reconstructed from an Exited projection or a PID.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct ExecutionProcess {
+    execution_id: String,
+    session_id: String,
+    incarnation: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct ExitProof {
+    process: ExecutionProcess,
+    code: Option<i32>,
+}
+
+type PendingExits = std::collections::BTreeMap<PathBuf, ExitProof>;
+static PENDING_EXITS: std::sync::LazyLock<Mutex<PendingExits>> = std::sync::LazyLock::new(|| Mutex::new(PendingExits::new()));
+
+fn pending_exits() -> &'static Mutex<PendingExits> {
+    &PENDING_EXITS
+}
+
+fn process_path(repo: &Path, slug: &str, session_id: &str) -> PathBuf {
+    session_meta_path(repo, slug, session_id).with_file_name(format!("{session_id}.execution-process.json"))
+}
+
+pub(super) fn read_process(repo: &Path, slug: &str, session_id: &str) -> Result<Option<ExecutionProcess>, String> {
+    match fs::read(process_path(repo, slug, session_id)) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|e| format!("read execution incarnation: {e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("read execution incarnation: {e}")),
+    }
+}
+
+fn proof_path(repo: &Path, slug: &str, process: &ExecutionProcess) -> PathBuf {
+    session_meta_path(repo, slug, &process.session_id).with_file_name(format!("{}.{}.execution-exit.json", process.session_id, process.incarnation))
+}
+
+// A previous rename may have succeeded while directory sync failed. Idempotent
+// receipt/exit replay must finish durability without inventing another revision.
+pub(super) fn sync_execution_state(repo: &Path, slug: &str) -> Result<(), String> {
+    let path = execution_state_path(repo, slug)?;
+    let parent = path.parent().ok_or("execution state has no parent")?;
+    fs::File::open(&path)
+        .and_then(|file| file.sync_all())
+        .and_then(|()| fs::File::open(parent)?.sync_all())
+        .map_err(|e| format!("ambiguous persistence after execution replay: {e}"))
+}
+
+fn apply_exit_proof(repo: &Path, slug: &str, lane: &str, proof: &ExitProof) -> Result<(), String> {
+    mutate_execution_state(repo, slug, lane, "confirm reaped execution", |_, state| {
+        let current = read_process(repo, slug, &proof.process.session_id)?.ok_or("missing execution process incarnation for exit proof")?;
+        let record = state.executions.get(&proof.process.execution_id).ok_or("missing execution for exit proof")?;
+        if current != proof.process || record.owner_session_id != proof.process.session_id {
+            eprintln!("discard stale exit obligation {slug}/{}", proof.process.session_id);
+            return Ok(());
+        }
+        if matches!(record.lifecycle, ExecutionLifecycle::Starting | ExecutionLifecycle::Queued) {
+            return Err("exit obligation cannot confirm an uncommitted or replacement launch".into());
+        }
+        confirm_execution_exit(state, &proof.process.execution_id, &proof.process.session_id, proof.code)
+    })?;
+    sync_execution_state(repo, slug)
+}
+
+fn reconcile_exits(repo: &Path, slug: &str, lane: &str) -> Result<(), String> {
+    let dir = session_meta_path(repo, slug, "_").parent().ok_or("missing sessions directory")?.to_path_buf();
+    // Keep the in-memory obligation if even its independent durable write fails.
+    // Once journaled, a daemon restart needs no process/metadata inference.
+    let pending: Vec<_> = pending_exits()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .filter(|(path, _)| path.parent() == Some(dir.as_path()))
+        .map(|(path, proof)| (path.clone(), proof.clone()))
+        .collect();
+    let mut errors = Vec::new();
+    for (path, proof) in pending {
+        match serde_json::to_vec(&proof)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| alinery_core::fs_atomic::write_bytes_durable(&path, &bytes))
+        {
+            Ok(()) => {
+                pending_exits().lock().unwrap_or_else(|e| e.into_inner()).remove(&path);
+            }
+            Err(error) => errors.push(format!("persist exit obligation {}: {error}", path.display())),
+        }
+    }
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) },
+        Err(e) => return Err(format!("read exit obligations: {e}")),
+    };
+    for entry in entries {
+        let result = (|| {
+            let entry = entry.map_err(|e| e.to_string())?;
+            if !entry.file_name().to_string_lossy().ends_with(".execution-exit.json") {
+                return Ok(());
+            }
+            let path = entry.path();
+            let proof: ExitProof = serde_json::from_slice(&fs::read(&path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+            if path != proof_path(repo, slug, &proof.process) {
+                return Err("exit proof filename does not match its owner".into());
+            }
+            apply_exit_proof(repo, slug, lane, &proof)?;
+            // State is durable before removal. A crash before unlink merely replays
+            // the same confirmation; the core rejects conflicting observations.
+            fs::remove_file(&path).map_err(|e| format!("remove confirmed exit proof: {e}"))
+        })();
+        if let Err(error) = result {
+            errors.push(error);
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
 fn mutate_execution_state<T>(
     repo: &Path,
     slug: &str,
@@ -84,6 +203,7 @@ fn project_all(repo: &Path, slug: &str) -> Result<Vec<SessionMeta>, String> {
 }
 
 pub(super) fn reconcile_task(repo: &Path, slug: &str, reg: &Registry, lane: &str, app_config: &Path, host: &ProtectedHost) -> Result<(), String> {
+    reconcile_exits(repo, slug, lane)?;
     let defaults = product(repo, app_config)?;
     mutate_execution_state(repo, slug, lane, "reconcile graph", |definition, state| {
         if state.creation != "ready" {
@@ -486,20 +606,13 @@ pub(super) fn start(repo: &Path, reg: &Registry, lane: &str, config: &Path, host
         Ok(reply)
     }
 }
-pub(super) fn exited(repo: &Path, slug: &str, session_id: &str, lane: &str, code: Option<i32>) {
-    if slug.is_empty() {
-        return;
-    }
-    let Some(meta) = read_session_meta_full(&session_meta_path(repo, slug, session_id)) else {
-        return;
-    };
-    if meta.execution_id.is_empty() {
-        return;
-    }
-    if let Err(error) = mutate_execution_state(repo, slug, lane, "confirm reaped execution", |_, state| {
-        confirm_execution_exit(state, &meta.execution_id, session_id, code)
-    }) {
-        eprintln!("execution exit {slug}/{session_id}: {error}");
+pub(super) fn exited(repo: &Path, slug: &str, process: Option<&ExecutionProcess>, lane: &str, code: Option<i32>) {
+    let Some(process) = process else { return };
+    let proof = ExitProof { process: process.clone(), code };
+    let path = proof_path(repo, slug, process);
+    pending_exits().lock().unwrap_or_else(|e| e.into_inner()).insert(path, proof);
+    if let Err(error) = reconcile_exits(repo, slug, lane) {
+        eprintln!("execution exit pending {slug}/{}: {error}", process.session_id);
     }
 }
 pub(super) fn reconcile_repo(repo: &Path, reg: &Registry, lane: &str, config: &Path, host: &ProtectedHost) {
@@ -512,23 +625,30 @@ pub(super) fn reconcile_repo(repo: &Path, reg: &Registry, lane: &str, config: &P
     }
 }
 
-pub(super) fn spawned(repo: &Path, slug: &str, session_id: &str, lane: &str) -> Result<(), String> {
+pub(super) fn spawned(repo: &Path, slug: &str, session_id: &str, lane: &str) -> Result<Option<ExecutionProcess>, String> {
     let Some(meta) = read_session_meta_full(&session_meta_path(repo, slug, session_id)) else {
-        return Ok(());
+        return Ok(None);
     };
     if meta.execution_id.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
+    let process = ExecutionProcess {
+        execution_id: meta.execution_id.clone(),
+        session_id: session_id.into(),
+        incarnation: uuid::Uuid::new_v4().to_string(),
+    };
     mutate_execution_state(repo, slug, lane, "commit spawned execution", |_, state| {
         let record = state.executions.get(&meta.execution_id).ok_or("missing execution")?;
         if record.owner_session_id != session_id {
             return Err("stale execution owner".into());
         }
+        alinery_core::fs_atomic::write_bytes_durable(&process_path(repo, slug, session_id), &serde_json::to_vec(&process).map_err(|e| e.to_string())?)?;
         if record.lifecycle == ExecutionLifecycle::Running {
             return Ok(());
         }
         record_execution_spawn(state, &meta.execution_id, session_id, Ok(()))
-    })
+    })?;
+    Ok(Some(process))
 }
 
 pub(super) fn failed_spawn(repo: &Path, slug: &str, session_id: &str, lane: &str, reg: &Registry, error: &str) -> Result<(), String> {
@@ -553,4 +673,99 @@ pub(super) fn failed_spawn(repo: &Path, slug: &str, session_id: &str, lane: &str
         record.error = Some(error.into());
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod bookkeeping_tests {
+    use super::*;
+
+    struct Fixture {
+        repo: PathBuf,
+        process: ExecutionProcess,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let repo = std::env::temp_dir().join(format!("alinery-exit-proof-{}", uuid::Uuid::new_v4()));
+            let source = "+++\nversion=2\nkey='fixture'\ntitle='Fixture'\ndescription=''\ndefault_model=''\ndefault_harness='omp'\n[[step]]\nkey='work'\ntitle='Work'\nshort=''\nis_coding_step=false\nmodel=''\nharness=''\ninputs=[]\noutputs=[{path='result.md'}]\nauto_advance_default=true\n+++\n<!-- alinery:step work -->\nWork.\n";
+            let definition = alinery_core::playbook::parse_playbook_md(source).unwrap();
+            let mut state = new_execution_state(
+                alinery_core::playbook::PlaybookRef {
+                    scope: alinery_core::playbook::PlaybookScope::Repo,
+                    key: "fixture".into(),
+                },
+                source,
+                "lane".into(),
+                1,
+                BTreeSet::from(["work".into()]),
+                LaunchChoices::default(),
+            )
+            .unwrap();
+            state.creation = "ready".into();
+            state.owning_app_config_identity = execution_config_identity().into();
+            fs::create_dir_all(alinery_core::artifacts_dir(&repo, "task")).unwrap();
+            fs::write(task_playbook_path(&repo, "task").unwrap(), source).unwrap();
+            let candidate = reconcile_graph(&definition, &mut state).unwrap().remove(0);
+            let id = reserve_execution(&repo, "task", &definition, &mut state, candidate, &LaunchChoices::default(), None, true).unwrap();
+            let session_id = state.executions[&id].owner_session_id.clone();
+            assert!(claim_execution_launch(&mut state, &id).unwrap());
+            record_execution_spawn(&mut state, &id, &session_id, Ok(())).unwrap();
+            let path = &state.executions[&id].outputs[0].relative_path;
+            fs::write(alinery_core::artifacts_dir(&repo, "task").join(path), "verified output").unwrap();
+            accept_execution_completion(&repo, "task", &mut state, &id, &session_id).unwrap();
+            write_execution_state_unlocked(&repo, "task", &mut state).unwrap();
+            let process = ExecutionProcess {
+                execution_id: id,
+                session_id,
+                incarnation: uuid::Uuid::new_v4().to_string(),
+            };
+            alinery_core::fs_atomic::write_bytes_durable(&process_path(&repo, "task", &process.session_id), &serde_json::to_vec(&process).unwrap()).unwrap();
+            Self { repo, process }
+        }
+        fn state(&self) -> TaskExecutionState {
+            read_execution_state(&self.repo, "task").unwrap()
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            pending_exits().lock().unwrap().retain(|path, _| !path.starts_with(&self.repo));
+            let _ = fs::remove_dir_all(&self.repo);
+        }
+    }
+
+    #[test]
+    fn completion_bookkeeping_retains_obligation_when_journal_write_fails() {
+        let f = Fixture::new();
+        let path = proof_path(&f.repo, "task", &f.process);
+        fs::create_dir(&path).unwrap();
+        exited(&f.repo, "task", Some(&f.process), "lane", Some(0));
+        assert!(!f.state().executions[&f.process.execution_id].shutdown_confirmed);
+        fs::remove_dir(&path).unwrap();
+        reconcile_exits(&f.repo, "task", "lane").unwrap();
+        assert_eq!(f.state().executions[&f.process.execution_id].lifecycle, ExecutionLifecycle::Completed);
+        assert!(!path.exists());
+        let before = f.state();
+        exited(&f.repo, "task", Some(&f.process), "lane", Some(0));
+        assert_eq!(f.state(), before, "duplicate confirmation cannot republish or advance revision");
+    }
+
+    #[test]
+    fn completion_bookkeeping_rejects_stale_incarnation_and_owner() {
+        let f = Fixture::new();
+        let old = f.process.clone();
+        let mut replacement = old.clone();
+        replacement.incarnation = uuid::Uuid::new_v4().to_string();
+        alinery_core::fs_atomic::write_bytes_durable(&process_path(&f.repo, "task", &old.session_id), &serde_json::to_vec(&replacement).unwrap()).unwrap();
+        let before = f.state();
+        exited(&f.repo, "task", Some(&old), "lane", Some(0));
+        assert_eq!(f.state(), before, "a previous process cannot confirm its replacement");
+        mutate_execution_state(&f.repo, "task", "lane", "fixture replace session owner", |_, state| {
+            state.executions.get_mut(&old.execution_id).unwrap().owner_session_id = "replacement-owner".into();
+            Ok(())
+        })
+        .unwrap();
+        let before = f.state();
+        exited(&f.repo, "task", Some(&replacement), "lane", Some(0));
+        assert_eq!(f.state(), before, "a previous session cannot confirm its replacement");
+    }
 }

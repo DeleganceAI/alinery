@@ -138,7 +138,7 @@ pub struct ExecutionRecord {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskExecutionState {
     pub version: u32,
     pub revision: u64,
@@ -314,8 +314,11 @@ pub fn mutate_execution_state<T>(
             return Err("task execution belongs to another daemon lane or app configuration".into());
         }
         let definition = read_task_playbook(repo, slug, &state)?;
+        let before = state.clone();
         let result = mutate(&definition, &mut state)?;
-        write_execution_state_unlocked(repo, slug, &mut state)?;
+        if state != before {
+            write_execution_state_unlocked(repo, slug, &mut state)?;
+        }
         Ok(result)
     })
 }
@@ -781,15 +784,26 @@ pub fn accept_execution_completion(repo: &Path, slug: &str, state: &mut TaskExec
 /// Only the process owner may invoke this after wait/reap AND output drain succeed.
 pub fn confirm_execution_exit(state: &mut TaskExecutionState, id: &str, session_id: &str, exit_code: Option<i32>) -> Result<(), String> {
     let record = owned_execution(state, id, session_id)?;
+    if record.shutdown_confirmed {
+        return if record.exit_code == exit_code {
+            Ok(())
+        } else {
+            Err("execution exit is already confirmed with a different exit code".into())
+        };
+    }
     record.shutdown_confirmed = true;
     record.exit_code = exit_code;
-    record.lifecycle = if record.receipt_id.is_some() {
+    record.lifecycle = if record.receipt_id.is_some() && exit_code == Some(0) {
         ExecutionLifecycle::Completed
     } else {
         ExecutionLifecycle::Failed
     };
     if record.receipt_id.is_none() {
         record.error = Some(format!("execution ended without accepted completion (exit {exit_code:?})"));
+    } else if exit_code != Some(0) {
+        record.error = Some(format!("execution ended unsuccessfully after accepted completion (exit {exit_code:?})"));
+    } else {
+        record.error = None;
     }
     Ok(())
 }

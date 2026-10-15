@@ -91,10 +91,10 @@ function makeFakeApi() {
       for (const h of hs) result = await h(payload, context);
       return result;
     },
-    async callTool(name, input, context) {
+    async callTool(name, input, context, signal, onUpdate) {
       const tool = tools[name];
       if (!tool) throw new Error(`tool not registered: ${name}`);
-      return tool.execute("tool-call-1", input, undefined, undefined, context);
+      return tool.execute("tool-call-1", input, signal, onUpdate, context);
     },
     getRegisteredEvents() {
       return Object.keys(handlers);
@@ -1067,6 +1067,129 @@ describe("production completion transport", () => {
 
   const event = { type: "phase_completed", omp_session_id: "omp-transport" };
 
+  async function withCompletionAttempts(firstReply, run) {
+    const root = mkdtempSync(path.join(os.tmpdir(), "alinery-completion-retry-"));
+    const runnerPath = path.join(root, "runner");
+    const statePath = path.join(root, "state.json");
+    writeFileSync(
+      runnerPath,
+      `#!${process.execPath}
+const fs = require("node:fs");
+const statePath = ${JSON.stringify(statePath)};
+const state = fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath, "utf8")) : { requests: [] };
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => input += chunk);
+process.stdin.on("end", () => {
+  state.requests.push({ event: JSON.parse(input), token: process.env.ALINERY_EVENT_TOKEN });
+  const accept = () => {
+    state.receipt ??= "immutable-receipt";
+    return { status: "accepted", receipt_id: state.receipt };
+  };
+  let reply;
+  ${firstReply}
+  state.lastReply = reply;
+  fs.writeFileSync(statePath, JSON.stringify(state));
+  if (reply !== undefined) process.stdout.write(JSON.stringify(reply) + "\\n");
+});
+`,
+      { mode: 0o755 },
+    );
+    try {
+      await run(ext.makeProductionCompletionEmitter({ runnerPath, environment: { ALINERY_EVENT_TOKEN: "same-owner-token" } }), () => JSON.parse(readFileSync(statePath, "utf8")));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  for (const [name, reply, attempts] of [
+    [
+      "busy_then_success_beyond_four_attempts",
+      'reply = state.requests.length < 5 ? { status: "rejected", reason: "task mutation busy during execution transaction" } : accept();',
+      5,
+    ],
+    ["prior_ambiguous_attempt_still_in_flight_recovers", 'reply = state.requests.length === 1 ? { status: "rejected", reason: "completion-in-progress" } : accept();', 2],
+    ["committed_but_lost_ack_replays_receipt", "const accepted = accept(); if (state.requests.length > 1) reply = accepted;", 2],
+    [
+      "committed_but_parent_sync_failed_replays_receipt",
+      'const accepted = accept(); reply = state.requests.length === 1 ? { status: "rejected", reason: "ambiguous persistence after rename of /task/execution.json (parent sync failed): I/O error" } : accepted;',
+      2,
+    ],
+    [
+      "temporary_write_failure_recovers",
+      'reply = state.requests.length === 1 ? { status: "rejected", reason: "write durable temporary file: No space left on device" } : accept();',
+      2,
+    ],
+  ]) {
+    test(name, async () => {
+      await withCompletionAttempts(reply, async (emitCompletion, state) => {
+        const api = makeFakeApi();
+        registerCallbacks(api, makeRecordingEmitter(), emitCompletion);
+        let shutdowns = 0;
+        const context = makeContext(event.omp_session_id);
+        context.shutdown = () => {
+          assert.deepEqual(state().lastReply, { status: "accepted", receipt_id: "immutable-receipt" });
+          shutdowns++;
+        };
+        const output = await api.callTool("alinery_phase_complete", {}, context);
+        assert.deepEqual(output.details, { status: "accepted", receipt_id: "immutable-receipt" });
+        assert.equal(shutdowns, 1);
+        assert.deepEqual(
+          state().requests,
+          Array.from({ length: attempts }, () => ({ event, token: "same-owner-token" })),
+        );
+      });
+    });
+  }
+
+  test("retry_observer_failure_does_not_abandon_completion", async () => {
+    await withCompletionAttempts('reply = state.requests.length === 1 ? { status: "delivery_failed" } : accept();', async (emitCompletion) => {
+      assert.deepEqual(
+        await emitCompletion(event, undefined, () => {
+          throw new Error("progress renderer failed");
+        }),
+        { status: "accepted", receipt_id: "immutable-receipt" },
+      );
+    });
+  });
+
+  test("permanent_rejection_and_authorization_gates_are_not_retried", async () => {
+    for (const outcome of [
+      { status: "rejected", reason: "invalid-event-token" },
+      { status: "rejected", reason: "execution owner is stale" },
+      { status: "rejected", reason: "retained task definition integrity mismatch" },
+      { status: "rejected", reason: "invalid task execution state: malformed JSON" },
+      { status: "human_authorization_required" },
+      { status: "invalid_outputs", diagnostics: ["invalid publication"] },
+    ]) {
+      await withCompletionAttempts(`reply = ${JSON.stringify(outcome)};`, async (emitCompletion, state) => {
+        assert.deepEqual(await emitCompletion(event), outcome);
+        assert.equal(state().requests.length, 1);
+      });
+    }
+  });
+
+  test("persistent_unavailability_stays_pending_until_cancelled_without_shutdown", async () => {
+    for (const outcome of [{ status: "delivery_failed" }, { status: "rejected", reason: "task mutation busy during execution transaction" }]) {
+      await withCompletionAttempts(`reply = ${JSON.stringify(outcome)};`, async (emitCompletion, state) => {
+        const api = makeFakeApi();
+        registerCallbacks(api, makeRecordingEmitter(), emitCompletion);
+        const context = makeContext(event.omp_session_id);
+        context.shutdown = () => assert.fail("unconfirmed completion must stay open");
+        const controller = new AbortController();
+        let updates = 0;
+        const output = await api.callTool("alinery_phase_complete", {}, context, controller.signal, (update) => {
+          assert.equal(update.details.status, "waiting_for_acceptance");
+          assert.match(update.content[0].text, /Automatically retrying/);
+          if (++updates === 2) controller.abort();
+        });
+        assert.equal(output.details.status, "delivery_failed");
+        assert.equal(updates, 2);
+        assert.equal(state().requests.length, 2);
+      });
+    }
+  });
+
   test("preserves_receipts_diagnostics_and_nonfatal_outcomes_after_pipe_drain", async () => {
     for (const outcome of [
       { status: "accepted", receipt_id: "receipt-".repeat(100) },
@@ -1084,7 +1207,7 @@ describe("production completion transport", () => {
     }
   });
 
-  test("rejects_malformed_truncated_and_oversized_acknowledgements", async () => {
+  test("malformed_truncated_and_oversized_acknowledgements_never_confirm_completion", async () => {
     for (const output of [
       '{"status":"accepted","receipt_id":"receipt"}',
       '{"status":"accepted"}\n',
@@ -1093,7 +1216,8 @@ describe("production completion transport", () => {
       `${JSON.stringify({ status: "accepted", receipt_id: "λ".repeat(40_000) })}\n`,
     ]) {
       await withRunnerOutput(output, async (emitCompletion) => {
-        await assert.rejects(() => emitCompletion(event));
+        const controller = new AbortController();
+        await assert.rejects(() => emitCompletion(event, controller.signal, () => controller.abort()), { name: "AbortError" });
       });
     }
   });

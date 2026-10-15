@@ -189,6 +189,126 @@ fn definition() -> String {
 }
 
 #[test]
+fn completion_bookkeeping_acceptance_busy_then_lost_ack_replays_immutable_receipt() {
+    use std::{io::Write, os::unix::net::UnixStream};
+    let fixture = Fixture::new();
+    let created = fixture.create(false, true);
+    let first = created.executions.iter().find(|r| r.candidate.step_key == "first").unwrap();
+    fixture.start(first);
+    fixture.wait_state("owner running", |state| state.executions[&first.id].lifecycle == ExecutionLifecycle::Running);
+    wait(|| fixture.root.join(format!("token-{}", first.owner_session_id)).exists());
+    fixture.outputs(first);
+    let token = fs::read_to_string(fixture.root.join(format!("token-{}", first.owner_session_id))).unwrap();
+    let event = json!({"op":"event","version":RUNNER_EVENT_PROTOCOL_VERSION,"session_id":first.owner_session_id,"token":token,
+        "event":{"type":"phase_completed","omp_session_id":"fixture","omp_turn_id":1}});
+    alinery_core::with_task_mutation_lock(&fixture.root, "fixture acceptance contention", || {
+        assert!(fixture.client.call(&event).unwrap()["error"]
+            .as_str()
+            .unwrap()
+            .contains("task mutation busy during accept execution completion"));
+        assert!(fixture.persisted().executions[&first.id].receipt_id.is_none());
+        Ok(())
+    })
+    .unwrap();
+    // Submit the same event and deliberately abandon the response. The daemon,
+    // not the transport fixture, commits the immutable publication receipt.
+    let mut stream = UnixStream::connect(&fixture.client.socket_path).unwrap();
+    writeln!(stream, "{event}").unwrap();
+    drop(stream);
+    fixture.wait_state("acceptance must commit even without an ACK consumer", |state| {
+        state.executions[&first.id].receipt_id.is_some()
+    });
+    let committed = fixture.persisted();
+    let replay = fixture.event(&first.owner_session_id);
+    assert_eq!(replay["completion"]["receipt_id"].as_str(), committed.executions[&first.id].receipt_id.as_deref());
+    assert_eq!(fixture.persisted(), committed, "receipt replay cannot reopen or republish acceptance");
+    assert!(!committed.executions[&first.id].shutdown_confirmed);
+    fixture.release(&first.owner_session_id);
+    fixture.wait_state("confirmation follows actual exit", |state| {
+        state.executions[&first.id].lifecycle == ExecutionLifecycle::Completed
+    });
+}
+
+#[test]
+fn completion_bookkeeping_retries_exit_after_contention_and_restarts_from_drain_proof() {
+    for restart in [false, true] {
+        let mut fixture = Fixture::new();
+        let created = fixture.create(false, true);
+        let first = created.executions.iter().find(|r| r.candidate.step_key == "first").unwrap();
+        fixture.start(first);
+        let accepted = fixture.accept(first);
+        let repo = fixture.root.clone();
+        alinery_core::with_task_mutation_lock(&repo, "fixture hold across exit", || {
+            fixture.release(&first.owner_session_id);
+            wait(|| {
+                fixture
+                    .client
+                    .call(&json!({"op":"status","id":first.owner_session_id}))
+                    .is_ok_and(|value| value["process"]["state"] == "exited")
+            });
+            // Exceed the production commit's contention deadline. The callback
+            // must fail, not merely wait successfully for this lock's release.
+            thread::sleep(alinery_core::TASK_MUTATION_CONTENTION_WAIT + Duration::from_millis(250));
+            assert!(!fixture.persisted().executions[&first.id].shutdown_confirmed);
+            if restart {
+                fixture.child.kill().unwrap();
+                fixture.child.wait().unwrap();
+            }
+            Ok(())
+        })
+        .unwrap();
+        if restart {
+            fixture.child = Command::new(env!("CARGO_BIN_EXE_alineryd"))
+                .args(["--repo", fixture.root.to_str().unwrap(), "--app-config", fixture.root.join("app.toml").to_str().unwrap()])
+                .env("ALINERY_RUNNER_PATH", fixture.root.join("runner"))
+                .env("ALINERY_HOST_EXECUTABLE", std::env::current_exe().unwrap())
+                .stdout(Stdio::null())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap();
+            wait(|| fixture.client.version_checked().is_ok());
+        }
+        fixture.wait_state("exit confirmation must recover without worker prompt", |state| {
+            state.executions[&first.id].lifecycle == ExecutionLifecycle::Completed
+        });
+        let state = fixture.persisted();
+        assert_eq!(state.executions[&first.id].receipt_id.as_deref(), accepted["completion"]["receipt_id"].as_str());
+        assert!(state.executions[&first.id].shutdown_confirmed);
+        assert_eq!(state.executions[&first.id].exit_code, Some(0));
+        assert_eq!(state.executions.len(), 2, "an incomplete join cannot launch");
+        let second = created.executions.iter().find(|r| r.candidate.step_key == "second").unwrap();
+        fixture.start(second);
+        fixture.finish(second);
+        fixture.wait_state("exactly one successor after both confirmations", |state| {
+            state.executions.values().filter(|r| r.candidate.step_key == "join").count() == 1
+        });
+    }
+}
+
+#[test]
+fn completion_bookkeeping_never_journals_exit_before_output_drain() {
+    let fixture = Fixture::new();
+    fs::write(fixture.root.join("harness"), format!(
+        "#!/bin/sh\nprintf '{{\"type\":\"ready\"}}\\n'\nwhile [ ! -f '{0}/release-'\"$ALINERY_SESSION_ID\" ]; do sleep 0.02; done\n(while [ ! -f '{0}/drain' ]; do sleep 0.02; done; printf '{{\"type\":\"last\"}}\\n') &\ntouch '{0}/parent-exiting'\nexit 0\n",
+        fixture.root.display())).unwrap();
+    let created = fixture.create(false, true);
+    let first = created.executions.iter().find(|r| r.candidate.step_key == "first").unwrap();
+    fixture.start(first);
+    fixture.accept(first);
+    fixture.release(&first.owner_session_id);
+    wait(|| fixture.root.join("parent-exiting").exists());
+    thread::sleep(Duration::from_millis(150));
+    assert!(!fixture.persisted().executions[&first.id].shutdown_confirmed);
+    assert!(!fs::read_dir(fixture.root.join(".alinery/tasks/fixture/sessions")).unwrap().any(|entry| entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .ends_with(".execution-exit.json")));
+    fs::write(fixture.root.join("drain"), "").unwrap();
+    fixture.wait_state("drained exit must complete", |state| state.executions[&first.id].lifecycle == ExecutionLifecycle::Completed);
+}
+
+#[test]
 fn manual_completion_reports_ready_without_publishing_or_releasing_join() {
     let fixture = Fixture::new();
     let created = fixture.create(false, false);

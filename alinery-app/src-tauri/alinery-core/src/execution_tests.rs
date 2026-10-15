@@ -625,6 +625,121 @@ fn retained_definition_is_independent_of_library_and_fails_closed_on_corruption(
 }
 
 #[test]
+fn accepted_completion_requires_successful_exit_and_exit_replay_is_immutable() {
+    for exit_code in [Some(0), Some(1), None] {
+        let mut f = Fixture::new("{path=\"result.md\"}", false, true, 1);
+        let id = f.reserve(false);
+        let owner = f.run(&id);
+        f.write_output(&id, 0, None);
+        let accepted = accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap();
+        confirm_execution_exit(&mut f.state, &id, &owner, exit_code).unwrap();
+        let successful = exit_code == Some(0);
+        assert_eq!(
+            f.state.executions[&id].lifecycle,
+            if successful { ExecutionLifecycle::Completed } else { ExecutionLifecycle::Failed }
+        );
+        assert_eq!(f.state.executions[&id].error.is_none(), successful);
+        assert!(f.state.occurrences.values().all(|o| occurrence_deliverable(&f.state, o) == successful));
+        let confirmed = f.state.clone();
+        confirm_execution_exit(&mut f.state, &id, &owner, exit_code).unwrap();
+        assert_eq!(f.state, confirmed);
+        let conflicting_code = if successful { Some(1) } else { Some(0) };
+        assert!(confirm_execution_exit(&mut f.state, &id, &owner, conflicting_code).is_err());
+        assert_eq!(f.state, confirmed);
+        assert!(confirm_execution_exit(&mut f.state, &id, "stale-owner", exit_code).is_err());
+        assert_eq!(f.state, confirmed);
+        assert_eq!(accept_execution_completion(&f.repo, "task", &mut f.state, &id, &owner).unwrap(), accepted);
+        assert_eq!(f.state, confirmed);
+    }
+}
+
+#[test]
+fn capacity_noop_preserves_durable_state_and_real_mutations_commit() {
+    use std::os::unix::fs::MetadataExt;
+    let mut f = Fixture::new("{path=\"result.md\"}", false, true, 1);
+    let running = f.reserve(true);
+    let owner = f.run(&running);
+    let waiting = f.reserve(true);
+    persist_owner_fixture(&mut f);
+    let path = execution_state_path(&f.repo, "task").unwrap();
+    let before = fs::read(&path).unwrap();
+    let inode = fs::metadata(&path).unwrap().ino();
+    let revision = f.state.revision;
+
+    assert!(!mutate_execution_state(&f.repo, "task", "lane", "", "full capacity", |_, state| { claim_execution_launch(state, &waiting) }).unwrap());
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(fs::metadata(&path).unwrap().ino(), inode, "full capacity must not replace the durable state file");
+    assert_eq!(read_execution_state(&f.repo, "task").unwrap().revision, revision);
+
+    mutate_execution_state(&f.repo, "task", "lane", "", "release capacity", |_, state| {
+        confirm_execution_exit(state, &running, &owner, Some(1))
+    })
+    .unwrap();
+    assert!(mutate_execution_state(&f.repo, "task", "lane", "", "claim capacity", |_, state| { claim_execution_launch(state, &waiting) }).unwrap());
+    let committed = read_execution_state(&f.repo, "task").unwrap();
+    assert_eq!(committed.revision, revision + 2);
+    assert_eq!(committed.executions[&waiting].lifecycle, ExecutionLifecycle::Starting);
+    assert_eq!(committed.executions[&running].lifecycle, ExecutionLifecycle::Failed);
+}
+
+#[test]
+fn unchanged_reconcile_preserves_durable_state_and_checks_ownership() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, true, 1);
+    f.reserve(false);
+    crate::playbook_scheduler::reconcile_graph(&f.definition, &mut f.state).unwrap();
+    persist_owner_fixture(&mut f);
+    let path = execution_state_path(&f.repo, "task").unwrap();
+    let before = fs::read(&path).unwrap();
+
+    let candidates = mutate_execution_state(&f.repo, "task", "lane", "", "unchanged reconcile", |definition, state| {
+        crate::playbook_scheduler::reconcile_graph(definition, state)
+    })
+    .unwrap();
+    assert!(candidates.is_empty());
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(read_execution_state(&f.repo, "task").unwrap().revision, f.state.revision);
+    for (lane, config) in [("other-lane", ""), ("lane", "other-config")] {
+        assert!(mutate_execution_state(&f.repo, "task", lane, config, "foreign no-op", |_, _| -> Result<(), String> {
+            panic!("foreign ownership must be rejected before mutation")
+        })
+        .is_err());
+    }
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn accepted_receipt_replay_preserves_durable_state_and_checks_owner() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, true, 1);
+    let id = f.reserve(false);
+    let owner = f.run(&id);
+    f.write_output(&id, 0, None);
+    persist_owner_fixture(&mut f);
+    let accepted = mutate_execution_state(&f.repo, "task", "lane", "", "accept completion", |_, state| {
+        accept_execution_completion(&f.repo, "task", state, &id, &owner)
+    })
+    .unwrap();
+    assert!(matches!(accepted, CompletionOutcome::Accepted { .. }));
+    let path = execution_state_path(&f.repo, "task").unwrap();
+    let before = fs::read(&path).unwrap();
+    let committed = read_execution_state(&f.repo, "task").unwrap();
+    assert_eq!(committed.revision, f.state.revision + 1);
+    fs::remove_file(crate::artifacts_dir(&f.repo, "task").join(&f.state.executions[&id].outputs[0].relative_path)).unwrap();
+
+    let replayed = mutate_execution_state(&f.repo, "task", "lane", "", "replay completion", |_, state| {
+        accept_execution_completion(&f.repo, "task", state, &id, &owner)
+    })
+    .unwrap();
+    assert_eq!(replayed, accepted);
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert!(mutate_execution_state(&f.repo, "task", "lane", "", "stale replay", |_, state| {
+        accept_execution_completion(&f.repo, "task", state, &id, "stale-owner")
+    })
+    .is_err());
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(read_execution_state(&f.repo, "task").unwrap().revision, committed.revision);
+}
+
+#[test]
 fn manual_reservation_cannot_smuggle_unrequired_input_bindings() {
     let mut f = Fixture::new("{path=\"result.md\"}", false, true, 1);
     let seed = install_seed(&mut f.state, "ticket.md", "00-ticket.md").unwrap();

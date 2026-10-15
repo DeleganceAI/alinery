@@ -26,6 +26,7 @@ import { spawn } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 // ---------- OMP extension API types ----------
@@ -183,7 +184,7 @@ export type CompletionOutcome =
   | { readonly status: "invalid_outputs"; readonly diagnostics: readonly string[] }
   | { readonly status: "rejected"; readonly reason: string };
 
-export type CompletionEmitter = (event: RunnerEventPhaseCompleted) => Promise<CompletionOutcome>;
+export type CompletionEmitter = (event: RunnerEventPhaseCompleted, signal?: AbortSignal, onRetry?: (reason: string) => void) => Promise<CompletionOutcome>;
 
 export type SessionNameOutcome = {
   readonly status: "saved" | "unchanged";
@@ -378,13 +379,14 @@ export function makeProductionEmitter(config: RunnerConfig | undefined): Emitter
 }
 
 /** Shared acknowledged transport; passive callbacks deliberately remain fail-open. */
-async function emitAcknowledged(config: RunnerConfig | undefined, event: RunnerEvent): Promise<{ result: Record<string, unknown>; code: number | null }> {
+async function emitAcknowledged(config: RunnerConfig | undefined, event: RunnerEvent, signal?: AbortSignal): Promise<{ result: Record<string, unknown>; code: number | null }> {
   if (!config) throw new Error("runner transport unavailable");
   // The packaged extension targets ES2022, before Promise.withResolvers.
   return new Promise((resolve, reject) => {
     const child = spawn(config.runnerPath, ["emit", "--result"], {
       stdio: ["pipe", "pipe", "ignore"],
       env: config.environment,
+      signal,
     });
     let settled = false;
     let output = "";
@@ -438,20 +440,56 @@ async function emitAcknowledged(config: RunnerConfig | undefined, event: RunnerE
   });
 }
 
+// Storage availability failures are not ownership/output rejections. In particular,
+// a parent-sync failure can leave the immutable receipt already committed.
+const RETRYABLE_COMPLETION_REJECTIONS = [
+  "completion-in-progress",
+  "task mutation busy during ",
+  "task execution state unavailable (pre-v2 tasks cannot launch): ",
+  "read retained task definition: ",
+  "create durable parent: ",
+  "create durable temporary file: ",
+  "write durable temporary file: ",
+  "sync durable temporary file: ",
+  "rename durable file: ",
+  "ambiguous persistence after rename of ",
+  "ambiguous persistence after execution replay: ",
+] as const;
+
 export function makeProductionCompletionEmitter(config: RunnerConfig | undefined): CompletionEmitter {
-  return async (event) => {
-    const { result } = await emitAcknowledged(config, event);
-    if (result.status === "accepted" && typeof result.receipt_id === "string" && result.receipt_id.length > 0) {
-      return { status: "accepted", receipt_id: result.receipt_id };
+  return async (event, signal, onRetry) => {
+    // Re-send the same authenticated identity: a committed completion replays its
+    // immutable receipt if the acknowledgement was lost. Never retry semantic gates.
+    for (let attempt = 0; ; attempt++) {
+      signal?.throwIfAborted();
+      try {
+        const { result } = await emitAcknowledged(config, event, signal);
+        if (result.status === "accepted" && typeof result.receipt_id === "string" && result.receipt_id.length > 0) {
+          return { status: "accepted", receipt_id: result.receipt_id };
+        }
+        if (result.status === "human_authorization_required") return { status: "human_authorization_required" };
+        if (result.status === "invalid_outputs" && Array.isArray(result.diagnostics) && result.diagnostics.every((item) => typeof item === "string")) {
+          return { status: "invalid_outputs", diagnostics: result.diagnostics };
+        }
+        if (result.status === "rejected" && typeof result.reason === "string" && result.reason.length > 0) {
+          const reason = result.reason;
+          if (!RETRYABLE_COMPLETION_REJECTIONS.some((prefix) => reason.startsWith(prefix))) return { status: "rejected", reason };
+          throw new Error(result.reason);
+        }
+        throw new Error("runner delivery failed");
+      } catch (error) {
+        signal?.throwIfAborted();
+        // Missing installation/configuration cannot recover by replaying. Transport
+        // outages remain pending until accepted, semantically rejected, or cancelled.
+        if (!config || (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "EACCES"))) throw error;
+        try {
+          onRetry?.(error instanceof Error ? error.message : String(error));
+        } catch {
+          // An observer cannot abandon an unresolved completion obligation.
+        }
+        await delay(250 * 2 ** Math.min(attempt, 4), undefined, { signal });
+      }
     }
-    if (result.status === "human_authorization_required") return { status: "human_authorization_required" };
-    if (result.status === "invalid_outputs" && Array.isArray(result.diagnostics) && result.diagnostics.every((item) => typeof item === "string")) {
-      return { status: "invalid_outputs", diagnostics: result.diagnostics };
-    }
-    if (result.status === "rejected" && typeof result.reason === "string" && result.reason.length > 0) {
-      return { status: "rejected", reason: result.reason };
-    }
-    throw new Error("runner delivery failed");
   };
 }
 
@@ -676,7 +714,7 @@ export function registerCallbacks(
       "If accepted, do no further work because ordinary OMP shutdown is requested. " +
       "Otherwise keep the session open and resolve the reported requirement.",
     parameters: api.zod.z.object({}),
-    async execute(toolCallId: string, _input: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, context: OmpExtensionContext) {
+    async execute(toolCallId: string, _input: Record<string, unknown>, signal: AbortSignal | undefined, onUpdate: unknown, context: OmpExtensionContext) {
       const sessionId = context.sessionManager.getSessionId();
       if (!sessionId) {
         return completionToolResult(
@@ -685,12 +723,24 @@ export function registerCallbacks(
         );
       }
 
+      const reportRetry = (reason: string) => {
+        if (typeof onUpdate !== "function") return;
+        try {
+          onUpdate(completionToolResult("waiting_for_acceptance", `Alinery has not confirmed completion: ${reason}. Automatically retrying; keep this session open.`, { reason }));
+        } catch {
+          // Rendering a progress update must not abandon completion recovery.
+        }
+      };
       let outcome: CompletionOutcome;
       try {
-        outcome = await emitCompletion({
-          type: "phase_completed",
-          omp_session_id: sessionId,
-        });
+        outcome = await emitCompletion(
+          {
+            type: "phase_completed",
+            omp_session_id: sessionId,
+          },
+          signal,
+          reportRetry,
+        );
         if (outcome.status === "human_authorization_required") {
           const approval = await requestApproval(
             emit,
@@ -704,9 +754,15 @@ export function registerCallbacks(
           }
           // A UI response is not completion authority. Only the authenticated app can grant
           // permission; re-check with the daemon before requesting ordinary shutdown.
-          outcome = await emitCompletion({ type: "phase_completed", omp_session_id: sessionId });
+          outcome = await emitCompletion({ type: "phase_completed", omp_session_id: sessionId }, signal, reportRetry);
         }
       } catch (error) {
+        if (signal?.aborted) {
+          return completionToolResult(
+            "delivery_failed",
+            "Completion confirmation was cancelled. Acceptance may already be committed; retry to recover its receipt. Keep this session open.",
+          );
+        }
         const reason = error instanceof Error ? error.message : String(error);
         return completionToolResult("delivery_failed", `Alinery could not confirm phase completion: ${reason}. Retry after the Alinery daemon is available.`, { reason });
       }
@@ -796,7 +852,7 @@ async function safeEmit(emit: Emitter, event: RunnerEvent): Promise<void> {
   }
 }
 
-function completionToolResult(status: CompletionOutcome["status"] | "delivery_failed", text: string, details: Record<string, unknown> = {}) {
+function completionToolResult(status: CompletionOutcome["status"] | "delivery_failed" | "waiting_for_acceptance", text: string, details: Record<string, unknown> = {}) {
   return {
     content: [{ type: "text" as const, text }],
     details: { status, ...details },

@@ -1053,13 +1053,16 @@ fn accepted_live_owner_is_not_handed_off_after_restart_without_exit_proof() {
     fixture.restart();
     let execution = fixture.execution(&source);
     assert_eq!(execution.receipt_id.as_deref(), Some(receipt.as_str()));
-    // Shutdown may prove the reap; otherwise restart must retain uncertain ownership.
+    // The fixture never releases the worker: explicit shutdown terminates it.
+    // A proven non-successful reap retains acceptance but cannot release a handoff.
+    // Otherwise restart must retain uncertain ownership.
     if execution.shutdown_confirmed {
-        assert_eq!(execution.lifecycle, ExecutionLifecycle::Completed);
+        assert_ne!(execution.exit_code, Some(0));
+        assert_eq!(execution.lifecycle, ExecutionLifecycle::Failed);
     } else {
         assert_eq!(execution.lifecycle, ExecutionLifecycle::Interrupted);
-        assert_eq!(fixture.state().state.executions.len(), 1);
     }
+    assert_eq!(fixture.state().state.executions.len(), 1, "terminated or uncertain producers cannot launch a successor");
 }
 
 #[test]
