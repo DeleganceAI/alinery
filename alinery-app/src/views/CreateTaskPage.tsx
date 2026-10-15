@@ -166,6 +166,8 @@ export function CreateTaskPage({
   const [attachments, setAttachments] = useState<string[]>([]);
   const [images, setImages] = useState<PastedImage[]>([]);
   const imagesRef = useRef<PastedImage[]>([]);
+  const [draftAttachmentsReady, setDraftAttachmentsReady] = useState(!initialDraft);
+  const [draftAttachmentsError, setDraftAttachmentsError] = useState("");
   const [linearImages, setLinearImages] = useState<LinearImage[]>([]);
   const [linearImageErrors, setLinearImageErrors] = useState<string[]>([]);
   const importGeneration = useRef(0);
@@ -214,6 +216,7 @@ export function CreateTaskPage({
   const clearingRef = useRef(false);
   const [clearing, setClearing] = useState(false);
   const draftSaveInFlightRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingDraftSave = useRef<(() => void) | null>(null);
   const draftIdentities = useRef(new Map(initialDraft ? [[initialDraft.repo_path, initialDraft.slug]] : []));
   const draftWriteGeneration = useRef(0);
   const targetRequest = useRef(0);
@@ -238,6 +241,7 @@ export function CreateTaskPage({
 
   useEffect(
     () => () => {
+      pendingDraftSave.current?.();
       attachmentGeneration.current += 1;
       importGeneration.current += 1;
       for (const image of imagesRef.current) URL.revokeObjectURL(image.previewUrl);
@@ -245,6 +249,38 @@ export function CreateTaskPage({
     },
     [],
   );
+
+  useEffect(() => {
+    if (!initialDraft) return;
+    let alive = true;
+    const generation = attachmentGeneration.current;
+    ipc
+      .readDraftAttachmentsForRepo(initialDraft.repo_path, initialDraft.slug)
+      .then((saved) => {
+        if (!alive || generation !== attachmentGeneration.current) return;
+        const restored: PastedImage[] = [];
+        try {
+          for (const image of saved.images) {
+            const bytes = Uint8Array.from(atob(image.bytes), (character) => character.charCodeAt(0));
+            const file = new File([bytes], image.name, { type: image.mime_type });
+            restored.push({ id: crypto.randomUUID(), file, name: image.name, previewUrl: URL.createObjectURL(file), previewUnavailable: false });
+          }
+        } catch (error) {
+          for (const image of restored) URL.revokeObjectURL(image.previewUrl);
+          throw error;
+        }
+        // Pasting or adding paths while the read is pending must not be lost.
+        updateImages([...restored, ...imagesRef.current]);
+        setAttachments((current) => [...new Set([...saved.entries, ...current])]);
+        setDraftAttachmentsReady(true);
+      })
+      .catch((error) => {
+        if (alive && generation === attachmentGeneration.current) setDraftAttachmentsError(`Couldn't load draft attachments: ${error}`);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [initialDraft?.repo_path, initialDraft?.slug]);
 
   const onPasteImage = (event: React.ClipboardEvent<HTMLTextAreaElement | HTMLInputElement>) => {
     const errors: string[] = [];
@@ -476,15 +512,18 @@ export function CreateTaskPage({
   };
   // Debounced draft write — only after user edit and when setting is on.
   useEffect(() => {
-    if (!draftAutosave || !dirtyRef.current || creatingRef.current || taskMutationGuard.currentKind() || !validCap) return;
+    if (!draftAttachmentsReady || !draftAutosave || !dirtyRef.current || creatingRef.current || taskMutationGuard.currentKind() || !validCap) return;
     const n = name.trim();
     if (!n || !playbook || !harness) return;
     const target = repoPath;
     const generation = draftWriteGeneration.current;
-    const handle = window.setTimeout(() => {
+    const savePending = () => {
+      pendingDraftSave.current = null;
       if (!dirtyRef.current || creatingRef.current || taskMutationGuard.currentKind() || generation !== draftWriteGeneration.current) return;
       const save = draftSaveInFlightRef.current
         .then(async () => {
+          if (creatingRef.current || taskMutationGuard.currentKind() || generation !== draftWriteGeneration.current) return;
+          const savedImages = await Promise.all(images.map(async (image) => ({ name: image.name, bytes: await encodeImage(image.file), mime_type: image.file.type })));
           if (creatingRef.current || taskMutationGuard.currentKind() || generation !== draftWriteGeneration.current) return;
           const t = await ipc.writeDraftForRepo({
             repoPath: target,
@@ -504,6 +543,7 @@ export function CreateTaskPage({
             worktreeName: worktreeName.trim(),
             taskSlug,
             draftBaseRef: baseRef,
+            draftAttachments: { entries: attachments, images: savedImages },
           });
           draftIdentities.current.set(target, t.slug);
           setDraftOrigins((origins) =>
@@ -515,13 +555,21 @@ export function CreateTaskPage({
           if (repoRef.current === target) setErr({ msg: "Couldn't save the draft.", detail: String(e) });
         });
       draftSaveInFlightRef.current = save;
-    }, 400);
-    return () => window.clearTimeout(handle);
+    };
+    pendingDraftSave.current = savePending;
+    const handle = window.setTimeout(savePending, 400);
+    return () => {
+      window.clearTimeout(handle);
+      if (pendingDraftSave.current === savePending) pendingDraftSave.current = null;
+    };
   }, [
     repoPath,
     name,
     desc,
     evidence,
+    images,
+    attachments,
+    draftAttachmentsReady,
     linearImages,
     linearId,
     githubIssue,
@@ -592,7 +640,7 @@ export function CreateTaskPage({
           : "Choose an available committed starting branch."
         : "";
   const create = () => {
-    if (importingRef.current || clearingRef.current || branchSnapshotRequest.current !== branchRequest.current) return;
+    if (!draftAttachmentsReady || importingRef.current || clearingRef.current || branchSnapshotRequest.current !== branchRequest.current) return;
     const n = name.trim();
     if (!n || !taskSlug || !sourceReady || !selectedSource || !startingBranchReady || baseRef === null || modelNeedsReselection || !validCap) return;
     if (creatingRef.current) {
@@ -825,6 +873,8 @@ export function CreateTaskPage({
     draftWriteGeneration.current += 1;
     const reset = () => {
       attachmentGeneration.current += 1;
+      setDraftAttachmentsReady(true);
+      setDraftAttachmentsError("");
       invalidateStartingBranches(true);
       for (const image of imagesRef.current) URL.revokeObjectURL(image.previewUrl);
       updateImages([]);
@@ -1193,7 +1243,8 @@ export function CreateTaskPage({
               </div>
             ))}
             {pasteErrors.length > 0 && <InlineStatus tone="error">{pasteErrors.join("\n")}</InlineStatus>}
-            <div className="hint">Paste images in Description, Evidence / pointers, or Attachments. Images attach on Create and are not saved with the draft.</div>
+            {!draftAttachmentsReady && <InlineStatus tone={draftAttachmentsError ? "error" : "warning"}>{draftAttachmentsError || "Loading draft attachments…"}</InlineStatus>}
+            <div className="hint">Paste images in Description, Evidence / pointers, or Attachments. Pasted images are saved with the draft when autosave is enabled.</div>
             <div className="hint">
               Local files are copied into the task. Attachment URLs are recorded, never fetched. Linear description images download on import. Drop files anywhere on this form.
             </div>
@@ -1359,7 +1410,12 @@ export function CreateTaskPage({
                 Open task
               </button>
             ) : (
-              <button type="button" className="btn" disabled={creating || clearing || importing || creatingRef.current || !!createBlockedReason || !taskSlug} onClick={create}>
+              <button
+                type="button"
+                className="btn"
+                disabled={!draftAttachmentsReady || creating || clearing || importing || creatingRef.current || !!createBlockedReason || !taskSlug}
+                onClick={create}
+              >
                 {creating ? "Creating…" : "Create task"}
               </button>
             )}
