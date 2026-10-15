@@ -233,6 +233,8 @@ describe("session attention classification", () => {
       [state("exited", { state: "idle" }, { state: "failed", reason: "StaleSource" }), "stale"],
       [state("alive", { state: "unknown" }, { state: "in_progress" }, "unsupported"), "unsupported"],
       [state("exited", { state: "idle" }, { state: "in_progress" }), "exited"],
+      [observation({ lifecycle: { state: "never_started" }, state: null }), "never_started"],
+      [observation({ lifecycle: { state: "exited", code: 0 }, state: null }), "exited"],
       [observation({ state: null }), "unknown"],
     ];
     for (const [value, expected] of scenarios) expect(observationDisplayKind(value)).toBe(expected);

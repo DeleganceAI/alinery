@@ -6,6 +6,7 @@ export type ObservationDisplayKind =
   | "completed"
   | "ready_to_advance"
   | "exited"
+  | "never_started"
   | "loading"
   | "unsupported"
   | "starting"
@@ -37,6 +38,7 @@ export function observationDisplayKind(observation: SessionObservation): Observa
   const { lifecycle, state } = observation;
   if (!state) {
     if (observation.checkpoint.phase_completed_at != null) return "completed";
+    if (lifecycle.state === "never_started") return "never_started";
     if (lifecycle.state === "live" || lifecycle.state === "live_exited") return "unknown";
     return "exited";
   }

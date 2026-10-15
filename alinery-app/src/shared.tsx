@@ -1008,6 +1008,8 @@ export function obsLabel(kind: ObservationDisplayKind): string {
       return "Ready to advance";
     case "exited":
       return "Exited";
+    case "never_started":
+      return "Not started";
     case "loading":
       return "Loading";
     case "unsupported":
@@ -1039,6 +1041,8 @@ function obsTooltip(kind: ObservationDisplayKind): string {
       return "Phase completed — ready to advance to the next step";
     case "exited":
       return "Session is not live in the current daemon";
+    case "never_started":
+      return "Session has not started";
     case "loading":
       return "Waiting for the first semantic adapter event";
     case "unsupported":
