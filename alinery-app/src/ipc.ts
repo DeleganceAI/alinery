@@ -398,6 +398,8 @@ export const listTaskPullRequests = (tasks: TaskActivityRef[]) => invoke<Record<
 export const listTasks = (repoPath?: string) => invoke<Task[]>("list_tasks", { repoPath });
 export const setAutoApproveAllForRepo = (repoPath: string, slug: string, enabled: boolean) => invoke<Task>("set_auto_approve_all_for_repo", { repoPath, slug, enabled });
 export const setRelatedTasksForRepo = (repoPath: string, slug: string, related: RelatedTaskRef[]) => invoke<Task>("set_related_tasks_for_repo", { repoPath, slug, related });
+export type DraftAttachments = { entries: string[]; images: { name: string; bytes: string; mime_type: string }[] };
+export const readDraftAttachmentsForRepo = (repoPath: string, slug: string) => invoke<DraftAttachments>("read_draft_attachments_for_repo", { repoPath, slug });
 export const writeDraftForRepo = (a: {
   repoPath: string;
   name: string;
@@ -416,6 +418,7 @@ export const writeDraftForRepo = (a: {
   worktreeName: string;
   draftSlug: string;
   draftBaseRef?: string | null;
+  draftAttachments?: DraftAttachments;
 }) => invoke<Task>("write_draft_for_repo", a);
 export type ChatFileStat = { name: string; bytes: number };
 export type CopyChatAttachmentsResult = { copied: string[]; failures: string[] };
