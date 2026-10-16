@@ -9408,12 +9408,44 @@ dialog.modal::backdrop {
   font-size: calc(16px * var(--ui-scale));
   font-weight: 600;
 }
+.harness-settings-layout { max-width: 760px; width: 100%; }
+.harness-settings-layout > .harness-settings-section:first-child {
+  margin-top: 24px;
+  padding-top: 0;
+  border-top: 0;
+}
+.harness-settings-layout .field { margin-block: 20px; }
+.harness-settings-layout .hint { line-height: 1.6; }
+.harness-provider-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  padding-block: 12px;
+}
+.harness-provider-row .hint { margin: 4px 0 0; }
+.harness-disclosure { margin-top: 20px; }
+.harness-disclosure > summary {
+  cursor: pointer;
+  color: var(--text-strong);
+  font-size: calc(13px * var(--ui-scale));
+  font-weight: 500;
+  padding-block: 8px;
+}
+.harness-disclosure > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: var(--radius-sm);
+}
+.harness-disclosure > summary > span { margin-left: 12px; font-weight: 400; }
+.harness-disclosure[open] > summary { margin-bottom: 12px; }
+.harness-customizations,
+.harness-session-service { padding-top: 16px; border-top: 1px solid var(--border); }
 .omp-settings {
-  margin-top: 16px;
-  padding: 18px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--surface);
+  margin-top: 24px;
+  padding: 24px 0 0;
+  border-top: 1px solid var(--border);
 }
 .omp-settings h3,
 .harness-settings-section > h3 {
