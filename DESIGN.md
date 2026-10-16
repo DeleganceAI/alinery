@@ -363,9 +363,9 @@ A complete unlisted `provider/model` identifier remains the selected custom mode
 
 ### Tasks and Sessions collections
 
-- Use `ListToolbar` for local search, filters, result counts, and a single clear-filters action. Search combines whitespace-separated terms; filters compose without changing repository or archived scope.
+- Use `ListToolbar` for the page heading, local search, filters, result counts, and a single clear-filters action. Tasks also keeps New task in that row. Keep the header on one line when space permits, wrapping controls without shrinking text at narrower widths. Search combines whitespace-separated terms; filters compose without changing repository or archived scope.
 - Keep task names and session names primary. Use quiet secondary metadata, light row separators, neutral selection with an accent edge, and the existing semantic status components.
-- Tasks expose status and playbook filters. Preserve hierarchy among visible results; when a parent is filtered out, keep its context in the child's secondary line without crowding the name.
+- Tasks expose status and playbook filters and default to Updated, most recent first, when there is no valid saved sort choice. Preserve explicit sort choices across visits and use Created when a task has no Updated timestamp. Preserve hierarchy among visible results; when a parent is filtered out, keep its context in the child's secondary line without crowding the name.
 - Sessions expose status filtering and the existing Priority, Started, and Updated sorts. Keep rename available by keyboard and on hover or selection, without a persistent text button. Do not repeat the session slug in every row.
 - Missing observations remain unknown, not inactive. Session filters share the display-state derivation used by `StatusDot`; filtering must not invent lifecycle state or change stop-session consent.
 - At `900 x 600`, task columns fit without horizontal scrolling and Sessions fits eight complete two-line rows at the default UI scale. In narrower panes, move secondary task fields into row metadata and retain every sort through the compact sort controls; session timestamps stack vertically beside the primary content.

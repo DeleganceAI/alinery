@@ -30,6 +30,10 @@
   flex-shrink: 0;
 }
 
+.collection-toolbar > .collection-heading {
+  flex-shrink: 0;
+}
+
 .collection-search {
   display: flex;
   align-items: center;

@@ -331,14 +331,15 @@ describe("Task List column sorting", () => {
     expect(screen.getByRole("button", { name: "Sort by Sessions" }).closest("th")?.getAttribute("aria-sort")).toBe("ascending");
   });
 
-  it("ignores an obsolete saved column and still allows choosing a valid sort", async () => {
-    window.localStorage.setItem("alinery:task-list:sort", JSON.stringify({ field: "removed-column", direction: "desc" }));
-    scenario.tasks = [task("alpha", { created: 1 }), task("beta", { created: 2 })];
+  it.each([null, JSON.stringify({ field: "removed-column", direction: "desc" })])("shows recently updated tasks first without a valid saved sort (%s)", async (saved) => {
+    if (saved !== null) window.localStorage.setItem("alinery:task-list:sort", saved);
+    scenario.tasks = [task("alpha", { created: 1, updated: 30 }), task("beta", { created: 2, updated: 20 }), task("legacy", { created: 25, updated: 0 })];
     render(<TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
     await screen.findByText("ALPHA");
-    expect(names()).toEqual(["ALPHA", "BETA"]);
+    expect(names()).toEqual(["ALPHA", "LEGACY", "BETA"]);
+    expect(screen.getByRole("button", { name: "Sort by Updated" }).closest("th")?.getAttribute("aria-sort")).toBe("descending");
     fireEvent.click(screen.getByRole("button", { name: "Sort by Created" }));
-    expect(names()).toEqual(["BETA", "ALPHA"]);
+    expect(names()).toEqual(["LEGACY", "BETA", "ALPHA"]);
   });
 
   it("sorts every column in both directions using displayed values, numeric counts, and missing activity last", async () => {
@@ -357,7 +358,6 @@ describe("Task List column sorting", () => {
     const onOpen = vi.fn();
     render(<TaskList allRepos={false} onOpen={onOpen} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
     await screen.findByRole("button", { name: "Build" });
-    expect(names()).toEqual(["Zulu", "Alpha", "Beta"]);
 
     const cases = [
       { label: "Name", direction: "ascending", first: ["Alpha", "Beta", "Zulu"], second: ["Zulu", "Beta", "Alpha"] },

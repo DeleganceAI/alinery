@@ -138,7 +138,7 @@ export function TaskList({
     } catch {
       // Invalid or unavailable storage must not prevent opening the task list.
     }
-    return { column: TASK_COLUMNS[5], direction: "asc" };
+    return { column: TASK_COLUMNS[6], direction: "desc" };
   });
   const activity = useBoardTaskActivity(tasks);
   const now = useMinuteNow();
@@ -259,19 +259,30 @@ export function TaskList({
     void load();
   };
 
+  const heading = (
+    <>
+      <h1 className="view-title">Tasks</h1>
+      {!empty && (
+        <button type="button" className="btn small" onClick={onCreate}>
+          New task
+        </button>
+      )}
+    </>
+  );
+
   return (
     <section className="listwrap collection-view task-list-view">
-      <div className="collection-heading">
-        <h1 className="view-title">Tasks</h1>
-        {!empty && (
-          <button type="button" className="btn small" onClick={onCreate}>
-            New task
-          </button>
-        )}
-        {!allRepos && <Checkbox checked={showArchived} onChange={setShowArchived} label="Show archived" />}
-      </div>
-      {loaded && (!empty || filtered) && (
-        <ListToolbar label="Tasks" query={query} onQueryChange={setQuery} shown={visibleTasks.length} total={tasks.length} filtered={filtered} onReset={resetFilters}>
+      {loaded && (!empty || filtered) ? (
+        <ListToolbar
+          label="Tasks"
+          heading={heading}
+          query={query}
+          onQueryChange={setQuery}
+          shown={visibleTasks.length}
+          total={tasks.length}
+          filtered={filtered}
+          onReset={resetFilters}
+        >
           <label>
             <span>Status</span>
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.currentTarget.value)}>
@@ -321,7 +332,13 @@ export function TaskList({
           >
             <span aria-hidden="true">{sort.direction === "asc" ? "↑" : "↓"}</span>
           </button>
+          {!allRepos && <Checkbox checked={showArchived} onChange={setShowArchived} label="Show archived" />}
         </ListToolbar>
+      ) : (
+        <div className="collection-heading">
+          {heading}
+          {!allRepos && <Checkbox checked={showArchived} onChange={setShowArchived} label="Show archived" />}
+        </div>
       )}
       {err && (
         <InlineStatus tone="error" detail={err.detail}>

@@ -360,10 +360,16 @@ export function SessionsList({
 
   return (
     <section className="listwrap collection-view">
-      <div className="collection-heading">
-        <h1 className="view-title">Sessions</h1>
-      </div>
-      <ListToolbar label="Sessions" query={query} onQueryChange={setQuery} shown={visibleItems.length} total={items.length} filtered={filtered} onReset={resetFilters}>
+      <ListToolbar
+        label="Sessions"
+        heading={<h1 className="view-title">Sessions</h1>}
+        query={query}
+        onQueryChange={setQuery}
+        shown={visibleItems.length}
+        total={items.length}
+        filtered={filtered}
+        onReset={resetFilters}
+      >
         <div className="sessions-filter">
           <label htmlFor={statusFilterId}>Status</label>
           <select id={statusFilterId} value={statusFilter} onChange={(event) => setStatusFilter(event.currentTarget.value as StatusFilter)}>

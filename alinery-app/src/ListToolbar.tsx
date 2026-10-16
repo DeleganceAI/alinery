@@ -4,6 +4,7 @@ import "./listToolbar.css";
 
 export function ListToolbar({
   label,
+  heading,
   query,
   onQueryChange,
   shown,
@@ -13,6 +14,7 @@ export function ListToolbar({
   children,
 }: {
   label: string;
+  heading?: ReactNode;
   query: string;
   onQueryChange: (value: string) => void;
   shown: number;
@@ -32,6 +34,7 @@ export function ListToolbar({
         if (control && ((!event.metaKey && !event.ctrlKey) || control.tagName === "SELECT")) event.stopPropagation();
       }}
     >
+      {heading && <div className="collection-heading">{heading}</div>}
       <div className="collection-search">
         <Search size={16} strokeWidth={1.5} aria-hidden="true" />
         <input
