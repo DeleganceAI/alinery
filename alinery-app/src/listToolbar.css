@@ -142,6 +142,18 @@
   white-space: nowrap;
 }
 
+.btn.collection-archive-toggle {
+  gap: 6px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.btn.collection-archive-toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--text-strong);
+}
+
 @media (max-width: 1000px) {
   .collection-toolbar {
     gap: 8px;

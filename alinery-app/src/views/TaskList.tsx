@@ -2,10 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
-import { ListToolbar } from "../ListToolbar";
+import { ArchiveFilter, ListToolbar } from "../ListToolbar";
 import {
   ArchiveTaskModal,
-  Checkbox,
   EMPTY_TASK_ACTIVITY,
   EmptyState,
   formatAbsolute,
@@ -332,12 +331,12 @@ export function TaskList({
           >
             <span aria-hidden="true">{sort.direction === "asc" ? "↑" : "↓"}</span>
           </button>
-          {!allRepos && <Checkbox checked={showArchived} onChange={setShowArchived} label="Show archived" />}
+          {!allRepos && <ArchiveFilter checked={showArchived} onChange={setShowArchived} />}
         </ListToolbar>
       ) : (
         <div className="collection-heading">
           {heading}
-          {!allRepos && <Checkbox checked={showArchived} onChange={setShowArchived} label="Show archived" />}
+          {!allRepos && <ArchiveFilter checked={showArchived} onChange={setShowArchived} />}
         </div>
       )}
       {err && (

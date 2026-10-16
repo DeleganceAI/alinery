@@ -191,15 +191,20 @@ describe("Task List relationship projection", () => {
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ slug: "child" }));
   });
 
-  it("retains archived child history beneath its parent when Show archived is on", async () => {
+  it("includes archived child history alongside active tasks and can hide it again", async () => {
     scenario.tasks = [task("parent", { created: 1 }), task("child", { parent_task: "parent", archived: true, created: 2 })];
     render(<TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} onCreate={() => {}} registerNav={() => {}} />);
     await screen.findByText("PARENT");
     expect(screen.queryByText("CHILD")).toBeNull();
 
-    fireEvent.click(screen.getByText("Show archived"));
+    fireEvent.click(screen.getByRole("button", { name: "Include archived" }));
     await screen.findByText("CHILD");
     expect([...document.querySelectorAll(".task-name-text")].map((node) => node.textContent)).toEqual(["PARENT", "CHILD"]);
+    expect(screen.getByRole("button", { name: "Include archived", pressed: true })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Include archived" }));
+    await waitFor(() => expect(screen.queryByText("CHILD")).toBeNull());
+    expect(screen.getByText("PARENT")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Include archived", pressed: false })).toBeDefined();
   });
 
   it("marks a visible child whose parent is filtered out", async () => {
@@ -413,7 +418,7 @@ describe("Task List column sorting", () => {
     act(() => requireNav(nav).openSelected());
     expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ slug: "child-2" }));
 
-    fireEvent.click(screen.getByText("Show archived"));
+    fireEvent.click(screen.getByRole("button", { name: "Include archived" }));
     await screen.findByText("ARCHIVED");
     expect(names()).toEqual(["ALPHA", "ZULU", "ARCHIVED", "CHILD-2", "CHILD-10"]);
     act(() => requireNav(nav).openSelected());

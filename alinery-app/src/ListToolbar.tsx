@@ -1,4 +1,4 @@
-import { Search, X } from "lucide-react";
+import { Archive, Check, Search, X } from "lucide-react";
 import { type ReactNode, useRef } from "react";
 import "./listToolbar.css";
 
@@ -79,5 +79,24 @@ export function ListToolbar({
         </span>
       </div>
     </search>
+  );
+}
+
+export function ArchiveFilter({ checked, onChange }: { checked: boolean; onChange: (value: boolean) => void }) {
+  const Icon = checked ? Check : Archive;
+  return (
+    <button
+      type="button"
+      className="btn ghost small collection-archive-toggle"
+      aria-pressed={checked}
+      title={checked ? "Hide archived items" : "Show active and archived items"}
+      onClick={() => onChange(!checked)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+      }}
+    >
+      <Icon size={14} strokeWidth={1.5} aria-hidden="true" />
+      Include archived
+    </button>
   );
 }

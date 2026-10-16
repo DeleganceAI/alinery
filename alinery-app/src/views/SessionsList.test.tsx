@@ -617,6 +617,24 @@ describe("SessionsList filtering", () => {
     expect(within(status).queryByRole("option", { name: "Archived" })).toBeNull();
   });
 
+  it("includes archived sessions alongside active work and clears an archived-only filter when inclusion is disabled", async () => {
+    sessionItems = [session({ id: "active", name: "Current work" }), session({ id: "archived", name: "Archived work", archived: true })];
+    mocks.listSessionItems.mockImplementation(async (_allRepos, includeArchived) => sessionItems.filter((item) => includeArchived || !item.archived));
+    const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    await waitFor(() => expect(renderedNames(container)).toEqual(["Current work"]));
+
+    fireEvent.click(screen.getByRole("button", { name: "Include archived", pressed: false }));
+    await waitFor(() => expect(renderedNames(container)).toEqual(["Current work", "Archived work"]));
+    const status = screen.getByLabelText("Status");
+    fireEvent.change(status, { target: { value: "archived" } });
+    expect(renderedNames(container)).toEqual(["Archived work"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Include archived", pressed: true }));
+    await waitFor(() => expect(renderedNames(container)).toEqual(["Current work"]));
+    expect(status).toHaveProperty("value", "all");
+    expect(within(status).queryByRole("option", { name: "Archived" })).toBeNull();
+  });
+
   it("keeps keyboard selection and open on visible rows through filtering and polling", async () => {
     vi.useFakeTimers();
     const alpha = session({ id: "alpha", name: "Alpha work", created: 30 });

@@ -2,7 +2,7 @@ import { ChevronRight, Pencil } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
-import { ListToolbar } from "../ListToolbar";
+import { ArchiveFilter, ListToolbar } from "../ListToolbar";
 import { awaitingSessionName, NameEditor, PendingSessionName } from "../NameEditor";
 import {
   hasAcknowledgedExit,
@@ -17,7 +17,7 @@ import {
   sessionStartedAt,
   sessionUpdatedAt,
 } from "../sessionAttention";
-import { Checkbox, EmptyState, harnessDisplayName, InlineStatus, KillButton, LoadingState, repoName, SessionTimestamp, StatusDot, sameSessionMetas, useMinuteNow } from "../shared";
+import { EmptyState, harnessDisplayName, InlineStatus, KillButton, LoadingState, repoName, SessionTimestamp, StatusDot, sameSessionMetas, useMinuteNow } from "../shared";
 import type { BoardNav, NameCommit, SessionListItem, SessionObservation, SessionStatusRef } from "../types";
 import { useSessionSort } from "../useSessionSort";
 import "./SessionsList.css";
@@ -410,13 +410,12 @@ export function SessionsList({
             );
           })}
         </div>
-        <Checkbox
+        <ArchiveFilter
           checked={showArchived}
           onChange={(value) => {
             setShowArchived(value);
             if (!value && statusFilter === "archived") setStatusFilter("all");
           }}
-          label="Show archived"
         />
       </ListToolbar>
       {err && (
