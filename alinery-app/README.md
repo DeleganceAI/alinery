@@ -79,8 +79,6 @@ non-`dev` Tauri command use **Alinery**, use `ai.delegance.alinery`, and keep th
 config path. The development config is global to development launches, not per worktree;
 repository-local `.alinery/` data is unchanged, so use disposable repositories for live testing.
 
-Repository ownership conflicts open a focused take-over modal once per owner. Dismissing it leaves a thin caution strip below the toolbar; click the strip to restore the modal. Session impact and confirmation remain explicit, with technical details collapsed by default and Cancel focused initially. The strip disappears when ownership resolves; lock files are never deleted to force access.
-
 The built app lives in `src-tauri/target/release/bundle/`.
 
 ### Provider connections
