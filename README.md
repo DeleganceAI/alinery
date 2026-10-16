@@ -84,9 +84,9 @@ In the task table and session header, hover the name or Tab to its pencil to edi
 
 Task records, sessions, and artifacts live under your repository's `.alinery/` directory. The app runs locally, and product-usage telemetry is opt-in.
 
-Task, session, and board browsing read saved metadata and the task's retained playbook even when its owning daemon is offline, incompatible, or belongs to another app instance. Artifact listings and saved content do not require a live owner. Task/session detail and Canvas use live execution data when available; otherwise they show validated saved progress with a separate availability notice and collapsed technical details. The app does not start, adopt, or take over a daemon just to browse.
+Task, session, and board browsing read saved metadata and the task's retained playbook even when its owning daemon is offline, incompatible, or belongs to another app instance. Artifact listings and saved content do not require a live owner. Task/session detail and Kanban+ use live execution data when available; otherwise they show validated saved progress with a separate availability notice and collapsed technical details. The app does not start, adopt, or take over a daemon just to browse.
 
-The Canvas saved-progress notice has a dismiss button. Dismissal survives polling for the same affected tasks and availability states; the notice returns if those conditions change or live access recovers and later becomes unavailable again.
+The Kanban+ saved-progress notice has a dismiss button. Dismissal survives polling for the same affected tasks and availability states; the notice returns if those conditions change or live access recovers and later becomes unavailable again.
 
 Completion grants, queued starts, and primary execution creation/recovery remain gated on live owner availability, with backend ownership checks unchanged. Unavailable live status is not proof that a session stopped or completed. Missing or corrupt retained data remains a storage error, not an empty execution state or a replacement from the current playbook library.
 
@@ -108,7 +108,7 @@ and tile width (up to 960px). Detailed and compact cards show every enabled prop
 scroll a card if its contents exceed the fixed tile height. Icon-only mode hides text.
 Draft tasks appear with a Draft label and open their saved creation form.
 
-On a fresh workspace, the default Canvas view starts with **Progress lanes**: playbook
+On a fresh workspace, the default Kanban+ view starts with **Progress lanes**: playbook
 steps left-to-right, all step labels, no grouping, repository fill, attention borders,
 manual lane order, compact cards, all tasks, fixed brightness, and archives
 hidden. Tile size is 150 × 78px, row/column spacing is 10/8px, and the first column is
