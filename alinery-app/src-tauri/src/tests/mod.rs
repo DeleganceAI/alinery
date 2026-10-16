@@ -471,3 +471,21 @@ fn status_ref(repo: &Path, slug: &str, id: &str) -> super::SessionStatusRef {
         id: id.into(),
     }
 }
+
+/// Removes the real per-identifier config dir (`~/Library/Application Support/test.alinery.*`)
+/// a mock app writes `app.toml` into, so test runs leave nothing behind.
+pub(crate) struct AppConfigDirGuard(std::path::PathBuf);
+impl Drop for AppConfigDirGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Builds a mock app under a unique identifier; keep the guard alive for the test's duration.
+pub(crate) fn build_mock_app(name: &str, builder: tauri::Builder<tauri::test::MockRuntime>) -> (tauri::App<tauri::test::MockRuntime>, AppConfigDirGuard) {
+    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+    context.config_mut().identifier = format!("test.alinery.{name}.{}", uuid::Uuid::new_v4());
+    let app = builder.build(context).unwrap();
+    let dir = tauri::Manager::path(&app).app_config_dir().unwrap();
+    (app, AppConfigDirGuard(dir))
+}
