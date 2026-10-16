@@ -589,7 +589,7 @@ describe("SessionsList filtering", () => {
     observations = {
       "/r:a-task:s1": {
         ...busyObservation,
-        state: { ...busyObservation.state, agent: { state: reason } },
+        state: { ...busyObservation.state, agent: reason === "idle" ? { state: reason } : { state: reason, correlation_id: "pending-prompt" } },
       },
     };
     await act(async () => {
