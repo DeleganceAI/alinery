@@ -212,7 +212,7 @@ describe("repository takeover dialog", () => {
     await screen.findByText(/Changed impact/);
     expect(ipc.confirmRepoTakeover).toHaveBeenCalledTimes(1);
     expect(refresh).toHaveBeenCalled();
-    const element = screen.getByRole("alertdialog");
+    const element = await screen.findByRole("alertdialog");
     expect(document.activeElement).toBe(element.querySelector("[data-autofocus]"));
     cancel(element);
     await waitFor(() => expect(ipc.cancelRepoTakeover).toHaveBeenCalledWith("consent-b"));
