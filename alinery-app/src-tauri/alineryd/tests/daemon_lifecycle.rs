@@ -414,10 +414,11 @@ fn fresh_prompts_are_distinct_from_harness_options() {
         r#"#!/bin/sh
 output=$1
 shift
-: > "$output"
+: > "$output.tmp"
 for arg in "$@"; do
-  printf '%s\036' "$arg" >> "$output"
+  printf '%s\036' "$arg" >> "$output.tmp"
 done
+mv "$output.tmp" "$output"
 "#,
     )
     .unwrap();

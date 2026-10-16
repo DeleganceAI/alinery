@@ -635,6 +635,41 @@ describe("session chat hatch", () => {
     rpcAttachSession.mockImplementation(async () => undefined);
   });
 
+  it("RPC attachment and reconnect do not write auto-compaction", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    rpcWriteSession.mockClear();
+    rpcAttachSession.mockClear();
+    const slot: { current?: (line: string) => void } = {};
+    captureRpcOnLine(slot);
+    const view = renderSession();
+    await waitFor(() => expect(rpcWriteSession).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ type: "get_state" })));
+    act(() =>
+      slot.current?.(
+        JSON.stringify({
+          type: "response",
+          command: "get_state",
+          success: true,
+          data: { autoCompactionEnabled: false, contextUsage: { tokens: 19200, contextWindow: 128000, percent: 15 } },
+        }),
+      ),
+    );
+    act(() => slot.current?.(JSON.stringify({ type: "auto_compaction_start" })));
+    expect(await screen.findByText(/Compacting conversation/)).toBeTruthy();
+    act(() => slot.current?.(JSON.stringify({ type: "auto_compaction_end", text: "Compaction finished" })));
+    expect(await screen.findByText("Compaction finished")).toBeTruthy();
+    const attaches = rpcAttachSession.mock.calls.length;
+    act(() => onStreamClosed.mock.calls[onStreamClosed.mock.calls.length - 1]?.[2]());
+    await waitFor(() => expect(rpcAttachSession).toHaveBeenCalledTimes(attaches + 1));
+    await waitFor(() =>
+      expect(
+        rpcWriteSession.mock.calls.filter(([, command]) => command && typeof command === "object" && "type" in command && command.type === "get_state").length,
+      ).toBeGreaterThan(1),
+    );
+    view.rerender(sessionView({ appearance: { ...DEFAULT_APPEARANCE, chat_font_size: 18 } }));
+    expect(screen.getByLabelText("Message or /command")).toBeTruthy();
+    expect(rpcWriteSession.mock.calls.filter(([, command]) => command && typeof command === "object" && "type" in command && command.type === "set_auto_compaction")).toEqual([]);
+  });
+
   it("lists Chat before Terminal in the hatch", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
     renderSession();

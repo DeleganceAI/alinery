@@ -31,11 +31,6 @@ export const cycleModelCommand = (id = nextId()) => ({ id, type: "cycle_model" a
 export const setThinkingLevelCommand = (level: string, id = nextId()) => ({ id, type: "set_thinking_level" as const, level });
 export const compactCommand = (customInstructions?: string, id = nextId()) =>
   customInstructions ? { id, type: "compact" as const, customInstructions } : { id, type: "compact" as const };
-export const setAutoCompactionCommand = (enabled: boolean, id = nextId()) => ({
-  id,
-  type: "set_auto_compaction" as const,
-  enabled,
-});
 export const setSubagentSubscriptionCommand = (level: "progress" | "events" | "off" = "events", id = nextId()) => ({
   id,
   type: "set_subagent_subscription" as const,

@@ -115,41 +115,19 @@ fn update_omp_atomic_replace_on_match() {
 }
 
 #[test]
-fn model_roles_yaml_round_trip_preserves_other_keys() {
-    let existing = "theme: dark\nmodelRoles:\n  smol: old/model\nother: keep\n";
-    let mut roles = HashMap::new();
-    roles.insert("default".into(), "anthropic/claude".into());
-    roles.insert("smol".into(), "xai/grok".into());
-    let rendered = render_model_roles_yaml(existing, &roles);
-    assert!(rendered.contains("theme: dark"));
-    assert!(rendered.contains("other: keep"));
-    assert!(!rendered.contains("old/model"));
-    let parsed = parse_model_roles_yaml(&rendered);
-    assert_eq!(parsed.get("default").map(String::as_str), Some("anthropic/claude"));
-    assert_eq!(parsed.get("smol").map(String::as_str), Some("xai/grok"));
-}
-
-#[test]
-fn model_roles_clear_removes_block() {
-    let existing = "a: 1\nmodelRoles:\n  smol: x/y\nb: 2\n";
-    let rendered = render_model_roles_yaml(existing, &HashMap::new());
-    assert!(!rendered.contains("modelRoles"));
-    assert!(rendered.contains("a: 1"));
-    assert!(rendered.contains("b: 2"));
-}
-
-#[test]
-fn ensure_default_model_role_only_fills_when_unset() {
-    let dir = std::env::temp_dir().join(format!("alinery-default-role-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    ensure_default_model_role(&dir, "alinery/Qwen3.6-35B-A3B").unwrap();
-    let first = parse_model_roles_yaml(&fs::read_to_string(dir.join("config.yml")).unwrap());
-    assert_eq!(first.get("default").map(String::as_str), Some("alinery/Qwen3.6-35B-A3B"));
-    ensure_default_model_role(&dir, "alinery/other").unwrap();
-    let second = parse_model_roles_yaml(&fs::read_to_string(dir.join("config.yml")).unwrap());
-    assert_eq!(second.get("default").map(String::as_str), Some("alinery/Qwen3.6-35B-A3B"));
-    let _ = fs::remove_dir_all(&dir);
+fn model_roles_read_flow_mapping_without_rewriting_configuration() {
+    let dir = std::env::temp_dir().join(format!("alinery-role-read-{}", uuid::Uuid::new_v4()));
+    let app_config = dir.join("app.toml");
+    let (agent, _) = alinery_core::omp_home_dirs(&app_config);
+    fs::create_dir_all(&agent).unwrap();
+    let original = "theme: dark\nmodelRoles: {default: 'provider/model', smol: 'other/model'}\n";
+    fs::write(agent.join("config.yaml"), original).unwrap();
+    let roles = alinery_core::read_omp_model_roles(&app_config).unwrap();
+    assert_eq!(roles.get("default").map(String::as_str), Some("provider/model"));
+    assert_eq!(roles.get("smol").map(String::as_str), Some("other/model"));
+    assert_eq!(fs::read_to_string(agent.join("config.yaml")).unwrap(), original);
+    assert!(!agent.join("config.yml").exists());
+    fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

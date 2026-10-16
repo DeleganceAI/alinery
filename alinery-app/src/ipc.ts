@@ -57,6 +57,7 @@ import type {
   LinearTicket,
   McpStatus,
   NormalizedPlaybook,
+  OmpCompactionSnapshot,
   OmpCustomizations,
   OmpUpdateStatus,
   PickerPreferences,
@@ -465,6 +466,9 @@ export const ompCustomizationPrompt = () => invoke<string>("omp_customization_pr
 
 // ── omp_customizations.rs ─────────────────────────────────────────────
 export const readOmpCustomizations = () => invoke<OmpCustomizations>("read_omp_customizations");
+
+export const readOmpCompaction = () => invoke<OmpCompactionSnapshot>("read_omp_compaction");
+export const setOmpAutoCompaction = (enabled: boolean, expectedRevision: string) => invoke<OmpCompactionSnapshot>("set_omp_auto_compaction", { enabled, expectedRevision });
 
 // One attach-id space per daemon session, shared by every pane that can attach to it (terminal,
 // chat, session chat). Per-pane counters collided: one pane's detach dropped another's stream.

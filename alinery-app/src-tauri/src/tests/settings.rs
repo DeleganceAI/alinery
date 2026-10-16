@@ -141,6 +141,16 @@ fn remove_repo_delists_and_reports_active() {
 }
 
 #[test]
+fn legacy_chat_compaction_bytes_do_not_control_omp() {
+    for old in [true, false] {
+        let mut config: AppConfig = toml::from_str(&format!("[appearance]\nchat_auto_compaction = {old}\n")).unwrap();
+        config.appearance = sanitize_appearance(config.appearance);
+        let saved = toml::Value::try_from(&config).unwrap();
+        assert!(saved.get("appearance").unwrap().get("chat_auto_compaction").is_none());
+    }
+}
+
+#[test]
 fn appearance_defaults_sanitize_and_round_trip() {
     // Empty TOML yields system appearance defaults.
     let empty: AppConfig = toml::from_str("").expect("empty toml parses");
@@ -157,7 +167,6 @@ fn appearance_defaults_sanitize_and_round_trip() {
     assert!(empty.appearance.chat_show_subagent_rows);
     assert!(empty.appearance.chat_show_subagent_drawer);
     assert!(empty.appearance.chat_auto_collapse_thinking);
-    assert!(empty.appearance.chat_auto_compaction);
     assert!(empty.appearance.chat_auto_scroll);
     assert_eq!(empty.appearance.chat_rail_density, "normal");
     assert_eq!(empty.appearance.chat_font_size, 14);
@@ -198,7 +207,6 @@ fn appearance_defaults_sanitize_and_round_trip() {
         chat_show_subagent_rows: false,
         chat_show_subagent_drawer: false,
         chat_auto_collapse_thinking: false,
-        chat_auto_compaction: false,
         chat_auto_scroll: false,
         chat_rail_density: "compact".into(),
         chat_font_size: 16,

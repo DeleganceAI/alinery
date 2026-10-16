@@ -230,7 +230,6 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
 
   const chat = useChatThread(selected, {
     active,
-    autoCompaction: visibility.autoCompaction,
     isFocused: (key) => selectedKeyRef.current === key,
     onReload: () => commitThreads(showArchivedRef.current, false),
     onResumeRefresh: () => commitThreads(false, true),

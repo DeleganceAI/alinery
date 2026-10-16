@@ -117,6 +117,15 @@ describe("normalizeChatView", () => {
     for (const key of chatKeys(view)) expect(view[key as keyof typeof view]).toBe(DEFAULT_APPEARANCE[key as keyof AppearancePrefs]);
   });
 
+  it("ignores legacy Chat compaction bytes when normalizing persisted preferences", () => {
+    for (const enabled of [true, false]) {
+      const stored = JSON.parse(JSON.stringify({ chat_auto_compaction: enabled, chat_font_size: 18 }));
+      const saved = normalizeChatView(stored);
+      expect(saved.chat_font_size).toBe(18);
+      expect(saved).not.toHaveProperty("chat_auto_compaction");
+    }
+  });
+
   it("keeps valid values", () => {
     const valid = {
       chat_show_thinking: true,
@@ -128,7 +137,6 @@ describe("normalizeChatView", () => {
       chat_show_subagent_rows: false,
       chat_show_subagent_drawer: false,
       chat_auto_collapse_thinking: false,
-      chat_auto_compaction: false,
       chat_auto_scroll: false,
       chat_rail_density: "comfortable",
       chat_font_size: 18,

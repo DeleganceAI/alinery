@@ -13,7 +13,6 @@ export type ChatPrefs = {
   showSubagentRows: boolean;
   showSubagentDrawer: boolean;
   autoCollapseThinking: boolean;
-  autoCompaction: boolean;
   autoScroll: boolean;
   railDensity: ChatRailDensity;
   fontSize: number;
@@ -42,7 +41,6 @@ export const DEFAULT_CHAT_VISIBILITY: ChatPrefs = {
   showSubagentRows: true,
   showSubagentDrawer: true,
   autoCollapseThinking: true,
-  autoCompaction: true,
   autoScroll: true,
   railDensity: "normal",
   fontSize: CHAT_FONT_DEFAULT,
@@ -77,7 +75,6 @@ export function chatVisibilityFromAppearance(input: AppearancePrefs | Record<str
     showSubagentRows: input.chat_show_subagent_rows !== false,
     showSubagentDrawer: input.chat_show_subagent_drawer !== false,
     autoCollapseThinking: input.chat_auto_collapse_thinking !== false,
-    autoCompaction: input.chat_auto_compaction !== false,
     autoScroll: input.chat_auto_scroll !== false,
     railDensity: density,
     fontSize: Math.min(22, Math.max(10, fontRaw)),
