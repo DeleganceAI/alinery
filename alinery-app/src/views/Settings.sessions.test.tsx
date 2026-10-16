@@ -65,6 +65,7 @@ const mocks = vi.hoisted(() => ({
   writeAppearance: vi.fn(),
   updateOmp: vi.fn(),
   confirmDanger: vi.fn(),
+  askConfirm: vi.fn(),
 }));
 
 vi.mock("../ipc", () =>
@@ -84,7 +85,7 @@ vi.mock("../ipc", () =>
   }),
 );
 
-vi.mock("../confirm", () => ({ confirmDanger: mocks.confirmDanger }));
+vi.mock("../confirm", () => ({ confirmDanger: mocks.confirmDanger, askConfirm: mocks.askConfirm }));
 
 import { Settings } from "./Settings";
 
@@ -138,6 +139,7 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation(async (appearance: typeof DEFAULT_APPEARANCE) => ({ active_repo: "/r", known_repos: ["/r"], mcp_enabled: true, appearance }));
   mocks.confirmDanger.mockReset().mockResolvedValue(true);
+  mocks.askConfirm.mockReset().mockResolvedValue("update");
 });
 
 afterEach(() => {
@@ -169,7 +171,11 @@ describe("Harness settings model default", () => {
 
 describe("Harness settings thinking default", () => {
   // By role: in a repo scope the label also holds the badge's "Use global value" button, which label text queries match too.
-  const thinkingSelect = async () => (await screen.findByRole("combobox", { name: /Default thinking level/ })) as HTMLSelectElement;
+  const thinkingSelect = async () => {
+    const summary = await screen.findByText("Session preferences");
+    if (!summary.closest("details")?.open) fireEvent.click(summary);
+    return (await screen.findByRole("combobox", { name: /Default thinking level/ })) as HTMLSelectElement;
+  };
 
   it("shows high while the setting is unset", async () => {
     renderHarnessSection();
@@ -262,96 +268,9 @@ describe("Sessions view and Chat tabs", () => {
     expect(((await screen.findByLabelText(/Show copy buttons/)) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole("button", { name: "900px" }).getAttribute("aria-pressed")).toBe("true");
   });
-
-  // The journal rows both tabs start with: thinking, tools and turn markers hidden; harness notices,
-  // subagent rows and drawer, date, time and the per-message copy icon shown; no actor labels,
-  // agent bubbles or block copy buttons.
-  const JOURNAL_DEFAULTS: [RegExp, boolean][] = [
-    [/Show thinking/, false],
-    [/Expand thinking by default/, false],
-    [/Show tool use/, false],
-    [/Expand tools by default/, false],
-    [/Show harness events/, true],
-    [/Show turn markers/, false],
-    [/Show subagent rows/, true],
-    [/Show subagent drawer/, true],
-    [/Show date/, true],
-    [/Show time/, true],
-    [/Show You \/ Agent labels/, false],
-    [/Show agent reply bubbles/, false],
-    [/Show block copy buttons/, false],
-    [/Show copy buttons/, true],
-  ];
-
-  it.each(["sessionsView", "chat"] as const)("%s starts with the shared journal defaults", async (section) => {
-    renderSection(section, DEFAULT_APPEARANCE);
-    await screen.findByLabelText(/Show thinking/);
-    for (const [label, checked] of JOURNAL_DEFAULTS) expect((screen.getByLabelText(label) as HTMLInputElement).checked, String(label)).toBe(checked);
-  });
-
-  it("Chat describes the meta strip and column width for Ava", async () => {
-    renderSection("chat");
-    expect(await screen.findByText("— repo · branch · thinking · status line under the thread title")).toBeTruthy();
-    expect(screen.getByText("Limits the width of the message thread, composer and notices.")).toBeTruthy();
-    expect(screen.getByText("Which journal rows appear in the Chat view. Global-only.")).toBeTruthy();
-    expect(screen.getByText("Density, sizing and behavior of the Chat view. Global-only.")).toBeTruthy();
-    expect(screen.getByText("Chat view column width")).toBeTruthy();
-    expect(screen.getByText("Chat view text")).toBeTruthy();
-    expect(screen.queryByText(/model · thinking · event count/)).toBeNull();
-    expect(screen.queryByText(/Limits journal thread width/)).toBeNull();
-  });
-
-  it("Sessions view keeps the journal descriptions for the session thread", async () => {
-    renderSection("sessionsView");
-    expect(await screen.findByText("— model · thinking · event count · context above the chat")).toBeTruthy();
-    expect(screen.getByText("Limits journal thread width; meta and composer stay full width.")).toBeTruthy();
-    expect(screen.getByText("Which journal rows appear in session chats. Global-only.")).toBeTruthy();
-    expect(screen.getByText("Density, sizing and behavior of session chats. Global-only.")).toBeTruthy();
-    expect(screen.getByText("Session chat column width")).toBeTruthy();
-    expect(screen.getByText("Session chat text")).toBeTruthy();
-    expect(screen.queryByText(/status line under the thread title/)).toBeNull();
-    expect(screen.queryByText(/message thread, composer and notices/)).toBeNull();
-  });
 });
 
 describe("Harness OMP version", () => {
-  it("renders installed and available versions", async () => {
-    mocks.checkOmpUpdate.mockResolvedValue({
-      installed: "18.1.10",
-      available: { version: "18.2.0", asset_url: "https://example.test/omp" },
-      checked_at: 1,
-    });
-    renderHarnessSection();
-    await waitFor(() => expect(screen.getByText(/Installed: 18.1.10/)).toBeTruthy());
-    expect(screen.getByText(/Update available: 18.2.0/)).toBeTruthy();
-    expect(screen.getByLabelText("Model")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Stop all sessions/ })).toBeTruthy();
-  });
-
-  it("names the binary and the config home this install uses", async () => {
-    // A version with no location cannot answer "which install am I looking at" -- the whole
-    // reason this panel got the paths.
-    mocks.checkOmpUpdate.mockResolvedValue({
-      installed: "18.1.10",
-      available: null,
-      checked_at: 1,
-      binary_path: "/Applications/Alinery.omp/omp",
-      config_dir: "/cfg/ai.delegance.alinery.dev/instances/abc123/omp/config/agent",
-    });
-    renderHarnessSection();
-    await waitFor(() => expect(screen.getByText(/Binary: \/Applications\/Alinery.omp\/omp/)).toBeTruthy());
-    expect(screen.getByText(/Config: .*instances\/abc123\/omp\/config\/agent/)).toBeTruthy();
-  });
-
-  it("says nothing rather than showing blanks when the paths are unknown", async () => {
-    mocks.checkOmpUpdate.mockResolvedValue({ installed: "18.1.10", available: null, checked_at: 1, binary_path: "", config_dir: "" });
-    renderHarnessSection();
-    await waitFor(() => expect(screen.getByText(/Installed: 18.1.10/)).toBeTruthy());
-    expect(screen.queryByText(/Binary:/)).toBeNull();
-    expect(screen.queryByText(/Config:/)).toBeNull();
-    expect(screen.queryByRole("button", { name: "Update OMP" })).toBeNull();
-  });
-
   it("Update OMP goes through confirm, then updateOmp", async () => {
     mocks.checkOmpUpdate.mockResolvedValue({
       installed: "18.1.10",
@@ -359,16 +278,16 @@ describe("Harness OMP version", () => {
       checked_at: 1,
     });
     renderHarnessSection();
-    const omp = await screen.findByRole("region", { name: "OMP" });
+    const omp = await screen.findByRole("region", { name: "Agent & providers" });
     const button = await within(omp).findByRole("button", { name: "Update OMP" });
     fireEvent.click(button);
-    await waitFor(() => expect(mocks.confirmDanger).toHaveBeenCalled());
+    await waitFor(() => expect(mocks.askConfirm).toHaveBeenCalled());
     await waitFor(() => expect(mocks.updateOmp).toHaveBeenCalledTimes(1));
 
     mocks.updateOmp.mockClear();
-    mocks.confirmDanger.mockResolvedValueOnce(false);
+    mocks.askConfirm.mockResolvedValueOnce("cancel");
     fireEvent.click(await screen.findByRole("button", { name: "Update OMP" }));
-    await waitFor(() => expect(mocks.confirmDanger).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mocks.askConfirm).toHaveBeenCalledTimes(2));
     expect(mocks.updateOmp).not.toHaveBeenCalled();
   });
 

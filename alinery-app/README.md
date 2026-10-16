@@ -41,6 +41,10 @@ new child's initial playbook session through the manager's existing daemon lane.
 only observes existing daemon session IDs as advisory warnings; it does not attach to, write to, or
 stop those sessions.
 
+### Harness settings
+
+Settings → **Harness** puts the default model first, followed by compact agent/provider controls. Session preferences, model inheritance, installation paths, customizations, and session-service controls expand on demand. Global/repository inheritance is unchanged. **Update OMP** uses a normal confirmation with Cancel focused by default; running sessions keep their existing binary. Session-stop and deletion actions retain destructive confirmations.
+
 ### Harness state and phase completion
 
 `alineryd` remains the PTY/process authority. For an OMP session it launches through the
