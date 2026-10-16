@@ -185,7 +185,7 @@ describe("SessionsList without identifiers", () => {
     }
     const rows = [...list.querySelectorAll<HTMLElement>(".session-list-row")];
     expect(within(rows[1]).getByText("Resumed")).toBeDefined();
-    expect(rows.map((row) => row.querySelector(".rts")?.textContent)).toEqual(["a-task", "a-task"]);
+    for (const row of rows) expect(row.textContent).not.toContain("a-task");
     fireEvent.click(rows[0]);
     expect(onOpen).toHaveBeenLastCalledWith(resumed);
     fireEvent.keyDown(rows[1], { key: "Enter" });
@@ -351,7 +351,7 @@ describe("SessionsList time sorting and presentation", () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
     await vi.waitFor(() => expect(renderedNames(container)).toEqual(["Target session", "Other task"]));
-    expect(screen.getByText("Failed")).toBeDefined();
+    expect(within(container.querySelector(".sessions-list") as HTMLElement).getByText("Failed")).toBeDefined();
 
     const updated = screen.getByRole("button", { name: /^Updated:/ });
     fireEvent.click(updated);
@@ -362,7 +362,7 @@ describe("SessionsList time sorting and presentation", () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
     await vi.waitFor(() => expect(screen.getByText("Stale")).toBeDefined());
-    expect(screen.queryByText("Failed")).toBeNull();
+    expect(within(container.querySelector(".sessions-list") as HTMLElement).queryByText("Failed")).toBeNull();
     expect(renderedNames(container)).toEqual(["Other task", "Target session"]);
     expect(updated.getAttribute("aria-pressed")).toBe("true");
     expect(updated.getAttribute("aria-label")).toContain("newest first");
@@ -404,7 +404,7 @@ describe("SessionsList time sorting and presentation", () => {
     expect(container.querySelector(".row.sel .rtt")?.textContent).toBe("Other task");
   });
 
-  it("keeps both exact timestamp descriptions in the meta band and advances them from one surface clock", async () => {
+  it("keeps both exact timestamp descriptions in the time column and advances them from one surface clock", async () => {
     vi.useFakeTimers();
     const now = 1_700_000_120;
     vi.setSystemTime(now * 1000);
@@ -415,8 +415,7 @@ describe("SessionsList time sorting and presentation", () => {
     const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
     await vi.waitFor(() => expect(renderedNames(container)).toEqual(["Timed task", "Other task"]));
     const row = screen.getByText("Timed task").closest(".row") as HTMLElement;
-    const meta = row.querySelector(".meta") as HTMLElement;
-    const times = [...meta.querySelectorAll("time")];
+    const times = [...row.querySelectorAll(".session-row-times time")];
     expect(times[0].textContent).toContain("1m");
     expect(times[0].getAttribute("title")).toContain(`Started ${new Date((now - 60) * 1000).toLocaleString()}`);
     expect(times[1].getAttribute("title")).toContain(`Status changed ${new Date((now - 3600) * 1000).toLocaleString()}`);
@@ -563,5 +562,111 @@ describe("session work names", () => {
     expect(within(secondRow).getByRole("textbox", { name: "Session name" })).toHaveProperty("value", "Unsubmitted second draft");
     expect(document.activeElement).toBe(within(secondRow).getByRole("textbox", { name: "Session name" }));
     expect(mocks.renameSession).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SessionsList filtering", () => {
+  it("searches names, task context, step, and model, and keeps no matches distinct from no sessions", async () => {
+    sessionItems = [
+      session({ id: "named", name: "Refactor parser", task_name: "Parser task", created: 30 }),
+      session({ id: "review", task_name: "Review task", created: 20, phase: "prepare-review", step_title: "Prepare review" }),
+      session({ id: "model", task_name: "Model task", created: 10, phase: "build", step_title: "Build", model: "anthropic/claude-sonnet" }),
+    ];
+    const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    await waitFor(() => expect(renderedNames(container)).toEqual(["Refactor parser", "Review task", "Model task"]));
+    const search = screen.getByLabelText("Search sessions");
+
+    fireEvent.change(search, { target: { value: "parser" } });
+    expect(renderedNames(container)).toEqual(["Refactor parser"]);
+    fireEvent.change(search, { target: { value: "prepare REVIEW" } });
+    expect(renderedNames(container)).toEqual(["Review task"]);
+    fireEvent.change(search, { target: { value: "sonnet" } });
+    expect(renderedNames(container)).toEqual(["Model task"]);
+
+    fireEvent.change(search, { target: { value: "nothing like this" } });
+    expect(renderedNames(container)).toEqual([]);
+    const noMatches = container.querySelector(".sessions-no-matches") as HTMLElement;
+    expect(noMatches).not.toBeNull();
+    expect(screen.queryByText("No sessions yet.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(renderedNames(container)).toEqual(["Refactor parser", "Review task", "Model task"]);
+    expect(search).toHaveProperty("value", "");
+    expect(container.querySelector(".sessions-no-matches")).toBeNull();
+  });
+
+  it("groups status from observations and never files an unobserved session as Not started", async () => {
+    sessionItems = [
+      session({ id: "unobserved", task_name: "Unobserved task", created: 30, phase: "a" }),
+      session({ id: "never", task_name: "Never task", created: 20, phase: "b" }),
+      session({ id: "busy", name: "Busy work", created: 10, phase: "c" }),
+    ];
+    observations = {
+      "/r:a-task:never": { lifecycle: { state: "never_started" }, state: null, checkpoint: {} },
+      "/r:a-task:busy": busyObservation,
+    };
+    const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    const status = screen.getByLabelText("Status");
+    await waitFor(() => expect(mocks.sessionListStatuses).toHaveBeenCalled());
+
+    fireEvent.change(status, { target: { value: "not_started" } });
+    await waitFor(() => expect(renderedNames(container)).toEqual(["Never task"]));
+    fireEvent.change(status, { target: { value: "unknown" } });
+    expect(renderedNames(container)).toEqual(["Unobserved task"]);
+    fireEvent.change(status, { target: { value: "running" } });
+    expect(renderedNames(container)).toEqual(["Busy work"]);
+    expect(within(status).queryByRole("option", { name: "Archived" })).toBeNull();
+  });
+
+  it("keeps keyboard selection and open on visible rows through filtering and polling", async () => {
+    vi.useFakeTimers();
+    const alpha = session({ id: "alpha", name: "Alpha work", created: 30 });
+    const beta = session({ id: "beta", name: "Beta work", created: 20 });
+    const gamma = session({ id: "gamma", name: "Gamma notes", created: 10 });
+    sessionItems = [alpha, beta, gamma];
+    const onOpen = vi.fn();
+    const { container } = render(
+      <SessionsList
+        allRepos={false}
+        activeRepo="/r"
+        onOpen={onOpen}
+        registerNav={(nav) => {
+          currentNav = nav;
+        }}
+        onCreateSession={() => {}}
+        onCreateTask={() => {}}
+      />,
+    );
+    await vi.waitFor(() => expect(renderedNames(container)).toEqual(["Alpha work", "Beta work", "Gamma notes"]));
+    await navReady(() => currentNav);
+    act(() => requireNav(currentNav).moveRow(1));
+    const selectedName = () => container.querySelector(".row.sel .rtt")?.textContent;
+    expect(selectedName()).toBe("Beta work");
+
+    const search = screen.getByLabelText("Search sessions");
+    fireEvent.change(search, { target: { value: "work" } });
+    expect(renderedNames(container)).toEqual(["Alpha work", "Beta work"]);
+    expect(selectedName()).toBe("Beta work");
+
+    sessionItems = [alpha, { ...beta, created: 40 }, gamma];
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await vi.waitFor(() => expect(renderedNames(container)).toEqual(["Beta work", "Alpha work"]));
+    expect(selectedName()).toBe("Beta work");
+
+    act(() => requireNav(currentNav).moveRow(1));
+    act(() => requireNav(currentNav).moveRow(1));
+    expect(selectedName()).toBe("Alpha work");
+    act(() => requireNav(currentNav).openSelected());
+    expect(onOpen).toHaveBeenLastCalledWith(alpha);
+
+    fireEvent.change(search, { target: { value: "gamma" } });
+    expect(selectedName()).toBe("Gamma notes");
+    act(() => requireNav(currentNav).openSelected());
+    expect(onOpen).toHaveBeenLastCalledWith(gamma);
+
+    fireEvent.change(search, { target: { value: "" } });
+    expect(renderedNames(container)).toEqual(["Beta work", "Alpha work", "Gamma notes"]);
+    expect(selectedName()).toBe("Gamma notes");
   });
 });

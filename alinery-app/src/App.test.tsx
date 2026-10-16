@@ -1309,9 +1309,9 @@ describe("session work names", () => {
     fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
     await screen.findByText("Original work");
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "Current child" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Search actions, tasks, and sessions" }), { target: { value: "Current child" } });
     await waitFor(() => expect(within(screen.getByRole("listbox")).getByText("Original work")).toBeDefined());
-    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search actions, tasks, and sessions" }), { key: "Escape" });
     const commit = deferred<{ name: string; source: string }>();
     ipcMocks.renameSession.mockReturnValue(commit.promise);
     fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
@@ -1321,7 +1321,7 @@ describe("session work names", () => {
     ipcMocks.listSessionItems.mockReturnValueOnce(oldRead.promise);
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await act(async () => {});
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "Current child" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Search actions, tasks, and sessions" }), { target: { value: "Current child" } });
     const committed = { ...original, name: "Committed work", name_source: "user" as const };
     const freshRead = deferred<SessionListItem[]>();
     ipcMocks.listSessionItems.mockReturnValue(freshRead.promise);

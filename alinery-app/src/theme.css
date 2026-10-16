@@ -1806,7 +1806,6 @@ main {
   left: calc(12px + (var(--task-depth) - 1) * 18px);
   color: var(--text-faint);
 }
-.task-parent-hidden,
 .task-child-badge {
   color: var(--text-muted);
   border-style: dashed;

@@ -65,6 +65,23 @@ export function observationDisplayKind(observation: SessionObservation): Observa
   return "unknown";
 }
 
+// Shared by the session marker and list filters so exit acknowledgments and
+// superseded attempts cannot disagree with the status used to find a row.
+export function sessionDisplayKind(
+  observation: SessionObservation | null | undefined,
+  superseded = false,
+  exitCode: number | null = null,
+  exitAcknowledged = false,
+): ObservationDisplayKind {
+  const observed = observation ? observationDisplayKind(observation) : "loading";
+  const acknowledgedExit = exitAcknowledged && (!observation?.state || observation.state.process.state === "exited");
+  const kind = acknowledgedExit ? "exited" : superseded && (observed === "idle" || observed === "exited") ? "stale" : observed;
+  if (!exitAcknowledged && exitCode != null && exitCode !== 0 && kind !== "busy" && kind !== "starting" && kind !== "waiting_for_input" && kind !== "waiting_for_approval") {
+    return "failed";
+  }
+  return kind;
+}
+
 export function sameSessionObservationMaps(left: Record<string, SessionObservation>, right: Record<string, SessionObservation>): boolean {
   const keys = Object.keys(left);
   if (keys.length !== Object.keys(right).length) return false;

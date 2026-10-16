@@ -10,7 +10,7 @@ import { IdleDot, ORB_SPEED, ORB_STATE, RunningIndicator, StateIcon } from "./In
 import * as ipc from "./ipc";
 import { BrandMark } from "./Logo";
 import { deriveModelRows } from "./modelFavorites";
-import { type ObservationDisplayKind, observationDisplayKind } from "./sessionAttention";
+import { type ObservationDisplayKind, observationDisplayKind, sessionDisplayKind } from "./sessionAttention";
 import { useTabPill } from "./tabMotion";
 import { toast } from "./toast";
 import type {
@@ -1114,8 +1114,7 @@ export function StatusDot({
   const currentPolledObs = polledObs?.key === pollKey ? polledObs.observation : null;
   const obs = observation ?? currentPolledObs;
   const observedKind: ObservationDisplayKind = obs ? observationDisplayKind(obs) : "loading";
-  const acknowledgedTerminalExit = exitAcknowledged && (!obs?.state || obs.state.process.state === "exited");
-  const kind: ObservationDisplayKind = acknowledgedTerminalExit ? "exited" : superseded && (observedKind === "idle" || observedKind === "exited") ? "stale" : observedKind;
+  const kind = sessionDisplayKind(obs, superseded, exitCode, exitAcknowledged);
 
   // Attention notifications: fire on transitions into idle/waiting states.
   // Never notify for unsupported/unknown; artifact presence never triggers.
@@ -1130,7 +1129,7 @@ export function StatusDot({
     }
   }, [observedKind, notifyTransitions, pollKey, repoPath, slug]);
 
-  if (!exitAcknowledged && exitCode != null && exitCode !== 0 && kind !== "busy" && kind !== "starting" && kind !== "waiting_for_input" && kind !== "waiting_for_approval") {
+  if (kind === "failed" && !exitAcknowledged && exitCode != null && exitCode !== 0) {
     return (
       <span
         className="statusdot statusdot-badge statusdot-failed"
