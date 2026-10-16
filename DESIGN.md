@@ -361,6 +361,17 @@ Provider and model selection uses a content-sized Accounts/Models segmented cont
 
 A complete unlisted `provider/model` identifier remains the selected custom model for Enter and Apply, even when a catalog model shares its prefix. Ordinary filter-only searches still select catalog results.
 
+### Tasks and Sessions collections
+
+- Use `ListToolbar` for the page heading, local search, filters, result counts, and a single clear-filters action. Tasks also keeps New task in that row. Keep the header on one line when space permits, wrapping controls without shrinking text at narrower widths. Search combines whitespace-separated terms; filters compose without changing repository or archived scope.
+- Archive visibility uses the shared `ArchiveFilter` button labeled “Include archived”, not a settings checkbox. Off shows an archive icon; on shows a checkmark and subtle accent treatment. Expose `aria-pressed`, support native keyboard activation, and include archived rows alongside active work rather than silently switching to archived-only results.
+- Keep task names and session names primary. Use quiet secondary metadata, light row separators, neutral selection with an accent edge, and the existing semantic status components.
+- Tasks expose status and playbook filters and default to Updated, most recent first, when there is no valid saved sort choice. Preserve explicit sort choices across visits and use Created when a task has no Updated timestamp. Preserve hierarchy among visible results; when a parent is filtered out, keep its context in the child's secondary line without crowding the name.
+- Sessions expose status filtering and the existing Priority, Started, and Updated sorts. Keep rename available by keyboard and on hover or selection, without a persistent text button. Do not repeat the session slug in every row.
+- Missing observations remain unknown, not inactive. Session filters share the display-state derivation used by `StatusDot`; filtering must not invent lifecycle state or change stop-session consent. Track attention transitions across the unfiltered collection so hiding a row cannot suppress notifications or cause duplicate delivery when it returns.
+- At `900 x 600`, task columns fit without horizontal scrolling and Sessions fits eight complete two-line rows at the default UI scale. In narrower panes, move secondary task fields into row metadata and retain every sort through the compact sort controls; attach complete metadata and parent context to the visible secondary line's tooltip, not a child that can be clipped. Session timestamps stack vertically beside the primary content.
+- Keyboard navigation and row actions operate only on visible results. Filter controls own navigation and confirmation keys without blocking global command shortcuts such as Search or view switching. Preserve selection across refresh when it remains visible, and show a distinct no-matches state rather than the first-use empty state.
+
 ### AI-native pattern mapping
 
 Use AI Elements as the pattern reference, adapted to Alinery's terminology and layout:

@@ -10,7 +10,7 @@ import { IdleDot, ORB_SPEED, ORB_STATE, RunningIndicator, StateIcon } from "./In
 import * as ipc from "./ipc";
 import { BrandMark } from "./Logo";
 import { deriveModelRows } from "./modelFavorites";
-import { type ObservationDisplayKind, observationDisplayKind } from "./sessionAttention";
+import { type ObservationDisplayKind, observationDisplayKind, sessionDisplayKind } from "./sessionAttention";
 import { useTabPill } from "./tabMotion";
 import { toast } from "./toast";
 import type {
@@ -1055,6 +1055,14 @@ function attentionReason(kind: ObservationDisplayKind): "idle" | "waiting_for_in
   return null;
 }
 
+// Both standalone dots and filtered collections use the same transition policy.
+export function notifySessionAttentionTransition(previous: ObservationDisplayKind | null, current: ObservationDisplayKind, repoPath: string, slug: string) {
+  const reason = attentionReason(current);
+  if (previous === "busy" && reason !== null) {
+    ipc.notifySessionAttention(repoPath, slug, reason).catch(() => {});
+  }
+}
+
 // Whether this kind should suppress the dot in minimal mode (only show for notable states).
 function obsMinimalHide(kind: ObservationDisplayKind): boolean {
   return kind === "exited" || kind === "unknown";
@@ -1114,23 +1122,18 @@ export function StatusDot({
   const currentPolledObs = polledObs?.key === pollKey ? polledObs.observation : null;
   const obs = observation ?? currentPolledObs;
   const observedKind: ObservationDisplayKind = obs ? observationDisplayKind(obs) : "loading";
-  const acknowledgedTerminalExit = exitAcknowledged && (!obs?.state || obs.state.process.state === "exited");
-  const kind: ObservationDisplayKind = acknowledgedTerminalExit ? "exited" : superseded && (observedKind === "idle" || observedKind === "exited") ? "stale" : observedKind;
+  const kind = sessionDisplayKind(obs, superseded, exitCode, exitAcknowledged);
 
   // Attention notifications: fire on transitions into idle/waiting states.
   // Never notify for unsupported/unknown; artifact presence never triggers.
   useEffect(() => {
     const prev = prevKind.current?.key === pollKey ? prevKind.current.kind : null;
     prevKind.current = { key: pollKey, kind: observedKind };
-    if (!notifyTransitions || !slug || !repoPath || prev === null || prev === observedKind) return;
-    const wasBusy = prev === "busy";
-    const reason = attentionReason(observedKind);
-    if (wasBusy && reason !== null) {
-      ipc.notifySessionAttention(repoPath, slug, reason).catch(() => {});
-    }
+    if (!notifyTransitions || !slug || !repoPath) return;
+    notifySessionAttentionTransition(prev, observedKind, repoPath, slug);
   }, [observedKind, notifyTransitions, pollKey, repoPath, slug]);
 
-  if (!exitAcknowledged && exitCode != null && exitCode !== 0 && kind !== "busy" && kind !== "starting" && kind !== "waiting_for_input" && kind !== "waiting_for_approval") {
+  if (kind === "failed" && !exitAcknowledged && exitCode != null && exitCode !== 0) {
     return (
       <span
         className="statusdot statusdot-badge statusdot-failed"

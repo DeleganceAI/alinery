@@ -1282,6 +1282,29 @@ describe("global notification owner", () => {
   });
 });
 
+describe("collection filter shortcuts", () => {
+  it("keeps global search and view shortcuts available without opening a row from filter confirmation", async () => {
+    namingScenario.realSessions = true;
+    ipcMocks.listSessionItems.mockResolvedValue([{ ...globalSession, name: "Keyboard work" }]);
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
+    await screen.findByText("Keyboard work");
+    const status = screen.getByRole("combobox", { name: "Status" });
+    status.focus();
+    fireEvent.keyDown(status, { key: "Enter", metaKey: true });
+    await act(async () => {});
+    expect(screen.queryByText("session:global-design")).toBeNull();
+    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(status, { key: "k", metaKey: true });
+    const search = await screen.findByRole("combobox", { name: "Search actions, tasks, and sessions" });
+    fireEvent.keyDown(search, { key: "Escape" });
+    status.focus();
+    fireEvent.keyDown(status, { key: "2", metaKey: true });
+    expect(await screen.findByRole("button", { name: "open list task" })).toBeDefined();
+  });
+});
+
 describe("session work names", () => {
   it("keyboard activation of a real session Rename does not open the selected session", async () => {
     namingScenario.realSessions = true;
@@ -1309,9 +1332,9 @@ describe("session work names", () => {
     fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
     await screen.findByText("Original work");
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "Current child" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Search actions, tasks, and sessions" }), { target: { value: "Current child" } });
     await waitFor(() => expect(within(screen.getByRole("listbox")).getByText("Original work")).toBeDefined());
-    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search actions, tasks, and sessions" }), { key: "Escape" });
     const commit = deferred<{ name: string; source: string }>();
     ipcMocks.renameSession.mockReturnValue(commit.promise);
     fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
@@ -1321,7 +1344,7 @@ describe("session work names", () => {
     ipcMocks.listSessionItems.mockReturnValueOnce(oldRead.promise);
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await act(async () => {});
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "Current child" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Search actions, tasks, and sessions" }), { target: { value: "Current child" } });
     const committed = { ...original, name: "Committed work", name_source: "user" as const };
     const freshRead = deferred<SessionListItem[]>();
     ipcMocks.listSessionItems.mockReturnValue(freshRead.promise);
