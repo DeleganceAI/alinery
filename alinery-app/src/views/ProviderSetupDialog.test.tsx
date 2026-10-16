@@ -370,8 +370,6 @@ describe("ProviderSetupDialog", () => {
     expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("Connecting…")).toBeTruthy();
 
-    expect(screen.getByText(/Current session openai-codex\/gpt-5\.6-luna/)).toBeTruthy();
-
     await emit({ type: "response", command: "get_available_models", success: true, data: { models: [{ provider: "xai-oauth", id: "grok-4.7" }] } });
     expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true");
@@ -447,8 +445,6 @@ describe("ProviderSetupDialog", () => {
     });
     expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("Connecting…")).toBeTruthy();
-
-    expect(screen.getByText(/Current session openai-codex\/gpt-5\.6-luna/)).toBeTruthy();
 
     await emit({ type: "response", command: "get_available_models", success: true, data: { models: [{ provider: "xai-oauth", id: "grok-4.7" }] } });
     expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();

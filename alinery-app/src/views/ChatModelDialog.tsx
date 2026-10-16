@@ -330,7 +330,7 @@ export function ChatModelDialog({
             </>
           ) : (
             <>
-              <p className="dim">{current ? `Current session ${current}. Apply switches this chat only.` : "Choose a model for this session."}</p>
+              <p className="dim">{current ? `Current model: ${current}` : "Choose a model."}</p>
               <ul className="chat-model-list">
                 {catalogueStatus === "connecting" ? <li className="dim">Connecting…</li> : null}
                 {catalogueStatus === "ready" && filtered.length === 0 && !customRef ? (
@@ -381,7 +381,7 @@ export function ChatModelDialog({
 
               <details className="chat-model-roles">
                 <summary>Role defaults</summary>
-                <p className="dim">Applies to new OMP processes. This chat’s model is selected above.</p>
+                <p className="dim">Defaults for new agent sessions.</p>
                 <div className="chat-role-list">
                   {BUILTIN_MODEL_ROLES.map((role) => {
                     const assigned = modelRoles[role] ?? "";
