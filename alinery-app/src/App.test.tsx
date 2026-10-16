@@ -21,6 +21,7 @@ import type {
 } from "./types";
 import type * as CreateTaskModule from "./views/CreateTaskPage";
 import { executionReply } from "./views/executionTestFixture";
+import type * as ProviderSetupModule from "./views/ProviderSetupDialog";
 import type { SessionsList as SessionsListComponent } from "./views/SessionsList";
 import type { TaskDetail as TaskDetailComponent } from "./views/TaskDetail";
 
@@ -167,6 +168,7 @@ const appConfig: AppConfig = {
 };
 
 const actualCreation = vi.hoisted(() => ({ enabled: false }));
+const actualProviders = vi.hoisted(() => ({ enabled: false }));
 const namingScenario = vi.hoisted(() => ({ realSessions: false, realTaskDetail: false }));
 
 const { ipcMocks, ipcModule } = vi.hoisted(() => {
@@ -286,11 +288,20 @@ vi.mock("./useMcpStatus", () => ({
   }),
   mcpFooterLabel: () => "",
 }));
+const telemetryScenario = vi.hoisted(() => ({ ask: false }));
 vi.mock("./telemetry-consent", () => ({
-  shouldAskTelemetryConsent: () => false,
-  TELEMETRY_CONSENT_CHOICES: [],
+  shouldAskTelemetryConsent: () => telemetryScenario.ask,
+  TELEMETRY_CONSENT_CHOICES: [{ key: "opt-out", label: "Don't share" }],
   telemetryConsentWrite: () => "later",
 }));
+vi.mock("./views/ProviderSetupDialog", async (importOriginal) => {
+  const actual = await importOriginal<typeof ProviderSetupModule>();
+  return {
+    ...actual,
+    ProviderSetupDialog: (props: Parameters<typeof actual.ProviderSetupDialog>[0]) =>
+      actualProviders.enabled ? <actual.ProviderSetupDialog {...props} /> : <div data-testid={`provider-setup:${props.mode}`} />,
+  };
+});
 vi.mock("./WindowChrome", () => ({
   ResizeHandles: () => null,
   WindowControls: () => null,
@@ -582,7 +593,9 @@ vi.mock("./views/ReviewHandoffPage", () => ({
 }));
 
 beforeEach(() => {
+  window.localStorage.setItem("alinery.onboardingCompleted.v1", "1");
   actualCreation.enabled = false;
+  actualProviders.enabled = false;
   namingScenario.realSessions = false;
   namingScenario.realTaskDetail = false;
   Element.prototype.scrollIntoView = vi.fn();
@@ -616,6 +629,168 @@ it("opens Playbooks from the top tab after selecting a repository, without an in
   fireEvent.click(screen.getByTitle(task.repo_path));
   fireEvent.click(await screen.findByRole("button", { name: "Playbooks" }));
   await screen.findByRole("table", { name: "Playbook library" });
+});
+
+describe("onboarding gate", () => {
+  it.each([
+    { creation: "ready" as const, error: null },
+    { creation: "partial" as const, error: "Worktree could not be created" },
+  ])("opens a retained starter task and reports $creation provisioning accurately", async ({ creation, error }) => {
+    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    window.localStorage.setItem("alinery.onboardingStep.v1", "launch");
+    vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => ({
+      source: { reference, path: null },
+      source_text: `+++\nversion = 2\nkey = "${reference.key}"\ntitle = "${reference.key}"\ndefault_harness = "omp"\n[[step]]\nkey = "inspect"\ntitle = "Inspect"\noutputs = [{ path = "result.md" }]\nauto_advance_default = false\n+++\n# Inspect\nInspect the work.`,
+      modified_at_ms: null,
+      definition: {
+        version: 2,
+        key: reference.key,
+        title: reference.key,
+        description: "",
+        default_model: "",
+        default_harness: "omp",
+        preamble: "",
+        section_order: ["inspect"],
+        step: [
+          {
+            key: "inspect",
+            title: "Inspect",
+            short: "",
+            inputs: [],
+            outputs: [{ path: "result.md" }],
+            model: "",
+            harness: "",
+            prompt: "Inspect the work.",
+            is_coding_step: false,
+            auto_advance_default: false,
+          },
+        ],
+      },
+    }));
+    vi.mocked(ipc.readConfigForRepo).mockResolvedValue({ defaults: { ...appConfig.global?.defaults, harness: "omp" } } as Config);
+    vi.mocked(ipc.createTaskForRepo).mockResolvedValue({
+      task,
+      sessions: [],
+      executions: [],
+      creation,
+      start: creation === "ready" ? "queued" : "not_requested",
+      errors: error ? [{ stage: "git_worktree", code: "provisioning_failed", message: error }] : [],
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Run SuperDevelop starter task" }));
+    await waitFor(() => expect(screen.queryByTestId("onboarding-flow")).toBeNull());
+    const notifications = screen.getByRole("status", { name: "Notifications" });
+    if (error) expect(notifications.textContent).toContain(error);
+    else expect(notifications.textContent).toBe("");
+    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+  });
+
+  it("offers a configured install the guide once at Playbooks, then lands on the grid after Skip", async () => {
+    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    render(<App />);
+    await screen.findByTestId("onboarding-step-playbooks");
+    // With a repository the guide is a modal over the board, not a replacement for it.
+    expect(screen.getByRole("dialog", { name: "Alinery onboarding" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Skip Onboarding" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Alinery onboarding" })).toBeNull());
+    await screen.findByTestId("grid:view:default-kanban-plus");
+    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+
+    cleanup();
+    render(<App />);
+    await screen.findByTestId("grid:view:default-kanban-plus");
+    expect(screen.queryByTestId("onboarding-flow")).toBeNull();
+  });
+
+  it("keeps workspace shortcuts and focus inside the open guide", async () => {
+    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    render(<App />);
+    await screen.findByTestId("onboarding-step-playbooks");
+    const guide = screen.getByRole("dialog", { name: "Alinery onboarding" });
+    const skip = within(guide).getByRole("button", { name: "Skip Onboarding" });
+    vi.useFakeTimers();
+    try {
+      fireEvent.keyDown(skip, { key: "n", metaKey: true });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      expect(screen.queryByRole("button", { name: "open created task" })).toBeNull();
+      fireEvent.keyDown(skip, { key: "k", metaKey: true });
+      expect(screen.getAllByRole("dialog")).toHaveLength(1);
+      expect(guide.contains(document.activeElement)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("lets a nested provider dialog dismiss without completing the guide", async () => {
+    actualProviders.enabled = true;
+    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    window.localStorage.setItem("alinery.onboardingStep.v1", "models");
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Manage accounts…" }));
+    const provider = await screen.findByRole("dialog", { name: /providers/i });
+    const accounts = within(provider).getByRole("tab", { name: "Accounts" });
+    accounts.focus();
+    expect(fireEvent.keyDown(accounts, { key: "Escape" })).toBe(true);
+    fireEvent(provider, new Event("cancel", { bubbles: true, cancelable: true }));
+    const guide = screen.getByRole("dialog", { name: "Alinery onboarding" });
+    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBeNull();
+    fireEvent(guide, new Event("cancel", { bubbles: true, cancelable: true }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Alinery onboarding" })).toBeNull());
+    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+  });
+
+  it("resumes an interrupted first run at the saved step once a repository exists", async () => {
+    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    window.localStorage.setItem("alinery.onboardingStep.v1", "models");
+    render(<App />);
+    await screen.findByTestId("onboarding-step-models");
+  });
+
+  it("opens the wizard on first run and keeps it open through the first repository pick", async () => {
+    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "" });
+    render(<App />);
+    await screen.findByTestId("onboarding-step-workspace");
+    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBeNull();
+
+    fireEvent.click(screen.getByTitle(task.repo_path));
+    await screen.findByRole("button", { name: "Add another repository" });
+    expect(screen.getByTestId("onboarding-step-workspace")).toBeTruthy();
+    expect(screen.queryByTestId("onboarding-step-playbooks")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByTestId("onboarding-step-playbooks");
+    expect(screen.getByRole("dialog", { name: "Alinery onboarding" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Skip Onboarding" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Alinery onboarding" })).toBeNull());
+    await screen.findByTestId("grid:view:default-kanban-plus");
+    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+  });
+
+  it("asks about usage sharing only after onboarding finishes, and offers provider setup only after the answer", async () => {
+    telemetryScenario.ask = true;
+    try {
+      window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+      render(<App />);
+      await screen.findByTestId("onboarding-step-playbooks");
+      expect(screen.queryByRole("alertdialog", { name: "Share anonymous usage?" })).toBeNull();
+      expect(screen.queryByTestId("provider-setup:auto")).toBeNull();
+
+      fireEvent.click(screen.getByRole("button", { name: "Skip Onboarding" }));
+      await screen.findByTestId("grid:view:default-kanban-plus");
+      expect(screen.queryByRole("alertdialog", { name: "Share anonymous usage?" })).toBeNull();
+      const dialog = await screen.findByRole("alertdialog", { name: "Share anonymous usage?" }, { timeout: 3000 });
+      expect(screen.queryByTestId("provider-setup:auto")).toBeNull();
+
+      fireEvent.click(within(dialog).getByRole("button", { name: "Don't share" }));
+      await screen.findByTestId("provider-setup:auto");
+    } finally {
+      telemetryScenario.ask = false;
+    }
+  });
 });
 
 async function renderApp() {

@@ -1,6 +1,8 @@
+import "../onboarding.css";
 import { type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import * as ipc from "../ipc";
+import { CURATED_PLAYBOOK_ARCHETYPES, type StarterTaskPreset } from "../onboarding";
 import { PullRequestIndicator } from "../PullRequestIndicator";
 import {
   ArchiveTaskModal,
@@ -15,7 +17,7 @@ import {
   taskKey,
   useBoardTaskActivity,
 } from "../shared";
-import type { BoardNav, BoardTask, KanbanColumn, TaskActivityStatus, TaskExecutionReply } from "../types";
+import type { BoardNav, BoardTask, KanbanColumn, PlaybookRef, TaskActivityStatus, TaskExecutionReply } from "../types";
 import { readTaskExecutions } from "../useExecutionObservation";
 import { usePointerDrag } from "../usePointerDrag";
 import { useTaskPullRequests } from "../useTaskPullRequests";
@@ -798,6 +800,9 @@ type GridProps = {
   registerNav: (nav: BoardNav | null) => void;
   storageKey?: string;
   initialPreset?: PresetKey;
+  onCreate?: (initialPlaybook?: PlaybookRef, initialPreset?: StarterTaskPreset) => void;
+  onOpenPlaybooks?: () => void;
+  onReplayOnboarding?: () => void;
   /** Repository whose missing live status the shell's conflict strip already reports. */
   liveStatusExplainedFor?: string;
 };
@@ -816,6 +821,9 @@ function ScopedGrid({
   registerNav,
   storageKey,
   initialPreset = "kanban",
+  onCreate,
+  onOpenPlaybooks,
+  onReplayOnboarding,
   liveStatusExplainedFor,
 }: GridProps & { scopeKey: string }) {
   const settingsId = useId();
@@ -1823,7 +1831,52 @@ function ScopedGrid({
       )}
       <div className="task-grid-board-wrap">
         {!loaded && !err && <div className="task-grid-empty">Loading grid…</div>}
-        {loaded && !err && visibleFacts.length === 0 && <div className="task-grid-empty">No tasks match this grid configuration.</div>}
+        {loaded && !err && tasks.length === 0 && (
+          <section className="grid-starter-gate" data-testid="grid-starter-gate" aria-label="Playbook starter deck">
+            <div className="grid-starter-header">
+              <div>
+                <h3>Start your first task with a playbook</h3>
+                <p className="grid-starter-subtitle">Choose a playbook below to launch a structured agent workflow in its own worktree, or open the interactive playbook guide.</p>
+              </div>
+            </div>
+            <div className="grid-starter-cards">
+              {CURATED_PLAYBOOK_ARCHETYPES.slice(0, 4).map((archetype) => (
+                <article key={archetype.reference.key} className="grid-starter-card">
+                  <div className="grid-starter-card-top">
+                    <strong>{archetype.title}</strong>
+                    <span className="pill">{archetype.badge}</span>
+                  </div>
+                  <p className="grid-starter-card-tagline">{archetype.tagline}</p>
+                  <p className="grid-starter-card-summary">{archetype.patternSummary}</p>
+                  <div className="grid-starter-card-actions">
+                    <button type="button" className="btn small" onClick={() => onCreate?.(archetype.reference)}>
+                      New task with {archetype.title}
+                    </button>
+                    <button type="button" className="btn ghost small" onClick={() => onCreate?.(archetype.reference, archetype.starterPreset)}>
+                      Try starter preset
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+            <div className="grid-starter-footer">
+              <button type="button" className="btn" onClick={() => onCreate?.()}>
+                New task
+              </button>
+              {onOpenPlaybooks && (
+                <button type="button" className="btn ghost" onClick={onOpenPlaybooks}>
+                  Browse playbooks library
+                </button>
+              )}
+              {onReplayOnboarding && (
+                <button type="button" className="btn ghost" onClick={onReplayOnboarding}>
+                  How playbooks work
+                </button>
+              )}
+            </div>
+          </section>
+        )}
+        {loaded && !err && tasks.length > 0 && visibleFacts.length === 0 && <div className="task-grid-empty">No tasks match this grid configuration.</div>}
         <div className="task-grid-groups" data-position={config.position} data-placement={config.placement} data-column-flow={config.columnFlow} data-card-mode={config.mode}>
           {groups.map((group) => {
             const visibilityKey = `${config.group}:${group.key}`;

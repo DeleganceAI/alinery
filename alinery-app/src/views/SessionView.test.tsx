@@ -1967,7 +1967,7 @@ describe("session-scoped completion permission", () => {
     expect(responses()).toEqual([]);
     await act(async () => grant.resolve());
     await waitFor(() => expect(responses()).toEqual([{ type: "extension_ui_response", id: "completion-ask", confirmed: true }]));
-    expect(pane.queryByRole("button", { name: "Finish step" })).toBeNull();
+    await waitFor(() => expect(pane.queryByRole("button", { name: "Finish step" })).toBeNull());
     expect(screen.getByLabelText("Message or /command")).toBeDefined();
   });
 
@@ -1996,7 +1996,7 @@ describe("session-scoped completion permission", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue working in this session" }));
     await waitFor(() => expect(responses()).toEqual([{ type: "extension_ui_response", id: "completion-ask", confirmed: false }]));
     expect(allowExecutionCompletion).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: "Finish step" })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Finish step" })).toBeNull());
     expect(screen.getByLabelText("Message or /command")).toBeDefined();
   });
 
