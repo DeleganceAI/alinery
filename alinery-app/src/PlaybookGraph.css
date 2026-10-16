@@ -177,6 +177,64 @@
   text-align: center;
   overflow-wrap: anywhere;
   cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.playbook-definition-node[data-sim-status="running"] {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.playbook-definition-node[data-sim-status="waiting_for_approval"] {
+  border-color: var(--warning);
+  background: var(--warning-subtle);
+}
+
+.playbook-definition-node[data-sim-status="completed"] {
+  border-color: var(--success);
+  background: var(--success-subtle);
+}
+
+.playbook-node-sim-badge {
+  position: absolute;
+  top: calc(-9px * var(--ui-scale));
+  right: calc(-6px * var(--ui-scale));
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: calc(11px * var(--ui-scale));
+  font-weight: 500;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.playbook-node-sim-badge.running {
+  border-color: var(--accent);
+  background: var(--surface-raised);
+  color: var(--accent);
+}
+
+.playbook-node-sim-badge.gate {
+  border-color: var(--warning);
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.playbook-node-sim-badge.completed {
+  border-color: var(--success);
+  background: var(--success-subtle);
+  color: var(--success);
 }
 
 .playbook-definition-node:hover {

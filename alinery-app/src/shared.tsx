@@ -1,20 +1,4 @@
-import {
-  ArrowRight,
-  ArrowUpCircle,
-  Check,
-  ChevronDown,
-  CircleAlert,
-  CircleCheck,
-  FolderOpen,
-  FolderPlus,
-  Info,
-  Package,
-  Plus,
-  RotateCw,
-  Search,
-  TriangleAlert,
-  X,
-} from "lucide-react";
+import { ArrowUpCircle, Check, ChevronDown, CircleAlert, CircleCheck, FolderPlus, Info, Package, Plus, RotateCw, Search, TriangleAlert, X } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { type OrbState, ThinkingOrb } from "thinking-orbs";
@@ -1389,72 +1373,13 @@ export function TaskActivityIndicators({ activity }: { activity: TaskActivitySum
   return <span className="task-activity-indicators">{indicator}</span>;
 }
 
-export function RepoPicker({
-  appConfig,
-  error,
-  onSelect,
-  onRemove,
-  onAdd,
-}: {
-  appConfig: AppConfig;
-  error: string;
-  onSelect: (path: string) => void;
-  onRemove: (path: string) => void;
-  onAdd: () => void;
-}) {
-  return (
-    <div className="picker">
-      <div className="picker-mark" aria-hidden="true">
-        <FolderOpen size={22} strokeWidth={1.7} />
-      </div>
-      <p className="picker-eyebrow">Welcome to Alinery</p>
-      <h2>Bring a repository into focus</h2>
-      <p className="picker-lede">
-        Choose a local folder to organize tasks, sessions, and project context in one place. If it is not a Git repository, Alinery asks before initializing one.
-      </p>
-      {appConfig.known_repos.length > 0 && (
-        <div className="picker-repos">
-          <p className="picker-label">Your repositories</p>
-          <div className="picker-repo-list">
-            {appConfig.known_repos.map((repo) => (
-              <div key={repo} className="repobtn-row">
-                <button type="button" className="repobtn" title={repo} onClick={() => onSelect(repo)}>
-                  <span className="repobtn-copy">
-                    <strong>{repoName(repo)}</strong>
-                    <span>{repo}</span>
-                  </span>
-                  <ArrowRight size={16} strokeWidth={1.6} aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  className="repobtn-x"
-                  title={`Remove ${repoName(repo)} from Alinery (repo files are untouched)`}
-                  aria-label={`Remove ${repoName(repo)}`}
-                  onClick={() => onRemove(repo)}
-                >
-                  <X size={16} strokeWidth={1.5} aria-hidden="true" />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      <button type="button" className="btn picker-action" onClick={onAdd}>
-        <FolderPlus size={16} strokeWidth={1.6} aria-hidden="true" />
-        Add a repository
-      </button>
-      <p className="picker-footnote">Your files stay on this Mac. A folder that is not a Git repository is initialized only after you confirm.</p>
-      {error && (
-        <InlineStatus tone="error" detail={error}>
-          Couldn't open the repository. Pick another, or add one below.
-        </InlineStatus>
-      )}
-    </div>
-  );
-}
-
 const rememberedModelKey = (harness: string, repoPath?: string) => (repoPath ? `alinery.lastmodel.${repoPath}:${harness}` : `alinery.lastmodel.${harness}`);
 
+/**
+ * Model selector: a select-style trigger showing the chosen `provider/id`, opening either the
+ * host's picker (`onOpenPicker`, the account-aware OMP dialog) or this component's own
+ * per-harness list. The empty value means the harness default; the clear control restores it.
+ */
 export function ModelInput({
   harness,
   value,

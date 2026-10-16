@@ -135,6 +135,7 @@ export function CreateTaskPage({
   onOpened = () => {},
   initialDraft,
   initialPlaybook,
+  initialPreset,
   activeRepo,
   knownRepos,
 }: {
@@ -144,10 +145,11 @@ export function CreateTaskPage({
   onOpened?: () => void;
   initialDraft?: BoardTask;
   initialPlaybook?: PlaybookRef;
+  initialPreset?: { name: string; description: string; evidence?: string };
   activeRepo: string;
   knownRepos: string[];
 }) {
-  const initialTaskSlug = initialDraft?.requested_slug || slugifyTaskName(initialDraft?.name ?? "");
+  const initialTaskSlug = initialDraft?.requested_slug || slugifyTaskName(initialDraft?.name ?? initialPreset?.name ?? "");
   const [repoPath, setRepoPath] = useState(initialDraft?.repo_path ?? activeRepo);
   const [baseRef, setBaseRef] = useState<string | null>(initialDraft?.draft_base_ref ?? null);
   const baseRefRef = useRef(baseRef);
@@ -158,11 +160,11 @@ export function CreateTaskPage({
   const branchRequest = useRef(0);
   const branchSnapshotRequest = useRef(-1);
   const [picking, setPicking] = useState<null | "task" | string>(null);
-  const [name, setName] = useState(initialDraft?.name ?? "");
+  const [name, setName] = useState(initialDraft?.name ?? initialPreset?.name ?? "");
   const [taskSlug, setTaskSlug] = useState(initialTaskSlug);
   const [slugEdited, setSlugEdited] = useState(!!initialDraft?.requested_slug && initialDraft.requested_slug !== slugifyTaskName(initialDraft.name));
-  const [desc, setDesc] = useState("");
-  const [evidence, setEvidence] = useState("");
+  const [desc, setDesc] = useState(initialPreset?.description ?? "");
+  const [evidence, setEvidence] = useState(initialPreset?.evidence ?? "");
   const [attachments, setAttachments] = useState<string[]>([]);
   const [images, setImages] = useState<PastedImage[]>([]);
   const imagesRef = useRef<PastedImage[]>([]);

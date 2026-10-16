@@ -4,12 +4,14 @@ Desktop UI for the Alinery task-centric AI coding playbook (kanban, persistent P
 
 ## Using the app (quick start)
 
-1. **Pick a repo** on first launch (or via the repo switcher). Alinery stores everything under `<repo>/.alinery/`.
+1. **Pick a repo** on first launch (or via the repo switcher). The centered setup screen stays on repository selection after connecting: add another repository or choose **Continue**. Alinery stores everything under `<repo>/.alinery/`.
 2. **Create a task** (`⌘N` or the “+” button) — gives it a slug, optional description, and an automatic git worktree on its own branch.
 3. **Open the task** → Kanban shows its current playbok phase. Click any phase to spawn a session.
 4. **Session view** runs the chosen harness (claude / codex / …) in a real PTY via xterm.js. The session keeps running in `alineryd` even if you quit the app; reopening re-attaches.
 5. **Artifacts** are written after each phase. Use the artifact list or MCP tools to read them.
 6. **Settings** (gear) manages browser-based GitHub/Linear connections plus repository config, harnesses, and notifications.
+
+The first-run guide covers repository selection, playbook previews, model setup, and a first task. The playbook demonstration uses the actual bundled definitions, creates no tasks or agent sessions, and pauses at human checkpoints; reduced-motion mode advances only when requested. A failed preview offers **Retry preview** instead of invented steps. **Skip Onboarding** opens the workspace once a repository is connected. An empty board offers starter tasks and a way to replay the guide. If starter provisioning needs attention, its error is shown while the retained task opens for inspection.
 
 ### Blocking sub-tasks
 
