@@ -173,7 +173,7 @@ export function OnboardingFlow({
       .then((status) => {
         if (cancelled) return;
         setAgentStatus(status.installed ? "ready" : "attention");
-        setAgentDetail(status.installed ? `OMP ${status.installed} is installed.` : `OMP could not be started at ${status.binary_path || "the configured location"}.`);
+        setAgentDetail(status.installed ? `Installed: ${status.installed}` : `OMP could not be started at ${status.binary_path || "the configured location"}.`);
       })
       .catch((error) => {
         if (cancelled) return;

@@ -381,6 +381,7 @@ AI components are not chat bubbles by default. Choose the structure that best ex
 - Do not hide essential actions exclusively behind hover.
 - Hover-only actions must also appear on keyboard focus.
 - Menus and dialogs support Escape, correct focus trapping, and focus restoration.
+- The onboarding overlay uses the shared native dialog. Background workspace shortcuts stay inactive, and Escape dismisses only the topmost nested dialog.
 - Destructive confirmations default focus to the safe choice.
 - Lists and tables preserve selection during refresh when the selected object still exists.
 - Streaming content should not steal scroll position or cause avoidable layout shift.
@@ -472,6 +473,7 @@ Rules:
 - Prefer explaining why an action is unavailable.
 - Do not use disabled styling to hide permission, lifecycle, or dependency problems.
 - Disabled controls remain legible; reduced contrast must still meet the intended accessibility treatment.
+- Installation checks report installation, not an agent connection, and must not start an unattached agent session.
 
 ### Agent lifecycle
 
@@ -563,6 +565,7 @@ Rules:
 ### Compatibility and safety
 
 - Preserve all current repository, task, session, artifact, worktree, and daemon lifecycle behavior.
+- Changing the onboarding model preserves all unrelated repository overrides, including credentials, backup settings, and other session defaults.
 - Preserve safe-default confirmation behavior.
 - Preserve session continuity across app quit and relaunch.
 - Never make destructive operations easier to trigger for visual simplicity.
