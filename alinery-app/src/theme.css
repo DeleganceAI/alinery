@@ -1379,7 +1379,7 @@ main {
   font: inherit;
 }
 .active-session-action:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -1625,7 +1625,7 @@ main {
   text-align: left;
 }
 .notification-row:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 .notification-condition {
@@ -3951,7 +3951,7 @@ dialog.modal::backdrop {
   background: var(--surface-subtle);
 }
 .name-edit-button:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 @media (hover: none) {
@@ -4004,7 +4004,7 @@ dialog.modal::backdrop {
   background: var(--surface-subtle);
 }
 .task-session-table tbody tr.session-row-openable:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 .task-session-table tbody tr.empty-row:hover {
@@ -4104,7 +4104,7 @@ dialog.modal::backdrop {
 .playbooks-sort-header:focus-visible,
 .session-sort-header:focus-visible,
 .session-sort-control:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 .session-sort-controls {
@@ -4129,7 +4129,7 @@ dialog.modal::backdrop {
   white-space: nowrap;
 }
 .session-time-label {
-  color: var(--text-subtle);
+  color: var(--text-faint);
   font-size: calc(11px * var(--ui-scale));
 }
 .session-time-value {
@@ -4405,7 +4405,7 @@ dialog.modal::backdrop {
   cursor: pointer;
 }
 .session-execution-bar > details > summary:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 .session-view-hatch {
@@ -5982,7 +5982,7 @@ dialog.modal::backdrop {
 .chat-role-table td {
   text-align: left;
   padding: 4px 6px;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
 .chat-role-table select.field-input {
@@ -6448,7 +6448,7 @@ dialog.modal::backdrop {
   background: var(--accent-subtle);
 }
 .artifact-resizer:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 .artifactpane {
@@ -6499,7 +6499,7 @@ dialog.modal::backdrop {
   background: var(--accent-subtle);
 }
 .artifacttab:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 .playbook-side-scroll {
@@ -6571,7 +6571,7 @@ dialog.modal::backdrop {
   cursor: pointer;
 }
 .task-history-entry > details > summary:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 .task-history-entry > :last-child {
@@ -6854,7 +6854,7 @@ dialog.modal::backdrop {
   cursor: default;
 }
 .playbooks-page :focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 .playbooks-detail {
@@ -7452,7 +7452,7 @@ dialog.modal::backdrop {
   font-family: inherit;
 }
 .comment-count-badge:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 .comment-popover {
