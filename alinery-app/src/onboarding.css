@@ -5,6 +5,8 @@
   display: flex;
   align-items: flex-start;
   justify-content: center;
+  height: 100%;
+  min-height: 0;
   padding: 24px 20px 36px;
   user-select: none;
   -webkit-user-select: none;
@@ -32,9 +34,6 @@
 .onboarding-overlay .onboarding-shell {
   margin: 0;
   max-width: 1180px;
-  /* One height for every step: the dialog never resizes while you move through it. */
-  height: min(calc(100vh - 160px), 760px);
-  max-height: none;
 }
 
 .onboarding-shell {
@@ -44,7 +43,10 @@
   flex-direction: column;
   width: 100%;
   max-width: 1080px;
-  min-height: 560px;
+  /* Keep navigation visible at every step; only the body scrolls. */
+  height: min(760px, 100%);
+  min-height: 0;
+  max-height: 100%;
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);

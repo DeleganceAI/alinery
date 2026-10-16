@@ -11,7 +11,7 @@ Desktop UI for the Alinery task-centric AI coding playbook (kanban, persistent P
 5. **Artifacts** are written after each phase. Use the artifact list or MCP tools to read them.
 6. **Settings** (gear) manages browser-based GitHub/Linear connections plus repository config, harnesses, and notifications.
 
-The first-run guide covers repository selection, playbook previews, model setup, and a first task. The playbook demonstration uses the actual bundled definitions, creates no tasks or agent sessions, and pauses at human checkpoints; reduced-motion mode advances only when requested. A failed preview offers **Retry preview** instead of invented steps. **Skip Onboarding** opens the workspace once a repository is connected. An empty board offers starter tasks and a way to replay the guide. If starter provisioning needs attention, its error is shown while the retained task opens for inspection.
+The first-run guide covers repository selection, playbook previews, model setup, and a first task. The playbook demonstration uses the actual bundled definitions, creates no tasks or agent sessions, and pauses at human checkpoints; reduced-motion mode advances only when requested. A failed preview offers **Retry preview** instead of invented steps. **Skip Onboarding** opens the workspace once a repository is connected. An empty board offers starter tasks and a way to replay the guide. If starter provisioning needs attention, its error is shown while the retained task opens for inspection. Navigation stays visible in short windows while each step's content scrolls.
 
 ### Blocking sub-tasks
 
