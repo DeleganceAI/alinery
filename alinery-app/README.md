@@ -4,6 +4,10 @@ Desktop UI for the Alinery task-centric AI coding playbook (kanban, persistent P
 
 ## Using the app (quick start)
 
+The default grid view is **Canvas** (formerly Kanban+); classic **Kanban** remains separate. Legacy default labels migrate without changing saved IDs, layouts, or custom names. A name collision preserves both saved views.
+
+Window controls follow close, minimize, fullscreen order. Keyboard focus uses the accent ring in both themes.
+
 1. **Pick a repo** on first launch (or via the repo switcher). Alinery stores everything under `<repo>/.alinery/`.
 2. **Create a task** (`⌘N` or the “+” button) — gives it a slug, optional description, and an automatic git worktree on its own branch.
 3. **Open the task** → Kanban shows its current playbok phase. Click any phase to spawn a session.
