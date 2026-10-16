@@ -214,6 +214,65 @@ fn definition() -> String {
 }
 
 #[test]
+fn manual_completion_reports_ready_without_publishing_or_releasing_join() {
+    let fixture = Fixture::new();
+    let created = fixture.create(false, false);
+    let first = created.executions.iter().find(|record| record.candidate.step_key == "first").unwrap();
+    fixture.start(first);
+    fixture.wait_state("manual owner is running", |state| state.executions[&first.id].lifecycle == ExecutionLifecycle::Running);
+    wait(|| fixture.root.join(format!("token-{}", first.owner_session_id)).exists());
+    fixture.outputs(first);
+    let before = fixture.persisted();
+
+    let outcome = fixture.event(&first.owner_session_id);
+    assert_eq!(
+        outcome["completion"]["status"], "ready",
+        "valid manual work must become reviewable without a finish approval"
+    );
+    let revision = outcome["completion"]["ready_revision"].as_u64().expect("ready identifies the validated work revision");
+    let ready = fixture.persisted();
+    assert_eq!(ready.executions[&first.id].lifecycle, ExecutionLifecycle::Running);
+    assert!(ready.executions[&first.id].receipt_id.is_none());
+    assert!(!ready.executions[&first.id].shutdown_confirmed);
+    assert_eq!(ready.occurrences, before.occurrences, "review drafts must not become accepted publications");
+    assert!(!ready.executions.values().any(|record| record.candidate.step_key == "join"));
+    let observed = serde_json::to_value(fixture.state()).unwrap();
+    assert_eq!(observed["state"]["executions"][&first.id]["ready_revision"], revision);
+}
+
+#[test]
+fn manual_one_step_completion_accepts_without_finish_permission_and_waits_for_exit() {
+    let fixture = Fixture::new();
+    let source = "+++\nversion=2\nkey='fixture'\ntitle='Fixture'\ndescription=''\ndefault_model=''\ndefault_harness='omp'\n[[step]]\nkey='only'\ntitle='Only'\nshort=''\ninputs=[]\noutputs=[{path='result.md'}]\nmodel=''\nharness=''\nis_coding_step=false\nauto_advance_default=false\n+++\n<!-- alinery:step only -->\nWrite your assigned output.\n";
+    let created = fixture.create_with(source, 1, &[], false);
+    let only = created.executions.iter().find(|record| record.candidate.step_key == "only").unwrap();
+    fixture.start(only);
+    fixture.wait_state("terminal owner is running", |state| state.executions[&only.id].lifecycle == ExecutionLifecycle::Running);
+    wait(|| fixture.root.join(format!("token-{}", only.owner_session_id)).exists());
+    fixture.outputs(only);
+
+    let outcome = fixture.event(&only.owner_session_id);
+    assert_eq!(
+        outcome["completion"]["status"], "accepted",
+        "a terminal step needs no continuation gesture or finish permission"
+    );
+    let finishing = fixture.persisted();
+    assert_eq!(finishing.executions[&only.id].lifecycle, ExecutionLifecycle::Finishing);
+    assert!(finishing.executions[&only.id].receipt_id.is_some());
+    assert!(!finishing.executions[&only.id].shutdown_confirmed);
+    assert!(finishing
+        .occurrences
+        .values()
+        .filter(|occurrence| occurrence.producer_execution_id.as_deref() == Some(only.id.as_str()))
+        .all(|occurrence| !alinery_core::execution::occurrence_deliverable(&finishing, occurrence)));
+    fixture.release(&only.owner_session_id);
+    fixture.wait_state("terminal handoff completes only after exit", |state| {
+        state.executions[&only.id].lifecycle == ExecutionLifecycle::Completed
+    });
+    assert!(fixture.persisted().executions[&only.id].shutdown_confirmed);
+}
+
+#[test]
 fn auxiliary_sessions_inherit_current_settings_without_overriding_explicit_models_or_terminal() {
     let fixture = Fixture::new();
     fs::write(fixture.root.join("app.toml"), "[global.defaults]\nharness='omp'\nmodel='provider/global'\n").unwrap();

@@ -217,6 +217,30 @@ describe("provider imports", () => {
   });
 });
 
+describe("continuation choices", () => {
+  it("uses graph destinations rather than step order and submits an explicit manual choice", async () => {
+    const source = structuredClone(sources[0]);
+    const build = { ...source.definition.step[0], auto_advance_default: true };
+    const review = { ...build, key: "review", title: "Review", inputs: [{ path: "result.md", mode: "single" as const }], outputs: [{ path: "review.md" }] };
+    source.definition.step = [review, build];
+    source.definition.section_order = ["review", "build"];
+    vi.mocked(ipc.readPlaybook).mockResolvedValue(source);
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+
+    await screen.findByRole("region", { name: "SuperDevelop graph" });
+    const choices = within(screen.getByRole("group", { name: /Build/ }));
+    expect(choices.getByRole("button", { name: "Continue automatically" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(choices.getByRole("button", { name: "Wait for me" }));
+    expect(choices.getByRole("button", { name: "Wait for me" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByRole("group", { name: /Review/ })).toBeNull();
+    expect(screen.getByText("Playbook complete").closest("button")).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Manual build" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await screen.findByRole("button", { name: "Open task" });
+    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ auto_advance_steps: ["review"] }) }));
+  });
+});
+
 describe("GitHub imports", () => {
   it("preserves edited fields when an import fails", async () => {
     vi.mocked(ipc.importGithubForRepo).mockRejectedValue(new Error("request failed"));
