@@ -1443,7 +1443,6 @@ export function RepoPicker({
         <FolderPlus size={16} strokeWidth={1.6} aria-hidden="true" />
         Add a repository
       </button>
-      <p className="picker-footnote">Your files stay on this Mac. A folder that is not a Git repository is initialized only after you confirm.</p>
       {error && (
         <InlineStatus tone="error" detail={error}>
           Couldn't open the repository. Pick another, or add one below.

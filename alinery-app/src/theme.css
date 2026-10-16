@@ -8121,12 +8121,6 @@ dialog.modal::backdrop {
   margin-top: 24px;
   padding-inline: 16px;
 }
-.picker-footnote {
-  margin: 14px 0 0;
-  color: var(--text-faint);
-  font-size: calc(12px * var(--ui-scale));
-  line-height: 1.45;
-}
 .picker .inline-status {
   margin-top: 20px;
 }
