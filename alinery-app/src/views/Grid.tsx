@@ -798,6 +798,8 @@ type GridProps = {
   registerNav: (nav: BoardNav | null) => void;
   storageKey?: string;
   initialPreset?: PresetKey;
+  /** Repository whose missing live status the shell's conflict strip already reports. */
+  liveStatusExplainedFor?: string;
 };
 
 export function Grid(props: GridProps) {
@@ -805,7 +807,17 @@ export function Grid(props: GridProps) {
   return <ScopedGrid key={scopeKey} {...props} scopeKey={scopeKey} />;
 }
 
-function ScopedGrid({ active = true, allRepos, scopeKey, onOpen, onDuplicate = () => {}, registerNav, storageKey, initialPreset = "kanban" }: GridProps & { scopeKey: string }) {
+function ScopedGrid({
+  active = true,
+  allRepos,
+  scopeKey,
+  onOpen,
+  onDuplicate = () => {},
+  registerNav,
+  storageKey,
+  initialPreset = "kanban",
+  liveStatusExplainedFor,
+}: GridProps & { scopeKey: string }) {
   const settingsId = useId();
   const initialWorkspace = useMemo(() => loadGridWorkspace(storageKey, initialPreset), [storageKey, initialPreset]);
   const cachedBoard = boardSnapshots.get(scopeKey);
@@ -958,7 +970,7 @@ function ScopedGrid({ active = true, allRepos, scopeKey, onOpen, onDuplicate = (
   }, [tasks, showArchived]);
   const unavailableExecutions = executionRefs.flatMap((ref) => {
     const execution = executions[ref.key];
-    return execution && execution.live?.status !== "available" ? [{ ref, live: execution.live }] : [];
+    return execution && execution.live?.status !== "available" && ref.repoPath !== liveStatusExplainedFor ? [{ ref, live: execution.live }] : [];
   });
   const availabilityKey = JSON.stringify(unavailableExecutions.map(({ ref, live }) => [ref.key, live?.status]));
   useEffect(() => {

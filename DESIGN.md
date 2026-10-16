@@ -357,6 +357,8 @@ Shared Alinery components should own the final class names, tokens, semantics, a
 - Command palette, toast, tooltip, confirmation, and destructive dialogs.
 - Loading, empty, error, unavailable, and recovery states.
 
+Provider and model selection uses a content-sized Accounts/Models segmented control beside a search field. Filter providers by name or identifier and models by provider/model identifier. Command-F focuses search; Escape clears a nonempty query before closing. Keep the header, search, and footer fixed while only the list scrolls. The dialog grows to the available window size, capped at 960 × 720px.
+
 ### AI-native pattern mapping
 
 Use AI Elements as the pattern reference, adapted to Alinery's terminology and layout:
@@ -460,6 +462,7 @@ Rules:
 - Preserve technical detail for inspection or copying.
 - Give the next safe recovery action.
 - Distinguish a product error, missing dependency, unavailable repository, permission problem, and agent failure.
+- A repository ownership conflict opens the take-over confirmation once. Dismissing it leaves a thin, neutral recovery strip below the header; clicking the strip reopens the confirmation. Keep owner identities and lock evidence in collapsed, copyable Details. Polling must not repeatedly reopen a dismissed confirmation, and live owners still require explicit consent before stopping.
 
 ### Success
 

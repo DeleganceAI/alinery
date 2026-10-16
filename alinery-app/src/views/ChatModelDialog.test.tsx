@@ -68,11 +68,86 @@ describe("ChatModelDialog", () => {
       />,
     );
     expect(html).toContain("Anthropic");
-    expect(html).toContain("signed in");
+    expect(html).toContain("Signed in");
     expect(html).toContain("Baseten");
     expect(html).toContain("openrouter");
     expect(html).toContain("Terminal /login");
-    expect(html).toContain("ready via env");
+    expect(html).toContain("Ready via env");
+  });
+
+  it("filters Accounts by name or provider id, case-insensitively, and Esc clears before closing", () => {
+    render(
+      <ChatModelDialog
+        {...base}
+        tab="accounts"
+        loginProviders={[
+          { id: "anthropic", name: "Anthropic", available: true, authenticated: false },
+          { id: "openai-codex", name: "ChatGPT", available: true, authenticated: true },
+        ]}
+        models={[{ provider: "openrouter", id: "auto" }]}
+      />,
+    );
+    const search = screen.getByRole("textbox", { name: "Search providers" }) as HTMLInputElement;
+    expect(document.activeElement).toBe(search);
+
+    fireEvent.change(search, { target: { value: "ANTH" } });
+    expect(screen.getByRole("button", { name: /Anthropic/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /ChatGPT/ })).toBeNull();
+
+    fireEvent.change(search, { target: { value: "codex" } });
+    expect(screen.getByRole("button", { name: /ChatGPT/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Anthropic/ })).toBeNull();
+
+    // Advanced rows are searchable while collapsed, and the footer toggle steps aside meanwhile.
+    fireEvent.change(search, { target: { value: "router" } });
+    expect(screen.getByRole("button", { name: /openrouter/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Advanced" })).toBeNull();
+
+    fireEvent.change(search, { target: { value: "zzz" } });
+    expect(screen.getByText("No providers match “zzz”")).toBeTruthy();
+
+    // Escape clears the filter even after focus leaves the search field.
+    const close = screen.getByTitle("Cancel");
+    close.focus();
+    expect(fireEvent.keyDown(close, { key: "Escape" })).toBe(false);
+    expect(search.value).toBe("");
+    expect(screen.getByRole("button", { name: /Anthropic/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /ChatGPT/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Advanced" })).toBeTruthy();
+    // Empty: Esc is left alone, so the dialog's cancel closes it as before.
+    expect(fireEvent.keyDown(search, { key: "Escape" })).toBe(true);
+  });
+
+  it("filters Models with the same search field and empty line", () => {
+    render(
+      <ChatModelDialog
+        {...base}
+        models={[
+          { provider: "xai", id: "grok-4.6" },
+          { provider: "anthropic", id: "claude-opus" },
+        ]}
+      />,
+    );
+    const search = screen.getByRole("textbox", { name: "Search models" });
+    fireEvent.change(search, { target: { value: "OPUS" } });
+    expect(screen.getByText("anthropic/claude-opus")).toBeTruthy();
+    expect(screen.queryByText("xai/grok-4.6")).toBeNull();
+    fireEvent.change(search, { target: { value: "nothing" } });
+    expect(screen.getByText("No models match “nothing”")).toBeTruthy();
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(screen.getByText("xai/grok-4.6")).toBeTruthy();
+  });
+
+  it("switches tabs with arrow keys and focuses the search with ⌘F", () => {
+    const onTabChange = vi.fn();
+    render(<ChatModelDialog {...base} tab="accounts" onTabChange={onTabChange} />);
+    const accounts = screen.getByRole("tab", { name: "Accounts" });
+    accounts.focus();
+    fireEvent.keyDown(accounts, { key: "ArrowRight" });
+    expect(onTabChange).toHaveBeenCalledWith("models");
+    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Models" }));
+    fireEvent.keyDown(window, { key: "f", metaKey: true });
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Search providers" }));
   });
 
   it("shows Connecting… instead of ready-empty copy while the catalogue is connecting", () => {
@@ -125,7 +200,7 @@ describe("ChatModelDialog", () => {
     );
     expect(accounts.indexOf("Alinery")).toBeGreaterThan(-1);
     expect(accounts.indexOf("Alinery")).toBeLessThan(accounts.indexOf("Anthropic"));
-    expect(accounts).toContain("ready");
+    expect(accounts).toContain("Ready");
     expect(accounts).not.toContain("Advanced");
 
     const models = renderToStaticMarkup(<ChatModelDialog {...base} hosted={hosted} />);

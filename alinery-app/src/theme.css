@@ -1088,7 +1088,7 @@ main {
 :root[data-theme="light"] .list-empty .empty-state-art.on {
   opacity: 1;
 }
-/* shell-level blocking banner for a repo owned by an incompatible daemon */
+/* transient repository operation error (App `repoErr`) */
 .daemon-conflict {
   display: flex;
   align-items: flex-start;
@@ -1102,18 +1102,6 @@ main {
   background: var(--danger-subtle);
   font-size: calc(13px * var(--ui-scale));
 }
-.daemon-conflict > div {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.daemon-owner-evidence {
-  overflow-wrap: anywhere;
-  max-height: 25vh;
-  overflow: auto;
-}
-.confirm-body .daemon-owner-evidence {
-  max-height: 40vh;
-}
 .daemon-host-warning {
   flex: none;
   padding: 8px 12px;
@@ -1122,14 +1110,6 @@ main {
   background: var(--warning-subtle);
   font-size: calc(13px * var(--ui-scale));
   line-height: 1.35;
-}
-.daemon-conflict .btn {
-  flex: none;
-}
-.daemon-conflict-icon {
-  flex: none;
-  align-self: flex-start;
-  margin-top: 2px;
 }
 .daemon-conflict-dismiss {
   flex: none;
@@ -1148,6 +1128,100 @@ main {
 .daemon-conflict-dismiss:hover {
   color: var(--text-strong);
   background: var(--danger-subtle);
+}
+/* Repository ownership strip (DaemonConflictBanner.tsx): one muted line under the top bar.
+   The takeover dialog carries the decision; this line only keeps the state visible. */
+.repo-strip {
+  flex: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.repo-strip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  max-height: 32px;
+  padding: 0 12px;
+}
+.repo-strip-reopen {
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease;
+}
+.repo-strip-reopen:hover {
+  background: var(--surface-subtle);
+}
+.repo-strip-reopen:focus-visible {
+  outline-offset: -2px;
+}
+.repo-strip-icon {
+  flex: none;
+  color: var(--warning);
+}
+.repo-strip.error .repo-strip-icon {
+  color: var(--danger);
+}
+.repo-strip-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-strip-row .btn {
+  flex: none;
+  height: 22px;
+}
+.repo-strip-toggle svg {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.repo-strip-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.repo-strip-details {
+  padding: 0 12px 10px 34px;
+}
+/* Exact technical evidence (lane, PID, hashes, lock paths): selectable and copyable. */
+.repo-evidence {
+  margin: 0;
+  max-height: 30vh;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.repo-evidence-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.takeover-details summary {
+  width: fit-content;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.takeover-details[open] summary {
+  margin-bottom: 8px;
 }
 .artifact-review-pending {
   display: flex;
@@ -5913,25 +5987,43 @@ dialog.modal::backdrop {
 .chat-meta p {
   margin: 0;
 }
+/* The one segmented control (Session view Chat/Terminal, Providers Accounts/Models): sized to its
+   segments, never a full-width track. Inner radius = track radius - border - padding. */
 .chat-hatch {
-  display: flex;
-  align-items: center;
+  display: inline-flex;
+  flex: none;
+  align-items: stretch;
   gap: 2px;
+  height: var(--control-h);
+  box-sizing: border-box;
   padding: 2px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-subtle);
 }
 .chat-hatch button {
-  border: 0;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--text-muted);
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: calc(13px * var(--ui-scale));
+  font-weight: 500;
+  padding: 0 12px;
+  border-radius: calc(var(--radius-sm) - 3px);
+  cursor: pointer;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease;
+}
+.chat-hatch button:hover {
+  color: var(--text);
 }
 .chat-hatch button.active {
   background: var(--surface-raised);
-  color: var(--text-strong);
+  color: var(--text);
+  border-color: var(--border);
+}
+.chat-hatch button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .chat-model-list {
   list-style: none;
@@ -5959,15 +6051,77 @@ dialog.modal::backdrop {
 .chat-model-star[aria-pressed="true"] {
   color: var(--accent, currentColor);
 }
-.chat-providers-tabs {
-  margin-bottom: 10px;
-}
 .chat-providers-advanced {
   margin-top: 12px;
+}
+/* Providers / Models dialog: a fixed frame so filtering never resizes it. The tabs, search and
+   footer stay put; only the panel scrolls, so the lists inside it are not capped. */
+.modal.chat-model-dialog {
+  width: min(960px, calc(100vw - 40px));
+  height: min(720px, calc(100vh - 60px));
+  max-width: none;
+  max-height: none;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  align-items: flex-start;
+}
+.chat-model-dialog .mh,
+.chat-model-dialog .mfoot {
+  flex: none;
+}
+.chat-model-dialog .mb {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.chat-model-dialog .chat-model-list {
+  max-height: none;
+  overflow: visible;
+}
+.chat-providers-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+}
+.chat-providers-search {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+}
+.chat-providers-search svg {
+  position: absolute;
+  left: 10px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.chat-providers-search .field-input {
+  width: 100%;
+  height: var(--control-h);
+  box-sizing: border-box;
+  padding-left: 32px;
+}
+.chat-providers-panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* Room for row focus rings: overflow-y:auto also clips horizontally. */
+  margin: 0 -2px;
+  padding: 0 2px;
+}
+.chat-provider-status {
+  flex: none;
+  font-size: calc(12px * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.chat-model-item:enabled .chat-provider-status {
+  color: var(--text);
+  font-weight: 500;
 }
 .chat-model-roles {
   margin-top: 14px;
