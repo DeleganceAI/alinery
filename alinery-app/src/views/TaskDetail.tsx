@@ -1,4 +1,4 @@
-import { ArrowLeft, List, Network, Pencil } from "lucide-react";
+import { ArrowLeft, List, Network, Pencil, Square } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -14,6 +14,7 @@ import { CopyArtifactButton, CopyTextButton, copyTextToClipboard } from "../chat
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
+import { abortCommand } from "../ompRpc";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PullRequestIndicator } from "../PullRequestIndicator";
 import {
@@ -30,6 +31,7 @@ import {
   sessionStartedAt,
   sessionUpdatedAt,
 } from "../sessionAttention";
+import { canAbortChatSession } from "../sessionMessage";
 import {
   ArchiveTaskModal,
   ArtifactProvenanceBadges,
@@ -225,6 +227,7 @@ export function TaskDetail({
   const loadWarning = combineLoadWarnings(sessionsError, artifactsError);
   const [busy, setBusy] = useState("");
   const sessionArchivePending = useRef(false);
+  const sessionStopPending = useRef(false);
   const [editingName, setEditingName] = useState<string | null>(null);
   const nameTrigger = useRef<HTMLButtonElement | null>(null);
   const editorVersion = useRef(0);
@@ -1513,6 +1516,22 @@ export function TaskDetail({
                     const harnessLabel = `${harnessDisplayName(s.harness)}${s.model ? ` · ${s.model}` : ""}`;
                     const unreadCompletion = classifySessionNotice(s, obs ?? undefined) === "unread_completion";
                     const openable = Boolean(task?.worktree) && !s.archived;
+                    const canStop =
+                      !s.archived &&
+                      s.harness === "omp" &&
+                      obs?.transport === "rpc" &&
+                      obs.state?.agent.state !== "waiting_for_approval" &&
+                      canAbortChatSession({
+                        connection: "open",
+                        lifecycle: obs.lifecycle,
+                        process: obs.state?.process ?? null,
+                        agent: obs.state?.agent ?? null,
+                        messageAdapter: obs.state?.message_adapter ?? "unsupported",
+                        body: "",
+                        composing: false,
+                        sending: false,
+                        interrupting: !!busy,
+                      });
                     return (
                       <tr
                         key={s.id}
@@ -1569,6 +1588,30 @@ export function TaskDetail({
                         </td>
                         <td className="session-actions">
                           <div className="session-actions-inner">
+                            <button
+                              type="button"
+                              className="btn ghost small chat-composer-abort"
+                              disabled={!canStop}
+                              aria-label={busy === `stop-session:${s.id}` ? "Stopping…" : "Stop"}
+                              title="Interrupt the current turn without killing the session"
+                              onClick={async () => {
+                                if (!canStop || sessionStopPending.current) return;
+                                sessionStopPending.current = true;
+                                setBusy(`stop-session:${s.id}`);
+                                setErr(null);
+                                try {
+                                  await ipc.rpcWriteSession(s.id, abortCommand());
+                                  await load();
+                                } catch (error) {
+                                  setErr({ msg: "Couldn't interrupt the session.", detail: String(error) });
+                                } finally {
+                                  sessionStopPending.current = false;
+                                  setBusy("");
+                                }
+                              }}
+                            >
+                              <Square className="chat-composer-icon" fill="currentColor" />
+                            </button>
                             <KillButton id={s.id} slug={slug} repoPath={repoPath} live={isLive} onKilled={load} />
                             <button type="button" className="btn ghost small" disabled={s.archived || !!busy} onClick={() => void archiveSession(s.id)}>
                               {busy === `archive-session:${s.id}` ? "Archiving session…" : "Archive"}

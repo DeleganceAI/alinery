@@ -489,8 +489,12 @@ pub(crate) fn write_attachment_bytes_into(dir: &Path, file_name: &str, bytes: &[
 }
 
 #[tauri::command]
-pub(crate) fn write_chat_attachment_bytes(task_slug: String, file_name: String, bytes: Vec<u8>) -> Result<String, String> {
-    write_chat_attachment_bytes_in(&active_repo()?, &task_slug, &file_name, &bytes)
+pub(crate) fn write_chat_attachment_bytes(app: AppHandle, task_slug: String, file_name: String, bytes: Vec<u8>, repo_path: Option<String>) -> Result<String, String> {
+    let repo = match repo_path {
+        Some(path) => target_repo_for_app(&app, &path)?,
+        None => active_repo()?,
+    };
+    write_chat_attachment_bytes_in(&repo, &task_slug, &file_name, &bytes)
 }
 
 pub(crate) fn read_chat_image_file(path: &Path, name: &str) -> Result<ChatImage, String> {
