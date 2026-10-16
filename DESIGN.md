@@ -461,6 +461,7 @@ Rules:
 - Give the next safe recovery action.
 - Distinguish a product error, missing dependency, unavailable repository, permission problem, and agent failure.
 - A repository ownership conflict opens the take-over confirmation once. Dismissing it leaves a thin, neutral recovery strip below the header; clicking the strip reopens the confirmation. Keep owner identities and lock evidence in collapsed, copyable Details. Polling must not repeatedly reopen a dismissed confirmation, and live owners still require explicit consent before stopping.
+- Remember every owner whose preview was shown, including manually opened and refreshed previews, across repository switches. A partial takeover still requires an explicit click for the next owner.
 
 ### Success
 
