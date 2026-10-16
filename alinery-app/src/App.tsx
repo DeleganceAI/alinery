@@ -1283,8 +1283,6 @@ export default function App() {
               />
             )}
             <div className={drawerOpen ? "app-main-column" : undefined} style={drawerOpen ? undefined : { display: "contents" }}>
-              {daemon.repo_busy && appConfig?.active_repo && <RepoBusyBanner repo={appConfig.active_repo} onPickRepo={() => void addRepo()} />}
-              <DaemonConflictBanner conflict={daemon.conflict} onRefresh={daemon.refresh} />
               <HostGuardWarning visible={daemon.host_guard_warning} />
               {repoErr && appConfig?.active_repo && (
                 <div className="daemon-conflict" role="alert">
@@ -1295,8 +1293,10 @@ export default function App() {
                 </div>
               )}
               {header}
+              {daemon.repo_busy && appConfig?.active_repo && <RepoBusyBanner repo={appConfig.active_repo} onPickRepo={() => void addRepo()} />}
+              <DaemonConflictBanner conflict={daemon.conflict} onRefresh={daemon.refresh} />
               {/* Backend ownership gate is the source of truth; blank main so the busy
-              banner is the only actionable surface (defense-in-depth). */}
+              strip is the only actionable surface (defense-in-depth). */}
               <main>
                 {daemon.repo_busy ? null : content}
                 {playbooksVisited && (
@@ -1668,6 +1668,7 @@ export default function App() {
               registerNav={registerNav}
               storageKey={sharedGridStorageKey(gridView.id, legacyGridScopeKey)}
               initialPreset={gridView.id === DEFAULT_GRID_VIEW_ID ? "progress" : "steps"}
+              liveStatusExplainedFor={daemon.conflict?.repo}
             />
           </div>
         );
