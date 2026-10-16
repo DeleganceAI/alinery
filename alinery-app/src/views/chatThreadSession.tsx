@@ -18,7 +18,7 @@ import {
   settleRefusedSend,
 } from "../chatTranscript";
 import * as ipc from "../ipc";
-import { compactCommand, getStateCommand, type ImageContent, promptCommand, setAutoCompactionCommand } from "../ompRpc";
+import { compactCommand, getStateCommand, type ImageContent, promptCommand } from "../ompRpc";
 import type { SessionTerminalIo } from "../SessionTerminal";
 import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
 import { isTurnActive } from "../sessionMessage";
@@ -199,8 +199,6 @@ type Entry = {
   draft: string;
   attachments: DraftAttachment[];
   verdicts: Map<string, Verdict>;
-  autoCompaction: boolean;
-  kick?: () => void;
   snapshot: ChatThreadSnapshot;
   listeners: Set<() => void>;
   api: ChatThreadApi;
@@ -224,7 +222,6 @@ type Registry = {
   retain: (thread: ChatThread, sub: Sub) => () => void;
   noteThread: (thread: ChatThread) => void;
   subFor: (key: string, id: symbol) => Sub | undefined;
-  setAutoCompaction: (key: string, value: boolean) => void;
   touch: (entry: Entry) => void;
   moveDraft: (from: string, to: string, fallback: string) => void;
 };
@@ -236,7 +233,6 @@ function createEntry(key: string): Entry {
     draft: "",
     attachments: [],
     verdicts: new Map(),
-    autoCompaction: true,
     snapshot: EMPTY_SNAPSHOT,
     listeners: new Set(),
     api: NO_API,
@@ -262,7 +258,6 @@ function createRegistry(): Registry {
     retain: () => () => {},
     noteThread: () => {},
     subFor: () => undefined,
-    setAutoCompaction: () => {},
     touch: () => {},
     moveDraft: () => {},
   };
@@ -343,13 +338,6 @@ function createRegistry(): Registry {
 
   registry.subFor = (key, id) => registry.entries.get(key)?.subs.get(id);
 
-  registry.setAutoCompaction = (key, value) => {
-    const entry = registry.entries.get(key);
-    if (!entry || entry.autoCompaction === value) return;
-    entry.autoCompaction = value;
-    entry.kick?.();
-  };
-
   registry.moveDraft = (from, to, fallback) => {
     const src = ensure(from);
     const text = src.draft || fallback;
@@ -426,7 +414,6 @@ export function useChatRegistry(): Registry {
 
 export type ChatThreadOptions = {
   active: boolean;
-  autoCompaction: boolean;
   isFocused: (key: string) => boolean;
   onReload: () => Promise<void> | void;
   onResumeRefresh: () => Promise<void> | void;
@@ -489,11 +476,6 @@ export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions
     };
     return registry.retain(thread, created);
   }, [registry, key]);
-
-  useEffect(() => {
-    if (!key) return;
-    registry.setAutoCompaction(key, optsRef.current.autoCompaction);
-  }, [registry, key, opts.autoCompaction]);
 
   const [trackedKey, setTrackedKey] = useState(key);
   const [snap, setSnap] = useState(EMPTY_SNAPSHOT);
@@ -597,10 +579,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
   const [mcpDialog, setMcpDialog] = useState<{ rows: McpServerRow[]; empty: boolean } | null>(null);
   const mcpListWait = useRef(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const [autoCompaction, setAutoCompactionState] = useState(entry.autoCompaction);
-  const autoCompactionRef = useRef(autoCompaction);
-  autoCompactionRef.current = entry.autoCompaction;
-  const compactionPushed = useRef("");
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -608,12 +586,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       alive.current = false;
     };
   }, []);
-  useEffect(() => {
-    entry.kick = () => setAutoCompactionState(entry.autoCompaction);
-    return () => {
-      if (entry.kick) entry.kick = undefined;
-    };
-  }, [entry]);
 
   const updateTranscript = useCallback((update: (current: ChatTranscriptState) => ChatTranscriptState) => {
     setTranscript(update);
@@ -623,7 +595,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: epoch, repo, and id are the attach identity.
   useEffect(() => {
     const threadNow = entry.thread ?? thread;
-    compactionPushed.current = `${key}:${autoCompactionRef.current}`;
     const attachId = ipc.nextAttachId();
     const claimed = registry.pendingPrompt?.key === key ? registry.pendingPrompt : null;
     const through = transcriptRef.current.fileStart;
@@ -744,7 +715,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
             ipc.chatDetach(repo, id, attachId).catch(() => {});
             return;
           }
-          for (const command of attachHandshake(autoCompactionRef.current)) {
+          for (const command of attachHandshake()) {
             await ipc.chatRpcWrite(repo, id, command);
           }
         } catch (cause) {
@@ -996,14 +967,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
         if (alive.current) setLoadingOlder(false);
       });
   }, [repo, id, updateTranscript]);
-
-  useEffect(() => {
-    if (!processLive) return;
-    const pushed = `${key}:${autoCompaction}`;
-    if (compactionPushed.current === pushed) return;
-    compactionPushed.current = pushed;
-    ipc.chatRpcWrite(repo, id, setAutoCompactionCommand(autoCompaction)).catch(() => {});
-  }, [autoCompaction, processLive, repo, id, key]);
 
   const stageIncoming = (accepted: DraftAttachment[]) => {
     if (accepted.length === 0) return;

@@ -15,7 +15,6 @@ import {
   type ImageContent,
   negotiateProtocolCommand,
   promptCommand,
-  setAutoCompactionCommand,
   setModelCommand,
   setSubagentSubscriptionCommand,
 } from "../ompRpc";
@@ -82,7 +81,7 @@ export function queueRefreshCommand(value: unknown) {
   return queueMoved ? getStateCommand() : null;
 }
 
-export function attachHandshake(autoCompaction: boolean) {
+export function attachHandshake() {
   // The command catalog too: OMP sends available_commands_update once at startup, and the daemon's
   // replay drops it after the first turn, so only an explicit ask fills the `/` list on reattach.
   // Subscribe before get_subagents so rows that finished during the gap still arrive as events.
@@ -90,7 +89,6 @@ export function attachHandshake(autoCompaction: boolean) {
     negotiateProtocolCommand(),
     getAvailableCommandsCommand(),
     getStateCommand(),
-    setAutoCompactionCommand(autoCompaction),
     setSubagentSubscriptionCommand("events"),
     getSubagentsCommand(),
     getAvailableModelsCommand(),

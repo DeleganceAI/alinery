@@ -13,6 +13,8 @@ pub mod http;
 pub mod lockfile;
 pub mod log;
 pub mod message;
+pub mod omp_config;
+mod omp_ownership;
 pub mod paths;
 pub mod playbook;
 pub mod playbook_library;
@@ -48,6 +50,7 @@ pub use hosted_inference::{
 pub use lockfile::*;
 pub use log::*;
 pub use message::*;
+pub use omp_config::*;
 pub use paths::*;
 pub use playbook::*;
 pub use playbook_library::*;

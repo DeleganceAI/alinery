@@ -62,6 +62,7 @@ const mocks = vi.hoisted(() => ({
   readScopedSettingsForRepo: vi.fn(),
   writeRepoOverridesForRepo: vi.fn(),
   checkOmpUpdate: vi.fn(),
+  readOmpCompaction: vi.fn(),
   writeAppearance: vi.fn(),
   updateOmp: vi.fn(),
   confirmDanger: vi.fn(),
@@ -75,6 +76,7 @@ vi.mock("../ipc", () =>
     readScopedSettingsForRepo: mocks.readScopedSettingsForRepo,
     writeRepoOverridesForRepo: mocks.writeRepoOverridesForRepo,
     checkOmpUpdate: mocks.checkOmpUpdate,
+    readOmpCompaction: mocks.readOmpCompaction,
     updateOmp: mocks.updateOmp,
     storageInfo: () => new Promise(() => {}),
     repoLiveSessions: async () => 0,
@@ -147,6 +149,7 @@ beforeEach(() => {
     clear: vi.fn(),
   });
   mocks.checkOmpUpdate.mockReset().mockResolvedValue({ installed: "", available: null, checked_at: 0 });
+  mocks.readOmpCompaction.mockReset().mockRejectedValue(new Error("Unavailable fixture installation"));
   mocks.updateOmp.mockReset().mockResolvedValue("omp/18.2.0");
   mocks.writeAppearance
     .mockReset()
@@ -244,6 +247,19 @@ describe("Harness settings thinking default", () => {
     await waitFor(async () => expect(within(await field()).getByText(/Repository override/)).toBeTruthy());
     expect((await thinkingSelect()).value).toBe("low");
   });
+});
+
+it("OMP owns the only compaction settings control", async () => {
+  renderSection("chat");
+  await screen.findByLabelText(/Auto-collapse thinking/);
+  expect(mocks.readOmpCompaction).not.toHaveBeenCalled();
+  expect(screen.queryByRole("checkbox", { name: /Auto-compaction/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Harness" }));
+  expect(await screen.findByRole("region", { name: "Compaction" })).toBeTruthy();
+  await waitFor(() => expect(mocks.readOmpCompaction).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect((screen.getByRole("button", { name: /Refresh compaction/ }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(await screen.findByRole("button", { name: /Refresh compaction/ }));
+  await waitFor(() => expect(mocks.readOmpCompaction).toHaveBeenCalledTimes(2));
 });
 
 describe("Sessions view and Chat tabs", () => {

@@ -49,23 +49,12 @@ describe("chatSession", () => {
     expect(queueRefreshCommand(undefined)).toBeNull();
   });
 
-  it("handshakes in order, subscribing to subagent events before reading the subagent list", () => {
-    expect(attachHandshake(true).map((command) => command.type)).toEqual([
-      "negotiate_protocol",
-      "get_available_commands",
-      "get_state",
-      "set_auto_compaction",
-      "set_subagent_subscription",
-      "get_subagents",
-      "get_available_models",
-    ]);
-    expect(attachHandshake(true).find((command) => command.type === "set_subagent_subscription")).toMatchObject({ level: "events" });
-  });
-
-  it("carries the auto-compaction setting in the handshake", () => {
-    for (const enabled of [true, false]) {
-      expect(attachHandshake(enabled).find((command) => command.type === "set_auto_compaction")).toMatchObject({ enabled });
-    }
+  it("attachment reads state without changing auto-compaction", () => {
+    const commands = attachHandshake();
+    expect(commands.some((command) => command.type === "get_state")).toBe(true);
+    expect(commands.filter((command) => String(command.type) === "set_auto_compaction")).toEqual([]);
+    expect(commands.find((command) => command.type === "set_subagent_subscription")).toMatchObject({ level: "events" });
+    expect(commands.findIndex((command) => command.type === "set_subagent_subscription")).toBeLessThan(commands.findIndex((command) => command.type === "get_subagents"));
   });
 
   it("prepends an older journal page and moves fileStart back to its start", () => {

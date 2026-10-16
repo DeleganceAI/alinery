@@ -343,8 +343,7 @@ describe("ChatView", () => {
     mocks.chatSessionStatus.mockResolvedValue(status);
     const { rerender } = render(chat());
     fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
-    // The seven handshake writes land, and the link is ready, before any send in these tests.
-    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledTimes(7));
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "get_state" })));
     await waitFor(() => expect(link()).toBe("ready"));
     return {
       rerender,
@@ -434,9 +433,8 @@ describe("ChatView", () => {
   it("takes back a send OMP refuses: the bubble goes and the text returns to the composer", async () => {
     const { emit } = await openLive(observed("idle", "alive", "rpc"));
     sendIdle("add an HNSW index");
-    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledTimes(8));
-    const sent = mocks.chatRpcWrite.mock.calls[7]?.[2] as { id: string; type: string };
-    expect(sent.type).toBe("prompt");
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "prompt", message: "add an HNSW index" })));
+    const sent = mocks.chatRpcWrite.mock.calls.find(([, , command]) => command.type === "prompt")?.[2];
     await screen.findByText("add an HNSW index");
     emit({ type: "response", id: sent.id, command: "prompt", success: false, error: "model busy" });
     await waitFor(() => expect((screen.getByLabelText("Message or /command") as HTMLTextAreaElement).value).toBe("add an HNSW index"));
@@ -757,7 +755,7 @@ describe("ChatView", () => {
     await openLive(observed("idle"));
     sendIdle("/login");
     expect((await screen.findByTestId("providers")).dataset.tab).toBe("accounts");
-    expect(mocks.chatRpcWrite).toHaveBeenCalledTimes(7);
+    expect(mocks.chatRpcWrite).not.toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "prompt" }));
     cleanup();
     await openLive(observed("idle"));
     sendIdle("/model alinery/fast");
@@ -775,9 +773,9 @@ describe("ChatView", () => {
 
   it("opens the tools dialog from a fresh get_state", async () => {
     await openLive(observed("idle"));
+    mocks.chatRpcWrite.mockClear();
     sendIdle("/tools");
-    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledTimes(8));
-    expect(mocks.chatRpcWrite).toHaveBeenLastCalledWith("/repo", "s-live", expect.objectContaining({ type: "get_state" }));
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenLastCalledWith("/repo", "s-live", expect.objectContaining({ type: "get_state" })));
     expect(await screen.findByRole("dialog", { name: "Tools this turn" })).toBeTruthy();
   });
 
@@ -855,19 +853,14 @@ describe("ChatView", () => {
     expect(screen.queryByText("queued · after this turn")).toBeNull();
   });
 
-  it("pushes a toggled auto-compaction setting to a live thread", async () => {
-    const { rerender } = await openLive(observed("idle"));
-    mocks.chatRpcWrite.mockClear();
-    rerender(chat({ ...DEFAULT_CHAT_VISIBILITY, autoCompaction: false }));
-    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "set_auto_compaction", enabled: false })));
-    expect(mocks.chatRpcWrite).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not push the auto-compaction setting to a thread whose OMP has exited", async () => {
-    const { rerender } = await openLive(observed("idle", "exited"));
-    mocks.chatRpcWrite.mockClear();
-    rerender(chat({ ...DEFAULT_CHAT_VISIBILITY, autoCompaction: false }));
-    expect(mocks.chatRpcWrite).not.toHaveBeenCalled();
+  it("mount reconnect and view changes preserve OMP compaction choice", async () => {
+    const { emit, rerender } = await openLive(observed("idle", "alive", "rpc"));
+    emit({ type: "response", command: "get_state", success: true, data: { autoCompactionEnabled: false } });
+    await reattach();
+    rerender(chat({ ...DEFAULT_CHAT_VISIBILITY, autoScroll: false }));
+    expect(link()).toBe("ready");
+    expect(mocks.chatRpcWrite.mock.calls.some(([, , command]) => command.type === "get_state")).toBe(true);
+    expect(mocks.chatRpcWrite.mock.calls.filter(([, , command]) => command.type === "set_auto_compaction")).toEqual([]);
   });
 
   it("restates an idle live thread to the terminal and back to chat", async () => {
@@ -885,6 +878,8 @@ describe("ChatView", () => {
     await waitFor(() => expect(mocks.chatRestate).toHaveBeenLastCalledWith("/repo", "s-live", "rpc"));
     await waitFor(() => expect(screen.queryByTestId("terminal")).toBeNull());
     expect(screen.getByLabelText("Message or /command")).toBeTruthy();
+    await waitFor(() => expect(link()).toBe("ready"));
+    expect(mocks.chatRpcWrite.mock.calls.filter(([, , command]) => command.type === "set_auto_compaction")).toEqual([]);
   });
 
   describe("the thinking level in the title bar", () => {

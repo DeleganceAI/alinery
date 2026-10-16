@@ -356,6 +356,9 @@ fn main() {
     );
     let app_config_identity: Arc<str> = Arc::from(alinery_core::app_config_identity(app_config.as_ref()));
     let _ = EXECUTION_CONFIG_IDENTITY.set(app_config_identity.to_string());
+    if let Err(error) = alinery_core::register_omp_launch_owner(app_config.as_ref()) {
+        eprintln!("OMP settings remain read-only: {error}");
+    }
     let alinery = alinery_dir(&repo);
     let namespace = (!daemon_namespace.is_empty()).then_some(daemon_namespace.as_ref());
     let socket_path = alineryd_socket_path(&repo, namespace);

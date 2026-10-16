@@ -139,6 +139,11 @@ pub fn run() {
     register_runtime_plugins(tauri::Builder::default())
         .manage(AppState::default())
         .setup(|app| {
+            if let Ok(config) = app_config_path(app.handle()) {
+                if let Err(error) = alinery_core::register_omp_launch_owner(&config) {
+                    eprintln!("OMP settings remain read-only: {error}");
+                }
+            }
             // B5: keep a daemon alive for every open repo (spawn-only — see the fn).
             spawn_daemon_poller(app.handle().clone());
             Ok(())
@@ -346,6 +351,8 @@ pub fn run() {
             update_omp,
             omp_agent_sessions_dir,
             read_omp_model_roles,
+            read_omp_compaction,
+            set_omp_auto_compaction,
             write_omp_model_roles,
             open_omp_config_dir,
             omp_customization_prompt,

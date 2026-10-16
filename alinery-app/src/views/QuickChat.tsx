@@ -238,7 +238,6 @@ export function QuickChat({ open, visibility, onOpenInChat, onHide }: { open: bo
 
   const chat = useChatThread(open ? resolved : null, {
     active: open,
-    autoCompaction: visibility.autoCompaction,
     isFocused: (key) => resolvedKey === key,
     onReload: commit,
     onResumeRefresh: commit,

@@ -17,6 +17,44 @@ use std::time::{Duration, Instant};
 /// Holds an exclusive `flock` for the process lifetime (or until drop).
 pub struct LockFile(File);
 
+/// A close-only flock: unlike LockFile, dropping a fork parent's descriptor must
+/// not explicitly unlock the open-file description inherited by its child.
+pub struct ProcessLease(File);
+
+impl ProcessLease {
+    pub fn acquire(path: &Path, exclusive: bool) -> io::Result<Option<Self>> {
+        use std::os::unix::fs::MetadataExt;
+        let file = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path)?;
+        let mode = if exclusive { libc::LOCK_EX } else { libc::LOCK_SH };
+        if unsafe { libc::flock(file.as_raw_fd(), mode | libc::LOCK_NB) } != 0 {
+            let error = io::Error::last_os_error();
+            return if error.raw_os_error() == Some(libc::EWOULDBLOCK) { Ok(None) } else { Err(error) };
+        }
+        let locked = file.metadata()?;
+        let linked = fs::metadata(path)?;
+        if locked.dev() != linked.dev() || locked.ino() != linked.ino() {
+            return Err(io::Error::other("process lease marker was replaced"));
+        }
+        Ok(Some(Self(file)))
+    }
+
+    pub fn share(&self) -> io::Result<()> {
+        if unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_SH) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    pub fn retain_across_exec(&self) -> io::Result<()> {
+        let fd = self.0.as_raw_fd();
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+}
+
 /// Open `path` (create if needed) and try `LOCK_EX|LOCK_NB`.
 ///
 /// - `Ok(Some(lock))` — exclusive lock acquired; keep the value alive.
