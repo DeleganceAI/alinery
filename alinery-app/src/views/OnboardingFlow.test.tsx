@@ -175,7 +175,7 @@ describe("OnboardingFlow wizard", () => {
       />,
     );
     await waitFor(() => expect(screen.getByLabelText("Default repository model")).toHaveProperty("value", effective.defaults.model));
-    fireEvent.click(screen.getByRole("button", { name: "Browse models" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "Default repository model" }));
     act(() => pick?.(model));
     await waitFor(() => expect(persisted.defaults.model).toBe(model || null));
     expect(persisted.github).toEqual(original.github);

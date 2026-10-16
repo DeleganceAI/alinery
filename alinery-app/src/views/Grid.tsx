@@ -803,6 +803,8 @@ type GridProps = {
   onCreate?: (initialPlaybook?: PlaybookRef, initialPreset?: StarterTaskPreset) => void;
   onOpenPlaybooks?: () => void;
   onReplayOnboarding?: () => void;
+  /** Repository whose missing live status the shell's conflict strip already reports. */
+  liveStatusExplainedFor?: string;
 };
 
 export function Grid(props: GridProps) {
@@ -822,6 +824,7 @@ function ScopedGrid({
   onCreate,
   onOpenPlaybooks,
   onReplayOnboarding,
+  liveStatusExplainedFor,
 }: GridProps & { scopeKey: string }) {
   const settingsId = useId();
   const initialWorkspace = useMemo(() => loadGridWorkspace(storageKey, initialPreset), [storageKey, initialPreset]);
@@ -975,7 +978,7 @@ function ScopedGrid({
   }, [tasks, showArchived]);
   const unavailableExecutions = executionRefs.flatMap((ref) => {
     const execution = executions[ref.key];
-    return execution && execution.live?.status !== "available" ? [{ ref, live: execution.live }] : [];
+    return execution && execution.live?.status !== "available" && ref.repoPath !== liveStatusExplainedFor ? [{ ref, live: execution.live }] : [];
   });
   const availabilityKey = JSON.stringify(unavailableExecutions.map(({ ref, live }) => [ref.key, live?.status]));
   useEffect(() => {

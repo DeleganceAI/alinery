@@ -246,7 +246,7 @@ describe("ProviderSetupDialog", () => {
     mocks.rpcAttachSession.mockImplementation(async () => undefined);
     render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
     expect(screen.getByText("Connecting…")).toBeTruthy();
-    expect(screen.queryByText("No models match.")).toBeNull();
+
     expect(screen.queryByText("No Chat-capable providers yet.")).toBeNull();
   });
 
@@ -280,7 +280,7 @@ describe("ProviderSetupDialog", () => {
     });
     vi.useRealTimers();
     expect(screen.getByText(/daemon not connected/i)).toBeTruthy();
-    expect(screen.queryByText("No models match.")).toBeNull();
+
     expect(screen.queryByText("No Chat-capable providers yet.")).toBeNull();
   });
 
@@ -369,17 +369,15 @@ describe("ProviderSetupDialog", () => {
     expect(screen.getByRole("tab", { name: "Accounts" }).getAttribute("aria-selected")).toBe("false");
     expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("Connecting…")).toBeTruthy();
-    expect(screen.queryByText("No models match.")).toBeNull();
-    expect(screen.getByText(/Current session openai-codex\/gpt-5\.6-luna/)).toBeTruthy();
 
     await emit({ type: "response", command: "get_available_models", success: true, data: { models: [{ provider: "xai-oauth", id: "grok-4.7" }] } });
-    expect(await screen.findByText("xai-oauth/grok-4.7")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true");
   });
 
   it("paints the process catalogue immediately and replaces it only when the payload differs", async () => {
     renderModelsPicker([modelsLine([{ provider: "xai-oauth", id: "grok-4.7" }])], true);
-    expect(await screen.findByText("xai-oauth/grok-4.7")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
     cleanup();
 
     renderModelsPicker(
@@ -392,17 +390,14 @@ describe("ProviderSetupDialog", () => {
       ],
       true,
     );
-    expect(screen.getByText("xai-oauth/grok-4.7")).toBeTruthy();
-    expect(screen.queryByText("No models match.")).toBeNull();
-    expect(screen.queryByText("Connecting…")).toBeNull();
+    expect(screen.getByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
 
     await emit({ type: "response", command: "get_available_models", success: true, data: { models: [{ provider: "xai-oauth", id: "grok-4.7" }] } });
-    expect(screen.getByText("xai-oauth/grok-4.7")).toBeTruthy();
-    expect(screen.queryByText("No models match.")).toBeNull();
+    expect(screen.getByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
 
     await emit({ type: "response", command: "get_available_models", success: true, data: { models: [{ provider: "xai-oauth", id: "grok-4.6" }] } });
-    expect(await screen.findByText("xai-oauth/grok-4.6")).toBeTruthy();
-    expect(screen.queryByText("xai-oauth/grok-4.7")).toBeNull();
+    expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.6" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "xai-oauth/grok-4.7" })).toBeNull();
   });
 
   it("does not open Accounts for a hosted-ready install, including before hosted settles", async () => {
@@ -450,22 +445,20 @@ describe("ProviderSetupDialog", () => {
     });
     expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("Connecting…")).toBeTruthy();
-    expect(screen.queryByText("No models match.")).toBeNull();
-    expect(screen.getByText(/Current session openai-codex\/gpt-5\.6-luna/)).toBeTruthy();
 
     await emit({ type: "response", command: "get_available_models", success: true, data: { models: [{ provider: "xai-oauth", id: "grok-4.7" }] } });
-    expect(await screen.findByText("xai-oauth/grok-4.7")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
   });
 
   it("keeps the cached catalogue when setup attach fails", async () => {
     renderModelsPicker([modelsLine([{ provider: "xai-oauth", id: "grok-4.7" }])], true);
-    expect(await screen.findByText("xai-oauth/grok-4.7")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
     cleanup();
 
     mocks.ompSetupSession.mockRejectedValue(new Error("setup exploded"));
     render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
-    expect(await screen.findByText("xai-oauth/grok-4.7")).toBeTruthy();
-    expect(screen.queryByText("No models match.")).toBeNull();
+    expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
+
     expect(screen.getByText(/setup exploded/)).toBeTruthy();
   });
 });

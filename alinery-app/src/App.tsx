@@ -1806,6 +1806,7 @@ export default function App() {
                 setOnboardingStep("playbooks");
                 setOnboardingOpen(true);
               }}
+              liveStatusExplainedFor={daemon.conflict?.repo}
             />
           </div>
         );

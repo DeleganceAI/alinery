@@ -425,8 +425,8 @@ export type CopyChatAttachmentsResult = { copied: string[]; failures: string[] }
 export type ChatImage = { mime_type: string; data: string };
 export const chatFileStat = (path: string) => invoke<ChatFileStat>("chat_file_stat", { path });
 export const copyChatAttachments = (taskSlug: string, paths: string[]) => invoke<CopyChatAttachmentsResult>("copy_chat_attachments", { taskSlug, paths });
-export const writeChatAttachmentBytes = (taskSlug: string, fileName: string, bytes: number[] | Uint8Array) =>
-  invoke<string>("write_chat_attachment_bytes", { taskSlug, fileName, bytes });
+export const writeChatAttachmentBytes = (taskSlug: string, fileName: string, bytes: number[] | Uint8Array, repoPath?: string) =>
+  invoke<string>("write_chat_attachment_bytes", { taskSlug, fileName, bytes, repoPath });
 export const readChatImage = (taskSlug: string, name: string) => invoke<ChatImage>("read_chat_image", { taskSlug, name });
 export const copyChatThreadAttachments = (repoPath: string, id: string, paths: string[]) =>
   invoke<CopyChatAttachmentsResult>("copy_chat_thread_attachments", { repoPath, id, paths });

@@ -1,4 +1,4 @@
-import { ArrowUpCircle, Check, ChevronDown, CircleAlert, CircleCheck, FolderPlus, Info, Package, Plus, RotateCw, Search, TriangleAlert, X } from "lucide-react";
+import { ArrowUpCircle, Check, ChevronDown, CircleAlert, CircleCheck, FolderPlus, Info, Package, Plus, Search, TriangleAlert, X } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { type OrbState, ThinkingOrb } from "thinking-orbs";
@@ -1390,8 +1390,7 @@ export function ModelInput({
   prefillRemembered = true,
   onOpenPicker,
   ariaLabel = "Model",
-  showPickerButton = true,
-  placeholder = "Model (empty = harness default)",
+  placeholder = "Harness default",
 }: {
   harness: string;
   value: string;
@@ -1404,14 +1403,13 @@ export function ModelInput({
   /**
    * Host the providers/models dialog instead of this component's own picker.
    *
-   * Model picking now lives in one place across the app, and it is the surface that also knows
+   * Model picking lives in one place across the app, and it is the surface that also knows
    * about accounts -- so a model you cannot reach because you are not signed in tells you so.
    * `shared` cannot import it directly (that would cycle through `views`), so the page opens it
    * and this becomes a plain trigger.
    */
   onOpenPicker?: () => void;
-  /** Omit the browse button. With `onOpenPicker`, clicking the field opens that dialog instead. */
-  showPickerButton?: boolean;
+  /** Shown when no model is chosen. */
   placeholder?: string;
 }) {
   const [models, setModels] = useState<string[]>([]);
@@ -1562,36 +1560,48 @@ export function ModelInput({
   const visible = deriveModelRows(models, favorites, q);
   const sel = Math.min(idx, Math.max(0, visible.length - 1));
   const occurrenceByModel = new Map<string, number>();
-  const openFromField = !showPickerButton ? onOpenPicker : undefined;
+  const custom = q.trim();
+  // A plain filter word stays a filter; a `provider/id` or a term with no matches is an id to use.
+  const customOffered = custom.length > 0 && !models.includes(custom) && (visible.length === 0 || custom.includes("/"));
+  const open = onOpenPicker ?? refresh;
+  const clear = () => {
+    onChange("");
+    onCommit?.("");
+  };
 
   return (
-    <div className={`model-input${openFromField ? " is-picker" : ""}`} style={style}>
+    <div className="model-select" style={style}>
       <input
-        className="field-input"
+        className="model-select-trigger field-input"
+        role="combobox"
+        readOnly
         aria-label={ariaLabel}
-        aria-haspopup={openFromField ? "dialog" : undefined}
-        title={openFromField ? "Select model" : undefined}
+        aria-haspopup="dialog"
+        aria-expanded={pickerOpen}
+        aria-busy={busy || undefined}
+        title={value || placeholder}
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        onBlur={() => onCommit?.(value)}
-        onClick={() => openFromField?.()}
+        onClick={() => {
+          if (!busy) open();
+        }}
         onKeyDown={(e) => {
-          if (!openFromField || e.key !== "Enter") return;
-          e.preventDefault();
-          openFromField();
+          if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
+            e.preventDefault();
+            if (!busy) open();
+          } else if ((e.key === "Backspace" || e.key === "Delete") && value) {
+            e.preventDefault();
+            clear();
+          }
         }}
       />
-      {showPickerButton && (
-        <button
-          type="button"
-          className="btn ghost small"
-          title={onOpenPicker ? "Browse models" : "Refresh model list"}
-          aria-label={onOpenPicker ? "Browse models" : "Refresh model list"}
-          disabled={busy}
-          onClick={onOpenPicker ?? refresh}
-        >
-          {busy ? "…" : <RotateCw size={14} strokeWidth={1.5} aria-hidden="true" />}
+      <span className="model-select-caret" aria-hidden="true">
+        {busy ? "…" : <ChevronDown size={14} strokeWidth={1.6} />}
+      </span>
+      {value && (
+        <button type="button" className="model-select-clear" aria-label={`Clear ${ariaLabel.toLowerCase()}`} title="Use harness default" onClick={clear}>
+          <X size={13} strokeWidth={1.6} aria-hidden="true" />
         </button>
       )}
       {!onOpenPicker && pickerOpen && (
@@ -1608,7 +1618,7 @@ export function ModelInput({
               className="field-input"
               aria-label="Filter models"
               value={q}
-              placeholder="Filter models…"
+              placeholder="Filter models or type a model id…"
               autoComplete="off"
               data-autofocus=""
               style={{ marginBottom: 8 }}
@@ -1630,6 +1640,7 @@ export function ModelInput({
                 } else if (e.key === "Enter") {
                   e.preventDefault();
                   if (visible[sel]) pick(visible[sel].model);
+                  else if (customOffered) pick(custom);
                 } else if (e.key === "Escape") {
                   e.preventDefault();
                   setPickerOpen(false);
@@ -1637,7 +1648,7 @@ export function ModelInput({
               }}
             />
             <ul className="list" aria-label="Models" ref={modelListRef} style={{ maxHeight: "50vh", overflowY: "auto" }}>
-              {visible.length === 0 && <li className="row disabled">No matching models</li>}
+              {visible.length === 0 && !customOffered && <li className="row disabled">No matching models</li>}
               {visible.map((row, i) => {
                 const action = row.favorite ? "Remove" : "Add";
                 const label = `${action} ${row.model} ${row.favorite ? "from" : "to"} favorites`;
@@ -1664,6 +1675,18 @@ export function ModelInput({
                   </li>
                 );
               })}
+              {customOffered && (
+                <li className={`row${visible.length === 0 ? " sel" : ""}`}>
+                  <button type="button" className="model-selection-button" aria-label={`Use custom model ${custom}`} onClick={() => pick(custom)}>
+                    <div className="rt">
+                      <div className="rtt">
+                        Use <code>{custom}</code>
+                      </div>
+                      <div className="rts">Custom model id, not from the harness list</div>
+                    </div>
+                  </button>
+                </li>
+              )}
             </ul>
           </div>
         </Dialog>

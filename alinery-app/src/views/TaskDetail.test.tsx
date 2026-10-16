@@ -39,6 +39,7 @@ const ipcSpies = vi.hoisted(() => ({
   createSessionForRepo: vi.fn(),
   restoreTaskForRepo: vi.fn(),
   archiveSessionForRepo: vi.fn(),
+  rpcWriteSession: vi.fn(),
   renameSession: vi.fn(),
   renameTask: vi.fn(),
   setAutoApproveAllForRepo: vi.fn(),
@@ -93,6 +94,7 @@ vi.mock("../ipc", () =>
     createSessionForRepo: ipcSpies.createSessionForRepo,
     restoreTaskForRepo: ipcSpies.restoreTaskForRepo,
     archiveSessionForRepo: ipcSpies.archiveSessionForRepo,
+    rpcWriteSession: ipcSpies.rpcWriteSession,
     renameSession: ipcSpies.renameSession,
     renameTask: ipcSpies.renameTask,
     setAutoApproveAllForRepo: ipcSpies.setAutoApproveAllForRepo,
@@ -268,6 +270,7 @@ beforeEach(() => {
   ipcSpies.recoverSubtaskManager.mockResolvedValue({ session: { ...manager, subtask_slug: "child" }, execution: null, start: "started" });
   ipcSpies.restoreTaskForRepo.mockReset().mockResolvedValue(undefined);
   ipcSpies.archiveSessionForRepo.mockReset();
+  ipcSpies.rpcWriteSession.mockReset().mockResolvedValue(undefined);
   ipcSpies.renameSession.mockReset().mockImplementation(async ({ sessionId, name }: { sessionId: string; name: string }) => {
     scenario.sessions = scenario.sessions.map((item) => (item.id === sessionId ? { ...item, name, name_source: "user" } : item));
     return { name, source: "user" };
@@ -820,6 +823,59 @@ describe("task session archive pending feedback", () => {
     await act(async () => retry.resolve());
     expect(screen.queryByText("archive-me")).toBeNull();
     expect(screen.queryByRole("button", { name: "Archiving session…" })).toBeNull();
+  });
+});
+
+describe("task session row Stop", () => {
+  it("aborts the current turn without opening or archiving the session, guards repeats, and allows retry", async () => {
+    scenario.sessions = [session({ id: "stop-me", harness: "omp" })];
+    mocks.sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("busy"), transport: "rpc" } });
+    const pending = deferred<void>();
+    ipcSpies.rpcWriteSession.mockReturnValueOnce(pending.promise);
+    const { onOpenSession } = await renderDetail();
+    const stop = await screen.findByRole("button", { name: "Stop" });
+    await waitFor(() => expect((stop as HTMLButtonElement).disabled).toBe(false));
+    act(() => {
+      fireEvent.click(stop);
+      fireEvent.click(stop);
+    });
+    expect(ipcSpies.rpcWriteSession).toHaveBeenCalledTimes(1);
+    expect(ipcSpies.rpcWriteSession).toHaveBeenCalledWith("stop-me", expect.objectContaining({ type: "abort" }));
+    expect(onOpenSession).not.toHaveBeenCalled();
+    expect(ipcSpies.archiveSessionForRepo).not.toHaveBeenCalled();
+    expect((screen.getByRole("button", { name: "Stopping…" }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => pending.reject(new Error("abort delivery failed")));
+    expect(screen.getByText(/abort delivery failed/)).toBeDefined();
+    mocks.sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("idle"), transport: "rpc" } });
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(ipcSpies.rpcWriteSession).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Stop" }) as HTMLButtonElement).disabled).toBe(true));
+    expect(screen.getByRole("button", { name: "Kill" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Archive" })).toBeDefined();
+  });
+
+  it("matches chat availability for input, approval, idle, exited, and terminal sessions", async () => {
+    const rows = [
+      { id: "input", agent: "waiting_for_input", transport: "rpc", live: true },
+      { id: "approval", agent: "waiting_for_approval", transport: "rpc", live: true },
+      { id: "idle", agent: "idle", transport: "rpc", live: true },
+      { id: "exited", agent: "busy", transport: "rpc", live: false },
+      { id: "terminal", agent: "busy", transport: "pty", live: true },
+    ] as const;
+    scenario.sessions = rows.map(({ id }) => ({ ...session({ id, harness: "omp" }), name: id }));
+    mocks.sessionStatuses.mockResolvedValue(
+      Object.fromEntries(
+        rows.map(({ id, agent, transport, live }) => {
+          const obs = observation("busy");
+          return [id, { ...obs, transport, lifecycle: live ? obs.lifecycle : { state: "exited", code: 0 }, state: { ...obs.state, agent: { state: agent } } }];
+        }),
+      ),
+    );
+    await renderDetail();
+    for (const { id } of rows) {
+      const row = (await screen.findByText(id)).closest("tr") as HTMLTableRowElement;
+      await waitFor(() => expect((within(row).getByRole("button", { name: "Stop" }) as HTMLButtonElement).disabled).toBe(id !== "input"));
+    }
   });
 });
 
