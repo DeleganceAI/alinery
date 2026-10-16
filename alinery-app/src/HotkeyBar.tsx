@@ -85,7 +85,7 @@ export function HotkeyBar({
   const buildStatus = daemon.build_drift ? "Older build" : daemon.reachable ? "Current" : "Not connected";
 
   return (
-    <footer>
+    <footer className="app-status-footer">
       <div className="fstat">
         <span className={`live ${dotClass}`} aria-hidden="true" />
         <span className={`footer-brand ${dotClass}`}>
