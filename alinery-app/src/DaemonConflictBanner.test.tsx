@@ -168,6 +168,41 @@ describe("repository takeover dialog", () => {
     expect(ipc.confirmRepoTakeover).toHaveBeenCalledExactlyOnceWith("consent-a");
   });
 
+  it("remembers a manually dismissed next owner after returning to the repository", async () => {
+    const second = { ...owner, lane: "other-dev", pid: 43 };
+    const nextConflict = { ...conflict, owners: [second] };
+    vi.mocked(ipc.prepareRepoTakeover)
+      .mockResolvedValueOnce(preview)
+      .mockResolvedValue({ ...preview, confirmation_id: "consent-b", owner: second });
+    vi.mocked(ipc.confirmRepoTakeover).mockResolvedValue({ status: "blocked", conflict: nextConflict });
+    const view = mount({ ...conflict, owners: [owner, second] });
+    accept(await dialog());
+    await waitFor(() => expect(strip()).toBeTruthy());
+    fireEvent.click(strip());
+    cancel(await dialog());
+    await waitFor(() => expect(ipc.cancelRepoTakeover).toHaveBeenCalledWith("consent-b"));
+    view.rerender(tree(null, view.refresh));
+    view.rerender(tree(nextConflict, view.refresh));
+    await act(async () => {});
+    expect(strip()).toBeTruthy();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(ipc.prepareRepoTakeover).toHaveBeenCalledTimes(2);
+  });
+
+  it("remembers the actual preview owner when it replaced the polled process", async () => {
+    const replacement = { ...owner, pid: 43 };
+    vi.mocked(ipc.prepareRepoTakeover).mockResolvedValue({ ...preview, owner: replacement });
+    const view = mount();
+    cancel(await dialog());
+    await waitFor(() => expect(strip()).toBeTruthy());
+    view.rerender(tree(null, view.refresh));
+    view.rerender(tree({ ...conflict, owners: [replacement] }, view.refresh));
+    await act(async () => {});
+    expect(strip()).toBeTruthy();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(ipc.prepareRepoTakeover).toHaveBeenCalledOnce();
+  });
+
   it("changed impact requires another explicit consent and allows cancelling it", async () => {
     const changed = { ...preview, confirmation_id: "consent-b", owner: { ...owner, impact: { status: "unknown", detail: "Changed impact" } as const } };
     vi.mocked(ipc.prepareRepoTakeover).mockResolvedValue(preview);

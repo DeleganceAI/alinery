@@ -179,6 +179,7 @@ function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflic
         current.confirmationId = preview.confirmation_id;
         if (current.disposed) return;
         if (preview.repo !== conflict.repo) throw new Error("Takeover preview belongs to another repository. Select the owner again.");
+        prompted.add(`${preview.repo}\0${preview.owner.lane}\0${preview.owner.pid}`);
         const { sentence, accept } = takeoverPrompt(preview.owner);
         const owners = (displayed ?? conflict).owners.map((candidate) => (candidate.lane === preview.owner.lane ? preview.owner : candidate));
         const accepted = await confirmDanger(
