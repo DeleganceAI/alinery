@@ -691,6 +691,10 @@ impl Default for ExperimentalFeatures {
 
 pub const MAX_GRID_VIEWS: usize = 3;
 pub const DEFAULT_GRID_VIEW_ID: &str = "default-kanban-plus";
+pub const DEFAULT_GRID_VIEW_NAME: &str = "Canvas";
+/// The default view's name before it was renamed to Canvas; saved settings still carrying it
+/// are migrated on read.
+pub const LEGACY_DEFAULT_GRID_VIEW_NAME: &str = "Kanban+";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GridViewDefinition {
@@ -703,7 +707,7 @@ pub struct GridViewDefinition {
 pub fn default_grid_views() -> Vec<GridViewDefinition> {
     vec![GridViewDefinition {
         id: DEFAULT_GRID_VIEW_ID.into(),
-        name: "Kanban+".into(),
+        name: DEFAULT_GRID_VIEW_NAME.into(),
         slot: 1,
     }]
 }
