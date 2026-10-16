@@ -11,6 +11,8 @@ Desktop UI for the Alinery task-centric AI coding playbook (kanban, persistent P
 5. **Artifacts** are written after each phase. Use the artifact list or MCP tools to read them.
 6. **Settings** (gear) manages browser-based GitHub/Linear connections plus repository config, harnesses, and notifications.
 
+Settings → **Harness** puts the default model first, followed by compact agent/provider controls. Session preferences, model inheritance, installation paths, customizations, and session-service controls expand on demand. Global/repository inheritance remains unchanged. **Update OMP** uses a normal confirmation action with Cancel focused by default; running sessions keep their existing binary. Session-stop and deletion actions retain destructive confirmations.
+
 ### Blocking sub-tasks
 
 Each task can own one active direct child. **Start sub-task** creates or opens a parent-owned
