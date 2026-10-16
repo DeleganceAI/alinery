@@ -370,7 +370,7 @@ A complete unlisted `provider/model` identifier remains the selected custom mode
 - Sessions expose status filtering and the existing Priority, Started, and Updated sorts. Keep rename available by keyboard and on hover or selection, without a persistent text button. Do not repeat the session slug in every row.
 - Missing observations remain unknown, not inactive. Session filters share the display-state derivation used by `StatusDot`; filtering must not invent lifecycle state or change stop-session consent. Track attention transitions across the unfiltered collection so hiding a row cannot suppress notifications or cause duplicate delivery when it returns.
 - At `900 x 600`, task columns fit without horizontal scrolling and Sessions fits eight complete two-line rows at the default UI scale. In narrower panes, move secondary task fields into row metadata and retain every sort through the compact sort controls; attach complete metadata and parent context to the visible secondary line's tooltip, not a child that can be clipped. Session timestamps stack vertically beside the primary content.
-- Keyboard navigation and row actions operate only on visible results. Preserve selection across refresh when it remains visible, and show a distinct no-matches state rather than the first-use empty state.
+- Keyboard navigation and row actions operate only on visible results. Filter controls own navigation and confirmation keys without blocking global command shortcuts such as Search or view switching. Preserve selection across refresh when it remains visible, and show a distinct no-matches state rather than the first-use empty state.
 
 ### AI-native pattern mapping
 

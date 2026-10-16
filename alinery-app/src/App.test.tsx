@@ -1282,6 +1282,29 @@ describe("global notification owner", () => {
   });
 });
 
+describe("collection filter shortcuts", () => {
+  it("keeps global search and view shortcuts available without opening a row from filter confirmation", async () => {
+    namingScenario.realSessions = true;
+    ipcMocks.listSessionItems.mockResolvedValue([{ ...globalSession, name: "Keyboard work" }]);
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
+    await screen.findByText("Keyboard work");
+    const status = screen.getByRole("combobox", { name: "Status" });
+    status.focus();
+    fireEvent.keyDown(status, { key: "Enter", metaKey: true });
+    await act(async () => {});
+    expect(screen.queryByText("session:global-design")).toBeNull();
+    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(status, { key: "k", metaKey: true });
+    const search = await screen.findByRole("combobox", { name: "Search actions, tasks, and sessions" });
+    fireEvent.keyDown(search, { key: "Escape" });
+    status.focus();
+    fireEvent.keyDown(status, { key: "2", metaKey: true });
+    expect(await screen.findByRole("button", { name: "open list task" })).toBeDefined();
+  });
+});
+
 describe("session work names", () => {
   it("keyboard activation of a real session Rename does not open the selected session", async () => {
     namingScenario.realSessions = true;

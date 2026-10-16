@@ -29,9 +29,9 @@ export function ListToolbar({
       className="collection-toolbar"
       aria-label={`Filter ${label.toLowerCase()}`}
       onKeyDown={(event) => {
-        // Native filter controls own their keys, not the selected row underneath.
+        // Filter navigation/confirmation stays local; global command shortcuts still reach App.
         const control = (event.target as HTMLElement).closest("select,button");
-        if (control && ((!event.metaKey && !event.ctrlKey) || control.tagName === "SELECT")) event.stopPropagation();
+        if (control && ((!event.metaKey && !event.ctrlKey) || event.key === "Enter" || event.key === " ")) event.stopPropagation();
       }}
     >
       {heading && <div className="collection-heading">{heading}</div>}
