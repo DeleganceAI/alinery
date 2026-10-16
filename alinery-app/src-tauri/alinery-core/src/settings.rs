@@ -13,7 +13,8 @@ use serde::Deserialize;
 use crate::log::{append_exception, append_info, quote_log_value};
 use crate::paths::{alinery_dir, config_toml_path};
 use crate::types::{
-    default_grid_views, default_telemetry_endpoint, GlobalSettings, GridViewDefinition, HarnessFile, RepoOverrides, TelemetryPrefs, DEFAULT_HARNESSES_TOML, MAX_GRID_VIEWS,
+    default_grid_views, default_telemetry_endpoint, GlobalSettings, GridViewDefinition, HarnessFile, RepoOverrides, TelemetryPrefs, DEFAULT_GRID_VIEW_NAME, DEFAULT_HARNESSES_TOML,
+    LEGACY_DEFAULT_GRID_VIEW_NAME, MAX_GRID_VIEWS,
 };
 
 #[derive(Deserialize, Default)]
@@ -67,9 +68,14 @@ fn normalize_loaded_grid_views(views: Vec<GridViewDefinition>) -> Vec<GridViewDe
     let mut ids = BTreeSet::new();
     let mut names = BTreeSet::new();
     let mut normalized = Vec::new();
+    // Saved settings keep the old default name "Kanban+"; show it as Canvas unless another view already uses that name.
+    let canvas_taken = views.iter().any(|view| view.name.trim().eq_ignore_ascii_case(DEFAULT_GRID_VIEW_NAME));
     for view in sort_grid_views_by_slot(views) {
         let id = view.id.trim();
-        let name = view.name.trim();
+        let name = match view.name.trim() {
+            LEGACY_DEFAULT_GRID_VIEW_NAME if !canvas_taken => DEFAULT_GRID_VIEW_NAME,
+            name => name,
+        };
         let name_key = name.to_lowercase();
         if id.is_empty() || name.is_empty() || !ids.insert(id.to_string()) || !names.insert(name_key) {
             continue;
@@ -731,8 +737,8 @@ mod tests {
                 slot: 2,
             },
             GridViewDefinition {
-                id: "kanban-plus".into(),
-                name: "Kanban+".into(),
+                id: "canvas".into(),
+                name: "Canvas".into(),
                 slot: 1,
             },
         ])
@@ -741,8 +747,8 @@ mod tests {
             prepared,
             vec![
                 GridViewDefinition {
-                    id: "kanban-plus".into(),
-                    name: "Kanban+".into(),
+                    id: "canvas".into(),
+                    name: "Canvas".into(),
                     slot: 1,
                 },
                 GridViewDefinition {
@@ -751,6 +757,26 @@ mod tests {
                     slot: 2,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn loaded_grid_views_rename_legacy_kanban_plus_to_canvas() {
+        let view = |id: &str, name: &str, slot: u8| GridViewDefinition {
+            id: id.into(),
+            name: name.into(),
+            slot,
+        };
+        let mut global = default_global_settings();
+        global.grid_views = vec![view("default-kanban-plus", "Kanban+", 1), view("planning", "Planning", 2)];
+        assert_eq!(
+            normalize_global_settings(global.clone()).grid_views,
+            vec![view("default-kanban-plus", "Canvas", 1), view("planning", "Planning", 2)]
+        );
+        global.grid_views = vec![view("default-kanban-plus", "Kanban+", 1), view("mine", "canvas", 2)];
+        assert_eq!(
+            normalize_global_settings(global).grid_views,
+            vec![view("default-kanban-plus", "Kanban+", 1), view("mine", "canvas", 2)]
         );
     }
 

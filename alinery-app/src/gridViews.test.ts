@@ -11,9 +11,9 @@ import {
 } from "./gridViews";
 
 describe("Grid view definitions", () => {
-  it("seeds exactly one Kanban+ view for missing or invalid settings", () => {
-    expect(normalizeGridViews(undefined)).toEqual([{ id: DEFAULT_GRID_VIEW_ID, name: "Kanban+", slot: 1 }]);
-    expect(normalizeGridViews([{ id: "", name: "  ", slot: 0 }])).toEqual([{ id: DEFAULT_GRID_VIEW_ID, name: "Kanban+", slot: 1 }]);
+  it("seeds exactly one Canvas view for missing or invalid settings", () => {
+    expect(normalizeGridViews(undefined)).toEqual([{ id: DEFAULT_GRID_VIEW_ID, name: "Canvas", slot: 1 }]);
+    expect(normalizeGridViews([{ id: "", name: "  ", slot: 0 }])).toEqual([{ id: DEFAULT_GRID_VIEW_ID, name: "Canvas", slot: 1 }]);
   });
 
   it("sorts explicit slots, trims labels, removes duplicates, and caps at three", () => {
@@ -36,11 +36,11 @@ describe("Grid view definitions", () => {
   it("reassigns slots on reorder without changing IDs and chooses a neutral new label", () => {
     const views = [
       { id: "b", name: "Planning", slot: 2 },
-      { id: "a", name: "Kanban+", slot: 1 },
+      { id: "a", name: "Canvas", slot: 1 },
     ];
     expect(withGridViewSlots(views)).toEqual([
       { id: "b", name: "Planning", slot: 1 },
-      { id: "a", name: "Kanban+", slot: 2 },
+      { id: "a", name: "Canvas", slot: 2 },
     ]);
     expect(nextGridViewName(views)).toBe("Grid view 2");
   });

@@ -919,8 +919,8 @@ describe("session navigation acknowledgment", () => {
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
 
-    // One Grid view by default, so the bar reads ⌘1 Kanban+, ⌘2 Tasks, ⌘3 Sessions, ⌘4 Kanban.
-    expect(screen.getByText("Go to Kanban+").closest(".pitem")?.textContent).toContain("⌘1");
+    // One Grid view by default, so the bar reads ⌘1 Canvas, ⌘2 Tasks, ⌘3 Sessions, ⌘4 Kanban.
+    expect(screen.getByText("Go to Canvas").closest(".pitem")?.textContent).toContain("⌘1");
     expect((await screen.findByText("Go to Tasks")).closest(".pitem")?.textContent).toContain("⌘2");
     expect(screen.getByText("Go to Sessions").closest(".pitem")?.textContent).toContain("⌘3");
     expect(screen.getByText("Go to Kanban").closest(".pitem")?.textContent).toContain("⌘4");
@@ -932,11 +932,11 @@ describe("session navigation acknowledgment", () => {
   it("exposes both boards by default and opens classic Kanban", async () => {
     await renderApp();
 
-    expect(screen.getByRole("button", { name: /Kanban\+/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Canvas/ })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Kanban4" }));
     expect(await screen.findByRole("button", { name: "open active card session" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    expect(await screen.findByText("Go to Kanban+")).toBeTruthy();
+    expect(await screen.findByText("Go to Canvas")).toBeTruthy();
     expect(screen.getByText("Go to Kanban")).toBeTruthy();
   });
 
@@ -949,7 +949,7 @@ describe("session navigation acknowledgment", () => {
 
     expect(screen.queryByRole("button", { name: "Kanban4" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    expect(await screen.findByText("Go to Kanban+")).toBeTruthy();
+    expect(await screen.findByText("Go to Canvas")).toBeTruthy();
     expect(screen.queryByText("Go to Kanban")).toBeNull();
   });
 
@@ -990,12 +990,12 @@ describe("session navigation acknowledgment", () => {
   it("keeps a visited Grid mounted while navigating away and back", async () => {
     await renderApp();
 
-    fireEvent.click(screen.getByRole("button", { name: /Kanban\+/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Canvas/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Change Grid layout" }));
     expect(screen.getByText("Grid layout revision 1")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Kanban\+/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Canvas/ }));
 
     expect(await screen.findByText("Grid layout revision 1")).toBeTruthy();
   });

@@ -3,7 +3,7 @@ import type { GridViewDefinition } from "./types";
 export const MAX_GRID_VIEWS = 3;
 export const ACTIVE_GRID_VIEW_STORAGE_KEY = "alinery:navigation:active-grid-view";
 export const DEFAULT_GRID_VIEW_ID = "default-kanban-plus";
-export const DEFAULT_GRID_VIEWS: readonly GridViewDefinition[] = [{ id: DEFAULT_GRID_VIEW_ID, name: "Kanban+", slot: 1 }];
+export const DEFAULT_GRID_VIEWS: readonly GridViewDefinition[] = [{ id: DEFAULT_GRID_VIEW_ID, name: "Canvas", slot: 1 }];
 
 export function normalizeGridViews(views: readonly GridViewDefinition[] | null | undefined): GridViewDefinition[] {
   const ids = new Set<string>();
