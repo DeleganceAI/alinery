@@ -199,7 +199,6 @@ export function ChatModelDialog({
     return [...matched.filter((m) => starred.has(`${m.provider}/${m.id}`)), ...matched.filter((m) => !starred.has(`${m.provider}/${m.id}`))];
   }, [listed, query, favorites]);
   const roleModels = useMemo(() => listed.filter((model) => model.provider !== HOSTED_PROVIDER || hosted?.ready), [listed, hosted?.ready]);
-  const selected = filtered.find((m) => `${m.provider}/${m.id}` === query.trim()) ?? filtered[0];
   // A `provider/id` nobody lists is still a valid ask (preview models, private deployments).
   const customRef = (() => {
     const q = query.trim();
@@ -207,6 +206,7 @@ export function ChatModelDialog({
     if (slash <= 0 || slash === q.length - 1 || listed.some((m) => `${m.provider}/${m.id}` === q)) return null;
     return { provider: q.slice(0, slash), id: q.slice(slash + 1) };
   })();
+  const selected = customRef ?? filtered.find((model) => `${model.provider}/${model.id}` === query.trim()) ?? filtered[0];
   const title = setup ? "Set up your providers" : tab === "accounts" ? "Providers" : "Models";
 
   const providerNeedle = providerQuery.trim().toLowerCase();
@@ -276,7 +276,6 @@ export function ChatModelDialog({
               onKeyDown={(e) => {
                 if (e.key !== "Enter" || tab !== "models") return;
                 if (selected) applyOrUpsell(selected.provider, selected.id);
-                else if (customRef) applyOrUpsell(customRef.provider, customRef.id);
               }}
             />
           </div>
@@ -416,12 +415,7 @@ export function ChatModelDialog({
       </div>
       <div className="mfoot">
         {tab === "models" ? (
-          <button
-            type="button"
-            className="btn small"
-            disabled={!selected && !customRef}
-            onClick={() => (selected ? applyOrUpsell(selected.provider, selected.id) : customRef && applyOrUpsell(customRef.provider, customRef.id))}
-          >
+          <button type="button" className="btn small" disabled={!selected} onClick={() => selected && applyOrUpsell(selected.provider, selected.id)}>
             Apply
           </button>
         ) : advanced.length > 0 && !providerNeedle ? (

@@ -128,6 +128,24 @@ describe("ChatModelDialog", () => {
     expect(screen.getByRole("button", { name: /xai\/grok-4\.6/ })).toBeTruthy();
   });
 
+  it.each(["Enter", "Apply"])("keeps a complete custom ID when a catalog model shares its prefix via %s", (action) => {
+    const onApplyModel = vi.fn();
+    render(<ChatModelDialog {...base} models={[{ provider: "openai", id: "gpt-5-mini" }]} onApplyModel={onApplyModel} />);
+    const search = screen.getByRole("textbox", { name: "Search models" });
+    fireEvent.change(search, { target: { value: "openai/gpt-5" } });
+    if (action === "Enter") fireEvent.keyDown(search, { key: "Enter" });
+    else fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(onApplyModel).toHaveBeenCalledExactlyOnceWith("openai", "gpt-5");
+  });
+
+  it.each(["gpt-5", "openai/gpt-5-mini"])("selects a catalog result for %s", (query) => {
+    const onApplyModel = vi.fn();
+    render(<ChatModelDialog {...base} models={[{ provider: "openai", id: "gpt-5-mini" }]} onApplyModel={onApplyModel} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Search models" }), { target: { value: query } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(onApplyModel).toHaveBeenCalledExactlyOnceWith("openai", "gpt-5-mini");
+  });
+
   it("switches tabs with arrow keys and focuses the search with ⌘F", () => {
     const onTabChange = vi.fn();
     render(<ChatModelDialog {...base} tab="accounts" onTabChange={onTabChange} />);
