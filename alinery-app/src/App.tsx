@@ -37,7 +37,7 @@ import { BrandMark } from "./Logo";
 import { isOnboardingCompleted, markOnboardingCompleted, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset } from "./onboarding";
 import { PRIORITY_SESSION_SORT, type SessionSort } from "./sessionAttention";
 import { EMPTY_SESSION_MESSAGE_DRAFT, type SessionMessageDraft, sessionMessageDraftKey } from "./sessionMessage";
-import { ALL_REPOS, isDevelopmentProductName, LoadingState, repoName, TopBar } from "./shared";
+import { ALL_REPOS, Dialog, isDevelopmentProductName, LoadingState, repoName, TopBar } from "./shared";
 import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, type DrawerTab, TerminalDrawer } from "./TerminalDrawer";
 import { gridViewIdOf, isPrimaryTab, primaryTabOf, viewFadeClass } from "./tabMotion";
 import * as taskMutationGuard from "./taskMutationGuard";
@@ -1153,7 +1153,8 @@ export default function App() {
     }
   };
 
-  const overlayOpen = searchOpen || diagramZoomOpen;
+  const onboardingVisible = Boolean(appConfig?.active_repo) && onboardingOpen && view.kind !== "playbooks";
+  const overlayOpen = searchOpen || diagramZoomOpen || onboardingVisible;
   // Avoid stuck overlayOpen after leaving task/session with zoom still flagged open.
   useEffect(() => {
     if (view.kind !== "task" && view.kind !== "session") setDiagramZoomOpen(false);
@@ -1178,7 +1179,7 @@ export default function App() {
     isFullscreen,
     board,
     toggleSearch: () => {
-      if (!hasRepo) return;
+      if (!hasRepo || onboardingVisible) return;
       setSearchOpen((open) => !open);
     },
     openCreate: () => {
@@ -1227,9 +1228,9 @@ export default function App() {
       void killDrawer();
     },
     toggleQuickChat: () => {
-      if (showChat) setQuickChatOpen((open) => !open);
+      if (showChat && !onboardingVisible) setQuickChatOpen((open) => !open);
     },
-    focusQuickChat: () => showChat && quickChatOpen && focusQuickChatComposer(),
+    focusQuickChat: () => !onboardingVisible && showChat && quickChatOpen && focusQuickChatComposer(),
   });
 
   // Actions call the same callbacks as their direct shortcuts.
@@ -1513,8 +1514,8 @@ export default function App() {
     />
   );
 
-  const onboardingModal = onboardingOpen && view.kind !== "playbooks" && (
-    <div className="onboarding-overlay" role="dialog" aria-modal="true" aria-label="Alinery onboarding">
+  const onboardingModal = onboardingVisible && (
+    <Dialog className="onboarding-overlay" ariaLabel="Alinery onboarding" onClose={completeOnboarding}>
       <OnboardingFlow
         appConfig={appConfig}
         repoError={repoErr}
@@ -1530,7 +1531,7 @@ export default function App() {
         }}
         onLaunchStarterTask={handleLaunchStarterTask}
       />
-    </div>
+    </Dialog>
   );
 
   const content = (

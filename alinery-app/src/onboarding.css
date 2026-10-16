@@ -12,15 +12,19 @@
   -webkit-user-select: none;
 }
 
-/* Once a workspace exists the wizard sits over it like any dialog: scrim behind, board inert. */
-.onboarding-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 40;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px 24px;
+/* Native modality keeps the workspace inert while nested provider dialogs stack above the guide. */
+.modal.onboarding-overlay {
+  width: min(1180px, calc(100vw - 48px));
+  height: min(760px, calc(100dvh - 48px));
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+.modal.onboarding-overlay::backdrop {
   background: var(--scrim-strong);
 }
 .onboarding-overlay .onboarding-view {

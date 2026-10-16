@@ -74,7 +74,7 @@ export function OnboardingFlow({
 
   // Step 03: Agent & model readiness state
   const [agentStatus, setAgentStatus] = useState<"checking" | "ready" | "attention">("checking");
-  const [agentDetail, setAgentDetail] = useState<string>("Checking local session service and OMP agent…");
+  const [agentDetail, setAgentDetail] = useState<string>("Checking OMP installation…");
   const [repoConfig, setRepoConfig] = useState<Config | null>(null);
   const [defaultModel, setDefaultModel] = useState<string>("");
   const [modelError, setModelError] = useState("");
@@ -148,12 +148,12 @@ export function OnboardingFlow({
     }
   }, [playbookSteps, selectedStepKey]);
 
-  // Probe agent & model readiness when entering Step 03 (or when active_repo changes)
+  // Check installation without creating a reserved setup process with no attached client.
   useEffect(() => {
     if (step !== "models" || !appConfig.active_repo) return;
     let cancelled = false;
     setAgentStatus("checking");
-    setAgentDetail("Checking local session service and OMP agent…");
+    setAgentDetail("Checking OMP installation…");
     setModelError("");
     setRepoConfig(null);
 
@@ -169,38 +169,23 @@ export function OnboardingFlow({
       });
 
     void ipc
-      .ompSetupSession()
-      .then(() => {
+      .checkOmpUpdate()
+      .then((status) => {
         if (cancelled) return;
-        setAgentStatus("ready");
-        setAgentDetail("Session daemon and OMP agent are reachable.");
+        setAgentStatus(status.installed ? "ready" : "attention");
+        setAgentDetail(status.installed ? `OMP ${status.installed} is installed.` : `OMP could not be started at ${status.binary_path || "the configured location"}.`);
       })
       .catch((error) => {
         if (cancelled) return;
         const msg = String(error);
         setAgentStatus("attention");
-        setAgentDetail(msg || "Could not reach the local OMP setup session.");
+        setAgentDetail(msg || "Could not check the OMP installation.");
       });
 
     return () => {
       cancelled = true;
     };
   }, [step, appConfig.active_repo, probeTick]);
-
-  // Escape key skips to workspace once a repository is connected
-  useEffect(() => {
-    if (!hasActiveRepo) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      const target = event.target as HTMLElement | null;
-      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
-      if (document.querySelector(".backdrop")) return;
-      event.preventDefault();
-      onCompleteToWorkspace();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [hasActiveRepo, onCompleteToWorkspace]);
 
   const [direction, setDirection] = useState<"forward" | "back">("forward");
   const goToStep = (next: OnboardingStepId) => {
@@ -306,11 +291,13 @@ export function OnboardingFlow({
     };
     setRepoConfig(updated);
     void ipc
-      .writeRepoOverridesForRepo(appConfig.active_repo, {
-        github: {},
-        defaults: { model: trimmed || null },
-        backup: {},
-      })
+      .readScopedSettingsForRepo(appConfig.active_repo)
+      .then(({ overrides }) =>
+        ipc.writeRepoOverridesForRepo(appConfig.active_repo, {
+          ...overrides,
+          defaults: { ...overrides.defaults, model: trimmed || null },
+        }),
+      )
       .catch((error) => setModelError(String(error)));
   };
 
@@ -392,6 +379,7 @@ export function OnboardingFlow({
                   type="button"
                   role="tab"
                   aria-selected={active}
+                  data-autofocus={active ? "" : undefined}
                   disabled={disabled}
                   className={`onboarding-step-pill${active ? " active" : ""}${completed ? " completed" : ""}`}
                   onClick={() => goToStep(item.id)}
@@ -743,7 +731,7 @@ export function OnboardingFlow({
                   <div className="onboarding-readiness-row">
                     <div className="onboarding-readiness-title">
                       <Cpu size={16} aria-hidden="true" />
-                      <strong>Agent connection</strong>
+                      <strong>Agent installation</strong>
                     </div>
                     {agentStatus === "checking" && (
                       <span className="pill">
@@ -760,7 +748,7 @@ export function OnboardingFlow({
                     {agentStatus === "attention" && <span className="pill onboarding-pill-warning">Needs attention</span>}
                   </div>
                   <p className="onboarding-readiness-detail">
-                    {agentStatus === "attention" ? "Could not connect to the session service. Review the details below, resolve the issue, then retry." : agentDetail}
+                    {agentStatus === "attention" ? "OMP isn't available. Review the details below, resolve the issue, then retry." : agentDetail}
                   </p>
                   {agentStatus === "attention" && (
                     <details className="onboarding-prompt-preview">

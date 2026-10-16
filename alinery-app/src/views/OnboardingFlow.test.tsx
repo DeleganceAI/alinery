@@ -10,7 +10,7 @@ import {
   readSavedOnboardingStep,
   writeSavedOnboardingStep,
 } from "../onboarding";
-import type { AppConfig, BoardTask, KanbanColumn, NormalizedPlaybook, NormalizedStep } from "../types";
+import type { AppConfig, BoardTask, KanbanColumn, NormalizedPlaybook, NormalizedStep, RepoOverrides, ScopedSettings } from "../types";
 import { Grid, resetGridBoardSnapshots } from "./Grid";
 import { OnboardingFlow } from "./OnboardingFlow";
 
@@ -107,6 +107,8 @@ beforeEach(() => {
   vi.spyOn(ipc, "ompSetupSession").mockResolvedValue("setup-session-1");
   vi.spyOn(ipc, "readModelFavorites").mockResolvedValue([]);
   vi.spyOn(ipc, "listHarnessModels").mockResolvedValue(["anthropic/claude-sonnet-4-5"]);
+  vi.spyOn(ipc, "listHarnessModelsForRepo").mockResolvedValue(["anthropic/claude-sonnet-4-5"]);
+  vi.spyOn(ipc, "checkOmpUpdate").mockResolvedValue({ installed: "18.11.1", available: null, checked_at: 1, binary_path: "/omp", config_dir: "/config" });
 });
 
 afterEach(() => {
@@ -137,6 +139,75 @@ describe("onboarding persistence helpers", () => {
 });
 
 describe("OnboardingFlow wizard", () => {
+  it.each(["openai/private-deployment", ""])("preserves unrelated repository overrides when choosing model %j", async (model) => {
+    const effective = await ipc.readConfigForRepo(baseConfig.active_repo);
+    const original: RepoOverrides = {
+      github: { token: "repository-credential-fixture" },
+      defaults: { thinking: "high", playbook: { scope: "repo", key: "custom" }, draft_autosave: false },
+      backup: { destination: "/backup", enabled: false, retention: 13 },
+    };
+    let persisted = structuredClone(original);
+    const scoped: ScopedSettings = {
+      global: { ...effective, harnesses: { harness: [] }, model_favorites: {}, updates: { check_enabled: true } },
+      effective,
+      overrides: original,
+    };
+    vi.spyOn(ipc, "readScopedSettingsForRepo").mockResolvedValue(scoped);
+    vi.spyOn(ipc, "writeRepoOverridesForRepo").mockImplementation(async (_repo, overrides) => {
+      persisted = structuredClone(overrides);
+      return { ...scoped, overrides: persisted };
+    });
+    let pick: ((value: string) => void) | undefined;
+    render(
+      <OnboardingFlow
+        appConfig={baseConfig}
+        repoError=""
+        initialStep="models"
+        onSelectRepo={vi.fn(async () => true)}
+        onAddRepo={vi.fn(async () => true)}
+        onRemoveRepo={vi.fn()}
+        onOpenProviderSetup={(_tab, onPick) => {
+          pick = onPick;
+        }}
+        onCompleteToWorkspace={vi.fn()}
+        onOpenCreateWithPlaybook={vi.fn()}
+        onLaunchStarterTask={vi.fn(async () => {})}
+      />,
+    );
+    await waitFor(() => expect(screen.getByLabelText("Default repository model")).toHaveProperty("value", effective.defaults.model));
+    fireEvent.click(screen.getByRole("button", { name: "Browse models" }));
+    act(() => pick?.(model));
+    await waitFor(() => expect(persisted.defaults.model).toBe(model || null));
+    expect(persisted.github).toEqual(original.github);
+    expect(persisted.backup).toEqual(original.backup);
+    expect(persisted.defaults).toEqual({ ...original.defaults, model: model || null });
+  });
+
+  it("leaves no unattached setup runtime after visiting model setup without opening accounts", async () => {
+    const unattached = new Set<string>();
+    vi.mocked(ipc.ompSetupSession).mockImplementation(async () => {
+      unattached.add("unattached-setup");
+      return "unattached-setup";
+    });
+    const view = render(
+      <OnboardingFlow
+        appConfig={baseConfig}
+        repoError=""
+        initialStep="models"
+        onSelectRepo={vi.fn(async () => true)}
+        onAddRepo={vi.fn(async () => true)}
+        onRemoveRepo={vi.fn()}
+        onOpenProviderSetup={vi.fn()}
+        onCompleteToWorkspace={vi.fn()}
+        onOpenCreateWithPlaybook={vi.fn()}
+        onLaunchStarterTask={vi.fn(async () => {})}
+      />,
+    );
+    await act(async () => {});
+    view.unmount();
+    expect([...unattached]).toEqual([]);
+  });
+
   it("shows a failed preview without fabricated steps and reloads it on retry", async () => {
     vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
     vi.mocked(ipc.readPlaybook).mockRejectedValueOnce(new Error("Bundled definition could not be read"));

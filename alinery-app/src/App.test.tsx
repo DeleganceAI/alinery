@@ -21,6 +21,7 @@ import type {
 } from "./types";
 import type * as CreateTaskModule from "./views/CreateTaskPage";
 import { executionReply } from "./views/executionTestFixture";
+import type * as ProviderSetupModule from "./views/ProviderSetupDialog";
 import type { SessionsList as SessionsListComponent } from "./views/SessionsList";
 import type { TaskDetail as TaskDetailComponent } from "./views/TaskDetail";
 
@@ -167,6 +168,7 @@ const appConfig: AppConfig = {
 };
 
 const actualCreation = vi.hoisted(() => ({ enabled: false }));
+const actualProviders = vi.hoisted(() => ({ enabled: false }));
 const namingScenario = vi.hoisted(() => ({ realSessions: false, realTaskDetail: false }));
 
 const { ipcMocks, ipcModule } = vi.hoisted(() => {
@@ -292,9 +294,14 @@ vi.mock("./telemetry-consent", () => ({
   TELEMETRY_CONSENT_CHOICES: [{ key: "opt-out", label: "Don't share" }],
   telemetryConsentWrite: () => "later",
 }));
-vi.mock("./views/ProviderSetupDialog", () => ({
-  ProviderSetupDialog: ({ mode }: { mode: string }) => <div data-testid={`provider-setup:${mode}`} />,
-}));
+vi.mock("./views/ProviderSetupDialog", async (importOriginal) => {
+  const actual = await importOriginal<typeof ProviderSetupModule>();
+  return {
+    ...actual,
+    ProviderSetupDialog: (props: Parameters<typeof actual.ProviderSetupDialog>[0]) =>
+      actualProviders.enabled ? <actual.ProviderSetupDialog {...props} /> : <div data-testid={`provider-setup:${props.mode}`} />,
+  };
+});
 vi.mock("./WindowChrome", () => ({
   ResizeHandles: () => null,
   WindowControls: () => null,
@@ -588,6 +595,7 @@ vi.mock("./views/ReviewHandoffPage", () => ({
 beforeEach(() => {
   window.localStorage.setItem("alinery.onboardingCompleted.v1", "1");
   actualCreation.enabled = false;
+  actualProviders.enabled = false;
   namingScenario.realSessions = false;
   namingScenario.realTaskDetail = false;
   Element.prototype.scrollIntoView = vi.fn();
@@ -693,6 +701,45 @@ describe("onboarding gate", () => {
     render(<App />);
     await screen.findByTestId("grid:view:default-kanban-plus");
     expect(screen.queryByTestId("onboarding-flow")).toBeNull();
+  });
+
+  it("keeps workspace shortcuts and focus inside the open guide", async () => {
+    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    render(<App />);
+    await screen.findByTestId("onboarding-step-playbooks");
+    const guide = screen.getByRole("dialog", { name: "Alinery onboarding" });
+    const skip = within(guide).getByRole("button", { name: "Skip Onboarding" });
+    vi.useFakeTimers();
+    try {
+      fireEvent.keyDown(skip, { key: "n", metaKey: true });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      expect(screen.queryByRole("button", { name: "open created task" })).toBeNull();
+      fireEvent.keyDown(skip, { key: "k", metaKey: true });
+      expect(screen.getAllByRole("dialog")).toHaveLength(1);
+      expect(guide.contains(document.activeElement)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("lets a nested provider dialog dismiss without completing the guide", async () => {
+    actualProviders.enabled = true;
+    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    window.localStorage.setItem("alinery.onboardingStep.v1", "models");
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Manage accounts…" }));
+    const provider = await screen.findByRole("dialog", { name: /providers/i });
+    const accounts = within(provider).getByRole("tab", { name: "Accounts" });
+    accounts.focus();
+    expect(fireEvent.keyDown(accounts, { key: "Escape" })).toBe(true);
+    fireEvent(provider, new Event("cancel", { bubbles: true, cancelable: true }));
+    const guide = screen.getByRole("dialog", { name: "Alinery onboarding" });
+    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBeNull();
+    fireEvent(guide, new Event("cancel", { bubbles: true, cancelable: true }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Alinery onboarding" })).toBeNull());
+    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
   });
 
   it("resumes an interrupted first run at the saved step once a repository exists", async () => {
