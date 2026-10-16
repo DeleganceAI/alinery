@@ -3841,7 +3841,7 @@ dialog.modal::backdrop {
   width: 100%;
   min-width: calc(560px * var(--ui-scale));
   border-collapse: collapse;
-  table-layout: fixed;
+  table-layout: auto;
 }
 .task-session-table th {
   padding: 8px 12px;
@@ -4073,7 +4073,7 @@ dialog.modal::backdrop {
   width: calc(80px * var(--ui-scale));
 }
 .task-session-table .session-actions-col {
-  width: calc(140px * var(--ui-scale));
+  width: 1%;
 }
 .task-session-table .session-time-col {
   width: calc(76px * var(--ui-scale));
@@ -4170,13 +4170,13 @@ dialog.modal::backdrop {
   align-content: center;
   justify-content: flex-end;
   gap: 8px;
-  flex-wrap: wrap;
-  white-space: normal;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 .session-actions-inner > .btn {
   flex: 0 0 auto;
   max-width: 100%;
-  white-space: normal;
+  white-space: nowrap;
 }
 /* Respond to the pane left by the artifact viewer/drawer, not the window. */
 @container session-table (max-width: 700px) {
