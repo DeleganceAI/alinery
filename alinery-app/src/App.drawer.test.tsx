@@ -142,7 +142,7 @@ async function renderApp(config: AppConfig = appConfig) {
   const { default: App } = await import("./App");
   render(<App />);
   if (config.active_repo) await screen.findByRole("button", { name: "Repository" });
-  else await screen.findByText("token:attention");
+  else await screen.findByRole("heading", { name: "Select a repository" });
 }
 
 // A cleared drawer is unmounted, so its last recorded props are stale; the shortcut only
@@ -172,6 +172,7 @@ function requireFn(value: unknown, name: string): (...args: string[]) => void {
 
 beforeEach(() => {
   cleanup();
+  window.localStorage.setItem("alinery.onboardingCompleted.v1", "1");
   vi.stubGlobal(
     "ResizeObserver",
     class {

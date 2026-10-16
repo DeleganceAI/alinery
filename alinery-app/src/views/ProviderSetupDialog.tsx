@@ -394,7 +394,7 @@ export function ProviderSetupDialog({
       tab={tab}
       setup={mode === "auto"}
       models={shownModels}
-      current={chat.sessionMeta.model}
+      current={onPick ? undefined : chat.sessionMeta.model}
       preselect={preselect}
       loginProviders={chat.sessionMeta.loginProviders ?? []}
       livePromotedIds={livePromotedIds}

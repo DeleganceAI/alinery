@@ -929,7 +929,7 @@ export type View =
   | { kind: "notifications" }
   | { kind: "playbooks" }
   | { kind: "settings"; section?: SettingsSectionKey }
-  | { kind: "create"; from: View; draft?: BoardTask; initialPlaybook?: PlaybookRef }
+  | { kind: "create"; from: View; draft?: BoardTask; initialPlaybook?: PlaybookRef; initialPreset?: { name: string; description: string; evidence?: string } }
   | { kind: "createSession"; from: View; initialTask?: { repo_path: string; slug: string } }
   | { kind: "task"; slug: string; from: View; repoPath?: string; initialTask?: Task }
   | {

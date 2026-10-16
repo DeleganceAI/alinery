@@ -2,7 +2,7 @@ import { ArrowRight } from "lucide-react";
 import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH, layoutDefinitionGraph, reduceFlowConnections } from "./playbookGraphLayout";
 import type { NormalizedStep } from "./types";
-import { type PanZoomView, usePanZoom } from "./usePanZoom";
+import { FIT_PADDING, type PanZoomView, usePanZoom } from "./usePanZoom";
 import { usePointerDrag } from "./usePointerDrag";
 import "./PlaybookGraph.css";
 
@@ -24,6 +24,8 @@ export function selectorsOverlap(left: string, right: string): boolean {
   return exact.length >= pattern.prefix.length + pattern.suffix.length && exact.startsWith(pattern.prefix) && exact.endsWith(pattern.suffix);
 }
 
+export type SimulatedStepStatus = "idle" | "running" | "waiting_for_approval" | "completed";
+
 export function PlaybookGraph({
   title,
   steps,
@@ -35,6 +37,11 @@ export function PlaybookGraph({
   defaultHarness = "",
   graphFraction,
   onGraphFractionChange,
+  selectedStepKey,
+  onSelectStep,
+  simulatedStatuses,
+  hideToolbar = false,
+  minScale,
 }: {
   title: string;
   steps: NormalizedStep[];
@@ -46,8 +53,15 @@ export function PlaybookGraph({
   defaultHarness?: string;
   graphFraction?: number;
   onGraphFractionChange?: (fraction: number) => void;
+  selectedStepKey?: string | null;
+  onSelectStep?: (key: string) => void;
+  simulatedStatuses?: Record<string, SimulatedStepStatus>;
+  hideToolbar?: boolean;
+  /** Lower zoom bound; also floors auto-fit so compact embeds stay legible and pan instead. */
+  minScale?: number;
 }) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const activeKey = selectedStepKey !== undefined ? selectedStepKey : selectedKey;
   const [displayMode, setDisplayMode] = useState<"flow" | "dependencies">("flow");
   const [focusConnections, setFocusConnections] = useState(false);
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
@@ -69,6 +83,7 @@ export function PlaybookGraph({
     viewportRef,
     paint: paintView,
     enabled: canvasEnabled,
+    minScale,
   });
   const fitGraph = () => {
     const canvas = canvasRef.current;
@@ -91,7 +106,7 @@ export function PlaybookGraph({
     if (onGraphFractionChange) onGraphFractionChange(bounded);
     else setLocalFraction(bounded);
   };
-  const selectedStep = steps.find((step) => step.key === selectedKey) ?? (showInspector ? steps[0] : undefined);
+  const selectedStep = steps.find((step) => step.key === activeKey) ?? (showInspector ? steps[0] : undefined);
   const edges = useMemo(
     () =>
       variant === "definition"
@@ -133,18 +148,37 @@ export function PlaybookGraph({
     const measure = () => {
       const width = split.clientWidth - (dividerRef.current?.offsetWidth ?? 0);
       if (width > 0) setAvailableWidth(width);
-      if (!initializedViewRef.current && viewport.clientWidth > 0 && viewport.clientHeight > 0 && canvas.offsetWidth > 0 && canvas.offsetHeight > 0) {
+      // Skip transient collapsed layouts: fitting into a sliver would pin the camera at the
+      // min scale; the observer retries once the viewport has real room.
+      const viewportReady = viewport.clientWidth > 2 * FIT_PADDING && viewport.clientHeight > 2 * FIT_PADDING;
+      if (!initializedViewRef.current && viewportReady && canvas.offsetWidth > 0 && canvas.offsetHeight > 0) {
         fit(canvas.offsetWidth, canvas.offsetHeight);
         initializedViewRef.current = true;
       }
     };
     measure();
+    if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure);
     observer.observe(split);
     observer.observe(viewport);
     observer.observe(canvas);
     return () => observer.disconnect();
   }, [canvasEnabled, layout, showInspector, fit, paintView, viewRef]);
+
+  useLayoutEffect(() => {
+    if (!selectedStepKey || !simulatedStatuses?.[selectedStepKey]) return;
+    const viewport = viewportRef.current;
+    const node = canvasRef.current?.querySelector<HTMLElement>('.playbook-definition-node[aria-pressed="true"]');
+    if (!viewport || !node) return;
+    const frame = viewport.getBoundingClientRect();
+    const bounds = node.getBoundingClientRect();
+    const dx = bounds.left < frame.left + 24 ? frame.left + 24 - bounds.left : bounds.right > frame.right - 24 ? frame.right - 24 - bounds.right : 0;
+    const dy = bounds.top < frame.top + 24 ? frame.top + 24 - bounds.top : bounds.bottom > frame.bottom - 24 ? frame.bottom - 24 - bounds.bottom : 0;
+    if (dx || dy) {
+      const view = viewRef.current;
+      setView({ ...view, tx: view.tx + dx, ty: view.ty + dy });
+    }
+  }, [selectedStepKey, simulatedStatuses, setView, viewRef]);
 
   if (variant === "definition" && layout) {
     const selectedEdges = showInspector ? edges.filter(({ from, to }) => from.key === selectedStep?.key || to.key === selectedStep?.key) : [];
@@ -158,26 +192,28 @@ export function PlaybookGraph({
         : layout.edges;
     return (
       <section className="playbook-graph-view playbook-definition-graph" aria-label={`${title} graph`}>
-        <div className="playbook-canvas-toolbar" role="group" aria-label="Graph display mode">
-          <button type="button" className="btn ghost small" aria-pressed={displayMode === "flow"} onClick={() => setDisplayMode("flow")}>
-            Flow
-          </button>
-          <button type="button" className="btn ghost small" aria-pressed={displayMode === "dependencies"} onClick={() => setDisplayMode("dependencies")}>
-            Artifact dependencies
-          </button>
-          {displayMode === "dependencies" && (
-            <button
-              type="button"
-              className="btn ghost small"
-              aria-pressed={focusConnections}
-              disabled={!selectedStep}
-              title={selectedStep ? `Show only connections entering or leaving ${selectedStep.title}` : "Select a step first"}
-              onClick={() => setFocusConnections((focused) => !focused)}
-            >
-              Focus connections
+        {!hideToolbar && (
+          <div className="playbook-canvas-toolbar" role="group" aria-label="Graph display mode">
+            <button type="button" className="btn ghost small" aria-pressed={displayMode === "flow"} onClick={() => setDisplayMode("flow")}>
+              Flow
             </button>
-          )}
-        </div>
+            <button type="button" className="btn ghost small" aria-pressed={displayMode === "dependencies"} onClick={() => setDisplayMode("dependencies")}>
+              Artifact dependencies
+            </button>
+            {displayMode === "dependencies" && (
+              <button
+                type="button"
+                className="btn ghost small"
+                aria-pressed={focusConnections}
+                disabled={!selectedStep}
+                title={selectedStep ? `Show only connections entering or leaving ${selectedStep.title}` : "Select a step first"}
+                onClick={() => setFocusConnections((focused) => !focused)}
+              >
+                Focus connections
+              </button>
+            )}
+          </div>
+        )}
         <div
           ref={splitRef}
           className={`playbook-definition-layout${resizing ? " resizing" : ""}`}
@@ -300,7 +336,7 @@ export function PlaybookGraph({
                           ({ from, to, label, labelX, labelY, labelWidth, labelHeight }) =>
                             displayMode === "dependencies" &&
                             label &&
-                            (from === selectedKey || to === selectedKey || from === hoveredKey || to === hoveredKey || hoveredEdge === JSON.stringify([from, to])) && (
+                            (from === activeKey || to === activeKey || from === hoveredKey || to === hoveredKey || hoveredEdge === JSON.stringify([from, to])) && (
                               <foreignObject
                                 key={JSON.stringify([from, to])}
                                 x={labelX}
@@ -310,7 +346,7 @@ export function PlaybookGraph({
                                 onMouseEnter={() => setHoveredEdge(JSON.stringify([from, to]))}
                                 onMouseLeave={() => setHoveredEdge(null)}
                               >
-                                <div className={`playbook-definition-edge-label${from === selectedKey || to === selectedKey ? " selected" : ""}`} title={label}>
+                                <div className={`playbook-definition-edge-label${from === activeKey || to === activeKey ? " selected" : ""}`} title={label}>
                                   {label}
                                 </div>
                               </foreignObject>
@@ -320,11 +356,14 @@ export function PlaybookGraph({
                       <div role="group" aria-label="Graph steps">
                         {layout.nodes.map(({ key, id, instance, x, y }) => {
                           const step = stepsByKey[key];
+                          const simStatus = simulatedStatuses?.[key];
+                          const activeSimStatus = simStatus && simStatus !== "idle" ? simStatus : undefined;
                           return (
                             <button
                               type="button"
                               className={`playbook-definition-node${instance === null ? "" : " illustrative"}`}
                               key={id}
+                              data-sim-status={activeSimStatus}
                               style={{
                                 left: `calc(${x}px * var(--ui-scale))`,
                                 top: `calc(${y}px * var(--ui-scale))`,
@@ -335,12 +374,18 @@ export function PlaybookGraph({
                               aria-pressed={selectedStep?.key === key}
                               aria-controls={showInspector ? inspectorId : undefined}
                               title={`${step.title}${instance === null ? "" : " — illustrative instance, not a fixed count"}`}
-                              onClick={() => setSelectedKey(key)}
+                              onClick={() => {
+                                setSelectedKey(key);
+                                onSelectStep?.(key);
+                              }}
                               onMouseEnter={() => setHoveredKey(key)}
                               onMouseLeave={() => setHoveredKey(null)}
                             >
                               <span className="playbook-definition-node-title">{step.title}</span>
                               {instance !== null && <span className="playbook-definition-instance">Example {instance}</span>}
+                              {activeSimStatus === "running" && <span className="playbook-node-sim-badge running">Running</span>}
+                              {activeSimStatus === "waiting_for_approval" && <span className="playbook-node-sim-badge gate">Checkpoint · Needs review</span>}
+                              {activeSimStatus === "completed" && <span className="playbook-node-sim-badge completed">Artifact sealed</span>}
                             </button>
                           );
                         })}
@@ -468,11 +513,25 @@ export function PlaybookGraph({
                   {selectedEdges.map(({ from, to, input, output }) => (
                     <li key={`${from.key}:${output.path}:${to.key}:${input.path}`} aria-label={`${from.title} to ${to.title}: ${input.mode}`}>
                       <div className="playbook-definition-edge-ends">
-                        <button type="button" aria-controls={inspectorId} onClick={() => setSelectedKey(from.key)}>
+                        <button
+                          type="button"
+                          aria-controls={inspectorId}
+                          onClick={() => {
+                            setSelectedKey(from.key);
+                            onSelectStep?.(from.key);
+                          }}
+                        >
                           {from.title}
                         </button>
                         <ArrowRight size={16} aria-hidden="true" />
-                        <button type="button" aria-controls={inspectorId} onClick={() => setSelectedKey(to.key)}>
+                        <button
+                          type="button"
+                          aria-controls={inspectorId}
+                          onClick={() => {
+                            setSelectedKey(to.key);
+                            onSelectStep?.(to.key);
+                          }}
+                        >
                           {to.title}
                         </button>
                         <span>({input.mode})</span>

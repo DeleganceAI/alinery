@@ -50,7 +50,7 @@ function renderModelInput(overrides: Partial<React.ComponentProps<typeof ModelIn
 }
 
 async function openModels() {
-  fireEvent.click(screen.getByRole("button", { name: "Refresh model list" }));
+  fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
   return screen.findByRole("list", { name: "Models" });
 }
 
@@ -89,6 +89,46 @@ describe("ModelInput remembered model", () => {
   });
 });
 
+describe("ModelInput trigger", () => {
+  it("shows the chosen model read-only and clears back to the harness default", () => {
+    const { props } = renderModelInput({ value: "anthropic/claude-sonnet-4-5", ariaLabel: "Task Default Model" });
+    const trigger = screen.getByRole("combobox", { name: "Task Default Model" }) as HTMLInputElement;
+    expect(trigger.value).toBe("anthropic/claude-sonnet-4-5");
+    expect(trigger.readOnly).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear task default model" }));
+    expect(props.onChange).toHaveBeenCalledWith("");
+    expect(props.onCommit).toHaveBeenCalledWith("");
+  });
+
+  it("shows the placeholder and no clear control when empty", () => {
+    renderModelInput({ value: "" });
+    expect((screen.getByRole("combobox", { name: "Model" }) as HTMLInputElement).placeholder).toBe("Harness default");
+    expect(screen.queryByRole("button", { name: "Clear model" })).toBeNull();
+  });
+
+  it("routes to the host picker instead of its own list when one is provided", () => {
+    const onOpenPicker = vi.fn();
+    renderModelInput({ onOpenPicker });
+    fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
+    expect(onOpenPicker).toHaveBeenCalledTimes(1);
+    expect(ipcSpies.listHarnessModels).not.toHaveBeenCalled();
+    expect(screen.queryByRole("list", { name: "Models" })).toBeNull();
+  });
+
+  it("offers a typed id that is not in the harness list as a custom model", async () => {
+    ipcSpies.listHarnessModels.mockResolvedValue(["opus", "sonnet"]);
+    const { props } = renderModelInput();
+    await openModels();
+    fireEvent.change(screen.getByRole("textbox", { name: "Filter models" }), { target: { value: "vendor/preview-7" } });
+    expect(screen.queryByText("No matching models")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Use custom model vendor/preview-7" }));
+    expect(props.onChange).toHaveBeenCalledWith("vendor/preview-7");
+    expect(props.onCommit).toHaveBeenCalledWith("vendor/preview-7");
+    expect(screen.queryByRole("list", { name: "Models" })).toBeNull();
+  });
+});
+
 describe("ModelInput favorites", () => {
   it("waits for favorites before exposing discovery and opens with favorites first", async () => {
     const favoriteRead = deferred<string[]>();
@@ -97,18 +137,18 @@ describe("ModelInput favorites", () => {
     ipcSpies.listHarnessModels.mockReturnValue(discovery.promise);
     const { props } = renderModelInput();
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh model list" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
     await act(async () => discovery.resolve(["opus", "sonnet", "haiku"]));
 
     expect(screen.queryByRole("list", { name: "Models" })).toBeNull();
-    expect((screen.getByRole("button", { name: "Refresh model list" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("combobox", { name: "Model" }).getAttribute("aria-busy")).toBe("true");
     expect(props.onChange).not.toHaveBeenCalled();
 
     await act(async () => favoriteRead.resolve(["sonnet"]));
 
     const list = await screen.findByRole("list", { name: "Models" });
     expect([...list.querySelectorAll(".rtt")].map((node) => node.textContent)).toEqual(["sonnet", "opus", "haiku"]);
-    expect((screen.getByRole("button", { name: "Refresh model list" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByRole("combobox", { name: "Model" }).getAttribute("aria-busy")).toBeNull();
   });
 
   it("waits for a rejected favorite read and then opens in discovery order without a toast", async () => {
@@ -118,7 +158,7 @@ describe("ModelInput favorites", () => {
     ipcSpies.listHarnessModels.mockReturnValue(discovery.promise);
     renderModelInput();
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh model list" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
     await act(async () => discovery.resolve(["opus", "sonnet"]));
     expect(screen.queryByRole("list", { name: "Models" })).toBeNull();
 
@@ -136,16 +176,16 @@ describe("ModelInput favorites", () => {
     ipcSpies.listHarnessModelsForRepo.mockReturnValueOnce(obsolete.promise).mockReturnValueOnce(current.promise);
 
     const view = renderModelInput({ harness: "omp", repoPath: "/repo-a" });
-    fireEvent.click(screen.getByRole("button", { name: "Refresh model list" }));
-    expect((screen.getByRole("button", { name: "Refresh model list" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
+    expect(screen.getByRole("combobox", { name: "Model" }).getAttribute("aria-busy")).toBe("true");
 
     view.rerender(<ModelInput {...view.props} repoPath="/repo-b" />);
-    await waitFor(() => expect((screen.getByRole("button", { name: "Refresh model list" }) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getByRole("button", { name: "Refresh model list" }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" }).getAttribute("aria-busy")).toBeNull());
+    fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
 
     await act(async () => obsolete.resolve(["obsolete-model"]));
     expect(screen.queryByRole("list", { name: "Models" })).toBeNull();
-    expect((screen.getByRole("button", { name: "Refresh model list" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("combobox", { name: "Model" }).getAttribute("aria-busy")).toBe("true");
 
     await act(async () => current.resolve(["current-model"]));
     expect(await screen.findByText("current-model")).toBeDefined();
@@ -298,14 +338,14 @@ describe("ModelInput favorites", () => {
     ipcSpies.listHarnessModels.mockResolvedValue([]);
     const view = renderModelInput();
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh model list" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
     await waitFor(() => expect(toastSpies.show).toHaveBeenCalledWith("No models found"));
     expect(screen.queryByRole("list", { name: "Models" })).toBeNull();
     expect(screen.queryByText("missing")).toBeNull();
 
     ipcSpies.listHarnessModelsForRepo.mockRejectedValue(new Error("discovery failed"));
     view.rerender(<ModelInput {...view.props} repoPath="/repo" />);
-    fireEvent.click(screen.getByRole("button", { name: "Refresh model list" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
     await waitFor(() => expect(ipcSpies.listHarnessModelsForRepo).toHaveBeenCalledWith("/repo", "omp"));
     expect(screen.queryByRole("list", { name: "Models" })).toBeNull();
     expect(screen.queryByText("missing")).toBeNull();
