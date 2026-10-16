@@ -1055,6 +1055,14 @@ function attentionReason(kind: ObservationDisplayKind): "idle" | "waiting_for_in
   return null;
 }
 
+// Both standalone dots and filtered collections use the same transition policy.
+export function notifySessionAttentionTransition(previous: ObservationDisplayKind | null, current: ObservationDisplayKind, repoPath: string, slug: string) {
+  const reason = attentionReason(current);
+  if (previous === "busy" && reason !== null) {
+    ipc.notifySessionAttention(repoPath, slug, reason).catch(() => {});
+  }
+}
+
 // Whether this kind should suppress the dot in minimal mode (only show for notable states).
 function obsMinimalHide(kind: ObservationDisplayKind): boolean {
   return kind === "exited" || kind === "unknown";
@@ -1121,12 +1129,8 @@ export function StatusDot({
   useEffect(() => {
     const prev = prevKind.current?.key === pollKey ? prevKind.current.kind : null;
     prevKind.current = { key: pollKey, kind: observedKind };
-    if (!notifyTransitions || !slug || !repoPath || prev === null || prev === observedKind) return;
-    const wasBusy = prev === "busy";
-    const reason = attentionReason(observedKind);
-    if (wasBusy && reason !== null) {
-      ipc.notifySessionAttention(repoPath, slug, reason).catch(() => {});
-    }
+    if (!notifyTransitions || !slug || !repoPath) return;
+    notifySessionAttentionTransition(prev, observedKind, repoPath, slug);
   }, [observedKind, notifyTransitions, pollKey, repoPath, slug]);
 
   if (kind === "failed" && !exitAcknowledged && exitCode != null && exitCode !== 0) {

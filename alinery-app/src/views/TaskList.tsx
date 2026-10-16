@@ -418,7 +418,10 @@ export function TaskList({
                         {t.archived && <span className="pill task-archived">Archived</span>}
                         {t.draft && <span className="pill">Draft</span>}
                       </span>
-                      <span className="task-subline">
+                      <span
+                        className="task-subline"
+                        title={`${t.branch}${allRepos ? ` · ${repoName(t.repo_path)}` : ""}${parentHidden ? ` · Child of ${parentName ?? t.parent_task}` : ""} · ${playbook} · ${t.session_count} sessions · Created ${formatAbsolute(t.created)} · Updated ${formatAbsolute(updated)}`}
+                      >
                         {t.branch}
                         {allRepos ? ` · ${repoName(t.repo_path)}` : ""}
                         {parentHidden && (
@@ -427,10 +430,7 @@ export function TaskList({
                             <span title={`Parent task: ${parentName ?? t.parent_task}`}>Child of {parentName ?? t.parent_task}</span>
                           </>
                         )}
-                        <span
-                          className="task-compact-meta"
-                          title={`${playbook} · ${t.session_count} sessions · Created ${formatAbsolute(t.created)} · Updated ${formatAbsolute(updated)}`}
-                        >
+                        <span className="task-compact-meta">
                           {` · ${playbook} · ${t.session_count} ${t.session_count === 1 ? "session" : "sessions"} · created ${formatAge(t.created, now)} · updated ${formatAge(updated, now)}`}
                         </span>
                       </span>

@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   listSessionItems: vi.fn(),
   sessionListStatuses: vi.fn(),
   renameSession: vi.fn(),
+  notifySessionAttention: vi.fn(),
 }));
 
 vi.mock("../ipc", () =>
@@ -21,6 +22,7 @@ vi.mock("../ipc", () =>
     listSessionItems: mocks.listSessionItems,
     renameSession: mocks.renameSession,
     sessionListStatuses: mocks.sessionListStatuses,
+    notifySessionAttention: mocks.notifySessionAttention,
     listBoardTasks: async () => boardTasks,
   }),
 );
@@ -36,6 +38,7 @@ beforeEach(() => {
     .mockImplementation(async (allRepos, _archived, repoPath) => (allRepos ? sessionItems : sessionItems.filter((item) => item.repo_path === repoPath)));
   mocks.sessionListStatuses.mockReset().mockImplementation(async () => observations);
   mocks.renameSession.mockReset().mockResolvedValue({ name: "Committed name", source: "user" });
+  mocks.notifySessionAttention.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -110,7 +113,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-const busyObservation: SessionObservation = {
+const busyObservation = {
   lifecycle: { state: "live" },
   state: {
     process: { state: "alive" },
@@ -120,7 +123,7 @@ const busyObservation: SessionObservation = {
     message_adapter: "unsupported",
   },
   checkpoint: {},
-};
+} satisfies SessionObservation;
 
 describe("SessionsList empty", () => {
   it("renders a catalog plate on the major empty surface", async () => {
@@ -566,6 +569,42 @@ describe("session work names", () => {
 });
 
 describe("SessionsList filtering", () => {
+  it.each([
+    { filter: "running", reason: "idle" },
+    { filter: "waiting", reason: "waiting_for_input" },
+    { filter: "search", reason: "waiting_for_approval" },
+  ] as const)("delivers attention exactly once when $filter hides one side of a transition", async ({ filter, reason }) => {
+    vi.useFakeTimers();
+    sessionItems = [session({ name: "Agent work" })];
+    observations = { "/r:a-task:s1": busyObservation };
+    const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={vi.fn()} registerNav={vi.fn()} onCreateSession={vi.fn()} onCreateTask={vi.fn()} />);
+    await act(async () => {});
+    expect(renderedNames(container)).toEqual(["Agent work"]);
+    expect(mocks.notifySessionAttention).not.toHaveBeenCalled();
+    if (filter === "search") {
+      fireEvent.change(screen.getByLabelText("Search sessions"), { target: { value: "unrelated" } });
+    } else {
+      fireEvent.change(screen.getByLabelText("Status"), { target: { value: filter } });
+    }
+    observations = {
+      "/r:a-task:s1": {
+        ...busyObservation,
+        state: { ...busyObservation.state, agent: { state: reason } },
+      },
+    };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(renderedNames(container)).toEqual(filter === "waiting" ? ["Agent work"] : []);
+    expect(mocks.notifySessionAttention).toHaveBeenCalledExactlyOnceWith("/r", "a-task", reason);
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(renderedNames(container)).toEqual(["Agent work"]);
+    expect(mocks.notifySessionAttention).toHaveBeenCalledTimes(1);
+  });
+
   it("searches names, task context, step, and model, and keeps no matches distinct from no sessions", async () => {
     sessionItems = [
       session({ id: "named", name: "Refactor parser", task_name: "Parser task", created: 30 }),

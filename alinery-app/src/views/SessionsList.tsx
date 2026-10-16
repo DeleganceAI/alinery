@@ -6,6 +6,8 @@ import { ArchiveFilter, ListToolbar } from "../ListToolbar";
 import { awaitingSessionName, NameEditor, PendingSessionName } from "../NameEditor";
 import {
   hasAcknowledgedExit,
+  type ObservationDisplayKind,
+  observationDisplayKind,
   orderSessionListItems,
   PRIORITY_SESSION_SORT,
   type SessionSort,
@@ -17,7 +19,19 @@ import {
   sessionStartedAt,
   sessionUpdatedAt,
 } from "../sessionAttention";
-import { EmptyState, harnessDisplayName, InlineStatus, KillButton, LoadingState, repoName, SessionTimestamp, StatusDot, sameSessionMetas, useMinuteNow } from "../shared";
+import {
+  EmptyState,
+  harnessDisplayName,
+  InlineStatus,
+  KillButton,
+  LoadingState,
+  notifySessionAttentionTransition,
+  repoName,
+  SessionTimestamp,
+  StatusDot,
+  sameSessionMetas,
+  useMinuteNow,
+} from "../shared";
 import type { BoardNav, NameCommit, SessionListItem, SessionObservation, SessionStatusRef } from "../types";
 import { useSessionSort } from "../useSessionSort";
 import "./SessionsList.css";
@@ -265,6 +279,21 @@ export function SessionsList({
       window.clearTimeout(timer);
     };
   }, []);
+
+  // Attention follows the fetched collection, not rows that filters can unmount.
+  const previousKinds = useRef(new Map<string, ObservationDisplayKind>());
+  useEffect(() => {
+    const next = new Map<string, ObservationDisplayKind>();
+    for (const item of items) {
+      if (item.archived) continue;
+      const key = rowKey(item);
+      const observation = observations[key];
+      const kind = observation ? observationDisplayKind(observation) : "loading";
+      notifySessionAttentionTransition(previousKinds.current.get(key) ?? null, kind, item.repo_path, item.task_slug);
+      next.set(key, kind);
+    }
+    previousKinds.current = next;
+  }, [items, observations]);
 
   const latestSessionByScope = items
     .filter((item) => !item.archived && item.phase)
@@ -549,6 +578,7 @@ export function SessionsList({
                       superseded={isSuperseded(item)}
                       exitCode={item.exit_code}
                       exitAcknowledged={hasAcknowledgedExit(item)}
+                      notifyTransitions={false}
                     />
                   )}
                 </div>
