@@ -85,6 +85,8 @@ The built app lives in `src-tauri/target/release/bundle/`.
 
 GitHub connection uses the installed `gh` CLI and its system credential store. Linear uses OAuth PKCE and the macOS Keychain. The Delegance Alinery OAuth app is already registered with callback `http://127.0.0.1:43119/oauth/linear/callback`. Override with `ALINERY_LINEAR_CLIENT_ID` only if you are using a different Linear app.
 
+Model/provider setup has compact **Accounts** and **Models** tabs, keyboard navigation, and search on both lists. The roomy, viewport-capped dialog keeps the same size between tabs, with independent body scrolling and bottom-right actions. Model fields open the shared picker, which also accepts custom `provider/model` IDs. **Role defaults** expands to direct model dropdowns; **Not assigned** clears an override, and unavailable assignments remain visible. Changes apply to new OMP processes, not the current session. Provider errors keep the full diagnostic under **Technical details**.
+
 ## MCP server (alinery-mcp)
 
 `alinery-mcp` exposes Alinery tasks, sessions, artifacts, and settings to any MCP client

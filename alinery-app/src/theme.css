@@ -2126,7 +2126,7 @@ main {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.step-model-row .model-input {
+.step-model-row .model-select {
   min-width: 0;
 }
 .createform-page .step-model-row .field-input {
@@ -2248,19 +2248,82 @@ textarea.field-input {
   resize: vertical;
   line-height: 1.5;
 }
-.model-input {
+/* Model selector: select-style trigger; the list lives in a dialog. */
+.model-select {
+  position: relative;
   display: flex;
-  gap: 6px;
   align-items: stretch;
-}
-.model-input.is-picker .field-input {
-  cursor: pointer;
-}
-.model-input .field-input {
-  flex: 1;
   min-width: 0;
 }
-.model-input .model-favorite-button {
+.model-select-trigger {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--control-h);
+  padding-right: 30px;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  caret-color: transparent;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+.model-select-trigger:hover {
+  border-color: var(--border-strong);
+}
+.model-select-trigger::placeholder {
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+}
+.model-select-trigger[aria-busy="true"] {
+  cursor: progress;
+}
+.model-select:has(.model-select-clear) .model-select-trigger {
+  padding-right: 54px;
+}
+.model-select-caret {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.model-select-trigger:hover .model-select-caret {
+  color: var(--text);
+}
+.model-select-clear {
+  position: absolute;
+  top: 50%;
+  right: 30px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+.model-select-clear:hover {
+  background: var(--surface-raised);
+  color: var(--text-strong);
+}
+.model-select .rts {
+  color: var(--text-muted);
+  font-size: calc(11.5px * var(--ui-scale));
+}
+.model-select .model-favorite-button {
   flex: 0 0 30px;
   width: 30px;
   height: 28px;
@@ -2274,21 +2337,21 @@ textarea.field-input {
   font-size: calc(18px * var(--ui-scale));
   line-height: 1;
 }
-.model-input .model-favorite-button:hover:not(:disabled) {
+.model-select .model-favorite-button:hover:not(:disabled) {
   border-color: var(--border-strong);
   background: var(--surface-subtle);
   color: var(--text-strong);
 }
-.model-input .model-favorite-button[aria-pressed="true"] {
+.model-select .model-favorite-button[aria-pressed="true"] {
   border-color: var(--accent);
   background: var(--accent-subtle);
   color: var(--accent);
 }
-.model-input .model-favorite-button:focus-visible {
+.model-select .model-favorite-button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
-.model-input .model-favorite-button:disabled {
+.model-select .model-favorite-button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
@@ -2941,6 +3004,8 @@ textarea.field-input {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
+  gap: 6px;
   height: var(--control-h);
   padding: 0 14px;
   border: 1px solid transparent;
@@ -5913,26 +5978,67 @@ dialog.modal::backdrop {
 .chat-meta p {
   margin: 0;
 }
+/* The one segmented control (Session view Chat/Terminal, Providers Accounts/Models): sized to its
+   segments, never a full-width track. Inner radius = track radius - border - padding. */
 .chat-hatch {
-  display: flex;
-  align-items: center;
+  display: inline-flex;
+  flex: none;
+  align-items: stretch;
   gap: 2px;
+  height: var(--control-h);
+  box-sizing: border-box;
   padding: 2px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-subtle);
 }
 .chat-hatch button {
-  border: 0;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--text-muted);
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: calc(13px * var(--ui-scale));
+  font-weight: 500;
+  padding: 0 12px;
+  border-radius: calc(var(--radius-sm) - 3px);
+  cursor: pointer;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease;
+}
+.chat-hatch button:hover {
+  color: var(--text);
 }
 .chat-hatch button.active {
   background: var(--surface-raised);
-  color: var(--text-strong);
+  color: var(--text);
+  border-color: var(--border);
 }
+.chat-hatch button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.chat-provider-error {
+  margin-block: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.5;
+}
+.chat-provider-error p { margin: 0 0 8px; color: var(--danger); }
+.chat-provider-error summary { cursor: pointer; color: var(--text-muted); }
+.chat-provider-error pre {
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: inherit;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 .chat-model-list {
   list-style: none;
   margin: 8px 0 0;
@@ -5959,35 +6065,98 @@ dialog.modal::backdrop {
 .chat-model-star[aria-pressed="true"] {
   color: var(--accent, currentColor);
 }
-.chat-providers-tabs {
-  margin-bottom: 10px;
-}
 .chat-providers-advanced {
   margin-top: 12px;
+}
+/* Providers / Models dialog: a fixed frame so filtering never resizes it. The tabs, search and
+   footer stay put; only the panel scrolls, so the lists inside it are not capped. */
+.modal.chat-model-dialog {
+  width: min(960px, calc(100vw - 40px));
+  height: min(720px, calc(100vh - 60px));
+  max-width: none;
+  max-height: none;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  align-items: flex-start;
+}
+.chat-model-dialog .mh,
+.chat-model-dialog .mfoot {
+  flex: none;
+}
+.chat-model-dialog .mfoot {
+  justify-content: flex-end;
+}
+.chat-model-dialog .mb {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.chat-model-dialog .chat-model-list {
+  max-height: none;
+  overflow: visible;
+}
+.chat-providers-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+}
+.chat-providers-search {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+}
+.chat-providers-search svg {
+  position: absolute;
+  left: 10px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.chat-providers-search .field-input {
+  width: 100%;
+  height: var(--control-h);
+  box-sizing: border-box;
+  padding-left: 32px;
+}
+.chat-providers-panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* Room for row focus rings: overflow-y:auto also clips horizontally. */
+  margin: 0 -2px;
+  padding: 0 2px;
+}
+.chat-provider-status {
+  flex: none;
+  font-size: calc(12px * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.chat-model-item:enabled .chat-provider-status {
+  color: var(--text);
+  font-weight: 500;
 }
 .chat-model-roles {
-  margin-top: 14px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
-.chat-role-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-  margin-top: 6px;
+.chat-model-roles > summary { cursor: pointer; font-weight: 600; }
+.chat-role-list { display: grid; gap: 0; }
+.chat-role-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) minmax(0, 2fr);
+  align-items: center;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
 }
-.chat-role-table th,
-.chat-role-table td {
-  text-align: left;
-  padding: 4px 6px;
-  border-bottom: 1px solid var(--border-subtle);
-  vertical-align: middle;
-}
-.chat-role-table select.field-input {
-  min-width: 10rem;
-}
+.chat-role-row:last-child { border-bottom: 0; }
+.chat-role-row select { width: 100%; min-width: 0; }
 .chat-model-item,
 .chat-mcp-row,
 .chat-tool-row {
