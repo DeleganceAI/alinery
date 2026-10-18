@@ -52,6 +52,7 @@ mod notify;
 mod omp_customizations;
 mod omp_update;
 mod paths;
+mod pi_durable;
 mod session;
 mod settings;
 mod subtask;

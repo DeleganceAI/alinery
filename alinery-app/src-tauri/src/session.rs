@@ -625,6 +625,25 @@ pub(crate) fn hosted_refresh_needed(intent: &str, harness: &str, model: &str) ->
     harness == alinery_core::DEFAULT_HARNESS_KEY && matches!(intent, daemon_client::ops::SPAWN | daemon_client::ops::RESUME) && (model.trim().is_empty() || is_hosted_model(model))
 }
 
+/// While the experimental toggle is on, refresh hosted inference inside the one-hour renewal lead.
+pub(crate) const PI_DURABLE_HOSTED_REFRESH: Duration = Duration::from_secs(30 * 60);
+
+pub(crate) fn refresh_hosted_if_pi_durable(enabled: bool, ensure: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    if !enabled {
+        return Ok(());
+    }
+    ensure()
+}
+
+pub(crate) fn spawn_pi_hosted_refresh(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(PI_DURABLE_HOSTED_REFRESH);
+        let Ok(app_config) = app_config_path(&app) else { continue };
+        let enabled = alinery_core::load_global_settings(&app_config).experiments.pi_durable;
+        let _ = refresh_hosted_if_pi_durable(enabled, || alinery_core::ensure_hosted_inference_for_spawn(&app_config));
+    });
+}
+
 pub(crate) async fn refresh_hosted_inference_before_open(app: AppHandle, intent: &str, harness: &str, model: &str) -> Result<(), String> {
     if !hosted_refresh_needed(intent, harness, model) {
         return Ok(());

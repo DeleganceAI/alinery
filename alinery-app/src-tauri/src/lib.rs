@@ -48,7 +48,7 @@ use alinery_core::daemon_client::{format_daemon_timeout, read_socket_line, Daemo
 use alinery_core::lockfile::{try_lock_exclusive, LockFile};
 #[cfg(test)]
 pub(crate) use alinery_core::write_task;
-use alinery_core::{alinery_app_lock_path, alinery_dir, ensure_harnesses_toml, login_shell_path, poller_action, DaemonCompat, PollerAction, PROTOCOL_VERSION};
+use alinery_core::{alinery_app_lock_path, alinery_dir, ensure_harnesses_toml, login_shell_path, DaemonCompat, PollerAction, PROTOCOL_VERSION};
 pub use alinery_core::{
     alineryd_lock_path,
     alineryd_socket_path,
@@ -91,6 +91,7 @@ mod notify;
 mod omp_customizations;
 mod omp_update;
 mod paths;
+mod pi_durable;
 mod playbook;
 mod session;
 mod settings;
@@ -116,6 +117,7 @@ use notify::*;
 use omp_customizations::*;
 use omp_update::*;
 use paths::*;
+use pi_durable::*;
 use playbook::*;
 use session::*;
 use settings::*;
@@ -141,6 +143,8 @@ pub fn run() {
         .setup(|app| {
             // B5: keep a daemon alive for every open repo (spawn-only — see the fn).
             spawn_daemon_poller(app.handle().clone());
+            spawn_pi_supervisor(app.handle().clone());
+            spawn_pi_hosted_refresh(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -300,6 +304,7 @@ pub fn run() {
             set_dock_badge_count,
             notify_session_attention,
             stop_daemon,
+            switch_pi_durable,
             repo_live_sessions,
             close_all_repos,
             cancel_quit,

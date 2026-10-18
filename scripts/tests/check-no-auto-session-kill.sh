@@ -39,7 +39,7 @@ done
 #   restore_backup        destructive restore, confirmed in the UI (the daemon holds the
 #                         data being replaced, so it is not restarted afterwards)
 #   confirm_repo_takeover_blocking  consumed one-shot selected-owner confirmation
-ALLOWED="stop_daemon close_repo_daemon restore_backup confirm_repo_takeover_blocking"
+ALLOWED="stop_daemon close_repo_daemon restore_backup confirm_repo_takeover_blocking switch_pi_durable_blocking"
 
 # `close_repo_daemon` is a plain fn, so a NEW CALLER of it would end every live session in
 # a repo without adding a `shutdown` sender for the scan above to notice. Its callers are
