@@ -127,7 +127,7 @@ fn launch_execution(repo: &Path, slug: &str, id: &str, reg: &Registry, lane: &st
         let definition = read_task_playbook(repo, slug, &state)?;
         let meta = project(repo, slug, &state, &definition, record, "", "")?;
         let launch = read_meta_launch_fields(repo, slug, &meta.id).ok_or("missing session projection")?;
-        spawn_session(reg, repo, launch, None, false, SessionTransport::Rpc, false, None, lane, app_config, host)
+        open_claimed_session(reg, repo, launch, lane, app_config, host)
     })();
     let error = result.as_ref().err().cloned();
     if let Some(error) = &error {

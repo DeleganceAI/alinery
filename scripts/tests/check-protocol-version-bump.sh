@@ -27,6 +27,8 @@ CONST_FILE="alinery-app/src-tauri/alinery-core/src/protocol.rs"
 # what the daemon accepts or replies with.
 SURFACE=(
   "alinery-app/src-tauri/alineryd/src/main.rs"
+  # The release binary is a thin wrapper. The op set lives in the library.
+  "alinery-app/src-tauri/alineryd/src/lib.rs"
   "$CONST_FILE"
   # Shared app/MCP wire client (ops / version classify). Keep this out of app lib.rs so
   # the gate is not drowned in unrelated UI/FS noise.

@@ -8,6 +8,10 @@ edition = "2021"
 name = "alineryd"
 path = "src/main.rs"
 
+[[bin]]
+name = "alinery-playbook"
+path = "src/bin/alinery-playbook.rs"
+
 [dependencies]
 portable-pty = "0.9"
 serde = { version = "1", features = ["derive"] }
