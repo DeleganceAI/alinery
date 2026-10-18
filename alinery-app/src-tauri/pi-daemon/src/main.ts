@@ -1,12 +1,12 @@
 import { createConnection, createServer, type Socket } from "node:net";
-import { readFileSync, readdirSync, writeFileSync, mkdirSync, unlinkSync, existsSync, statSync, realpathSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync, mkdirSync, unlinkSync, existsSync, statSync, realpathSync, readlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { dlopen, FFIType, ptr, CString } from "bun:ffi";
+import type { WatchHandle } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
-import { xaiProvider } from "@earendil-works/pi-ai/providers/xai";
 import { Type } from "@earendil-works/pi-ai";
-import { Harness, createRegistry, defineDoc, defineExtension, defineTool } from "@earendil-works/pi-durable";
+import { Harness, LiveDoc, createRegistry, defineDoc, defineExtension, defineTool, type Harness as OpenedHarness } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { installAlineryProvider, modelSources } from "./provider.ts";
 
@@ -35,7 +35,8 @@ type Live = {
   process: "starting" | "alive" | "exited";
   agent: { state: string; correlation_id?: string; reason?: string };
   playbook: { state: string; reason?: string };
-  harness: unknown;
+  harness: OpenedHarness | null;
+  liveRun: boolean;
   seenNonce: string;
 };
 
@@ -126,7 +127,8 @@ function acquireOwnership(repoPath: string, laneName: string, configIdentity: st
   const code = lib.symbols.alinery_pi_acquire(ptr(Buffer.from(`${repoPath}\0`)), ptr(Buffer.from(`${laneName}\0`)), ptr(Buffer.from(`${configIdentity}\0`)));
   if (code !== 0) {
     const message = lib.symbols.alinery_pi_acquire_error();
-    throw new Error(message ? new CString(message).toString() : "ownership acquire failed");
+    const text = typeof message === "string" ? message : typeof message === "number" && message !== 0 ? new CString(message).toString() : "ownership acquire failed";
+    throw new Error(text || "ownership acquire failed");
   }
 }
 
@@ -176,40 +178,82 @@ async function openSession(id: string, taskSlug: string, model: string) {
     agent: { state: "idle" },
     playbook: { state: "in_progress" },
     harness: null,
+    liveRun: false,
     seenNonce: "",
   };
   live.set(id, row);
   const meta = readMeta(taskSlug, id);
   if (!meta.started_at) writeMeta(taskSlug, id, { started_at: Math.floor(Date.now() / 1000), harness: "omp", harness_resume_token: "" });
+  // Bun can finish the later awaits as microtasks. Yield once so list can observe starting.
+  const turn = Promise.withResolvers();
+  setImmediate(turn.resolve);
+  await turn.promise;
   const storage = await openNodeSqliteStorage(path);
-  const harness = await Harness.open(storage, { models, registry }, context);
+  const harness = await Harness.open(
+    storage,
+    {
+      models,
+      registry,
+      conversationCreated: async (tx, conversation) => {
+        await tx.doc(Attention, conversation.id);
+        await tx.doc(PhaseRequest, conversation.id);
+      },
+    },
+    context,
+  );
   row.harness = harness;
-  if (exists) harness.resume();
   const root = await harness.root(context, exists ? undefined : { agent: { model: { provider: "alinery", modelId: model.replace(/^alinery\//, "") } } });
+  // Resumed conversations were created before this hook existed. tx.doc loads an existing doc and creates a missing one.
+  await root.commit(async (tx) => {
+    await tx.doc(Attention, root.id);
+    await tx.doc(PhaseRequest, root.id);
+  }, context);
+  watch(row, harness, root.id);
+  if (exists) harness.resume();
   row.process = "alive";
-  watch(row, root);
   return row;
 }
 
-function watch(row: Live, root: { id: string; commit: Function }) {
-  const harness = row.harness as { watchDoc: Function };
-  void harness.watchDoc(Attention, root.id, context).then((state: { subscribe: Function }) => {
-    state.subscribe((value: { wait: Live["agent"] extends never ? never : { kind: string; correlationId: string } | null }) => {
-      if (value.wait) row.agent = { state: value.wait.kind === "approval" ? "waiting_for_approval" : "waiting_for_input", correlation_id: value.wait.correlationId };
-    });
+function watch(row: Live, harness: OpenedHarness, conversationId: string) {
+  const attach = <T>(pending: Promise<WatchHandle<T> | undefined>, apply: (value: T) => void) => {
+    pending
+      .then((state) => {
+        if (!state) {
+          console.error(`watchDoc unavailable for ${row.id}`);
+          return;
+        }
+        state.start(async (value) => {
+          apply(value);
+        });
+        apply(state.value);
+      })
+      .catch((error) => {
+        console.error(`watch failed for ${row.id}: ${error}`);
+      });
+  };
+  attach(harness.watchDoc(Attention, conversationId, context), (value) => {
+    if (value?.wait) {
+      row.agent = {
+        state: value.wait.kind === "approval" ? "waiting_for_approval" : "waiting_for_input",
+        correlation_id: value.wait.correlationId,
+      };
+      return;
+    }
+    if (row.agent.state === "waiting_for_input" || row.agent.state === "waiting_for_approval") {
+      row.agent = { state: row.liveRun ? "busy" : "idle" };
+    }
   });
-  void harness.watchDoc({ kind: "pi.live" } as never, root.id, context).then((state: { subscribe: Function }) => {
-    state.subscribe((value: { run?: unknown } | null) => {
-      if (row.agent.state === "waiting_for_input" || row.agent.state === "waiting_for_approval") return;
-      row.agent = { state: value?.run ? "busy" : "idle" };
-    });
+  attach(harness.watchDoc(LiveDoc, conversationId, context), (value) => {
+    row.liveRun = Boolean(value?.run);
+    if (row.agent.state === "waiting_for_input" || row.agent.state === "waiting_for_approval") return;
+    row.agent = { state: row.liveRun ? "busy" : "idle" };
   });
-  void harness.watchDoc(PhaseRequest, root.id, context).then((state: { subscribe: Function }) => {
-    state.subscribe((value: { phase: string; executionId: string; nonce: string }) => {
-      if (!value.nonce || value.nonce === row.seenNonce) return;
-      row.seenNonce = value.nonce;
-      if (!row.taskSlug) return;
-      void forwardPhase(row, value);
+  attach(harness.watchDoc(PhaseRequest, conversationId, context), (value) => {
+    if (!value?.nonce || value.nonce === row.seenNonce) return;
+    row.seenNonce = value.nonce;
+    if (!row.taskSlug) return;
+    void forwardPhase(row, value).catch((error) => {
+      console.error(`phase forward failed for ${row.id}: ${error}`);
     });
   });
 }
@@ -245,26 +289,95 @@ function helper(request: unknown, body?: Buffer): Promise<Record<string, unknown
   });
 }
 
+function executionOwnership(reply: Record<string, unknown>): { owning_lane: string; owning_app_config_identity: string } | null {
+  if (reply.error != null || reply.definition == null) return null;
+  const state = reply.state;
+  if (!state || typeof state !== "object" || !("owning_lane" in state) || !("owning_app_config_identity" in state)) return null;
+  const owningLane = state.owning_lane;
+  const owningIdentity = state.owning_app_config_identity;
+  if (typeof owningLane !== "string" || typeof owningIdentity !== "string") return null;
+  return { owning_lane: owningLane, owning_app_config_identity: owningIdentity };
+}
+
+async function taskOpenAllowed(taskSlug: string): Promise<{ ok: true } | { ok: false; reply: Record<string, unknown> }> {
+  if (!taskSlug) return { ok: true };
+  const reply = await helper({ op: "get_task_execution", request: { task_slug: taskSlug } });
+  const ownership = executionOwnership(reply);
+  if (!ownership || ownership.owning_lane !== lane || ownership.owning_app_config_identity !== identity) {
+    return { ok: false, reply };
+  }
+  return { ok: true };
+}
+
+function ownershipRefusal(reply: Record<string, unknown>): Record<string, unknown> {
+  if (reply.error != null) return reply;
+  return { error: "task execution ownership mismatch" };
+}
+
+function socketFd(socket: Socket): number | null {
+  const record: unknown = socket;
+  if (!record || typeof record !== "object" || !("_handle" in record)) return null;
+  const handle = record._handle;
+  if (!handle || typeof handle !== "object" || !("fd" in handle) || typeof handle.fd !== "number") return null;
+  return handle.fd;
+}
+
+// libSystem has no getpeerid. Match alinery-core peer_process_id: getpeereid, then LOCAL_PEERPID.
+const SOL_LOCAL = 0;
+const LOCAL_PEERPID = 0x002;
+const SOL_SOCKET = 1;
+const SO_PEERCRED = 17;
+
 function peerExecutable(socket: Socket): string | null {
-  const fd = (socket as Socket & { _handle?: { fd?: number } })._handle?.fd;
+  const fd = socketFd(socket);
   if (fd == null) return null;
   try {
-    const libc = dlopen(process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6", {
-      getpeerid: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i32 },
-    });
-    const pidBuf = Buffer.alloc(4);
-    if (process.platform !== "darwin") return null;
-    const code = libc.symbols.getpeerid(fd, ptr(pidBuf));
-    if (code !== 0) return null;
-    const pid = pidBuf.readInt32LE(0);
-    const path = Buffer.alloc(4096);
-    const proc = dlopen("libSystem.B.dylib", { proc_pidpath: { args: [FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 } });
-    const length = proc.symbols.proc_pidpath(pid, ptr(path), path.length);
-    if (length <= 0) return null;
-    return path.subarray(0, length).toString().replace(/\0+$/, "");
+    if (process.platform === "darwin") return darwinPeerExecutable(fd);
+    if (process.platform === "linux") return linuxPeerExecutable(fd);
+    return null;
   } catch {
     return null;
   }
+}
+
+function darwinPeerExecutable(fd: number): string | null {
+  const libc = dlopen("libSystem.B.dylib", {
+    getpeereid: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+    getsockopt: { args: [FFIType.i32, FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+    geteuid: { args: [], returns: FFIType.u32 },
+    proc_pidpath: { args: [FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
+  });
+  const uid = Buffer.alloc(4);
+  const gid = Buffer.alloc(4);
+  if (libc.symbols.getpeereid(fd, ptr(uid), ptr(gid)) !== 0) return null;
+  if (uid.readUInt32LE(0) !== libc.symbols.geteuid()) return null;
+  const pid = Buffer.alloc(4);
+  const size = Buffer.alloc(4);
+  size.writeUInt32LE(4, 0);
+  if (libc.symbols.getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, ptr(pid), ptr(size)) !== 0) return null;
+  if (size.readUInt32LE(0) !== 4) return null;
+  const pidNum = pid.readInt32LE(0);
+  if (pidNum <= 0) return null;
+  const path = Buffer.alloc(4096);
+  const length = libc.symbols.proc_pidpath(pidNum, ptr(path), path.length);
+  if (length <= 0) return null;
+  return path.subarray(0, length).toString().replace(/\0+$/, "");
+}
+
+function linuxPeerExecutable(fd: number): string | null {
+  const libc = dlopen("libc.so.6", {
+    getsockopt: { args: [FFIType.i32, FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+    geteuid: { args: [], returns: FFIType.u32 },
+  });
+  const cred = Buffer.alloc(12);
+  const size = Buffer.alloc(4);
+  size.writeUInt32LE(12, 0);
+  if (libc.symbols.getsockopt(fd, SOL_SOCKET, SO_PEERCRED, ptr(cred), ptr(size)) !== 0) return null;
+  if (size.readUInt32LE(0) < 12) return null;
+  const pidNum = cred.readInt32LE(0);
+  const peerUid = cred.readUInt32LE(4);
+  if (pidNum <= 0 || peerUid !== libc.symbols.geteuid()) return null;
+  return readlinkSync(`/proc/${pidNum}/exe`);
 }
 function samePath(left: string, right: string): boolean {
   if (left === right) return true;
@@ -276,6 +389,7 @@ function samePath(left: string, right: string): boolean {
 }
 
 const kept = new WeakSet<Socket>();
+const uiAuthorized = new WeakSet<Socket>();
 
 function reply(socket: Socket, value: unknown, keep = false) {
   socket.write(`${JSON.stringify(value)}\n`);
@@ -323,13 +437,21 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
     } catch {
       /* already gone */
     }
-    reply(socket, { ok: true });
-    process.exit(0);
+    socket.write(`${JSON.stringify({ ok: true })}\n`, () => {
+      socket.end();
+      process.exit(0);
+    });
+    return;
   }
   if (op === "spawn" || op === "attach" || op === "resume") {
     const id = String(header.id ?? "");
     if (op !== "attach" && id && !live.has(id)) {
       const taskSlug = String(header.task_slug ?? "");
+      const owned = await taskOpenAllowed(taskSlug);
+      if (!owned.ok) {
+        reply(socket, ownershipRefusal(owned.reply));
+        return;
+      }
       const model = String(header.model ?? "");
       void openSession(id, taskSlug, model).catch((error) => {
         const row = live.get(id);
@@ -344,9 +466,9 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
       const id = String(header.id ?? "");
       const row = live.get(id);
       if (row) {
-        const harness = row.harness as { close?: () => Promise<void> | void } | null;
+        const harness = row.harness;
         try {
-          void harness?.close?.();
+          if (harness) void harness.close(context);
         } catch {
           /* already closed */
         }
@@ -370,8 +492,14 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
       reply(socket, { error: "bad-launch-token" });
       return;
     }
+    const taskSlug = String(header.task_slug ?? "");
+    const owned = await taskOpenAllowed(taskSlug);
+    if (!owned.ok) {
+      reply(socket, ownershipRefusal(owned.reply));
+      return;
+    }
     try {
-      await openSession(String(header.id ?? ""), String(header.task_slug ?? ""), String(header.model ?? ""));
+      await openSession(String(header.id ?? ""), taskSlug, String(header.model ?? ""));
       reply(socket, { ok: true });
     } catch (error) {
       reply(socket, { error: String(error) });
@@ -385,10 +513,19 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
       reply(socket, { error: "UI control requires the protected UI host" });
       return;
     }
+    uiAuthorized.add(socket);
     reply(socket, { ok: true }, true);
     return;
   }
-  if (["get_task_execution", "create_execution_session", "start_session", "create_task", "create_subtask", "allow_execution_completion"].includes(op)) {
+  if (op === "allow_execution_completion") {
+    if (!uiAuthorized.has(socket)) {
+      reply(socket, { error: "completion permission requires an authenticated UI control connection" });
+      return;
+    }
+    reply(socket, await helper(header, body ?? undefined), true);
+    return;
+  }
+  if (["get_task_execution", "create_execution_session", "start_session", "create_task", "create_subtask"].includes(op)) {
     const forwarded = await helper(header, body ?? undefined);
     reply(socket, forwarded);
     return;
@@ -443,7 +580,17 @@ function resumeInterrupted() {
         if (!name.endsWith(".pi.sqlite")) continue;
         const id = name.slice(0, -".pi.sqlite".length);
         const meta = readMeta(taskSlug, id);
-        if (meta.started_at && !meta.ended_at) void openSession(id, taskSlug, String(meta.model ?? ""));
+        if (meta.started_at && !meta.ended_at) {
+          void taskOpenAllowed(taskSlug).then((owned) => {
+            if (!owned.ok) {
+              console.error(`resume skipped ${id}: ownership`);
+              return;
+            }
+            return openSession(id, taskSlug, String(meta.model ?? ""));
+          }).catch((error) => {
+            console.error(`resume failed ${id}: ${error}`);
+          });
+        }
       }
     };
     walk(root, "");
