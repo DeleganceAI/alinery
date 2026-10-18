@@ -28,9 +28,65 @@ export function modelSources(appConfig: string): { hosted: boolean; grok: boolea
 
 let compatRetry = false;
 
-export function installAlineryProvider(models: { setProvider: (provider: unknown) => void }, appConfig: string) {
+function httpStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== "object" || !("status" in error)) return undefined;
+  return typeof error.status === "number" ? error.status : undefined;
+}
+
+export function installAlineryProvider(models: { setProvider: (provider: unknown) => void; refresh?: (options?: { providers?: string[] }) => Promise<unknown> }, appConfig: string) {
   const grok = xaiProvider();
   const hostedApi = openAIResponsesApi();
+  const catalog = () => {
+    const inference = readInference(appConfig);
+    const hosted = (inference?.catalog.models ?? []).map((model) => ({
+      id: model.id,
+      name: model.name,
+      api: "openai-responses",
+      provider: "alinery",
+      baseUrl: inference?.catalog.base_url,
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: model.context_window,
+      maxTokens: model.max_tokens,
+    }));
+    const grokModels = grok.getModels().map((model) => ({ ...model, provider: "alinery" }));
+    return [...hosted, ...grokModels];
+  };
+  const streamWith = (method: "stream" | "streamSimple", model: { id: string; api?: string }, context: unknown, options: Record<string, unknown> | undefined) => {
+    const inference = readInference(appConfig);
+    const hosted = inference?.catalog.models.some((item) => item.id === model.id);
+    if (!hosted) {
+      if (!process.env.XAI_API_KEY?.trim()) throw new Error(`model ${model.id} is unavailable`);
+      return grok[method]({ ...model, provider: "xai" }, context, options);
+    }
+    if (!inference?.token) throw new Error(`model ${model.id} is unavailable`);
+    const hostedModel = { ...model, baseUrl: inference.catalog.base_url };
+    const stream = hostedApi[method](hostedModel, context, { ...options, apiKey: inference.token, compat: compatRetry });
+    return {
+      ...stream,
+      async *[Symbol.asyncIterator]() {
+        try {
+          yield* stream;
+        } catch (error) {
+          const status = httpStatus(error);
+          if (status === 400 && !compatRetry) {
+            compatRetry = true;
+            yield* hostedApi[method](hostedModel, context, {
+              ...options,
+              apiKey: inference.token,
+              store: false,
+              developerRole: true,
+              maxCompletionTokens: true,
+            });
+            return;
+          }
+          throw error;
+        }
+      },
+    };
+  };
+  // pi-ai 1.3.0 ignores a top-level stream and requires api.stream (or an api map).
   const provider = createProvider({
     id: "alinery",
     name: "Alinery",
@@ -45,55 +101,15 @@ export function installAlineryProvider(models: { setProvider: (provider: unknown
         },
       },
     },
-    getModels: () => {
-      const inference = readInference(appConfig);
-      const hosted = (inference?.catalog.models ?? []).map((model) => ({
-        id: model.id,
-        name: model.name,
-        api: "openai-responses",
-        provider: "alinery",
-        baseUrl: inference?.catalog.base_url,
-        reasoning: false,
-        input: ["text"],
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: model.context_window,
-        maxTokens: model.max_tokens,
-      }));
-      const grokModels = grok.getModels().map((model) => ({ ...model, provider: "alinery" }));
-      return [...hosted, ...grokModels];
-    },
-    stream: (model, context, options) => {
-      const inference = readInference(appConfig);
-      const hosted = inference?.catalog.models.some((item) => item.id === model.id);
-      if (!hosted) {
-        if (!process.env.XAI_API_KEY?.trim()) throw new Error(`model ${model.id} is unavailable`);
-        return grok.stream({ ...model, provider: "xai" }, context, options);
-      }
-      if (!inference?.token) throw new Error(`model ${model.id} is unavailable`);
-      const stream = hostedApi.stream({ ...model, baseUrl: inference.catalog.base_url }, context, { ...options, apiKey: inference.token, compat: compatRetry });
-      return {
-        ...stream,
-        async *[Symbol.asyncIterator]() {
-          try {
-            yield* stream;
-          } catch (error) {
-            const status = (error as { status?: number }).status;
-            if (status === 400 && !compatRetry) {
-              compatRetry = true;
-              yield* hostedApi.stream({ ...model, baseUrl: inference.catalog.base_url }, context, {
-                ...options,
-                apiKey: inference.token,
-                store: false,
-                developerRole: true,
-                maxCompletionTokens: true,
-              });
-              return;
-            }
-            throw error;
-          }
-        },
-      };
+    models: [],
+    fetchModels: async () => catalog(),
+    api: {
+      stream: (model, context, options) => streamWith("stream", model, context, options),
+      streamSimple: (model, context, options) => streamWith("streamSimple", model, context, options),
     },
   });
+  // createProvider's getModels is the baseline snapshot. Re-read inference.json on each lookup.
+  provider.getModels = catalog;
+  provider.getAllModels = catalog;
   models.setProvider(provider);
 }
