@@ -116,11 +116,12 @@ describe("Settings General", () => {
     const misc = subsection("Misc");
     expect(misc.getByRole("heading", { level: 3, name: "Experimental options" })).toBeTruthy();
     const boxes = misc.getAllByRole("checkbox");
-    expect(boxes).toHaveLength(4);
+    expect(boxes).toHaveLength(5);
     expect(boxes[0]).toBe(await keepAwake());
     expect(boxes[1]).toBe(telemetry());
     expect(boxes[2]).toBe(misc.getByRole("checkbox", { name: /Original Kanban/ }));
     expect(boxes[3]).toBe(misc.getByRole("checkbox", { name: /^Chat/ }));
+    expect(boxes[4]).toBe(misc.getByRole("checkbox", { name: /PI durable/ }));
   });
 
   it("shows Keep awake off and editable, with the note under it", async () => {

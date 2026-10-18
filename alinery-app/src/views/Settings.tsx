@@ -680,6 +680,32 @@ export function Settings({
     saveGlobal({ ...global, experiments: { ...global.experiments, show_chat: value } }, value ? "Chat tab shown" : "Chat tab hidden");
   };
 
+  const setPiDurable = (value: boolean) => {
+    if (!global || !isGlobal) return;
+    const previous = global;
+    const next = { ...global, experiments: { ...global.experiments, pi_durable: value } };
+    setGlobal(next);
+    setCfg(globalAsConfig(next));
+    ipc
+      .switchPiDurable(value)
+      .then((saved) => {
+        setGlobal(saved);
+        setCfg(globalAsConfig(saved));
+        onGlobalSettingsChange?.(saved);
+        report(value ? "PI durable on" : "PI durable off");
+      })
+      .catch((error) => {
+        setGlobal(previous);
+        setCfg(globalAsConfig(previous));
+        reportError(error, "Could not switch the session daemon");
+      });
+  };
+
+  const saveGrokKey = (value: string) => {
+    if (!global || !isGlobal) return;
+    saveGlobal({ ...global, experiments: { ...global.experiments, grok_api_key: value } }, value.trim() ? "Grok key saved" : "Grok key cleared");
+  };
+
   const updateGlobalChoice = (key: ChoiceKey, patch: Partial<GlobalSettings[ChoiceKey]>) => {
     if (!global) return;
     saveGlobal({ ...global, [key]: { ...global[key], ...patch } });
@@ -2169,6 +2195,33 @@ export function Settings({
                     </div>
                   }
                 />
+                <Checkbox
+                  checked={global.experiments?.pi_durable ?? false}
+                  disabled={!isGlobal}
+                  onChange={setPiDurable}
+                  label={
+                    <div>
+                      <div>PI durable</div>
+                      <div className="hint">Run sessions on the experimental Pi Durable daemon instead of the release daemon.</div>
+                    </div>
+                  }
+                />
+                {(global.experiments?.pi_durable ?? false) && (
+                  <div className="field">
+                    <label htmlFor="grok-api-key">Grok API key</label>
+                    <input
+                      id="grok-api-key"
+                      className="field-input mono"
+                      type="password"
+                      autoComplete="off"
+                      disabled={!isGlobal}
+                      defaultValue={global.experiments?.grok_api_key ?? ""}
+                      onBlur={(event) => {
+                        if (event.target.value !== (global.experiments?.grok_api_key ?? "")) saveGrokKey(event.target.value);
+                      }}
+                    />
+                  </div>
+                )}
               </section>
             </div>
           </>

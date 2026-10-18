@@ -240,6 +240,10 @@ export type ExperimentalFeatures = {
   show_original_kanban?: boolean;
   /** Chat tab, shown after Kanban. Absent = hidden; true shows the tab. */
   show_chat?: boolean;
+  /** Experimental Pi Durable harness. Absent = off, so current installs keep the release daemon. */
+  pi_durable?: boolean;
+  /** Grok key for the experimental daemon. Empty or absent is unset. */
+  grok_api_key?: string;
 };
 export type GridViewDefinition = { id: string; name: string; slot: number };
 export type UpdateRelease = { version: string; url: string; sha256: string; size: number; protocol_version: number; published_at: string };

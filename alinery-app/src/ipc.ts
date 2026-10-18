@@ -223,6 +223,7 @@ export const closeAllRepos = () => invoke<number>("close_all_repos");
 export const daemonStatus = () => invoke<DaemonStatus>("daemon_status");
 export const repoLiveSessions = (path: string) => invoke<number>("repo_live_sessions", { path });
 export const stopDaemon = (path: string | null) => invoke<void>("stop_daemon", { path });
+export const switchPiDurable = (enabled: boolean) => invoke<GlobalSettings>("switch_pi_durable", { enabled });
 export const prepareRepoTakeover = (repoPath: string, ownerLane: string) => invoke<TakeoverPreview>("prepare_repo_takeover", { repoPath, ownerLane });
 export const confirmRepoTakeover = (confirmationId: string) => invoke<TakeoverOutcome>("confirm_repo_takeover", { confirmationId });
 export const cancelRepoTakeover = (confirmationId: string) => invoke<void>("cancel_repo_takeover", { confirmationId });

@@ -351,6 +351,15 @@ fn push_changed_u8(fields: &mut Vec<String>, key: &str, prev: u8, next: u8) {
     }
 }
 
+fn secret_if_set(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 fn push_opt_secret(fields: &mut Vec<String>, key: &str, prev: &Option<String>, next: &Option<String>) {
     if prev == next {
         return;
@@ -449,6 +458,13 @@ fn log_global_diff(app_config: &Path, prev: &GlobalSettings, next: &GlobalSettin
         next.experiments.show_original_kanban,
     );
     push_changed_bool(&mut fields, "experiments.show_chat", prev.experiments.show_chat, next.experiments.show_chat);
+    push_changed_bool(&mut fields, "experiments.pi_durable", prev.experiments.pi_durable, next.experiments.pi_durable);
+    push_opt_secret(
+        &mut fields,
+        "experiments.grok_api_key",
+        &secret_if_set(&prev.experiments.grok_api_key),
+        &secret_if_set(&next.experiments.grok_api_key),
+    );
     if prev.grid_views != next.grid_views {
         fields.push("grid_views=changed".into());
     }
@@ -809,6 +825,27 @@ mod tests {
         assert!(text.contains("github.token=changed"), "{text}");
         assert!(text.contains("harnesses=changed"), "{text}");
         assert!(!text.contains("sk-secret-material"), "{text}");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn grok_key_logs_redacted_change_and_never_the_material() {
+        let (dir, app_config) = temp_app("alinery_log_grok_key");
+        write_global_settings(&app_config, &default_global_settings()).unwrap();
+        let mut next = default_global_settings();
+        next.experiments.grok_api_key = "xai-secret-material".into();
+        next.experiments.show_chat = true;
+        write_global_settings(&app_config, &next).unwrap();
+        let text = log_text(&app_config);
+        assert!(text.contains("experiments.grok_api_key=changed"), "{text}");
+        assert!(text.contains("experiments.show_chat=true"), "{text}");
+        assert!(!text.contains("xai-secret-material"), "{text}");
+        let mut cleared = next.clone();
+        cleared.experiments.grok_api_key.clear();
+        write_global_settings(&app_config, &cleared).unwrap();
+        let cleared_text = log_text(&app_config);
+        assert!(cleared_text.contains("experiments.grok_api_key=cleared"), "{cleared_text}");
+        assert!(!cleared_text.contains("xai-secret-material"), "{cleared_text}");
         let _ = fs::remove_dir_all(dir);
     }
     #[test]

@@ -38,6 +38,10 @@ vi.mock("../ipc", () =>
   mockIpc({
     readGlobalSettings: async () => globalSettings,
     writeGlobalSettings: vi.fn(async (next: GlobalSettings) => next),
+    switchPiDurable: vi.fn(async (enabled: boolean) => ({
+      ...globalSettings,
+      experiments: { ...globalSettings.experiments, pi_durable: enabled },
+    })),
   }),
 );
 
@@ -60,6 +64,7 @@ const mcp: McpStatusHandle = {
 afterEach(() => {
   cleanup();
   vi.mocked(ipc.writeGlobalSettings).mockClear();
+  vi.mocked(ipc.switchPiDurable).mockClear();
 });
 
 describe("Settings experimental features", () => {
@@ -133,5 +138,82 @@ describe("Settings experimental features", () => {
     expect(screen.getByRole("button", { name: "Sessions view" })).toBeTruthy();
     fireEvent.click(checkbox);
     expect(await screen.findByRole("button", { name: "Chat" })).toBeTruthy();
+  });
+
+  it("keeps PI durable off until opted in, and shows the Grok key only while it is on", async () => {
+    render(
+      <Settings
+        mcp={mcp}
+        activeRepo="/r"
+        knownRepos={["/r"]}
+        appearance={DEFAULT_APPEARANCE}
+        onAppearanceChange={() => {}}
+        onGlobalSettingsChange={() => {}}
+        onNotificationsChange={() => {}}
+        initialSection="general"
+      />,
+    );
+
+    const toggle = (await screen.findByRole("checkbox", { name: /PI durable/ })) as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    expect(screen.queryByLabelText("Grok API key")).toBeNull();
+    fireEvent.click(toggle);
+    const key = (await screen.findByLabelText("Grok API key")) as HTMLInputElement;
+    expect(key.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    expect(ipc.switchPiDurable).toHaveBeenCalledWith(true);
+    expect(ipc.writeGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it("disables the PI durable controls when the scope is not global", async () => {
+    globalSettings.experiments = { show_original_kanban: true, show_chat: false, pi_durable: true, grok_api_key: "kept" };
+    render(
+      <Settings
+        mcp={mcp}
+        activeRepo="/r"
+        knownRepos={["/r"]}
+        appearance={DEFAULT_APPEARANCE}
+        onAppearanceChange={() => {}}
+        onGlobalSettingsChange={() => {}}
+        onNotificationsChange={() => {}}
+        initialSection="general"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "r" }));
+    const toggle = (await screen.findByRole("checkbox", { name: /PI durable/ })) as HTMLInputElement;
+    const key = (await screen.findByLabelText("Grok API key")) as HTMLInputElement;
+    expect(toggle.disabled).toBe(true);
+    expect(key.disabled).toBe(true);
+    globalSettings.experiments = undefined;
+  });
+
+  it("saves the Grok key without clearing other experimental flags or switching daemons", async () => {
+    vi.mocked(ipc.switchPiDurable).mockResolvedValueOnce({
+      ...globalSettings,
+      experiments: { show_original_kanban: true, show_chat: true, pi_durable: true },
+    });
+    render(
+      <Settings
+        mcp={mcp}
+        activeRepo="/r"
+        knownRepos={["/r"]}
+        appearance={DEFAULT_APPEARANCE}
+        onAppearanceChange={() => {}}
+        onGlobalSettingsChange={() => {}}
+        onNotificationsChange={() => {}}
+        initialSection="general"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("checkbox", { name: /PI durable/ }));
+    const key = await screen.findByLabelText("Grok API key");
+    fireEvent.blur(key, { target: { value: "xai-test-key" } });
+    await waitFor(() => expect(ipc.writeGlobalSettings).toHaveBeenCalled());
+    const calls = vi.mocked(ipc.writeGlobalSettings).mock.calls;
+    const saved = calls[calls.length - 1][0] as GlobalSettings;
+    expect(saved.experiments?.grok_api_key).toBe("xai-test-key");
+    expect(saved.experiments?.show_chat).not.toBe(false);
+    expect(saved.experiments?.show_original_kanban).not.toBe(false);
+    expect(ipc.switchPiDurable).toHaveBeenCalledTimes(1);
   });
 });
