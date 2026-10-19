@@ -30,8 +30,21 @@ const TAURI_SUBCOMMANDS = new Set([
   "signer",
 ]);
 
+const PI_DAEMON_SUBCOMMANDS = new Set(["dev", "build"]);
+
 function isDevLaunch(args) {
   return args.find((arg) => TAURI_SUBCOMMANDS.has(arg)) === "dev";
+}
+
+// The experimental PI durable daemon is deliberately not an externalBin, so no
+// cargo or tauri step compiles it. These two launches compile it beside the app
+// executable they are about to run; every other subcommand leaves it alone.
+export function piDaemonCompile(args) {
+  const subcommand = args.find((arg) => TAURI_SUBCOMMANDS.has(arg));
+  if (!PI_DAEMON_SUBCOMMANDS.has(subcommand)) {
+    return undefined;
+  }
+  return { release: args.includes("--release") || (subcommand === "build" && !args.includes("--debug")) };
 }
 
 function devServerConfig(port) {
@@ -192,6 +205,23 @@ export async function reserveDevPort(requestedPort, lockDirectory = tmpdir()) {
   throw new Error(`no available development port found at or above ${DEFAULT_DEV_PORT}`);
 }
 
+// --no-download keeps a launch from reaching the network for a toolchain: an
+// absent Bun only skips the optional daemon, and never fails the launch.
+async function compilePiDaemon(sourceRoot, release) {
+  const args = [join(sourceRoot, "scripts", "dev-fetch-bun.sh"), "--no-download", ...(release ? ["--release"] : [])];
+  const code = await new Promise((resolve) => {
+    const child = spawn("bash", args, { stdio: "inherit" });
+    child.on("error", (error) => {
+      console.error(error.message);
+      resolve(1);
+    });
+    child.on("exit", (exit) => resolve(exit ?? 1));
+  });
+  if (code !== 0) {
+    console.error(`alinery-pi-daemon: compile failed (exit ${code}); the experimental PI durable toggle stays unavailable`);
+  }
+}
+
 async function run(args) {
   let reservation;
   try {
@@ -199,6 +229,10 @@ async function run(args) {
       reservation = await reserveDevPort(parseDevPort(process.env.ALINERY_DEV_PORT));
     }
     const launch = selectTauriLaunch(args, import.meta.url, reservation?.port);
+    const compile = piDaemonCompile(args);
+    if (compile) {
+      await compilePiDaemon(launch.sourceRoot, compile.release);
+    }
     const executable = join(launch.packageRoot, "node_modules", ".bin", process.platform === "win32" ? "tauri.cmd" : "tauri");
     const child = spawn(executable, launch.args, {
       env: childEnvironment(process.env, launch.environment),
