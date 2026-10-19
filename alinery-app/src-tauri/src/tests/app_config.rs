@@ -177,8 +177,8 @@ fn serve_daemon(
                             "app_config_identity": version_identity,
                         })
                         .to_string()
-                    } else if op == "kill" && kill_error {
-                        "{\"error\":\"kill failed\"}".to_string()
+                    } else if (op == "kill" || op == "shutdown") && kill_error {
+                        "{\"error\":\"stop failed\"}".to_string()
                     } else if op == "list" {
                         "{\"sessions\":[]}".to_string()
                     } else {
@@ -274,6 +274,71 @@ fn seed_routes(state: &AppState, ids: &[&str]) {
     for id in ids {
         routes.insert((*id).to_string(), DaemonClient::connect_path(PathBuf::from("/tmp/unused-drawer-route.sock")).unwrap());
     }
+}
+
+#[test]
+fn remove_repo_delists_conflicted_repo_without_touching_daemon() {
+    use tauri::Manager;
+    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let fixture = drawer_switch("remove-conflict", false);
+    let state = fixture.app.state::<AppState>();
+    state.set_daemon_conflict(
+        &fixture.previous,
+        crate::DaemonConflict {
+            repo: fixture.previous.display().to_string(),
+            app_protocol: PROTOCOL_VERSION,
+            app_config_identity: "config".into(),
+            owners: Vec::new(),
+            issues: vec!["incompatible protocol".into()],
+        },
+    );
+    let config = AppConfig {
+        active_repo: fixture.previous.display().to_string(),
+        known_repos: vec![fixture.previous.display().to_string(), fixture.destination.display().to_string()],
+        ..Default::default()
+    };
+    crate::write_app_config(fixture.app.handle(), &config).unwrap();
+    let result = crate::remove_repo_sync(fixture.app.handle().clone(), config.active_repo).expect("conflict must not prevent removal");
+    assert_eq!(result.known_repos, vec![fixture.destination.display().to_string()]);
+    assert!(result.active_repo.is_empty());
+    assert_eq!(crate::load_app_config(fixture.app.handle()).known_repos, result.known_repos);
+    assert!(crate::active_repo().is_err());
+    assert!(state.repo_daemon(&fixture.previous).is_none());
+    assert!(!state.owns_repo(&fixture.previous));
+    assert!(
+        fixture.prev_requests.lock().unwrap_or_else(|error| error.into_inner()).is_empty(),
+        "foreign daemon must receive no requests"
+    );
+    assert!(fixture.previous.join(".git").exists(), "repository files must survive removal");
+}
+
+#[test]
+fn remove_repo_delists_when_owned_daemon_rejects_shutdown() {
+    use tauri::Manager;
+    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let fixture = drawer_switch("remove-fail", true);
+    let config = AppConfig {
+        active_repo: fixture.previous.display().to_string(),
+        known_repos: vec![fixture.previous.display().to_string()],
+        ..Default::default()
+    };
+    crate::write_app_config(fixture.app.handle(), &config).unwrap();
+    let result = crate::remove_repo_sync(fixture.app.handle().clone(), config.active_repo).expect("shutdown failure must not prevent removal");
+    assert!(result.known_repos.is_empty());
+    assert!(crate::load_app_config(fixture.app.handle()).known_repos.is_empty());
+    let state = fixture.app.state::<AppState>();
+    assert!(!state.owns_repo(&fixture.previous));
+    assert!(state.repo_daemon(&fixture.previous).is_none());
+    assert!(fixture
+        .prev_requests
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .iter()
+        .any(|request| request.op == "shutdown"));
+    assert!(
+        current_alineryd_socket_path(&fixture.previous).exists(),
+        "failed shutdown must not force-kill or unlink the daemon"
+    );
 }
 
 #[test]
