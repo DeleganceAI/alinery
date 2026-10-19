@@ -370,8 +370,10 @@ export function SessionView({
   }, [repoPath, taskSlug, id]);
   const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
   const executionEpoch = useRef(0);
+  const followContinuation = useRef<{ executionId: string; revision: number; stepKey: string; existingIds: Set<string> } | null>(null);
   const [executionError, setExecutionError] = useState("");
   const [lineageSessions, setLineageSessions] = useState<SessionDisplayMeta[]>([]);
+  const [lineageObservations, setLineageObservations] = useState<Record<string, SessionObservation>>({});
   const [lineageError, setLineageError] = useState("");
   const executionAvailable = executionView?.live?.status === "available" && !executionError;
   const [completionBusy, setCompletionBusy] = useState(false);
@@ -379,6 +381,7 @@ export function SessionView({
   const [continuationMessage, setContinuationMessage] = useState("");
   const [endMessage, setEndMessage] = useState("");
   const [sessionActionsOpen, setSessionActionsOpen] = useState(false);
+  const [continuationInfoOpen, setContinuationInfoOpen] = useState(false);
   const [endAccepted, setEndAccepted] = useState(false);
   const [requestedContinuation, setRequestedContinuation] = useState<{ id: string; revision: number } | null>(null);
   const [invalidatedReady, setInvalidatedReady] = useState<{ id: string; revision: number } | null>(null);
@@ -690,14 +693,20 @@ export function SessionView({
   useEffect(() => {
     let alive = true;
     executionEpoch.current += 1;
+    followContinuation.current = null;
     continuationInFlight.current = false;
     setCompletionBusy(false);
     setExecutionView(null);
     setExecutionError("");
     setLineageSessions([]);
+    setLineageObservations({});
     setLineageError("");
     setEndMessage("");
+    setContinuationMessage("");
+    setRequestedContinuation(null);
+    setInvalidatedReady(null);
     setSessionActionsOpen(false);
+    setContinuationInfoOpen(false);
     setEndAccepted(false);
     if (!taskSlug) return;
     let timer = 0;
@@ -717,8 +726,28 @@ export function SessionView({
           setExecutionView(next);
           setExecutionError("");
         }
+        const refs =
+          sessionsResult.status === "fulfilled"
+            ? sessionsResult.value
+                .filter((session) => session.id !== id && !session.archived && !session.ended_at)
+                .map((session) => ({ repo_path: repoPath, task_slug: taskSlug, id: session.id }))
+            : [];
+        const observed = refs.length ? await ipc.sessionListStatuses(refs).catch(() => ({}) as Record<string, SessionObservation>) : {};
+        if (alive) {
+          setLineageObservations(
+            Object.fromEntries(
+              refs.flatMap((ref) => {
+                const value = observed[`${ref.repo_path}:${ref.task_slug}:${ref.id}`];
+                return value ? [[ref.id, value]] : [];
+              }),
+            ),
+          );
+        }
       } catch (error) {
-        if (alive) setExecutionError(String(error));
+        if (alive) {
+          setExecutionError(String(error));
+          setLineageObservations({});
+        }
       } finally {
         if (alive) timer = window.setTimeout(refresh, 1500);
       }
@@ -730,6 +759,28 @@ export function SessionView({
       window.clearTimeout(timer);
     };
   }, [taskSlug, repoPath, id]);
+
+  useEffect(() => {
+    const follow = followContinuation.current;
+    if (!follow || !executionAvailable || !executionView || lineageError || !onOpenSession) return;
+    const source = executionView.state.executions[follow.executionId];
+    if (!source || source.owner_session_id !== id || source.work_revision !== follow.revision) {
+      followContinuation.current = null;
+      return;
+    }
+    if (!source.receipt_id || !source.shutdown_confirmed || source.lifecycle !== "completed") return;
+    const successors = Object.values(executionView.state.executions).filter(
+      (record) => !follow.existingIds.has(record.id) && record.parent_execution_ids.includes(source.id) && record.candidate.step_key === follow.stepKey,
+    );
+    // A fan-out has no single destination session. Leave selection to the navigator.
+    if (successors.length !== 1) return;
+    const successor = successors[0];
+    if (!["running", "finishing", "completed"].includes(successor.lifecycle)) return;
+    const session = lineageSessions.find((item) => item.id === successor.owner_session_id && item.execution_id === successor.id && !item.archived && item.started_at != null);
+    if (!session) return;
+    followContinuation.current = null;
+    onOpenSession(session);
+  }, [executionView, executionAvailable, lineageSessions, lineageError, id, onOpenSession]);
 
   const handleArchive = async () => {
     if (archivePending.current) return;
@@ -1941,24 +1992,43 @@ export function SessionView({
   const capability = execution ? executionView?.continuation[execution.id] : undefined;
   const executionAssessment = execution ? executionView?.executions[execution.id] : undefined;
   const destinations = executionAssessment?.destinations ?? [];
-  const continuationLabel = destinations.length === 1 ? `Continue to ${destinations[0].title}` : "Continue playbook";
-  const continuationShown = execution?.continuation_mode === "manual" && execution.last_ready_revision != null && executionAssessment?.terminality !== "terminal";
+  const continuationLabel =
+    destinations.length === 1 ? (
+      <span>
+        Continue to <em>{destinations[0].title}</em>
+      </span>
+    ) : (
+      "Continue playbook"
+    );
+  const continuationShown = execution?.continuation_mode === "manual" && execution.lifecycle !== "queued" && executionAssessment?.terminality !== "terminal";
   const requestedHere = requestedContinuation?.id === execution?.id && requestedContinuation?.revision === execution?.ready_revision;
   const invalidatedHere = invalidatedReady?.id === execution?.id && invalidatedReady?.revision === execution?.ready_revision;
+  const continuationPending = completionBusy || requestedHere || execution?.continuation_requested_revision != null || !!execution?.receipt_id || endAccepted;
   const continuationReason =
     executionError ||
     (!executionAvailable ? "Continuation unavailable: the execution owner cannot be queried." : "") ||
     (execution?.owner_session_id !== id ? "This session is no longer the execution owner." : "") ||
+    (endAccepted || execution?.receipt_id ? "Handoff accepted; waiting for the session to exit." : "") ||
     (!capability?.available ? `Continuation unavailable: ${capability?.reason ?? "the native continuation boundary is not available."}` : "") ||
     (capability?.reason ? "Waiting for native work or submitted input to settle." : "") ||
     (navHistory || !liveRpc || terminalConnection !== "open" ? "Reconnect to the live session to continue." : "") ||
     (execution?.lifecycle !== "running" ? "Waiting for the accepted handoff and session exit." : "") ||
     (pendingUiReply ? "Resolve the pending approval or question before continuing." : "") ||
-    (completionBusy || requestedHere || execution?.continuation_requested_revision != null ? "Continuation requested; waiting for the handoff." : "") ||
+    (continuationPending ? "Continuation requested; waiting for the handoff." : "") ||
     (invalidatedHere || messageSending || execution?.ready_revision == null ? "Waiting for renewed readiness after review." : "") ||
     (executionAssessment?.terminality !== "nonterminal" ? "Waiting for an authoritative continuation assessment." : "");
   const continueReadyExecution = async () => {
     if (continuationInFlight.current || continuationReason || !execution || !capability || execution.ready_revision == null) return;
+    const epoch = executionEpoch.current;
+    followContinuation.current =
+      destinations.length === 1 && onOpenSession
+        ? {
+            executionId: execution.id,
+            revision: execution.ready_revision,
+            stepKey: destinations[0].step_key,
+            existingIds: new Set(Object.keys(executionView?.state.executions ?? {})),
+          }
+        : null;
     const request = {
       task_slug: taskSlug,
       execution_id: execution.id,
@@ -1973,29 +2043,42 @@ export function SessionView({
     try {
       try {
         const outcome = await ipc.continueExecution(request, repoPath);
-        if (outcome.status !== "requested" && outcome.status !== "accepted") setRequestedContinuation(null);
+        if (epoch !== executionEpoch.current) return;
+        if (outcome.status !== "requested" && outcome.status !== "accepted") {
+          followContinuation.current = null;
+          setRequestedContinuation(null);
+        }
         if (outcome.status === "invalid_outputs") setContinuationMessage(outcome.diagnostics.join("\n"));
         else if ("reason" in outcome) setContinuationMessage(outcome.reason);
-        else if (outcome.status === "accepted") setContinuationMessage("Handoff accepted; waiting for the session to exit.");
-        else if (outcome.status === "requested") setContinuationMessage("Continuation requested; waiting for the handoff.");
+        else if (outcome.status === "accepted") {
+          setEndAccepted(true);
+          setContinuationMessage("Handoff accepted; waiting for the session to exit.");
+        } else if (outcome.status === "requested") setContinuationMessage("Continuation requested; waiting for the handoff.");
       } catch (error) {
+        if (epoch !== executionEpoch.current) return;
         setContinuationMessage(`Continuation outcome unavailable: ${String(error)}. Refreshing does not resend the request.`);
         // Authoritative intent or failed observation still disables the action.
         // An unacknowledged local call must not strand a fresh manual retry.
         setRequestedContinuation(null);
       }
       try {
-        setExecutionView(await readTaskExecution(repoPath, taskSlug));
+        const next = await readTaskExecution(repoPath, taskSlug);
+        if (epoch !== executionEpoch.current) return;
+        setExecutionView(next);
         setExecutionError("");
       } catch (refreshError) {
+        if (epoch !== executionEpoch.current) return;
         setExecutionError(String(refreshError));
       }
     } finally {
-      continuationInFlight.current = false;
-      setCompletionBusy(false);
+      if (epoch === executionEpoch.current) {
+        continuationInFlight.current = false;
+        setCompletionBusy(false);
+      }
     }
   };
   const unacceptedOwner = execution?.owner_session_id === id && execution.receipt_id == null && execution.lifecycle !== "queued" && !endAccepted;
+  const canEnd = unacceptedOwner && executionAvailable && Boolean(continuationReason);
   const canReplace = unacceptedOwner && execution.shutdown_confirmed && executionAvailable && Boolean(onOpenReplacement);
   const refreshHandoff = async (epoch = executionEpoch.current) => {
     try {
@@ -2009,7 +2092,7 @@ export function SessionView({
     }
   };
   const endAndContinue = async () => {
-    if (continuationInFlight.current || !execution || !unacceptedOwner || !executionAvailable) return;
+    if (continuationInFlight.current || completionBusy || !execution || !canEnd) return;
     const epoch = executionEpoch.current;
     continuationInFlight.current = true;
     setCompletionBusy(true);
@@ -2046,6 +2129,7 @@ export function SessionView({
       submitted = true;
       const outcome = await ipc.endExecution(prepared.request, repoPath);
       if (epoch !== executionEpoch.current) return;
+      setSessionActionsOpen(true);
       if (outcome.status === "accepted") {
         setEndAccepted(true);
         setEndMessage("Handoff accepted. Refreshing the Playbook state.");
@@ -2058,6 +2142,7 @@ export function SessionView({
       }
     } catch (error) {
       if (epoch !== executionEpoch.current) return;
+      setSessionActionsOpen(true);
       setEndMessage(
         submitted
           ? `End-session outcome unavailable: ${String(error)}. Refresh status before deciding whether to retry. Refreshing never resends the request.`
@@ -2109,27 +2194,46 @@ export function SessionView({
       <div className="session-continuation" role="status" aria-label="Playbook status">
         Playbook complete
       </div>
-    ) : continuationShown ? (
+    ) : continuationShown || canEnd ? (
       <section className="session-continuation" aria-label="Playbook continuation">
-        {(continuationMessage || continuationReason) && (
-          <span id="continuation-reason" role="status">
-            {continuationMessage || continuationReason}
+        {continuationShown && (
+          <span
+            className="continuation-control"
+            role="group"
+            aria-label={continuationReason ? "Unavailable continuation" : undefined}
+            aria-describedby={continuationReason ? "continuation-reason" : undefined}
+            tabIndex={continuationReason ? 0 : undefined}
+            onFocus={() => setContinuationInfoOpen(Boolean(continuationReason))}
+            onBlur={() => setContinuationInfoOpen(false)}
+            onMouseEnter={() => setContinuationInfoOpen(Boolean(continuationReason))}
+            onMouseLeave={() => setContinuationInfoOpen(false)}
+            onClick={() => setContinuationInfoOpen(Boolean(continuationReason))}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setContinuationInfoOpen(false);
+            }}
+          >
+            <button
+              className="btn primary"
+              type="button"
+              disabled={Boolean(continuationReason)}
+              aria-describedby={continuationReason ? "continuation-reason" : undefined}
+              onClick={() => void continueReadyExecution()}
+            >
+              {continuationPending ? "Continuing…" : continuationLabel}
+            </button>
+            {(continuationMessage || continuationReason) && (
+              <span id="continuation-reason" role="tooltip" hidden={!continuationReason || !continuationInfoOpen}>
+                {continuationMessage || continuationReason}
+              </span>
+            )}
           </span>
         )}
-        <button
-          className="btn primary"
-          type="button"
-          disabled={Boolean(continuationReason)}
-          aria-describedby={continuationMessage || continuationReason ? "continuation-reason" : undefined}
-          onClick={() => void continueReadyExecution()}
-        >
-          {continuationLabel}
-        </button>
+        {canEnd && (
+          <button type="button" className="btn ghost small" disabled={completionBusy} onClick={() => void endAndContinue()}>
+            End &amp; continue…
+          </button>
+        )}
       </section>
-    ) : capability && !capability.available && execution?.lifecycle === "running" ? (
-      <div className="session-continuation" role="status">
-        Continuation unavailable: {capability.reason ?? "Native continuation is not available."}
-      </div>
     ) : null;
   const turnActive = isTurnActive({
     pendingTurn: chat.pendingTurn,
@@ -2342,11 +2446,6 @@ export function SessionView({
           {(unacceptedOwner || endMessage) && (
             <section className="session-handoff-actions" aria-label="Session handoff">
               {endMessage && <span role="status">{endMessage}</span>}
-              {unacceptedOwner && (
-                <button type="button" className="btn ghost small" disabled={completionBusy || !executionAvailable} onClick={() => void endAndContinue()}>
-                  End session and continue…
-                </button>
-              )}
               {canReplace && (
                 <button type="button" className="btn small" disabled={completionBusy} onClick={() => void replaceStoppedSession()}>
                   Replace stopped session
@@ -2499,9 +2598,9 @@ export function SessionView({
                       onLoadOlder={loadOlder}
                       loadingOlder={loadingOlder}
                       atStart={chat.fileStart === 0}
+                      floatingActions={continuationArea}
                     />
                   </div>
-                  {continuationArea && <div className="session-continuation-anchor">{continuationArea}</div>}
                   {showChatComposer ? (
                     <>
                       {uiPrompt ? (
@@ -2555,20 +2654,23 @@ export function SessionView({
                 </>
               ) : (
                 showPtyTerminal && (
-                  <div className="terminal-frame">
-                    <SessionTerminal
-                      sessionId={id}
-                      cwd={cwd}
-                      taskSlug={taskSlug}
-                      phase={phase}
-                      harness={harness}
-                      model={model}
-                      intent={termIntent}
-                      resumeToken={resumeToken}
-                      terminalFontSize={appearance.terminal_font_size}
-                      onConnectionStateChange={handleTerminalConnectionState}
-                    />
-                  </div>
+                  <>
+                    <div className="terminal-frame">
+                      <SessionTerminal
+                        sessionId={id}
+                        cwd={cwd}
+                        taskSlug={taskSlug}
+                        phase={phase}
+                        harness={harness}
+                        model={model}
+                        intent={termIntent}
+                        resumeToken={resumeToken}
+                        terminalFontSize={appearance.terminal_font_size}
+                        onConnectionStateChange={handleTerminalConnectionState}
+                      />
+                    </div>
+                    {continuationArea && <div className="session-continuation-anchor">{continuationArea}</div>}
+                  </>
                 )
               )}
               {contextActions.length > 0 && <ContextActionBar actions={contextActions} />}
@@ -2656,6 +2758,7 @@ export function SessionView({
             phase={executionStep?.title ?? phase}
             sessions={lineageSessions}
             executionView={executionView}
+            observations={{ ...lineageObservations, [id]: observation }}
             error={lineageError || executionError}
             artifactPaths={artifactNames}
             readableArtifactPaths={artifactNames.filter((path) => findOwnedArtifactNode(artifactTree, path))}

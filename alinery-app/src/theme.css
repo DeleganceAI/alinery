@@ -4353,6 +4353,8 @@ dialog.modal::backdrop {
 }
 .session-actions-dialog {
   width: min(560px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
 }
 .session-actions-heading {
   display: flex;
@@ -9175,20 +9177,50 @@ dialog.modal::backdrop {
   position: absolute;
   right: 14px;
   bottom: 10px;
+}
+.session-continuation-anchor > .session-continuation,
+.chat-floating-footer > .session-continuation {
   max-width: calc(100% - 28px);
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-menu);
+  padding: 0;
+  border: 0;
   font-size: calc(12px * var(--ui-scale));
 }
-.terminal-frame:has(+ .session-continuation-anchor) .chat-list {
-  padding-bottom: 96px;
+.chat-floating-footer {
+  position: absolute;
+  inset-inline: 12px 14px;
+  bottom: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  pointer-events: none;
+}
+.chat-floating-footer > * {
+  pointer-events: auto;
+}
+.chat-floating-footer > .chat-activity {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  align-self: flex-end;
+  padding: 0 0 4px;
+  border: 0;
+  background: transparent;
+  overflow-wrap: anywhere;
+}
+.chat-floating-footer > .session-continuation {
+  position: relative;
+  margin-left: auto;
+  max-width: 100%;
+}
+.chat-pane:has(> .session-continuation-anchor) .chat-list {
+  padding-bottom: calc(var(--chat-footer-height, 76px) + 20px);
 }
 .session-continuation {
   flex: 0 0 auto;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
@@ -9200,7 +9232,39 @@ dialog.modal::backdrop {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.session-continuation > button {
+.continuation-control {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+}
+.continuation-control > button:disabled {
+  pointer-events: none;
+}
+.continuation-control:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+.continuation-control [role="tooltip"] {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  width: max-content;
+  max-width: min(320px, 100%);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-menu);
+  color: var(--text);
+}
+.continuation-control > .primary:disabled {
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  opacity: 1;
+}
+.session-continuation > button,
+.continuation-control > button {
   flex: 0 0 auto;
   max-width: 100%;
   height: auto;
@@ -9208,16 +9272,6 @@ dialog.modal::backdrop {
   padding-block: 6px;
   white-space: normal;
   overflow-wrap: anywhere;
-  background: var(--accent);
-  color: var(--on-accent);
-}
-@media (max-width: 600px) {
-  .session-continuation {
-    flex-wrap: wrap;
-  }
-  .session-continuation > span {
-    flex-basis: 100%;
-  }
 }
 
 .session-input-recovery {

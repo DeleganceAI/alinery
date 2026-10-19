@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { chatMaxWidthCss } from "../appearance";
 import { collectLiveSubagents } from "../chat/subagents";
@@ -15,6 +16,7 @@ function ChatPaneImpl({
   onLoadOlder,
   loadingOlder = false,
   atStart = true,
+  floatingActions,
 }: {
   entries: ChatEntry[];
   status?: SessionChatStatus;
@@ -25,12 +27,16 @@ function ChatPaneImpl({
   loadingOlder?: boolean;
   /** The first prompt of the conversation is loaded — there is nothing older to fetch. */
   atStart?: boolean;
+  /** Supplying this slot, including null, floats activity alongside the session actions. */
+  floatingActions?: ReactNode;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
+  const floatingFooter = useRef<HTMLDivElement>(null);
   const stick = useRef(visibility.autoScroll);
   const anchor = useRef<{ id: string; top: number } | null>(null);
   const shown = useMemo(() => visibleChatEntries(entries, visibility), [entries, visibility]);
   const activity = chatActivityLabel(status, shown);
+  const hasFloatingFooter = floatingActions !== undefined && Boolean(activity || floatingActions);
 
   useEffect(() => {
     stick.current = visibility.autoScroll;
@@ -41,6 +47,23 @@ function ChatPaneImpl({
     if (!el || !stick.current || !visibility.autoScroll) return;
     el.scrollTop = el.scrollHeight;
   }, [visibility.autoScroll]);
+
+  useLayoutEffect(() => {
+    const footer = floatingFooter.current;
+    const list = scroller.current;
+    if (!hasFloatingFooter || !footer || !list) return;
+    const measure = () => {
+      list.style.setProperty("--chat-footer-height", `${footer.getBoundingClientRect().height}px`);
+      scrollToEnd();
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(footer);
+    return () => {
+      observer.disconnect();
+      list.style.removeProperty("--chat-footer-height");
+    };
+  }, [hasFloatingFooter, scrollToEnd]);
 
   useEffect(() => {
     scrollToEnd();
@@ -90,6 +113,12 @@ function ChatPaneImpl({
   }
 
   const liveSubs = useMemo(() => collectLiveSubagents(entries), [entries]);
+  const activityIndicator = activity ? (
+    <div className="chat-activity" role="status" data-testid="chat-activity" aria-live="polite">
+      <RunningIndicator running={status === "running"} />
+      <span>{activity}</span>
+    </div>
+  ) : null;
 
   return (
     <div
@@ -126,12 +155,16 @@ function ChatPaneImpl({
           ))}
         </ol>
       </div>
-      {activity ? (
-        <div className="chat-activity" role="status" data-testid="chat-activity" aria-live="polite">
-          <RunningIndicator running={status === "running"} />
-          <span>{activity}</span>
-        </div>
-      ) : null}
+      {floatingActions !== undefined
+        ? (activity || floatingActions) && (
+            <div className="session-continuation-anchor">
+              <div className="chat-floating-footer" ref={floatingFooter}>
+                {activityIndicator}
+                {floatingActions}
+              </div>
+            </div>
+          )
+        : activityIndicator}
     </div>
   );
 }

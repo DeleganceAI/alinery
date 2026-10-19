@@ -10,9 +10,20 @@ import { mockIpc } from "../test/mockIpc";
 import { journalPage } from "../test/ompJournal";
 import { stubScrollSize } from "../test/scroll";
 import { Toast, toast } from "../toast";
-import type { AgentState, ArtifactListItem, ArtifactTreeNode, DispatchOutcome, SessionObservation, Task, TaskExecutionReply } from "../types";
+import type { AgentState, ArtifactListItem, ArtifactTreeNode, DispatchOutcome, SessionDisplayMeta, SessionObservation, Task, TaskExecutionReply } from "../types";
 import { executionRecord, executionReply, partiallyPublishedExecution } from "./executionTestFixture";
 import { type SessionSendRecovery, SessionView } from "./SessionView";
+
+beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+});
+afterEach(() => vi.unstubAllGlobals());
 
 const scenario = vi.hoisted(() => ({
   itemCalls: 0,
@@ -46,6 +57,7 @@ const writeChatAttachmentBytes = vi.hoisted(() => vi.fn(async (_slug: string, fi
 const readChatImage = vi.hoisted(() => vi.fn(async (_taskSlug: string, _name: string) => ({ mime_type: "image/png", data: "aa" })));
 const getTaskExecution = vi.hoisted(() => vi.fn());
 const continueExecution = vi.hoisted(() => vi.fn());
+const listSessions = vi.hoisted(() => vi.fn(async (): Promise<SessionDisplayMeta[]> => []));
 const getSessionDisplay = vi.hoisted(() => vi.fn(async () => null));
 const renameSession = vi.hoisted(() => vi.fn());
 const prepareEndExecution = vi.hoisted(() => vi.fn());
@@ -104,6 +116,7 @@ vi.mock("../ipc", () =>
     renameSession,
     getTaskExecution,
     continueExecution,
+    listSessions,
     prepareEndExecution,
     endExecution,
     createSessionForRepo,
@@ -2351,11 +2364,115 @@ describe("review continuation", () => {
     rpcWriteSession.mockReset().mockResolvedValue({ status: "written" });
     getTaskExecution.mockReset().mockResolvedValue(readyReply());
     continueExecution.mockReset().mockResolvedValue({ status: "requested", ready_revision: 7 });
+    listSessions.mockReset().mockResolvedValue([]);
   });
   afterEach(() => {
     cleanup();
     getTaskExecution.mockReset();
+    listSessions.mockReset().mockResolvedValue([]);
     vi.useRealTimers();
+  });
+
+  it("opens only the new successor after accepted shutdown and actual start", async () => {
+    vi.useFakeTimers();
+    const onOpenSession = vi.fn();
+    const reply = readyReply();
+    getTaskExecution.mockImplementation(async () => structuredClone(reply));
+    const view = renderSession({ onOpenSession });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Review changes" }));
+    await flushPromises();
+    const source = reply.state.executions["execution-a"];
+    source.receipt_id = "receipt";
+    source.lifecycle = "finishing";
+    const successor = executionRecord({ id: "next", owner_session_id: "next-session", parent_execution_ids: [source.id], lifecycle: "queued" });
+    successor.candidate.step_key = "review";
+    reply.state.executions.next = successor;
+    const session: SessionDisplayMeta = {
+      id: "next-session",
+      execution_id: "next",
+      worktree: "/worktrees/task",
+      created: 2,
+      archived: false,
+      phase: "review",
+      harness: "omp",
+      model: "",
+      playbook: "retained",
+      generic: false,
+      harness_resume_token: "",
+      started_at: 3,
+    };
+    listSessions.mockResolvedValue([session]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(onOpenSession).not.toHaveBeenCalled();
+    source.lifecycle = "completed";
+    source.shutdown_confirmed = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(onOpenSession).not.toHaveBeenCalled();
+    successor.lifecycle = "running";
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(onOpenSession).toHaveBeenCalledExactlyOnceWith(session);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(onOpenSession).toHaveBeenCalledTimes(1);
+    view.rerender(sessionView({ id: session.id, onOpenSession }));
+    await flushPromises();
+    expect(screen.queryByText("Continuation requested; waiting for the handoff.")).toBeNull();
+  });
+
+  it.each(["unrelated", "fanout", "new review", "refused", "left session"] as const)("does not redirect after continuation when %s", async (condition) => {
+    vi.useFakeTimers();
+    const onOpenSession = vi.fn();
+    const reply = readyReply();
+    getTaskExecution.mockImplementation(async () => structuredClone(reply));
+    if (condition === "refused") continueExecution.mockResolvedValue({ status: "waiting", reason: "Still working" });
+    const view = renderSession({ onOpenSession });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Review changes" }));
+    await flushPromises();
+    if (condition === "left session") view.rerender(sessionView({ id: "another-session", onOpenSession }));
+    const source = reply.state.executions["execution-a"];
+    if (condition === "new review") {
+      source.work_revision += 1;
+      source.ready_revision = null;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500);
+      });
+    }
+    source.receipt_id = "receipt";
+    source.lifecycle = "completed";
+    source.shutdown_confirmed = true;
+    const successor = executionRecord({ id: "next", owner_session_id: "next-session", parent_execution_ids: [condition === "unrelated" ? "other" : source.id] });
+    successor.candidate.step_key = "review";
+    reply.state.executions.next = successor;
+    if (condition === "fanout") reply.state.executions.second = { ...successor, id: "second", owner_session_id: "second-session" };
+    listSessions.mockResolvedValue([
+      {
+        id: "next-session",
+        execution_id: "next",
+        worktree: "/worktrees/task",
+        created: 2,
+        archived: false,
+        phase: "review",
+        harness: "omp",
+        model: "",
+        playbook: "retained",
+        generic: false,
+        harness_resume_token: "",
+        started_at: 3,
+      },
+    ]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(onOpenSession).not.toHaveBeenCalled();
   });
 
   describe("human-authorized end and handoff", () => {
@@ -2365,16 +2482,19 @@ describe("review continuation", () => {
       endExecution.mockReset().mockResolvedValue({ status: "accepted", receipt_id: "receipt-end" });
       createSessionForRepo.mockReset();
       confirmDanger.mockReset().mockResolvedValue(true);
+      getTaskExecution.mockResolvedValue(readyReply(null));
     });
 
-    it("keeps execution details and recovery actions hidden until requested", async () => {
+    it("keeps execution details hidden and offers only normal continuation when ready", async () => {
+      getTaskExecution.mockResolvedValue(readyReply());
       renderSession();
-      await screen.findByRole("button", { name: "Continue to Review changes" });
-      expect(screen.queryByRole("button", { name: "End session and continue…" })).toBeNull();
+      const control = await screen.findByRole("button", { name: "Continue to Review changes" });
+      await waitFor(() => expect(control).toHaveProperty("disabled", false));
+      expect(screen.queryByRole("button", { name: "End & continue…" })).toBeNull();
       expect(screen.queryByLabelText("Session execution")).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
       const dialog = await screen.findByRole("dialog", { name: "Session actions" });
-      expect(within(dialog).getByRole("button", { name: "End session and continue…" })).toBeDefined();
+      expect(within(dialog).queryByRole("button", { name: "End & continue…" })).toBeNull();
       expect(within(dialog).getByLabelText("Session execution")).toBeDefined();
       fireEvent.click(within(dialog).getByRole("button", { name: "Close session actions" }));
       expect(screen.queryByRole("dialog", { name: "Session actions" })).toBeNull();
@@ -2385,8 +2505,7 @@ describe("review continuation", () => {
       confirmDanger.mockImplementation(confirmation.confirmDanger);
       render(<confirmation.ConfirmHost />);
       renderSession();
-      fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
-      fireEvent.click(await screen.findByRole("button", { name: "End session and continue…" }));
+      fireEvent.click(await screen.findByRole("button", { name: "End & continue…" }));
       const dialog = await screen.findByRole("alertdialog", { name: "End session and continue?" });
       expect(within(dialog).getByText("research/2-result-10.md")).toBeDefined();
       const cancelButtons = within(dialog).getAllByRole("button", { name: "Cancel" });
@@ -2400,15 +2519,15 @@ describe("review continuation", () => {
     it("cancels without ending and submits only the confirmed prepared identity", async () => {
       confirmDanger.mockResolvedValueOnce(false);
       renderSession();
-      fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
-      const action = await screen.findByRole("button", { name: "End session and continue…" });
+      const action = await screen.findByRole("button", { name: "End & continue…" });
       fireEvent.click(action);
       await waitFor(() => expect(confirmDanger).toHaveBeenCalledTimes(1));
       expect(endExecution).not.toHaveBeenCalled();
       await waitFor(() => expect(action).toHaveProperty("disabled", false));
       fireEvent.click(action);
       await waitFor(() => expect(endExecution).toHaveBeenCalledExactlyOnceWith(request, "/repo"));
-      await screen.findByText(/Handoff accepted/);
+      await screen.findByRole("dialog", { name: "Session actions" });
+      expect(screen.queryByRole("button", { name: "End & continue…" })).toBeNull();
       expect(screen.queryByText("Playbook complete")).toBeNull();
       expect(continueExecution).not.toHaveBeenCalled();
     });
@@ -2419,8 +2538,7 @@ describe("review continuation", () => {
       blocked.continuation["execution-a"] = { available: false, process_incarnation: "raw", reason: "Raw terminal input cannot be tracked" };
       getTaskExecution.mockResolvedValue(blocked);
       renderSession({ intent: "attach" });
-      fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
-      const action = await screen.findByRole("button", { name: "End session and continue…" });
+      const action = await screen.findByRole("button", { name: "End & continue…" });
       expect(screen.getByTestId("terminal")).toBeDefined();
       fireEvent.click(action);
       await waitFor(() => expect(endExecution).toHaveBeenCalledExactlyOnceWith(request, "/repo"));
@@ -2430,8 +2548,7 @@ describe("review continuation", () => {
     it("retains stopped invalid-output diagnostics and only offers replacement after shutdown proof", async () => {
       endExecution.mockResolvedValue({ status: "invalid_outputs", diagnostics: ["Missing required result"] });
       renderSession();
-      fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
-      fireEvent.click(await screen.findByRole("button", { name: "End session and continue…" }));
+      fireEvent.click(await screen.findByRole("button", { name: "End & continue…" }));
       await screen.findByText(/Missing required result/);
       expect(screen.queryByRole("button", { name: "Replace stopped session" })).toBeNull();
       expect(createSessionForRepo).not.toHaveBeenCalled();
@@ -2483,8 +2600,7 @@ describe("review continuation", () => {
       const result = deferred<{ request: typeof request; artifacts: string[]; diagnostics: string[] }>();
       prepareEndExecution.mockReturnValue(result.promise);
       const view = renderSession();
-      fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
-      fireEvent.click(await screen.findByRole("button", { name: "End session and continue…" }));
+      fireEvent.click(await screen.findByRole("button", { name: "End & continue…" }));
       await waitFor(() => expect(prepareEndExecution).toHaveBeenCalledTimes(1));
       view.unmount();
       await act(async () => result.resolve({ request, artifacts: ["result.md"], diagnostics: [] }));
@@ -2496,24 +2612,21 @@ describe("review continuation", () => {
       const result = deferred<{ status: string; receipt_id: string }>();
       endExecution.mockReturnValue(result.promise);
       const view = renderSession();
-      fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
-      fireEvent.click(await screen.findByRole("button", { name: "End session and continue…" }));
+      fireEvent.click(await screen.findByRole("button", { name: "End & continue…" }));
       await waitFor(() => expect(endExecution).toHaveBeenCalledTimes(1));
-      const next = readyReply();
+      const next = readyReply(null);
       next.state.executions["execution-a"].owner_session_id = "other-session";
       getTaskExecution.mockResolvedValue(next);
       view.rerender(sessionView({ id: "other-session" }));
       await act(async () => result.resolve({ status: "accepted", receipt_id: "old-receipt" }));
-      fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
-      expect(await screen.findByRole("button", { name: "End session and continue…" })).toHaveProperty("disabled", false);
+      expect(await screen.findByRole("button", { name: "End & continue…" })).toHaveProperty("disabled", false);
       expect(screen.queryByText(/Handoff accepted/)).toBeNull();
     });
 
     it("does not resend an uncertain end request on observation refresh", async () => {
       endExecution.mockRejectedValue(new Error("Reply lost"));
       renderSession();
-      fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
-      fireEvent.click(await screen.findByRole("button", { name: "End session and continue…" }));
+      fireEvent.click(await screen.findByRole("button", { name: "End & continue…" }));
       await screen.findByText(/End-session outcome unavailable/);
       const refresh = screen.getByRole("button", { name: "Refresh handoff status" });
       await waitFor(() => expect(refresh).toHaveProperty("disabled", false));
@@ -2530,6 +2643,7 @@ describe("review continuation", () => {
     const control = await screen.findByRole("button", { name: "Continue to Review changes" });
     await flushPromises();
     expect(control).toHaveProperty("disabled", true);
+    expect(within(screen.getByRole("region", { name: "Playbook continuation" })).getByRole("button", { name: "End & continue…" })).toBeDefined();
     fireEvent.click(control);
     expect(continueExecution).not.toHaveBeenCalled();
   });
@@ -2541,7 +2655,6 @@ describe("review continuation", () => {
     const control = await screen.findByRole("button", { name: "Continue to Review changes" });
     await waitFor(() => expect(control).toHaveProperty("disabled", false));
     expect(within(screen.getByRole("region", { name: "Playbook continuation" })).getByRole("button", { name: "Continue to Review changes" })).toBe(control);
-    expect(within(screen.getByTestId("chat-pane")).queryByRole("button", { name: "Continue to Review changes" })).toBeNull();
     fireEvent.click(control);
     fireEvent.click(control);
     expect(continueExecution).toHaveBeenCalledExactlyOnceWith(
@@ -2556,7 +2669,7 @@ describe("review continuation", () => {
     );
     await act(async () => result.resolve({ status: "requested", ready_revision: 7 }));
     expect(screen.queryByText("Playbook complete")).toBeNull();
-    expect(screen.getByRole("button", { name: "Continue to Review changes" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Continuing…" })).toHaveProperty("disabled", true);
   });
 
   it("keeps accepted handoff evidence when the subsequent observation fails", async () => {
@@ -2626,24 +2739,48 @@ describe("review continuation", () => {
     expect(screen.getByRole("button", { name: "Continue to Review changes" })).toHaveProperty("disabled", false);
   });
 
+  it("never offers ending an already accepted handoff", async () => {
+    const accepted = readyReply();
+    accepted.state.executions["execution-a"].receipt_id = "accepted";
+    accepted.state.executions["execution-a"].lifecycle = "finishing";
+    getTaskExecution.mockResolvedValue(accepted);
+    renderSession();
+    expect(await screen.findByRole("button", { name: "Continuing…" })).toHaveProperty("disabled", true);
+    expect(screen.queryByRole("button", { name: "End & continue…" })).toBeNull();
+  });
+
+  it("exposes unavailable reasons on focus and dismisses them with Escape", async () => {
+    getTaskExecution.mockResolvedValue(readyReply(null));
+    renderSession();
+    const info = await screen.findByRole("group", { name: "Unavailable continuation" });
+    expect(screen.queryByRole("button", { name: "Continuation details" })).toBeNull();
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    fireEvent.focus(info);
+    expect(screen.getByRole("tooltip").textContent).toContain("readiness");
+    fireEvent.keyDown(info, { key: "Escape" });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
   it("keeps saved readiness visible without granting live authority", async () => {
     const saved = readyReply();
     getTaskExecution.mockResolvedValue({ ...saved, live: { status: "offline", detail: "Owner is offline" }, continuation: {} });
     renderSession();
     const control = await screen.findByRole("button", { name: "Continue to Review changes" });
     expect(control).toHaveProperty("disabled", true);
+    expect(screen.queryByRole("button", { name: "End & continue…" })).toBeNull();
     fireEvent.click(control);
     expect(continueExecution).not.toHaveBeenCalled();
     expect(screen.queryByText("Playbook complete")).toBeNull();
   });
 
-  it("does not offer continuation before readiness or for automatic and terminal work", async () => {
+  it("shows disabled continuation before readiness but not for automatic or terminal work", async () => {
     const unready = readyReply(null);
     unready.state.executions["execution-a"].last_ready_revision = null;
     getTaskExecution.mockResolvedValue(unready);
     const first = renderSession();
     await flushPromises();
-    expect(screen.queryByRole("button", { name: /Continue (to|playbook)/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /Continue (to|playbook)/ })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "End & continue…" })).toBeDefined();
     first.unmount();
     const automatic = readyReply();
     automatic.state.executions["execution-a"].continuation_mode = "automatic";

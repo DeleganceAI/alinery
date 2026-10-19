@@ -5,23 +5,6 @@
   font-size: 12px;
 }
 
-.session-lineage-finished {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
-  border-left: 3px solid var(--accent);
-}
-
-.session-lineage-finished .session-lineage-node {
-  width: auto;
-  min-width: 100px;
-  max-width: 210px;
-  padding: 4px 9px;
-}
-
 .session-lineage-details > summary {
   display: flex;
   align-items: center;
@@ -129,6 +112,23 @@ button.session-lineage-node:hover:not(:disabled),
 .session-lineage-empty {
   color: var(--text-muted);
   font-size: 11px;
+}
+
+.session-lineage-working {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  vertical-align: middle;
+}
+
+.session-lineage-newest {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: 9px;
 }
 
 .session-lineage-empty {
