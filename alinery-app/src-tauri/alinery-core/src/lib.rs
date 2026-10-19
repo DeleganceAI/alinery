@@ -14,7 +14,6 @@ pub mod lockfile;
 pub mod log;
 pub mod message;
 pub mod omp_config;
-mod omp_ownership;
 pub mod paths;
 pub mod playbook;
 pub mod playbook_library;

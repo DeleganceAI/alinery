@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as ipc from "../ipc";
-import { Checkbox } from "../shared";
 import type { OmpCompactionField, OmpCompactionSnapshot } from "../types";
 
 const statusWarnings: Record<OmpCompactionSnapshot["status"], string | null> = {
   ready: null,
-  pending_initialization: "Defaults not yet applied.",
-  legacy_unresolved: "Settings unavailable. Defaults have not been applied.",
+  legacy_unresolved: "OMP settings unavailable.",
   invalid: "OMP settings contain invalid values.",
   unreadable: "Couldn't read OMP settings.",
   unsupported: "This OMP version doesn't support settings here.",
@@ -47,31 +45,12 @@ export function OmpCompaction() {
     };
   }, [refresh]);
 
-  const known = typeof snapshot?.enabled.value === "boolean" && snapshot.enabled.source !== "unknown";
-  const editable = !!snapshot && known && snapshot.write_allowed && !pending && !error;
-  const changeEnabled = async (enabled: boolean) => {
-    if (!editable || !snapshot) return;
-    const current = ++request.current;
-    setPending(true);
-    try {
-      const next = await ipc.setOmpAutoCompaction(enabled, snapshot.revision);
-      if (current === request.current) {
-        setSnapshot(next);
-        setError(null);
-      }
-    } catch (cause) {
-      if (current === request.current) setError(String(cause));
-    } finally {
-      if (current === request.current) setPending(false);
-    }
-  };
-
   const warning = error
     ? snapshot
       ? "Values may be out of date. Refresh to try again."
       : "Settings unavailable. Try Refresh."
     : snapshot
-      ? (statusWarnings[snapshot.status] ?? (!snapshot.write_allowed ? "Editing unavailable." : null))
+      ? (statusWarnings[snapshot.status] ?? (snapshot.errors.length ? "Some OMP settings are unavailable." : null))
       : null;
 
   return (
@@ -90,9 +69,7 @@ export function OmpCompaction() {
         )}
         {snapshot && (
           <dl className="omp-compaction-values">
-            <dt>
-              <Checkbox checked={known && snapshot.enabled.value === true} disabled={!editable} onChange={(enabled) => void changeEnabled(enabled)} label="Auto-compaction" />
-            </dt>
+            <dt>Auto-compaction</dt>
             <dd title={snapshot.enabled.source}>{fieldText(snapshot.enabled, "boolean")}</dd>
             <dt>Compaction threshold</dt>
             <dd title={snapshot.threshold_percent.source}>{fieldText(snapshot.threshold_percent, "percent")}</dd>

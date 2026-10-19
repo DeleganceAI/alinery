@@ -255,11 +255,7 @@ export type OmpCompactionSnapshot = {
   binary_path: string | null;
   installed_version: string | null;
   config_path: string | null;
-  status: "ready" | "pending_initialization" | "legacy_unresolved" | "invalid" | "unreadable" | "unsupported" | "missing_binary";
-  revision: string;
-  write_allowed: boolean;
-  write_blocked_reason: string | null;
-  pending_defaults: boolean;
+  status: "ready" | "legacy_unresolved" | "invalid" | "unreadable" | "unsupported" | "missing_binary";
   enabled: OmpCompactionField<boolean>;
   threshold_percent: OmpCompactionField<number>;
   threshold_tokens: OmpCompactionField<number>;

@@ -293,8 +293,8 @@ fn apply_default_role_after_sync(config_dir: &Path, app_config: &Path) {
 }
 
 fn apply_default_model_role(app_config: &Path, default_model: &str) {
-    // Automatic role seeding defers when another managed OMP process owns this home.
-    let _ = ensure_default_model_role(app_config, default_model);
+    let (agent_dir, _) = alinery_core::omp_home_dirs(app_config);
+    let _ = ensure_default_model_role(&agent_dir, default_model);
 }
 
 pub(crate) fn sync_hosted_inference(config_dir: &Path, app_config: &Path, accounts_url: &str, access_token: &str, session_id: &str, paid: bool) -> Result<(), String> {

@@ -137,12 +137,9 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
     let rest = &child_args[1..];
 
     let (repo, app_config) = take_mcp_launch_context()?;
-    alinery_core::register_omp_launch_owner(&app_config)?;
     let extension_package = materialise_extension(&repo, &app_config)?;
 
     let new_argv = build_exec_argv(executable, rest, &extension_package);
-    let lease = alinery_core::prepare_omp_launch(&app_config, Path::new(executable))?;
-    lease.retain_across_exec()?;
 
     // Replace this process.  This call does not return on success.
     exec_replace(executable, &new_argv)

@@ -9422,9 +9422,6 @@ dialog.modal::backdrop {
   margin: 0;
   overflow-wrap: anywhere;
 }
-.omp-compaction-values .opt {
-  padding: 0;
-}
 .omp-customization-list {
   list-style: none;
   margin: 0;
