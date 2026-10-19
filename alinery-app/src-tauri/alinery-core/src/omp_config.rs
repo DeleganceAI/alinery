@@ -235,14 +235,14 @@ fn version_output(app_config: &Path, binary: &Path, timeout: Duration) -> Result
     }
     result
 }
-fn version(app_config: &Path, binary: &Path) -> Option<String> {
-    let output = version_output(app_config, binary, Duration::from_secs(3)).ok()?;
-    let raw = std::str::from_utf8(&output).ok()?.trim();
-    let version = raw.strip_prefix("omp/")?;
-    if version.len() > 40 || !version.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
-        return None;
+fn version(app_config: &Path, binary: &Path) -> Result<String, String> {
+    let output = version_output(app_config, binary, Duration::from_secs(3))?;
+    let raw = std::str::from_utf8(&output).map_err(|_| "OMP version response is not valid UTF-8")?.trim();
+    let version = raw.strip_prefix("omp/").ok_or("OMP version response has an unrecognized format")?;
+    if version.is_empty() || version.len() > 40 || !version.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+        return Err("OMP version response has an unrecognized format".into());
     }
-    Some(version.into())
+    Ok(version.into())
 }
 
 fn snapshot(app_config: &Path, binary: Option<&Path>) -> OmpCompactionSnapshot {
@@ -272,10 +272,19 @@ fn snapshot(app_config: &Path, binary: Option<&Path>) -> OmpCompactionSnapshot {
         result.errors.push("Packaged OMP is unavailable".into());
         return result;
     };
-    result.installed_version = version(app_config, binary);
+    result.installed_version = match version(app_config, binary) {
+        Ok(version) => Some(version),
+        Err(error) => {
+            result.status = "unsupported";
+            result.errors.push(format!("Cannot identify the installed OMP version: {error}"));
+            return result;
+        }
+    };
     if result.installed_version.as_deref() != Some(SUPPORTED) {
         result.status = "unsupported";
-        result.errors.push("Compaction settings require verified OMP 18.1.13".into());
+        result
+            .errors
+            .push("Alinery has not verified compaction settings for this OMP version; verified version: 18.1.13".into());
         return result;
     }
     let mut doc = match doc {
@@ -484,14 +493,39 @@ mod tests {
     }
 
     #[test]
-    fn omp_config_unsupported_version_never_claims_defaults_or_exposes_stderr() {
+    fn omp_config_unverified_and_unidentified_versions_keep_values_unknown_and_errors_safe() {
         let f = Fixture::new();
-        for script in ["echo omp/99.0.0", "echo private-secret >&2; exit 1", "echo private-secret"] {
+        let agent = f.agent();
+        let content = "compaction: {enabled: false}\nsecret: private-secret\n";
+        fs::write(agent.join("config.yml"), content).unwrap();
+        for (script, installed, cause) in [
+            ("echo omp/99.0.0", Some("99.0.0"), "not verified"),
+            ("echo private-secret; echo private-secret >&2; exit 1", None, "probe failed"),
+            ("echo private-secret", None, "unrecognized format"),
+            ("printf 'omp/'", None, "unrecognized format"),
+            ("printf '\\377'", None, "not valid UTF-8"),
+        ] {
             let binary = f.script(script);
             let state = snapshot(&f.app(), Some(&binary));
             assert_eq!(state.status, "unsupported");
-            assert_eq!(state.enabled.source, "unknown");
+            assert_eq!(state.installed_version.as_deref(), installed);
+            assert!(state.errors.iter().any(|error| error.contains(cause)));
+            if installed.is_none() {
+                assert!(state.errors.iter().any(|error| error.contains("Cannot identify")));
+                assert!(!state.errors.iter().any(|error| error.contains("18.1.13")));
+            }
+            for field in [
+                &state.enabled,
+                &state.threshold_percent,
+                &state.threshold_tokens,
+                &state.mid_turn_enabled,
+                &state.async_enabled,
+            ] {
+                assert_eq!(field.source, "unknown");
+                assert_eq!(field.value, None);
+            }
             assert!(!serde_json::to_string(&state).unwrap().contains("private-secret"));
+            assert_eq!(fs::read_to_string(agent.join("config.yml")).unwrap(), content);
         }
         assert_eq!(snapshot(&f.app(), None).status, "missing_binary");
     }

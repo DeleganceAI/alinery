@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as ipc from "../ipc";
+import { InlineStatus } from "../shared";
 import type { OmpCompactionField, OmpCompactionSnapshot } from "../types";
 
 const statusWarnings: Record<OmpCompactionSnapshot["status"], string | null> = {
   ready: null,
-  legacy_unresolved: "OMP settings unavailable.",
-  invalid: "OMP settings contain invalid values.",
-  unreadable: "Couldn't read OMP settings.",
-  unsupported: "This OMP version doesn't support settings here.",
-  missing_binary: "OMP isn't installed.",
+  legacy_unresolved: "Inspect legacy settings through OMP, then refresh.",
+  invalid: "Inspect and correct the OMP configuration, then refresh.",
+  unreadable: "Check access to the OMP configuration, then refresh.",
+  unsupported: "Alinery hasn't verified this OMP version. Check compatibility, then refresh.",
+  missing_binary: "OMP wasn't found. Check the installation, then refresh.",
 };
 
 function fieldText(field: OmpCompactionField<boolean | number>, kind: "boolean" | "percent" | "tokens") {
@@ -21,7 +22,7 @@ function fieldText(field: OmpCompactionField<boolean | number>, kind: "boolean" 
 export function OmpCompaction() {
   const [snapshot, setSnapshot] = useState<OmpCompactionSnapshot | null>(null);
   const [pending, setPending] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState(false);
   const request = useRef(0);
   const refresh = useCallback(async () => {
     const current = ++request.current;
@@ -30,10 +31,10 @@ export function OmpCompaction() {
       const next = await ipc.readOmpCompaction();
       if (current === request.current) {
         setSnapshot(next);
-        setError(null);
+        setError(false);
       }
-    } catch (cause) {
-      if (current === request.current) setError(String(cause));
+    } catch {
+      if (current === request.current) setError(true);
     } finally {
       if (current === request.current) setPending(false);
     }
@@ -48,9 +49,11 @@ export function OmpCompaction() {
   const warning = error
     ? snapshot
       ? "Values may be out of date. Refresh to try again."
-      : "Settings unavailable. Try Refresh."
+      : "Couldn't read OMP settings. Refresh to try again."
     : snapshot
-      ? (statusWarnings[snapshot.status] ?? (snapshot.errors.length ? "Some OMP settings are unavailable." : null))
+      ? snapshot.status === "unsupported" && snapshot.installed_version === null
+        ? "Couldn't identify OMP. Check the installation, then refresh."
+        : (statusWarnings[snapshot.status] ?? (snapshot.errors.length ? "Some OMP settings are unavailable. Inspect the configuration, then refresh." : null))
       : null;
 
   return (
@@ -61,30 +64,38 @@ export function OmpCompaction() {
           {pending ? "Refreshing…" : "Refresh"}
         </button>
       </div>
-      <div aria-live="polite" aria-busy={pending}>
+      <div className="omp-compaction-content" aria-live="polite" aria-busy={pending}>
+        <dl className={`omp-compaction-values${!snapshot && error ? " omp-compaction-values-hidden" : ""}`} aria-hidden={!snapshot && error ? true : undefined}>
+          <dt>Auto-compaction</dt>
+          <dd title={snapshot?.enabled.source}>
+            {snapshot ? fieldText(snapshot.enabled, "boolean") : <span className="omp-compaction-placeholder" role="img" aria-label="Loading" />}
+          </dd>
+          <dt>Compaction threshold</dt>
+          <dd title={snapshot?.threshold_percent.source}>
+            {snapshot ? fieldText(snapshot.threshold_percent, "percent") : <span className="omp-compaction-placeholder" role="img" aria-label="Loading" />}
+          </dd>
+          <dt>Token-limit override</dt>
+          <dd className="omp-compaction-token-limit" title={snapshot?.threshold_tokens.source}>
+            {snapshot ? fieldText(snapshot.threshold_tokens, "tokens") : <span className="omp-compaction-placeholder" role="img" aria-label="Loading" />}
+            {snapshot && snapshot.threshold_tokens.value !== null && snapshot.threshold_tokens.value > 0 && <span className="dim"> · overrides %</span>}
+          </dd>
+          <dt>Mid-turn compaction</dt>
+          <dd title={snapshot?.mid_turn_enabled.source}>
+            {snapshot ? fieldText(snapshot.mid_turn_enabled, "boolean") : <span className="omp-compaction-placeholder" role="img" aria-label="Loading" />}
+          </dd>
+          <dt>Async compaction</dt>
+          <dd title={snapshot?.async_enabled.source}>
+            {snapshot ? fieldText(snapshot.async_enabled, "boolean") : <span className="omp-compaction-placeholder" role="img" aria-label="Loading" />}
+          </dd>
+          <dt>Context capacity</dt>
+          <dd>{snapshot ? "Varies by model" : <span className="omp-compaction-placeholder" role="img" aria-label="Loading" />}</dd>
+        </dl>
         {warning && (
-          <p role="alert" className="field-error">
-            {warning}
-          </p>
-        )}
-        {snapshot && (
-          <dl className="omp-compaction-values">
-            <dt>Auto-compaction</dt>
-            <dd title={snapshot.enabled.source}>{fieldText(snapshot.enabled, "boolean")}</dd>
-            <dt>Compaction threshold</dt>
-            <dd title={snapshot.threshold_percent.source}>{fieldText(snapshot.threshold_percent, "percent")}</dd>
-            <dt>Token-limit override</dt>
-            <dd title={snapshot.threshold_tokens.source}>
-              {fieldText(snapshot.threshold_tokens, "tokens")}
-              {snapshot.threshold_tokens.value !== null && snapshot.threshold_tokens.value > 0 && <span className="dim"> · overrides %</span>}
-            </dd>
-            <dt>Mid-turn compaction</dt>
-            <dd title={snapshot.mid_turn_enabled.source}>{fieldText(snapshot.mid_turn_enabled, "boolean")}</dd>
-            <dt>Async compaction</dt>
-            <dd title={snapshot.async_enabled.source}>{fieldText(snapshot.async_enabled, "boolean")}</dd>
-            <dt>Context capacity</dt>
-            <dd>Varies by model</dd>
-          </dl>
+          <div className={!snapshot ? "omp-compaction-first-error" : undefined}>
+            <InlineStatus tone="error" detail={!error ? snapshot?.errors.join("\n") : undefined}>
+              {warning}
+            </InlineStatus>
+          </div>
         )}
       </div>
     </section>
