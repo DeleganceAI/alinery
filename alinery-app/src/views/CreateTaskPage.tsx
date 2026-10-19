@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { afterPaint } from "../afterPaint";
 import * as ipc from "../ipc";
-import { PlaybookGraph } from "../PlaybookGraph";
+import { PlaybookGraph, selectorsOverlap } from "../PlaybookGraph";
 import { Checkbox, InlineStatus, ModelInput, ompDefaultModel, orderPlaybookCandidates, playbookRefKey, samePlaybookRef } from "../shared";
 import * as taskMutationGuard from "../taskMutationGuard";
 import { toast } from "../toast";
@@ -1113,19 +1113,44 @@ export function CreateTaskPage({
             </div>
           </div>
           {!!selectedSource?.definition.step.length && (
-            <div className="create-field">
-              <span>Automatic completion permission for future executions</span>
-              {selectedSource.definition.step.map((step) => (
-                <Checkbox
-                  key={step.key}
-                  checked={autoAdvance.includes(step.key)}
-                  onChange={(checked) => {
-                    dirtyRef.current = true;
-                    setAutoAdvance((cur) => (checked ? [...cur, step.key] : cur.filter((key) => key !== step.key)));
-                  }}
-                  label={step.title}
-                />
-              ))}
+            <div className="create-field create-continuation">
+              <span>After each step</span>
+              <div className="hint">Choose when the next step starts.</div>
+              {selectedSource.definition.step.map((step) => {
+                const hasDestination = selectedSource.definition.step.some((consumer) =>
+                  step.outputs.some((output) => consumer.inputs.some((input) => selectorsOverlap(output.path, input.path))),
+                );
+                const automatic = autoAdvance.includes(step.key);
+                return (
+                  <div className="create-continuation-row" key={step.key}>
+                    <span className="create-continuation-label">{step.title}</span>
+                    {hasDestination ? (
+                      <div className="create-continuation-choices" role="group" aria-label={step.title}>
+                        {[true, false].map((value) => (
+                          <button
+                            key={String(value)}
+                            type="button"
+                            aria-pressed={automatic === value}
+                            disabled={creating || clearing || creatingRef.current}
+                            onClick={() => {
+                              if (automatic === value) return;
+                              dirtyRef.current = true;
+                              setAutoAdvance((cur) => (value ? [...cur, step.key] : cur.filter((key) => key !== step.key)));
+                            }}
+                          >
+                            <span className="create-continuation-check" aria-hidden="true">
+                              {automatic === value ? "✓" : ""}
+                            </span>
+                            {value ? "Continue automatically" : "Wait for me"}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="create-continuation-complete">Playbook complete</span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
           <label className="create-field">

@@ -22,7 +22,13 @@ export function executionRecord(overrides: Partial<ExecutionRecord> = {}): Execu
     is_coding_step: false,
     start_requested: true,
     lifecycle: "running",
-    permission: { kind: "locked" },
+    continuation_mode: "manual",
+    work_revision: 0,
+    last_admission_sequence: 0,
+    last_ready_revision: null,
+    ready_revision: null,
+    continuation_requested_revision: null,
+    ready_assessment: null,
     receipt_id: null,
     exit_code: null,
     shutdown_confirmed: false,
@@ -34,6 +40,9 @@ export function executionRecord(overrides: Partial<ExecutionRecord> = {}): Execu
 export function executionReply(records: ExecutionRecord[] = [executionRecord()]): TaskExecutionReply {
   return {
     live: { status: "available" },
+    assessment: { status: "active", reasons: [] },
+    executions: Object.fromEntries(records.map((record) => [record.id, { destinations: [], terminality: "unresolved", reasons: [] }])),
+    continuation: {},
     definition: {
       version: 2,
       key: "retained",
@@ -59,7 +68,7 @@ export function executionReply(records: ExecutionRecord[] = [executionRecord()])
       ],
     },
     state: {
-      version: 1,
+      version: 2,
       revision: 1,
       creation: "ready",
       creation_error: null,

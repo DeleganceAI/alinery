@@ -260,7 +260,7 @@ export function CreateSessionPage({
               Execution {execution.id} · {execution.lifecycle} · Current owner {execution.owner_session_id}
             </p>
             {mode === "recover" && executionAvailable && (
-              <p>Recovery retains these assignments and replaces only this proven-stopped owner. Its completion permission will be reset.</p>
+              <p>Recovery retains these assignments and replaces only this proven-stopped owner. Manual continuation requires renewed readiness.</p>
             )}
             {mode === "manual" && (
               <p>This independent execution uses the selected input occurrences. The daemon reserves new output paths; it does not complete the original execution.</p>

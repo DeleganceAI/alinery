@@ -151,6 +151,7 @@ describe("saved execution state without live access", () => {
     const fixture = task();
     const retained = executionReply([executionRecord({ owner_session_id: "s1" })]);
     retained.live = { status: "foreign_owner", detail: "Owner configuration differs from this app" };
+    retained.assessment = { status: "complete", reasons: [] };
     mocks.getTask.mockResolvedValue(fixture);
     mocks.getTaskExecution.mockResolvedValue(retained);
     mocks.listSessions.mockResolvedValue([session({ id: "s1" })]);
@@ -161,9 +162,13 @@ describe("saved execution state without live access", () => {
     await screen.findByRole("row", { name: "Open session Retained playbook · Retained worker" });
     expect(screen.queryByRole("alert")).toBeNull();
     expect((screen.getByText(retained.live.detail).closest("details") as HTMLDetailsElement).open).toBe(false);
+    const assessment = screen.getByRole("status", { name: "Playbook status" });
+    expect(assessment.textContent).toContain("Saved assessment");
+    expect(assessment.textContent).toContain("Playbook complete");
+    expect(assessment.querySelector("button")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "History" }));
     expect(screen.getByRole("article", { name: "Execution execution-a" })).toBeDefined();
-    expect((screen.getByRole("button", { name: "Allow this session to complete · s1" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: /Allow this session|Continue (to|playbook)/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Artifacts", pressed: false }));
     expect(await screen.findByText("00-ticket.md")).toBeDefined();
     expect(screen.queryByRole("alert")).toBeNull();

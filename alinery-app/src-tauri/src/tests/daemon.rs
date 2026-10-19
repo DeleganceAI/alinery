@@ -1192,6 +1192,8 @@ fn task_execution_offline_preserves_saved_progress_without_taking_ownership() {
     assert_eq!(payload["state"], serde_json::to_value(&saved.state).unwrap());
     assert_eq!(payload["definition"], serde_json::to_value(&saved.definition).unwrap());
     assert!(payload["live"]["detail"].is_string());
+    assert_eq!(payload["continuation"], serde_json::json!({}), "saved progress must never authorize continuation");
+    assert_ne!(payload["assessment"]["status"], "complete", "an unexited owner is not settled");
     assert!(crate::task_daemon_for(&repo, "task", &config).is_err());
     assert!(require_repo_owned(&guest, &repo).is_err());
     assert!(!guest.owns_repo(&repo));
@@ -1212,6 +1214,25 @@ fn task_execution_classifies_owner_failures_and_uses_healthy_live_reply() {
         let saved = crate::saved_task_execution_for(&repo, "task").unwrap();
         let mut live = saved.clone();
         live.state.revision += 10;
+        let seed = alinery_core::execution::install_seed(&mut live.state, "ticket.md", "0-ticket-1.md").unwrap();
+        let candidate = alinery_core::execution::ExecutionCandidate {
+            step_key: "implementation".into(),
+            context_id: "root".into(),
+            inputs: std::collections::BTreeMap::from([("ticket.md".into(), vec![seed])]),
+            complete_collection_id: None,
+            each_collection_id: None,
+            each_member_id: None,
+            manual: false,
+        };
+        let execution_id = alinery_core::execution::reserve_execution(&repo, "task", &live.definition, &mut live.state, candidate, &Default::default(), None, false).unwrap();
+        live.continuation.insert(
+            execution_id,
+            alinery_core::ContinuationCapability {
+                process_incarnation: "live-incarnation".into(),
+                available: true,
+                reason: None,
+            },
+        );
         let expected_live = serde_json::to_value(&live).unwrap();
         let identity = alinery_core::app_config_identity(&config);
         let (requests, server) = recording_lane_with_response(alinery_core::alineryd_socket_path(&repo, Some("owner")), move |op| {
@@ -1236,6 +1257,9 @@ fn task_execution_classifies_owner_failures_and_uses_healthy_live_reply() {
         let expected = if status == "available" { expected_live } else { serde_json::to_value(&saved).unwrap() };
         assert_eq!(payload["state"], expected["state"]);
         assert_eq!(payload["definition"], expected["definition"]);
+        assert_eq!(payload["assessment"], expected["assessment"]);
+        assert_eq!(payload["executions"], expected["executions"]);
+        assert_eq!(payload["continuation"], expected["continuation"]);
         let mut expected_requests = vec!["version"];
         if matches!(status, "available" | "query_failure") {
             expected_requests.push("get_task_execution");

@@ -78,6 +78,7 @@ import { NotificationsList } from "./views/NotificationsList";
 import { Playbooks } from "./views/Playbooks";
 import { ProviderSetupDialog } from "./views/ProviderSetupDialog";
 import { SessionsList } from "./views/SessionsList";
+import type { SessionSendRecovery } from "./views/SessionView";
 import { SECTIONS as SETTINGS_SECTIONS, Settings } from "./views/Settings";
 import { TaskList } from "./views/TaskList";
 import { ResizeHandles, useWindowFullscreen, WindowControls } from "./WindowChrome";
@@ -186,6 +187,7 @@ export default function App() {
   const [reloadNonce, setReloadNonce] = useState(0);
   const [sessionMessageDrafts, setSessionMessageDrafts] = useState<Map<string, SessionMessageDraft>>(() => new Map());
   const [sessionQueuedFollowUps, setSessionQueuedFollowUps] = useState<Map<string, QueuedFollowUp[]>>(() => new Map());
+  const sessionSendRecovery = useRef(new Map<string, Map<string, SessionSendRecovery>>());
   const [productName, setProductName] = useState("");
   const [appVersion, setAppVersion] = useState("");
   const [busy, setBusy] = useState<ToastBusy | null>(null);
@@ -1608,6 +1610,15 @@ export default function App() {
                   playbook={view.playbook}
                   intent={view.intent}
                   resumeToken={view.resumeToken}
+                  sendRecovery={(() => {
+                    const key = sessionMessageDraftKey(appConfig.active_repo, view.taskSlug, view.id);
+                    let recovery = sessionSendRecovery.current.get(key);
+                    if (!recovery) {
+                      recovery = new Map();
+                      sessionSendRecovery.current.set(key, recovery);
+                    }
+                    return recovery;
+                  })()}
                   messageDraft={sessionMessageDrafts.get(sessionMessageDraftKey(appConfig.active_repo, view.taskSlug, view.id)) ?? EMPTY_SESSION_MESSAGE_DRAFT}
                   onMessageDraftChange={(draft) => {
                     const key = sessionMessageDraftKey(appConfig.active_repo, view.taskSlug, view.id);
@@ -1634,6 +1645,12 @@ export default function App() {
                   onDiagramZoomOpenChange={setDiagramZoomOpen}
                   onNameCommitted={onNameCommitted}
                   onBack={goBack}
+                  onOpenSession={(session) => {
+                    void openTaskSession({ repoPath: appConfig.active_repo, taskSlug: view.taskSlug, session, from: view });
+                  }}
+                  onOpenReplacement={(session) => {
+                    void openTaskSession({ repoPath: appConfig.active_repo, taskSlug: view.taskSlug, session, from: view, intent: "attach" });
+                  }}
                   onStartFresh={() => {
                     setView({ kind: "createSession", from: view, initialTask: { repo_path: appConfig.active_repo, slug: view.taskSlug } });
                   }}

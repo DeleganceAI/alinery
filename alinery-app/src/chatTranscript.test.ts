@@ -34,6 +34,26 @@ const stamped = (line: unknown, timestamp: number) => {
   return { ...event, message: { ...event.message, timestamp } };
 };
 
+it("does not attribute an equal-caption native image to an unmatched dispatch", () => {
+  const original = appendOptimisticUser(emptyTranscript(), "same caption", "follow_up", undefined, [
+    { kind: "image", name: "second.png", mimeType: "image/png", src: "blob:second" },
+  ]);
+  original.entries[0].id = "dispatch:second";
+  const next = applyRpcLine(original, {
+    type: "message_start",
+    message: {
+      role: "user",
+      content: [
+        { type: "text", text: "same caption" },
+        { type: "image", mimeType: "image/png", data: "first-image" },
+      ],
+    },
+  });
+  const pending = next.entries.find((entry) => entry.id === "dispatch:second");
+  expect(pending).toMatchObject({ type: "follow_up", attachments: [{ name: "second.png", src: "blob:second" }] });
+  expect(next.entries.some((entry) => entry.type === "prompt" && entry.attachments?.some((attachment) => attachment.src === "data:image/png;base64,first-image"))).toBe(true);
+});
+
 describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
   it("records ready protocol v1", () => {
     const state = applyRpcLine(emptyTranscript(), load("live-ready.json"));

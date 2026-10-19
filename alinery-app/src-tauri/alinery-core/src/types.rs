@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-pub const RUNNER_EVENT_PROTOCOL_VERSION: u16 = 3;
+pub const RUNNER_EVENT_PROTOCOL_VERSION: u16 = 4;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -57,6 +57,25 @@ where
     Ok(value)
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ContinuationBoundary {
+    PrimaryControl,
+    NativeTools,
+    AdmittedQueue,
+    PublicEntries,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContinuationControl {
+    pub process_incarnation: String,
+    pub capability_revision: u64,
+    pub work_revision: u64,
+    pub continuation_requested_revision: Option<u64>,
+    pub available: bool,
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RunnerEvent {
@@ -82,11 +101,75 @@ pub enum RunnerEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         omp_turn_id: Option<u64>,
     },
-    PhaseCompleted {
+    ContinuationBind {
         #[serde(deserialize_with = "deserialize_non_empty_string")]
         omp_session_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        omp_turn_id: Option<u64>,
+        groups: Vec<ContinuationBoundary>,
+        #[serde(deserialize_with = "deserialize_non_empty_string")]
+        operation_id: String,
+        expected_capability_revision: u64,
+    },
+    ContinuationPoll {
+        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_optional_non_empty_string")]
+        process_incarnation: Option<String>,
+    },
+    ContinuationRevoke {
+        #[serde(deserialize_with = "deserialize_non_empty_string")]
+        process_incarnation: String,
+        #[serde(deserialize_with = "deserialize_non_empty_string")]
+        operation_id: String,
+        #[serde(deserialize_with = "deserialize_non_empty_string")]
+        reason: String,
+        expected_capability_revision: u64,
+    },
+    NativeWorkEntered {
+        #[serde(deserialize_with = "deserialize_non_empty_string")]
+        process_incarnation: String,
+        #[serde(deserialize_with = "deserialize_non_empty_string")]
+        operation_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_optional_non_empty_string")]
+        dispatch_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_optional_non_empty_string")]
+        dispatch_proof: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_optional_non_empty_string")]
+        parent_operation_id: Option<String>,
+    },
+    NativeWorkSettled {
+        #[serde(deserialize_with = "deserialize_non_empty_string")]
+        process_incarnation: String,
+        #[serde(deserialize_with = "deserialize_non_empty_string")]
+        operation_id: String,
+    },
+    NativeDispatchConsumed {
+        #[serde(deserialize_with = "deserialize_non_empty_string")]
+        process_incarnation: String,
+        #[serde(deserialize_with = "deserialize_non_empty_string")]
+        dispatch_id: String,
+    },
+    NativeDispatchTransferred {
+        #[serde(deserialize_with = "deserialize_non_empty_string")]
+        process_incarnation: String,
+        #[serde(deserialize_with = "deserialize_non_empty_string")]
+        dispatch_id: String,
+        #[serde(deserialize_with = "deserialize_non_empty_string")]
+        replacement_dispatch_id: String,
+    },
+    NativeDispatchRejected {
+        #[serde(deserialize_with = "deserialize_non_empty_string")]
+        process_incarnation: String,
+        #[serde(deserialize_with = "deserialize_non_empty_string")]
+        dispatch_id: String,
+        reason: String,
+    },
+    ReadinessReported {
+        #[serde(deserialize_with = "deserialize_non_empty_string")]
+        process_incarnation: String,
+        expected_work_revision: u64,
+    },
+    ContinuationFinalize {
+        #[serde(deserialize_with = "deserialize_non_empty_string")]
+        process_incarnation: String,
+        ready_revision: u64,
     },
     SessionNameSuggested {
         name: String,

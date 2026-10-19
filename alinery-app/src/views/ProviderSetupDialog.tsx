@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ModelRolesMap } from "../chat/modelRoles";
 import { settleOpenUrl } from "../chat/openUrl";
 import { isInteractivePromptLoginError, needsProviderSetup, shouldOfferProviderSetup } from "../chat/providers";
-import { loginReply, setModelReply } from "../chat/send";
+import { loginReply, requireWritten, setModelReply } from "../chat/send";
 import type { ProvidersDialogTab } from "../chat/slash";
 import { applyRpcLine, type ChatTranscriptState, dismissPendingUi, emptyTranscript, isPresentationUi, type PendingUi } from "../chatTranscript";
 import * as ipc from "../ipc";
@@ -113,8 +113,14 @@ export function ProviderSetupDialog({
             setLoginBusy(null);
             if (reply.ok) {
               setModelError(null);
-              void ipc.rpcWriteSession(sessionIdRef.current, getLoginProvidersCommand()).catch(() => undefined);
-              void ipc.rpcWriteSession(sessionIdRef.current, getAvailableModelsCommand()).catch(() => undefined);
+              void ipc
+                .rpcWriteSession(sessionIdRef.current, getLoginProvidersCommand())
+                .then(requireWritten)
+                .catch((error: unknown) => setModelError(String(error)));
+              void ipc
+                .rpcWriteSession(sessionIdRef.current, getAvailableModelsCommand())
+                .then(requireWritten)
+                .catch((error: unknown) => setModelError(String(error)));
             } else if (isInteractivePromptLoginError(reply.error)) {
               setLivePromotedIds((prev) => (prev.includes(providerId) ? prev : [...prev, providerId]));
               setModelError(reply.error ?? "This provider needs Terminal /login.");
@@ -156,11 +162,11 @@ export function ProviderSetupDialog({
       }
       // The daemon negotiates protocol v2 for this session on `ready`, so go straight to
       // asking what it can see.
-      await ipc.rpcWriteSession(id, getStateCommand());
+      requireWritten(await ipc.rpcWriteSession(id, getStateCommand()));
       if (cancelled) return;
-      await ipc.rpcWriteSession(id, getLoginProvidersCommand());
+      requireWritten(await ipc.rpcWriteSession(id, getLoginProvidersCommand()));
       if (cancelled) return;
-      await ipc.rpcWriteSession(id, getAvailableModelsCommand());
+      requireWritten(await ipc.rpcWriteSession(id, getAvailableModelsCommand()));
     };
 
     const run = async () => {
@@ -231,6 +237,7 @@ export function ProviderSetupDialog({
       await settleOpenUrl(sessionIdRef.current, request.id, request.launchUrl || request.url, setModelError);
       setChat((current) => dismissPendingUi(current, request.id));
     } catch (error) {
+      handledUiRef.current.delete(request.id);
       setModelError(String(error));
     }
   }, []);
@@ -240,7 +247,10 @@ export function ProviderSetupDialog({
       if (handledUiRef.current.has(request.id)) continue;
       if (isPresentationUi(request.method)) {
         handledUiRef.current.add(request.id);
-        void ipc.rpcWriteSession(sessionIdRef.current, cancelExtensionUi(request.id)).catch(() => undefined);
+        void ipc
+          .rpcWriteSession(sessionIdRef.current, cancelExtensionUi(request.id))
+          .then(requireWritten)
+          .catch((error: unknown) => setModelError(String(error)));
       } else if (request.method === "open_url" && loginOpenUrlRef.current) {
         // Sign in authorizes only its first browser request; further links need approval.
         loginOpenUrlRef.current = false;
@@ -254,9 +264,10 @@ export function ProviderSetupDialog({
     if (handledUiRef.current.has(requestId)) return;
     handledUiRef.current.add(requestId);
     try {
-      await ipc.rpcWriteSession(sessionIdRef.current, response);
+      requireWritten(await ipc.rpcWriteSession(sessionIdRef.current, response));
       setChat((current) => dismissPendingUi(current, requestId));
     } catch (error) {
+      handledUiRef.current.delete(requestId);
       setModelError(String(error));
     }
   };
@@ -276,7 +287,7 @@ export function ProviderSetupDialog({
     setModelError(null);
     modelApplyRef.current = true;
     try {
-      await ipc.rpcWriteSession(sessionIdRef.current, setModelCommand(provider, modelId));
+      requireWritten(await ipc.rpcWriteSession(sessionIdRef.current, setModelCommand(provider, modelId)));
     } catch (error) {
       modelApplyRef.current = false;
       setModelError(String(error));
@@ -290,7 +301,7 @@ export function ProviderSetupDialog({
     loginApplyRef.current = providerId;
     loginOpenUrlRef.current = true;
     try {
-      await ipc.rpcWriteSession(sessionIdRef.current, loginCommand(providerId));
+      requireWritten(await ipc.rpcWriteSession(sessionIdRef.current, loginCommand(providerId)));
     } catch (error) {
       loginApplyRef.current = null;
       loginOpenUrlRef.current = false;

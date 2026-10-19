@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { settleOpenUrl } from "../chat/openUrl";
+import { requireWritten } from "../chat/send";
 import { type ChatTranscriptState, dismissPendingUi, isPresentationUi } from "../chatTranscript";
 import * as ipc from "../ipc";
 import { cancelExtensionUi, extensionUiConfirm, extensionUiValue } from "../ompRpc";
@@ -33,7 +34,10 @@ export function useChatUiReplies({
     handled.current.clear();
   }, [repo, id]);
 
-  const write = useCallback((payload: object) => (repo && id ? ipc.chatRpcWrite(repo, id, payload) : Promise.reject(new Error("no thread selected"))), [repo, id]);
+  const write = useCallback(
+    (payload: object) => (repo && id ? ipc.chatRpcWrite(repo, id, payload).then(requireWritten) : Promise.reject(new Error("no thread selected"))),
+    [repo, id],
+  );
 
   // Presentation requests (status, title, notify) want no answer from a person, only a release.
   useEffect(() => {
@@ -41,9 +45,9 @@ export function useChatUiReplies({
     for (const request of transcript.pendingUi) {
       if (handled.current.has(request.id) || !isPresentationUi(request.method)) continue;
       handled.current.add(request.id);
-      void write(cancelExtensionUi(request.id)).catch(() => undefined);
+      void write(cancelExtensionUi(request.id)).catch((cause: unknown) => onError(String(cause)));
     }
-  }, [live, transcript.pendingUi, write]);
+  }, [live, transcript.pendingUi, write, onError]);
 
   const answer = useCallback(
     async (requestId: string, send: () => Promise<unknown>) => {

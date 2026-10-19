@@ -593,7 +593,6 @@ it("attaches canvas gestures after empty and execution views", () => {
   expect(screen.queryByRole("group", { name: "Graph display mode" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Focus connections" })).toBeNull();
   expect(screen.getByLabelText("build: 2 active sessions")).toBeTruthy();
-  expect(screen.getByTitle("Completion automatically authorized")).toBeTruthy();
   expect(fireEvent.wheel(viewport, { deltaY: -120, clientX: 100, clientY: 100 })).toBe(true);
   rerender(<PlaybookGraph variant="definition" title="Review" steps={steps} />);
   expect(fireEvent.wheel(screen.getByRole("region", { name: "Dependency graph canvas" }), { deltaY: -120, clientX: 100, clientY: 100 })).toBe(false);

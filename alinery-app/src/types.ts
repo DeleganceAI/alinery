@@ -704,7 +704,22 @@ export type SessionTypeChoice =
 export type SavePlaybookRequest = { target: PlaybookRef; source: string; overwrite: boolean };
 export type LaunchChoices = { harness: string; model: string };
 export type ExecutionLifecycle = "queued" | "starting" | "running" | "finishing" | "completed" | "launch_failed" | "failed" | "interrupted";
-export type CompletionPermission = { kind: "automatic" | "locked" | "consumed" } | { kind: "human_granted"; execution_id: string; session_id: string };
+export type ContinuationMode = "automatic" | "manual";
+export type Terminality = "terminal" | "nonterminal" | "unresolved";
+export type ReadyAssessmentKey = { destinations: string[]; terminality: Terminality };
+export type AssessmentReason = { code: string; message: string; execution_id: string | null; context_id: string | null; collection_id: string | null; selector: string | null };
+export type ExecutionAssessment = { destinations: { step_key: string; title: string }[]; terminality: Terminality; reasons: AssessmentReason[] };
+export type TaskAssessment = { status: "active" | "waiting" | "blocked" | "complete"; reasons: AssessmentReason[] };
+export type CompletionOutcome =
+  | { status: "accepted"; receipt_id: string }
+  | { status: "ready" | "requested"; ready_revision: number }
+  | { status: "waiting" | "stale" | "unavailable"; reason: string }
+  | { status: "invalid_outputs"; diagnostics: string[] };
+export type DispatchOutcome = { status: "written" } | { status: "not_sent" | "unknown"; reason: string };
+export type ContinueExecutionRequest = { task_slug: string; execution_id: string; session_id: string; process_incarnation: string; ready_revision: number };
+export type PrepareEndExecutionRequest = { task_slug: string; execution_id: string; session_id: string };
+export type EndExecutionRequest = PrepareEndExecutionRequest & { process_incarnation: string; work_revision: number };
+export type EndExecutionPreparation = { request: EndExecutionRequest; artifacts: string[]; diagnostics: string[] };
 export type OutputAssignment = { selector: string; relative_path: string; discriminator: number };
 export type ExecutionCandidate = {
   step_key: string;
@@ -728,7 +743,13 @@ export type ExecutionRecord = {
   is_coding_step: boolean;
   start_requested: boolean;
   lifecycle: ExecutionLifecycle;
-  permission: CompletionPermission;
+  continuation_mode: ContinuationMode;
+  work_revision: number;
+  last_admission_sequence: number;
+  last_ready_revision: number | null;
+  ready_revision: number | null;
+  continuation_requested_revision: number | null;
+  ready_assessment: ReadyAssessmentKey | null;
   receipt_id: string | null;
   exit_code: number | null;
   shutdown_confirmed: boolean;
@@ -775,7 +796,15 @@ export type TaskExecutionState = {
   >;
 };
 export type ExecutionAvailability = { status: "available" } | { status: "offline" | "foreign_owner" | "incompatible" | "unavailable"; detail: string };
-export type TaskExecutionReply = { state: TaskExecutionState; definition: NormalizedPlaybook; live: ExecutionAvailability };
+export type ContinuationCapability = { process_incarnation: string; available: boolean; reason: string | null };
+export type TaskExecutionReply = {
+  state: TaskExecutionState;
+  definition: NormalizedPlaybook;
+  live: ExecutionAvailability;
+  assessment: TaskAssessment;
+  executions: Record<string, ExecutionAssessment>;
+  continuation: Record<string, ContinuationCapability>;
+};
 export type TaskAttachment = { name: string; bytes: string };
 export type PreparedTaskAttachments = { attachments: TaskAttachment[]; attachment_urls: string[]; attachment_errors: string[] };
 export type CreateTaskRequest = {

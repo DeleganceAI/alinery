@@ -122,7 +122,13 @@ function retainedExecution(steps: NormalizedStep[], states: [string, ExecutionLi
         is_coding_step: false,
         start_requested: true,
         lifecycle,
-        permission: { kind: "automatic" },
+        continuation_mode: "automatic",
+        work_revision: 0,
+        last_admission_sequence: 0,
+        last_ready_revision: null,
+        ready_revision: null,
+        continuation_requested_revision: null,
+        ready_assessment: null,
         receipt_id: null,
         exit_code: null,
         shutdown_confirmed: false,
@@ -133,6 +139,9 @@ function retainedExecution(steps: NormalizedStep[], states: [string, ExecutionLi
   );
   return {
     live: { status: "available" },
+    assessment: { status: "active", reasons: [] },
+    executions: {},
+    continuation: {},
     definition: {
       version: 2,
       key: "superdevelop",

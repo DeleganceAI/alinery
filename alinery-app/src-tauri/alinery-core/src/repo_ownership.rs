@@ -5,12 +5,18 @@ use std::io::ErrorKind;
 use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
 
-use crate::execution::{interrupt_unproven_owners, read_execution_state, read_task_playbook, write_execution_state_unlocked, TaskExecutionState};
+use crate::execution::{decode_execution_state, interrupt_unproven_owners, read_task_playbook, write_execution_state_unlocked, TaskExecutionState};
 use crate::lockfile::{try_lock_exclusive, LockFile};
 
 /// Permanent inode leases, retained until the daemon exits. Never unlink these files.
 pub struct RepoOwnership {
     _leases: Vec<LockFile>,
+}
+
+struct DiscoveredTask {
+    slug: String,
+    state: TaskExecutionState,
+    needs_conversion: bool,
 }
 
 fn validate_lane(lane: &str) -> Result<(), String> {
@@ -45,7 +51,7 @@ fn entries(path: &Path) -> Result<Vec<fs::DirEntry>, String> {
     }
 }
 
-fn discover(repo: &Path, lane: Option<&str>) -> Result<(RepoOwnership, Vec<(String, TaskExecutionState)>), String> {
+fn discover(repo: &Path, lane: Option<&str>) -> Result<(RepoOwnership, Vec<DiscoveredTask>), String> {
     let root = crate::alinery_dir(repo);
     fs::create_dir_all(&root).map_err(|error| format!("create {}: {error}", root.display()))?;
     let mut leases = vec![lease(&root.join(".repo-owner.lock"))?];
@@ -91,12 +97,13 @@ fn discover(repo: &Path, lane: Option<&str>) -> Result<(RepoOwnership, Vec<(Stri
             Ok(metadata) if !metadata.is_file() => return Err(format!("invalid task owner file {}", state_path.display())),
             Ok(_) => {}
         }
-        let state = read_execution_state(repo, &slug)?;
+        let bytes = fs::read(&state_path).map_err(|e| format!("read {}: {e}", state_path.display()))?;
+        let (state, needs_conversion) = decode_execution_state(&bytes)?;
         validate_lane(&state.owning_lane)?;
         read_task_playbook(repo, &slug, &state)?;
         state.revision.checked_add(1).ok_or("execution revision overflow")?;
         lanes.insert(state.owning_lane.clone());
-        states.push((slug, state));
+        states.push(DiscoveredTask { slug, state, needs_conversion });
     }
     for lane in lanes {
         leases.push(lease(&crate::alineryd_lock_path(repo, Some(&lane)))?);
@@ -125,12 +132,17 @@ pub fn check_available(repo: &Path) -> Result<(), String> {
 pub fn acquire(repo: &Path, lane: &str, app_config_identity: &str) -> Result<RepoOwnership, String> {
     crate::with_task_mutation_lock_waiting(repo, "acquire project ownership", crate::TASK_MUTATION_CONTENTION_WAIT, || {
         let (guard, states) = discover(repo, Some(lane))?;
-        for (slug, mut state) in states {
+        for DiscoveredTask {
+            slug,
+            mut state,
+            needs_conversion,
+        } in states
+        {
             // Always interrupt uncertain work, including retries after a partial durable
             // batch. Ownership adoption is not proof that any child process stopped.
             let interrupted = state.executions.values().any(|record| record.lifecycle.holds_capacity());
             interrupt_unproven_owners(&mut state, &BTreeSet::new());
-            if state.owning_lane != lane || state.owning_app_config_identity != app_config_identity || interrupted {
+            if needs_conversion || state.owning_lane != lane || state.owning_app_config_identity != app_config_identity || interrupted {
                 state.owning_lane = lane.into();
                 state.owning_app_config_identity = app_config_identity.into();
                 write_execution_state_unlocked(repo, &slug, &mut state)?;

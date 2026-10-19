@@ -11,7 +11,7 @@ const reply = (confirmed: boolean) => ({ type: "extension_ui_response", id: "req
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.openUrl.mockResolvedValue(undefined);
-  mocks.rpcWriteSession.mockResolvedValue(undefined);
+  mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
 });
 
 describe("settleOpenUrl", () => {
@@ -46,5 +46,12 @@ describe("settleOpenUrl", () => {
   it("answers over the session RPC when no writer is given", async () => {
     await settleOpenUrl("s1", "req-1", "https://example.com", vi.fn());
     expect(mocks.rpcWriteSession).toHaveBeenCalledWith("s1", reply(true));
+  });
+
+  it("does not acknowledge a link whose response delivery is unknown", async () => {
+    mocks.rpcWriteSession.mockResolvedValueOnce({ status: "unknown", reason: "Lost response acknowledgement" });
+    await expect(settleOpenUrl("s1", "req-1", "https://example.com", vi.fn())).rejects.toThrow(/Delivery unknown.*Lost response acknowledgement/);
+    expect(mocks.openUrl).toHaveBeenCalledTimes(1);
+    expect(mocks.rpcWriteSession).toHaveBeenCalledTimes(1);
   });
 });

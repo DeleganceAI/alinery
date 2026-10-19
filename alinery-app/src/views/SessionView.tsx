@@ -1,4 +1,4 @@
-import { ArrowLeft, MessageSquare, Pencil } from "lucide-react";
+import { ArrowLeft, Ellipsis, MessageSquare, Pencil, X } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -16,10 +16,10 @@ import type { ModelRolesMap } from "../chat/modelRoles";
 import { decodeOmpPage } from "../chat/ompFile";
 import { settleOpenUrl as settleBrowserUrl } from "../chat/openUrl";
 import { isInteractivePromptLoginError, shouldOfferProviderSetup } from "../chat/providers";
-import { latestQueuedFollowUp, type QueuedFollowUp, queuedCountFromGetState, queuedTextsNotInEntries, reconcileQueuedFollowUps } from "../chat/queue";
-import { applySendPlan, commandOutputText, loginReply, planChatSend, setModelReply } from "../chat/send";
+import { latestQueuedFollowUp, type QueuedFollowUp } from "../chat/queue";
+import { applySendPlan, commandOutputText, DispatchFailure, loginReply, planChatSend, requireWritten, setModelReply } from "../chat/send";
 import { type McpServerRow, type ProvidersDialogTab, parseMcpListOutput } from "../chat/slash";
-import type { ChatEntry, SessionChatStatus } from "../chat/types";
+import type { SessionChatStatus } from "../chat/types";
 import { chatVisibilityFromAppearance } from "../chat/visibility";
 import {
   appendOptimisticAbort,
@@ -31,12 +31,9 @@ import {
   dismissPendingUi,
   emptyTranscript,
   isPresentationUi,
-  matchingSendFailure,
-  matchingSendSuccess,
   needsUiReply,
   settleRefusedSend,
 } from "../chatTranscript";
-import { completionPrompt } from "../completionPrompt";
 import { confirmDanger, confirmStopAndSwitch } from "../confirm";
 import * as ipc from "../ipc";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
@@ -62,12 +59,14 @@ import {
   setSubagentSubscriptionCommand,
   setThinkingLevelCommand,
 } from "../ompRpc";
+import { SessionLineage } from "../SessionLineage";
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
 import { appendGeneratedText, canAbortChatSession, isTurnActive, OMP_INTERRUPT_DATA, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
 import type { ContextAction } from "../shared";
 import {
   ArtifactProvenanceBadges,
   ContextActionBar,
+  Dialog,
   ExecutionAvailabilityNotice,
   ExecutionOutputs,
   finalizedSubtaskNotice,
@@ -89,7 +88,9 @@ import type {
   NameCommit,
   ReviewHandoffSource,
   SessionDisplayContext,
+  SessionDisplayMeta,
   SessionMessageActionProvenance,
+  SessionMeta,
   SessionObservation,
   Task,
   TaskExecutionReply,
@@ -119,6 +120,20 @@ type PreparedChatSend = {
   copied: DraftAttachment[];
 };
 
+export type SessionSendRecovery = {
+  commandId: string;
+  draft: string;
+  caption: string;
+  sourceDraft: SessionMessageDraft;
+  actions: SessionMessageDraft["pendingActions"];
+  entryId: string;
+  attachments: DraftAttachment[];
+  queued?: boolean;
+  transferDispatchId?: string;
+  status: "pending" | "refused" | "acknowledged" | "consumed" | "settled" | "unknown";
+  reason?: string;
+};
+
 async function blobBytes(previewUrl: string): Promise<number[]> {
   const response = await fetch(previewUrl);
   return Array.from(new Uint8Array(await response.arrayBuffer()));
@@ -127,7 +142,7 @@ async function blobBytes(previewUrl: string): Promise<number[]> {
 async function prepareChatSend(taskSlug: string, repoPath: string, caption: string, attachments: DraftAttachment[]): Promise<PreparedChatSend> {
   const restated: DraftAttachment[] = [];
   for (const item of attachments) {
-    if (item.sourcePath) {
+    if (item.sourcePath && !item.copiedName) {
       const stat = await ipc.chatFileStat(item.sourcePath);
       restated.push({ ...item, name: stat.name, bytes: stat.bytes });
     } else {
@@ -193,9 +208,12 @@ export function SessionView({
   onMessageDraftChange,
   queuedFollowUps = [],
   onQueuedFollowUpsChange,
+  sendRecovery,
   onAppearanceChange,
   onBack,
   onStartFresh,
+  onOpenReplacement,
+  onOpenSession,
   onStartReviewHandoff,
   onOpenRelatedTask,
   onDiagramZoomOpenChange,
@@ -218,9 +236,12 @@ export function SessionView({
   onMessageDraftChange: (draft: SessionMessageDraft) => void;
   queuedFollowUps?: QueuedFollowUp[];
   onQueuedFollowUpsChange?: (items: QueuedFollowUp[]) => void;
+  sendRecovery?: Map<string, SessionSendRecovery>;
   onAppearanceChange: (next: AppearancePrefs) => void;
   onBack: () => void;
   onStartFresh: () => void;
+  onOpenReplacement?: (session: SessionMeta) => void;
+  onOpenSession?: (session: SessionMeta) => void;
   onStartReviewHandoff: (source: ReviewHandoffSource) => void;
   onOpenRelatedTask: (slug: string, relatedRepoPath?: string) => void;
   onDiagramZoomOpenChange?: (open: boolean) => void;
@@ -252,6 +273,7 @@ export function SessionView({
   const chatAutoCompaction = appearance.chat_auto_compaction !== false;
   const chatAutoCompactionRef = useRef(chatAutoCompaction);
   chatAutoCompactionRef.current = chatAutoCompaction;
+  const compactionStateRequestRef = useRef<string | null>(null);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const commentOpenerRef = useRef<HTMLElement | null>(null);
   const {
@@ -347,14 +369,21 @@ export function SessionView({
     };
   }, [repoPath, taskSlug, id]);
   const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
+  const executionEpoch = useRef(0);
   const [executionError, setExecutionError] = useState("");
+  const [lineageSessions, setLineageSessions] = useState<SessionDisplayMeta[]>([]);
+  const [lineageError, setLineageError] = useState("");
   const executionAvailable = executionView?.live?.status === "available" && !executionError;
   const [completionBusy, setCompletionBusy] = useState(false);
-  const [completionGrant, setCompletionGrant] = useState<{ sessionId: string; requestId: string } | null>(null);
-  const grantedCompletionRequestId = completionGrant?.sessionId === id ? completionGrant.requestId : null;
+  const continuationInFlight = useRef(false);
+  const [continuationMessage, setContinuationMessage] = useState("");
+  const [endMessage, setEndMessage] = useState("");
+  const [sessionActionsOpen, setSessionActionsOpen] = useState(false);
+  const [endAccepted, setEndAccepted] = useState(false);
+  const [requestedContinuation, setRequestedContinuation] = useState<{ id: string; revision: number } | null>(null);
+  const [invalidatedReady, setInvalidatedReady] = useState<{ id: string; revision: number } | null>(null);
   const execution = Object.values(executionView?.state.executions ?? {}).find((record) => record.owner_session_id === id || record.previous_session_ids.includes(id));
   const executionStep = executionView?.definition.step.find((step) => step.key === execution?.candidate.step_key);
-  const completionAvailable = executionAvailable && execution?.owner_session_id === id && execution.lifecycle === "running";
   const [reviewFindingsComments, setReviewFindingsComments] = useState<ArtifactComment[]>([]);
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [approvalStatus, setApprovalStatus] = useState("");
@@ -393,20 +422,27 @@ export function SessionView({
   const archivePending = useRef(false);
   const [dropping, setDropping] = useState(false);
   const attachmentSeq = useRef(0);
-  // Last model send whose stdin write was acked but whose OMP response has not landed yet.
-  // Cleared on matching success/failure or turn_start; used to restore the draft if OMP refuses.
-  const pendingSendRef = useRef<{
-    commandId: string;
-    draft: string;
-    actions: SessionMessageDraft["pendingActions"];
-    entryId: string;
-    attachments: DraftAttachment[];
-    /** Also in `queuedFollowUpsRef`, which a refusal must leave. */
-    queued?: boolean;
-  } | null>(null);
+  const localSendRecovery = useRef(new Map<string, SessionSendRecovery>());
+  const pendingSends = sendRecovery ?? localSendRecovery.current;
+  const pendingSendsRef = useRef(pendingSends);
+  pendingSendsRef.current = pendingSends;
+  const [, refreshSendRecovery] = useState(0);
+  const invalidateReview = () => {
+    if (execution?.ready_revision != null) setInvalidatedReady({ id: execution.id, revision: execution.ready_revision });
+  };
+  const writeRpc = async (payload: unknown) => requireWritten(await ipc.rpcWriteSession(id, payload));
+  const writeRaw = async (data: string) => requireWritten(await ipc.writeSession(id, data, crypto.randomUUID()));
   const chatRef = useRef(chat);
   chatRef.current = chat;
   const queuedFollowUpsRef = useRef(queuedFollowUps);
+  const releaseUnusedPreviews = (attachments: DraftAttachment[]) => {
+    const retained = new Set([
+      ...messageDraftRef.current.attachments.map((attachment) => attachment.previewUrl),
+      ...[...pendingSendsRef.current.values()].flatMap((item) => item.attachments.map((attachment) => attachment.previewUrl)),
+      ...queuedFollowUpsRef.current.flatMap((item) => item.attachments.map((attachment) => attachment.previewUrl)),
+    ]);
+    revokeDraftPreviewUrls(attachments.filter((attachment) => !retained.has(attachment.previewUrl)));
+  };
   queuedFollowUpsRef.current = queuedFollowUps;
 
   const handleTerminalConnectionState = useCallback((state: SessionTerminalConnectionState) => setTerminalConnection(state), []);
@@ -415,6 +451,27 @@ export function SessionView({
   const updateMessageDraft = (draft: SessionMessageDraft) => {
     messageDraftRef.current = draft;
     onMessageDraftChange(draft);
+  };
+  const refuseSend = (pending: SessionSendRecovery, reason: string) => {
+    pending.status = "refused";
+    pending.reason = reason;
+    const draft = messageDraftRef.current;
+    const blank = draft.body === "" && draft.attachments.length === 0 && draft.pendingActions.length === 0;
+    const restore = blank || draft === pending.sourceDraft;
+    const next = settleRefusedSend(chatRef.current, pending.entryId, pending.caption, restore);
+    chatRef.current = next;
+    setChat(next);
+    if (restore) {
+      updateMessageDraft({ body: pending.draft, pendingActions: pending.actions, attachments: pending.attachments });
+      pendingSendsRef.current.delete(pending.commandId);
+    }
+    const remaining = queuedFollowUpsRef.current.filter((item) => item.dispatchId !== pending.commandId);
+    if (remaining.length !== queuedFollowUpsRef.current.length) {
+      queuedFollowUpsRef.current = remaining;
+      onQueuedFollowUpsChange?.(remaining);
+    }
+    refreshSendRecovery((revision) => revision + 1);
+    setMessageError(reason);
   };
 
   const nextAttachmentId = () => {
@@ -595,7 +652,7 @@ export function SessionView({
     ompSeedRef.current = null;
     preferredViewAppliedRef.current = null;
     handledUiRef.current.clear();
-    pendingSendRef.current = null;
+    if (!sendRecovery) localSendRecovery.current.clear();
     mcpListWaitRef.current = false;
     modelApplyRef.current = false;
     loginApplyRef.current = null;
@@ -632,13 +689,30 @@ export function SessionView({
 
   useEffect(() => {
     let alive = true;
+    executionEpoch.current += 1;
+    continuationInFlight.current = false;
+    setCompletionBusy(false);
     setExecutionView(null);
     setExecutionError("");
+    setLineageSessions([]);
+    setLineageError("");
+    setEndMessage("");
+    setSessionActionsOpen(false);
+    setEndAccepted(false);
     if (!taskSlug) return;
     let timer = 0;
     const refresh = async () => {
       try {
-        const next = await readTaskExecution(repoPath, taskSlug);
+        const [executionResult, sessionsResult] = await Promise.allSettled([readTaskExecution(repoPath, taskSlug), ipc.listSessions(taskSlug, repoPath)]);
+        if (!alive) return;
+        if (sessionsResult.status === "fulfilled") {
+          setLineageSessions(sessionsResult.value);
+          setLineageError("");
+        } else {
+          setLineageError(String(sessionsResult.reason));
+        }
+        if (executionResult.status === "rejected") throw executionResult.reason;
+        const next = executionResult.value;
         if (alive) {
           setExecutionView(next);
           setExecutionError("");
@@ -652,6 +726,7 @@ export function SessionView({
     void refresh();
     return () => {
       alive = false;
+      executionEpoch.current += 1;
       window.clearTimeout(timer);
     };
   }, [taskSlug, repoPath, id]);
@@ -1058,6 +1133,7 @@ export function SessionView({
     plan: ReturnType<typeof planChatSend>,
     busy: boolean,
     extras?: { message?: string; images?: ImageContent[] },
+    beforeWrite?: (commandId: string) => void,
   ): Promise<{ commandId: string } | null> => {
     const dispatch = plan.dispatch;
     switch (dispatch.kind) {
@@ -1073,24 +1149,32 @@ export function SessionView({
           .then(setHosted)
           .catch(() => setHosted(null))
           .finally(() => setHostedLoaded(true));
-        await ipc.rpcWriteSession(id, getLoginProvidersCommand()).catch(() => undefined);
-        await ipc.rpcWriteSession(id, getAvailableModelsCommand()).catch(() => undefined);
-        await ipc.rpcWriteSession(id, getStateCommand()).catch(() => undefined);
+        await writeRpc(getLoginProvidersCommand()).catch(() => undefined);
+        await writeRpc(getAvailableModelsCommand()).catch(() => undefined);
+        await writeRpc(getStateCommand()).catch(() => undefined);
         return null;
       case "hatch":
         toast(dispatch.reason, "info");
         return null;
       case "get-tools":
-        await ipc.rpcWriteSession(id, getStateCommand());
+        await writeRpc(getStateCommand());
         setToolsOpen(true);
         return null;
-      case "mcp-list":
+      case "mcp-list": {
+        invalidateReview();
         mcpListWaitRef.current = true;
-        await ipc.rpcWriteSession(id, promptCommand("/mcp list"));
+        const command = promptCommand("/mcp list");
+        beforeWrite?.(command.id);
+        await writeRpc(command);
         return null;
-      case "compact":
-        await ipc.rpcWriteSession(id, compactCommand(dispatch.customInstructions));
+      }
+      case "compact": {
+        invalidateReview();
+        const command = compactCommand(dispatch.customInstructions);
+        beforeWrite?.(command.id);
+        await writeRpc(command);
         return null;
+      }
       case "mcp-prompt":
       case "compact-mode":
       case "prompt":
@@ -1099,14 +1183,18 @@ export function SessionView({
         const message = extras?.message ?? dispatch.message;
         const images = extras?.images;
         const command = busy ? followUpCommand(message, undefined, images) : promptCommand(message, undefined, images);
-        await ipc.rpcWriteSession(id, command);
+        invalidateReview();
+        beforeWrite?.(command.id);
+        await writeRpc(command);
         return plan.invokesModel ? { commandId: command.id } : null;
       }
     }
   };
 
   const sendCurrentMessage = async (text?: string) => {
-    const caption = (text ?? messageDraftRef.current.body).trim();
+    const sourceDraft = messageDraftRef.current;
+    const original = text === undefined || text === sourceDraft.body.trim() ? sourceDraft.body : text;
+    const caption = original.trim();
     const attachments = messageDraftRef.current.attachments ?? [];
     if (messageSending || (caption.length === 0 && attachments.length === 0)) return;
     if (caption.startsWith("/") && attachments.length > 0) {
@@ -1137,35 +1225,50 @@ export function SessionView({
           refreshAttachmentArtifacts();
         }
         const plan = planChatSend(caption, chatRef.current.commands, busy);
-        const sent = await dispatchChatPlan(plan, busy, extras);
-        const rowAttachments = draftToRowAttachments(attachments);
-        const applied = applySendPlan(chatRef.current, caption, plan, rowAttachments.length > 0 ? rowAttachments : undefined);
-        chatRef.current = applied.state;
-        setChat(applied.state);
-        if (sent && applied.entryId) {
-          pendingSendRef.current = {
-            commandId: sent.commandId,
-            draft: caption,
-            actions,
-            entryId: applied.entryId,
-            attachments,
-            queued: busy && plan.optimisticKind === "follow_up",
-          };
+        let recovery: SessionSendRecovery | undefined;
+        try {
+          await dispatchChatPlan(plan, busy, extras, (commandId) => {
+            const rowAttachments = draftToRowAttachments(attachments);
+            const applied = applySendPlan(chatRef.current, caption, plan, rowAttachments.length > 0 ? rowAttachments : undefined);
+            const entryId = `dispatch:${commandId}`;
+            const next = { ...applied.state, entries: applied.state.entries.map((entry) => (entry.id === applied.entryId ? { ...entry, id: entryId } : entry)) };
+            chatRef.current = next;
+            setChat(next);
+            recovery = {
+              commandId,
+              draft: original,
+              caption,
+              sourceDraft,
+              actions,
+              entryId,
+              attachments: queuedAttachments,
+              queued: busy && plan.optimisticKind === "follow_up",
+              status: "pending",
+            };
+            pendingSends.set(commandId, recovery);
+          });
+        } catch (error) {
+          if (recovery) {
+            if (error instanceof DispatchFailure && error.status === "not_sent") {
+              refuseSend(recovery, error.reason);
+              return;
+            }
+            recovery.status = "unknown";
+            recovery.reason = String(error);
+            refreshSendRecovery((revision) => revision + 1);
+            const next = settleRefusedSend(chatRef.current, recovery.entryId, caption, true);
+            chatRef.current = next;
+            setChat(next);
+          }
+          throw error;
         }
-        if (busy && plan.optimisticKind === "follow_up") {
-          const nextQueue = [...queuedFollowUpsRef.current, { text: caption, attachments: queuedAttachments }];
+        if (recovery?.status === "refused") return;
+        if (busy && plan.optimisticKind === "follow_up" && recovery?.status !== "consumed" && recovery?.status !== "settled") {
+          const nextQueue = [...queuedFollowUpsRef.current, { text: caption, attachments: queuedAttachments, dispatchId: recovery?.commandId, entryId: recovery?.entryId }];
           queuedFollowUpsRef.current = nextQueue;
           onQueuedFollowUpsChange?.(nextQueue);
         }
-        updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
-      }
-      if (actions.length > 0) {
-        try {
-          await ipc.finalizeSessionMessageActions(id, taskSlug, actions);
-          await refreshFinalizedActions(actions);
-        } catch (error) {
-          setMessageError(`Delivered to session, but Alinery could not finalize message metadata: ${String(error)}`);
-        }
+        if (messageDraftRef.current === sourceDraft) updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
       }
     } catch (error) {
       toast.error(String(error));
@@ -1176,7 +1279,8 @@ export function SessionView({
   };
 
   const sendNow = async () => {
-    const draftBody = messageDraftRef.current.body.trim();
+    const sourceDraft = messageDraftRef.current;
+    const draftBody = sourceDraft.body.trim();
     const draftAttachments = messageDraftRef.current.attachments ?? [];
     const usingDraft = draftBody.length > 0 || draftAttachments.length > 0;
     const queued = latestQueuedFollowUp(queuedFollowUpsRef.current);
@@ -1201,35 +1305,49 @@ export function SessionView({
         pendingAttachments = prepared.copied;
         refreshAttachmentArtifacts();
       }
-      const command = abortAndPromptCommand(message, undefined, images);
-      await ipc.rpcWriteSession(id, command);
+      if (!usingDraft && !queued?.dispatchId) {
+        setMessageError("This queued input has no dispatch identity. It remains queued; Send now cannot safely transfer it.");
+        return;
+      }
+      const command = { ...abortAndPromptCommand(message, undefined, images), ...(!usingDraft ? { transfer_dispatch_id: queued?.dispatchId } : {}) };
+      invalidateReview();
       const rowAttachments = draftToRowAttachments(attachments);
+      const next = appendOptimisticUser(chatRef.current, caption, "prompt", undefined, rowAttachments.length > 0 ? rowAttachments : undefined);
+      const entryId = `dispatch:${command.id}`;
+      const last = next.entries[next.entries.length - 1];
+      if (last) last.id = entryId;
+      chatRef.current = next;
+      setChat(next);
+      const recovery: SessionSendRecovery = {
+        commandId: command.id,
+        draft: usingDraft ? sourceDraft.body : caption,
+        caption,
+        sourceDraft,
+        actions: usingDraft ? sourceDraft.pendingActions : [],
+        entryId,
+        attachments: pendingAttachments,
+        status: "pending",
+        transferDispatchId: usingDraft ? undefined : queued?.dispatchId,
+      };
+      pendingSends.set(command.id, recovery);
+      try {
+        await writeRpc(command);
+      } catch (error) {
+        if (error instanceof DispatchFailure && error.status === "not_sent") {
+          refuseSend(recovery, error.reason);
+          return;
+        }
+        recovery.status = "unknown";
+        recovery.reason = String(error);
+        refreshSendRecovery((revision) => revision + 1);
+        const restored = settleRefusedSend(chatRef.current, recovery.entryId, caption, true);
+        chatRef.current = restored;
+        setChat(restored);
+        throw error;
+      }
+      if (recovery.status === "refused") return;
       if (usingDraft) {
-        updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
-        const next = appendOptimisticUser(chatRef.current, caption, "prompt", undefined, rowAttachments.length > 0 ? rowAttachments : undefined);
-        chatRef.current = next;
-        setChat(next);
-        const entryId = next.entries[next.entries.length - 1]?.id;
-        if (entryId) pendingSendRef.current = { commandId: command.id, draft: caption, actions: [], entryId, attachments: pendingAttachments };
-      } else {
-        const remaining = queuedFollowUpsRef.current.slice(0, -1);
-        onQueuedFollowUpsChange?.(remaining);
-        setChat((current) => {
-          const entries = [...current.entries];
-          let entryId: string | undefined;
-          for (let i = entries.length - 1; i >= 0; i -= 1) {
-            const entry = entries[i];
-            if (entry?.type === "follow_up" && entry.text === caption) {
-              entries[i] = { ...entry, type: "prompt" };
-              entryId = entry.id;
-              break;
-            }
-          }
-          const next = { ...current, entries };
-          chatRef.current = next;
-          if (entryId) pendingSendRef.current = { commandId: command.id, draft: caption, actions: [], entryId, attachments: pendingAttachments };
-          return next;
-        });
+        if (messageDraftRef.current === sourceDraft) updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
       }
     } catch (error) {
       toast.error(String(error));
@@ -1431,50 +1549,99 @@ export function SessionView({
       if (cancelled) return;
       try {
         const value: unknown = JSON.parse(line);
-        const pending = pendingSendRef.current;
-        const refused = pending ? matchingSendFailure(value, pending.commandId) : null;
-        if (refused !== null && pending) {
-          pendingSendRef.current = null;
-          // The composer takes the text back unless something else is being written there: then the row
-          // stays, marked not sent, and neither message is lost.
-          const draft = messageDraftRef.current;
-          const blank = draft.body.trim() === "" && (draft.attachments ?? []).length === 0 && draft.pendingActions.length === 0;
-          const restore = blank || (draft.body !== "" && draft.body === pending.draft);
+        if (
+          value &&
+          typeof value === "object" &&
+          "id" in value &&
+          typeof value.id === "string" &&
+          value.id === compactionStateRequestRef.current &&
+          "type" in value &&
+          value.type === "response" &&
+          "command" in value &&
+          value.command === "get_state"
+        ) {
+          compactionStateRequestRef.current = null;
+          if (
+            "success" in value &&
+            value.success === true &&
+            "data" in value &&
+            value.data &&
+            typeof value.data === "object" &&
+            "autoCompactionEnabled" in value.data &&
+            typeof value.data.autoCompactionEnabled === "boolean" &&
+            value.data.autoCompactionEnabled !== chatAutoCompactionRef.current
+          ) {
+            void writeRpc(setAutoCompactionCommand(chatAutoCompactionRef.current)).catch((error) => toast(String(error), "error"));
+          }
+        }
+        const native =
+          typeof value === "object" &&
+          value !== null &&
+          "type" in value &&
+          value.type === "alinery_dispatch" &&
+          "dispatch_id" in value &&
+          typeof value.dispatch_id === "string" &&
+          "status" in value
+            ? value
+            : undefined;
+        const responseId = native?.dispatch_id ?? (typeof value === "object" && value !== null && "id" in value && typeof value.id === "string" ? value.id : undefined);
+        const pending = typeof responseId === "string" ? pendingSendsRef.current.get(responseId) : undefined;
+        if (native && (native.status === "consumed" || native.status === "settled")) {
+          if (pending) pending.status = native.status;
+          const transferId = native.status === "consumed" ? pending?.transferDispatchId : undefined;
+          const consumed = queuedFollowUpsRef.current.filter((item) => item.dispatchId === native.dispatch_id || (transferId !== undefined && item.dispatchId === transferId));
+          const rowIds = new Set(consumed.map((item) => item.entryId));
+          if (pending) rowIds.add(pending.entryId);
+          const remaining = queuedFollowUpsRef.current.filter((item) => !consumed.includes(item));
+          queuedFollowUpsRef.current = remaining;
+          onQueuedFollowUpsChange?.(remaining);
           setChat((current) => {
-            const next = settleRefusedSend(applyRpcLine(current, value), pending.entryId, pending.draft, restore);
+            const next = { ...current, entries: current.entries.filter((entry) => !rowIds.has(entry.id)) };
             chatRef.current = next;
             return next;
           });
-          if (restore) updateMessageDraft({ body: pending.draft, pendingActions: pending.actions, attachments: pending.attachments });
-          if (pending.queued) {
-            // OMP never queued it, and a reattach would otherwise re-add its row from this list.
-            const at = queuedFollowUpsRef.current.map((item) => item.text).lastIndexOf(pending.draft);
-            if (at >= 0) {
-              const remaining = queuedFollowUpsRef.current.filter((_, index) => index !== at);
-              queuedFollowUpsRef.current = remaining;
-              onQueuedFollowUpsChange?.(remaining);
-            }
+          if (native.status === "settled" && pending) {
+            const finish = async () => {
+              if (pending.actions.length > 0) {
+                await ipc.finalizeSessionMessageActions(id, taskSlug, pending.actions);
+                await refreshFinalizedActions(pending.actions);
+              }
+              pendingSendsRef.current.delete(pending.commandId);
+              releaseUnusedPreviews(pending.attachments);
+              refreshSendRecovery((revision) => revision + 1);
+            };
+            void finish().catch((error) => {
+              pending.reason = `Message settled, but its metadata could not be finalized: ${String(error)}`;
+              setMessageError(pending.reason);
+            });
           }
+          return;
+        }
+        const response = typeof value === "object" && value !== null && "type" in value && value.type === "response" && "success" in value ? value : undefined;
+        const consumed = pending?.status === "consumed" || pending?.status === "settled";
+        const refused =
+          pending && !consumed && native?.status === "rejected" ? ("reason" in native && typeof native.reason === "string" ? native.reason : "Send was refused.") : null;
+        const uncertainFailure = Boolean(pending && !consumed && response?.success === false);
+        if (refused !== null && pending) {
+          refuseSend(pending, refused);
           toast.error(refused);
-          setMessageError(refused);
         } else {
-          if (pending && (matchingSendSuccess(value, pending.commandId) || (typeof value === "object" && value !== null && "type" in value && value.type === "turn_start"))) {
-            revokeDraftPreviewUrls(pending.attachments);
-            pendingSendRef.current = null;
+          if (uncertainFailure && pending) {
+            // A native command can fail after accepting its input. Only the
+            // authenticated rejected disposition establishes that it was not sent.
+            pending.status = "unknown";
+            pending.reason = response && "error" in response && typeof response.error === "string" ? response.error : "Native command failed";
+            refreshSendRecovery((revision) => revision + 1);
+          }
+          if (pending?.status === "pending" && response?.success === true) {
+            // Stock RPC acknowledges scheduling before prompt completion; a later
+            // error can carry this same ID. Keep recovery until actual settlement.
+            pending.status = "acknowledged";
           }
           setChat((current) => {
-            let next = applyRpcLine(current, value);
-            const count = queuedCountFromGetState(value);
-            if (typeof count === "number") {
-              const reconciled = reconcileQueuedFollowUps(queuedFollowUpsRef.current, count);
-              queuedFollowUpsRef.current = reconciled.texts;
-              onQueuedFollowUpsChange?.(reconciled.texts);
-              const texts = reconciled.texts.map((item) => item.text);
-              next = {
-                ...next,
-                entries: next.entries.filter((entry) => entry.type !== "follow_up" || texts.includes(entry.text)),
-              };
-            }
+            // Protected sends retire by dispatch ID; a native echo is never identified by its caption.
+            const next = applyRpcLine(current, value, false);
+            if (uncertainFailure && pending) next.entries = next.entries.filter((entry) => entry.id !== pending.entryId);
             chatRef.current = next;
             return next;
           });
@@ -1485,7 +1652,7 @@ export function SessionView({
               rec.type === "turn_end" ||
               rec.type === "agent_end")
           ) {
-            void ipc.rpcWriteSession(id, getStateCommand()).catch(() => undefined);
+            void writeRpc(getStateCommand()).catch(() => undefined);
           }
         }
         if (mcpListWaitRef.current) {
@@ -1517,8 +1684,8 @@ export function SessionView({
             setLoginBusy(null);
             if (reply.ok) {
               setModelError(null);
-              void ipc.rpcWriteSession(id, getLoginProvidersCommand()).catch(() => undefined);
-              void ipc.rpcWriteSession(id, getAvailableModelsCommand()).catch(() => undefined);
+              void writeRpc(getLoginProvidersCommand()).catch(() => undefined);
+              void writeRpc(getAvailableModelsCommand()).catch(() => undefined);
             } else if (isInteractivePromptLoginError(reply.error)) {
               setLivePromotedIds((prev) => (prev.includes(providerId) ? prev : [...prev, providerId]));
               setModelError(reply.error ?? "This provider needs Terminal /login.");
@@ -1551,17 +1718,21 @@ export function SessionView({
     void journal
       .then(() => {
         if (cancelled) return;
-        const missing = queuedTextsNotInEntries(
-          queuedFollowUpsRef.current.map((item) => item.text),
-          chatRef.current.entries,
-        );
+        const missing = queuedFollowUpsRef.current.filter((item) => !item.entryId || !chatRef.current.entries.some((entry) => entry.id === item.entryId));
         if (missing.length > 0) {
-          setChat((current) => {
-            let next = current;
-            for (const text of missing) next = appendOptimisticUser(next, text, "follow_up");
-            chatRef.current = next;
-            return next;
+          let next = chatRef.current;
+          const rebuilt = queuedFollowUpsRef.current.map((item) => {
+            if (!missing.includes(item)) return item;
+            next = appendOptimisticUser(next, item.text, "follow_up", undefined, draftToRowAttachments(item.attachments));
+            const entryId = next.entries[next.entries.length - 1]?.id;
+            const recovery = item.dispatchId ? pendingSendsRef.current.get(item.dispatchId) : undefined;
+            if (recovery && entryId) recovery.entryId = entryId;
+            return { ...item, entryId };
           });
+          queuedFollowUpsRef.current = rebuilt;
+          onQueuedFollowUpsChange?.(rebuilt);
+          chatRef.current = next;
+          setChat(next);
         }
         // A detach sent before this attach lands is lost, so detach again once it has, as chat does.
         return ipc.rpcAttachSession({ id, attachId, streamToken: attachId, onLine: apply }).then(() => {
@@ -1576,22 +1747,22 @@ export function SessionView({
         // No wait for `ready`: OMP emits it once at spawn, so on any established session the old
         // 2s deadline always expired in full and told us nothing. History no longer depends on it
         // either — it was read from the journal before this attach began.
-        await ipc.rpcWriteSession(id, negotiateProtocolCommand());
+        await writeRpc(negotiateProtocolCommand());
         if (cancelled) return;
-        await ipc.rpcWriteSession(id, getAvailableCommandsCommand());
+        await writeRpc(getAvailableCommandsCommand());
         if (cancelled) return;
-        await ipc.rpcWriteSession(id, getStateCommand());
+        const stateRequest = getStateCommand();
+        compactionStateRequestRef.current = stateRequest.id;
+        await writeRpc(stateRequest);
         if (cancelled) return;
-        await ipc.rpcWriteSession(id, setAutoCompactionCommand(chatAutoCompactionRef.current));
+        await writeRpc(setSubagentSubscriptionCommand("events"));
         if (cancelled) return;
-        await ipc.rpcWriteSession(id, setSubagentSubscriptionCommand("events"));
+        await writeRpc(getSubagentsCommand());
         if (cancelled) return;
-        await ipc.rpcWriteSession(id, getSubagentsCommand());
-        if (cancelled) return;
-        await ipc.rpcWriteSession(id, getLoginProvidersCommand());
+        await writeRpc(getLoginProvidersCommand());
 
         if (cancelled) return;
-        await ipc.rpcWriteSession(id, getAvailableModelsCommand());
+        await writeRpc(getAvailableModelsCommand());
         void ipc.readOmpModelRoles().then((roles) => {
           if (!cancelled) setModelRoles(roles);
         });
@@ -1619,7 +1790,10 @@ export function SessionView({
   }, [liveRpc, rpcProcessLive, id, taskSlug, seedOmpJournal, chatAttachEpoch]);
   useEffect(() => {
     if (!rpcProcessLive) return;
-    void ipc.rpcWriteSession(id, setAutoCompactionCommand(chatAutoCompaction)).catch(() => undefined);
+    // A viewer must not invalidate Ready merely by reapplying an unchanged preference.
+    const stateRequest = getStateCommand();
+    compactionStateRequestRef.current = stateRequest.id;
+    void writeRpc(stateRequest).catch(() => undefined);
   }, [chatAutoCompaction, rpcProcessLive, id]);
   const settleOpenUrl = async (requestId: string, raw: string | undefined) => {
     try {
@@ -1635,7 +1809,7 @@ export function SessionView({
       if (handledUiRef.current.has(request.id)) continue;
       if (isPresentationUi(request.method)) {
         handledUiRef.current.add(request.id);
-        void ipc.rpcWriteSession(id, cancelExtensionUi(request.id)).catch(() => undefined);
+        void writeRpc(cancelExtensionUi(request.id)).catch(() => undefined);
         continue;
       }
       // Clicking "Sign in" IS the consent for the link that click produces: OMP answers `login`
@@ -1721,7 +1895,7 @@ export function SessionView({
     setMessageError("");
     try {
       setChat((current) => appendOptimisticAbort(current));
-      await ipc.rpcWriteSession(id, abortCommand());
+      await writeRpc(abortCommand());
     } catch (error) {
       setMessageError(`Couldn't interrupt the session: ${String(error)}`);
     } finally {
@@ -1740,8 +1914,13 @@ export function SessionView({
     });
     if (active) {
       if (!(await confirmStopAndSwitch(target))) return false;
-      if (liveRpc) await ipc.rpcWriteSession(id, abortCommand()).catch(() => undefined);
-      else await ipc.writeSession(id, OMP_INTERRUPT_DATA).catch(() => undefined);
+      try {
+        if (liveRpc) await writeRpc(abortCommand());
+        else await writeRaw(OMP_INTERRUPT_DATA);
+      } catch (error) {
+        toast(String(error), "error");
+        return false;
+      }
     }
     setViewBusy(true);
     try {
@@ -1758,33 +1937,200 @@ export function SessionView({
 
   const pendingUiReply = chat.pendingUi.some((request) => needsUiReply(request.method));
   const chatVisibility = useMemo(() => chatVisibilityFromAppearance(appearance), [appearance]);
-  // The reserved confirm title from the run-local extension selects this UI action, not
-  // authority. Always show our own consequences and grant only through authenticated IPC.
-  const completionRequestIds = useMemo(
-    () => new Set(chat.pendingUi.filter((request) => request.method === "confirm" && request.title === "Allow this session to complete").map((request) => request.id)),
-    [chat.pendingUi],
-  );
-  const completionCopy = useMemo(() => completionPrompt(executionView?.definition, execution), [executionView?.definition, execution]);
-  const chatEntries = useMemo(
-    () =>
-      chat.entries.map(
-        (entry): ChatEntry =>
-          entry.type === "approval" && completionRequestIds.has(entry.requestId)
-            ? {
-                ...entry,
-                ...completionCopy,
-                detail:
-                  grantedCompletionRequestId === entry.requestId
-                    ? "You already chose to finish this step, but the reply did not reach the agent. Retry the handoff to let the agent finish; this does not grant permission again."
-                    : completionCopy.detail,
-                allowLabel: grantedCompletionRequestId === entry.requestId ? "Retry handoff" : completionCopy.allowLabel,
-                disabled: !liveRpc || navHistory || !completionAvailable || completionBusy,
-                denyDisabled: grantedCompletionRequestId === entry.requestId,
-              }
-            : entry,
-      ),
-    [chat.entries, completionRequestIds, completionCopy, liveRpc, navHistory, completionAvailable, completionBusy, grantedCompletionRequestId],
-  );
+  const chatEntries = chat.entries;
+  const capability = execution ? executionView?.continuation[execution.id] : undefined;
+  const executionAssessment = execution ? executionView?.executions[execution.id] : undefined;
+  const destinations = executionAssessment?.destinations ?? [];
+  const continuationLabel = destinations.length === 1 ? `Continue to ${destinations[0].title}` : "Continue playbook";
+  const continuationShown = execution?.continuation_mode === "manual" && execution.last_ready_revision != null && executionAssessment?.terminality !== "terminal";
+  const requestedHere = requestedContinuation?.id === execution?.id && requestedContinuation?.revision === execution?.ready_revision;
+  const invalidatedHere = invalidatedReady?.id === execution?.id && invalidatedReady?.revision === execution?.ready_revision;
+  const continuationReason =
+    executionError ||
+    (!executionAvailable ? "Continuation unavailable: the execution owner cannot be queried." : "") ||
+    (execution?.owner_session_id !== id ? "This session is no longer the execution owner." : "") ||
+    (!capability?.available ? `Continuation unavailable: ${capability?.reason ?? "the native continuation boundary is not available."}` : "") ||
+    (capability?.reason ? "Waiting for native work or submitted input to settle." : "") ||
+    (navHistory || !liveRpc || terminalConnection !== "open" ? "Reconnect to the live session to continue." : "") ||
+    (execution?.lifecycle !== "running" ? "Waiting for the accepted handoff and session exit." : "") ||
+    (pendingUiReply ? "Resolve the pending approval or question before continuing." : "") ||
+    (completionBusy || requestedHere || execution?.continuation_requested_revision != null ? "Continuation requested; waiting for the handoff." : "") ||
+    (invalidatedHere || messageSending || execution?.ready_revision == null ? "Waiting for renewed readiness after review." : "") ||
+    (executionAssessment?.terminality !== "nonterminal" ? "Waiting for an authoritative continuation assessment." : "");
+  const continueReadyExecution = async () => {
+    if (continuationInFlight.current || continuationReason || !execution || !capability || execution.ready_revision == null) return;
+    const request = {
+      task_slug: taskSlug,
+      execution_id: execution.id,
+      session_id: id,
+      process_incarnation: capability.process_incarnation,
+      ready_revision: execution.ready_revision,
+    };
+    continuationInFlight.current = true;
+    setCompletionBusy(true);
+    setRequestedContinuation({ id: execution.id, revision: execution.ready_revision });
+    setContinuationMessage("");
+    try {
+      try {
+        const outcome = await ipc.continueExecution(request, repoPath);
+        if (outcome.status !== "requested" && outcome.status !== "accepted") setRequestedContinuation(null);
+        if (outcome.status === "invalid_outputs") setContinuationMessage(outcome.diagnostics.join("\n"));
+        else if ("reason" in outcome) setContinuationMessage(outcome.reason);
+        else if (outcome.status === "accepted") setContinuationMessage("Handoff accepted; waiting for the session to exit.");
+        else if (outcome.status === "requested") setContinuationMessage("Continuation requested; waiting for the handoff.");
+      } catch (error) {
+        setContinuationMessage(`Continuation outcome unavailable: ${String(error)}. Refreshing does not resend the request.`);
+        // Authoritative intent or failed observation still disables the action.
+        // An unacknowledged local call must not strand a fresh manual retry.
+        setRequestedContinuation(null);
+      }
+      try {
+        setExecutionView(await readTaskExecution(repoPath, taskSlug));
+        setExecutionError("");
+      } catch (refreshError) {
+        setExecutionError(String(refreshError));
+      }
+    } finally {
+      continuationInFlight.current = false;
+      setCompletionBusy(false);
+    }
+  };
+  const unacceptedOwner = execution?.owner_session_id === id && execution.receipt_id == null && execution.lifecycle !== "queued" && !endAccepted;
+  const canReplace = unacceptedOwner && execution.shutdown_confirmed && executionAvailable && Boolean(onOpenReplacement);
+  const refreshHandoff = async (epoch = executionEpoch.current) => {
+    try {
+      const next = await readTaskExecution(repoPath, taskSlug);
+      if (epoch !== executionEpoch.current) return;
+      setExecutionView(next);
+      setExecutionError("");
+      setReclassifyTick((tick) => tick + 1);
+    } catch (error) {
+      if (epoch === executionEpoch.current) setExecutionError(String(error));
+    }
+  };
+  const endAndContinue = async () => {
+    if (continuationInFlight.current || !execution || !unacceptedOwner || !executionAvailable) return;
+    const epoch = executionEpoch.current;
+    continuationInFlight.current = true;
+    setCompletionBusy(true);
+    let submitted = false;
+    try {
+      const prepared = await ipc.prepareEndExecution(taskSlug, execution.id, id, repoPath);
+      if (epoch !== executionEpoch.current) return;
+      if (
+        !(await confirmDanger(
+          "End session and continue?",
+          <div>
+            <p>This interrupts the current work and ends this session. Unsaved or unfinished work may be lost.</p>
+            <p>
+              After shutdown is confirmed, Alinery validates the assigned artifacts below. Only valid outputs can be accepted as a handoff; this does not declare the whole Playbook
+              complete.
+            </p>
+            <ul>
+              {prepared.artifacts.map((path) => (
+                <li key={path}>
+                  <code>{path}</code>
+                </li>
+              ))}
+            </ul>
+            {prepared.diagnostics.map((diagnostic) => (
+              <p key={diagnostic}>{diagnostic}</p>
+            ))}
+            <p>If validation fails, the session stays stopped. You can repair the artifacts and retry, or explicitly replace the stopped session in this same execution.</p>
+          </div>,
+          "End session and continue",
+        ))
+      )
+        return;
+      if (epoch !== executionEpoch.current) return;
+      submitted = true;
+      const outcome = await ipc.endExecution(prepared.request, repoPath);
+      if (epoch !== executionEpoch.current) return;
+      if (outcome.status === "accepted") {
+        setEndAccepted(true);
+        setEndMessage("Handoff accepted. Refreshing the Playbook state.");
+      } else if (outcome.status === "invalid_outputs") {
+        setEndMessage(`Session stopped; handoff not accepted. ${outcome.diagnostics.join("\n")} Repair the assigned artifacts and retry, or replace the stopped session.`);
+      } else if ("reason" in outcome) {
+        setEndMessage(outcome.reason);
+      } else {
+        setEndMessage("End-session request acknowledged; refresh to inspect the handoff state.");
+      }
+    } catch (error) {
+      if (epoch !== executionEpoch.current) return;
+      setEndMessage(
+        submitted
+          ? `End-session outcome unavailable: ${String(error)}. Refresh status before deciding whether to retry. Refreshing never resends the request.`
+          : `Could not prepare end-session confirmation: ${String(error)}`,
+      );
+    } finally {
+      if (epoch === executionEpoch.current) await refreshHandoff(epoch);
+      if (epoch === executionEpoch.current) {
+        continuationInFlight.current = false;
+        setCompletionBusy(false);
+      }
+    }
+  };
+  const replaceStoppedSession = async () => {
+    if (continuationInFlight.current || !canReplace || !execution) return;
+    const epoch = executionEpoch.current;
+    continuationInFlight.current = true;
+    setCompletionBusy(true);
+    try {
+      if (
+        !(await confirmDanger(
+          "Replace stopped session?",
+          "Start a replacement in the same unfinished execution, preserving its assigned inputs and outputs? This does not accept the existing artifacts.",
+          "Replace stopped session",
+        ))
+      )
+        return;
+      if (epoch !== executionEpoch.current) return;
+      const reply = await ipc.createSessionForRepo({
+        repoPath,
+        request: { task_slug: taskSlug, target: { kind: "primary", step_key: execution.candidate.step_key, execution_id: execution.id }, start: true },
+      });
+      if (epoch !== executionEpoch.current) return;
+      if (reply.errors?.length) toast.error(reply.errors.map((error) => error.message).join("\n"));
+      onOpenReplacement?.(reply.session);
+    } catch (error) {
+      if (epoch !== executionEpoch.current) return;
+      setEndMessage(`Replacement outcome unavailable: ${String(error)}. Refresh status before retrying; the current owner may have changed.`);
+    } finally {
+      if (epoch === executionEpoch.current) await refreshHandoff(epoch);
+      if (epoch === executionEpoch.current) {
+        continuationInFlight.current = false;
+        setCompletionBusy(false);
+      }
+    }
+  };
+  const continuationArea =
+    !executionError && executionView?.assessment.status === "complete" ? (
+      <div className="session-continuation" role="status" aria-label="Playbook status">
+        Playbook complete
+      </div>
+    ) : continuationShown ? (
+      <section className="session-continuation" aria-label="Playbook continuation">
+        {(continuationMessage || continuationReason) && (
+          <span id="continuation-reason" role="status">
+            {continuationMessage || continuationReason}
+          </span>
+        )}
+        <button
+          className="btn primary"
+          type="button"
+          disabled={Boolean(continuationReason)}
+          aria-describedby={continuationMessage || continuationReason ? "continuation-reason" : undefined}
+          onClick={() => void continueReadyExecution()}
+        >
+          {continuationLabel}
+        </button>
+      </section>
+    ) : capability && !capability.available && execution?.lifecycle === "running" ? (
+      <div className="session-continuation" role="status">
+        Continuation unavailable: {capability.reason ?? "Native continuation is not available."}
+      </div>
+    ) : null;
   const turnActive = isTurnActive({
     pendingTurn: chat.pendingTurn,
     turnOpen: chat.turnOpen,
@@ -1811,24 +2157,27 @@ export function SessionView({
     .filter((part) => part && part.length > 0)
     .join(" · ");
   const pickThinking = (level: string) => {
-    void ipc.rpcWriteSession(id, setThinkingLevelCommand(level)).catch((error) => toast(String(error), "error"));
+    void writeRpc(setThinkingLevelCommand(level)).catch((error) => toast(String(error), "error"));
   };
 
   const replyExtensionValue = async (requestId: string, value: string) => {
     handledUiRef.current.add(requestId);
+    invalidateReview();
     try {
-      await ipc.rpcWriteSession(id, extensionUiValue(requestId, value));
+      await writeRpc(extensionUiValue(requestId, value));
       setChat((current) => dismissPendingUi(current, requestId));
     } catch (error) {
+      handledUiRef.current.delete(requestId);
       toast(String(error), "error");
     }
   };
   const cancelExtensionPrompt = async (requestId: string) => {
     handledUiRef.current.add(requestId);
     try {
-      await ipc.rpcWriteSession(id, cancelExtensionUi(requestId));
+      await writeRpc(cancelExtensionUi(requestId));
       setChat((current) => dismissPendingUi(current, requestId));
     } catch (error) {
+      handledUiRef.current.delete(requestId);
       toast(String(error), "error");
     }
   };
@@ -1837,30 +2186,6 @@ export function SessionView({
     if (handledUiRef.current.has(requestId)) return;
     handledUiRef.current.add(requestId);
     const request = chatRef.current.pendingUi.find((pending) => pending.id === requestId);
-    if (completionRequestIds.has(requestId)) {
-      if (!liveRpc || navHistory || !completionAvailable || completionBusy || !execution || (!allow && grantedCompletionRequestId === requestId)) {
-        handledUiRef.current.delete(requestId);
-        return;
-      }
-      setCompletionBusy(true);
-      try {
-        if (allow && grantedCompletionRequestId !== requestId) {
-          await ipc.allowExecutionCompletion(taskSlug, execution.id, id, repoPath);
-          setCompletionGrant({ sessionId: id, requestId });
-          setExecutionView(await readTaskExecution(repoPath, taskSlug));
-        }
-        // Do not release the waiting tool until the grant is durably acknowledged.
-        await ipc.rpcWriteSession(id, extensionUiConfirm(requestId, allow));
-        setChat((current) => dismissPendingUi(current, requestId));
-        setExecutionError("");
-      } catch (error) {
-        handledUiRef.current.delete(requestId);
-        setExecutionError(String(error));
-      } finally {
-        setCompletionBusy(false);
-      }
-      return;
-    }
     // Allowing an `open_url` means "did it open", not "was it permitted", so it goes through the
     // same settle path the login auto-open uses. Declining is a plain false — nothing is opened.
     if (allow && request?.method === "open_url") {
@@ -1868,9 +2193,11 @@ export function SessionView({
       return;
     }
     try {
-      await ipc.rpcWriteSession(id, extensionUiConfirm(requestId, allow));
+      invalidateReview();
+      await writeRpc(extensionUiConfirm(requestId, allow));
       setChat((current) => dismissPendingUi(current, requestId));
     } catch (error) {
+      handledUiRef.current.delete(requestId);
       toast(String(error), "error");
     }
   };
@@ -1885,7 +2212,7 @@ export function SessionView({
     setModelError(null);
     modelApplyRef.current = true;
     try {
-      await ipc.rpcWriteSession(id, setModelCommand(provider, modelId));
+      await writeRpc(setModelCommand(provider, modelId));
     } catch (error) {
       modelApplyRef.current = false;
       setModelError(String(error));
@@ -1897,7 +2224,7 @@ export function SessionView({
     loginApplyRef.current = providerId;
     loginOpenUrlRef.current = providerId;
     try {
-      await ipc.rpcWriteSession(id, loginCommand(providerId));
+      await writeRpc(loginCommand(providerId));
     } catch (error) {
       loginApplyRef.current = null;
       loginOpenUrlRef.current = null;
@@ -1914,7 +2241,7 @@ export function SessionView({
     try {
       const switched = await switchTransport("pty");
       if (!switched) return;
-      await ipc.writeSession(id, "/login\n");
+      await writeRaw("/login\n");
       toast("Opened Terminal for /login. Finish provider setup there.", "info");
     } catch (error) {
       toast(String(error), "error");
@@ -1996,9 +2323,73 @@ export function SessionView({
           </div>
         )}
         <CopyTextButton text={cwd} label="worktree path" />
+        {(execution || endMessage) && (
+          <button type="button" className="btn ghost small icon-btn" aria-label="Session actions" title="Session actions" onClick={() => setSessionActionsOpen(true)}>
+            <Ellipsis size={16} aria-hidden="true" />
+          </button>
+        )}
       </div>
       {finalizedNotice && <InlineStatus tone="warning">{finalizedNotice}</InlineStatus>}
       {executionView && <ExecutionAvailabilityNotice live={executionView.live} controls />}
+      {sessionActionsOpen && (
+        <Dialog ariaLabel="Session actions" className="session-actions-dialog" onClose={() => setSessionActionsOpen(false)}>
+          <header className="session-actions-heading">
+            <h3>Session actions</h3>
+            <button type="button" className="btn ghost small icon-btn" aria-label="Close session actions" data-autofocus onClick={() => setSessionActionsOpen(false)}>
+              <X size={16} aria-hidden="true" />
+            </button>
+          </header>
+          {(unacceptedOwner || endMessage) && (
+            <section className="session-handoff-actions" aria-label="Session handoff">
+              {endMessage && <span role="status">{endMessage}</span>}
+              {unacceptedOwner && (
+                <button type="button" className="btn ghost small" disabled={completionBusy || !executionAvailable} onClick={() => void endAndContinue()}>
+                  End session and continue…
+                </button>
+              )}
+              {canReplace && (
+                <button type="button" className="btn small" disabled={completionBusy} onClick={() => void replaceStoppedSession()}>
+                  Replace stopped session
+                </button>
+              )}
+              {endMessage && (
+                <button type="button" className="btn ghost small" disabled={completionBusy} onClick={() => void refreshHandoff()}>
+                  Refresh handoff status
+                </button>
+              )}
+            </section>
+          )}
+          {execution && executionView && (
+            <div className="session-execution-bar">
+              <details className="session-execution" aria-label="Session execution">
+                <summary>
+                  {executionStep?.title ?? execution.candidate.step_key} · {execution.lifecycle} · Owner {execution.owner_session_id}
+                </summary>
+                <p className="mono">Execution {execution.id}</p>
+                {execution.owner_session_id !== id && <p>This is a previous owner. Current owner: {execution.owner_session_id}.</p>}
+                {execution.lifecycle === "finishing" && <p>Outputs accepted; waiting for confirmed shutdown. The session remains interactive until it exits.</p>}
+                {execution.lifecycle === "interrupted" && <p>Ownership is uncertain; no replacement can start until shutdown is confirmed.</p>}
+                {execution.error && <InlineStatus tone="error">{execution.error}</InlineStatus>}
+                <ul aria-label="Execution inputs">
+                  {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) =>
+                    ids.map((occurrenceId) => {
+                      const occurrence = executionView.state.occurrences[occurrenceId];
+                      return (
+                        <li key={`${selector}:${occurrenceId}`}>
+                          <code>{selector}</code> ← <code>{occurrence?.relative_path ?? occurrenceId}</code> · occurrence {occurrenceId} · producer{" "}
+                          {occurrence?.producer_execution_id ?? "seed"}
+                        </li>
+                      );
+                    }),
+                  )}
+                </ul>
+                <ExecutionOutputs execution={execution} occurrences={executionView.state.occurrences} />
+                <p>Continuation: {execution.continuation_mode === "automatic" ? "Automatic" : "Wait for me"}</p>
+              </details>
+            </div>
+          )}
+        </Dialog>
+      )}
       {hasTask && !navHistory && effectiveLifecycle?.state === "never_started" && (
         <div className="session-execution">
           <p>{execution?.start_requested ? "Start requested; waiting for the daemon to acquire capacity." : "This session is queued. Opening it does not start it."}</p>
@@ -2030,38 +2421,6 @@ export function SessionView({
         <InlineStatus tone="warning" detail={executionError}>
           Execution state unavailable; queued starts and completion grants are disabled.
         </InlineStatus>
-      )}
-      {execution && executionView && (
-        <div className="session-execution-bar">
-          <details className="session-execution" aria-label="Session execution">
-            <summary>
-              {executionStep?.title ?? execution.candidate.step_key} · {execution.lifecycle} · Owner {execution.owner_session_id}
-            </summary>
-            <p className="mono">Execution {execution.id}</p>
-            {execution.owner_session_id !== id && <p>This is a previous owner. Current owner: {execution.owner_session_id}.</p>}
-            {execution.lifecycle === "finishing" && <p>Outputs accepted; waiting for confirmed shutdown. The session remains interactive until it exits.</p>}
-            {execution.lifecycle === "interrupted" && <p>Ownership is uncertain; no replacement can start until shutdown is confirmed.</p>}
-            {execution.error && <InlineStatus tone="error">{execution.error}</InlineStatus>}
-            <ul aria-label="Execution inputs">
-              {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) =>
-                ids.map((occurrenceId) => {
-                  const occurrence = executionView.state.occurrences[occurrenceId];
-                  return (
-                    <li key={`${selector}:${occurrenceId}`}>
-                      <code>{selector}</code> ← <code>{occurrence?.relative_path ?? occurrenceId}</code> · occurrence {occurrenceId} · producer{" "}
-                      {occurrence?.producer_execution_id ?? "seed"}
-                    </li>
-                  );
-                }),
-              )}
-            </ul>
-            <ExecutionOutputs execution={execution} occurrences={executionView.state.occurrences} />
-            <p>
-              Completion permission: {execution.permission.kind}
-              {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
-            </p>
-          </details>
-        </div>
       )}
       <div className={`sessionbody${hasTask ? "" : " no-artifacts"}`} style={{ ["--artifact-width" as string]: `${artifactWidth}px` }}>
         <div className="termhost" ref={termhostRef}>
@@ -2107,6 +2466,7 @@ export function SessionView({
               )}
             </div>
           )}
+          {navHistory ? continuationArea : null}
           {!navHistory && termIntent && (
             <>
               {showChat ? (
@@ -2141,6 +2501,7 @@ export function SessionView({
                       atStart={chat.fileStart === 0}
                     />
                   </div>
+                  {continuationArea && <div className="session-continuation-anchor">{continuationArea}</div>}
                   {showChatComposer ? (
                     <>
                       {uiPrompt ? (
@@ -2167,12 +2528,13 @@ export function SessionView({
                         onRemoveAttachment={(id) => {
                           const current = messageDraftRef.current;
                           const removed = current.attachments.find((item) => item.id === id);
-                          if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
                           updateMessageDraft({ ...current, attachments: current.attachments.filter((item) => item.id !== id) });
+                          if (removed) releaseUnusedPreviews([removed]);
                         }}
                         onClear={() => {
-                          revokeDraftPreviewUrls(messageDraftRef.current.attachments);
+                          const attachments = messageDraftRef.current.attachments;
                           updateMessageDraft({ body: "", pendingActions: messageDraftRef.current.pendingActions, attachments: [] });
+                          releaseUnusedPreviews(attachments);
                         }}
                         onPasteFiles={stageBlobs}
                         onBodyChange={(next) => {
@@ -2212,6 +2574,41 @@ export function SessionView({
               {contextActions.length > 0 && <ContextActionBar actions={contextActions} />}
             </>
           )}
+          {pendingSends.size > 0 && (
+            <section className="session-input-recovery" aria-label="Recoverable session input">
+              {[...pendingSends.values()].map((item) => (
+                <div key={item.commandId} role="status">
+                  <span>
+                    {item.status === "refused"
+                      ? "Not sent"
+                      : item.status === "unknown"
+                        ? "Delivery unknown"
+                        : item.status === "pending"
+                          ? "Awaiting delivery confirmation"
+                          : item.status === "settled"
+                            ? "Message settled"
+                            : "Awaiting native settlement"}
+                    : {item.draft}
+                    {item.reason ? ` — ${item.reason}` : ""}
+                  </span>
+                  <CopyTextButton text={item.draft} label="original message" />
+                  <button
+                    type="button"
+                    disabled={
+                      !showChatComposer || item.status !== "refused" || messageDraft.body !== "" || messageDraft.attachments.length > 0 || messageDraft.pendingActions.length > 0
+                    }
+                    onClick={() => {
+                      updateMessageDraft({ body: item.draft, pendingActions: item.actions, attachments: item.attachments });
+                      pendingSends.delete(item.commandId);
+                      refreshSendRecovery((revision) => revision + 1);
+                    }}
+                  >
+                    Restore unsent message{item.attachments.length > 0 ? ` (${item.attachments.length} attachments)` : ""}
+                  </button>
+                </div>
+              ))}
+            </section>
+          )}
           {!navHistory && showPanel && effectiveLifecycle && (
             <>
               <SessionActionPanel
@@ -2223,7 +2620,7 @@ export function SessionView({
                 artifactReady={artifactReady}
                 repoPath={repoPath}
                 taskSlug={taskSlug}
-                onStartFresh={leftover ? () => undefined : onStartFresh}
+                onStartFresh={leftover || execution ? undefined : onStartFresh}
                 onArchive={handleArchive}
                 archiveBusy={archiveBusy}
                 onViewHistory={() => setShowHistory(true)}
@@ -2252,6 +2649,24 @@ export function SessionView({
                 ))}
             </>
           )}
+          <SessionLineage
+            key={displayScope}
+            id={id}
+            name={display?.session.name || ""}
+            phase={executionStep?.title ?? phase}
+            sessions={lineageSessions}
+            executionView={executionView}
+            error={lineageError || executionError}
+            artifactPaths={artifactNames}
+            readableArtifactPaths={artifactNames.filter((path) => findOwnedArtifactNode(artifactTree, path))}
+            onOpenSession={onOpenSession}
+            onOpenArtifact={(path) => {
+              setSelectedArtifactNode(findOwnedArtifactNode(artifactTree, path) ?? null);
+              setSelectedArtifact(path);
+              setArtifactMode("preview");
+              setArtifactErr("");
+            }}
+          />
           {modelDialog && (
             <ChatModelDialog
               tab={modelDialog.tab}

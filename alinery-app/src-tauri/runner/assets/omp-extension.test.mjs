@@ -139,6 +139,1111 @@ function makeCompletionEmitter(emit, outcome = { status: "accepted", receipt_id:
   };
 }
 
+test("manual_ready_and_waiting_do_not_confirm_or_shutdown", async () => {
+  for (const outcome of [
+    { status: "ready", ready_revision: 7 },
+    { status: "requested", ready_revision: 7 },
+    { status: "waiting", reason: "native invocation remains active" },
+    { status: "stale", reason: "review superseded readiness" },
+    { status: "invalid_outputs", diagnostics: ["report is empty"] },
+    { status: "unavailable", reason: "primary receiver not bound" },
+    { status: "accepted", receipt_id: "immutable-receipt" },
+  ]) {
+    const api = makeFakeApi();
+    const emit = makeRecordingEmitter();
+    let shutdowns = 0;
+    let confirmations = 0;
+    const context = {
+      ...makeContext("same-owner"),
+      shutdown() {
+        shutdowns++;
+      },
+      ui: {
+        async confirm() {
+          confirmations++;
+          return true;
+        },
+      },
+    };
+    registerCallbacks(api, emit, makeCompletionEmitter(emit, outcome), undefined);
+    const first = await api.callTool("alinery_phase_complete", {}, context);
+    assert.deepEqual(first.details, outcome);
+    assert.equal(confirmations, 0);
+    assert.equal(shutdowns, outcome.status === "accepted" ? 1 : 0);
+    const replay = await api.callTool("alinery_phase_complete", {}, context);
+    assert.deepEqual(replay.details, outcome);
+    assert.equal(shutdowns, outcome.status === "accepted" ? 1 : 0);
+  }
+});
+
+function nativeFixture(toolExecute = async () => ({ content: [], details: {} }), complete, authorize) {
+  const api = makeFakeApi();
+  const context = makeContext("native-owner");
+  const events = [];
+  const listeners = [];
+  const hooks = [];
+  const follow = [];
+  const steer = [];
+  const jobs = new Map();
+  let releaseRun;
+  let run = Promise.resolve();
+  const native = {
+    name: "write",
+    label: "write",
+    description: "native",
+    parameters: { native: true },
+    concurrency: "exclusive",
+    approval: () => "native-approval",
+    execute: toolExecute,
+  };
+  const nativeContext = {
+    toolCall: { toolCallId: "native-batch", isLastInBatch: true },
+    settings: { nativeSetting: "preserved" },
+    providerSafetyApproved: true,
+  };
+  class Session {
+    sessionManager = context.sessionManager;
+    asyncJobManager = {
+      register(_type, _label, run) {
+        const id = `job-${jobs.size + 1}`;
+        const controller = new AbortController();
+        const job = { ownerId: "native-owner", status: "running", controller };
+        job.promise = Promise.resolve()
+          .then(() => run({ signal: controller.signal }))
+          .then((result) => {
+            if (job.status !== "cancelled") job.status = "completed";
+            return result;
+          });
+        jobs.set(id, job);
+        return id;
+      },
+      getJob(id) {
+        return jobs.get(id);
+      },
+      cancel(id) {
+        const job = jobs.get(id);
+        if (job) {
+          job.status = "cancelled";
+          job.controller.abort();
+        }
+      },
+      async drainDeliveries() {
+        return true;
+      },
+      isDeliverySuppressed() {
+        return false;
+      },
+    };
+    yieldQueue = {
+      drainLazy() {
+        return [];
+      },
+    };
+    agent = {
+      async prompt(message) {
+        for (const listener of listeners) listener({ type: "message_start", message });
+        await run;
+      },
+      async continue() {
+        for (const hook of hooks) await hook();
+        const message = steer.shift() ?? follow.shift();
+        if (message) for (const listener of listeners) listener({ type: "message_start", message });
+        await run;
+      },
+      steer(message) {
+        steer.push(message);
+      },
+      followUp(message) {
+        follow.push(message);
+      },
+      subscribe(fn) {
+        listeners.push(fn);
+        return () => {};
+      },
+      addBeforeQueuedMessageDequeueHook(fn) {
+        hooks.push(fn);
+        return () => {};
+      },
+      peekSteeringQueue() {
+        return steer;
+      },
+      peekFollowUpQueue() {
+        return follow;
+      },
+      waitForIdle() {
+        return run;
+      },
+      replaceQueues(nextSteer, nextFollow) {
+        steer.splice(0, steer.length, ...nextSteer);
+        follow.splice(0, follow.length, ...nextFollow);
+      },
+    };
+    get extensionRunner() {
+      return {};
+    }
+    getToolByName(name) {
+      return name === "write" ? native : undefined;
+    }
+    hasBuiltInTool(name) {
+      return name === "write";
+    }
+  }
+  for (const name of ext.SELECTED_SESSION_METHODS) Session.prototype[name] = async () => {};
+  Session.prototype.prompt = async function (text) {
+    await this.agent.prompt({ role: "user", content: [{ type: "text", text }] });
+  };
+  Session.prototype.followUp = async function (text) {
+    this.agent.followUp({ role: "user", content: [{ type: "text", text }] });
+  };
+  const session = new Session();
+  api.pi = { AgentSession: Session };
+  api.getAllTools = () => [{ name: "write" }];
+  let revision = 0;
+  let intent = null;
+  let capabilityRevision = 0;
+  let available = false;
+  let reason = "not bound";
+  const activeNative = new Set();
+  const pollWaiters = [];
+  const control = async (event) => {
+    const authoritative = await authorize?.(event);
+    events.push(event);
+    if (authoritative) {
+      if ("process_incarnation" in authoritative) {
+        capabilityRevision = authoritative.capability_revision;
+        revision = authoritative.work_revision;
+        intent = authoritative.continuation_requested_revision;
+        available = authoritative.available;
+        reason = authoritative.reason;
+      }
+      return authoritative;
+    }
+    if (event.type === "continuation_bind" || event.type === "continuation_revoke") {
+      if (event.expected_capability_revision !== capabilityRevision) throw new ext.NativeControlRejected("stale capability revision");
+      capabilityRevision++;
+      if (event.type === "continuation_bind") {
+        available = true;
+        reason = null;
+      } else {
+        revision++;
+        available = false;
+        reason = event.reason;
+      }
+    }
+    if (event.type === "native_work_entered") {
+      if (event.parent_operation_id && !activeNative.has(event.parent_operation_id)) throw new ext.NativeControlRejected("stale native parent");
+      if (!available && !event.parent_operation_id && !event.dispatch_proof) throw new ext.NativeControlRejected("native root unavailable");
+      activeNative.add(event.operation_id);
+      revision++;
+    }
+    if (event.type === "native_work_settled") activeNative.delete(event.operation_id);
+    if (event.type === "continuation_poll") for (const resolve of pollWaiters.splice(0)) resolve();
+    return {
+      process_incarnation: "native-incarnation",
+      capability_revision: capabilityRevision,
+      work_revision: revision,
+      continuation_requested_revision: intent,
+      available,
+      reason,
+    };
+  };
+  const adapter = new ext.NativeContinuation(
+    api,
+    control,
+    complete ??
+      (async (event) => {
+        events.push(event);
+        return event.type === "continuation_finalize" ? { status: "accepted", receipt_id: "receipt" } : { status: "ready", ready_revision: revision };
+      }),
+  );
+  void session.extensionRunner;
+  return {
+    api,
+    context,
+    nativeContext,
+    events,
+    session,
+    native,
+    adapter,
+    capability() {
+      return { available, capabilityRevision, revision, intent, pending: [...activeNative] };
+    },
+    async consume() {
+      run = new Promise((resolve) => {
+        releaseRun = resolve;
+      });
+      for (const hook of hooks) await hook();
+      const message = follow.shift();
+      for (const listener of listeners) listener({ type: "message_start", message });
+      return () => releaseRun();
+    },
+    request() {
+      intent = revision;
+    },
+    nextPoll() {
+      return new Promise((resolve) => pollWaiters.push(resolve));
+    },
+  };
+}
+
+test("does_not_poll_continuation_during_initial_work_before_ready", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  let release;
+  let started;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  const entered = new Promise((resolve) => {
+    started = resolve;
+  });
+  const fixture = nativeFixture();
+  fixture.session.prompt = async () => {
+    started();
+    await held;
+  };
+  await fixture.adapter.bind(fixture.context);
+  const startupPolls = fixture.events.filter((event) => event.type === "continuation_poll").length;
+  const work = fixture.session.prompt("ordinary initial work, no readiness report");
+  try {
+    await entered;
+    context.mock.timers.runAll();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(
+      fixture.events.filter((event) => event.type === "continuation_poll").length,
+      startupPolls,
+      "startup bootstrap is allowed; initial work must not start a periodic control loop",
+    );
+  } finally {
+    release();
+    await work;
+    await fixture.adapter.invalidate("fixture disposed");
+  }
+});
+
+test("cached_canonical_native_tool_reference_is_admitted_before_effects", async () => {
+  let fixture;
+  fixture = nativeFixture(async () => {
+    assert.equal((await fixture.adapter.ready(fixture.context)).status, "waiting", "cached native calls must retain their selected lifetime");
+    return { content: [], details: {} };
+  });
+  const cachedNative = fixture.session.getToolByName("write");
+  await fixture.adapter.bind(fixture.context);
+  await cachedNative.execute("cached-call", {}, undefined, undefined, fixture.nativeContext);
+});
+
+test("changed_canonical_native_handle_revokes_continuation_before_new_effects", async () => {
+  let acknowledge;
+  const ack = new Promise((resolve) => {
+    acknowledge = resolve;
+  });
+  const fixture = nativeFixture(undefined, undefined, async (event) => {
+    if (event.type === "continuation_revoke") await ack;
+  });
+  let effects = 0;
+  fixture.session.prompt = async () => {
+    effects++;
+  };
+  await fixture.adapter.bind(fixture.context);
+  const replaced = {
+    ...fixture.native,
+    execute: async () => {
+      effects++;
+      return { content: [], details: {} };
+    },
+  };
+  fixture.session.getToolByName = () => replaced;
+  const outcome = await fixture.adapter.ready(fixture.context);
+  assert.equal(outcome.status, "unavailable");
+  assert.match(outcome.reason, /Native execution boundary changed for write/);
+  await assert.rejects(() => fixture.session.prompt("do not run under the obsolete binding"), /Native execution boundary changed/);
+  assert.equal(effects, 0);
+  acknowledge();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fixture.capability().available, false, "changed required identity revokes the authoritative capability");
+});
+
+test("settled_public_model_change_rebinds_new_handles_without_losing_cached_lifetimes", async () => {
+  let releaseOld;
+  let enteredOld;
+  const heldOld = new Promise((resolve) => {
+    releaseOld = resolve;
+  });
+  const oldEntered = new Promise((resolve) => {
+    enteredOld = resolve;
+  });
+  let fixture;
+  fixture = nativeFixture(async () => {
+    enteredOld();
+    assert.equal((await fixture.adapter.ready(fixture.context)).status, "waiting");
+    await heldOld;
+    return { content: [], details: {} };
+  });
+  const cachedOld = fixture.native;
+  const replacement = {
+    ...cachedOld,
+    execute: async () => {
+      assert.equal((await fixture.adapter.ready(fixture.context)).status, "waiting", "new native handle must enter the same owner ledger");
+      return { content: [], details: {} };
+    },
+  };
+  let current = cachedOld;
+  fixture.session.getToolByName = () => current;
+  fixture.session.setModel = async () => {
+    current = replacement;
+    return { switched: true };
+  };
+  await fixture.adapter.bind(fixture.context);
+  const oldCall = cachedOld.execute("old", {}, undefined, undefined, fixture.nativeContext);
+  await oldEntered;
+  assert.deepEqual(await fixture.session.setModel({ id: "next-model" }), { switched: true });
+  assert.equal((await fixture.adapter.ready(fixture.context)).status, "waiting", "model settlement must not erase the still-live old native call");
+  releaseOld();
+  await oldCall;
+  await replacement.execute("new", {}, undefined, undefined, fixture.nativeContext);
+  await cachedOld.execute("cached-after-switch", {}, undefined, undefined, fixture.nativeContext);
+  assert.equal((await fixture.adapter.ready(fixture.context)).status, "ready");
+});
+
+test("model_rebind_failure_preserves_the_native_result_or_error", async () => {
+  for (const fails of [false, true]) {
+    const fixture = nativeFixture();
+    const nativeError = new Error("native model selection rejected");
+    const nativeResult = { switched: true };
+    fixture.session.setModel = async () => {
+      fixture.session.getToolByName = () => undefined;
+      if (fails) throw nativeError;
+      return nativeResult;
+    };
+    await fixture.adapter.bind(fixture.context);
+    if (fails)
+      await assert.rejects(
+        () => fixture.session.setModel({ id: "unsupported" }),
+        (error) => error === nativeError,
+      );
+    else assert.equal(await fixture.session.setModel({ id: "changed" }), nativeResult);
+    assert.equal((await fixture.adapter.ready(fixture.context)).status, "unavailable");
+    assert.equal(fixture.capability().available, false);
+  }
+});
+
+test("external_abort_cannot_reuse_pre_abort_deferred_readiness_after_unwind", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  let release;
+  let entered;
+  const unwind = new Promise((resolve) => {
+    release = resolve;
+  });
+  const running = new Promise((resolve) => {
+    entered = resolve;
+  });
+  let fixture;
+  fixture = nativeFixture(async () => {
+    assert.equal((await fixture.adapter.ready(fixture.context)).status, "waiting");
+    entered();
+    await unwind;
+    return { content: [], details: {} };
+  });
+  fixture.session.abort = async () => {
+    await unwind;
+  };
+  await fixture.adapter.bind(fixture.context);
+  const work = fixture.session.getToolByName("write").execute("held", {}, undefined, undefined, fixture.nativeContext);
+  await running;
+  const aborted = fixture.session.abort();
+  release();
+  await Promise.all([work, aborted]);
+  try {
+    context.mock.timers.runAll();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(
+      fixture.events.some((event) => event.type === "readiness_reported"),
+      false,
+      "cancellation invalidates the earlier deferred completion report",
+    );
+    assert.equal((await fixture.adapter.ready(fixture.context)).status, "ready", "a new explicit report after unwind remains available");
+  } finally {
+    await fixture.adapter.invalidate("fixture disposed");
+  }
+});
+
+for (const route of ["idle-prompt", "streaming-thunk"]) {
+  test(`selected_job_delivery_keeps_${route}_owned_after_body_and_receipt`, async () => {
+    let releaseBody;
+    let releaseReceipt;
+    let releaseRun;
+    const body = new Promise((resolve) => {
+      releaseBody = resolve;
+    });
+    const receipt = new Promise((resolve) => {
+      releaseReceipt = resolve;
+    });
+    const run = new Promise((resolve) => {
+      releaseRun = resolve;
+    });
+    let jobId;
+    let fixture;
+    fixture = nativeFixture(async () => {
+      jobId = fixture.session.asyncJobManager.register("eval", "selected producer", async () => {
+        await body;
+      });
+      return { content: [], details: { async: { state: "running", jobId } } };
+    });
+    const message = { role: "custom", customType: "async-result", details: { jobs: [] }, content: "native result" };
+    const thunkReceiver = {};
+    fixture.session.yieldQueue.drainLazy = () => [
+      function () {
+        assert.equal(this, thunkReceiver, "native thunk receiver must be preserved");
+        return message;
+      },
+    ];
+    fixture.session.agent.waitForIdle = () => run;
+    fixture.session.agent.prompt = async () => {
+      await run;
+    };
+    fixture.session.asyncJobManager.drainDeliveries = async ({ filter }) => {
+      assert.equal(filter.ownerId, "native-owner");
+      await receipt;
+      return true;
+    };
+    try {
+      await fixture.adapter.bind(fixture.context);
+      await fixture.session.getToolByName("write").execute("producer", {}, undefined, undefined, fixture.nativeContext);
+      message.details.jobs.push({ jobId });
+      releaseBody();
+      await fixture.session.asyncJobManager.getJob(jobId).promise;
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal((await fixture.adapter.ready(fixture.context)).status, "waiting", "body settlement does not erase pending native delivery");
+      let injected;
+      if (route === "idle-prompt") injected = fixture.session.agent.prompt(message);
+      else assert.equal(fixture.session.yieldQueue.drainLazy()[0].call(thunkReceiver), message);
+      releaseReceipt();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal((await fixture.adapter.ready(fixture.context)).status, "waiting", "a native receipt is not settlement of its consuming run");
+      releaseRun();
+      await (injected ?? run);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal((await fixture.adapter.ready(fixture.context)).status, "ready");
+    } finally {
+      releaseBody();
+      releaseReceipt();
+      releaseRun();
+      await new Promise((resolve) => setImmediate(resolve));
+      await fixture.adapter.invalidate("fixture disposed");
+    }
+  });
+}
+
+test("nested_completion_waits_for_the_actual_native_return_and_queue_run", async () => {
+  let fixture;
+  let releaseTool;
+  const toolLatch = new Promise((resolve) => {
+    releaseTool = resolve;
+  });
+  fixture = nativeFixture(async () => {
+    const outcome = await fixture.adapter.ready(fixture.context);
+    assert.equal(outcome.status, "waiting");
+    await toolLatch;
+    return { content: [{ type: "text", text: "late native write complete" }], details: {} };
+  });
+  await fixture.adapter.bind(fixture.context);
+  const wrapped = fixture.session.getToolByName("write");
+  assert.equal(wrapped.parameters, fixture.native.parameters);
+  assert.equal(wrapped.approval(), "native-approval");
+  const pending = wrapped.execute("tool", {}, undefined, undefined, fixture.nativeContext);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    fixture.events.some((event) => event.type === "readiness_reported"),
+    false,
+  );
+  releaseTool();
+  await pending;
+  await fixture.session.followUp('\u001eALINERY:{"id":"review","proof":"review-proof"}\u001fexact review');
+  assert.equal((await fixture.adapter.ready(fixture.context)).status, "waiting");
+  const releaseRun = await fixture.consume();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal((await fixture.adapter.ready(fixture.context)).status, "waiting");
+  releaseRun();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal((await fixture.adapter.ready(fixture.context)).status, "ready");
+  assert.ok(fixture.events.some((event) => event.type === "native_dispatch_consumed" && event.dispatch_id === "review"));
+});
+
+test("canonical_native_execution_preserves_signal_and_error_identity", async () => {
+  const failure = new Error("native failure");
+  const abort = new AbortController();
+  const fixture = nativeFixture(async (_id, _input, signal) => {
+    assert.equal(signal, abort.signal);
+    throw failure;
+  });
+  await fixture.adapter.bind(fixture.context);
+  const wrapped = fixture.session.getToolByName("write");
+  await assert.rejects(
+    () => wrapped.execute("id", {}, abort.signal, undefined, fixture.nativeContext),
+    (error) => error === failure,
+  );
+});
+
+test("canonical_native_execution_preserves_batch_and_provider_context", async () => {
+  const progress = [];
+  const abort = new AbortController();
+  const fixture = nativeFixture(async (_id, _input, signal, onUpdate, context) => {
+    assert.equal(signal, abort.signal);
+    assert.equal(context.toolCall?.toolCallId, "native-batch", "native batching must retain the original AgentToolContext");
+    assert.equal(context.providerSafetyApproved, true, "native approval must not receive an ExtensionContext substitute");
+    onUpdate({ content: [{ type: "text", text: "native progress" }], details: {} });
+    return { content: [{ type: "text", text: context.settings.nativeSetting }], details: { batchFlushed: context.toolCall.isLastInBatch } };
+  });
+  await fixture.adapter.bind(fixture.context);
+  const result = await fixture.session.getToolByName("write").execute("outer-call", {}, abort.signal, (update) => progress.push(update), fixture.nativeContext);
+  assert.deepEqual(result.details, { batchFlushed: true });
+  assert.equal(result.content[0].text, "preserved");
+  assert.equal(progress[0].content[0].text, "native progress");
+  await fixture.adapter.invalidate("unaccepted session transition");
+  const afterDisposal = await fixture.session.getToolByName("write").execute("after-disposal", {}, abort.signal, (update) => progress.push(update), fixture.nativeContext);
+  assert.deepEqual(afterDisposal.details, { batchFlushed: true });
+  assert.equal(progress.length, 2, "deactivated native execution retains the original caller context");
+});
+
+test("ambiguous_finalization_remains_fenced_until_receipt_replay", async () => {
+  let entered;
+  const finalizing = new Promise((resolve) => {
+    entered = resolve;
+  });
+  let release;
+  const acknowledgement = new Promise((resolve) => {
+    release = resolve;
+  });
+  let finalizations = 0;
+  let postShutdownPoll = false;
+  const fixture = nativeFixture(
+    undefined,
+    async (event) => {
+      if (event.type === "readiness_reported") return { status: "requested", ready_revision: 0 };
+      finalizations++;
+      entered();
+      await acknowledgement;
+      return { status: "accepted", receipt_id: "one-replayed-receipt" };
+    },
+    (event) => {
+      if (event.type === "continuation_poll" && shutdowns === 1) postShutdownPoll = true;
+    },
+  );
+  let shutdowns = 0;
+  fixture.context.shutdown = () => {
+    shutdowns++;
+  };
+  await fixture.adapter.bind(fixture.context);
+  await fixture.adapter.ready(fixture.context);
+  fixture.request();
+  const deadline = setTimeout(() => assert.fail("finalization was never entered"), 5000);
+  try {
+    await finalizing;
+    await assert.rejects(() => fixture.session.prompt("losing review"), /finishing/);
+    assert.equal(shutdowns, 0);
+    assert.equal(finalizations, 1);
+    release();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(shutdowns, 1);
+    assert.equal(finalizations, 1);
+    assert.equal(postShutdownPoll, true, "idle RPC shutdown gets a native input-loop wake only after shutdown was requested");
+  } finally {
+    clearTimeout(deadline);
+  }
+});
+
+test("accepted_shutdown_keeps_native_tool_and_public_entry_fenced_until_exit", async () => {
+  let toolEffects = 0;
+  let promptEffects = 0;
+  const fixture = nativeFixture(
+    async () => {
+      toolEffects++;
+      return { content: [], details: {} };
+    },
+    async () => ({ status: "accepted", receipt_id: "immutable-receipt" }),
+  );
+  fixture.session.prompt = async () => {
+    promptEffects++;
+    return true;
+  };
+  await fixture.adapter.bind(fixture.context);
+  registerCallbacks(fixture.api, makeRecordingEmitter(), async () => assert.fail("wrong completion transport"), undefined, undefined, undefined, undefined, fixture.adapter);
+  let shutdownLifecycle;
+  fixture.context.shutdown = () => {
+    shutdownLifecycle = fixture.api.trigger("session_shutdown", {}, fixture.context);
+  };
+  assert.equal((await fixture.adapter.ready(fixture.context)).status, "accepted");
+  await shutdownLifecycle;
+  await assert.rejects(() => fixture.session.prompt("late native review"));
+  await assert.rejects(() => fixture.session.getToolByName("write").execute("late", {}, undefined, undefined, fixture.nativeContext));
+  await assert.rejects(async () => fixture.session.agent.prompt({ role: "user", content: [] }));
+  assert.throws(() => fixture.session.agent.followUp({ role: "user", content: [] }));
+  assert.equal(promptEffects, 0);
+  assert.equal(toolEffects, 0);
+});
+
+test("send_now_transfers_only_the_exact_queued_dispatch_and_rejects_consumed_replay", async () => {
+  const fixture = nativeFixture();
+  await fixture.adapter.bind(fixture.context);
+  const framed = (id, text, transfer_dispatch_id) => `\u001eALINERY:${JSON.stringify({ id, proof: `${id}-proof`, transfer_dispatch_id })}\u001f${text}`;
+  await fixture.session.followUp(framed("earlier", "same caption"));
+  await fixture.session.followUp(framed("selected", "same caption"));
+  const [earlier, selected] = fixture.session.agent.peekFollowUpQueue();
+  await fixture.session.prompt(framed("send-now", "same caption", "selected"));
+  assert.deepEqual(fixture.session.agent.peekFollowUpQueue(), [earlier]);
+  assert.equal(fixture.session.agent.peekFollowUpQueue().includes(selected), false);
+  await assert.rejects(() => fixture.session.prompt(framed("duplicate", "same caption", "selected")), /no longer transferable/);
+  assert.deepEqual(fixture.session.agent.peekFollowUpQueue(), [earlier]);
+  assert.equal(
+    fixture.events.filter((event) => event.type === "native_dispatch_transferred" && event.dispatch_id === "selected" && event.replacement_dispatch_id === "send-now").length,
+    1,
+  );
+});
+
+test("known_native_job_cancellation_retains_the_actual_unwind_promise", async () => {
+  let release;
+  const unwind = new Promise((resolve) => {
+    release = resolve;
+  });
+  let jobId;
+  let fixture;
+  fixture = nativeFixture(async () => {
+    jobId = fixture.session.asyncJobManager.register("eval", "selected child", async ({ signal }) => {
+      await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+      await unwind;
+    });
+    return { content: [], details: { async: { state: "running", jobId } } };
+  });
+  await fixture.adapter.bind(fixture.context);
+  await fixture.session.getToolByName("write").execute("tool", {}, undefined, undefined, fixture.nativeContext);
+  fixture.session.asyncJobManager.cancel(jobId);
+  assert.equal((await fixture.adapter.ready(fixture.context)).status, "waiting");
+  release();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal((await fixture.adapter.ready(fixture.context)).status, "ready");
+});
+
+test("settled_native_work_renews_prior_readiness_without_another_completion_call", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  const fixture = nativeFixture(async () => {
+    await held;
+    return { content: [], details: {} };
+  });
+  await fixture.adapter.bind(fixture.context);
+  await fixture.adapter.ready(fixture.context);
+  const pending = fixture.native.execute("late-tool", {}, undefined, undefined, fixture.nativeContext);
+  await new Promise((resolve) => setImmediate(resolve));
+  context.mock.timers.runAll();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fixture.events.filter((event) => event.type === "readiness_reported").length, 1, "held work cannot renew readiness");
+  release();
+  await pending;
+  context.mock.timers.runAll();
+  await new Promise((resolve) => setImmediate(resolve));
+  try {
+    const reports = fixture.events.filter((event) => event.type === "readiness_reported");
+    assert.equal(reports.length, 2, "actual settlement must renew the existing readiness request");
+    assert.equal(reports[1].expected_work_revision, fixture.capability().revision);
+    await fixture.session.runIdleCompaction();
+    context.mock.timers.runAll();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(fixture.events.filter((event) => event.type === "readiness_reported").length, 3, "maintenance must not lose readiness");
+  } finally {
+    await fixture.adapter.invalidate("fixture disposed");
+  }
+});
+
+test("new_review_after_ready_requires_its_own_completion_request", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const fixture = nativeFixture();
+  await fixture.adapter.bind(fixture.context);
+  await fixture.adapter.ready(fixture.context);
+  await fixture.session.followUp('\u001eALINERY:{"id":"new-review","proof":"new-proof"}\u001frevise this');
+  const releaseRun = await fixture.consume();
+  releaseRun();
+  await new Promise((resolve) => setImmediate(resolve));
+  context.mock.timers.runAll();
+  await new Promise((resolve) => setImmediate(resolve));
+  try {
+    assert.equal(fixture.events.filter((event) => event.type === "readiness_reported").length, 1, "new review cannot inherit old readiness");
+    assert.equal((await fixture.adapter.ready(fixture.context)).status, "ready");
+  } finally {
+    await fixture.adapter.invalidate("fixture disposed");
+  }
+});
+
+test("late_readiness_reply_cannot_restore_completion_after_new_review", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  let releaseReady;
+  let releaseAdmission;
+  let reports = 0;
+  const heldReady = new Promise((resolve) => {
+    releaseReady = resolve;
+  });
+  const heldAdmission = new Promise((resolve) => {
+    releaseAdmission = resolve;
+  });
+  const fixture = nativeFixture(
+    undefined,
+    async () => {
+      reports++;
+      if (reports === 1) await heldReady;
+      return { status: "ready", ready_revision: fixture.capability().revision };
+    },
+    async (event) => {
+      if (event.type === "native_work_entered") await heldAdmission;
+    },
+  );
+  await fixture.adapter.bind(fixture.context);
+  const ready = fixture.adapter.ready(fixture.context);
+  const review = fixture.session.followUp('\u001eALINERY:{"id":"new-review","proof":"new-proof"}\u001frevise this');
+  releaseReady();
+  await ready;
+  releaseAdmission();
+  await review;
+  const releaseRun = await fixture.consume();
+  releaseRun();
+  await new Promise((resolve) => setImmediate(resolve));
+  context.mock.timers.runAll();
+  await new Promise((resolve) => setImmediate(resolve));
+  try {
+    assert.equal(reports, 1, "a stale completion reply cannot renew readiness for later review");
+  } finally {
+    await fixture.adapter.invalidate("fixture disposed");
+  }
+});
+
+test("later_review_cannot_reuse_an_earlier_deferred_readiness_request", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  let fixture;
+  fixture = nativeFixture(async () => {
+    assert.equal((await fixture.adapter.ready(fixture.context)).status, "waiting");
+    await held;
+    return { content: [], details: {} };
+  });
+  await fixture.adapter.bind(fixture.context);
+  const pending = fixture.session.getToolByName("write").execute("tool", {}, undefined, undefined, fixture.nativeContext);
+  await new Promise((resolve) => setImmediate(resolve));
+  await fixture.session.followUp('\u001eALINERY:{"id":"later-review","proof":"later-proof"}\u001frevise this');
+  release();
+  await pending;
+  const releaseRun = await fixture.consume();
+  releaseRun();
+  await new Promise((resolve) => setImmediate(resolve));
+  try {
+    context.mock.timers.runAll();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(
+      fixture.events.some((event) => event.type === "readiness_reported"),
+      false,
+    );
+    assert.equal((await fixture.adapter.ready(fixture.context)).status, "ready");
+  } finally {
+    await fixture.adapter.invalidate("fixture disposed");
+  }
+});
+
+test("missing_boundary_and_session_shutdown_never_leave_protected_readiness", async () => {
+  const missing = nativeFixture();
+  missing.session.agent.replaceQueues = undefined;
+  await missing.adapter.bind(missing.context);
+  assert.equal((await missing.adapter.ready(missing.context)).status, "unavailable");
+  assert.equal(
+    missing.events.some((event) => event.type === "continuation_bind"),
+    false,
+  );
+  const fixture = nativeFixture();
+  await fixture.adapter.bind(fixture.context);
+  registerCallbacks(fixture.api, makeRecordingEmitter(), async () => assert.fail("detached completion transport"), undefined, undefined, undefined, undefined, fixture.adapter);
+  await fixture.api.trigger("session_shutdown", {}, fixture.context);
+  assert.equal(fixture.capability().available, false);
+  assert.equal((await fixture.adapter.ready(fixture.context)).status, "unavailable");
+  const entered = fixture.events.filter((event) => event.type === "native_work_entered").length;
+  await fixture.session.prompt("ordinary native behavior after binding disposal");
+  assert.equal(fixture.events.filter((event) => event.type === "native_work_entered").length, entered);
+});
+
+test("revocation_does_not_reopen_review_before_authoritative_ack", async () => {
+  let acknowledge;
+  let started;
+  const ack = new Promise((resolve) => {
+    acknowledge = resolve;
+  });
+  const entered = new Promise((resolve) => {
+    started = resolve;
+  });
+  const fixture = nativeFixture(undefined, undefined, async (event) => {
+    if (event.type === "continuation_revoke") {
+      started();
+      await ack;
+    }
+  });
+  let effects = 0;
+  fixture.session.prompt = async () => {
+    effects++;
+  };
+  await fixture.adapter.bind(fixture.context);
+  const revoke = fixture.adapter.invalidate("required boundary lost");
+  try {
+    await entered;
+    await assert.rejects(() => fixture.session.prompt("losing review"), /finishing|required boundary lost/);
+    assert.equal(effects, 0);
+    acknowledge();
+    await revoke;
+    await fixture.session.prompt("plain review after committed revocation");
+    assert.equal(effects, 1);
+    assert.equal((await fixture.adapter.ready(fixture.context)).status, "unavailable");
+  } finally {
+    acknowledge();
+    await revoke;
+  }
+});
+
+test("rejected_revocation_keeps_review_fenced_when_continue_wins", async () => {
+  let rejectRevoke;
+  let started;
+  const rejection = new Promise((resolve) => {
+    rejectRevoke = resolve;
+  });
+  const entered = new Promise((resolve) => {
+    started = resolve;
+  });
+  const fixture = nativeFixture(undefined, undefined, async (event) => {
+    if (event.type === "continuation_revoke") {
+      started();
+      await rejection;
+      throw new ext.NativeControlRejected("continuation already requested");
+    }
+  });
+  let effects = 0;
+  fixture.session.prompt = async () => {
+    effects++;
+  };
+  await fixture.adapter.bind(fixture.context);
+  const revoke = fixture.adapter.invalidate("boundary changed");
+  await entered;
+  fixture.request();
+  rejectRevoke();
+  await revoke;
+  await assert.rejects(() => fixture.session.prompt("must not cross requested handoff"), /finishing|boundary changed/);
+  assert.equal(effects, 0);
+});
+
+test("revoked_capability_retains_original_incarnation_until_entered_work_settles", async () => {
+  let release;
+  let started;
+  const unwind = new Promise((resolve) => {
+    release = resolve;
+  });
+  const entered = new Promise((resolve) => {
+    started = resolve;
+  });
+  const pending = new Set();
+  const fixture = nativeFixture(
+    async () => {
+      started();
+      await unwind;
+      return { content: [], details: { original: true } };
+    },
+    undefined,
+    (event) => {
+      if (event.type === "native_work_entered") pending.add(event.operation_id);
+      if (event.type === "native_work_settled") {
+        assert.equal(event.process_incarnation, "native-incarnation");
+        pending.delete(event.operation_id);
+      }
+    },
+  );
+  await fixture.adapter.bind(fixture.context);
+  const work = fixture.session.getToolByName("write").execute("active", {}, undefined, undefined, fixture.nativeContext);
+  await entered;
+  await fixture.adapter.invalidate("required boundary lost");
+  release();
+  assert.deepEqual((await work).details, { original: true });
+  assert.deepEqual([...pending], [], "real old work must settle even though new protected admission is unavailable");
+});
+
+test("revoked_scope_retains_late_children_without_delaying_native_parent_return", async () => {
+  let resumeParent;
+  let releaseChild;
+  let enteredParent;
+  let enteredChild;
+  const resume = new Promise((resolve) => {
+    resumeParent = resolve;
+  });
+  const childDone = new Promise((resolve) => {
+    releaseChild = resolve;
+  });
+  const parentStarted = new Promise((resolve) => {
+    enteredParent = resolve;
+  });
+  const childStarted = new Promise((resolve) => {
+    enteredChild = resolve;
+  });
+  let child;
+  let fixture;
+  fixture = nativeFixture(async (_id, input) => {
+    if (input.kind === "parent") {
+      enteredParent();
+      await resume;
+      child = fixture.session.getToolByName("write").execute("child", { kind: "child" }, undefined, undefined, fixture.nativeContext);
+      return { content: [], details: { parentReturned: true } };
+    }
+    enteredChild();
+    await childDone;
+    return { content: [], details: {} };
+  });
+  await fixture.adapter.bind(fixture.context);
+  const parent = fixture.session.getToolByName("write").execute("parent", { kind: "parent" }, undefined, undefined, fixture.nativeContext);
+  await parentStarted;
+  await fixture.adapter.invalidate("retire protected admission");
+  resumeParent();
+  let deadline;
+  try {
+    const result = await Promise.race([
+      parent,
+      new Promise((_, reject) => {
+        deadline = setTimeout(() => reject(new Error("native parent return waited for child execution")), 5000);
+      }),
+    ]);
+    assert.equal(result.details.parentReturned, true);
+    await childStarted;
+    assert.equal(fixture.capability().pending.length, 2, "parent and actual late child stay owned while unavailable");
+    releaseChild();
+    await child;
+    assert.deepEqual(fixture.capability().pending, []);
+  } finally {
+    clearTimeout(deadline);
+    resumeParent();
+    releaseChild();
+    await Promise.allSettled([parent, child]);
+  }
+});
+
+test("stale_binding_acknowledgement_cannot_activate_native_admission", async () => {
+  const fixture = nativeFixture(undefined, undefined, (event) => {
+    if (event.type === "continuation_bind")
+      return {
+        process_incarnation: "native-incarnation",
+        capability_revision: event.expected_capability_revision + 3,
+        work_revision: 0,
+        continuation_requested_revision: null,
+        available: true,
+        reason: null,
+      };
+  });
+  let effects = 0;
+  fixture.session.prompt = async () => {
+    effects++;
+  };
+  await fixture.adapter.bind(fixture.context);
+  assert.equal((await fixture.adapter.ready(fixture.context)).status, "unavailable");
+  await assert.rejects(() => fixture.session.prompt("must not use another binding's acknowledgement"), /Stale continuation binding/);
+  assert.equal(effects, 0);
+});
+
+test("accepted_revocation_replay_keeps_the_fence_and_requests_shutdown_once", async () => {
+  let committed = false;
+  const fixture = nativeFixture(undefined, undefined, (event) => {
+    if (event.type === "continuation_revoke") committed = true;
+    if (committed && (event.type === "continuation_revoke" || event.type === "continuation_poll")) {
+      return { status: "accepted", receipt_id: "immutable-winner" };
+    }
+  });
+  let shutdowns = 0;
+  fixture.context.shutdown = () => {
+    shutdowns++;
+  };
+  await fixture.adapter.bind(fixture.context);
+  await fixture.adapter.invalidate("acceptance won the race");
+  await new Promise((resolve) => setImmediate(resolve));
+  await fixture.adapter.invalidate("duplicate lifecycle notification");
+  assert.equal(shutdowns, 1);
+  await assert.rejects(() => fixture.session.prompt("after immutable acceptance"), /finishing/);
+});
+
+test("daemon_waiting_retains_the_deferred_readiness_request_until_authority_settles", async () => {
+  let attempts = 0;
+  const fixture = nativeFixture(undefined, async () => {
+    attempts++;
+    return attempts === 1 ? { status: "waiting", reason: "native intake acknowledgement is pending" } : { status: "ready", ready_revision: 0 };
+  });
+  await fixture.adapter.bind(fixture.context);
+  assert.equal((await fixture.adapter.ready(fixture.context)).status, "waiting");
+  const deadline = setTimeout(() => assert.fail("continuation poll did not run"), 5000);
+  try {
+    await fixture.nextPoll();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(attempts, 2, "known temporary waiting must not discard the requested readiness");
+  } finally {
+    clearTimeout(deadline);
+  }
+});
+
+test("opaque_dispatch_proof_is_validated_before_effects_and_replay_cannot_deliver_twice", async () => {
+  const claims = new Map();
+  const fixture = nativeFixture(undefined, undefined, (event) => {
+    if (event.type !== "native_work_entered" || !event.dispatch_id) return;
+    if (event.dispatch_proof !== "single-dispatch-proof") throw new ext.NativeControlRejected("invalid dispatch proof");
+    const claimed = claims.get(event.dispatch_id);
+    if (claimed && claimed !== event.operation_id) throw new ext.NativeControlRejected("dispatch proof already claimed");
+    claims.set(event.dispatch_id, event.operation_id);
+  });
+  const delivered = [];
+  fixture.session.prompt = async (text) => {
+    delivered.push(text);
+    return true;
+  };
+  await fixture.adapter.bind(fixture.context);
+  const frame = '\u001eALINERY:{"id":"review","proof":"single-dispatch-proof"}\u001fexact original review';
+  await fixture.session.prompt(frame);
+  assert.deepEqual(delivered, ["exact original review"], "opaque envelope is removed before native preprocessing");
+  await assert.rejects(() => fixture.session.prompt(frame), /already claimed/);
+  assert.deepEqual(delivered, ["exact original review"], "replayed proof cannot deliver a second native prompt");
+});
+
+test("forged_dispatch_proof_cannot_reach_the_native_delegate", async () => {
+  const fixture = nativeFixture(undefined, undefined, (event) => {
+    if (event.type === "native_work_entered" && event.dispatch_id) throw new ext.NativeControlRejected("invalid dispatch proof");
+  });
+  let effects = 0;
+  fixture.session.prompt = async () => {
+    effects++;
+    return true;
+  };
+  await fixture.adapter.bind(fixture.context);
+  await assert.rejects(() => fixture.session.prompt('\u001eALINERY:{"id":"forged","proof":"not-authorized"}\u001fmalicious input'), /invalid dispatch proof/);
+  assert.equal(effects, 0);
+  await assert.rejects(() => fixture.session.prompt('\u001eALINERY:{"id":"another-pending-input","proof":"forged-again"}\u001fpayload'), /invalid dispatch proof/);
+  assert.equal(
+    fixture.events.some((event) => event.type === "native_dispatch_rejected"),
+    false,
+    "unclaimed text must not reject someone else's pending dispatch",
+  );
+});
+
+test("generic_session_preserves_literal_header_shaped_input_without_authority", async () => {
+  const fixture = nativeFixture(undefined, undefined, (event) => {
+    if (event.type === "continuation_poll" && event.process_incarnation === undefined) throw new ext.NativeControlRejected("session has no primary execution");
+  });
+  const delivered = [];
+  fixture.session.prompt = async (text) => {
+    delivered.push(text);
+    return true;
+  };
+  await fixture.adapter.bind(fixture.context);
+  const literal = '\u001eALINERY:{"id":"literal","proof":"ordinary-user-text"}\u001funchanged';
+  await fixture.session.prompt(literal);
+  assert.deepEqual(delivered, [literal]);
+});
+
 test("naming prompt preserves context and stops after acknowledged name", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "alinery-naming-"));
   const runner = path.join(root, "runner");
@@ -514,7 +1619,7 @@ describe("2C — OMP extension callback behavior in isolation", () => {
     assert.deepEqual(emit.emitted[3], { type: "idle", omp_turn_id: 10 });
 
     for (const ev of emit.emitted) {
-      assert.notEqual(ev.type, "phase_completed");
+      assert.notEqual(ev.type, "readiness_reported");
       assert.notEqual(ev.type, "process_exited");
     }
   });
@@ -597,8 +1702,8 @@ describe("2C — OMP extension callback behavior in isolation", () => {
 
     assert.equal(emit.emitted.length, 1);
     const ev = emit.emitted[0];
-    assert.equal(ev.type, "phase_completed");
-    assert.equal(ev.omp_session_id, "omp-sess-abc");
+    assert.equal(ev.type, "readiness_reported");
+    assert.equal(ev.process_incarnation, "omp-sess-abc");
     assert.ok(!("omp_turn_id" in ev), "OMP tool context exposes no turn id");
 
     assert.equal(output.content[0].type, "text");
@@ -638,126 +1743,11 @@ describe("2C — OMP extension callback behavior in isolation", () => {
     assert.equal(shutdownRequests, 2, "session reset must clear the shutdown latch");
   });
 
-  test("locked_completion_waits_for_approval_then_rechecks_daemon_acceptance", async () => {
-    const api = makeFakeApi();
-    const emit = makeRecordingEmitter();
-    let attempts = 0;
-    let shutdowns = 0;
-    let answer;
-    let present;
-    const shown = new Promise((resolve) => {
-      present = resolve;
-    });
-    registerCallbacks(
-      api,
-      emit,
-      async () => {
-        attempts += 1;
-        return attempts === 1 ? { status: "human_authorization_required" } : { status: "accepted", receipt_id: "approved-receipt" };
-      },
-      undefined,
-    );
-    const pending = api.callTool(
-      "alinery_phase_complete",
-      {},
-      {
-        ...makeContext("completion-session"),
-        shutdown() {
-          shutdowns += 1;
-        },
-        ui: {
-          confirm(title) {
-            present(title);
-            return new Promise((resolve) => {
-              answer = resolve;
-            });
-          },
-        },
-      },
-    );
-    await shown;
-    assert.equal(attempts, 1);
-    assert.equal(shutdowns, 0);
-    answer(true);
-    assert.deepEqual((await pending).details, { status: "accepted", receipt_id: "approved-receipt" });
-    assert.equal(attempts, 2);
-    assert.equal(shutdowns, 1);
-  });
-
-  test("completion_denial_or_unavailable_ui_never_retries_or_shuts_down", async () => {
-    for (const response of [false, undefined, "true", new Error("UI disconnected")]) {
-      const api = makeFakeApi();
-      const emit = makeRecordingEmitter();
-      let attempts = 0;
-      registerCallbacks(
-        api,
-        emit,
-        async () => {
-          attempts += 1;
-          return { status: "human_authorization_required" };
-        },
-        undefined,
-      );
-      const result = await api.callTool(
-        "alinery_phase_complete",
-        {},
-        {
-          ...makeContext("completion-session"),
-          shutdown() {
-            assert.fail("must remain interactive");
-          },
-          ui: {
-            async confirm() {
-              if (response instanceof Error) throw response;
-              return response;
-            },
-          },
-        },
-      );
-      assert.equal(result.details.status, "human_authorization_required");
-      assert.equal(attempts, 1);
-      assert.deepEqual(emit.emitted.at(-1), { type: "busy", correlation_id: "tool-call-1" });
-    }
-  });
-
-  test("an_allowed_confirmation_does_not_replace_daemon_permission_or_output_validation", async () => {
-    for (const outcome of [
-      { status: "human_authorization_required" },
-      { status: "invalid_outputs", diagnostics: ["report.md must not be empty"] },
-      { status: "rejected", reason: "owner changed" },
-    ]) {
-      const api = makeFakeApi();
-      const emit = makeRecordingEmitter();
-      let attempts = 0;
-      let confirmations = 0;
-      registerCallbacks(api, emit, async () => (++attempts === 1 ? { status: "human_authorization_required" } : outcome), undefined);
-      const result = await api.callTool(
-        "alinery_phase_complete",
-        {},
-        {
-          ...makeContext("completion-session"),
-          shutdown() {
-            assert.fail("must remain interactive");
-          },
-          ui: {
-            async confirm() {
-              confirmations += 1;
-              return true;
-            },
-          },
-        },
-      );
-      assert.deepEqual(result.details, outcome);
-      assert.equal(attempts, 2);
-      assert.equal(confirmations, 1);
-    }
-  });
-
   test("completion_tool_keeps_locked_invalid_and_transport_failures_interactive", async () => {
     const cases = [
-      { outcome: { status: "human_authorization_required" } },
+      { outcome: { status: "ready", ready_revision: 7 } },
       { outcome: { status: "invalid_outputs", diagnostics: ["research/result.md must be a regular file", "report.md must not be empty"] } },
-      { outcome: { status: "rejected", reason: "execution owner is stale" } },
+      { outcome: { status: "stale", reason: "execution owner is stale" } },
       { outcome: new Error("daemon unavailable") },
       { outcome: new Error("daemon timeout") },
     ];
@@ -860,7 +1850,7 @@ describe("2C — OMP extension callback behavior in isolation", () => {
     const ctx = makeContext("omp-s2");
     await api.callTool("alinery_phase_complete", {}, ctx);
     await api.callTool("alinery_phase_complete", {}, ctx);
-    const pcs = emit.emitted.filter((e) => e.type === "phase_completed");
+    const pcs = emit.emitted.filter((e) => e.type === "readiness_reported");
     assert.equal(pcs.length, 2);
     assert.deepEqual(pcs[0], pcs[1]);
   });
@@ -1065,7 +2055,7 @@ describe("production completion transport", () => {
     }
   }
 
-  const event = { type: "phase_completed", omp_session_id: "omp-transport" };
+  const event = { type: "readiness_reported", process_incarnation: "omp-transport", expected_work_revision: 0 };
 
   async function withCompletionAttempts(firstReply, run) {
     const root = mkdtempSync(path.join(os.tmpdir(), "alinery-completion-retry-"));
@@ -1126,7 +2116,7 @@ process.stdin.on("end", () => {
         const api = makeFakeApi();
         registerCallbacks(api, makeRecordingEmitter(), emitCompletion);
         let shutdowns = 0;
-        const context = makeContext(event.omp_session_id);
+        const context = makeContext(event.process_incarnation);
         context.shutdown = () => {
           assert.deepEqual(state().lastReply, { status: "accepted", receipt_id: "immutable-receipt" });
           shutdowns++;
@@ -1159,11 +2149,11 @@ process.stdin.on("end", () => {
       { status: "rejected", reason: "execution owner is stale" },
       { status: "rejected", reason: "retained task definition integrity mismatch" },
       { status: "rejected", reason: "invalid task execution state: malformed JSON" },
-      { status: "human_authorization_required" },
+      { status: "ready", ready_revision: 7 },
       { status: "invalid_outputs", diagnostics: ["invalid publication"] },
     ]) {
       await withCompletionAttempts(`reply = ${JSON.stringify(outcome)};`, async (emitCompletion, state) => {
-        assert.deepEqual(await emitCompletion(event), outcome);
+        assert.deepEqual(await emitCompletion(event), outcome.status === "rejected" ? { status: "unavailable", reason: outcome.reason } : outcome);
         assert.equal(state().requests.length, 1);
       });
     }
@@ -1174,7 +2164,7 @@ process.stdin.on("end", () => {
       await withCompletionAttempts(`reply = ${JSON.stringify(outcome)};`, async (emitCompletion, state) => {
         const api = makeFakeApi();
         registerCallbacks(api, makeRecordingEmitter(), emitCompletion);
-        const context = makeContext(event.omp_session_id);
+        const context = makeContext(event.process_incarnation);
         context.shutdown = () => assert.fail("unconfirmed completion must stay open");
         const controller = new AbortController();
         let updates = 0;
@@ -1194,8 +2184,11 @@ process.stdin.on("end", () => {
     for (const outcome of [
       { status: "accepted", receipt_id: "receipt-".repeat(100) },
       { status: "invalid_outputs", diagnostics: ["Missing nested/output.md", "λ".repeat(5000)] },
-      { status: "human_authorization_required" },
-      { status: "rejected", reason: "execution owner is stale" },
+      { status: "ready", ready_revision: 7 },
+      { status: "requested", ready_revision: 7 },
+      { status: "waiting", reason: "native work pending" },
+      { status: "stale", reason: "generation changed" },
+      { status: "unavailable", reason: "primary binding missing" },
     ]) {
       await withRunnerOutput(
         `${JSON.stringify(outcome)}\n`,

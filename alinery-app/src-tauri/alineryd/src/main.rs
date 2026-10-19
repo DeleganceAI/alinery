@@ -18,6 +18,7 @@ mod idle_inhibit;
 mod ui_control;
 use alinery_core::daemon_client::{control_request_size_error, MAX_CONTROL_BODY_BYTES, MAX_CONTROL_HEADER_BYTES};
 use alinery_core::execution::{CompletionOutcome, ExecutionLifecycle};
+use alinery_core::task_creation::DispatchOutcome;
 use alinery_core::{
     alinery_dir, alineryd_lock_path, alineryd_reconciler_lock_path, alineryd_socket_path, all_session_meta_paths, ensure_hosted_inference_for_spawn, is_hosted_model,
     login_shell_path, normalized_session_status, process_exited, process_started, read_meta_launch_fields, read_session_meta_full, read_task, reduce_runner_event,
@@ -95,7 +96,6 @@ struct Inner {
     // byte cap can drop it. OMP emits it once at spawn; without it every later attach pays a
     // full 2s wait for a line that will never come again.
     rpc_ready: Option<Vec<u8>>,
-    completion_in_flight: bool,
     state: SessionState,
     // Last durable activity second: streaming tokens within it need no disk write.
     activity_at: Option<u64>,
@@ -116,6 +116,7 @@ struct Sess {
     // Restate in-flight: reader EOF must not stamp ended_at / exit_code.
     replacing: Arc<AtomicBool>,
     pending_pty_seed: bool,
+    continuation: Arc<Mutex<execution::ContinuationGate>>,
 }
 
 impl Sess {
@@ -784,35 +785,184 @@ fn reply(stream: &mut UnixStream, v: Value) {
     let _ = writeln!(stream, "{v}");
 }
 
-fn message_error_response(error: impl Into<String>, delivery: &str) -> Value {
-    json!({"error": error.into(), "delivery": delivery})
-}
-
-fn reply_message_error(stream: &mut UnixStream, error: impl Into<String>, delivery: &str) {
-    reply(stream, message_error_response(error, delivery));
-}
-
 fn write_and_flush_message<W: Write + ?Sized>(writer: &mut W, adapter: MessageAdapter, body: &[u8]) -> Result<(), String> {
     write_message(adapter, writer, body)
         .map_err(|error| format!("write-message: {error}"))
         .and_then(|_| writer.flush().map_err(|error| format!("flush-message: {error}")))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CompletionEventAction {
-    NotNeeded,
-    Attempt,
-    InFlight,
+fn dispatch_reply(stream: &mut UnixStream, id: &str, outcome: DispatchOutcome) {
+    match &outcome {
+        DispatchOutcome::Written => reply(stream, json!({"ok":true,"dispatch_id":id,"dispatch":outcome})),
+        DispatchOutcome::NotSent { reason } => reply(stream, json!({"error":reason,"delivery":"not_sent","dispatch_id":id,"dispatch":outcome})),
+        DispatchOutcome::Unknown { reason } => reply(stream, json!({"error":reason,"delivery":"unknown","dispatch_id":id,"dispatch":outcome})),
+    }
 }
 
-fn completion_event_action(required: bool, in_flight: &mut bool) -> CompletionEventAction {
-    if !required {
-        CompletionEventAction::NotNeeded
-    } else if *in_flight {
-        CompletionEventAction::InFlight
-    } else {
-        *in_flight = true;
-        CompletionEventAction::Attempt
+fn controlled_dispatch(
+    repo: &Path,
+    owner: &execution::Owner,
+    id: &str,
+    work: bool,
+    tracked: bool,
+    write: impl FnOnce(&mut execution::ContinuationGate) -> Result<(), String>,
+) -> DispatchOutcome {
+    let mut gate = owner.gate.lock().unwrap_or_else(|e| e.into_inner());
+    dispatch_under_gate(repo, owner, &mut gate, id, work, tracked, write)
+}
+
+fn dispatch_under_gate(
+    repo: &Path,
+    owner: &execution::Owner,
+    gate: &mut execution::ContinuationGate,
+    id: &str,
+    work: bool,
+    tracked: bool,
+    write: impl FnOnce(&mut execution::ContinuationGate) -> Result<(), String>,
+) -> DispatchOutcome {
+    if work {
+        match owner.admit(repo, gate, id, tracked) {
+            Ok(Some(previous)) => return previous,
+            Ok(None) => {}
+            Err(reason) => return DispatchOutcome::NotSent { reason },
+        }
+    }
+    let outcome = match write(gate) {
+        Ok(()) => DispatchOutcome::Written,
+        // A write_all/flush error does not establish that zero bytes escaped.
+        Err(reason) => DispatchOutcome::Unknown { reason },
+    };
+    if work {
+        owner.dispatched(gate, id, outcome.clone());
+    }
+    outcome
+}
+
+fn observational_rpc(payload: &Value) -> bool {
+    matches!(
+        payload.get("type").and_then(Value::as_str),
+        Some(
+            "get_state"
+                | "get_messages"
+                | "get_messages_page"
+                | "get_branch_messages"
+                | "get_last_assistant_text"
+                | "get_session_stats"
+                | "get_available_models"
+                | "get_available_commands"
+                | "get_login_providers"
+                | "set_subagent_subscription"
+                | "get_subagents"
+                | "get_subagent_messages"
+                | "negotiate_protocol"
+        )
+    )
+}
+
+// Match pinned OMP's JavaScript \s, including BOM but excluding NEL.
+fn native_skill_whitespace(ch: char) -> bool {
+    matches!(
+        ch,
+        '\t' | '\n' | '\u{000b}' | '\u{000c}' | '\r' | ' ' | '\u{00a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'
+    )
+}
+
+fn native_skill_prompt(message: &str) -> bool {
+    message
+        .split(native_skill_whitespace)
+        .any(|word| word.strip_prefix("/skill:").is_some_and(|name| !name.is_empty() && !name.contains('/')))
+}
+
+fn correlated_rpc(mut payload: Value, dispatch_id: &str, gate: &mut execution::ContinuationGate) -> Value {
+    let skill = payload.get("message").and_then(Value::as_str).is_some_and(native_skill_prompt);
+    let ordinary = matches!(payload.get("type").and_then(Value::as_str), Some("prompt" | "steer" | "follow_up" | "abort_and_prompt"))
+        && !skill
+        && payload
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|message| !message.trim_start_matches(native_skill_whitespace).starts_with('/'));
+    if ordinary && gate.available() {
+        let message = payload["message"].as_str().unwrap();
+        let mut header = json!({"id":dispatch_id,"proof":gate.dispatch_proof(dispatch_id)});
+        if payload["type"] == "abort_and_prompt" {
+            if let Some(transfer) = payload.get("transfer_dispatch_id").and_then(Value::as_str).filter(|id| !id.is_empty()) {
+                header["transfer_dispatch_id"] = json!(transfer);
+            }
+        }
+        payload["message"] = json!(format!("\u{001e}ALINERY:{header}\u{001f}{message}"));
+    }
+    if gate.available() && payload["type"] == "prompt" && skill {
+        gate.register_rpc_intake(dispatch_id, "prompt");
+    }
+    if gate.available() {
+        match payload["type"].as_str() {
+            Some("compact") => gate.register_rpc_intake(dispatch_id, "compact"),
+            Some("set_model") => gate.register_rpc_intake(dispatch_id, "set_model"),
+            Some("set_thinking_level") => gate.register_rpc_intake(dispatch_id, "set_thinking_level"),
+            Some("set_auto_compaction") => gate.register_rpc_intake(dispatch_id, "set_auto_compaction"),
+            _ => {}
+        }
+    }
+    payload
+}
+
+fn dispatch_rpc_seed(reg: &Registry, repo: &Path, session_id: &str) {
+    let attempt = || -> Result<(), String> {
+        let owner = execution::owner(reg, session_id)?;
+        let stdin = {
+            let map = reg.lock().unwrap_or_else(|e| e.into_inner());
+            let session = map.get(session_id).ok_or("unknown-session")?;
+            if !Arc::ptr_eq(&owner.gate, &session.continuation) {
+                return Err("stale seed transport".into());
+            }
+            let SessionIo::Rpc { stdin } = &session.io else { return Ok(()) };
+            stdin.clone()
+        };
+        let mut gate = owner.gate.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(message) = gate.take_rpc_seed() else { return Ok(()) };
+        let dispatch_id = "internal-seed";
+        let outcome = dispatch_under_gate(repo, &owner, &mut gate, dispatch_id, true, true, |gate| {
+            let payload = correlated_rpc(json!({"id":dispatch_id,"type":"prompt","message":message}), dispatch_id, gate);
+            let mut writer = stdin.lock().unwrap_or_else(|e| e.into_inner());
+            writeln!(writer, "{payload}").and_then(|_| writer.flush()).map_err(|error| error.to_string())
+        });
+        match outcome {
+            DispatchOutcome::Written => Ok(()),
+            DispatchOutcome::NotSent { reason } | DispatchOutcome::Unknown { reason } => {
+                gate.seed_failed(format!("initial prompt delivery failed: {reason}"));
+                Err(reason)
+            }
+        }
+    };
+    if let Err(error) = attempt() {
+        eprintln!("rpc seed prompt: {error}");
+    }
+}
+
+fn wake_accepted_rpc(reg: &Registry, session_id: &str, incarnation: &str) {
+    let Ok(owner) = execution::owner(reg, session_id) else { return };
+    let stdin = {
+        let map = reg.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(session) = map.get(session_id) else { return };
+        if !Arc::ptr_eq(&owner.gate, &session.continuation) {
+            return;
+        }
+        let SessionIo::Rpc { stdin } = &session.io else { return };
+        stdin.clone()
+    };
+    let gate = owner.gate.lock().unwrap_or_else(|e| e.into_inner());
+    if !gate.matches_incarnation(incarnation)
+        || owner.replacing.load(Ordering::SeqCst)
+        || !process_accepts_runner_events(&owner.inner.lock().unwrap_or_else(|e| e.into_inner()).state.process)
+    {
+        return;
+    }
+    let mut writer = stdin.lock().unwrap_or_else(|e| e.into_inner());
+    // The authenticated post-shutdown poll replayed a durable receipt before
+    // scheduling this read-only wake. It requests no work and grants no intent.
+    if let Err(error) = writeln!(writer, "{}", json!({"id":"completion-shutdown-wake","type":"get_state"})).and_then(|_| writer.flush()) {
+        eprintln!("completion shutdown wake: {error}");
     }
 }
 
@@ -822,74 +972,6 @@ fn start_auto_advance_once(repo: PathBuf, reg: Registry, daemon_namespace: Strin
             reconcile_auto_advance_repo(&repo, &reg, &daemon_namespace, &app_config, &protected_host);
         }
     });
-}
-
-fn accept_phase_completion(
-    reg: &Registry,
-    repo: &Path,
-    session_id: &str,
-    task_slug: &str,
-    omp_session_id: &str,
-    omp_turn_id: Option<u64>,
-    meta_path: &Path,
-    _app_config: &Path,
-) -> Result<CompletionOutcome, String> {
-    if task_slug.is_empty() {
-        return Err("session has no v2 execution".into());
-    }
-    let source = read_session_meta_full(meta_path).ok_or("missing-session-meta")?;
-    if source.execution_id.is_empty() {
-        return Err("session has no v2 execution".into());
-    }
-    let outcome = alinery_core::execution::mutate_execution_state(
-        repo,
-        task_slug,
-        &source.daemon_namespace,
-        execution_config_identity(),
-        "accept execution completion",
-        |_, state| alinery_core::execution::accept_execution_completion(repo, task_slug, state, &source.execution_id, session_id),
-    )?;
-    if matches!(outcome, CompletionOutcome::Accepted { .. }) {
-        execution::sync_execution_state(repo, task_slug)?;
-        // Projection failures cannot revoke a receipt already durably committed.
-        if let Err(error) = stamp_meta(meta_path, |value| {
-            value["semantic"] = json!({"phase_completed_at":now_secs(),"omp_session_id":omp_session_id,"omp_turn_id":omp_turn_id});
-        }) {
-            eprintln!("completion projection: {error}");
-        }
-        let completed = alinery_core::execution::read_execution_state(repo, task_slug).is_ok_and(|state| {
-            state
-                .executions
-                .get(&source.execution_id)
-                .is_some_and(|record| record.lifecycle == ExecutionLifecycle::Completed)
-        });
-        let _ = set_live_playbook(reg, session_id, if completed { PlaybookState::Completed } else { PlaybookState::ReadyToAdvance });
-    } else {
-        let agent = match &outcome {
-            CompletionOutcome::HumanAuthorizationRequired => alinery_core::AgentState::WaitingForApproval {
-                correlation_id: format!("completion-permission:{}", source.execution_id),
-            },
-            CompletionOutcome::InvalidOutputs { diagnostics } => {
-                use std::hash::{Hash, Hasher};
-                let mut hash = std::collections::hash_map::DefaultHasher::new();
-                diagnostics.hash(&mut hash);
-                alinery_core::AgentState::WaitingForInput {
-                    correlation_id: format!("completion-outputs:{}:{:016x}", source.execution_id, hash.finish()),
-                }
-            }
-            CompletionOutcome::Accepted { .. } => unreachable!(),
-        };
-        let session = reg.lock().unwrap_or_else(|error| error.into_inner()).get(session_id).map(|session| session.inner.clone());
-        if let Some(inner) = session {
-            let mut inner = inner.lock().unwrap_or_else(|error| error.into_inner());
-            let mut candidate = inner.state.clone();
-            candidate.agent = agent;
-            if let Err(error) = publish_live_transition(&mut inner, meta_path, candidate) {
-                eprintln!("completion attention projection: {error}");
-            }
-        }
-    }
-    Ok(outcome)
 }
 
 fn emit_session_started(app_config: &Path, is_resume: bool, harness: &str, phase: &str, session_id: &str, task_id: &str) {
@@ -965,14 +1047,19 @@ struct PendingPtySeed {
 
 fn dispatch_pty_seed(pending: PendingPtySeed, reg: Registry, repo: PathBuf, lane: String) {
     std::thread::spawn(move || {
-        let result = {
-            let mut writer = pending.writer.lock().unwrap_or_else(|error| error.into_inner());
-            writer
-                .write_all(alinery_core::MESSAGE_SUBMIT)
-                .and_then(|()| writer.flush())
-                .map_err(|error| error.to_string())
+        let outcome = match execution::owner(&reg, &pending.session_id) {
+            Ok(owner) if Arc::ptr_eq(&owner.inner, &pending.inner) => controlled_dispatch(&repo, &owner, "internal-pty-seed-submit", true, false, |_| {
+                let mut writer = pending.writer.lock().unwrap_or_else(|error| error.into_inner());
+                writer
+                    .write_all(alinery_core::MESSAGE_SUBMIT)
+                    .and_then(|()| writer.flush())
+                    .map_err(|error| error.to_string())
+            }),
+            _ => DispatchOutcome::NotSent {
+                reason: "stale initial prompt transport".into(),
+            },
         };
-        if let Err(error) = result {
+        if let DispatchOutcome::NotSent { reason: error } | DispatchOutcome::Unknown { reason: error } = outcome {
             let current = reg
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -1012,15 +1099,16 @@ fn dispatch_pty_seed(pending: PendingPtySeed, reg: Registry, repo: PathBuf, lane
 enum RunnerEventResult {
     Passive,
     Completion(CompletionOutcome),
+    Control(alinery_core::ContinuationControl),
     SessionName(alinery_core::SessionNameOutcome),
 }
 
-fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Path) -> Result<(RunnerEventResult, Option<PendingPtySeed>), String> {
+fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, _app_config: &Path) -> Result<(RunnerEventResult, Option<PendingPtySeed>), String> {
     let envelope: RunnerEventEnvelope = serde_json::from_value(req.clone()).map_err(|_| "invalid-event".to_string())?;
     if envelope.version != RUNNER_EVENT_PROTOCOL_VERSION {
         return Err("unsupported-event-version".into());
     }
-    let (inner, meta_path, task_slug) = {
+    let (inner, meta_path) = {
         let map = reg.lock().unwrap_or_else(|e| e.into_inner());
         let session = map.get(&envelope.session_id).ok_or_else(|| "unknown-session".to_string())?;
         if session.event_token != envelope.token {
@@ -1042,12 +1130,19 @@ fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Pa
             let outcome = alinery_core::set_session_name(repo, &session.task_slug, &envelope.session_id, name, alinery_core::SessionNameSource::Auto)?;
             return Ok((RunnerEventResult::SessionName(outcome), None));
         }
-        (session.inner.clone(), session.meta_path.clone(), session.task_slug.clone())
+        (session.inner.clone(), session.meta_path.clone())
     };
 
-    let completion_action = {
+    let owner = execution::owner(reg, &envelope.session_id)?;
+    if owner.token != envelope.token || !Arc::ptr_eq(&owner.inner, &inner) {
+        return Err("stale runner event owner".into());
+    }
+    if let Some(result) = execution::continuation_event(repo, &owner, &envelope.event)? {
+        return Ok((result, None));
+    }
+    {
         let mut state = inner.lock().unwrap_or_else(|e| e.into_inner());
-        if !process_accepts_runner_events(&state.state.process) && !matches!(envelope.event, RunnerEvent::PhaseCompleted { .. }) {
+        if !process_accepts_runner_events(&state.state.process) {
             return Err("session-exited".into());
         }
         if state.state.adapter != HarnessAdapter::Omp {
@@ -1061,26 +1156,7 @@ fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Pa
             record_activity(&mut state, &meta_path, now_secs())?;
         }
         publish_live_transition(&mut state, &meta_path, reduced.state)?;
-        if matches!(envelope.event, RunnerEvent::PhaseCompleted { .. }) {
-            completion_event_action(true, &mut state.completion_in_flight)
-        } else {
-            CompletionEventAction::NotNeeded
-        }
-    };
-
-    let completion = match (&envelope.event, completion_action) {
-        (_, CompletionEventAction::InFlight) => Err("completion-in-progress".to_string()),
-        (RunnerEvent::PhaseCompleted { .. }, CompletionEventAction::Attempt) if task_slug.is_empty() => {
-            inner.lock().unwrap_or_else(|error| error.into_inner()).completion_in_flight = false;
-            Ok(None)
-        }
-        (RunnerEvent::PhaseCompleted { omp_session_id, omp_turn_id }, CompletionEventAction::Attempt) => {
-            let result = accept_phase_completion(reg, repo, &envelope.session_id, &task_slug, omp_session_id, *omp_turn_id, &meta_path, app_config);
-            inner.lock().unwrap_or_else(|error| error.into_inner()).completion_in_flight = false;
-            Ok(Some(result?))
-        }
-        _ => Ok(None),
-    }?;
+    }
     let pending_seed = if matches!(envelope.event, RunnerEvent::Idle { .. }) {
         let mut map = reg.lock().unwrap_or_else(|e| e.into_inner());
         map.get_mut(&envelope.session_id).and_then(|session| {
@@ -1104,7 +1180,7 @@ fn handle_runner_event(req: &Value, reg: &Registry, repo: &Path, app_config: &Pa
     } else {
         None
     };
-    Ok((completion.map_or(RunnerEventResult::Passive, RunnerEventResult::Completion), pending_seed))
+    Ok((RunnerEventResult::Passive, pending_seed))
 }
 
 fn handle_conn(
@@ -1160,8 +1236,8 @@ fn handle_conn(
     let id = || req.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
     match op {
-        "ui_control" => ui_control::serve(&mut stream, repo, daemon_namespace, protected_host),
-        "allow_execution_completion" => reply(&mut stream, json!({"error":"completion permission requires an authenticated UI control connection"})),
+        "ui_control" => ui_control::serve(&mut stream, repo, reg, protected_host, daemon_namespace, app_config),
+        "continue_execution" | "prepare_end_execution" | "end_execution" => reply(&mut stream, json!({"error":"continuation requires an authenticated UI control connection"})),
         "create_task" => {
             let result: Result<Value, String> = (|| {
                 // Keep the reservation through typed decoding and provisioning, including errors.
@@ -1200,7 +1276,7 @@ fn handle_conn(
                     .map_err(|e| e.to_string()),
                     "get_task_execution" => {
                         let input: alinery_core::task_creation::GetTaskExecutionRequest = serde_json::from_value(input).map_err(|e| e.to_string())?;
-                        serde_json::to_value(execution::query(repo, &input.task_slug, daemon_namespace)?).map_err(|e| e.to_string())
+                        serde_json::to_value(execution::query(repo, &input.task_slug, daemon_namespace, reg)?).map_err(|e| e.to_string())
                     }
                     "create_subtask" => {
                         let input: alinery_core::CreateSubtaskInput = serde_json::from_value(input).map_err(|e| e.to_string())?;
@@ -1247,8 +1323,11 @@ fn handle_conn(
         }
         "event" => match handle_runner_event(&req, reg, repo, app_config) {
             Ok((completion, pending_seed)) => {
+                let bound = matches!(&completion, RunnerEventResult::Control(control) if control.available) && req["event"]["type"] == "continuation_bind";
+                let wake = matches!(&completion, RunnerEventResult::Completion(CompletionOutcome::Accepted { .. })) && req["event"]["type"] == "continuation_poll";
                 match completion {
                     RunnerEventResult::Completion(completion) => reply(&mut stream, json!({"ok":true,"completion":completion})),
+                    RunnerEventResult::Control(control) => reply(&mut stream, json!({"ok":true,"control":control})),
                     RunnerEventResult::SessionName(outcome) => reply(&mut stream, json!({"ok":true,"session_name":outcome})),
                     RunnerEventResult::Passive => reply(&mut stream, json!({"ok":true})),
                 }
@@ -1256,51 +1335,62 @@ fn handle_conn(
                 if let Some(pending) = pending_seed {
                     dispatch_pty_seed(pending, reg.clone(), repo.to_path_buf(), daemon_namespace.into());
                 }
+                if bound {
+                    let reg = reg.clone();
+                    let repo = repo.to_path_buf();
+                    let session_id = req["session_id"].as_str().unwrap_or("").to_string();
+                    // The authenticated startup callback must receive its ACK
+                    // before native input can call back into this same gate.
+                    std::thread::spawn(move || dispatch_rpc_seed(&reg, &repo, &session_id));
+                }
+                if wake {
+                    let reg = reg.clone();
+                    let session_id = req["session_id"].as_str().unwrap_or("").to_string();
+                    let incarnation = req["event"]["process_incarnation"].as_str().unwrap_or("").to_string();
+                    std::thread::spawn(move || wake_accepted_rpc(&reg, &session_id, &incarnation));
+                }
             }
             Err(error) => reply(&mut stream, json!({"error":error})),
         },
         "write" => {
-            let data = req.get("data").and_then(|v| v.as_str()).unwrap_or("");
-            // #119 T0-2: snapshot the per-session writer + inner Arc handles under the
-            // registry lock, then DROP the global guard before the blocking PTY
-            // write_all/flush. Holding the registry mutex across a write to a harness
-            // that has stopped draining stdin (full kernel PTY input buffer) would
-            // starve every other control op repo-wide. Mirror `kill`'s clone-then-drop.
-            let handles = {
-                let map = reg.lock().unwrap_or_else(|e| e.into_inner());
-                match map.get(&id()) {
-                    None => None,
-                    Some(s) => match &s.io {
-                        SessionIo::Rpc { .. } => Some(Err(WRONG_TRANSPORT)),
-                        SessionIo::Pty { writer, .. } => Some(Ok((writer.clone(), s.inner.clone()))),
-                    },
-                }
-            };
-            match handles {
-                None => reply(&mut stream, json!({"error": "unknown-session"})),
-                Some(Err(error)) => reply(&mut stream, json!({"error": error})),
-                Some(Ok((writer, inner))) => {
-                    let process = inner.lock().unwrap_or_else(|e| e.into_inner()).state.process.clone();
-                    if matches!(process, ProcessState::Exited { .. }) {
-                        reply(&mut stream, json!({"error": "session-exited"}));
-                        return;
+            let dispatch_id = req
+                .get("dispatch_id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let result = (|| {
+                let owner = execution::owner(reg, &id())?;
+                let writer = {
+                    let map = reg.lock().unwrap_or_else(|e| e.into_inner());
+                    let session = map.get(&id()).ok_or("unknown-session")?;
+                    if !Arc::ptr_eq(&owner.gate, &session.continuation) {
+                        return Err("stale session transport".into());
                     }
-                    let write_result = {
-                        let mut w = writer.lock().unwrap_or_else(|e| e.into_inner());
-                        w.write_all(data.as_bytes()).and_then(|_| w.flush())
-                    };
-                    match write_result {
-                        Ok(()) => reply(&mut stream, json!({"ok": true})),
-                        Err(e) => reply(&mut stream, json!({"error": format!("write-session: {e}")})),
+                    match &session.io {
+                        SessionIo::Pty { writer, .. } => writer.clone(),
+                        _ => return Err(WRONG_TRANSPORT.into()),
                     }
-                }
-            }
+                };
+                let data = req.get("data").and_then(Value::as_str).unwrap_or("");
+                Ok::<_, String>(controlled_dispatch(repo, &owner, &dispatch_id, true, data.contains(['\r', '\n']), |_| {
+                    let mut writer = writer.lock().unwrap_or_else(|e| e.into_inner());
+                    writer.write_all(data.as_bytes()).and_then(|_| writer.flush()).map_err(|e| format!("write-session: {e}"))
+                }))
+            })();
+            dispatch_reply(&mut stream, &dispatch_id, result.unwrap_or_else(|reason| DispatchOutcome::NotSent { reason }));
         }
         "send_message" => {
+            let dispatch_id = req
+                .get("dispatch_id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             let body = match read_message_body(&mut stream, &req, message_budget) {
                 Ok(body) => body,
                 Err(error) => {
-                    reply_message_error(&mut stream, error, "not_sent");
+                    dispatch_reply(&mut stream, &dispatch_id, DispatchOutcome::NotSent { reason: error });
                     return;
                 }
             };
@@ -1316,17 +1406,34 @@ fn handle_conn(
             };
             let handles = match handles {
                 None => {
-                    reply_message_error(&mut stream, "unknown-session", "not_sent");
+                    dispatch_reply(&mut stream, &dispatch_id, DispatchOutcome::NotSent { reason: "unknown-session".into() });
                     return;
                 }
                 Some(Err(error)) => {
-                    reply_message_error(&mut stream, error, "not_sent");
+                    dispatch_reply(&mut stream, &dispatch_id, DispatchOutcome::NotSent { reason: error.into() });
                     return;
                 }
                 Some(Ok(handles)) => handles,
             };
             let (writer, inner, meta_path) = handles;
-            let mut writer = writer.lock().unwrap_or_else(|error| error.into_inner());
+            let owner = match execution::owner(reg, &id()) {
+                Ok(owner) if Arc::ptr_eq(&owner.inner, &inner) => owner,
+                _ => {
+                    dispatch_reply(
+                        &mut stream,
+                        &dispatch_id,
+                        DispatchOutcome::NotSent {
+                            reason: "stale session transport".into(),
+                        },
+                    );
+                    return;
+                }
+            };
+            let mut gate = owner.gate.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(previous) = gate.replay(&dispatch_id) {
+                dispatch_reply(&mut stream, &dispatch_id, previous);
+                return;
+            }
             let adapter = {
                 let inner = inner.lock().unwrap_or_else(|error| error.into_inner());
                 if inner.state.process != ProcessState::Alive {
@@ -1342,24 +1449,24 @@ fn handle_conn(
             let adapter = match adapter {
                 Ok(adapter) => adapter,
                 Err(error) => {
-                    reply_message_error(&mut stream, error, "not_sent");
+                    dispatch_reply(&mut stream, &dispatch_id, DispatchOutcome::NotSent { reason: error.into() });
                     return;
                 }
             };
             if let Err(error) = validate_message_body(adapter, &body.bytes) {
-                reply_message_error(&mut stream, error, "not_sent");
+                dispatch_reply(&mut stream, &dispatch_id, DispatchOutcome::NotSent { reason: error.into() });
                 return;
             }
-            match write_and_flush_message(&mut **writer, adapter, &body.bytes) {
-                Ok(()) => {
-                    if let Err(error) = record_activity(&mut inner.lock().unwrap_or_else(|error| error.into_inner()), &meta_path, now_secs()) {
-                        // The message was delivered; a timestamp failure must not invite a duplicate send.
-                        eprintln!("message activity stamp {}: {error}", meta_path.display());
-                    }
-                    reply(&mut stream, json!({"ok": true}));
+            let outcome = dispatch_under_gate(repo, &owner, &mut gate, &dispatch_id, true, true, |_| {
+                let mut writer = writer.lock().unwrap_or_else(|error| error.into_inner());
+                write_and_flush_message(&mut **writer, adapter, &body.bytes)
+            });
+            if matches!(outcome, DispatchOutcome::Written) {
+                if let Err(error) = record_activity(&mut inner.lock().unwrap_or_else(|error| error.into_inner()), &meta_path, now_secs()) {
+                    eprintln!("message activity stamp {}: {error}", meta_path.display());
                 }
-                Err(error) => reply_message_error(&mut stream, error, "unknown"),
             }
+            dispatch_reply(&mut stream, &dispatch_id, outcome);
         }
         "resize" => {
             let cols = req.get("cols").and_then(|v| v.as_u64()).unwrap_or(80) as u16;
@@ -1526,39 +1633,43 @@ fn handle_conn(
             }
         }
         "rpc_write" => {
-            let Some(payload) = req.get("payload").filter(|value| value.is_object()) else {
-                reply(&mut stream, json!({"error": "missing payload"}));
-                return;
-            };
-            let handles = {
-                let map = reg.lock().unwrap_or_else(|e| e.into_inner());
-                match map.get(&id()) {
-                    None => None,
-                    Some(s) => match &s.io {
-                        SessionIo::Pty { .. } => Some(Err(WRONG_TRANSPORT)),
-                        SessionIo::Rpc { stdin } => Some(Ok((stdin.clone(), s.inner.clone()))),
-                    },
+            let dispatch_id = req
+                .get("payload")
+                .and_then(|payload| payload.get("id"))
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let session_id = id();
+            let mut request = req;
+            let result = (|| {
+                let mut payload = request.get_mut("payload").filter(|value| value.is_object()).map(Value::take).ok_or("missing payload")?;
+                if payload.get("id").and_then(Value::as_str).is_none_or(str::is_empty) {
+                    payload["id"] = json!(dispatch_id);
                 }
-            };
-            match handles {
-                None => reply(&mut stream, json!({"error": "unknown-session"})),
-                Some(Err(error)) => reply(&mut stream, json!({"error": error})),
-                Some(Ok((stdin, inner))) => {
-                    let process = inner.lock().unwrap_or_else(|e| e.into_inner()).state.process.clone();
-                    if matches!(process, ProcessState::Exited { .. }) {
-                        reply(&mut stream, json!({"error": "session-exited"}));
-                        return;
+                let owner = execution::owner(reg, &session_id)?;
+                let stdin = {
+                    let map = reg.lock().unwrap_or_else(|e| e.into_inner());
+                    let session = map.get(&session_id).ok_or("unknown-session")?;
+                    if !Arc::ptr_eq(&owner.gate, &session.continuation) {
+                        return Err("stale session transport".into());
                     }
-                    let write_result = {
-                        let mut w = stdin.lock().unwrap_or_else(|e| e.into_inner());
-                        writeln!(w, "{payload}").and_then(|_| w.flush())
-                    };
-                    match write_result {
-                        Ok(()) => reply(&mut stream, json!({"ok": true})),
-                        Err(e) => reply(&mut stream, json!({"error": format!("rpc-write: {e}")})),
+                    match &session.io {
+                        SessionIo::Rpc { stdin } => stdin.clone(),
+                        _ => return Err(WRONG_TRANSPORT.into()),
                     }
-                }
-            }
+                };
+                let work = !observational_rpc(&payload);
+                // Unknown/non-chat/slash intake cannot be declared consumed by
+                // a later idle callback. Retain it until exact native evidence.
+                let tracked = work && payload["type"] != "extension_ui_response" && payload["type"] != "abort";
+                Ok::<_, String>(controlled_dispatch(repo, &owner, &dispatch_id, work, tracked, |gate| {
+                    let payload = correlated_rpc(payload, &dispatch_id, gate);
+                    let mut writer = stdin.lock().unwrap_or_else(|e| e.into_inner());
+                    writeln!(writer, "{payload}").and_then(|_| writer.flush()).map_err(|e| format!("rpc-write: {e}"))
+                }))
+            })();
+            dispatch_reply(&mut stream, &dispatch_id, result.unwrap_or_else(|reason| DispatchOutcome::NotSent { reason }));
         }
         "version" => {
             // Protocol, app-config identity, and host-guard readiness describe whether
@@ -2086,7 +2197,6 @@ fn spawn_session(
         rpc_pending: VecDeque::new(),
         rpc_pending_bytes: 0,
         rpc_ready: None,
-        completion_in_flight: false,
         activity_at: None,
         reaped_and_drained: false,
         state: SessionState {
@@ -2114,6 +2224,7 @@ fn spawn_session(
                     scrollback_path: scrollback_path_sess,
                 },
                 inner: inner.clone(),
+                continuation: Arc::new(Mutex::new(execution::ContinuationGate::default())),
                 pid: None,
                 meta_path: meta_path.clone(),
                 event_token,
@@ -2152,6 +2263,7 @@ fn spawn_session(
             return Err(error);
         }
     };
+    execution::capture_process(reg, &launch.id, execution_process.clone());
     let lifecycle = Arc::new((Mutex::new(SpawnLifecycle::Pending), Condvar::new()));
     let lifecycle_reader = Arc::clone(&lifecycle);
     let (reaped_sender, reaped_receiver) = mpsc::sync_channel(1);
@@ -2264,14 +2376,19 @@ fn spawn_session(
         if let Some(prompt) = seeded.take() {
             let prompt_writer = Arc::clone(&writer);
             let (result_sender, result_receiver) = mpsc::sync_channel(1);
+            let prompt_owner = execution::owner(reg, &launch.id)?;
+            let prompt_repo = repo.to_path_buf();
             std::thread::spawn(move || {
-                let result = {
+                let result = match controlled_dispatch(&prompt_repo, &prompt_owner, "internal-pty-seed", true, false, |_| {
                     let mut writer = prompt_writer.lock().unwrap_or_else(|error| error.into_inner());
                     writer
                         .write_all(prompt.as_bytes())
                         .and_then(|_| writer.write_all(b"\r"))
                         .and_then(|_| writer.flush())
                         .map_err(|error| error.to_string())
+                }) {
+                    DispatchOutcome::Written => Ok(()),
+                    DispatchOutcome::NotSent { reason } | DispatchOutcome::Unknown { reason } => Err(reason),
                 };
                 let _ = result_sender.send(result);
             });
@@ -2478,7 +2595,6 @@ mod rpc_ring_tests {
             rpc_pending: VecDeque::new(),
             rpc_pending_bytes: 0,
             rpc_ready: None,
-            completion_in_flight: false,
             activity_at: None,
             reaped_and_drained: false,
             state: SessionState::default(),
@@ -2633,6 +2749,7 @@ mod rpc_ring_tests {
                     scrollback_path: repo.join("unused"),
                 },
                 inner: inner.clone(),
+                continuation: Arc::new(Mutex::new(execution::ContinuationGate::default())),
                 pid: None,
                 meta_path,
                 event_token: "current".into(),
@@ -2700,7 +2817,6 @@ mod rpc_ring_tests {
         let mut inner = empty_inner();
         inner.state.process = ProcessState::Alive;
         inner.state.adapter = HarnessAdapter::Omp;
-        inner.completion_in_flight = true;
         let inner = Arc::new(Mutex::new(inner));
         let reg: Registry = Arc::new(Mutex::new(HashMap::from([(
             "s1".into(),
@@ -2711,6 +2827,7 @@ mod rpc_ring_tests {
                     scrollback_path: repo.join("unused"),
                 },
                 inner: inner.clone(),
+                continuation: Arc::new(Mutex::new(execution::ContinuationGate::default())),
                 pid: None,
                 meta_path: meta_path.clone(),
                 event_token: "current".into(),
@@ -2746,7 +2863,6 @@ mod rpc_ring_tests {
             session.event_token = "replacement".into();
             let mut replacement = empty_inner();
             replacement.state = state_before.clone();
-            replacement.completion_in_flight = true;
             session.inner = Arc::new(Mutex::new(replacement));
         }
         assert_eq!(call(&request).err().unwrap(), "invalid-event-token", "the stale registry generation cannot commit");
@@ -2781,7 +2897,6 @@ mod rpc_ring_tests {
         assert!(call(&current).is_err(), "taskless identity must not name a retained task session");
         let map = reg.lock().unwrap();
         assert!(map["s1"].pending_pty_seed);
-        assert!(map["s1"].inner.lock().unwrap().completion_in_flight);
         assert_eq!(inner.lock().unwrap().state, state_before);
         assert_eq!(fs::read(&meta_path).unwrap(), before);
         assert_eq!(alinery_core::read_session_name(&repo, "task", "s1").unwrap().unwrap().name, "Repair cache");
@@ -3017,7 +3132,6 @@ fn spawn_omp_setup_session(reg: &Registry, repo: &Path, app_config: &Path, daemo
         rpc_pending: VecDeque::new(),
         rpc_pending_bytes: 0,
         rpc_ready: None,
-        completion_in_flight: false,
         activity_at: None,
         reaped_and_drained: false,
         state: SessionState {
@@ -3061,6 +3175,7 @@ fn spawn_omp_setup_session(reg: &Registry, repo: &Path, app_config: &Path, daemo
             Sess {
                 io: SessionIo::Rpc { stdin },
                 inner: inner.clone(),
+                continuation: Arc::new(Mutex::new(execution::ContinuationGate::default())),
                 pid: Some(pid),
                 // No meta on disk to stamp: this session has no task and leaves no record.
                 meta_path: PathBuf::new(),
@@ -3225,6 +3340,7 @@ fn spawn_rpc_session(
 
     cmd.stderr(Stdio::from(stderr));
     let meta_path = session_meta_path(repo, &launch.task_slug, &launch.id);
+    let protected_seed = !read_session_meta_full(&meta_path).ok_or("missing-session-meta")?.execution_id.is_empty();
     let meta_path_reader = meta_path.clone();
     let execution_reader = (
         repo.to_path_buf(),
@@ -3247,7 +3363,6 @@ fn spawn_rpc_session(
         rpc_pending: VecDeque::new(),
         rpc_pending_bytes: 0,
         rpc_ready: None,
-        completion_in_flight: false,
         activity_at: None,
         reaped_and_drained: false,
         state: SessionState {
@@ -3291,6 +3406,7 @@ fn spawn_rpc_session(
             Sess {
                 io: SessionIo::Rpc { stdin },
                 inner: inner.clone(),
+                continuation: Arc::new(Mutex::new(execution::ContinuationGate::with_rpc_seed(seeded, protected_seed))),
                 pid: Some(pid),
                 meta_path: meta_path.clone(),
                 event_token: event_token.to_string(),
@@ -3310,6 +3426,7 @@ fn spawn_rpc_session(
             return Err(error);
         }
     };
+    execution::capture_process(reg, &launch.id, execution_process.clone());
     let lifecycle = Arc::new((Mutex::new(SpawnLifecycle::Pending), Condvar::new()));
     let lifecycle_reader = Arc::clone(&lifecycle);
     let (reaped_sender, reaped_receiver) = mpsc::sync_channel(1);
@@ -3318,7 +3435,6 @@ fn spawn_rpc_session(
         let mut buf = Vec::new();
         let mut tmp = [0u8; 8192];
         let mut assembler = RpcChunkAssembler::new();
-        let mut seed = seeded;
         loop {
             let read_result = reader.read(&mut tmp);
             match read_result {
@@ -3327,6 +3443,7 @@ fn spawn_rpc_session(
                         buf.push(b'\n');
                         match assembler.push_jsonl(&buf) {
                             Ok(Some(complete)) => {
+                                execution::rpc_intake_response(&execution_reader.4, &execution_reader.2, &inner_t, &complete);
                                 let kind = classify_rpc_line(&complete);
                                 let mut inner = inner_t.lock().unwrap_or_else(|error| error.into_inner());
                                 if !replacing_reader.load(Ordering::SeqCst) {
@@ -3387,6 +3504,7 @@ fn spawn_rpc_session(
                         let line: Vec<u8> = buf.drain(..=idx).collect();
                         match assembler.push_jsonl(&line) {
                             Ok(Some(complete)) => {
+                                execution::rpc_intake_response(&execution_reader.4, &execution_reader.2, &inner_t, &complete);
                                 let kind = classify_rpc_line(&complete);
                                 {
                                     let mut inner = inner_t.lock().unwrap_or_else(|error| error.into_inner());
@@ -3421,12 +3539,9 @@ fn spawn_rpc_session(
                                             eprintln!("rpc negotiate_protocol: {error}");
                                         }
                                     }
-                                    if let Some(message) = seed.take() {
-                                        let payload = json!({"type": "prompt", "message": message});
-                                        let mut writer = stdin_reader.lock().unwrap_or_else(|error| error.into_inner());
-                                        if let Err(error) = writeln!(writer, "{payload}").and_then(|_| writer.flush()) {
-                                            eprintln!("rpc seed prompt: {error}");
-                                        }
+                                    if let Ok(owner) = execution::owner(&execution_reader.4, &execution_reader.2) {
+                                        owner.gate.lock().unwrap_or_else(|e| e.into_inner()).mark_rpc_ready();
+                                        dispatch_rpc_seed(&execution_reader.4, &execution_reader.0, &execution_reader.2);
                                     }
                                 }
                             }
@@ -3536,6 +3651,9 @@ fn restate_session(
     };
     execution::task_for_owner(repo, &task_slug, daemon_namespace)?;
     let execution_process = execution::read_process(repo, &task_slug, id)?;
+    let owner = execution::owner(reg, id)?;
+    let mut gate = owner.gate.lock().unwrap_or_else(|e| e.into_inner());
+    owner.admit(repo, &mut gate, &format!("restate-{}", uuid::Uuid::new_v4()), false)?;
     {
         let map = reg.lock().unwrap_or_else(|error| error.into_inner());
         let current = map.get(id).ok_or("unknown-session")?;
@@ -3548,6 +3666,7 @@ fn restate_session(
             return Err("session replacement already in progress".into());
         }
     }
+    drop(gate);
     let prepared = (|| {
         let meta = read_session_meta_full(&meta_path).ok_or("missing session")?;
         if !meta.execution_id.is_empty() {
@@ -3559,9 +3678,9 @@ fn restate_session(
                     }
                     // Retain live/coding ownership; block acceptance while replacing the process.
                     record.lifecycle = ExecutionLifecycle::Interrupted;
-                    if !matches!(record.permission, alinery_core::execution::CompletionPermission::Automatic) {
-                        record.permission = alinery_core::execution::CompletionPermission::Locked;
-                    }
+                    record.ready_revision = None;
+                    record.continuation_requested_revision = None;
+                    record.ready_assessment = None;
                     Ok(())
                 });
             result?;
@@ -3700,23 +3819,6 @@ fn set_live_playbook(reg: &Registry, id: &str, playbook: PlaybookState) -> Resul
         publish_live_transition(&mut inner, &meta_path, candidate)?;
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod completion_gate {
-    use super::*;
-
-    #[test]
-    fn overlapping_completion_is_not_reported_as_accepted() {
-        let mut in_flight = false;
-        assert_eq!(completion_event_action(true, &mut in_flight), CompletionEventAction::Attempt);
-        assert!(in_flight);
-        assert_eq!(completion_event_action(true, &mut in_flight), CompletionEventAction::InFlight);
-
-        in_flight = false;
-        assert_eq!(completion_event_action(false, &mut in_flight), CompletionEventAction::NotNeeded);
-        assert!(!in_flight);
-    }
 }
 
 #[cfg(test)]
@@ -3968,23 +4070,28 @@ mod request_limits {
     }
 
     #[test]
-    fn message_error_replies_distinguish_rejection_from_ambiguous_delivery() {
-        assert_eq!(
-            message_error_response("session-not-idle", "not_sent"),
-            json!({"error": "session-not-idle", "delivery": "not_sent"})
-        );
-        assert_eq!(
-            message_error_response("write-message: fixture failure", "unknown"),
-            json!({"error": "write-message: fixture failure", "delivery": "unknown"})
-        );
-        assert_eq!(
-            message_error_response("flush-message: fixture failure", "unknown"),
-            json!({"error": "flush-message: fixture failure", "delivery": "unknown"})
-        );
-    }
-
-    #[test]
     fn every_segment_and_flush_failure_is_delivery_unknown() {
+        let owner = execution::Owner {
+            gate: Arc::new(Mutex::new(execution::ContinuationGate::default())),
+            inner: Arc::new(Mutex::new(Inner {
+                parser: None,
+                clients: Vec::new(),
+                rpc_pending: VecDeque::new(),
+                rpc_pending_bytes: 0,
+                rpc_ready: None,
+                state: SessionState {
+                    process: ProcessState::Alive,
+                    ..SessionState::default()
+                },
+                activity_at: None,
+                reaped_and_drained: false,
+            })),
+            replacing: Arc::new(AtomicBool::new(false)),
+            task_slug: String::new(),
+            session_id: "fixture".into(),
+            meta_path: PathBuf::new(),
+            token: String::new(),
+        };
         struct FailingWriter {
             writes: usize,
             fail_write: Option<usize>,
@@ -4015,8 +4122,14 @@ mod request_limits {
                 fail_write: Some(fail_write),
                 fail_flush: false,
             };
-            let error = write_and_flush_message(&mut writer, MessageAdapter::OmpBracketedPaste, b"body").unwrap_err();
-            assert_eq!(message_error_response(error, "unknown")["delivery"], "unknown");
+            let outcome = controlled_dispatch(Path::new("/unused"), &owner, &format!("segment-{fail_write}"), true, false, |_| {
+                write_and_flush_message(&mut writer, MessageAdapter::OmpBracketedPaste, b"body")
+            });
+            assert!(matches!(outcome, DispatchOutcome::Unknown { .. }), "any possibly partial segment write is uncertain");
+            let replay = controlled_dispatch(Path::new("/unused"), &owner, &format!("segment-{fail_write}"), true, false, |_| {
+                panic!("uncertain writes must never be automatically repeated")
+            });
+            assert_eq!(replay, outcome);
         }
 
         let mut writer = FailingWriter {
@@ -4024,9 +4137,13 @@ mod request_limits {
             fail_write: None,
             fail_flush: true,
         };
-        let error = write_and_flush_message(&mut writer, MessageAdapter::OmpBracketedPaste, b"body").unwrap_err();
-        assert!(error.starts_with("flush-message:"));
-        assert_eq!(message_error_response(error, "unknown")["delivery"], "unknown");
+        let outcome = controlled_dispatch(Path::new("/unused"), &owner, "flush", true, false, |_| {
+            write_and_flush_message(&mut writer, MessageAdapter::OmpBracketedPaste, b"body")
+        });
+        assert!(
+            matches!(outcome, DispatchOutcome::Unknown { .. }),
+            "flush failure after successful writes is not a safe refusal"
+        );
     }
 
     #[test]

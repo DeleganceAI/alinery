@@ -1,13 +1,14 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { APPEARANCE_EVENT } from "./appearance";
 import { decodeChannelFrame } from "./channelFrame";
+import { CopyTextButton } from "./chat/CopyMessage";
 import * as ipc from "./ipc";
 import { attachGpuRenderer } from "./terminalRenderer";
 import { restoreViewport, saveViewport } from "./terminalViewport";
-import type { SessionObservation } from "./types";
+import type { DispatchOutcome, SessionObservation } from "./types";
 import "@xterm/xterm/css/xterm.css";
 
 // xterm needs concrete colors; these tokens are plain hexes in both built-in
@@ -34,6 +35,19 @@ function terminalTheme() {
 // unique per socket pump within that mount so stale data/close events cannot affect a reattach.
 let nextStreamToken = 1;
 
+type RecoverableChunk = { id: string; data: string; outcome: Exclude<DispatchOutcome, { status: "written" }> | null };
+// App-lifetime input ownership, independent of xterm mounts and pending write callbacks.
+// Output never enters this store. Retain original strings; escape only their presentation.
+const inputRecovery = new Map<string, { chunks: RecoverableChunk[]; listeners: Set<() => void> }>();
+
+function recoveryFor(key: string) {
+  let recovery = inputRecovery.get(key);
+  if (!recovery) {
+    recovery = { chunks: [], listeners: new Set() };
+    inputRecovery.set(key, recovery);
+  }
+  return recovery;
+}
 export type SessionTerminalConnectionState = "opening" | "open" | "recovering" | "failed";
 // One xterm pane bound to one pty session. Bytes are written straight to the
 // terminal — never through React state (pty output is thousands of tiny writes/sec).
@@ -43,7 +57,7 @@ export type SessionTerminalConnectionState = "opening" | "open" | "recovering" |
 /** The daemon calls a terminal makes. Default: the active-repo session commands; a chat thread passes its own repo-scoped set. */
 export type SessionTerminalIo = {
   open: (args: Parameters<typeof ipc.openSession>[0]) => Promise<void>;
-  write: (data: string) => Promise<void>;
+  write: (data: string, dispatchId: string) => Promise<DispatchOutcome>;
   resize: (cols: number, rows: number) => Promise<void>;
   detach: (attachId: number) => Promise<void>;
   status: () => Promise<SessionObservation>;
@@ -83,6 +97,16 @@ export function SessionTerminal({
   io?: SessionTerminalIo;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const recovery = recoveryFor(JSON.stringify([cwd, taskSlug, sessionId]));
+  const chunks = useSyncExternalStore(
+    (notify) => {
+      recovery.listeners.add(notify);
+      return () => {
+        recovery.listeners.delete(notify);
+      };
+    },
+    () => recovery.chunks,
+  );
 
   useEffect(() => {
     const attachId = ipc.nextAttachId();
@@ -90,7 +114,7 @@ export function SessionTerminal({
     if (!host) return;
     const sessionIo: SessionTerminalIo = io ?? {
       open: (args) => ipc.openSession(args),
-      write: (data) => ipc.writeSession(sessionId, data),
+      write: (data, dispatchId) => ipc.writeSession(sessionId, data, dispatchId),
       resize: (cols, rows) => ipc.resizeSession(sessionId, cols, rows),
       detach: (id) => ipc.detachSession(sessionId, id),
       status: () => ipc.sessionStatus(sessionId, taskSlug || null),
@@ -355,8 +379,31 @@ export function SessionTerminal({
     };
     void startMonitoredStream();
 
-    // Keystrokes -> pty. write_session no-ops in Rust until the session registers.
-    const dataSub = term.onData((d) => sessionIo.write(d).catch(() => {}));
+    // Own the original chunk before dispatch: completion may arrive after navigation.
+    // Transport uncertainty never permits resending or executing input as output.
+    const dataSub = term.onData((data) => {
+      const chunk: RecoverableChunk = { id: crypto.randomUUID(), data, outcome: null };
+      recovery.chunks = [...recovery.chunks, chunk];
+      const notify = () => {
+        for (const listener of recovery.listeners) listener();
+      };
+      notify();
+      void (async () => {
+        try {
+          const outcome = await sessionIo.write(data, chunk.id);
+          if (outcome.status === "written") {
+            recovery.chunks = recovery.chunks.filter((item) => item !== chunk);
+          } else {
+            chunk.outcome = outcome;
+            recovery.chunks = [...recovery.chunks];
+          }
+        } catch (error) {
+          chunk.outcome = { status: "unknown", reason: String(error) };
+          recovery.chunks = [...recovery.chunks];
+        }
+        notify();
+      })();
+    });
 
     const ro = new ResizeObserver(() => {
       cancelAnimationFrame(resizeFrame);
@@ -387,7 +434,25 @@ export function SessionTerminal({
       if (keepViewport) saveViewport(sessionId, term);
       term.dispose();
     };
-  }, [sessionId, cwd, taskSlug, phase, harness, model, intent, resumeToken, readOnly, keepViewport, terminalFontSize, onConnectionStateChange, io]);
+  }, [sessionId, cwd, taskSlug, phase, harness, model, intent, resumeToken, readOnly, keepViewport, terminalFontSize, onConnectionStateChange, io, recovery]);
 
-  return <div ref={hostRef} style={{ width: "100%", height: "100%" }} />;
+  return (
+    <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+      {chunks.length > 0 && (
+        <section aria-label="Recoverable terminal input" style={{ maxHeight: "35%", overflow: "auto", flexShrink: 0 }}>
+          <p>Original input retained. Unknown delivery must not be resent without checking the session.</p>
+          <CopyTextButton text={chunks.map((chunk) => chunk.data).join("")} label="original input" />
+          <ol>
+            {chunks.map((chunk) => (
+              <li key={chunk.id}>
+                <span>{chunk.outcome === null ? "Delivery pending" : `${chunk.outcome.status === "not_sent" ? "Not sent" : "Delivery unknown"}: ${chunk.outcome.reason}`}</span>
+                <pre>{JSON.stringify(chunk.data)}</pre>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+      <div ref={hostRef} style={{ width: "100%", flex: 1, minHeight: 0 }} />
+    </div>
+  );
 }

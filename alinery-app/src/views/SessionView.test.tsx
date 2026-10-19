@@ -3,15 +3,16 @@ import { type ComponentProps, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import type { QueuedFollowUp } from "../chat/queue";
+import type * as Confirmation from "../confirm";
 import type * as Ipc from "../ipc";
 import type { SessionMessageDraft } from "../sessionMessage";
 import { mockIpc } from "../test/mockIpc";
 import { journalPage } from "../test/ompJournal";
 import { stubScrollSize } from "../test/scroll";
 import { Toast, toast } from "../toast";
-import type { AgentState, ArtifactListItem, ArtifactTreeNode, SessionObservation, Task } from "../types";
+import type { AgentState, ArtifactListItem, ArtifactTreeNode, DispatchOutcome, SessionObservation, Task, TaskExecutionReply } from "../types";
 import { executionRecord, executionReply, partiallyPublishedExecution } from "./executionTestFixture";
-import { SessionView } from "./SessionView";
+import { type SessionSendRecovery, SessionView } from "./SessionView";
 
 const scenario = vi.hoisted(() => ({
   itemCalls: 0,
@@ -30,23 +31,26 @@ const restateSession = vi.hoisted(() => vi.fn(async () => undefined));
 const rpcAttachSession = vi.hoisted(() => vi.fn(async (_args: unknown) => undefined));
 const onStreamClosed = vi.hoisted(() => vi.fn((_id: string, _attachId: number, _onClosed: () => void, _onGiveUp: () => void) => () => {}));
 const readSessionOmp = vi.hoisted(() => vi.fn(async (_args: unknown): Promise<ArrayBuffer> => Promise.reject(new Error("no journal"))));
-const rpcWriteSession = vi.hoisted(() => vi.fn(async (_id: string, _payload: unknown) => undefined));
+const rpcWriteSession = vi.hoisted(() => vi.fn(async (_id: string, _payload: unknown): Promise<DispatchOutcome> => ({ status: "written" })));
 const detachSession = vi.hoisted(() => vi.fn(async () => undefined));
 const readOmpModelRoles = vi.hoisted(() => vi.fn(async () => ({}) as Record<string, string>));
 const writeOmpModelRoles = vi.hoisted(() => vi.fn(async (roles: Record<string, string>) => roles));
 const openUrl = vi.hoisted(() => vi.fn(async (_url: string | URL, _openWith?: string): Promise<void> => undefined));
-const confirmDanger = vi.hoisted(() => vi.fn(async () => true));
+const confirmDanger = vi.hoisted(() => vi.fn<typeof Confirmation.confirmDanger>(async () => true));
 const confirmStopAndSwitch = vi.hoisted(() => vi.fn(async (_target: "pty" | "rpc") => true));
 const archiveSession = vi.hoisted(() => vi.fn());
 const pickAttachmentFilesDialog = vi.hoisted(() => vi.fn(async (): Promise<string[]> => []));
 const chatFileStat = vi.hoisted(() => vi.fn(async (path: string) => ({ name: path.split("/").pop() ?? path, bytes: 12 })));
 const copyChatAttachments = vi.hoisted(() => vi.fn(async () => ({ copied: [] as string[], failures: [] as string[] })));
 const writeChatAttachmentBytes = vi.hoisted(() => vi.fn(async (_slug: string, fileName: string) => fileName));
-const readChatImage = vi.hoisted(() => vi.fn(async () => ({ mime_type: "image/png", data: "aa" })));
+const readChatImage = vi.hoisted(() => vi.fn(async (_taskSlug: string, _name: string) => ({ mime_type: "image/png", data: "aa" })));
 const getTaskExecution = vi.hoisted(() => vi.fn());
-const allowExecutionCompletion = vi.hoisted(() => vi.fn());
+const continueExecution = vi.hoisted(() => vi.fn());
 const getSessionDisplay = vi.hoisted(() => vi.fn(async () => null));
 const renameSession = vi.hoisted(() => vi.fn());
+const prepareEndExecution = vi.hoisted(() => vi.fn());
+const endExecution = vi.hoisted(() => vi.fn());
+const createSessionForRepo = vi.hoisted(() => vi.fn());
 
 const task: Task = {
   name: "Task",
@@ -99,7 +103,10 @@ vi.mock("../ipc", () =>
     getSessionDisplay,
     renameSession,
     getTaskExecution,
-    allowExecutionCompletion,
+    continueExecution,
+    prepareEndExecution,
+    endExecution,
+    createSessionForRepo,
     listTasks: () => {
       scenario.taskCalls += 1;
       if (scenario.tasksError) return Promise.reject(scenario.tasksError);
@@ -304,7 +311,7 @@ describe("session work names", () => {
     getSessionDisplay.mockResolvedValue(context as never);
     renderSession({ intent: "history", harness });
     await flushPromises();
-    expect(screen.getByText("Historical work")).toBeDefined();
+    expect(within(screen.getByRole("group", { name: "Session name" })).getByText("Historical work")).toBeDefined();
     expect(screen.getByText("Current child")).toBeDefined();
     expect(screen.getByRole("button", { name: "Current parent" })).toBeDefined();
     expect(getSessionDisplay).toHaveBeenCalledWith("/repo", "task", "session");
@@ -316,7 +323,7 @@ describe("session work names", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
-    expect(screen.getByText("External name")).toBeDefined();
+    expect(within(screen.getByRole("group", { name: "Session name" })).getByText("External name")).toBeDefined();
     expect(screen.getByText("Renamed task")).toBeDefined();
     expect(screen.getByText("Renamed child")).toBeDefined();
     expect(screen.getByRole("button", { name: "Renamed parent" })).toBeDefined();
@@ -341,7 +348,7 @@ describe("session work names", () => {
     getSessionDisplay.mockResolvedValue({ session: { id: "session", name: "Saved name" }, task_name: "Task", subtask_name: null } as never);
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Session name" }), { key: "Enter" });
     await flushPromises();
-    expect(screen.getByText("Saved name")).toBeDefined();
+    expect(within(screen.getByRole("group", { name: "Session name" })).getByText("Saved name")).toBeDefined();
     expect(document.activeElement).toBe(screen.getByRole("group", { name: "Session name" }));
     expect(renameSession).toHaveBeenCalledWith({ repoPath: "/repo", taskSlug: "task", sessionId: "session", name: "Saved name" });
     expect(onBack).not.toHaveBeenCalled();
@@ -367,12 +374,12 @@ describe("session work names", () => {
     await act(async () => {
       oldPoll.resolve(original as never);
     });
-    expect(screen.getByText("Committed")).toBeDefined();
+    expect(within(screen.getByRole("group", { name: "Session name" })).getByText("Committed")).toBeDefined();
     getSessionDisplay.mockResolvedValue({ ...original, session: { ...original.session, name: "External" } } as never);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
-    expect(screen.getByText("External")).toBeDefined();
+    expect(within(screen.getByRole("group", { name: "Session name" })).getByText("External")).toBeDefined();
     const lateSave = deferred<{ name: string; source: string }>();
     renameSession.mockReturnValueOnce(lateSave.promise);
     fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
@@ -386,7 +393,7 @@ describe("session work names", () => {
     await act(async () => {
       lateSave.resolve({ name: "Late old repo", source: "user" });
     });
-    expect(screen.getByText("Other repo")).toBeDefined();
+    expect(screen.getByTitle("Other repo")).toBeDefined();
     expect(screen.getByRole("textbox", { name: "Session name" })).toHaveProperty("value", "Keep this draft");
     expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Session name" }));
   });
@@ -968,7 +975,7 @@ describe("session chat send routing", () => {
   beforeEach(() => {
     scenario.tasks = [{ ...task }];
     rpcWriteSession.mockClear();
-    rpcWriteSession.mockImplementation(async () => undefined);
+    rpcWriteSession.mockImplementation(async () => ({ status: "written" as const }));
     rpcAttachSession.mockReset();
     rpcAttachSession.mockImplementation(async () => undefined);
     copyChatAttachments.mockReset();
@@ -993,7 +1000,7 @@ describe("session chat send routing", () => {
     cleanup();
     sessionStatus.mockReset();
     sessionStatus.mockResolvedValue({ lifecycle: { state: "exited" as const, code: 0 }, state: null, checkpoint: {} });
-    rpcWriteSession.mockImplementation(async () => undefined);
+    rpcWriteSession.mockImplementation(async () => ({ status: "written" as const }));
     vi.mocked(globalThis.fetch).mockRestore?.();
   });
 
@@ -1028,6 +1035,7 @@ describe("session chat send routing", () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
     rpcWriteSession.mockImplementation(async (_id: string, payload: unknown) => {
       if ((payload as { type?: string } | null)?.type === "prompt") throw new Error("stdin closed");
+      return { status: "written" as const };
     });
     const onDraftChange = vi.fn();
     renderSession({ messageDraft: { body: "keep me", pendingActions: [], attachments: [] }, onMessageDraftChange: onDraftChange });
@@ -1057,11 +1065,10 @@ describe("session chat send routing", () => {
     await act(async () => {
       onLine.current?.(
         JSON.stringify({
-          type: "response",
-          id: commandId,
-          command: "prompt",
-          success: false,
-          error: "Agent is already processing",
+          type: "alinery_dispatch",
+          dispatch_id: commandId,
+          status: "rejected",
+          reason: "Agent is already processing",
         }),
       );
     });
@@ -1087,7 +1094,7 @@ describe("session chat send routing", () => {
     onDraftChange.mockClear();
 
     await act(async () => {
-      onLine.current?.(JSON.stringify({ type: "response", id: commandId, command: "prompt", success: false, error: "Agent is already processing" }));
+      onLine.current?.(JSON.stringify({ type: "alinery_dispatch", dispatch_id: commandId, status: "rejected", reason: "Agent is already processing" }));
     });
 
     const pane = within(screen.getByTestId("chat-pane"));
@@ -1098,39 +1105,345 @@ describe("session chat send routing", () => {
     expect(onDraftChange).not.toHaveBeenCalled();
   });
 
+  it("preserves both out-of-order refusals after an unrelated turn starts", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    const onDraftChange = vi.fn();
+    const view = renderSession({ messageDraft: { body: "first review", pendingActions: [], attachments: [] }, onMessageDraftChange: onDraftChange });
+    await flushPromises();
+    await waitFor(() => expect(onLine.current).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    await flushPromises();
+    view.rerender(sessionView({ messageDraft: { body: "second review", pendingActions: [], attachments: [] }, onMessageDraftChange: onDraftChange }));
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+    await waitFor(() => expect(sends()).toHaveLength(2));
+    await flushPromises();
+    view.rerender(sessionView({ messageDraft: { body: "new unsent review", pendingActions: [], attachments: [] }, onMessageDraftChange: onDraftChange }));
+    onDraftChange.mockClear();
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "response", id: sends()[0]?.id, command: "prompt", success: true }));
+      onLine.current?.(JSON.stringify({ type: "turn_start" }));
+      for (const sent of [...sends()].reverse()) {
+        onLine.current?.(JSON.stringify({ type: "alinery_dispatch", dispatch_id: sent?.id, status: "rejected", reason: "Session is finishing" }));
+      }
+    });
+    const pane = within(screen.getByTestId("chat-pane"));
+    for (const caption of ["first review", "second review"]) {
+      const row = pane.getByText(caption).closest("article") as HTMLElement;
+      expect(within(row).getByText("not sent")).toBeDefined();
+      expect(within(row).getByRole("button", { name: "Copy message" })).toBeDefined();
+    }
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("new unsent review");
+    expect(onDraftChange).not.toHaveBeenCalled();
+    expect(sends()).toHaveLength(2);
+  });
+
+  it("does not replace a newer equal-caption draft's different image on refusal", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    copyChatAttachments.mockResolvedValue({ copied: ["shot.png"], failures: [] });
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    const onDraftChange = vi.fn();
+    const view = renderSession({ messageDraft: { body: "same caption", pendingActions: [], attachments: [diskPng] }, onMessageDraftChange: onDraftChange });
+    await flushPromises();
+    await waitFor(() => expect(onLine.current).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    await flushPromises();
+    view.rerender(sessionView({ messageDraft: { body: "same caption", pendingActions: [], attachments: [blobPng] }, onMessageDraftChange: onDraftChange }));
+    onDraftChange.mockClear();
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "alinery_dispatch", dispatch_id: sends()[0]?.id, status: "rejected", reason: "Session is finishing" }));
+    });
+    expect(onDraftChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Remove paste.png" })).toBeDefined();
+    expect(within(screen.getByTestId("chat-pane")).getByText("not sent")).toBeDefined();
+    expect(sends()).toHaveLength(1);
+  });
+
+  it.each(["before", "after"])("does not turn a native failure %s consumption into a definitely unsent draft", async (order) => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    function DraftHarness() {
+      const [draft, setDraft] = useState<SessionMessageDraft>({ body: "Already delivered", pendingActions: [], attachments: [] });
+      return sessionView({ messageDraft: draft, onMessageDraftChange: setDraft });
+    }
+    render(<DraftHarness />);
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    await flushPromises();
+    const commandId = sends()[0]?.id;
+    const failure = { type: "response", id: commandId, command: "prompt", success: false, error: "Post-delivery persistence failed" };
+    const consumed = { type: "alinery_dispatch", dispatch_id: commandId, status: "consumed" };
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "message_start", message: { role: "user", content: [{ type: "text", text: "Already delivered" }] } }));
+      for (const event of order === "before" ? [failure, consumed] : [consumed, failure]) onLine.current?.(JSON.stringify(event));
+    });
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("");
+    expect(within(screen.getByTestId("chat-pane")).getAllByText("Already delivered")).toHaveLength(1);
+    expect(screen.queryByText("not sent")).toBeNull();
+    expect(sends()).toHaveLength(1);
+  });
+
+  it("keeps an uncertain transport send recoverable beside a newer draft without retrying", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    let rejectWrite!: (reason: Error) => void;
+    const write = new Promise<void>((_resolve, reject) => {
+      rejectWrite = reject;
+    });
+    rpcWriteSession.mockImplementation(async (_id: string, payload: unknown) => {
+      if (typeof payload === "object" && payload !== null && "type" in payload && payload.type === "prompt") await write;
+      return { status: "written" as const };
+    });
+    const onDraftChange = vi.fn();
+    const view = renderSession({ messageDraft: { body: "  original review  ", pendingActions: [], attachments: [] }, onMessageDraftChange: onDraftChange });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    view.rerender(sessionView({ messageDraft: { body: "newer review", pendingActions: [], attachments: [] }, onMessageDraftChange: onDraftChange }));
+    onDraftChange.mockClear();
+    await act(async () => {
+      rejectWrite(new Error("Acknowledgement lost"));
+    });
+    expect(screen.getByText(/Delivery unknown:/)).toBeDefined();
+    expect(screen.getByRole("button", { name: "Copy original message" })).toBeDefined();
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("newer review");
+    expect(onDraftChange).not.toHaveBeenCalled();
+    expect(sends()).toHaveLength(1);
+  });
+
+  it("keeps unknown original input copyable after the session becomes read-only history", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    rpcWriteSession.mockImplementation(async (_id, payload) => {
+      if (typeof payload === "object" && payload !== null && "type" in payload && payload.type === "prompt") {
+        return { status: "unknown", reason: "Acknowledgement lost" };
+      }
+      return { status: "written" };
+    });
+    const recovery = new Map<string, SessionSendRecovery>();
+    const first = renderSession({ messageDraft: { body: "original before exit", pendingActions: [], attachments: [] }, sendRecovery: recovery });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(screen.getByText(/Delivery unknown:/)).toBeDefined());
+    first.unmount();
+    renderSession({ intent: "history", sendRecovery: recovery });
+    await flushPromises();
+    expect(screen.getByRole("button", { name: "Copy original message" })).toBeDefined();
+    expect(screen.getByText(/original before exit/)).toBeDefined();
+    expect(sends()).toHaveLength(1);
+  });
+
+  it("recovers the original image and untrimmed text after navigation without resending", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    copyChatAttachments.mockResolvedValue({ copied: ["shot.png"], failures: [] });
+    const recovery = new Map<string, SessionSendRecovery>();
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    const first = renderSession({
+      messageDraft: { body: "  original review  ", pendingActions: [], attachments: [diskPng] },
+      sendRecovery: recovery,
+    });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    const sent = sends()[0];
+    await flushPromises();
+    first.unmount();
+    function ReturnedSession() {
+      const [draft, setDraft] = useState<SessionMessageDraft>({ body: "newer draft", pendingActions: [], attachments: [] });
+      return sessionView({ messageDraft: draft, onMessageDraftChange: setDraft, sendRecovery: recovery });
+    }
+    render(<ReturnedSession />);
+    await flushPromises();
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "alinery_dispatch", dispatch_id: sent?.id, status: "rejected", reason: "Session is finishing" }));
+    });
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("newer draft");
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Restore unsent message (1 attachments)" }));
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("  original review  ");
+    expect(screen.getByRole("button", { name: "Remove shot.png" })).toBeDefined();
+    expect(sends()).toHaveLength(1);
+  });
+  it("restores a typed not-sent draft without claiming transport delivery", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    rpcWriteSession.mockImplementation(async (_id, payload) => {
+      if (typeof payload === "object" && payload !== null && "type" in payload && payload.type === "prompt") {
+        return { status: "not_sent", reason: "Continuation already requested" };
+      }
+      return { status: "written" as const };
+    });
+    function DraftHarness() {
+      const [draft, setDraft] = useState<SessionMessageDraft>({ body: "  retained original  ", pendingActions: [], attachments: [] });
+      return sessionView({ messageDraft: draft, onMessageDraftChange: setDraft });
+    }
+    render(<DraftHarness />);
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    await flushPromises();
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("  retained original  ");
+    expect(screen.getByText("Continuation already requested")).toBeDefined();
+    expect(within(screen.getByTestId("chat-pane")).queryByText("retained original")).toBeNull();
+    expect(sends()).toHaveLength(1);
+  });
+
+  it("retains the original non-chat slash until an exact native outcome instead of guessing from activity", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    function SlashHarness() {
+      const [draft, setDraft] = useState<SessionMessageDraft>({ body: "/compact keep the plan  ", pendingActions: [], attachments: [] });
+      return sessionView({ messageDraft: draft, onMessageDraftChange: setDraft });
+    }
+    render(<SlashHarness />);
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() =>
+      expect(rpcWriteSession.mock.calls.some(([, payload]) => typeof payload === "object" && payload !== null && "type" in payload && payload.type === "compact")).toBe(true),
+    );
+    const command = rpcWriteSession.mock.calls
+      .map(([, payload]) => payload)
+      .find((payload) => typeof payload === "object" && payload !== null && "type" in payload && payload.type === "compact");
+    if (typeof command !== "object" || command === null || !("id" in command)) throw new Error("Missing compact command");
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "response", id: command.id, command: "compact", success: true }));
+      onLine.current?.(JSON.stringify({ type: "turn_start" }));
+      onLine.current?.(JSON.stringify({ type: "response", command: "get_state", success: true, data: { queuedMessageCount: 0 } }));
+    });
+    expect(screen.getByRole("button", { name: "Copy original message" })).toBeDefined();
+    expect(screen.getByText(/Awaiting native settlement: \/compact keep the plan/)).toBeDefined();
+  });
+
+  it("settles only the exact native dispatch and never a queue count snapshot", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    const recovery = new Map<string, SessionSendRecovery>();
+    let queue: QueuedFollowUp[] = [];
+    function QueueHarness() {
+      const [draft, setDraft] = useState<SessionMessageDraft>({ body: "first", pendingActions: [], attachments: [] });
+      const [items, setItems] = useState<QueuedFollowUp[]>([]);
+      queue = items;
+      return (
+        <>
+          <button type="button" onClick={() => setDraft({ body: "second", pendingActions: [], attachments: [] })}>
+            Next draft
+          </button>
+          {sessionView({ messageDraft: draft, onMessageDraftChange: setDraft, queuedFollowUps: items, onQueuedFollowUpsChange: setItems, sendRecovery: recovery })}
+        </>
+      );
+    }
+    render(<QueueHarness />);
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+    await waitFor(() => expect(queue).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "Next draft" }));
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+    await waitFor(() => expect(queue).toHaveLength(2));
+    const [first, second] = sends();
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "response", command: "get_state", success: true, data: { queuedMessageCount: 0 } }));
+    });
+    expect(queue.map((item) => item.text)).toEqual(["first", "second"]);
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "alinery_dispatch", dispatch_id: second?.id, status: "consumed" }));
+    });
+    expect(queue.map((item) => item.text)).toEqual(["first"]);
+    expect(recovery.has(first?.id ?? "")).toBe(true);
+    expect(recovery.has(second?.id ?? "")).toBe(true);
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "alinery_dispatch", dispatch_id: second?.id, status: "settled" }));
+    });
+    expect(recovery.has(second?.id ?? "")).toBe(false);
+    expect(recovery.has(first?.id ?? "")).toBe(true);
+  });
+
+  it.each(["before", "after"])("retires only a consumed dispatch row %s its native echo with equal captions and different images", async (order) => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    copyChatAttachments.mockResolvedValue({ copied: ["shot.png"], failures: [] });
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    const view = renderSession({ messageDraft: { body: "same review", pendingActions: [], attachments: [diskPng] } });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    await flushPromises();
+    view.rerender(sessionView({ messageDraft: { body: "same review", pendingActions: [], attachments: [blobPng] } }));
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+    await waitFor(() => expect(sends()).toHaveLength(2));
+    await act(async () => {
+      const echo = JSON.stringify({
+        type: "message_start",
+        message: {
+          role: "user",
+          content: [
+            { type: "text", text: "same review" },
+            { type: "image", mimeType: "image/png", data: "first-image" },
+          ],
+        },
+      });
+      const consumed = JSON.stringify({ type: "alinery_dispatch", dispatch_id: sends()[0]?.id, status: "consumed" });
+      for (const line of order === "before" ? [consumed, echo] : [echo, consumed]) onLine.current?.(line);
+      onLine.current?.(JSON.stringify({ type: "alinery_dispatch", dispatch_id: sends()[0]?.id, status: "settled" }));
+    });
+    const pane = within(screen.getByTestId("chat-pane"));
+    expect(pane.getAllByText("same review")).toHaveLength(2);
+    expect(pane.getAllByText("queued · after this turn")).toHaveLength(1);
+    const queuedRow = pane.getByText("queued · after this turn").closest("article");
+    expect(queuedRow?.querySelector("img")?.getAttribute("src")).toBe(blobPng.previewUrl);
+    expect(sends()).toHaveLength(2);
+    await act(async () => {
+      const echo = JSON.stringify({
+        type: "message_start",
+        message: {
+          role: "user",
+          content: [
+            { type: "text", text: "same review" },
+            { type: "image", mimeType: "image/png", data: "second-image" },
+          ],
+        },
+      });
+      const consumed = JSON.stringify({ type: "alinery_dispatch", dispatch_id: sends()[1]?.id, status: "consumed" });
+      for (const line of order === "before" ? [consumed, echo] : [echo, consumed]) onLine.current?.(line);
+      onLine.current?.(JSON.stringify({ type: "alinery_dispatch", dispatch_id: sends()[1]?.id, status: "settled" }));
+    });
+    expect(pane.getAllByText("same review")).toHaveLength(2);
+    expect(pane.queryByText("queued · after this turn")).toBeNull();
+    const images = [...screen.getByTestId("chat-pane").querySelectorAll("img")].map((image) => image.getAttribute("src"));
+    expect(images).toEqual(expect.arrayContaining(["data:image/png;base64,first-image", "data:image/png;base64,second-image"]));
+  });
+
   it("drops a refused follow-up from the queued list, so a reattach does not bring its row back", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
     const onLine = { current: undefined as ((line: string) => void) | undefined };
     captureRpcOnLine(onLine);
-    const onQueuedChange = vi.fn();
-    const onDraftChange = vi.fn();
-    const view = renderSession({
-      messageDraft: { body: "later", pendingActions: [], attachments: [] },
-      onMessageDraftChange: onDraftChange,
-      onQueuedFollowUpsChange: onQueuedChange,
-    });
+    function QueueHarness({ mounted = true }: { mounted?: boolean }) {
+      const [queued, setQueued] = useState<QueuedFollowUp[]>([]);
+      const [draft, setDraft] = useState<SessionMessageDraft>({ body: "later", pendingActions: [], attachments: [] });
+      return mounted ? sessionView({ messageDraft: draft, onMessageDraftChange: setDraft, queuedFollowUps: queued, onQueuedFollowUpsChange: setQueued }) : null;
+    }
+    const view = render(<QueueHarness />);
     await flushPromises();
     await waitFor(() => expect(onLine.current).toBeDefined());
     fireEvent.click(screen.getByRole("button", { name: "Queue" }));
-    await waitFor(() => expect(sends()).toHaveLength(1));
-    expect(onQueuedChange).toHaveBeenLastCalledWith([{ text: "later", attachments: [] }]);
+    await screen.findByText("queued · after this turn");
     const commandId = sends()[0]?.id;
-    view.rerender(
-      sessionView({
-        messageDraft: { body: "", pendingActions: [], attachments: [] },
-        queuedFollowUps: [{ text: "later", attachments: [] }],
-        onMessageDraftChange: onDraftChange,
-        onQueuedFollowUpsChange: onQueuedChange,
-      }),
-    );
-
     await act(async () => {
-      onLine.current?.(JSON.stringify({ type: "response", id: commandId, command: "follow_up", success: false, error: "Agent is not processing" }));
+      onLine.current?.(JSON.stringify({ type: "alinery_dispatch", dispatch_id: commandId, status: "rejected", reason: "Agent is not processing" }));
     });
-
-    expect(onQueuedChange).toHaveBeenLastCalledWith([]);
-    expect(onDraftChange).toHaveBeenLastCalledWith({ body: "later", pendingActions: [], attachments: [] });
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("later");
     expect(screen.queryByText(/queued · after this turn/)).toBeNull();
+    view.rerender(<QueueHarness mounted={false} />);
+    view.rerender(<QueueHarness />);
+    await flushPromises();
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("later");
+    expect(screen.queryByText(/queued · after this turn/)).toBeNull();
+    expect(sends()).toHaveLength(1);
   });
 
   it("keeps queuing after an unrelated RPC failure between write and turn_start", async () => {
@@ -1177,27 +1490,6 @@ describe("session chat send routing", () => {
     expect(screen.getByText("queued · after this turn")).toBeTruthy();
   });
 
-  it("drops local queued follow_up rows when get_state count is 0", async () => {
-    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
-    const onLine = { current: undefined as ((line: string) => void) | undefined };
-    captureRpcOnLine(onLine);
-    renderSession({ queuedFollowUps: [{ text: "keep me", attachments: [] }] });
-    await flushPromises();
-    await waitFor(() => expect(onLine.current).toBeDefined());
-    expect(await screen.findByText("keep me")).toBeTruthy();
-    await act(async () => {
-      onLine.current?.(
-        JSON.stringify({
-          type: "response",
-          command: "get_state",
-          success: true,
-          data: { queuedMessageCount: 0 },
-        }),
-      );
-    });
-    await waitFor(() => expect(within(screen.getByTestId("chat-pane")).queryByText("keep me")).toBeNull());
-  });
-
   it("does not trim in-flight follow-ups on a non-get_state line", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
     const onLine = { current: undefined as ((line: string) => void) | undefined };
@@ -1237,7 +1529,7 @@ describe("session chat send routing", () => {
 
   it("Send now with empty draft aborts and prompts the latest queued text", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
-    renderSession({ queuedFollowUps: [{ text: "later", attachments: [] }], messageDraft: { body: "", pendingActions: [], attachments: [] } });
+    renderSession({ queuedFollowUps: [{ text: "later", attachments: [], dispatchId: "queued-later" }], messageDraft: { body: "", pendingActions: [], attachments: [] } });
     await flushPromises();
     fireEvent.click(screen.getByRole("button", { name: "Send now" }));
     await waitFor(() => expect(rpcWriteSession.mock.calls.some(([, payload]) => (payload as { type?: string } | null)?.type === "abort_and_prompt")).toBe(true));
@@ -1320,6 +1612,7 @@ describe("session chat send routing", () => {
     readChatImage.mockResolvedValue({ mime_type: "image/png", data: "aa" });
     rpcWriteSession.mockImplementation(async (_id: string, payload: unknown) => {
       if (payload && typeof payload === "object" && "type" in payload && payload.type === "prompt") order.push("write");
+      return { status: "written" as const };
     });
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
     const messageDraft = { body: "see this", pendingActions: [], attachments: [diskPng] } as SessionMessageDraft;
@@ -1396,6 +1689,79 @@ describe("session chat send routing", () => {
     error.mockRestore();
   });
 
+  it("retries the copied image after a refusal even when the original disk file is gone", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    copyChatAttachments.mockResolvedValue({ copied: ["stored-shot.png"], failures: [] });
+    readChatImage.mockImplementation(async (_slug, name) => {
+      if (name !== "stored-shot.png") throw new Error("Original attachment is unavailable");
+      return { mime_type: "image/png", data: "original-image-bytes" };
+    });
+    let promptCount = 0;
+    rpcWriteSession.mockImplementation(async (_id, payload) => {
+      if (typeof payload === "object" && payload !== null && "type" in payload && payload.type === "prompt" && ++promptCount === 1) {
+        return { status: "not_sent", reason: "Not yet available" };
+      }
+      return { status: "written" };
+    });
+    function DraftHarness() {
+      const [draft, setDraft] = useState<SessionMessageDraft>({ body: "Keep these exact image bytes", pendingActions: [], attachments: [diskPng] });
+      return sessionView({ messageDraft: draft, onMessageDraftChange: setDraft });
+    }
+    render(<DraftHarness />);
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Not yet available");
+    expect(sends()).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Remove shot.png" })).toBeDefined();
+    chatFileStat.mockRejectedValue(new Error("Original disk file was removed"));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends()).toHaveLength(2));
+    const retried = sends()[1];
+    expect(retried && "images" in retried && retried.images).toEqual([{ type: "image", data: "original-image-bytes", mimeType: "image/png" }]);
+  });
+
+  it("preserves a rejected draft and image when the native refusal precedes the transport ACK", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    copyChatAttachments.mockResolvedValue({ copied: ["shot.png"], failures: [] });
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    let acknowledge!: () => void;
+    const transportAck = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    rpcWriteSession.mockImplementation(async (_id: string, payload: unknown) => {
+      if ((payload as { type?: string } | null)?.type === "prompt") await transportAck;
+      return { status: "written" as const };
+    });
+    function DraftHarness() {
+      const [draft, setDraft] = useState<SessionMessageDraft>({ body: "keep this review", pendingActions: [], attachments: [diskPng] });
+      return sessionView({ messageDraft: draft, onMessageDraftChange: setDraft });
+    }
+    render(<DraftHarness />);
+    await flushPromises();
+    await waitFor(() => expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(onLine.current).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends()).toHaveLength(1));
+    const sent = sends()[0];
+    expect(sent).toMatchObject({ type: "prompt", message: "keep this review", images: [{ type: "image", data: "aa", mimeType: "image/png" }] });
+    expect(sent?.id).toEqual(expect.any(String));
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "alinery_dispatch", dispatch_id: sent?.id, status: "rejected", reason: "Session is finishing" }));
+    });
+    await act(async () => {
+      acknowledge();
+      await transportAck;
+    });
+    await flushPromises();
+
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("keep this review");
+    expect(screen.getByRole("button", { name: "Remove shot.png" })).toBeDefined();
+    expect(screen.getByText("Session is finishing")).toBeDefined();
+    expect(within(screen.getByTestId("chat-pane")).queryByText("keep this review")).toBeNull();
+    expect(sends()).toHaveLength(1);
+  });
+
   it.each([
     { button: "Send", command: "prompt", busy: false },
     { button: "Queue", command: "follow_up", busy: true },
@@ -1407,9 +1773,10 @@ describe("session chat send routing", () => {
     const rejection = new Error("request-too-large: control request exceeds the 67108864 byte limit");
     const attempts: unknown[] = [];
     rpcWriteSession.mockImplementation(async (_id: string, payload: unknown) => {
-      if ((payload as { type?: string } | null)?.type !== command) return;
+      if (typeof payload !== "object" || payload === null || !("type" in payload) || payload.type !== command) return { status: "written" };
       attempts.push(payload);
       if (attempts.length === 1) throw rejection;
+      return { status: "written" as const };
     });
     const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     try {
@@ -1453,24 +1820,58 @@ describe("session chat send routing", () => {
     }
   });
 
-  it("keeps an image follow-up queued when Send now is rejected and retries the same attachment", async () => {
+  it("transfers only the selected queued identity on Send now and preserves the earlier queue", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    let queue: QueuedFollowUp[] = [];
+    function TransferHarness() {
+      const [items, setItems] = useState<QueuedFollowUp[]>([
+        { text: "earlier", attachments: [], dispatchId: "earlier-id" },
+        { text: "selected", attachments: [], dispatchId: "selected-id" },
+      ]);
+      queue = items;
+      return sessionView({ queuedFollowUps: items, onQueuedFollowUpsChange: setItems });
+    }
+    render(<TransferHarness />);
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    await waitFor(() =>
+      expect(rpcWriteSession.mock.calls.some(([, payload]) => typeof payload === "object" && payload !== null && "type" in payload && payload.type === "abort_and_prompt")).toBe(
+        true,
+      ),
+    );
+    const command = rpcWriteSession.mock.calls
+      .map(([, payload]) => payload)
+      .find((payload) => typeof payload === "object" && payload !== null && "type" in payload && payload.type === "abort_and_prompt");
+    expect(command).toMatchObject({ transfer_dispatch_id: "selected-id", message: "selected" });
+    expect(queue.map((item) => item.text)).toEqual(["earlier", "selected"]);
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "alinery_dispatch", dispatch_id: "selected-id", status: "settled" }));
+    });
+    expect(queue.map((item) => item.text)).toEqual(["earlier"]);
+  });
+
+  it("keeps an image follow-up recoverable through rejected Send now and transport-only retry ACK", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
     const onDraftChange = vi.fn();
     const onQueuedFollowUpsChange = vi.fn();
     const rejection = new Error("request-too-large: control request exceeds the 67108864 byte limit");
     const attempts: unknown[] = [];
     rpcWriteSession.mockImplementation(async (_id: string, payload: unknown) => {
-      if ((payload as { type?: string } | null)?.type !== "abort_and_prompt") return;
+      if (typeof payload !== "object" || payload === null || !("type" in payload) || payload.type !== "abort_and_prompt") return { status: "written" };
       attempts.push(payload);
       if (attempts.length === 1) throw rejection;
+      return { status: "written" as const };
     });
     renderSession({
       messageDraft: { body: "", pendingActions: [], attachments: [] },
       onMessageDraftChange: onDraftChange,
-      queuedFollowUps: [{ text: "keep this queued caption", attachments: [blobPng] }],
+      queuedFollowUps: [{ text: "keep this queued caption", attachments: [blobPng], dispatchId: "queued-image" }],
       onQueuedFollowUpsChange,
     });
     await flushPromises();
+    onQueuedFollowUpsChange.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "Send now" }));
 
     expect(await screen.findByText(String(rejection))).toBeDefined();
@@ -1487,14 +1888,13 @@ describe("session chat send routing", () => {
     ]);
 
     fireEvent.click(screen.getByRole("button", { name: "Send now" }));
-    await waitFor(() => expect(onQueuedFollowUpsChange).toHaveBeenCalledWith([]));
-    expect(attempts).toHaveLength(2);
+    await waitFor(() => expect(attempts).toHaveLength(2));
     expect(attempts[1]).toMatchObject({
       type: "abort_and_prompt",
       message: "keep this queued caption",
       images: [{ type: "image", data: "aa", mimeType: "image/png" }],
     });
-    expect(screen.queryByText("queued · after this turn")).toBeNull();
+    expect(screen.getByText("queued · after this turn")).toBeDefined();
     expect(screen.queryByText(String(rejection))).toBeNull();
   });
 
@@ -1536,31 +1936,15 @@ describe("session chat send routing", () => {
     expect(Array.isArray(attachments) && attachments[0] && typeof attachments[0] === "object" && attachments[0] !== null && "data" in attachments[0]).toBe(false);
   });
 
-  it("revokes blob URLs on turn_start ACK and restores them without revoke on refusal", async () => {
+  it("keeps blob preview ownership when a correlated refusal restores the attachment", async () => {
     const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     writeChatAttachmentBytes.mockResolvedValue("paste.png");
     copyChatAttachments.mockResolvedValue({ copied: ["paste.png"], failures: [] });
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
     const onLine = { current: undefined as ((line: string) => void) | undefined };
     captureRpcOnLine(onLine);
-    const onDraftChange = vi.fn();
-    const messageDraft = { body: "see this", pendingActions: [], attachments: [blobPng] } as SessionMessageDraft;
-    renderSession({ messageDraft, onMessageDraftChange: onDraftChange });
-    await flushPromises();
-    await waitFor(() => expect(onLine.current).toBeDefined());
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(sends()).toHaveLength(1));
-    await act(async () => {
-      onLine.current?.(JSON.stringify({ type: "turn_start" }));
-    });
-    expect(revoke).toHaveBeenCalledWith("blob:http://localhost/paste");
-    revoke.mockClear();
-
-    const refusedDraft = { body: "see this", pendingActions: [], attachments: [blobPng] } as SessionMessageDraft;
-    cleanup();
-    captureRpcOnLine(onLine);
     const restore = vi.fn();
-    renderSession({ messageDraft: refusedDraft, onMessageDraftChange: restore });
+    renderSession({ messageDraft: { body: "see this", pendingActions: [], attachments: [blobPng] }, onMessageDraftChange: restore });
     await flushPromises();
     await waitFor(() => expect(onLine.current).toBeDefined());
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -1569,11 +1953,10 @@ describe("session chat send routing", () => {
     await act(async () => {
       onLine.current?.(
         JSON.stringify({
-          type: "response",
-          id: commandId,
-          command: "prompt",
-          success: false,
-          error: "Agent is already processing",
+          type: "alinery_dispatch",
+          dispatch_id: commandId,
+          status: "rejected",
+          reason: "Agent is already processing",
         }),
       );
     });
@@ -1608,7 +1991,7 @@ describe("session chat attach handshake", () => {
   beforeEach(() => {
     scenario.tasks = [{ ...task }];
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
-    rpcWriteSession.mockReset().mockResolvedValue(undefined);
+    rpcWriteSession.mockReset().mockResolvedValue({ status: "written" });
     rpcAttachSession.mockReset();
     rpcAttachSession.mockImplementation(async () => undefined);
   });
@@ -1618,7 +2001,51 @@ describe("session chat attach handshake", () => {
     vi.useRealTimers();
     sessionStatus.mockReset();
     sessionStatus.mockResolvedValue({ lifecycle: { state: "exited" as const, code: 0 }, state: null, checkpoint: {} });
-    rpcWriteSession.mockReset().mockResolvedValue(undefined);
+    rpcWriteSession.mockReset().mockResolvedValue({ status: "written" });
+  });
+
+  const commands = (type: string) =>
+    rpcWriteSession.mock.calls
+      .map(([, payload]) => payload)
+      .filter(
+        (payload): payload is { type: string; id: string } =>
+          !!payload && typeof payload === "object" && "type" in payload && payload.type === type && "id" in payload && typeof payload.id === "string",
+      );
+
+  it("does not mutate matching native compaction preferences when attaching or reattaching", async () => {
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    renderSession();
+    for (let pass = 0; pass < 2; pass++) {
+      await waitFor(() => expect(commands("get_available_models")).not.toEqual([]));
+      const states = commands("get_state");
+      expect(states.length).toBeGreaterThan(0);
+      await act(async () => {
+        for (const state of states)
+          onLine.current?.(JSON.stringify({ type: "response", id: state.id, command: "get_state", success: true, data: { autoCompactionEnabled: true } }));
+        onLine.current?.(JSON.stringify({ type: "response", id: null, command: "get_state", success: true, data: { autoCompactionEnabled: false } }));
+      });
+      expect(commands("set_auto_compaction")).toEqual([]);
+      if (pass === 0) {
+        rpcWriteSession.mockClear();
+        await act(async () => onStreamClosed.mock.calls[onStreamClosed.mock.calls.length - 1]?.[2]?.());
+      }
+    }
+  });
+
+  it("synchronizes changed compaction preferences only from the fresh correlated state reply", async () => {
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    const view = renderSession();
+    await waitFor(() => expect(commands("get_available_models")).not.toEqual([]));
+    rpcWriteSession.mockClear();
+    view.rerender(sessionView({ appearance: { ...DEFAULT_APPEARANCE, chat_auto_compaction: false } }));
+    await waitFor(() => expect(commands("get_state")).toHaveLength(1));
+    const request = commands("get_state")[0];
+    await act(async () => onLine.current?.(JSON.stringify({ type: "response", id: "unrelated", command: "get_state", success: true, data: { autoCompactionEnabled: true } })));
+    expect(commands("set_auto_compaction")).toEqual([]);
+    await act(async () => onLine.current?.(JSON.stringify({ type: "response", id: request.id, command: "get_state", success: true, data: { autoCompactionEnabled: true } })));
+    expect(commands("set_auto_compaction")).toEqual([expect.objectContaining({ type: "set_auto_compaction", enabled: false })]);
   });
 
   it("re-reads the journal when a dropped stream reattaches", async () => {
@@ -1760,6 +2187,7 @@ describe("session chat attach handshake", () => {
         sessionStatus.mockResolvedValue(exitedRpc);
         throw "session-exited";
       }
+      return { status: "written" as const };
     });
     render(<Toast />);
     renderSession({ messageDraft: { body: "keep draft", pendingActions: [], attachments: [] } });
@@ -1776,6 +2204,7 @@ describe("session chat attach handshake", () => {
         if (status === "unavailable") sessionStatus.mockRejectedValue(new Error("Status unavailable"));
         throw new Error("RPC connection failed");
       }
+      return { status: "written" as const };
     });
     render(<Toast />);
     renderSession();
@@ -1845,7 +2274,7 @@ describe("session chat thinking level", () => {
 
   beforeEach(() => {
     scenario.tasks = [{ ...task }];
-    rpcWriteSession.mockReset().mockResolvedValue(undefined);
+    rpcWriteSession.mockReset().mockResolvedValue({ status: "written" });
     rpcAttachSession.mockReset();
     rpcAttachSession.mockImplementation(async () => undefined);
   });
@@ -1854,7 +2283,7 @@ describe("session chat thinking level", () => {
     cleanup();
     sessionStatus.mockReset();
     sessionStatus.mockResolvedValue({ lifecycle: { state: "exited" as const, code: 0 }, state: null, checkpoint: {} });
-    rpcWriteSession.mockReset().mockResolvedValue(undefined);
+    rpcWriteSession.mockReset().mockResolvedValue({ status: "written" });
   });
 
   it("keeps the status line's text with the level in it", async () => {
@@ -1897,7 +2326,366 @@ describe("session chat thinking level", () => {
   });
 });
 
-describe("session-scoped completion permission", () => {
+describe("review continuation", () => {
+  function readyReply(revision: number | null = 7): TaskExecutionReply {
+    const record = Object.assign(executionRecord({ owner_session_id: "session" }), {
+      continuation_mode: "manual",
+      work_revision: revision ?? 8,
+      last_ready_revision: 7,
+      ready_revision: revision,
+      continuation_requested_revision: null,
+    });
+    return {
+      ...executionReply([record]),
+      assessment: { status: "active", reasons: [] },
+      executions: { [record.id]: { destinations: [{ step_key: "review", title: "Review changes" }], terminality: "nonterminal", reasons: [] } },
+      continuation: { [record.id]: { process_incarnation: "incarnation-a", available: true, reason: null } },
+    };
+  }
+  beforeEach(() => {
+    scenario.tasks = [task];
+    scenario.tasksPromise = null;
+    scenario.tasksError = null;
+    sessionStatus.mockReset().mockResolvedValue(liveObservation("rpc"));
+    rpcAttachSession.mockReset().mockResolvedValue(undefined);
+    rpcWriteSession.mockReset().mockResolvedValue({ status: "written" });
+    getTaskExecution.mockReset().mockResolvedValue(readyReply());
+    continueExecution.mockReset().mockResolvedValue({ status: "requested", ready_revision: 7 });
+  });
+  afterEach(() => {
+    cleanup();
+    getTaskExecution.mockReset();
+    vi.useRealTimers();
+  });
+
+  describe("human-authorized end and handoff", () => {
+    const request = { task_slug: "task", execution_id: "execution-a", session_id: "session", process_incarnation: "prepared-incarnation", work_revision: 12 };
+    beforeEach(() => {
+      prepareEndExecution.mockReset().mockResolvedValue({ request, artifacts: ["research/2-result-10.md"], diagnostics: [] });
+      endExecution.mockReset().mockResolvedValue({ status: "accepted", receipt_id: "receipt-end" });
+      createSessionForRepo.mockReset();
+      confirmDanger.mockReset().mockResolvedValue(true);
+    });
+
+    it("keeps execution details and recovery actions hidden until requested", async () => {
+      renderSession();
+      await screen.findByRole("button", { name: "Continue to Review changes" });
+      expect(screen.queryByRole("button", { name: "End session and continue…" })).toBeNull();
+      expect(screen.queryByLabelText("Session execution")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+      const dialog = await screen.findByRole("dialog", { name: "Session actions" });
+      expect(within(dialog).getByRole("button", { name: "End session and continue…" })).toBeDefined();
+      expect(within(dialog).getByLabelText("Session execution")).toBeDefined();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close session actions" }));
+      expect(screen.queryByRole("dialog", { name: "Session actions" })).toBeNull();
+    });
+
+    it("shows assigned artifacts in a safe-default keyboard confirmation", async () => {
+      const confirmation = await vi.importActual<typeof Confirmation>("../confirm");
+      confirmDanger.mockImplementation(confirmation.confirmDanger);
+      render(<confirmation.ConfirmHost />);
+      renderSession();
+      fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
+      fireEvent.click(await screen.findByRole("button", { name: "End session and continue…" }));
+      const dialog = await screen.findByRole("alertdialog", { name: "End session and continue?" });
+      expect(within(dialog).getByText("research/2-result-10.md")).toBeDefined();
+      const cancelButtons = within(dialog).getAllByRole("button", { name: "Cancel" });
+      const cancel = cancelButtons[cancelButtons.length - 1];
+      expect(cancel.hasAttribute("data-autofocus")).toBe(true);
+      fireEvent.click(cancel);
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+      expect(endExecution).not.toHaveBeenCalled();
+    });
+
+    it("cancels without ending and submits only the confirmed prepared identity", async () => {
+      confirmDanger.mockResolvedValueOnce(false);
+      renderSession();
+      fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
+      const action = await screen.findByRole("button", { name: "End session and continue…" });
+      fireEvent.click(action);
+      await waitFor(() => expect(confirmDanger).toHaveBeenCalledTimes(1));
+      expect(endExecution).not.toHaveBeenCalled();
+      await waitFor(() => expect(action).toHaveProperty("disabled", false));
+      fireEvent.click(action);
+      await waitFor(() => expect(endExecution).toHaveBeenCalledExactlyOnceWith(request, "/repo"));
+      await screen.findByText(/Handoff accepted/);
+      expect(screen.queryByText("Playbook complete")).toBeNull();
+      expect(continueExecution).not.toHaveBeenCalled();
+    });
+
+    it("offers explicit ending in live Terminal while ordinary Continue remains blocked", async () => {
+      sessionStatus.mockResolvedValue(liveObservation("pty"));
+      const blocked = readyReply();
+      blocked.continuation["execution-a"] = { available: false, process_incarnation: "raw", reason: "Raw terminal input cannot be tracked" };
+      getTaskExecution.mockResolvedValue(blocked);
+      renderSession({ intent: "attach" });
+      fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
+      const action = await screen.findByRole("button", { name: "End session and continue…" });
+      expect(screen.getByTestId("terminal")).toBeDefined();
+      fireEvent.click(action);
+      await waitFor(() => expect(endExecution).toHaveBeenCalledExactlyOnceWith(request, "/repo"));
+      expect(continueExecution).not.toHaveBeenCalled();
+    });
+
+    it("retains stopped invalid-output diagnostics and only offers replacement after shutdown proof", async () => {
+      endExecution.mockResolvedValue({ status: "invalid_outputs", diagnostics: ["Missing required result"] });
+      renderSession();
+      fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
+      fireEvent.click(await screen.findByRole("button", { name: "End session and continue…" }));
+      await screen.findByText(/Missing required result/);
+      expect(screen.queryByRole("button", { name: "Replace stopped session" })).toBeNull();
+      expect(createSessionForRepo).not.toHaveBeenCalled();
+    });
+
+    it("replaces proven-stopped unaccepted work in the same execution and opens its session", async () => {
+      const stopped = readyReply();
+      stopped.state.executions["execution-a"].shutdown_confirmed = true;
+      stopped.state.executions["execution-a"].lifecycle = "failed";
+      getTaskExecution.mockResolvedValue(stopped);
+      const replacement = { id: "replacement", worktree: "/worktrees/task", phase: "worker", harness: "omp", model: "", playbook: "retained" };
+      createSessionForRepo.mockResolvedValue({ session: replacement, execution: stopped.state.executions["execution-a"], start: "started" });
+      const onOpenReplacement = vi.fn();
+      renderSession({ onOpenReplacement });
+      fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Replace stopped session" }));
+      await waitFor(() =>
+        expect(createSessionForRepo).toHaveBeenCalledExactlyOnceWith({
+          repoPath: "/repo",
+          request: {
+            task_slug: "task",
+            target: { kind: "primary", step_key: stopped.state.executions["execution-a"].candidate.step_key, execution_id: "execution-a" },
+            start: true,
+          },
+        }),
+      );
+      expect(onOpenReplacement).toHaveBeenCalledExactlyOnceWith(replacement);
+      expect(screen.queryByRole("button", { name: "Start fresh" })).toBeNull();
+    });
+
+    it("ignores a replacement response after leaving its session", async () => {
+      const stopped = readyReply();
+      stopped.state.executions["execution-a"].shutdown_confirmed = true;
+      stopped.state.executions["execution-a"].lifecycle = "failed";
+      getTaskExecution.mockResolvedValue(stopped);
+      const result = deferred<{ session: { id: string } }>();
+      createSessionForRepo.mockReturnValue(result.promise);
+      const onOpenReplacement = vi.fn();
+      const view = renderSession({ onOpenReplacement });
+      fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Replace stopped session" }));
+      await waitFor(() => expect(createSessionForRepo).toHaveBeenCalledTimes(1));
+      view.unmount();
+      await act(async () => result.resolve({ session: { id: "replacement" } }));
+      expect(onOpenReplacement).not.toHaveBeenCalled();
+    });
+
+    it("ignores end preparation after leaving its session", async () => {
+      const result = deferred<{ request: typeof request; artifacts: string[]; diagnostics: string[] }>();
+      prepareEndExecution.mockReturnValue(result.promise);
+      const view = renderSession();
+      fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
+      fireEvent.click(await screen.findByRole("button", { name: "End session and continue…" }));
+      await waitFor(() => expect(prepareEndExecution).toHaveBeenCalledTimes(1));
+      view.unmount();
+      await act(async () => result.resolve({ request, artifacts: ["result.md"], diagnostics: [] }));
+      expect(confirmDanger).not.toHaveBeenCalled();
+      expect(endExecution).not.toHaveBeenCalled();
+    });
+
+    it("does not apply an old end result to a newly viewed owner", async () => {
+      const result = deferred<{ status: string; receipt_id: string }>();
+      endExecution.mockReturnValue(result.promise);
+      const view = renderSession();
+      fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
+      fireEvent.click(await screen.findByRole("button", { name: "End session and continue…" }));
+      await waitFor(() => expect(endExecution).toHaveBeenCalledTimes(1));
+      const next = readyReply();
+      next.state.executions["execution-a"].owner_session_id = "other-session";
+      getTaskExecution.mockResolvedValue(next);
+      view.rerender(sessionView({ id: "other-session" }));
+      await act(async () => result.resolve({ status: "accepted", receipt_id: "old-receipt" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
+      expect(await screen.findByRole("button", { name: "End session and continue…" })).toHaveProperty("disabled", false);
+      expect(screen.queryByText(/Handoff accepted/)).toBeNull();
+    });
+
+    it("does not resend an uncertain end request on observation refresh", async () => {
+      endExecution.mockRejectedValue(new Error("Reply lost"));
+      renderSession();
+      fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
+      fireEvent.click(await screen.findByRole("button", { name: "End session and continue…" }));
+      await screen.findByText(/End-session outcome unavailable/);
+      const refresh = screen.getByRole("button", { name: "Refresh handoff status" });
+      await waitFor(() => expect(refresh).toHaveProperty("disabled", false));
+      fireEvent.click(refresh);
+      await flushPromises();
+      expect(endExecution).toHaveBeenCalledTimes(1);
+    });
+  });
+  it("keeps validated readiness disabled while native input settlement is outstanding", async () => {
+    const pending = readyReply();
+    pending.continuation["execution-a"].reason = "Submitted input has not settled";
+    getTaskExecution.mockResolvedValue(pending);
+    renderSession();
+    const control = await screen.findByRole("button", { name: "Continue to Review changes" });
+    await flushPromises();
+    expect(control).toHaveProperty("disabled", true);
+    fireEvent.click(control);
+    expect(continueExecution).not.toHaveBeenCalled();
+  });
+
+  it("submits the observed ready owner once outside the transcript without claiming completion", async () => {
+    const result = deferred<{ status: string; ready_revision: number }>();
+    continueExecution.mockReturnValue(result.promise);
+    renderSession();
+    const control = await screen.findByRole("button", { name: "Continue to Review changes" });
+    await waitFor(() => expect(control).toHaveProperty("disabled", false));
+    expect(within(screen.getByRole("region", { name: "Playbook continuation" })).getByRole("button", { name: "Continue to Review changes" })).toBe(control);
+    expect(within(screen.getByTestId("chat-pane")).queryByRole("button", { name: "Continue to Review changes" })).toBeNull();
+    fireEvent.click(control);
+    fireEvent.click(control);
+    expect(continueExecution).toHaveBeenCalledExactlyOnceWith(
+      {
+        task_slug: "task",
+        execution_id: "execution-a",
+        session_id: "session",
+        process_incarnation: "incarnation-a",
+        ready_revision: 7,
+      },
+      "/repo",
+    );
+    await act(async () => result.resolve({ status: "requested", ready_revision: 7 }));
+    expect(screen.queryByText("Playbook complete")).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue to Review changes" })).toHaveProperty("disabled", true);
+  });
+
+  it("keeps accepted handoff evidence when the subsequent observation fails", async () => {
+    continueExecution.mockResolvedValueOnce({ status: "accepted", receipt_id: "accepted-receipt" });
+    renderSession();
+    const control = await screen.findByRole("button", { name: "Continue to Review changes" });
+    await waitFor(() => expect(control).toHaveProperty("disabled", false));
+    getTaskExecution.mockRejectedValue(new Error("Snapshot unavailable"));
+    fireEvent.click(control);
+    await screen.findByText("Handoff accepted; waiting for the session to exit.");
+    await screen.findByText(/Snapshot unavailable/);
+    expect(screen.queryByText(/Continuation outcome unavailable/)).toBeNull();
+    expect(screen.queryByText("Playbook complete")).toBeNull();
+    expect(control).toHaveProperty("disabled", true);
+    expect(continueExecution).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows explicit same-owner retry after a lost Continue reply and live refresh", async () => {
+    continueExecution.mockRejectedValueOnce(new Error("Reply lost"));
+    renderSession();
+    const control = await screen.findByRole("button", { name: "Continue to Review changes" });
+    await waitFor(() => expect(control).toHaveProperty("disabled", false));
+    fireEvent.click(control);
+    await screen.findByText(/Continuation outcome unavailable/);
+    await waitFor(() => expect(control).toHaveProperty("disabled", false));
+    expect(continueExecution).toHaveBeenCalledTimes(1);
+    fireEvent.click(control);
+    await waitFor(() => expect(continueExecution).toHaveBeenCalledTimes(2));
+    expect(continueExecution).toHaveBeenNthCalledWith(
+      2,
+      { task_slug: "task", execution_id: "execution-a", session_id: "session", process_incarnation: "incarnation-a", ready_revision: 7 },
+      "/repo",
+    );
+  });
+
+  it("allows an explicit retry at the same ready revision after a definite non-requested outcome", async () => {
+    continueExecution.mockResolvedValueOnce({ status: "waiting", reason: "A native operation is still settling" });
+    renderSession();
+    const control = await screen.findByRole("button", { name: "Continue to Review changes" });
+    await waitFor(() => expect(control).toHaveProperty("disabled", false));
+    fireEvent.click(control);
+    await waitFor(() => expect(screen.getByText("A native operation is still settling")).toBeDefined());
+    await waitFor(() => expect(control).toHaveProperty("disabled", false));
+    expect(continueExecution).toHaveBeenCalledTimes(1);
+    fireEvent.click(control);
+    await waitFor(() => expect(continueExecution).toHaveBeenCalledTimes(2));
+    expect(continueExecution.mock.calls[1]?.[0]).toMatchObject({ ready_revision: 7, process_incarnation: "incarnation-a" });
+  });
+
+  it("retains a disabled continuation during revision and enables only fresh authoritative readiness", async () => {
+    vi.useFakeTimers();
+    renderSession({ messageDraft: { body: "Please revise this", pendingActions: [], attachments: [] } });
+    await flushPromises();
+    expect(screen.getByRole("button", { name: "Continue to Review changes" })).toHaveProperty("disabled", false);
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await flushPromises();
+    expect(screen.getByRole("button", { name: "Continue to Review changes" })).toHaveProperty("disabled", true);
+    getTaskExecution.mockResolvedValue(readyReply(null));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(screen.getByRole("button", { name: "Continue to Review changes" })).toHaveProperty("disabled", true);
+    getTaskExecution.mockResolvedValue(readyReply(8));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(screen.getByRole("button", { name: "Continue to Review changes" })).toHaveProperty("disabled", false);
+  });
+
+  it("keeps saved readiness visible without granting live authority", async () => {
+    const saved = readyReply();
+    getTaskExecution.mockResolvedValue({ ...saved, live: { status: "offline", detail: "Owner is offline" }, continuation: {} });
+    renderSession();
+    const control = await screen.findByRole("button", { name: "Continue to Review changes" });
+    expect(control).toHaveProperty("disabled", true);
+    fireEvent.click(control);
+    expect(continueExecution).not.toHaveBeenCalled();
+    expect(screen.queryByText("Playbook complete")).toBeNull();
+  });
+
+  it("does not offer continuation before readiness or for automatic and terminal work", async () => {
+    const unready = readyReply(null);
+    unready.state.executions["execution-a"].last_ready_revision = null;
+    getTaskExecution.mockResolvedValue(unready);
+    const first = renderSession();
+    await flushPromises();
+    expect(screen.queryByRole("button", { name: /Continue (to|playbook)/ })).toBeNull();
+    first.unmount();
+    const automatic = readyReply();
+    automatic.state.executions["execution-a"].continuation_mode = "automatic";
+    getTaskExecution.mockResolvedValue(automatic);
+    const second = renderSession();
+    await flushPromises();
+    expect(screen.queryByRole("button", { name: /Continue (to|playbook)/ })).toBeNull();
+    second.unmount();
+    const terminal = readyReply();
+    terminal.executions["execution-a"] = { destinations: [], terminality: "terminal", reasons: [] };
+    getTaskExecution.mockResolvedValue(terminal);
+    renderSession();
+    await flushPromises();
+    expect(screen.queryByRole("button", { name: /Continue (to|playbook)/ })).toBeNull();
+    expect(screen.queryByText("Playbook complete")).toBeNull();
+  });
+
+  it("uses a generic continuation label for several destinations and only aggregate settlement completes the playbook", async () => {
+    vi.useFakeTimers();
+    const reply = readyReply();
+    reply.executions["execution-a"].destinations.push({ step_key: "audit", title: "Audit changes" });
+    getTaskExecution.mockResolvedValue(reply);
+    renderSession();
+    await flushPromises();
+    expect(screen.getByRole("button", { name: "Continue playbook" })).toBeDefined();
+    expect(screen.queryByText("Audit changes")).toBeNull();
+    expect(screen.queryByText("Playbook complete")).toBeNull();
+    getTaskExecution.mockResolvedValue({ ...reply, assessment: { status: "complete", reasons: [] } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(screen.getByLabelText("Playbook status").textContent).toBe("Playbook complete");
+    expect(screen.queryByRole("button", { name: "Continue playbook" })).toBeNull();
+    getTaskExecution.mockRejectedValue(new Error("Execution query failed"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(screen.queryByText("Playbook complete")).toBeNull();
+  });
+});
+
+describe("session execution history and substantive approvals", () => {
   beforeEach(() => {
     scenario.tasks = [task];
     scenario.tasksPromise = null;
@@ -1905,18 +2693,13 @@ describe("session-scoped completion permission", () => {
     scenario.items = [];
     sessionStatus.mockReset().mockResolvedValue(liveObservation("rpc"));
     rpcAttachSession.mockReset().mockResolvedValue(undefined);
-    rpcWriteSession.mockReset().mockResolvedValue(undefined);
+    rpcWriteSession.mockReset().mockResolvedValue({ status: "written" });
     getTaskExecution.mockReset().mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session" })]));
-    allowExecutionCompletion.mockReset().mockImplementation(async (_slug: string, executionId: string, sessionId: string) => {
-      getTaskExecution.mockResolvedValue(
-        executionReply([executionRecord({ owner_session_id: sessionId, permission: { kind: "human_granted", execution_id: executionId, session_id: sessionId } })]),
-      );
-    });
+    continueExecution.mockReset();
   });
   afterEach(() => {
     cleanup();
     getTaskExecution.mockReset();
-    allowExecutionCompletion.mockReset();
     vi.useRealTimers();
   });
 
@@ -1924,6 +2707,7 @@ describe("session-scoped completion permission", () => {
     getTaskExecution.mockResolvedValue(partiallyPublishedExecution("session"));
     renderSession();
     await flushPromises();
+    fireEvent.click(await screen.findByRole("button", { name: "Session actions" }));
     const execution = screen.getByLabelText("Session execution");
     fireEvent.click(within(execution).getByText(/Retained worker · finishing/));
     const outputs = within(within(execution).getByRole("list", { name: "Execution outputs" }));
@@ -1936,163 +2720,17 @@ describe("session-scoped completion permission", () => {
     expect(outputs.queryByText("notes/2-other-21.md")).toBeNull();
   });
 
-  async function requestCompletion(title = "Allow this session to complete") {
+  it("does not turn an ordinary approval into continuation authority", async () => {
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    renderSession();
     await flushPromises();
-    const attach = rpcAttachSession.mock.calls[rpcAttachSession.mock.calls.length - 1]?.[0] as { onLine: (line: string) => void };
     await act(async () => {
-      attach.onLine(JSON.stringify({ type: "extension_ui_request", id: "completion-ask", method: "confirm", title, message: "Extension-supplied description" }));
+      onLine.current?.(JSON.stringify({ type: "extension_ui_request", id: "approval", method: "confirm", title: "Approve a different action", message: "A substantive decision" }));
     });
-  }
-
-  function responses() {
-    return rpcWriteSession.mock.calls
-      .map(([, payload]) => payload as { type?: string; id?: string; confirmed?: boolean })
-      .filter((payload) => payload.type === "extension_ui_response" && payload.id === "completion-ask");
-  }
-
-  it("asks in chat only when requested and waits for the authenticated grant before releasing the tool", async () => {
-    const grant = deferred<void>();
-    allowExecutionCompletion.mockReturnValue(grant.promise);
-    renderSession();
-    await flushPromises();
-    expect(screen.queryByRole("button", { name: "Finish step" })).toBeNull();
-    await requestCompletion();
-    const pane = within(screen.getByTestId("chat-pane"));
-    const allow = pane.getByRole("button", { name: "Finish step" });
-    expect(pane.getByRole("button", { name: "Continue working in this session" })).toBeDefined();
-    expect(pane.queryByText("Extension-supplied description")).toBeNull();
-    fireEvent.click(allow);
-    fireEvent.click(allow);
-    expect(allowExecutionCompletion).toHaveBeenCalledExactlyOnceWith("task", "execution-a", "session", "/repo");
-    expect(responses()).toEqual([]);
-    await act(async () => grant.resolve());
-    await waitFor(() => expect(responses()).toEqual([{ type: "extension_ui_response", id: "completion-ask", confirmed: true }]));
-    expect(pane.queryByRole("button", { name: "Finish step" })).toBeNull();
-    expect(screen.getByLabelText("Message or /command")).toBeDefined();
-  });
-
-  it("offers step completion without promising a dependent step and grants only the current execution", async () => {
-    const saved = executionReply([executionRecord({ owner_session_id: "session" })]);
-    saved.definition.step.unshift({
-      ...saved.definition.step[0],
-      key: "review",
-      title: "Review changes",
-      inputs: [{ path: "result.md", mode: "single" }],
-      outputs: [{ path: "review.md" }],
-    });
-    getTaskExecution.mockResolvedValue(saved);
-    renderSession();
-    await requestCompletion();
-    expect(screen.getByText("Ready to finish this step?")).toBeDefined();
-    expect(screen.getByText(/Possible following steps: Review changes/)).toBeDefined();
-    fireEvent.click(screen.getByRole("button", { name: "Finish step" }));
-    await waitFor(() => expect(responses()).toEqual([{ type: "extension_ui_response", id: "completion-ask", confirmed: true }]));
-    expect(allowExecutionCompletion).toHaveBeenCalledExactlyOnceWith("task", "execution-a", "session", "/repo");
-  });
-
-  it("denies completion without granting permission or closing the composer", async () => {
-    renderSession();
-    await requestCompletion();
-    fireEvent.click(screen.getByRole("button", { name: "Continue working in this session" }));
-    await waitFor(() => expect(responses()).toEqual([{ type: "extension_ui_response", id: "completion-ask", confirmed: false }]));
-    expect(allowExecutionCompletion).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: "Finish step" })).toBeNull();
-    expect(screen.getByLabelText("Message or /command")).toBeDefined();
-  });
-
-  it("does not turn an ordinary approval into completion authority", async () => {
-    renderSession();
-    await requestCompletion("Approve a different action");
     fireEvent.click(screen.getByRole("button", { name: "Allow" }));
-    await waitFor(() => expect(responses()).toEqual([{ type: "extension_ui_response", id: "completion-ask", confirmed: true }]));
-    expect(allowExecutionCompletion).not.toHaveBeenCalled();
-  });
-
-  it("never grants a replacement from a retired owner's history", async () => {
-    getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "replacement", previous_session_ids: ["session"] })]));
-    renderSession();
-    await requestCompletion();
-    const allow = screen.getByRole("button", { name: "Finish step" });
-    expect(allow).toHaveProperty("disabled", true);
-    fireEvent.click(allow);
-    expect(allowExecutionCompletion).not.toHaveBeenCalled();
-    expect(responses()).toEqual([]);
-    fireEvent.click(await screen.findByText(/Owner replacement/));
-    expect(screen.getByText("This is a previous owner. Current owner: replacement.")).toBeDefined();
-  });
-
-  it.each(["offline", "foreign_owner", undefined] as const)("keeps saved execution history readable without completion authority when live status is %s", async (status) => {
-    const saved = executionReply([executionRecord({ owner_session_id: "session" })]);
-    getTaskExecution.mockResolvedValue({ ...saved, live: status ? { status, detail: "Owner cannot be queried" } : undefined });
-    renderSession();
-    await requestCompletion();
-    const allow = screen.getByRole("button", { name: "Finish step" });
-    expect(allow).toHaveProperty("disabled", true);
-    fireEvent.click(allow);
-    fireEvent.click(screen.getByText(/Retained worker · running · Owner session/));
-    expect(screen.getByText("research/1-request-2.md")).toBeDefined();
-    expect(screen.getByText("research/2-result-10.md")).toBeDefined();
-    expect(allowExecutionCompletion).not.toHaveBeenCalled();
-    expect(responses()).toEqual([]);
-  });
-
-  it("revokes completion authority when a refresh fails after a live reply", async () => {
-    vi.useFakeTimers();
-    renderSession();
-    await requestCompletion();
-    const allow = screen.getByRole("button", { name: "Finish step" }) as HTMLButtonElement;
-    expect(allow.disabled).toBe(false);
-
-    getTaskExecution.mockRejectedValue(new Error("Execution query failed"));
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1500);
-    });
-    expect(allow.disabled).toBe(true);
-    fireEvent.click(allow);
-    expect(allowExecutionCompletion).not.toHaveBeenCalled();
-    expect(responses()).toEqual([]);
-  });
-
-  it("keeps a failed grant pending and permits retry after authority recovers", async () => {
-    vi.useFakeTimers();
-    allowExecutionCompletion.mockRejectedValueOnce(new Error("grant failed"));
-    renderSession();
-    await requestCompletion();
-    fireEvent.click(screen.getByRole("button", { name: "Finish step" }));
-    await flushPromises();
-    expect(responses()).toEqual([]);
-    expect(screen.getByRole("button", { name: "Finish step" })).toHaveProperty("disabled", true);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1500);
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Finish step" }));
-    await flushPromises();
-    expect(responses()).toEqual([{ type: "extension_ui_response", id: "completion-ask", confirmed: true }]);
-    expect(allowExecutionCompletion).toHaveBeenCalledTimes(2);
-  });
-
-  it("does not offer a false denial after permission was granted but the RPC reply failed", async () => {
-    vi.useFakeTimers();
-    rpcWriteSession.mockImplementation(async (_id, payload) => {
-      if (payload && typeof payload === "object" && "type" in payload && payload.type === "extension_ui_response") throw new Error("reply failed");
-    });
-    renderSession();
-    await requestCompletion();
-    fireEvent.click(screen.getByRole("button", { name: "Finish step" }));
-    await flushPromises();
-    expect(allowExecutionCompletion).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1500);
-    });
-    expect(screen.getByRole("button", { name: "Continue working in this session" })).toHaveProperty("disabled", true);
-    fireEvent.click(screen.getByRole("button", { name: "Continue working in this session" }));
-    expect(responses().some((response) => response.confirmed === false)).toBe(false);
-    rpcWriteSession.mockResolvedValue(undefined);
-    fireEvent.click(screen.getByRole("button", { name: "Retry handoff" }));
-    await flushPromises();
-    expect(screen.queryByRole("button", { name: "Retry handoff" })).toBeNull();
-    expect(allowExecutionCompletion).toHaveBeenCalledTimes(1);
-    expect(responses().map((response) => response.confirmed)).toEqual([true, true]);
+    await waitFor(() => expect(rpcWriteSession).toHaveBeenCalledWith("session", { type: "extension_ui_response", id: "approval", confirmed: true }));
+    expect(continueExecution).not.toHaveBeenCalled();
   });
 });
 
@@ -2134,11 +2772,9 @@ describe("held task sessions", () => {
     getTaskExecution.mockResolvedValue({ ...saved, live: status ? { status, detail: "Owner cannot be queried" } : undefined });
     renderSession({ intent: undefined });
 
-    await screen.findByText(/Retained worker · queued · Owner session/);
-    const start = screen.getByRole("button", { name: "Start this queued session" });
+    const start = await screen.findByRole("button", { name: "Start this queued session" });
     expect((start as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(start);
     expect(startSession).not.toHaveBeenCalled();
-    expect(screen.getByText("research/2-result-10.md")).toBeDefined();
   });
 });

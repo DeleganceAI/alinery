@@ -14,7 +14,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 pub use crate::task_creation::{
-    AllowExecutionCompletionRequest, CreateExecutionSessionReply, CreateExecutionSessionRequest, CreateTaskReply, CreateTaskRequest, ExecutionSessionTarget,
+    ContinueExecutionRequest, CreateExecutionSessionReply, CreateExecutionSessionRequest, CreateTaskReply, CreateTaskRequest, DispatchOutcome, ExecutionSessionTarget,
     GetTaskExecutionRequest, StartSessionRequest, TaskAttachment, TaskExecutionReply, TaskPlaybookPackage,
 };
 
@@ -37,11 +37,29 @@ impl UiControlConnection {
         expect_ok(value)?;
         Ok(Self { stream })
     }
-    pub fn allow_execution_completion(&mut self, request: &AllowExecutionCompletionRequest) -> Result<(), String> {
-        writeln!(self.stream, "{}", json!({"op":"allow_execution_completion","request":request})).map_err(|e| e.to_string())?;
+    pub fn prepare_end_execution(&mut self, request: &crate::PrepareEndExecutionRequest) -> Result<crate::EndExecutionPreparation, String> {
+        self.end_control("prepare_end_execution", request, "preparation")
+    }
+    pub fn end_execution(&mut self, request: &crate::EndExecutionRequest) -> Result<crate::CompletionOutcome, String> {
+        self.end_control("end_execution", request, "completion")
+    }
+    fn end_control<T: serde::de::DeserializeOwned>(&mut self, op: &str, request: &impl serde::Serialize, field: &str) -> Result<T, String> {
+        writeln!(self.stream, "{}", json!({"op":op,"request":request})).map_err(|e| e.to_string())?;
         self.stream.flush().map_err(|e| e.to_string())?;
-        let value = serde_json::from_str(&read_reply_line(&mut self.stream, DAEMON_CONTROL_TIMEOUT)?).map_err(|e| e.to_string())?;
-        expect_ok(value)
+        let value: Value = serde_json::from_str(&read_reply_line(&mut self.stream, DAEMON_CONTROL_TIMEOUT)?).map_err(|e| e.to_string())?;
+        if let Some(error) = reply_error(&value) {
+            return Err(error.to_string());
+        }
+        serde_json::from_value(value.get(field).cloned().ok_or_else(|| format!("missing {field}"))?).map_err(|e| e.to_string())
+    }
+    pub fn continue_execution(&mut self, request: &ContinueExecutionRequest) -> Result<crate::CompletionOutcome, String> {
+        writeln!(self.stream, "{}", json!({"op":"continue_execution","request":request})).map_err(|e| e.to_string())?;
+        self.stream.flush().map_err(|e| e.to_string())?;
+        let value: Value = serde_json::from_str(&read_reply_line(&mut self.stream, DAEMON_CONTROL_TIMEOUT)?).map_err(|e| e.to_string())?;
+        if let Some(error) = reply_error(&value) {
+            return Err(error.to_string());
+        }
+        serde_json::from_value(value.get("completion").cloned().ok_or("missing continuation outcome")?).map_err(|error| format!("invalid continuation outcome: {error}"))
     }
 }
 
@@ -139,8 +157,8 @@ pub fn shutdown_request() -> Value {
     json!({"op": ops::SHUTDOWN})
 }
 
-pub fn write_request(id: &str, data: &str) -> Value {
-    json!({"op": ops::WRITE, "id": id, "data": data})
+pub fn write_request(id: &str, data: &str, dispatch_id: &str) -> Value {
+    json!({"op": ops::WRITE, "id": id, "data": data, "dispatch_id": dispatch_id})
 }
 
 pub fn send_message_header(id: &str, body_bytes: usize) -> Value {
@@ -177,6 +195,22 @@ pub fn rpc_attach_request(id: &str, attach_id: u64) -> Value {
 
 pub fn rpc_write_request(id: &str, payload: &Value) -> Value {
     json!({"op": ops::RPC_WRITE, "id": id, "payload": payload})
+}
+
+/// Only an explicit disposition proves that no bytes were sent. A legacy or
+/// malformed acknowledgement cannot safely authorize retrying user input.
+pub fn parse_dispatch_reply(response: Value) -> DispatchOutcome {
+    let dispatch = response.get("dispatch").filter(|value| {
+        value
+            .as_object()
+            .is_some_and(|fields| fields.get("status").and_then(Value::as_str) != Some("written") || fields.len() == 1)
+    });
+    match dispatch.cloned().and_then(|value| serde_json::from_value::<DispatchOutcome>(value).ok()) {
+        Some(outcome) => outcome,
+        None => DispatchOutcome::Unknown {
+            reason: reply_error(&response).unwrap_or("invalid daemon dispatch acknowledgement").to_string(),
+        },
+    }
 }
 
 /// Bring up (or reuse) the reserved setup session. Carries no id: the daemon owns the reserved
@@ -654,8 +688,11 @@ impl DaemonClient {
         self.call(&detach_request(id, attach_id)).and_then(expect_ok)
     }
 
-    pub fn write_session(&self, id: &str, data: &str) -> Result<(), String> {
-        self.call(&write_request(id, data)).and_then(expect_ok)
+    pub fn write_session(&self, id: &str, data: &str, dispatch_id: &str) -> Result<DispatchOutcome, String> {
+        Ok(match self.call(&write_request(id, data, dispatch_id)) {
+            Ok(reply) => parse_dispatch_reply(reply),
+            Err(reason) => DispatchOutcome::Unknown { reason },
+        })
     }
 
     pub fn send_message(&self, id: &str, body: &str) -> Result<(), String> {
@@ -691,8 +728,11 @@ impl DaemonClient {
         self.call(&restate_request(id, transport)).and_then(expect_ok)
     }
 
-    pub fn rpc_write_session(&self, id: &str, payload: &Value) -> Result<(), String> {
-        self.call(&rpc_write_request(id, payload)).and_then(expect_ok)
+    pub fn rpc_write_session(&self, id: &str, payload: &Value) -> Result<DispatchOutcome, String> {
+        Ok(match self.call(&rpc_write_request(id, payload)) {
+            Ok(reply) => parse_dispatch_reply(reply),
+            Err(reason) => DispatchOutcome::Unknown { reason },
+        })
     }
 
     /// Returns the reserved setup session id to attach to.
@@ -722,19 +762,11 @@ fn unknown_message_delivery(detail: &str) -> String {
 }
 
 fn expect_message_send(response: Value) -> Result<(), String> {
-    if let Some(error) = reply_error(&response) {
-        return match response.get("delivery").and_then(Value::as_str) {
-            Some("not_sent") => Err(error.to_string()),
-            Some("unknown") => Err(format!(
-                "Message may have been partially sent. Alinery did not retry. Check OMP before resending; resending may duplicate or corrupt the input. Daemon error: {error}"
-            )),
-            _ => Err(unknown_message_delivery("malformed daemon reply: missing message delivery classification")),
-        };
+    match parse_dispatch_reply(response) {
+        DispatchOutcome::Written => Ok(()),
+        DispatchOutcome::NotSent { reason } => Err(reason),
+        DispatchOutcome::Unknown { reason } => Err(unknown_message_delivery(&reason)),
     }
-    if response.get("ok").and_then(Value::as_bool) != Some(true) {
-        return Err(unknown_message_delivery("malformed daemon reply: missing ok:true"));
-    }
-    Ok(())
 }
 
 fn expect_ok(response: Value) -> Result<(), String> {
@@ -1001,7 +1033,7 @@ mod tests {
         assert_eq!(shutdown_request()["op"], "shutdown");
         assert_eq!(version_request()["op"], "version");
         assert_eq!(list_request()["op"], "list");
-        assert_eq!(write_request("s1", "hi")["data"], "hi");
+        assert_eq!(write_request("s1", "hi", "dispatch-1")["data"], "hi");
         assert_eq!(send_message_header("s1", 7)["op"], "send_message");
         assert_eq!(send_message_header("s1", 7)["body_bytes"], 7);
         assert_eq!(resize_request("s1", 80, 24)["cols"], 80);
@@ -1106,17 +1138,23 @@ mod tests {
     #[test]
     fn message_send_reply_preserves_rejection_and_warns_on_partial_delivery() {
         assert_eq!(
-            expect_message_send(json!({"error": "session-not-idle", "delivery": "not_sent"})).unwrap_err(),
-            "session-not-idle"
+            parse_dispatch_reply(json!({"dispatch":{"status":"not_sent","reason":"session finishing"}})),
+            DispatchOutcome::NotSent {
+                reason: "session finishing".into()
+            },
         );
-        let partial = expect_message_send(json!({"error": "write-message: fixture failure", "delivery": "unknown"})).unwrap_err();
-        assert!(partial.contains("may have been partially sent"));
-        assert!(partial.contains("did not retry"));
-        assert!(partial.contains("resending may duplicate or corrupt"));
-        assert!(partial.contains("write-message: fixture failure"));
-        assert!(expect_message_send(json!({"error": "write-message: fixture failure"}))
-            .unwrap_err()
-            .contains("missing message delivery classification"));
+        assert_eq!(
+            parse_dispatch_reply(json!({"dispatch":{"status":"unknown","reason":"partial write"}})),
+            DispatchOutcome::Unknown { reason: "partial write".into() },
+        );
+        assert_eq!(parse_dispatch_reply(json!({"dispatch":{"status":"written"}})), DispatchOutcome::Written);
+        for response in [
+            json!({"ok":true}),
+            json!({"error":"session finishing"}),
+            json!({"dispatch":{"status":"written","extra":true}}),
+        ] {
+            assert!(matches!(parse_dispatch_reply(response), DispatchOutcome::Unknown { .. }));
+        }
     }
 
     #[test]

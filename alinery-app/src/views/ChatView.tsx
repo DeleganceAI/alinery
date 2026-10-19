@@ -19,11 +19,12 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatComposer } from "../ChatComposer";
 import { formatContextUsage } from "../chat/format";
-import { applySendPlan, commandOutputText, planChatSend } from "../chat/send";
+import { applySendPlan, commandOutputText, planChatSend, requireWritten } from "../chat/send";
 import { type McpServerRow, type ProvidersDialogTab, parseMcpListOutput } from "../chat/slash";
 import type { SessionChatStatus } from "../chat/types";
 import type { ChatPrefs } from "../chat/visibility";
 import {
+  appendHarnessNotice,
   appendOptimisticAbort,
   appendOptimisticUser,
   type ChatTranscriptState,
@@ -485,7 +486,11 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
                 }
               }
               const refresh = queueRefreshCommand(value);
-              if (refresh) ipc.chatRpcWrite(repo, id, refresh).catch(() => {});
+              if (refresh)
+                ipc
+                  .chatRpcWrite(repo, id, refresh)
+                  .then(requireWritten)
+                  .catch((cause: unknown) => setError(errorMessage(cause)));
             },
           });
           // The attach runs off the main thread, so cleanup's detach can reach the daemon before
@@ -497,7 +502,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
             return;
           }
           for (const command of attachHandshake(autoCompactionRef.current)) {
-            await ipc.chatRpcWrite(repo, id, command);
+            requireWritten(await ipc.chatRpcWrite(repo, id, command));
           }
         } catch (cause) {
           if (cancelled) return;
@@ -513,7 +518,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
         try {
           await writeSend(key, repo, id, sendCommand(claimed.text, false), claimed.text, (current) => applyPlainSend(current, claimed.text, false));
         } catch (cause) {
-          if (!cancelled) dropClaim(`Not sent: ${errorMessage(cause)}`);
+          if (!cancelled) dropClaim(errorMessage(cause));
           return;
         }
         if (pendingPrompt.current === claimed) pendingPrompt.current = null;
@@ -613,7 +618,10 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     const key = `${selectedRepo}:${selectedId}:${visibility.autoCompaction}`;
     if (compactionPushed.current === key) return;
     compactionPushed.current = key;
-    ipc.chatRpcWrite(selectedRepo, selectedId, setAutoCompactionCommand(visibility.autoCompaction)).catch(() => {});
+    ipc
+      .chatRpcWrite(selectedRepo, selectedId, setAutoCompactionCommand(visibility.autoCompaction))
+      .then(requireWritten)
+      .catch((cause: unknown) => setError(errorMessage(cause)));
   }, [visibility.autoCompaction, processLive, selectedRepo, selectedId]);
   const inTerminal = processLive && observation?.transport === "pty";
   const terminalIo = useMemo(() => (selectedRepo && selectedId ? chatTerminalIo(selectedRepo, selectedId) : undefined), [selectedRepo, selectedId]);
@@ -632,7 +640,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     try {
       if (activity.turnActive) {
         if (!(await confirmStopAndSwitch(target))) return;
-        await (inTerminal ? ipc.chatPtyWrite(repo, id, OMP_INTERRUPT_DATA) : ipc.chatRpcWrite(repo, id, abortTurnCommand())).catch(() => {});
+        requireWritten(await (inTerminal ? ipc.chatPtyWrite(repo, id, OMP_INTERRUPT_DATA, crypto.randomUUID()) : ipc.chatRpcWrite(repo, id, abortTurnCommand())));
       }
       setHatchBusy(true);
       await ipc.chatRestate(repo, id, target);
@@ -757,9 +765,12 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     const judged = command.type === "prompt" || command.type === "follow_up" || command.type === "abort_and_prompt";
     if (judged) awaitingVerdicts.current.set(command.id, verdict);
     try {
-      await ipc.chatRpcWrite(repo, id, command);
+      requireWritten(await ipc.chatRpcWrite(repo, id, command));
     } catch (cause) {
       awaitingVerdicts.current.delete(command.id);
+      if (!verdict.refused && (draftsRef.current[key] ?? "") !== text) {
+        updateTranscript(key, (current) => appendHarnessNotice(current, "input_recovery", `${errorMessage(cause)}\nOriginal input:\n${text}`));
+      }
       throw cause;
     }
     if (verdict.refused) return;
@@ -890,13 +901,20 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
 
   function abort() {
     if (!selected || !selectionKey) return;
-    updateTranscript(selectionKey, (current) => appendOptimisticAbort(current));
-    ipc.chatRpcWrite(selected.repo_path, selected.session.id, abortTurnCommand()).catch((cause: unknown) => setError(String(cause)));
+    const key = selectionKey;
+    ipc
+      .chatRpcWrite(selected.repo_path, selected.session.id, abortTurnCommand())
+      .then(requireWritten)
+      .then(() => updateTranscript(key, (current) => appendOptimisticAbort(current)))
+      .catch((cause: unknown) => setError(String(cause)));
   }
 
   function pickThinking(level: string) {
     if (!selected) return;
-    ipc.chatRpcWrite(selected.repo_path, selected.session.id, setThinkingLevelCommand(level)).catch((cause: unknown) => setError(String(cause)));
+    ipc
+      .chatRpcWrite(selected.repo_path, selected.session.id, setThinkingLevelCommand(level))
+      .then(requireWritten)
+      .catch((cause: unknown) => setError(String(cause)));
   }
 
   const contextUsage = formatContextUsage(transcript.sessionMeta.contextUsage?.tokens, transcript.sessionMeta.contextUsage?.contextWindow);
@@ -1294,6 +1312,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
             const slash = model.indexOf("/");
             ipc
               .chatRpcWrite(selected.repo_path, selected.session.id, applyModelCommand(model.slice(0, slash), model.slice(slash + 1)))
+              .then(requireWritten)
               .catch((cause: unknown) => setError(String(cause)));
           }}
           onClose={() => setProvidersDialog(null)}

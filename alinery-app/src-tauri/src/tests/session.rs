@@ -3,6 +3,69 @@
 //! `use super::*` reaches the shared imports and fixtures in tests/mod.rs.
 use super::*;
 
+fn assert_raw_write_never_falls_back(owner_reply: &str, expected: &str) {
+    use tauri::Manager;
+    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let repo = activity_repo("no-resend");
+    let own_path = repo.join("own.sock");
+    let owner_path = repo.join("owner.sock");
+    let own_socket = status_list_socket(own_path.clone(), Some("{\"ok\":true}\n"));
+    let owner_socket = status_list_socket(owner_path.clone(), Some(owner_reply));
+    let state = AppState::default();
+    assert!(state.claim_repo(&repo));
+    state.set_daemon(
+        &repo,
+        crate::DaemonClient::connect_path(own_path).unwrap(),
+        alinery_core::DaemonCompat::Current,
+        "config".into(),
+        false,
+    );
+    state
+        .session_routes
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert("session".into(), crate::DaemonClient::connect_path(owner_path).unwrap());
+    set_active_repo_global(Some(repo.clone())).unwrap();
+    let app = tauri::test::mock_builder()
+        .manage(state)
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let result = crate::write_session(app.state(), "session".into(), "review λ\u{1b}[A\r".into(), "dispatch-a".into());
+    let owner_calls = owner_socket.calls();
+    let own_calls = own_socket.calls();
+    set_active_repo_global(None).unwrap();
+    drop(app);
+    let _ = fs::remove_dir_all(repo);
+    assert_eq!(owner_calls, 1, "the chosen owner must receive the write");
+    assert_eq!(own_calls, 0, "a rejected or uncertain write must never be replayed through another route");
+    let outcome = serde_json::to_value(result.unwrap()).unwrap();
+    assert_eq!(outcome["status"], expected);
+    if expected != "written" {
+        assert!(outcome["reason"].as_str().is_some_and(|reason| !reason.is_empty()));
+    }
+}
+
+#[test]
+fn semantic_refusal_write_never_fallback_resend() {
+    assert_raw_write_never_falls_back("{\"dispatch\":{\"status\":\"not_sent\",\"reason\":\"continuation already requested\"}}\n", "not_sent");
+}
+
+#[test]
+fn unknown_write_never_fallback_resend() {
+    // The owner reads the complete request then closes without acknowledging it.
+    assert_raw_write_never_falls_back("", "unknown");
+}
+
+#[test]
+fn malformed_write_acknowledgment_is_unknown_without_resend() {
+    assert_raw_write_never_falls_back("{\"ok\":true}\n", "unknown");
+}
+
+#[test]
+fn written_acknowledgment_does_not_require_a_second_route() {
+    assert_raw_write_never_falls_back("{\"dispatch\":{\"status\":\"written\"}}\n", "written");
+}
+
 #[test]
 fn scoped_session_items_ignore_corrupt_known_repo_and_global_active_repo() {
     let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());

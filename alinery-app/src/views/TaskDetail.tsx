@@ -373,19 +373,6 @@ export function TaskDetail({
     }
   };
 
-  const allowCompletion = async (executionId: string, sessionId: string) => {
-    if (executionView?.live?.status !== "available" || executionError || busy) return;
-    setBusy(`allow:${executionId}`);
-    try {
-      await ipc.allowExecutionCompletion(slug, executionId, sessionId, repoPath);
-      await refreshExecution();
-    } catch (error) {
-      setExecutionError(String(error));
-    } finally {
-      setBusy("");
-    }
-  };
-
   const load = async () => {
     const isCurrent = beginNameRead();
     // Every optional read is pre-wrapped so one rejection can never fail the shared
@@ -1748,8 +1735,17 @@ export function TaskDetail({
                       Graph
                     </button>
                   </div>
-                  {playbookView === "graph" && <p>Retained task definition · See List for active counts and automatic completion.</p>}
+                  {playbookView === "graph" && <p>Retained task definition · See List for active counts and continuation settings.</p>}
                 </div>
+                {executionView?.assessment && !executionError && (
+                  <div role="status" aria-label="Playbook status">
+                    {executionView.live?.status !== "available" && <p>Saved assessment · Live continuation unavailable</p>}
+                    <p>{executionView.assessment.status === "complete" ? "Playbook complete" : `Playbook ${executionView.assessment.status}`}</p>
+                    {executionView.assessment.reasons.map((reason) => (
+                      <p key={JSON.stringify(reason)}>{reason.message}</p>
+                    ))}
+                  </div>
+                )}
                 <PlaybookGraph
                   variant={playbookView === "graph" ? "definition" : "execution"}
                   showInspector={false}
@@ -1805,19 +1801,17 @@ export function TaskDetail({
                           </ul>
                           <ExecutionOutputs execution={execution} occurrences={executionView.state.occurrences} />
                         </details>
-                        <p className="task-history-permission">
-                          Completion permission: {execution.permission.kind}
-                          {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
-                        </p>
-                        {execution.permission.kind === "locked" && execution.lifecycle === "running" && (
-                          <button
-                            type="button"
-                            className="btn small"
-                            disabled={!!busy || !!executionError || executionView.live?.status !== "available"}
-                            onClick={() => void allowCompletion(execution.id, execution.owner_session_id)}
-                          >
-                            Allow this session to complete · {execution.owner_session_id}
-                          </button>
+                        <p>Continuation: {execution.continuation_mode === "automatic" ? "Continue automatically" : "Wait for me"}</p>
+                        {execution.lifecycle === "running" && (
+                          <p>
+                            {execution.continuation_requested_revision != null
+                              ? "Continuation requested; handoff not yet accepted."
+                              : execution.ready_revision != null
+                                ? "Ready for review."
+                                : execution.last_ready_revision != null
+                                  ? "Review in progress; renewed readiness required."
+                                  : "Work in progress."}
+                          </p>
                         )}
                       </article>
                     ))}
