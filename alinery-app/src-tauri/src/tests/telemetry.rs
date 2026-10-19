@@ -144,3 +144,21 @@ fn write_draft_in_emits_task_draft_create_only_on_first_write() {
     let _ = fs::remove_dir_all(&repo);
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn setting_changes_favorites_emit_once_without_custom_names_or_values() {
+    let dir = unique_temp("telemetry_settings_favorites");
+    let events = capture_events(&dir, 2, |app_config| {
+        set_model_favorite_in(app_config, "private-provider", "private-model", false).unwrap();
+        set_model_favorite_in(app_config, "private-provider", "private-model", true).unwrap();
+        set_model_favorite_in(app_config, "private-provider", "private-model", true).unwrap();
+        set_model_favorite_in(app_config, "private-provider", "private-model", false).unwrap();
+        set_model_favorite_in(app_config, "private-provider", "private-model", false).unwrap();
+    });
+    for event in events {
+        assert_eq!(event["event"], "settings.change");
+        assert_eq!(event["props"], serde_json::json!({"setting": "model_favorites", "scope": "global", "source": "app"}));
+        assert!(!event.to_string().contains("private-"));
+    }
+    let _ = fs::remove_dir_all(dir);
+}

@@ -502,18 +502,82 @@ pub(crate) async fn remove_repo(app: AppHandle, path: String) -> Result<AppConfi
     .map_err(|error| format!("remove repository task: {error}"))?
 }
 
+// Only compiled field names can reach telemetry; ava_chat's arbitrary map keys never do.
+pub(crate) fn appearance_settings_changes(previous: &AppearancePrefs, next: &AppearancePrefs) -> Vec<&'static str> {
+    let mut changed = Vec::new();
+    macro_rules! fields {
+        ($($field:ident),+ $(,)?) => {$(
+            if previous.$field != next.$field {
+                changed.push(stringify!($field));
+            }
+        )+};
+    }
+    fields!(
+        accent_color,
+        ui_scale,
+        terminal_font_size,
+        artifact_font_size,
+        artifact_viewer_width,
+        session_default_view,
+        mode
+    );
+    let defaults = AppearancePrefs::default();
+    macro_rules! chat_fields {
+        ($($field:ident),+ $(,)?) => {$(
+            fields!($field);
+            let default = toml::Value::try_from(&defaults.$field).expect("scalar appearance default");
+            let before = previous.ava_chat.get(stringify!($field)).unwrap_or(&default);
+            let after = next.ava_chat.get(stringify!($field)).unwrap_or(&default);
+            if before != after {
+                changed.push(concat!("ava_chat.", stringify!($field)));
+            }
+        )+};
+    }
+    chat_fields!(
+        chat_show_thinking,
+        chat_expand_thinking,
+        chat_show_tools,
+        chat_expand_tools,
+        chat_show_harness,
+        chat_show_turn_markers,
+        chat_show_subagent_rows,
+        chat_show_subagent_drawer,
+        chat_auto_collapse_thinking,
+        chat_auto_compaction,
+        chat_auto_scroll,
+        chat_rail_density,
+        chat_font_size,
+        chat_rail_font_size,
+        chat_show_meta,
+        chat_show_composer_hints,
+        chat_max_width,
+        chat_show_date,
+        chat_show_time,
+        chat_show_actor_labels,
+        chat_show_agent_bubbles,
+        chat_show_block_copy_buttons,
+        chat_show_copy_buttons,
+    );
+    changed
+}
+
 #[tauri::command]
 pub(crate) fn write_appearance(app: AppHandle, appearance: AppearancePrefs) -> Result<AppConfig, String> {
     let mut cfg = load_app_config(&app);
-    cfg.appearance = sanitize_appearance(appearance);
+    let next = sanitize_appearance(appearance);
+    let changed = appearance_settings_changes(&cfg.appearance, &next);
+    cfg.appearance = next;
     write_app_config(&app, &cfg)?;
-    emit(
-        &app,
-        alinery_core::TelemetryEvent::SettingsChange {
-            source: alinery_core::TelemetrySource::App,
-            scope: alinery_core::SettingsChangeScope::Appearance,
-        },
-    );
+    for setting in changed {
+        emit(
+            &app,
+            alinery_core::TelemetryEvent::SettingsChange {
+                source: alinery_core::TelemetrySource::App,
+                scope: alinery_core::SettingsChangeScope::Appearance,
+                setting,
+            },
+        );
+    }
     Ok(cfg)
 }
 

@@ -55,6 +55,94 @@ pub fn default_global_settings() -> GlobalSettings {
         ..Default::default()
     }
 }
+
+/// Stable telemetry names for changed settings. Callers pass normalized settings;
+/// values and user-defined collection keys never become event properties.
+pub fn global_settings_changes(previous: &GlobalSettings, next: &GlobalSettings) -> Vec<&'static str> {
+    [
+        ("notifications.enabled", previous.notifications.enabled != next.notifications.enabled),
+        ("notifications.sound", previous.notifications.sound != next.notifications.sound),
+        ("notifications.bounce", previous.notifications.bounce != next.notifications.bounce),
+        ("notifications.banner", previous.notifications.banner != next.notifications.banner),
+        ("notifications.dock_badge", previous.notifications.dock_badge != next.notifications.dock_badge),
+        (
+            "notifications.dock_badge_input_waits",
+            previous.notifications.dock_badge_input_waits != next.notifications.dock_badge_input_waits,
+        ),
+        (
+            "notifications.dock_badge_approval_waits",
+            previous.notifications.dock_badge_approval_waits != next.notifications.dock_badge_approval_waits,
+        ),
+        (
+            "notifications.dock_badge_failures",
+            previous.notifications.dock_badge_failures != next.notifications.dock_badge_failures,
+        ),
+        (
+            "notifications.dock_badge_completions",
+            previous.notifications.dock_badge_completions != next.notifications.dock_badge_completions,
+        ),
+        ("github.token", previous.github.token != next.github.token),
+        ("defaults.harness", previous.defaults.harness != next.defaults.harness),
+        ("defaults.model", previous.defaults.model != next.defaults.model),
+        ("defaults.thinking", previous.defaults.thinking != next.defaults.thinking),
+        ("defaults.playbook", previous.defaults.playbook != next.defaults.playbook),
+        ("defaults.draft_autosave", previous.defaults.draft_autosave != next.defaults.draft_autosave),
+        ("backup.destination", previous.backup.destination != next.backup.destination),
+        ("backup.enabled", previous.backup.enabled != next.backup.enabled),
+        ("backup.retention", previous.backup.retention != next.backup.retention),
+        ("backup.trigger_pre_archive", previous.backup.trigger_pre_archive != next.backup.trigger_pre_archive),
+        (
+            "backup.trigger_post_artifact_change",
+            previous.backup.trigger_post_artifact_change != next.backup.trigger_post_artifact_change,
+        ),
+        (
+            "backup.trigger_post_push_commit",
+            previous.backup.trigger_post_push_commit != next.backup.trigger_post_push_commit,
+        ),
+        ("harnesses", previous.harnesses != next.harnesses),
+        ("model_favorites", previous.model_favorites != next.model_favorites),
+        ("telemetry.enabled", previous.telemetry.enabled != next.telemetry.enabled),
+        ("updates.check_enabled", previous.updates.check_enabled != next.updates.check_enabled),
+        ("power.keep_awake", previous.power.keep_awake != next.power.keep_awake),
+        (
+            "experiments.show_original_kanban",
+            previous.experiments.show_original_kanban != next.experiments.show_original_kanban,
+        ),
+        ("experiments.show_chat", previous.experiments.show_chat != next.experiments.show_chat),
+        ("grid_views", previous.grid_views != next.grid_views),
+    ]
+    .into_iter()
+    .filter_map(|(name, changed)| changed.then_some(name))
+    .collect()
+}
+
+/// Compare overrides, not effective values: adding or clearing an override is a
+/// change even when its value matches the inherited global setting.
+pub fn repo_settings_changes(previous: &RepoOverrides, next: &RepoOverrides) -> Vec<&'static str> {
+    [
+        ("github.token", previous.github.token != next.github.token),
+        ("defaults.harness", previous.defaults.harness != next.defaults.harness),
+        ("defaults.model", previous.defaults.model != next.defaults.model),
+        ("defaults.thinking", previous.defaults.thinking != next.defaults.thinking),
+        ("defaults.playbook", previous.defaults.playbook != next.defaults.playbook),
+        ("defaults.draft_autosave", previous.defaults.draft_autosave != next.defaults.draft_autosave),
+        ("backup.destination", previous.backup.destination != next.backup.destination),
+        ("backup.enabled", previous.backup.enabled != next.backup.enabled),
+        ("backup.retention", previous.backup.retention != next.backup.retention),
+        ("backup.trigger_pre_archive", previous.backup.trigger_pre_archive != next.backup.trigger_pre_archive),
+        (
+            "backup.trigger_post_artifact_change",
+            previous.backup.trigger_post_artifact_change != next.backup.trigger_post_artifact_change,
+        ),
+        (
+            "backup.trigger_post_push_commit",
+            previous.backup.trigger_post_push_commit != next.backup.trigger_post_push_commit,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(name, changed)| changed.then_some(name))
+    .collect()
+}
 fn sort_grid_views_by_slot(mut views: Vec<GridViewDefinition>) -> Vec<GridViewDefinition> {
     let slots: BTreeSet<u8> = views.iter().map(|view| view.slot).collect();
     let complete_slots = slots.len() == views.len() && views.iter().all(|view| view.slot > 0 && usize::from(view.slot) <= views.len());
@@ -539,6 +627,154 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn telemetry_changes_ignore_unchanged_settings_and_installation_metadata() {
+        let previous = default_global_settings();
+        assert!(global_settings_changes(&previous, &previous).is_empty());
+        let mut next = previous.clone();
+        next.telemetry.prompted = !previous.telemetry.prompted;
+        next.telemetry.install_id = "local-installation".into();
+        next.telemetry.endpoint = "https://example.invalid".into();
+        assert!(global_settings_changes(&previous, &next).is_empty());
+        next.telemetry.enabled = !previous.telemetry.enabled;
+        assert_eq!(global_settings_changes(&previous, &next), ["telemetry.enabled"]);
+        let overrides = RepoOverrides::default();
+        assert!(repo_settings_changes(&overrides, &overrides).is_empty());
+    }
+
+    #[test]
+    fn global_telemetry_changes_cover_settings_without_serializing_values() {
+        use crate::telemetry::{event_record, SettingsChangeScope, TelemetryEvent, TelemetrySource};
+
+        let previous = default_global_settings();
+        let mut next = previous.clone();
+        next.notifications.enabled = false;
+        next.notifications.sound = false;
+        next.notifications.bounce = true;
+        next.notifications.banner = false;
+        next.notifications.dock_badge = false;
+        next.notifications.dock_badge_input_waits = false;
+        next.notifications.dock_badge_approval_waits = false;
+        next.notifications.dock_badge_failures = false;
+        next.notifications.dock_badge_completions = false;
+        next.github.token = "private-credential".into();
+        next.defaults.harness = "private-harness".into();
+        next.defaults.model = "private-model".into();
+        next.defaults.thinking = "private-thinking".into();
+        next.defaults.playbook.key = "private-playbook".into();
+        next.defaults.draft_autosave = false;
+        next.backup.destination = "/private/backup-location".into();
+        next.backup.enabled = true;
+        next.backup.retention += 1;
+        next.backup.trigger_pre_archive = true;
+        next.backup.trigger_post_artifact_change = true;
+        next.backup.trigger_post_push_commit = true;
+        next.harnesses.harness[0].env.insert("PRIVATE_VARIABLE".into(), "private-value".into());
+        next.model_favorites.insert("private-harness".into(), vec!["private-model".into()]);
+        next.telemetry.enabled = false;
+        next.updates.check_enabled = false;
+        next.power.keep_awake = true;
+        next.experiments.show_original_kanban = false;
+        next.experiments.show_chat = true;
+        next.grid_views[0].name = "private-view".into();
+        let expected = [
+            "notifications.enabled",
+            "notifications.sound",
+            "notifications.bounce",
+            "notifications.banner",
+            "notifications.dock_badge",
+            "notifications.dock_badge_input_waits",
+            "notifications.dock_badge_approval_waits",
+            "notifications.dock_badge_failures",
+            "notifications.dock_badge_completions",
+            "github.token",
+            "defaults.harness",
+            "defaults.model",
+            "defaults.thinking",
+            "defaults.playbook",
+            "defaults.draft_autosave",
+            "backup.destination",
+            "backup.enabled",
+            "backup.retention",
+            "backup.trigger_pre_archive",
+            "backup.trigger_post_artifact_change",
+            "backup.trigger_post_push_commit",
+            "harnesses",
+            "model_favorites",
+            "telemetry.enabled",
+            "updates.check_enabled",
+            "power.keep_awake",
+            "experiments.show_original_kanban",
+            "experiments.show_chat",
+            "grid_views",
+        ];
+        assert_eq!(global_settings_changes(&previous, &next), expected);
+        assert_eq!(global_settings_changes(&next, &previous), expected);
+        for setting in global_settings_changes(&previous, &next) {
+            let record = event_record(
+                &TelemetryEvent::SettingsChange {
+                    source: TelemetrySource::App,
+                    scope: SettingsChangeScope::Global,
+                    setting,
+                },
+                "anonymous-installation",
+            );
+            let serialized = serde_json::to_string(&record).unwrap();
+            assert!(!serialized.contains("private"));
+            assert_eq!(record["event"], "settings.change");
+            assert_eq!(
+                record["props"],
+                serde_json::json!({
+                    "source": "app", "scope": "global", "setting": setting,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn repo_telemetry_changes_include_added_and_cleared_inherited_values() {
+        let previous = RepoOverrides::default();
+        let global = default_global_settings();
+        let next = RepoOverrides {
+            github: crate::types::RepoGitHubOverrides { token: Some(global.github.token) },
+            defaults: crate::types::RepoHarnessChoiceOverrides {
+                harness: Some(global.defaults.harness),
+                model: Some(global.defaults.model),
+                thinking: Some(global.defaults.thinking),
+                playbook: Some(global.defaults.playbook),
+                draft_autosave: Some(global.defaults.draft_autosave),
+            },
+            backup: RepoBackupOverrides {
+                destination: Some(global.backup.destination),
+                enabled: Some(global.backup.enabled),
+                retention: Some(global.backup.retention),
+                trigger_pre_archive: Some(global.backup.trigger_pre_archive),
+                trigger_post_artifact_change: Some(global.backup.trigger_post_artifact_change),
+                trigger_post_push_commit: Some(global.backup.trigger_post_push_commit),
+            },
+        };
+        let expected = [
+            "github.token",
+            "defaults.harness",
+            "defaults.model",
+            "defaults.thinking",
+            "defaults.playbook",
+            "defaults.draft_autosave",
+            "backup.destination",
+            "backup.enabled",
+            "backup.retention",
+            "backup.trigger_pre_archive",
+            "backup.trigger_post_artifact_change",
+            "backup.trigger_post_push_commit",
+        ];
+        assert_eq!(repo_settings_changes(&previous, &next), expected);
+        assert_eq!(repo_settings_changes(&next, &previous), expected);
+        assert!(repo_settings_changes(&next, &next).is_empty());
+        let mut edited = next.clone();
+        edited.defaults.model = Some("private-model".into());
+        assert_eq!(repo_settings_changes(&next, &edited), ["defaults.model"]);
+    }
 
     static TEST_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
