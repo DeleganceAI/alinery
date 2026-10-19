@@ -485,27 +485,49 @@ and one in the third before the review concludes.
 \section{The Playbook Engine in Alinery}
 \label{sec:playbook-engine}
 
-Alinery implements a FAM as a Playbook whose authored steps are instantiated
-as executions over particular artifacts. A task retains the selected
-Playbook, a shared repository worktree, and the execution history. A session
-is the agent process and conversation carrying out an execution. Separating
-steps, executions, and sessions allows one reading step to serve many
-discovered sources while the engine records which inputs each invocation
-received, what it published, and whether its process has stopped.
+Alinery is a desktop application for carrying out agent-assisted
+investigations and software-development work through reusable processes.
+A user creates a \emph{task} for a particular effort, such as conducting a
+literature review or investigating a software defect, and selects a
+\emph{Playbook} that defines the steps available to the agents. In Alinery,
+a \textbf{Task} is a persistent container for that effort: it keeps the selected Playbook, working files, agent conversations,
+published artifacts, and execution history together. Users can inspect the
+resulting evidence and direct ongoing work as the process unfolds.
 
-The filename-set model in Section~\ref{sec:fam-definition-execution} describes
-completed agentic transitions. Implementing those transitions requires
-additional decisions about input binding, publication, concurrency, and
-recovery. Alinery makes those decisions for a local system in which humans
-can inspect artifacts and steer ongoing work. Its restrictions on input
-modes, workspace access, and recovery are implementation policies rather
-than requirements of every FAM.\footnote{The engine and accompanying design
-guidance described here are available in the Alinery source at revision
-\texttt{054fb36}: \url{https://github.com/DeleganceAI/alinery/tree/054fb36}.}
+A Playbook implements a particular FAM by specifying agent instructions and
+artifact dependencies. The engine creates an \emph{execution} when it
+applies one of the Playbook's step definitions to particular input artifacts.
+A \emph{session} is the running agent process and its conversation through
+which that execution performs its work. In the literature-review example,
+the overall review occupies one task, while assessing three discovered
+sources creates three executions of the same reading step. Each reading
+execution runs in a session and publishes an assessment that subsequent
+work can consume. The task retains those assessments and their execution
+records after the sessions finish, allowing later work to build on earlier
+results.
+
+The task also provides a shared repository worktree: a working copy of the
+project's files in which agents perform their work. Executions therefore
+share both a persistent record of the investigation and a workspace, while
+retaining separate input assignments, conversations, and publications.
+These distinctions allow the engine to record which evidence each
+invocation received, what it produced, and whether the agent process has
+stopped.
+
+The filename-set model in Section~\ref{sec:fam-definition-execution}
+describes completed agentic transitions. Implementing those transitions
+requires additional decisions about which artifact publications an
+execution consumes, when its outputs become available to successors, which
+executions may run concurrently, and how interrupted work is recovered.
+The following subsections explain Alinery's choices and their consequences
+for human inspection and control. Its input modes, workspace rules, and
+recovery policies are implementation choices rather than requirements of
+every FAM.\footnote{The engine and accompanying design
+guidance described here are available at \url{https://github.com/DeleganceAI/alinery/tree/054fb36}.}
 
 \subsection{Authored Processes and Agent Judgment}
 
-A Playbook fixes the available step definitions and their dependencies,
+A Playbook defines the available steps and their dependencies,
 while agents determine the concrete work performed within those definitions.
 In the literature-review example, an agent chooses which sources merit
 reading and whether the accumulated evidence warrants another round. The
@@ -516,16 +538,22 @@ available operations fixed makes the permitted process available for review
 before execution, without requiring the author to enumerate the sources,
 branches, or number of iterations in advance.
 
-Alinery places domain judgments in agent instructions and artifacts. A
-general engine-level condition language would require authors to express
-additional decision logic alongside those instructions; the current engine
-instead uses declared artifact dependencies to determine readiness. Every
-listed input is required, so listing a review and a request creates an AND
-dependency. Output declarations describe possible publications, and an
-agent can enable different continuations by choosing which outputs to
-publish. The engine does not enforce an exclusive choice between two valid
-outcomes. If the review procedure requires either a continuation request or
-a closing report, the agent instructions must establish that exclusivity.
+The agent instructions specify how to evaluate the evidence and decide what
+work should follow. The engine determines which steps can run from the
+artifacts those steps require. For example, a step that requires both a
+review and a follow-up request must wait until both are available. The
+engine does not itself judge whether the review warrants further
+investigation; an agent makes that judgment and records its decision in an
+artifact that enables the corresponding next step.
+
+Each step also specifies the artifacts its agent may produce. In the
+literature-review example, \emph{Assess next step} may publish a follow-up
+request to continue the investigation or a closing report to conclude it.
+The agent's instructions must tell it to choose one of those outcomes. The
+engine checks whether the published artifacts are permitted outputs of the
+step, but does not reject a completion merely because the agent produced
+both a request and a report. The requirement to choose one outcome therefore
+relies on the agent following its instructions.
 
 \subsection{Artifact Identity and Causal Dependencies}
 
