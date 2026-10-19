@@ -579,6 +579,10 @@ export function Dialog({
       className={`modal${className ? ` ${className}` : ""}`}
       role={role}
       aria-label={ariaLabel}
+      onKeyDown={(e) => {
+        // Keep native Escape cancellation, but do not also trigger page Back.
+        if (e.key === "Escape") e.stopPropagation();
+      }}
       onCancel={(e) => {
         e.preventDefault();
         onClose();
