@@ -541,6 +541,23 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
  * everything after it. Live entries are identified by their ids never starting with `f:`, so they
  * survive a page landing and always sort after the file content.
  */
+export type VinculumMessage = { role: string; text: string };
+
+/** Replace the pane with the daemon transcript. Row ids stay stable while messages are only appended. */
+export function applyVinculumTranscript(messages: VinculumMessage[]): ChatTranscriptState {
+  const page = {
+    start: 0,
+    messages: messages.map(
+      (message, index): ChatMessage => ({
+        rowId: `v${index}`,
+        role: message.role === "user" ? "user" : message.role === "tool" ? "toolResult" : "assistant",
+        content: [{ type: "text", text: message.text }],
+      }),
+    ),
+  };
+  return { ...applyFilePage(emptyTranscript(), page, "initial"), ready: true, fileStart: 0 };
+}
+
 export function applyFilePage(state: ChatTranscriptState, page: { start: number; messages: ChatMessage[] }, position: "initial" | "older"): ChatTranscriptState {
   const messages = position === "older" ? [...page.messages, ...state.messages] : page.messages;
   // Only journal rows carry an OMP row id. Messages the stream added since attach already have their

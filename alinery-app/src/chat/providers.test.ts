@@ -3,6 +3,7 @@ import {
   HOSTED_PROVIDER,
   isInteractivePromptLoginError,
   type LoginProvider,
+  mergeGrokModels,
   mergeHostedModels,
   needsProviderSetup,
   partitionProviders,
@@ -18,6 +19,13 @@ const providers = (rows: Partial<LoginProvider>[]): LoginProvider[] =>
   }));
 
 const models = (...ids: string[]) => ids.map((provider) => ({ provider, id: `${provider}-model` }));
+
+describe("mergeGrokModels", () => {
+  it("adds the xAI chat models only when a Grok key is saved", () => {
+    expect(mergeGrokModels([], false)).toEqual([]);
+    expect(mergeGrokModels([], true).map((model) => `${model.provider}/${model.id}`)).toContain("xai/grok-4.6");
+  });
+});
 
 describe("needsProviderSetup", () => {
   it("is false with an empty provider list (still loading)", () => {

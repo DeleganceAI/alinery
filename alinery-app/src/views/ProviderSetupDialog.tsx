@@ -104,6 +104,7 @@ export function ProviderSetupDialog({
   const [favorites, setFavorites] = useState<string[]>([]);
   const [hosted, setHosted] = useState<HostedCatalogView | null>(null);
   const [hostedLoaded, setHostedLoaded] = useState(false);
+  const [grokReady, setGrokReady] = useState(false);
   const chatRef = useRef(emptyTranscript());
   const sessionIdRef = useRef("");
   const loginApplyRef = useRef<string | null>(null);
@@ -252,6 +253,12 @@ export function ProviderSetupDialog({
       .finally(() => {
         if (!cancelled) setHostedLoaded(true);
       });
+    void ipc.grokKeyReady().then(
+      (ready) => {
+        if (!cancelled) setGrokReady(ready);
+      },
+      () => undefined,
+    );
 
     return () => {
       cancelled = true;
@@ -400,6 +407,7 @@ export function ProviderSetupDialog({
       livePromotedIds={livePromotedIds}
       modelRoles={modelRoles}
       hosted={hosted}
+      grok={grokReady}
       favorites={favorites}
       catalogueStatus={tab === "models" ? modelsStatus : accountsStatus}
       onToggleFavorite={(model, favorite) => {

@@ -223,7 +223,6 @@ export const closeAllRepos = () => invoke<number>("close_all_repos");
 export const daemonStatus = () => invoke<DaemonStatus>("daemon_status");
 export const repoLiveSessions = (path: string) => invoke<number>("repo_live_sessions", { path });
 export const stopDaemon = (path: string | null) => invoke<void>("stop_daemon", { path });
-export const switchPiDurable = (enabled: boolean) => invoke<GlobalSettings>("switch_pi_durable", { enabled });
 export const prepareRepoTakeover = (repoPath: string, ownerLane: string) => invoke<TakeoverPreview>("prepare_repo_takeover", { repoPath, ownerLane });
 export const confirmRepoTakeover = (confirmationId: string) => invoke<TakeoverOutcome>("confirm_repo_takeover", { confirmationId });
 export const cancelRepoTakeover = (confirmationId: string) => invoke<void>("cancel_repo_takeover", { confirmationId });
@@ -289,6 +288,11 @@ export const archiveChatThread = (repoPath: string, sessionId: string, removeWor
 export const removeChatWorktree = (repoPath: string, sessionId: string) => invoke<void>("remove_chat_worktree", { repoPath, sessionId });
 export const resumeChatThread = (repoPath: string, sessionId: string) => invoke<SessionMeta>("resume_chat_thread", { repoPath, sessionId });
 export const chatBranchLabel = (repoPath: string, sessionId: string) => invoke<ChatBranch>("chat_branch_label", { repoPath, sessionId });
+export type VinculumMessage = { role: string; text: string };
+export const chatTranscript = (repoPath: string, id: string) => invoke<VinculumMessage[]>("chat_transcript", { repoPath, id });
+export const chatPrompt = (repoPath: string, id: string, text: string) => invoke<void>("chat_prompt", { repoPath, id, text });
+export const chatAbort = (repoPath: string, id: string) => invoke<void>("chat_abort", { repoPath, id });
+export const chatSetModel = (repoPath: string, id: string, model: string) => invoke<void>("chat_set_model", { repoPath, id, model });
 export const chatRpcWrite = (repoPath: string, id: string, payload: unknown) => invoke<void>("chat_rpc_write", { repoPath, id, payload });
 export const chatDetach = (repoPath: string, id: string, attachId: number) => invoke<void>("chat_detach", { repoPath, id, attachId });
 export const chatSessionStatus = (repoPath: string, id: string) => invoke<SessionObservation>("chat_session_status", { repoPath, id });
@@ -351,6 +355,10 @@ export const readSessionOmp = (a: { id: string; taskSlug?: string | null; end?: 
 export const resizeSession = (id: string, cols: number, rows: number) => invoke<void>("resize_session", { id, cols, rows });
 export const sessionArtifactReady = (id: string, taskSlug: string) => invoke<boolean>("session_artifact_ready", { id, taskSlug });
 export const sessionListStatuses = (refs: SessionStatusRef[]) => invoke<Record<string, SessionObservation>>("session_list_statuses", { refs });
+export const sessionTranscript = (id: string) => invoke<VinculumMessage[]>("session_transcript", { id });
+export const sessionPrompt = (id: string, text: string) => invoke<void>("session_prompt", { id, text });
+export const sessionSetModel = (id: string, model: string) => invoke<void>("session_set_model", { id, model });
+export const sessionAbort = (id: string) => invoke<void>("session_abort", { id });
 export const sessionStatus = (id: string, taskSlug: string | null) => invoke<SessionObservation>("session_status", { id, taskSlug });
 export const sessionStatuses = (ids: string[], taskSlug: string) => invoke<Record<string, SessionObservation>>("session_statuses", { ids, taskSlug });
 export const writeSession = (id: string, data: string) => invoke<void>("write_session", { id, data });
@@ -372,6 +380,7 @@ export const finalizeSessionMessageActions = (id: string, taskSlug: string, acti
 export const clearRepoOverrideForRepo = (repoPath: string, field: string) => invoke<ScopedSettings>("clear_repo_override_for_repo", { repoPath, field });
 export const deleteAllArchivedStorage = (repoPath: string) => invoke<PurgeArchivedResult>("delete_all_archived_storage", { repoPath });
 export const listHarnessModels = (harness: string) => invoke<string[]>("list_harness_models", { harness });
+export const grokKeyReady = () => invoke<boolean>("grok_key_ready");
 export const listHarnessModelsForRepo = (repoPath: string, harness: string) => invoke<string[]>("list_harness_models_for_repo", { repoPath, harness });
 export const readConfig = () => invoke<Config>("read_config");
 export const readConfigForRepo = (repoPath: string) => invoke<Config>("read_config_for_repo", { repoPath });

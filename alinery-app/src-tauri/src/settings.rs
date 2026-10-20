@@ -53,6 +53,14 @@ pub(crate) fn list_harness_models_in(app_config: &Path, repo: &Path, harness: &s
     out
 }
 
+/// True when Settings has a Grok key. The key itself stays out of this reply.
+#[tauri::command]
+pub(crate) fn grok_key_ready(app: AppHandle) -> bool {
+    app_config_path(&app)
+        .ok()
+        .is_some_and(|path| !alinery_core::load_global_settings(&path).experiments.grok_api_key.trim().is_empty())
+}
+
 #[tauri::command]
 pub(crate) async fn list_harness_models(app: AppHandle, harness: String) -> Vec<String> {
     // `models_cmd` is a login shell plus `omp models`. Never run that on the webview thread.

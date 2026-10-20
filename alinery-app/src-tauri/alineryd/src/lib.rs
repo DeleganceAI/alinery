@@ -321,6 +321,11 @@ pub(crate) fn set_pi_session_opener(opener: fn(&Path, &str, &LaunchFields) -> Re
     let _ = PI_SESSION_OPENER.set(opener);
 }
 
+/// The playbook helper installs this. Release `alineryd` does not, and still spawns its own harness.
+fn pi_opens_sessions() -> bool {
+    PI_SESSION_OPENER.get().is_some()
+}
+
 fn open_claimed_session(reg: &Registry, repo: &Path, launch: LaunchFields, lane: &str, app_config: &Path, host: &ProtectedHost) -> Result<(), String> {
     if let Some(opener) = PI_SESSION_OPENER.get() {
         return opener(repo, lane, &launch);

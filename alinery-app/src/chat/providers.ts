@@ -4,6 +4,9 @@ import type { HostedCatalogView } from "../types";
 /** Product provider for Alinery-hosted models. Not an OMP login row. */
 export const HOSTED_PROVIDER = "alinery";
 
+/** xAI chat models the daemon can launch when a Grok key is saved. Same ids as pi-ai's xAI catalog. */
+export const GROK_MODELS = ["grok-4.3", "grok-4.5", "grok-4.6", "grok-4.7"];
+
 /** OMP `get_login_providers` row. */
 export type LoginProvider = {
   id: string;
@@ -100,6 +103,14 @@ export function partitionProviders(input: { loginProviders: LoginProvider[]; mod
   const chatLogin = input.loginProviders.filter((p) => p.id !== HOSTED_PROVIDER && !advanced.has(p.id));
   const advancedList = [...advanced.values()].sort((a, b) => a.name.localeCompare(b.name));
   return { chatLogin, advanced: advancedList };
+}
+
+/** Append xAI rows when Settings has a Grok key. Absent from the hosted catalog and from OMP's model list. */
+export function mergeGrokModels(models: ChatModelOption[], enabled: boolean): ChatModelOption[] {
+  if (!enabled) return models;
+  const seen = new Set(models.map((model) => `${model.provider}/${model.id}`));
+  const extra = GROK_MODELS.filter((id) => !seen.has(`xai/${id}`)).map((id) => ({ provider: "xai", id }));
+  return extra.length > 0 ? [...models, ...extra] : models;
 }
 
 /** Catalog rows first; drop OMP duplicates of the same `alinery/<id>`. */

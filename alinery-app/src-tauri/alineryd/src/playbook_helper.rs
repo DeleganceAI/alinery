@@ -85,12 +85,14 @@ pub fn run() {
 fn open_on_pi_daemon(repo: &Path, lane: &str, launch: &LaunchFields) -> Result<(), String> {
     let socket = alinery_core::alineryd_socket_path(repo, (!lane.is_empty()).then_some(lane));
     let token = std::env::var("ALINERY_PI_LAUNCH_TOKEN").unwrap_or_default();
+    let prompt = alinery_core::resolve_launch_prompt(repo, launch)?;
     let request = json!({
         "op": "pi_open",
         "token": token,
         "id": launch.id,
         "task_slug": launch.task_slug,
         "model": launch.model,
+        "prompt": prompt,
     });
     let mut last = "pi daemon did not accept the session".to_string();
     for _ in 0..40 {
@@ -103,7 +105,7 @@ fn open_on_pi_daemon(repo: &Path, lane: &str, launch: &LaunchFields) -> Result<(
                 BufReader::new(stream).read_line(&mut line).map_err(|error| error.to_string())?;
                 let value: Value = serde_json::from_str(line.trim()).map_err(|error| error.to_string())?;
                 if value.get("ok").and_then(Value::as_bool) == Some(true) {
-                    return Ok(());
+                    return super::execution::spawned(repo, &launch.task_slug, &launch.id, lane);
                 }
                 last = value.get("error").and_then(Value::as_str).unwrap_or("pi open failed").to_string();
                 return Err(last);

@@ -344,6 +344,10 @@ pub mod ops {
     pub const RPC_ATTACH: &str = "rpc_attach";
     pub const RPC_WRITE: &str = "rpc_write";
     pub const OMP_SETUP: &str = "omp_setup";
+    pub const TRANSCRIPT: &str = "transcript";
+    pub const PROMPT: &str = "prompt";
+    pub const ABORT: &str = "abort";
+    pub const SET_MODEL: &str = "set_model";
 }
 
 pub fn is_known_open_intent(intent: &str) -> bool {
@@ -406,6 +410,28 @@ pub fn rpc_write_request(id: &str, payload: &Value) -> Value {
 /// one and returns it, so the app cannot ask for a setup session under an id of its choosing.
 pub fn omp_setup_request() -> Value {
     json!({"op": ops::OMP_SETUP})
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct TranscriptMessage {
+    pub role: String,
+    pub text: String,
+}
+
+pub fn transcript_request(id: &str) -> Value {
+    json!({"op": ops::TRANSCRIPT, "id": id})
+}
+
+pub fn prompt_request(id: &str, text: &str) -> Value {
+    json!({"op": ops::PROMPT, "id": id, "text": text})
+}
+
+pub fn abort_request(id: &str) -> Value {
+    json!({"op": ops::ABORT, "id": id})
+}
+
+pub fn set_model_request(id: &str, model: &str) -> Value {
+    json!({"op": ops::SET_MODEL, "id": id, "model": model})
 }
 
 pub struct OpenRequest<'a> {
@@ -918,6 +944,27 @@ impl DaemonClient {
         self.call(&rpc_write_request(id, payload)).and_then(expect_ok)
     }
 
+    pub fn transcript(&self, id: &str) -> Result<Vec<TranscriptMessage>, String> {
+        let response = self.call(&transcript_request(id))?;
+        if let Some(error) = reply_error(&response) {
+            return Err(error.to_string());
+        }
+        let messages = response.get("messages").cloned().unwrap_or(json!([]));
+        serde_json::from_value(messages).map_err(|error| error.to_string())
+    }
+
+    pub fn prompt(&self, id: &str, text: &str) -> Result<(), String> {
+        self.call(&prompt_request(id, text)).and_then(expect_ok)
+    }
+
+    pub fn abort(&self, id: &str) -> Result<(), String> {
+        self.call(&abort_request(id)).and_then(expect_ok)
+    }
+
+    pub fn set_model(&self, id: &str, model: &str) -> Result<(), String> {
+        self.call(&set_model_request(id, model)).and_then(expect_ok)
+    }
+
     /// Returns the reserved setup session id to attach to.
     pub fn omp_setup(&self) -> Result<String, String> {
         let reply = self.call(&omp_setup_request())?;
@@ -1333,6 +1380,14 @@ mod tests {
     #[test]
     fn rpc_attach_request_shape() {
         assert_eq!(rpc_attach_request("s1", 7), json!({"op": "rpc_attach", "id": "s1", "attach_id": 7}));
+    }
+
+    #[test]
+    fn vinculum_request_shapes() {
+        assert_eq!(transcript_request("s1"), json!({"op": "transcript", "id": "s1"}));
+        assert_eq!(prompt_request("s1", "hello"), json!({"op": "prompt", "id": "s1", "text": "hello"}));
+        assert_eq!(abort_request("s1"), json!({"op": "abort", "id": "s1"}));
+        assert_eq!(set_model_request("s1", "xai/grok-4.6"), json!({"op": "set_model", "id": "s1", "model": "xai/grok-4.6"}));
     }
 
     #[test]

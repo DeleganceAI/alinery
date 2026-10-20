@@ -1,5 +1,5 @@
 //! daemon: extracted from lib.rs. See AGENTS.md for the module map.
-use crate::pi_durable::{experimental_poller_decision, poller_should_spawn_release, restart_prototype_pair, TogglePoll};
+use crate::pi_durable::restart_prototype_pair;
 use crate::*;
 use std::cell::Cell;
 #[cfg(test)]
@@ -1242,9 +1242,8 @@ pub(crate) fn canonical_host_executable(current_exe: std::io::Result<PathBuf>) -
 }
 
 pub(crate) fn spawn_daemon_detached(repo: &Path, app_config: &Path) -> Result<(), String> {
-    let namespace = alineryd_socket_namespace();
-    let host_executable = canonical_host_executable(std::env::current_exe());
-    daemon_client::spawn_daemon_detached(repo, app_config, namespace.as_deref(), host_executable.as_deref())
+    // Repo attach starts the helper, then the Vinculum UI daemon. Release `alineryd` is not a launch path.
+    crate::pi_durable::start_prototype_pair(repo, app_config)
 }
 
 // DELIBERATE TEARDOWN ORIGIN (B1). Settings explicitly stops this daemon's sessions.
@@ -1481,7 +1480,7 @@ pub(crate) fn spawn_daemon_poller(app: AppHandle) {
                 continue;
             }
             let lifecycle = state.repo_lifecycle(&repo);
-            let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+            let _guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
             if state.is_quitting() || state.is_closing(&repo) || !load_app_config(&app).known_repos.iter().any(|known| Path::new(known) == repo) {
                 continue;
             }
@@ -1501,9 +1500,8 @@ pub(crate) fn spawn_daemon_poller(app: AppHandle) {
             if state.is_quitting() || state.is_closing(&repo) {
                 continue;
             }
-            let toggle_on = alinery_core::load_global_settings(&app_config).experiments.pi_durable;
-            match experimental_poller_decision(toggle_on, compat) {
-                TogglePoll::Leave | TogglePoll::Release(PollerAction::Leave) => {
+            match alinery_core::poller_action(compat) {
+                PollerAction::Leave => {
                     if let (Some(client), Some(compat), Some(version)) = (probe, compat, version.as_ref()) {
                         // Refresh the daemon-owned readiness and compatibility reported by
                         // whichever process currently answers this socket. Preserve the
@@ -1513,19 +1511,16 @@ pub(crate) fn spawn_daemon_poller(app: AppHandle) {
                         }
                     }
                 }
-                TogglePoll::Release(PollerAction::Spawn) if probe.is_none() && poller_should_spawn_release(toggle_on, PollerAction::Spawn) => {
-                    attach_repo_daemon_locked(&state, &repo, &app_config, &guard)
+                PollerAction::Spawn if probe.is_none() => {
+                    let _ = restart_prototype_pair(&state, &repo, &app_config);
                 }
-                TogglePoll::Release(PollerAction::Spawn) | TogglePoll::Release(PollerAction::SurfaceConflict) => {
+                PollerAction::Spawn => {}
+                PollerAction::SurfaceConflict => {
                     let conflict = daemon_conflicts(&repo, &app_config_identity);
                     if !state.is_quitting() && !state.is_closing(&repo) {
                         state.set_daemon_conflict(&repo, conflict);
                     }
                 }
-                TogglePoll::RestartPair if probe.is_none() => {
-                    let _ = restart_prototype_pair(&state, &repo, &app_config);
-                }
-                TogglePoll::RestartPair => {}
             }
         }
     });

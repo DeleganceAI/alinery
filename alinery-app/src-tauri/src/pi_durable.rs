@@ -1,9 +1,7 @@
-//! Experimental Pi Durable process switch.
+//! Vinculum process supervision.
 //!
-//! This is a deliberate teardown origin. It is not `stop_daemon`: that command always
-//! restarts the release daemon. Enable stops release `alineryd`, then starts the helper,
-//! then starts `alinery-pi-daemon`. Disable reverses that and restarts release through
-//! the existing spawn.
+//! The UI socket is `alinery-pi-daemon`. `alinery-playbook` is the helper beside it.
+//! Nothing in this module starts release `alineryd`.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
@@ -16,28 +14,11 @@ use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use alinery_core::daemon_client::{self, configure_detached_process, configure_host_guard_environment};
-use alinery_core::{playbook_client, playbook_socket_path, poller_action, DaemonCompat, PollerAction};
+use alinery_core::{playbook_client, playbook_socket_path};
 
-use crate::app_config::load_app_config;
-use crate::daemon::{alineryd_socket_namespace, attach_repo_daemon_locked, canonical_host_executable, connect_current_daemon, takeover_allowed};
-use crate::paths::{active_repo, app_config_path, validate_known_target_repo};
-use crate::state::{AppState, ClosingGuard};
-
-pub(crate) enum TogglePoll {
-    Release(PollerAction),
-    RestartPair,
-    Leave,
-}
-
-pub(crate) fn experimental_poller_decision(toggle_on: bool, compat: Option<DaemonCompat>) -> TogglePoll {
-    if !toggle_on {
-        return TogglePoll::Release(poller_action(compat));
-    }
-    match poller_action(compat) {
-        PollerAction::Spawn => TogglePoll::RestartPair,
-        PollerAction::Leave | PollerAction::SurfaceConflict => TogglePoll::Leave,
-    }
-}
+use crate::daemon::{alineryd_socket_namespace, canonical_host_executable, connect_current_daemon};
+use crate::paths::app_config_path;
+use crate::state::AppState;
 
 pub(crate) enum HelperSupervision {
     RestartHelperOnly,
@@ -54,43 +35,6 @@ pub(crate) fn helper_supervision(ui_socket_up: bool, helper_up: bool) -> HelperS
     } else {
         HelperSupervision::Leave
     }
-}
-
-pub(crate) trait PiSwitchOps {
-    fn validate(&mut self) -> Result<(), String>;
-    fn reserve(&mut self) -> Result<(), String>;
-    fn mark_closing(&mut self) -> Result<(), String>;
-    fn wait_socket_gone(&mut self) -> Result<(), String>;
-    fn persist_flag(&mut self, enabled: bool) -> Result<(), String>;
-    fn stop_helper(&mut self) -> Result<(), String>;
-    fn start_helper(&mut self) -> Result<(), String>;
-    fn start_pi_daemon(&mut self) -> Result<(), String>;
-    fn start_release(&mut self) -> Result<(), String>;
-    fn drop_closing(&mut self);
-}
-
-pub(crate) fn run_experimental_switch(enable: bool, ops: &mut dyn PiSwitchOps, shutdown_ui: &mut dyn FnMut() -> Result<(), String>) -> Result<(), String> {
-    ops.validate()?;
-    ops.reserve()?;
-    ops.mark_closing()?;
-    let result = (|| {
-        shutdown_ui()?;
-        ops.wait_socket_gone()?;
-        ops.persist_flag(enable)?;
-        if enable {
-            ops.start_helper()?;
-            ops.start_pi_daemon()
-        } else {
-            ops.stop_helper()?;
-            ops.start_release()
-        }
-    })();
-    ops.drop_closing();
-    result
-}
-
-fn pi_durable_enabled(app_config: &Path) -> bool {
-    alinery_core::load_global_settings(app_config).experiments.pi_durable
 }
 
 fn grok_key(app_config: &Path) -> String {
@@ -195,10 +139,15 @@ fn start_pi_daemon(repo: &Path, app_config: &Path) -> Result<(), String> {
     spawn_detached(&binary, repo, app_config, &borrowed)
 }
 
-fn restart_pair(state: &AppState, repo: &Path, app_config: &Path) -> Result<(), String> {
+/// Stop a leftover helper, then start the helper and the UI daemon. Does not start release `alineryd`.
+pub(crate) fn start_prototype_pair(repo: &Path, app_config: &Path) -> Result<(), String> {
     let _ = stop_helper(repo);
     start_helper(repo, app_config)?;
-    start_pi_daemon(repo, app_config)?;
+    start_pi_daemon(repo, app_config)
+}
+
+fn restart_pair(state: &AppState, repo: &Path, app_config: &Path) -> Result<(), String> {
+    start_prototype_pair(repo, app_config)?;
     if let Ok(client) = connect_current_daemon(repo) {
         if let Ok(version) = client.version_checked() {
             let identity = alinery_core::app_config_identity(app_config);
@@ -221,10 +170,7 @@ pub(crate) fn spawn_pi_supervisor(app: AppHandle) {
             continue;
         }
         let Ok(app_config) = app_config_path(&app) else { continue };
-        if !pi_durable_enabled(&app_config) {
-            continue;
-        }
-        for repo in load_app_config(&app).known_repos.iter().map(PathBuf::from) {
+        for repo in crate::app_config::load_app_config(&app).known_repos.iter().map(PathBuf::from) {
             if !repo.is_dir() || state.is_closing(&repo) {
                 continue;
             }
@@ -246,89 +192,4 @@ pub(crate) fn spawn_pi_supervisor(app: AppHandle) {
             }
         }
     });
-}
-
-struct LiveSwitch<'a> {
-    state: &'a AppState,
-    app: &'a AppHandle,
-    repo: PathBuf,
-    app_config: PathBuf,
-    closing: Option<ClosingGuard<'a>>,
-}
-
-impl PiSwitchOps for LiveSwitch<'_> {
-    fn validate(&mut self) -> Result<(), String> {
-        takeover_allowed(self.state, &self.repo)?;
-        validate_known_target_repo(&load_app_config(self.app).known_repos, &self.repo.display().to_string()).map(|_| ())
-    }
-    fn reserve(&mut self) -> Result<(), String> {
-        let reservation = self.state.reserve_repo(&self.repo)?.ok_or("repo-busy: another Alinery window owns this project")?;
-        reservation.commit(self.state);
-        Ok(())
-    }
-    fn mark_closing(&mut self) -> Result<(), String> {
-        self.closing = Some(self.state.mark_closing(&self.repo));
-        Ok(())
-    }
-    fn wait_socket_gone(&mut self) -> Result<(), String> {
-        daemon_client::wait_for_daemon_gone(&self.repo, alineryd_socket_namespace().as_deref().unwrap_or(""))
-    }
-    fn persist_flag(&mut self, enabled: bool) -> Result<(), String> {
-        let mut settings = alinery_core::load_global_settings(&self.app_config);
-        settings.experiments.pi_durable = enabled;
-        alinery_core::write_global_settings(&self.app_config, &settings)
-    }
-    fn stop_helper(&mut self) -> Result<(), String> {
-        stop_helper(&self.repo)
-    }
-    fn start_helper(&mut self) -> Result<(), String> {
-        start_helper(&self.repo, &self.app_config)
-    }
-    fn start_pi_daemon(&mut self) -> Result<(), String> {
-        start_pi_daemon(&self.repo, &self.app_config)
-    }
-    fn start_release(&mut self) -> Result<(), String> {
-        let lifecycle = self.state.repo_lifecycle(&self.repo);
-        let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
-        attach_repo_daemon_locked(self.state, &self.repo, &self.app_config, &guard);
-        Ok(())
-    }
-    fn drop_closing(&mut self) {
-        self.closing.take();
-    }
-}
-
-// DELIBERATE TEARDOWN ORIGIN. Settings switches this repo between the release daemon
-// and the experimental pair. Not `stop_daemon`, and not a caller of `close_repo_daemon`.
-fn switch_pi_durable_blocking(app: &AppHandle, enabled: bool) -> Result<alinery_core::GlobalSettings, String> {
-    let state = app.state::<AppState>();
-    let repo = active_repo()?;
-    takeover_allowed(&state, &repo)?;
-    let app_config = app_config_path(app)?;
-    let mut live = LiveSwitch {
-        state: &state,
-        app,
-        repo: repo.clone(),
-        app_config: app_config.clone(),
-        closing: None,
-    };
-    run_experimental_switch(enabled, &mut live, &mut || {
-        if let Ok(daemon) = connect_current_daemon(&repo) {
-            daemon.call(&daemon_client::shutdown_request()).map(|_| ())?;
-        }
-        Ok(())
-    })?;
-    state.clear_daemon(&repo);
-    Ok(alinery_core::load_global_settings(&app_config))
-}
-
-#[tauri::command]
-pub(crate) async fn switch_pi_durable(app: AppHandle, enabled: bool) -> Result<alinery_core::GlobalSettings, String> {
-    tauri::async_runtime::spawn_blocking(move || switch_pi_durable_blocking(&app, enabled))
-        .await
-        .map_err(|error| format!("switch pi durable task: {error}"))?
-}
-
-pub(crate) fn poller_should_spawn_release(toggle_on: bool, action: PollerAction) -> bool {
-    !toggle_on && matches!(action, PollerAction::Spawn)
 }

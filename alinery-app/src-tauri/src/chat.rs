@@ -467,6 +467,43 @@ pub(crate) fn chat_branch_label(app: AppHandle, state: State<'_, AppState>, repo
 }
 
 #[tauri::command]
+pub(crate) async fn chat_transcript(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_path: String,
+    id: String,
+) -> Result<Vec<alinery_core::daemon_client::TranscriptMessage>, String> {
+    let repo = owned_chat_repo(&app, &state, &repo_path)?;
+    let _ = load_root_omp(&repo, &id)?;
+    let daemon = chat_daemon(&state, &repo)?;
+    off_main_thread("chat transcript", move || daemon.transcript(&id)).await
+}
+
+#[tauri::command]
+pub(crate) async fn chat_prompt(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, text: String) -> Result<(), String> {
+    let repo = owned_chat_repo(&app, &state, &repo_path)?;
+    let _ = load_root_omp(&repo, &id)?;
+    let daemon = chat_daemon(&state, &repo)?;
+    off_main_thread("chat prompt", move || daemon.prompt(&id, &text)).await
+}
+
+#[tauri::command]
+pub(crate) async fn chat_abort(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String) -> Result<(), String> {
+    let repo = owned_chat_repo(&app, &state, &repo_path)?;
+    let _ = load_root_omp(&repo, &id)?;
+    let daemon = chat_daemon(&state, &repo)?;
+    off_main_thread("chat abort", move || daemon.abort(&id)).await
+}
+
+#[tauri::command]
+pub(crate) async fn chat_set_model(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, model: String) -> Result<(), String> {
+    let repo = owned_chat_repo(&app, &state, &repo_path)?;
+    let _ = load_root_omp(&repo, &id)?;
+    let daemon = chat_daemon(&state, &repo)?;
+    off_main_thread("chat set model", move || daemon.set_model(&id, &model)).await
+}
+
+#[tauri::command]
 pub(crate) async fn chat_rpc_write(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, payload: Value) -> Result<(), String> {
     let repo = owned_chat_repo(&app, &state, &repo_path)?;
     let _ = load_root_omp(&repo, &id)?;

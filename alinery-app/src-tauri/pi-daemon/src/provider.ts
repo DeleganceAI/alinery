@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createProvider } from "@earendil-works/pi-ai/models";
 import { xaiProvider } from "@earendil-works/pi-ai/providers/xai";
-import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 
 type CatalogModel = { id: string; name: string; context_window: number; max_tokens: number };
 type InferenceFile = { token: string; expires_at: number; catalog: { base_url: string; models: CatalogModel[] } };
@@ -26,22 +26,26 @@ export function modelSources(appConfig: string): { hosted: boolean; grok: boolea
   return { hosted: Boolean(inference?.token && inference.catalog?.models?.length), grok: Boolean(process.env.XAI_API_KEY?.trim()) };
 }
 
-let compatRetry = false;
-
-function httpStatus(error: unknown): number | undefined {
-  if (!error || typeof error !== "object" || !("status" in error)) return undefined;
-  return typeof error.status === "number" ? error.status : undefined;
+/** A blank session model is not a model. Chats and auxiliary sessions are created that way when settings have no default. */
+export function resolveModelId(appConfig: string, requested: string): string {
+  const explicit = requested.trim().replace(/^(?:alinery|xai)\//, "");
+  if (explicit) return explicit;
+  const hosted = readInference(appConfig)?.catalog.models ?? [];
+  const preferred = hosted.find((model) => model.id === "DeepSeek-V4.1-Flash") ?? hosted[0];
+  if (preferred?.id) return preferred.id;
+  return xaiProvider().getModels()[0]?.id ?? "";
 }
 
 export function installAlineryProvider(models: { setProvider: (provider: unknown) => void; refresh?: (options?: { providers?: string[] }) => Promise<unknown> }, appConfig: string) {
   const grok = xaiProvider();
-  const hostedApi = openAIResponsesApi();
+  // The hosted catalog is openai-completions. /v1/responses is not served and comes back 404.
+  const hostedApi = openAICompletionsApi();
   const catalog = () => {
     const inference = readInference(appConfig);
     const hosted = (inference?.catalog.models ?? []).map((model) => ({
       id: model.id,
       name: model.name,
-      api: "openai-responses",
+      api: "openai-completions",
       provider: "alinery",
       baseUrl: inference?.catalog.base_url,
       reasoning: false,
@@ -57,34 +61,13 @@ export function installAlineryProvider(models: { setProvider: (provider: unknown
     const inference = readInference(appConfig);
     const hosted = inference?.catalog.models.some((item) => item.id === model.id);
     if (!hosted) {
-      if (!process.env.XAI_API_KEY?.trim()) throw new Error(`model ${model.id} is unavailable`);
-      return grok[method]({ ...model, provider: "xai" }, context, options);
+      const key = process.env.XAI_API_KEY?.trim();
+      if (!key) throw new Error(`model ${model.id} is unavailable`);
+      return grok[method]({ ...model, provider: "xai" }, context, { ...options, apiKey: key });
     }
     if (!inference?.token) throw new Error(`model ${model.id} is unavailable`);
-    const hostedModel = { ...model, baseUrl: inference.catalog.base_url };
-    const stream = hostedApi[method](hostedModel, context, { ...options, apiKey: inference.token, compat: compatRetry });
-    return {
-      ...stream,
-      async *[Symbol.asyncIterator]() {
-        try {
-          yield* stream;
-        } catch (error) {
-          const status = httpStatus(error);
-          if (status === 400 && !compatRetry) {
-            compatRetry = true;
-            yield* hostedApi[method](hostedModel, context, {
-              ...options,
-              apiKey: inference.token,
-              store: false,
-              developerRole: true,
-              maxCompletionTokens: true,
-            });
-            return;
-          }
-          throw error;
-        }
-      },
-    };
+    const hostedModel = { ...model, api: "openai-completions", baseUrl: inference.catalog.base_url };
+    return hostedApi[method](hostedModel, context, { ...options, apiKey: inference.token });
   };
   // pi-ai 1.3.0 ignores a top-level stream and requires api.stream (or an api map).
   const provider = createProvider({
@@ -93,11 +76,15 @@ export function installAlineryProvider(models: { setProvider: (provider: unknown
     auth: {
       apiKey: {
         name: "Alinery hosted",
-        resolve: () => {
+        // Models.applyAuth reads resolution.auth. A credential-shaped return leaves auth undefined and throws on auth.apiKey before any request.
+        resolve: async ({ credential }) => {
+          const explicit = credential?.key?.trim();
+          if (explicit) return { auth: { apiKey: explicit }, source: "stored credential" };
           const inference = readInference(appConfig);
-          const grokReady = Boolean(process.env.XAI_API_KEY?.trim());
-          if (!inference?.token && !grokReady) return undefined;
-          return { type: "apiKey", key: inference?.token ?? "xai" };
+          if (inference?.token) return { auth: { apiKey: inference.token }, source: "alinery hosted" };
+          const grokKey = process.env.XAI_API_KEY?.trim();
+          if (grokKey) return { auth: { apiKey: grokKey }, source: "XAI_API_KEY" };
+          return undefined;
         },
       },
     },

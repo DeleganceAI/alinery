@@ -27,6 +27,7 @@ import {
   appendOptimisticUser,
   applyFilePage,
   applyRpcLine,
+  applyVinculumTranscript,
   type ChatTranscriptState,
   carryOver,
   dismissPendingUi,
@@ -322,6 +323,7 @@ export function SessionView({
   const [modelRoles, setModelRoles] = useState<ModelRolesMap>({});
   const [hosted, setHosted] = useState<HostedCatalogView | null>(null);
   const [hostedLoaded, setHostedLoaded] = useState(false);
+  const [grokReady, setGrokReady] = useState(false);
   const [loginBusy, setLoginBusy] = useState<string | null>(null);
   const [livePromotedIds, setLivePromotedIds] = useState<string[]>([]);
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -1078,7 +1080,15 @@ export function SessionView({
     setMessageSending(true);
     setMessageError("");
     try {
-      if (transport === "rpc") {
+      if (transport === "rpc" && vinculum) {
+        const message = attachments.length > 0 ? (await prepareChatSend(taskSlug, repoPath, caption, attachments)).message : caption;
+        if (attachments.length > 0) refreshAttachmentArtifacts();
+        await ipc.sessionPrompt(id, message);
+        const next = appendOptimisticUser(chatRef.current, caption, busy ? "follow_up" : "prompt");
+        chatRef.current = next;
+        setChat(next);
+        updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
+      } else if (transport === "rpc") {
         let extras: { message?: string; images?: ImageContent[] } | undefined;
         let queuedAttachments = attachments;
         if (attachments.length > 0) {
@@ -1152,8 +1162,13 @@ export function SessionView({
         pendingAttachments = prepared.copied;
         refreshAttachmentArtifacts();
       }
-      const command = abortAndPromptCommand(message, undefined, images);
-      await ipc.rpcWriteSession(id, command);
+      const command = vinculum ? null : abortAndPromptCommand(message, undefined, images);
+      if (vinculum) {
+        await ipc.sessionAbort(id);
+        await ipc.sessionPrompt(id, message);
+      } else if (command) {
+        await ipc.rpcWriteSession(id, command);
+      }
       const rowAttachments = draftToRowAttachments(attachments);
       if (usingDraft) {
         updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
@@ -1161,7 +1176,7 @@ export function SessionView({
         chatRef.current = next;
         setChat(next);
         const entryId = next.entries[next.entries.length - 1]?.id;
-        if (entryId) pendingSendRef.current = { commandId: command.id, draft: caption, actions: [], entryId, attachments: pendingAttachments };
+        if (entryId && command) pendingSendRef.current = { commandId: command.id, draft: caption, actions: [], entryId, attachments: pendingAttachments };
       } else {
         const remaining = queuedFollowUpsRef.current.slice(0, -1);
         onQueuedFollowUpsChange?.(remaining);
@@ -1178,7 +1193,7 @@ export function SessionView({
           }
           const next = { ...current, entries };
           chatRef.current = next;
-          if (entryId) pendingSendRef.current = { commandId: command.id, draft: caption, actions: [], entryId, attachments: pendingAttachments };
+          if (entryId && command) pendingSendRef.current = { commandId: command.id, draft: caption, actions: [], entryId, attachments: pendingAttachments };
           return next;
         });
       }
@@ -1263,6 +1278,7 @@ export function SessionView({
     utilityTerminal: !hasTask,
     harness,
   });
+  const vinculum = harness === "omp";
   const liveRpc = observation?.transport === "rpc";
   // Exited RPC sessions still support replay, but their processes cannot accept commands.
   const rpcProcessLive = liveRpc && observation?.lifecycle.state === "live" && observation.state?.process.state === "alive";
@@ -1270,7 +1286,7 @@ export function SessionView({
   const ompCoding = harness === "omp" && !leftover && !navHistory && !showPanel;
   const showChat = ompCoding && Boolean(termIntent) && !livePty;
   const showPtyTerminal = Boolean(termIntent) && !showChat;
-  const showHatch = ompCoding && observation?.lifecycle.state === "live" && (liveRpc || livePty);
+  const showHatch = !vinculum && ompCoding && observation?.lifecycle.state === "live" && (liveRpc || livePty);
   const showChatComposer = showChat && composerEligible;
   useEffect(() => {
     if (!showChat || termIntent !== "spawn" || observation?.transport) return;
@@ -1288,7 +1304,7 @@ export function SessionView({
 
   // Fresh OMP starts as RPC. If Settings prefers Terminal, restate once after the session is live.
   useEffect(() => {
-    if (!ompCoding || observation?.lifecycle.state !== "live") return;
+    if (vinculum || !ompCoding || observation?.lifecycle.state !== "live") return;
     if (termIntent !== "spawn" && termIntent !== "resume") return;
     if (!observation.transport || preferredViewAppliedRef.current === id) return;
     const want = appearance.session_default_view === "terminal" ? "pty" : "rpc";
@@ -1303,7 +1319,7 @@ export function SessionView({
       })
       .catch((error) => toast(String(error), "error"))
       .finally(() => setViewBusy(false));
-  }, [ompCoding, observation?.lifecycle.state, observation?.transport, termIntent, id, taskSlug, appearance.session_default_view]);
+  }, [vinculum, ompCoding, observation?.lifecycle.state, observation?.transport, termIntent, id, taskSlug, appearance.session_default_view]);
 
   // The journal owns committed history. It is read straight off disk, so it works for a dead
   // session with no daemon, it survives a busy OMP that refuses RPC history, and it still holds
@@ -1330,9 +1346,9 @@ export function SessionView({
   }, [id, loadOmpPage]);
 
   useEffect(() => {
-    if (harness !== "omp") return;
+    if (vinculum || harness !== "omp") return;
     void seedOmpJournal();
-  }, [harness, seedOmpJournal]);
+  }, [vinculum, harness, seedOmpJournal]);
 
   const olderBusy = useRef(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -1350,7 +1366,31 @@ export function SessionView({
   }, [loadOmpPage]);
 
   useEffect(() => {
-    if (!liveRpc) return;
+    if (!vinculum || !showChat) return;
+    let cancelled = false;
+    const pull = () => {
+      void ipc.sessionTranscript(id).then(
+        (messages) => {
+          if (cancelled) return;
+          setChat((current) => {
+            const next = applyVinculumTranscript(messages);
+            chatRef.current = next;
+            return next;
+          });
+          setTerminalConnection("open");
+        },
+        () => undefined,
+      );
+    };
+    pull();
+    const timer = window.setInterval(pull, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [vinculum, showChat, id]);
+  useEffect(() => {
+    if (vinculum || !liveRpc) return;
     let cancelled = false;
     const attachId = ipc.nextAttachId();
     // Live stream closed mid-turn (see `ipc.onStreamClosed`): reattach while still live in RPC.
@@ -1569,9 +1609,9 @@ export function SessionView({
     };
   }, [liveRpc, rpcProcessLive, id, taskSlug, seedOmpJournal, chatAttachEpoch]);
   useEffect(() => {
-    if (!rpcProcessLive) return;
+    if (vinculum || !rpcProcessLive) return;
     void ipc.rpcWriteSession(id, setAutoCompactionCommand(chatAutoCompaction)).catch(() => undefined);
-  }, [chatAutoCompaction, rpcProcessLive, id]);
+  }, [vinculum, chatAutoCompaction, rpcProcessLive, id]);
   const settleOpenUrl = async (requestId: string, raw: string | undefined) => {
     try {
       await settleBrowserUrl(id, requestId, raw, (error) => toast(error, "error"));
@@ -1614,6 +1654,12 @@ export function SessionView({
       .finally(() => {
         if (!cancelled) setHostedLoaded(true);
       });
+    void ipc.grokKeyReady().then(
+      (ready) => {
+        if (!cancelled) setGrokReady(ready);
+      },
+      () => undefined,
+    );
     return () => {
       cancelled = true;
     };
@@ -1672,7 +1718,8 @@ export function SessionView({
     setMessageError("");
     try {
       setChat((current) => appendOptimisticAbort(current));
-      await ipc.rpcWriteSession(id, abortCommand());
+      if (vinculum) await ipc.sessionAbort(id);
+      else await ipc.rpcWriteSession(id, abortCommand());
     } catch (error) {
       setMessageError(`Couldn't interrupt the session: ${String(error)}`);
     } finally {
@@ -1762,6 +1809,7 @@ export function SessionView({
     .filter((part) => part && part.length > 0)
     .join(" · ");
   const pickThinking = (level: string) => {
+    if (vinculum) return;
     void ipc.rpcWriteSession(id, setThinkingLevelCommand(level)).catch((error) => toast(String(error), "error"));
   };
 
@@ -1833,6 +1881,16 @@ export function SessionView({
   const onApproveChat = useCallback((requestId: string, allow: boolean) => void approveChatRef.current(requestId, allow), []);
 
   const applyChatModel = async (provider: string, modelId: string) => {
+    if (vinculum) {
+      setModelError(null);
+      try {
+        await ipc.sessionSetModel(id, `${provider}/${modelId}`);
+        setModelDialog(null);
+      } catch (error) {
+        setModelError(String(error));
+      }
+      return;
+    }
     setModelError(null);
     modelApplyRef.current = true;
     try {
@@ -1843,6 +1901,7 @@ export function SessionView({
     }
   };
   const startChatLogin = async (providerId: string) => {
+    if (vinculum) return;
     setModelError(null);
     setLoginBusy(providerId);
     loginApplyRef.current = providerId;
@@ -2214,6 +2273,7 @@ export function SessionView({
               livePromotedIds={livePromotedIds}
               modelRoles={modelRoles}
               hosted={hosted}
+              grok={grokReady}
               error={modelError}
               loginBusy={loginBusy}
               onTabChange={(tab) => setModelDialog((current) => (current ? { ...current, tab, setup: false } : current))}

@@ -6,11 +6,11 @@ import type { WatchHandle } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { Type } from "@earendil-works/pi-ai";
-import { Harness, LiveDoc, createRegistry, defineDoc, defineExtension, defineTool, type Harness as OpenedHarness } from "@earendil-works/pi-durable";
+import { Harness, LiveDoc, createRegistry, defineDoc, defineExtension, defineTool, type Conversation, type Harness as OpenedHarness } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { installAlineryProvider, modelSources } from "./provider.ts";
+import { installAlineryProvider, modelSources, resolveModelId } from "./provider.ts";
 
-const PROTOCOL = 16;
+const PROTOCOL = 17;
 const context = BACKGROUND_CONTEXT;
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
   kind: "alinery.attention",
@@ -36,6 +36,7 @@ type Live = {
   agent: { state: string; correlation_id?: string; reason?: string };
   playbook: { state: string; reason?: string };
   harness: OpenedHarness | null;
+  conversationId: string;
   liveRun: boolean;
   seenNonce: string;
 };
@@ -167,7 +168,7 @@ function sessionState(row: Live) {
   };
 }
 
-async function openSession(id: string, taskSlug: string, model: string) {
+async function openSession(id: string, taskSlug: string, model: string, prompt = "") {
   const path = sqlitePath(taskSlug, id);
   mkdirSync(dirname(path), { recursive: true });
   const exists = existsSync(path) && statSync(path).size > 0;
@@ -178,6 +179,7 @@ async function openSession(id: string, taskSlug: string, model: string) {
     agent: { state: "idle" },
     playbook: { state: "in_progress" },
     harness: null,
+    conversationId: "",
     liveRun: false,
     seenNonce: "",
   };
@@ -202,7 +204,12 @@ async function openSession(id: string, taskSlug: string, model: string) {
     context,
   );
   row.harness = harness;
-  const root = await harness.root(context, exists ? undefined : { agent: { model: { provider: "alinery", modelId: model.replace(/^alinery\//, "") } } });
+  const modelId = resolveModelId(appConfig, model);
+  if (!modelId) throw new Error("no model is configured");
+  const root = await harness.root(context, exists ? undefined : { agent: { model: { provider: "alinery", modelId } } });
+  row.conversationId = root.id;
+  await ensureModel(root, modelId);
+  if (!String(readMeta(taskSlug, id).model ?? "").trim()) writeMeta(taskSlug, id, { model: `alinery/${modelId}` });
   // Resumed conversations were created before this hook existed. tx.doc loads an existing doc and creates a missing one.
   await root.commit(async (tx) => {
     await tx.doc(Attention, root.id);
@@ -210,8 +217,100 @@ async function openSession(id: string, taskSlug: string, model: string) {
   }, context);
   watch(row, harness, root.id);
   if (exists) harness.resume();
+  await seedPrompt(root, prompt);
   row.process = "alive";
   return row;
+}
+
+async function ensureModel(conversation: Conversation, modelId: string, force = false) {
+  const agent = await conversation.agent(context);
+  if (agent.model?.modelId === modelId) return;
+  if (!force && agent.model?.modelId) return;
+  await conversation.configure({ model: { provider: "alinery", modelId } }, context);
+}
+
+async function seedPrompt(conversation: Conversation, prompt: string) {
+  if (!prompt) return;
+  const page = await conversation.entries({ order: "ascending" }, 200, undefined, context);
+  const hasUser = page.items.some((entry) => entry.kind === "pi.user" || (entry.model ?? []).some((message) => message.role === "user"));
+  if (hasUser) return;
+  // Admission only. The model run continues after this returns.
+  await conversation.submit({ type: "input", content: prompt, whenBusy: "followUp" }, context);
+}
+
+function textOf(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (!part || typeof part !== "object" || !("text" in part)) return "";
+      const text = part.text;
+      return typeof text === "string" ? text : "";
+    })
+    .filter((text) => text.length > 0)
+    .join("\n");
+}
+
+type ShownMessage = { role?: string; content?: unknown; errorMessage?: string };
+
+// conversation.context() is the next model request. It drops assistant messages whose stop reason is error, aborted, or deferred, so a failed turn never reaches the pane. The transcript is the stored entries, plus the in-flight partial.
+async function transcriptMessages(row: Live, conversation: Conversation): Promise<ShownMessage[]> {
+  const messages: ShownMessage[] = [];
+  let cursor: Awaited<ReturnType<Conversation["entries"]>>["next"];
+  for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
+    const page = await conversation.entries({ order: "ascending" }, 200, cursor, context);
+    for (const entry of page.items) {
+      const model = entry.model;
+      if (!Array.isArray(model)) continue;
+      for (const message of model) {
+        if (message && typeof message === "object") messages.push(message as ShownMessage);
+      }
+    }
+    cursor = page.next;
+    if (!cursor) break;
+  }
+  const live = row.harness ? await row.harness.documentState(LiveDoc, conversation.id, context) : undefined;
+  try {
+    const partial = live?.value?.generation?.message;
+    if (partial) messages.push(partial);
+    else if (live?.value?.generation?.retry?.error) messages.push({ role: "assistant", errorMessage: live.value.generation.retry.error });
+  } finally {
+    live?.dispose();
+  }
+  return messages;
+}
+
+function formatTranscript(messages: ReadonlyArray<ShownMessage>): Array<{ role: "user" | "assistant" | "tool"; text: string }> {
+  const out: Array<{ role: "user" | "assistant" | "tool"; text: string }> = [];
+  for (const message of messages) {
+    if (message.role === "user") {
+      const text = textOf(message.content).trim();
+      if (text) out.push({ role: "user", text });
+      continue;
+    }
+    if (message.role !== "assistant") continue;
+    const prose: string[] = [];
+    if (Array.isArray(message.content)) {
+      for (const part of message.content) {
+        if (!part || typeof part !== "object") continue;
+        const record = part as { type?: string; text?: string; name?: string };
+        if (record.type === "toolCall" || record.type === "tool_call") {
+          const name = record.name?.trim();
+          if (name) out.push({ role: "tool", text: name });
+          continue;
+        }
+        if (record.type === "text" && record.text?.trim()) prose.push(record.text.trim());
+      }
+    }
+    if (prose.length > 0) out.push({ role: "assistant", text: prose.join("\n") });
+    else if (message.errorMessage?.trim()) out.push({ role: "assistant", text: message.errorMessage.trim() });
+  }
+  return out;
+}
+
+async function conversationFor(row: Live): Promise<Conversation | null> {
+  if (!row.harness || !row.conversationId) return null;
+  return (await row.harness.conversation(row.conversationId, context)) ?? null;
 }
 
 function watch(row: Live, harness: OpenedHarness, conversationId: string) {
@@ -268,20 +367,35 @@ async function forwardPhase(row: Live, value: { phase: string; executionId: stri
 function helper(request: unknown, body?: Buffer): Promise<Record<string, unknown>> {
   return new Promise((resolve) => {
     const socket = createConnection(helperSocket);
-    let data = "";
-    socket.on("data", (chunk) => {
-      data += chunk.toString();
-      const line = data.split("\n")[0];
-      if (line) {
-        socket.end();
-        try {
-          resolve(JSON.parse(line) as Record<string, unknown>);
-        } catch {
-          resolve({ error: "bad-helper-reply" });
-        }
+    const chunks: Buffer[] = [];
+    let settled = false;
+    const finish = (value: Record<string, unknown>) => {
+      if (settled) return;
+      settled = true;
+      socket.end();
+      resolve(value);
+    };
+    // One reply is one JSON line. split("\n")[0] is the whole buffer until that byte arrives, so a split read parsed a prefix, closed the socket, and reported bad-helper-reply after create_task had already committed.
+    const takeLine = () => {
+      const buffered = Buffer.concat(chunks);
+      const newline = buffered.indexOf(0x0a);
+      if (newline < 0) return;
+      try {
+        const parsed: unknown = JSON.parse(buffered.subarray(0, newline).toString("utf8"));
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) finish({ error: "bad-helper-reply" });
+        else finish(parsed as Record<string, unknown>);
+      } catch {
+        finish({ error: "bad-helper-reply" });
       }
+    };
+    socket.on("data", (chunk) => {
+      chunks.push(Buffer.from(chunk));
+      takeLine();
     });
-    socket.on("error", (error) => resolve({ error: String(error) }));
+    socket.on("error", (error) => finish({ error: String(error) }));
+    socket.on("end", () => {
+      if (!settled) finish({ error: "bad-helper-reply" });
+    });
     socket.on("connect", () => {
       socket.write(`${JSON.stringify(request)}\n`);
       if (body) socket.write(body);
@@ -499,7 +613,72 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
       return;
     }
     try {
-      await openSession(String(header.id ?? ""), taskSlug, String(header.model ?? ""));
+      await openSession(String(header.id ?? ""), taskSlug, String(header.model ?? ""), typeof header.prompt === "string" ? header.prompt : "");
+      reply(socket, { ok: true });
+    } catch (error) {
+      reply(socket, { error: String(error) });
+    }
+    return;
+  }
+  if (op === "transcript" || op === "prompt" || op === "abort") {
+    const row = live.get(String(header.id ?? ""));
+    if (!row) {
+      reply(socket, { error: "unknown-session" });
+      return;
+    }
+    try {
+      const conversation = await conversationFor(row);
+      if (!conversation) {
+        reply(socket, { error: "unknown-session" });
+        return;
+      }
+      if (op === "transcript") {
+        reply(socket, { messages: formatTranscript(await transcriptMessages(row, conversation)) });
+        return;
+      }
+      if (op === "prompt") {
+        const text = typeof header.text === "string" ? header.text : "";
+        if (!text.trim()) {
+          reply(socket, { error: "empty-prompt" });
+          return;
+        }
+        const modelId = resolveModelId(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
+        if (!modelId) {
+          reply(socket, { error: "no model is configured" });
+          return;
+        }
+        await ensureModel(conversation, modelId);
+        await conversation.submit({ type: "input", content: text, whenBusy: "followUp" }, context);
+        reply(socket, { ok: true });
+        return;
+      }
+      await conversation.abort(context);
+      reply(socket, { ok: true });
+    } catch (error) {
+      reply(socket, { error: String(error) });
+    }
+    return;
+  }
+  if (op === "set_model") {
+    const row = live.get(String(header.id ?? ""));
+    if (!row) {
+      reply(socket, { error: "unknown-session" });
+      return;
+    }
+    const requested = typeof header.model === "string" ? header.model : "";
+    const modelId = resolveModelId(appConfig, requested);
+    if (!modelId) {
+      reply(socket, { error: "no model is configured" });
+      return;
+    }
+    try {
+      const conversation = await conversationFor(row);
+      if (!conversation) {
+        reply(socket, { error: "unknown-session" });
+        return;
+      }
+      await ensureModel(conversation, modelId, true);
+      writeMeta(row.taskSlug, row.id, { model: requested.includes("/") ? requested : `alinery/${modelId}` });
       reply(socket, { ok: true });
     } catch (error) {
       reply(socket, { error: String(error) });

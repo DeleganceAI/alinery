@@ -1,40 +1,21 @@
-import {
-  Archive,
-  Brain,
-  ChevronDown,
-  ChevronRight,
-  FolderGit2,
-  GitBranch,
-  MessageSquare,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Pencil,
-  Pin,
-  PinOff,
-  Plus,
-  SquareTerminal,
-  Trash2,
-  X,
-} from "lucide-react";
+import { Archive, Brain, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquare, PanelLeftClose, PanelLeftOpen, Pencil, Pin, PinOff, Plus, Trash2, X } from "lucide-react";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ChatComposer } from "../ChatComposer";
 import type { ChatPrefs } from "../chat/visibility";
 import { emptyTranscript } from "../chatTranscript";
-import { askConfirm, confirmDanger, confirmStopAndSwitch } from "../confirm";
+import { askConfirm, confirmDanger } from "../confirm";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { NameEditor } from "../NameEditor";
 import { setThinkingLevelCommand } from "../ompRpc";
 import { SessionTerminal } from "../SessionTerminal";
 import type { ObservationDisplayKind } from "../sessionAttention";
-import { OMP_INTERRUPT_DATA } from "../sessionMessage";
 import { Checkbox, Dialog, InlineStatus, LoadingState, obsLabel, StatusMarker } from "../shared";
 import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatPane } from "./ChatPane";
-import { abortTurnCommand } from "./chatSession";
 import { ChatSessionContext, ChatSessionProvider, chatActivity, errorMessage, threadKey, threadLabel, useChatRegistry, useChatThread } from "./chatThreadSession";
 import { ThinkingSelect } from "./ThinkingSelect";
 
@@ -115,7 +96,6 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
   const [renaming, setRenaming] = useState(false);
   const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(() => new Set());
   const [railObservations, setRailObservations] = useState<Record<string, SessionObservation>>({});
-  const [hatchBusy, setHatchBusy] = useState(false);
   // Hidden behind another tab the view stays mounted; its pollers skip their ticks.
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -334,34 +314,6 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
     }, 3000);
     return () => window.clearInterval(timer);
   }, [activity.turnActive]);
-
-  /**
-   * The escape hatch: restart this thread's OMP on the same journal in its terminal UI, or back
-   * into chat. Click-only, never automatic — it replaces the live process.
-   */
-  async function hatch() {
-    if (!selected || !selectionKey || hatchBusy) return;
-    const repo = selected.repo_path;
-    const id = selected.session.id;
-    const target = inTerminal ? "rpc" : "pty";
-    setError("");
-    try {
-      if (activity.turnActive) {
-        if (!(await confirmStopAndSwitch(target))) return;
-        await (inTerminal ? ipc.chatPtyWrite(repo, id, OMP_INTERRUPT_DATA) : ipc.chatRpcWrite(repo, id, abortTurnCommand())).catch(() => {});
-      }
-      setHatchBusy(true);
-      await ipc.chatRestate(repo, id, target);
-      const next = await ipc.chatSessionStatus(repo, id);
-      chat.setObserved(next);
-      // Back in chat: re-read the journal (turns typed in the terminal) and reattach RPC.
-      if (target === "rpc") chat.reconnect();
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setHatchBusy(false);
-    }
-  }
 
   const groups = repoGroups(dirs, threads);
   const repoPaths = groups.map((group) => group.path);
@@ -693,19 +645,6 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
                     <Trash2 size={16} aria-hidden="true" />
                   </button>
                 )}
-                {processLive || hatchBusy ? (
-                  <button
-                    type="button"
-                    className={`chat-icon-btn${inTerminal ? " on" : ""}`}
-                    aria-pressed={inTerminal}
-                    aria-label={inTerminal ? "Back to chat" : "Open in Terminal"}
-                    title={inTerminal ? "Back to chat" : "Open in OMP terminal"}
-                    disabled={hatchBusy}
-                    onClick={() => void hatch()}
-                  >
-                    {inTerminal ? <MessageSquare size={16} aria-hidden="true" /> : <SquareTerminal size={16} aria-hidden="true" />}
-                  </button>
-                ) : null}
                 <button type="button" className="chat-icon-btn" aria-label="Archive" title="Archive" onClick={() => void archiveThread(selected)}>
                   <Archive size={16} aria-hidden="true" />
                 </button>

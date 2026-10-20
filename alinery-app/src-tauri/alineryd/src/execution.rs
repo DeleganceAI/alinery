@@ -435,7 +435,7 @@ pub(super) fn create_session(
     })?;
     if request.start {
         let launch = read_meta_launch_fields(repo, slug, &session.id).ok_or("missing session")?;
-        if let Err(error) = spawn_session(reg, repo, launch, None, false, SessionTransport::Pty, false, None, lane, config, host) {
+        if let Err(error) = launch_auxiliary_session(reg, repo, launch, lane, config, host) {
             return Ok(CreateExecutionSessionReply {
                 session,
                 execution: None,
@@ -451,6 +451,14 @@ pub(super) fn create_session(
     }
     session_reply(repo, slug, session, request.start)
 }
+/// Chats and other auxiliary sessions. The playbook helper has no OMP host, so Vinculum opens those instead of `spawn_session`.
+fn launch_auxiliary_session(reg: &Registry, repo: &Path, launch: LaunchFields, lane: &str, config: &Path, host: &ProtectedHost) -> Result<(), String> {
+    if pi_opens_sessions() && launch.harness != NO_HARNESS_KEY {
+        return open_claimed_session(reg, repo, launch, lane, config, host);
+    }
+    spawn_session(reg, repo, launch, None, false, SessionTransport::Pty, false, None, lane, config, host)
+}
+
 pub(super) fn start(repo: &Path, reg: &Registry, lane: &str, config: &Path, host: &ProtectedHost, request: StartSessionRequest) -> Result<CreateExecutionSessionReply, String> {
     if alinery_core::safe_component(&request.session_id) != Some(request.session_id.as_str())
         || (!request.task_slug.is_empty() && alinery_core::safe_component(&request.task_slug) != Some(request.task_slug.as_str()))
@@ -480,8 +488,9 @@ pub(super) fn start(repo: &Path, reg: &Registry, lane: &str, config: &Path, host
             return Err("session already started".into());
         }
         let launch = read_meta_launch_fields(repo, &request.task_slug, &meta.id).ok_or("missing session")?;
-        let result = spawn_session(reg, repo, launch, None, false, SessionTransport::Pty, false, None, lane, config, host);
-        let mut reply = session_reply(repo, &request.task_slug, meta, result.is_ok())?;
+        let result = launch_auxiliary_session(reg, repo, launch, lane, config, host);
+        let session = read_session_meta_full(&session_meta_path(repo, &request.task_slug, &meta.id)).unwrap_or(meta);
+        let mut reply = session_reply(repo, &request.task_slug, session, result.is_ok())?;
         if let Err(error) = result {
             reply.start = "failed".into();
             reply.errors.push(CreationError {

@@ -626,21 +626,8 @@ fn hosted_refresh_needed_only_for_omp_hosted_spawn_and_resume() {
 }
 
 #[test]
-fn pi_durable_hosted_refresh_is_thirty_minutes_and_skips_when_off() {
+fn pi_durable_hosted_refresh_is_thirty_minutes() {
     assert_eq!(crate::PI_DURABLE_HOSTED_REFRESH, std::time::Duration::from_secs(30 * 60));
-    let mut calls = 0;
-    crate::refresh_hosted_if_pi_durable(false, || {
-        calls += 1;
-        Ok(())
-    })
-    .unwrap();
-    assert_eq!(calls, 0);
-    crate::refresh_hosted_if_pi_durable(true, || {
-        calls += 1;
-        Ok(())
-    })
-    .unwrap();
-    assert_eq!(calls, 1);
 }
 
 #[test]

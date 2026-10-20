@@ -1,5 +1,5 @@
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -71,6 +71,35 @@ fn empty_task_slug_does_not_write_an_execution() {
     let reply = helper.call(json!({"op":"phase_request","task_slug":"","session_id":"s","nonce":"n1","phase":"build","execution_id":"e"}));
     assert_eq!(reply["forwarded"], false);
     assert!(!helper.repo.join(".alinery/tasks").exists());
+}
+
+#[test]
+fn root_chat_start_opens_on_the_pi_daemon() {
+    let helper = Helper::spawn();
+    let ui = helper.repo.join(".alinery/alineryd.sock");
+    let listener = UnixListener::bind(&ui).unwrap();
+    let sessions = helper.repo.join(".alinery/sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    std::fs::write(
+        sessions.join("s-chat.meta.json"),
+        r#"{"id":"s-chat","worktree":"/tmp","created":1,"generic":true,"harness":"omp","model":"alinery/DeepSeek-V4.1-Flash"}"#,
+    )
+    .unwrap();
+    let accepted = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let mut line = String::new();
+        BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
+        writeln!(stream, "{}", json!({"ok":true})).unwrap();
+        let _ = stream.flush();
+        line
+    });
+    let reply = helper.call(json!({"op":"start_session","request":{"task_slug":"","session_id":"s-chat"}}));
+    let line = accepted.join().unwrap();
+    assert!(line.contains("\"op\":\"pi_open\""), "{line}");
+    assert_eq!(reply["start"], "started", "{reply}");
+    let message = reply["errors"][0]["message"].as_str().unwrap_or("");
+    assert!(!message.contains("OMP host"), "{reply}");
 }
 
 #[test]

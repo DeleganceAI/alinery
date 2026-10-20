@@ -111,7 +111,7 @@ export function ompDefaultModel(defaults: { harness?: string; model?: string } |
 
 export function harnessDisplayName(harness: string) {
   if (harness === "no-harness") return "Terminal";
-  if (harness === "omp") return "OMP CLI";
+  if (harness === "omp") return "Vinculum";
   return "Unsupported";
 }
 

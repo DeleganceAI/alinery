@@ -2,7 +2,7 @@ import { Star, X } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { costBand } from "../chat/costBand";
 import { BUILTIN_MODEL_ROLES, type ModelRolesMap } from "../chat/modelRoles";
-import { type AdvancedProviderRow, HOSTED_PROVIDER, hostedPrice, type LoginProvider, mergeHostedModels, partitionProviders } from "../chat/providers";
+import { type AdvancedProviderRow, HOSTED_PROVIDER, hostedPrice, type LoginProvider, mergeGrokModels, mergeHostedModels, partitionProviders } from "../chat/providers";
 import type { ProvidersDialogTab } from "../chat/slash";
 import type { ChatModelOption } from "../chatTranscript";
 import { Dialog } from "../shared";
@@ -18,6 +18,8 @@ export type ChatProvidersDialogProps = {
   livePromotedIds?: string[];
   modelRoles: ModelRolesMap;
   hosted?: HostedCatalogView | null;
+  /** Settings has a Grok key, so the xAI chat models are selectable. */
+  grok?: boolean;
   error?: string | null;
   loginBusy?: string | null;
   children?: ReactNode;
@@ -123,6 +125,7 @@ export function ChatModelDialog({
   livePromotedIds = [],
   modelRoles,
   hosted,
+  grok = false,
   error,
   loginBusy,
   children,
@@ -148,7 +151,7 @@ export function ChatModelDialog({
     setQuery(preselect ?? "");
   }, [preselect]);
 
-  const listed = useMemo(() => mergeHostedModels(models, hosted), [models, hosted]);
+  const listed = useMemo(() => mergeGrokModels(mergeHostedModels(models, hosted), grok), [models, hosted, grok]);
   const { chatLogin, advanced } = useMemo(() => partitionProviders({ loginProviders, models: listed, livePromotedIds }), [loginProviders, listed, livePromotedIds]);
 
   const filtered = useMemo(() => {

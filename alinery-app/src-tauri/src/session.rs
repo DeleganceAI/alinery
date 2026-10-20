@@ -625,22 +625,14 @@ pub(crate) fn hosted_refresh_needed(intent: &str, harness: &str, model: &str) ->
     harness == alinery_core::DEFAULT_HARNESS_KEY && matches!(intent, daemon_client::ops::SPAWN | daemon_client::ops::RESUME) && (model.trim().is_empty() || is_hosted_model(model))
 }
 
-/// While the experimental toggle is on, refresh hosted inference inside the one-hour renewal lead.
+/// Refresh hosted inference inside the one-hour renewal lead. Vinculum is the only daemon.
 pub(crate) const PI_DURABLE_HOSTED_REFRESH: Duration = Duration::from_secs(30 * 60);
-
-pub(crate) fn refresh_hosted_if_pi_durable(enabled: bool, ensure: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
-    if !enabled {
-        return Ok(());
-    }
-    ensure()
-}
 
 pub(crate) fn spawn_pi_hosted_refresh(app: AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(PI_DURABLE_HOSTED_REFRESH);
         let Ok(app_config) = app_config_path(&app) else { continue };
-        let enabled = alinery_core::load_global_settings(&app_config).experiments.pi_durable;
-        let _ = refresh_hosted_if_pi_durable(enabled, || alinery_core::ensure_hosted_inference_for_spawn(&app_config));
+        let _ = alinery_core::ensure_hosted_inference_for_spawn(&app_config);
     });
 }
 
@@ -1065,6 +1057,34 @@ pub(crate) fn omp_setup_session(state: State<'_, AppState>) -> Result<String, St
     let _repo = require_owned_active_repo(&state)?;
     let daemon = state.daemon().ok_or("daemon not connected")?;
     daemon.omp_setup()
+}
+
+#[tauri::command]
+pub(crate) async fn session_transcript(state: State<'_, AppState>, id: String) -> Result<Vec<alinery_core::daemon_client::TranscriptMessage>, String> {
+    let _repo = require_owned_active_repo(&state)?;
+    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
+    off_main_thread("transcript", move || daemon.transcript(&id)).await
+}
+
+#[tauri::command]
+pub(crate) async fn session_prompt(state: State<'_, AppState>, id: String, text: String) -> Result<(), String> {
+    let _repo = require_owned_active_repo(&state)?;
+    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
+    off_main_thread("prompt", move || daemon.prompt(&id, &text)).await
+}
+
+#[tauri::command]
+pub(crate) async fn session_abort(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let _repo = require_owned_active_repo(&state)?;
+    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
+    off_main_thread("abort", move || daemon.abort(&id)).await
+}
+
+#[tauri::command]
+pub(crate) async fn session_set_model(state: State<'_, AppState>, id: String, model: String) -> Result<(), String> {
+    let _repo = require_owned_active_repo(&state)?;
+    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
+    off_main_thread("set model", move || daemon.set_model(&id, &model)).await
 }
 
 #[tauri::command]
