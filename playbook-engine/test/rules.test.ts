@@ -2,9 +2,11 @@
  * The engine's individual rules, each on the smallest playbook that shows it.
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { Launch } from '../src/harness.ts';
+import { parsePlaybookMd } from '../src/playbook-md.ts';
 import { validatePlaybook } from '../src/playbook.ts';
 import { complete, FakeHarness, type FakeSession } from './fake-harness.ts';
 import { byStep, openEngine, playbook, settle, step, taskDir, writeText } from './helpers.ts';
@@ -30,6 +32,16 @@ test('validation: wildcard ownership is unique, exact roles may be shared', () =
   assert.deepEqual(codes([step('a', { inputs: [{ path: 'a-*.md', mode: 'each' }, { path: 'b-*.md', mode: 'complete' }] })]), ['multiple_collections']);
   assert.deepEqual(codes([step('a', { outputs: [{ path: 'attachments/x.md' }] })]), ['invalid_path']);
   assert.deepEqual(codes([step('a', { prompt: 'see {{NOPE}}' })]), ['unknown_prompt_token']);
+  assert.deepEqual(codes([step('a', { outputs: [{ path: 'slice-*.md', required: true }] })]), ['required_wildcard']);
+});
+
+test('spec playbook parses, including required outputs', () => {
+  const text = readFileSync(new URL('../../alinery-app/src-tauri/playbooks/spec/playbook.md', import.meta.url), 'utf8');
+  const result = parsePlaybookMd(text);
+  assert.equal(result.diagnostics.length, 0, result.diagnostics.map((d) => d.message).join('; '));
+  const plan = result.playbook?.steps.find((s) => s.key === 'plan-slices');
+  assert.equal(plan?.outputs.find((o) => o.path === 'tasks.md')?.required, true);
+  assert.equal(plan?.outputs.find((o) => o.path === 'slice-*.md')?.required, undefined);
 });
 
 test('ambiguity: two unrelated briefs for one request is reported, not guessed', async () => {
@@ -159,6 +171,27 @@ test('acceptance: an empty assigned file rejects the attempt; nothing published 
   writeText(launch.outputs['c-*.md'].replace('*', '2'), 'late');
   assert.deepEqual(await launch.requestCompletion(), accepted); // files written after acceptance never join the receipt
   assert.deepEqual(byStep(engine, 's')[0].receipt!.map((o) => o.role), ['a.md', 'b.md', 'c-1.md']);
+});
+
+test('a required output rejects until that exact file exists', async () => {
+  const pb = playbook([step('s', { outputs: [{ path: 'optional.md' }, { path: 'must.md', required: true }] })]);
+  const dir = taskDir();
+  let launch!: Launch;
+  const engine = openEngine(
+    pb,
+    new FakeHarness(async (l) => {
+      launch = l;
+    }),
+    dir,
+  );
+  await engine.tick();
+  await new Promise((r) => setImmediate(r));
+  writeText(launch.outputs['optional.md'], 'ok');
+  const rejected = await launch.requestCompletion();
+  assert.equal(rejected.kind, 'rejected');
+  if (rejected.kind === 'rejected') assert.ok(rejected.problems.some((p) => p.includes('must.md')));
+  writeText(launch.outputs['must.md'], 'ok');
+  assert.equal((await launch.requestCompletion()).kind, 'accepted');
 });
 
 test('a session that exits without completing is failed, not done, and its binding is not re-reserved', async () => {

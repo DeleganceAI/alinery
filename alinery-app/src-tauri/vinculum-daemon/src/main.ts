@@ -10,6 +10,7 @@ import { Harness, LiveDoc, createRegistry, defineDoc, defineExtension, defineToo
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
+import { completeSession, engineAxis, enginePlaybook, permitSession, startGraphs } from "./graph.ts";
 import { installAlineryProvider, modelSources, resolveModelId } from "./provider.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
@@ -42,6 +43,7 @@ type Live = {
   conversationId: string;
   liveRun: boolean;
   seenNonce: string;
+  executionId: string;
 };
 
 const live = new Map<string, Live>();
@@ -219,6 +221,7 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
     conversationId: "",
     liveRun: false,
     seenNonce: "",
+    executionId: "",
   };
   live.set(id, row);
   const meta = readMeta(taskSlug, id);
@@ -435,6 +438,12 @@ async function requestPhase(conversationId: string) {
   if (!row.taskSlug) return { output: [{ type: "text" as const, text: phaseResultText({ forwarded: false }) }] };
   const meta = readMeta(row.taskSlug, row.id);
   const nonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const local = await completeSession(row.id);
+  if (local) {
+    applyPhaseReply(row, local);
+    row.seenNonce = nonce;
+    return { output: [{ type: "text" as const, text: phaseResultText(local) }], isError: local.outcome !== "accepted" };
+  }
   const reply = await helper({
     op: "phase_request",
     task_slug: row.taskSlug,
@@ -449,6 +458,11 @@ async function requestPhase(conversationId: string) {
 }
 
 async function forwardPhase(row: Live, value: { phase: string; executionId: string; nonce: string }) {
+  const local = await completeSession(row.id);
+  if (local) {
+    applyPhaseReply(row, local);
+    return;
+  }
   const reply = await helper({ op: "phase_request", task_slug: row.taskSlug, session_id: row.id, phase: value.phase, execution_id: value.executionId, nonce: value.nonce });
   applyPhaseReply(row, reply);
 }
@@ -610,7 +624,10 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
   if (op === "list") {
     const axis = await helper({ op: "playbook_axis" });
     const byId = new Map<string, { state: string; reason?: string }>();
-    for (const row of (axis.sessions as Array<{ id: string; playbook: { state: string; reason?: string } }> | undefined) ?? []) byId.set(row.id, row.playbook);
+    for (const row of engineAxis()) byId.set(row.id, row.playbook);
+    for (const row of (axis.sessions as Array<{ id: string; playbook: { state: string; reason?: string } }> | undefined) ?? []) {
+      if (!byId.has(row.id)) byId.set(row.id, row.playbook);
+    }
     const sessions = [...live.values()]
       .filter((row) => row.id !== "__omp-setup__")
       .map((row) => ({ id: row.id, ...sessionState({ ...row, playbook: byId.get(row.id) ?? row.playbook }), transport: "rpc" }));
@@ -623,9 +640,10 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
       reply(socket, { error: "unknown-session" });
       return;
     }
-    const axis = await helper({ op: "playbook_axis" });
-    const match = ((axis.sessions as Array<{ id: string; playbook: { state: string; reason?: string } }> | undefined) ?? []).find((item) => item.id === row.id);
-    reply(socket, { ...sessionState({ ...row, playbook: match?.playbook ?? row.playbook }), transport: "rpc" });
+    const fromEngine = enginePlaybook(row.id);
+    const axis = fromEngine ? undefined : await helper({ op: "playbook_axis" });
+    const match = fromEngine ?? ((axis?.sessions as Array<{ id: string; playbook: { state: string; reason?: string } }> | undefined) ?? []).find((item) => item.id === row.id)?.playbook;
+    reply(socket, { ...sessionState({ ...row, playbook: match ?? row.playbook }), transport: "rpc" });
     return;
   }
   if (op === "shutdown") {
@@ -798,6 +816,12 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
       reply(socket, { error: "completion permission requires an authenticated UI control connection" });
       return;
     }
+    const request = header.request;
+    const sessionId = request && typeof request === "object" && !Array.isArray(request) ? String((request as { session_id?: unknown }).session_id ?? "") : "";
+    if (sessionId && (await permitSession(sessionId))) {
+      reply(socket, { ok: true }, true);
+      return;
+    }
     reply(socket, await helper(header, body ?? undefined), true);
     return;
   }
@@ -875,4 +899,42 @@ function resumeInterrupted() {
 
 server.listen(uiSocket, () => {
   resumeInterrupted();
+  startGraphs(repo, {
+    open: (id, taskSlug, model, prompt) => openSession(id, taskSlug, model, prompt).then(() => undefined),
+    async status(id) {
+      const row = live.get(id);
+      if (!row) return { kind: "unknown" };
+      if (row.process === "exited") return { kind: "exited", exitCode: null };
+      if (row.process === "starting") return { kind: "starting" };
+      if (row.agent.state === "busy" || row.liveRun) return { kind: "running" };
+      return { kind: "idle" };
+    },
+    async send(id, text) {
+      const row = live.get(id);
+      const conversation = row ? await conversationFor(row) : null;
+      if (!row || !conversation) throw new Error(`unknown session ${id}`);
+      const modelId = resolveModelId(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
+      if (!modelId) throw new Error("no model is configured");
+      await ensureModel(conversation, modelId);
+      await conversation.submit({ type: "input", content: text, whenBusy: "followUp" }, context);
+    },
+    async stop(id) {
+      const row = live.get(id);
+      if (!row || row.process === "exited") return;
+      const conversation = await conversationFor(row);
+      if (conversation) {
+        try {
+          await conversation.abort(context);
+        } catch {
+          /* already idle */
+        }
+      }
+      row.process = "exited";
+      writeMeta(row.taskSlug, row.id, { ended_at: Math.floor(Date.now() / 1000) });
+    },
+    bind(id, executionId) {
+      const row = live.get(id);
+      if (row) row.executionId = executionId;
+    },
+  });
 });

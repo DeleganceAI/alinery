@@ -32,6 +32,8 @@ export interface Output {
    * assigned artifact overall.
    */
   path: string;
+  /** Exact outputs only. Completion rejects until this nonempty file exists. A wildcard cannot be required. */
+  required?: boolean;
 }
 
 export interface Step {
@@ -61,8 +63,21 @@ export interface Playbook {
   steps: Step[];
 }
 
-/** The only `{{TOKEN}}`s a prompt may use. Anything else is a validation error, so a typo cannot reach an agent. */
-export const PROMPT_TOKENS = ['ARTIFACTS_DIR', 'TICKET_FILE', 'PROMPT_EXTRA'] as const;
+/** The only `{{TOKEN}}`s a prompt may use. A backslash-escaped `\{{TOKEN}}` is literal. Anything else is a validation error. */
+export const PROMPT_TOKENS = [
+  'ARTIFACTS_DIR',
+  'ARTIFACT_FILE',
+  'REVIEW_HANDOFF_FILE',
+  'SESSION_HISTORY_DIR',
+  'TASK_NAME',
+  'TASK_SLUG',
+  'WORKTREE',
+  'PLAYBOOK_KEY',
+  'PHASE_KEY',
+  'PHASE_TITLE',
+  'TICKET_FILE',
+  'PROMPT_EXTRA',
+] as const;
 
 export interface Diagnostic {
   code: string;
@@ -168,10 +183,11 @@ export function validatePlaybook(pb: Playbook): Diagnostic[] {
     s.outputs.forEach((o, n) => {
       const problem = pathProblem(o.path);
       if (problem) bad('invalid_path', `output ${o.path} ${problem}`, s.key);
+      if (o.required && wildcard(o.path)) bad('required_wildcard', `required applies only to an exact output, not ${o.path}`, s.key);
       if (s.outputs.slice(0, n).some((prev) => overlaps(prev.path, o.path))) bad('duplicate_output', `output ${o.path} overlaps an earlier output of the same step`, s.key);
     });
 
-    for (const m of s.prompt.matchAll(/\{\{(\w+)\}\}/g)) {
+    for (const m of s.prompt.matchAll(/(?<!\\)\{\{(\w+)\}\}/g)) {
       if (!(PROMPT_TOKENS as readonly string[]).includes(m[1])) bad('unknown_prompt_token', `unknown prompt token {{${m[1]}}}`, s.key);
     }
   }

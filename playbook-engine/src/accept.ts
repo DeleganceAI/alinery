@@ -29,7 +29,11 @@ export function inspectOutputs(outDir: string, outputs: Output[]): Inspection {
   for (const out of outputs) {
     const w = wildcard(out.path);
     if (!w) {
+      const before = problems.length;
       consider(out.path);
+      if (out.required && problems.length === before && !published.some((item) => item.role === out.path)) {
+        problems.push(`${out.path} is required`);
+      }
       continue;
     }
     // Wildcard family: every file in the assigned directory that matches the selector is a member.

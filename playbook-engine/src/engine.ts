@@ -46,8 +46,16 @@ export interface EngineOptions {
   maxLiveSessions?: number;
   /** Task-level human gate per step key. true = the agent may complete on its own. Defaults to each step's autoAdvanceDefault. */
   autoAdvance?: Record<string, boolean>;
-  /** Values for `{{TICKET_FILE}}` and `{{PROMPT_EXTRA}}`. `{{ARTIFACTS_DIR}}` is each execution's own output directory. */
-  tokens?: { TICKET_FILE?: string; PROMPT_EXTRA?: string };
+  /** Values for prompt tokens that are not derived from the execution. `{{ARTIFACTS_DIR}}` is each execution's own output directory. */
+  tokens?: {
+    TICKET_FILE?: string;
+    PROMPT_EXTRA?: string;
+    TASK_NAME?: string;
+    TASK_SLUG?: string;
+    WORKTREE?: string;
+    REVIEW_HANDOFF_FILE?: string;
+    SESSION_HISTORY_DIR?: string;
+  };
 }
 
 const WRAP_UP = 'Permission to finish granted. Complete your writes, give a brief handoff, then call the completion tool once and finish without starting more work.';
@@ -220,16 +228,26 @@ export class Engine {
   }
 
   #render(step: Step, e: Execution, inputs: Record<string, string[]>, outputs: Record<string, string>): string {
+    const exact = step.outputs.find((output) => !output.path.includes('*'));
     const tokens: Record<string, string> = {
       ARTIFACTS_DIR: e.outDir,
+      ARTIFACT_FILE: exact ? join(e.outDir, exact.path) : '',
+      REVIEW_HANDOFF_FILE: this.#opts.tokens?.REVIEW_HANDOFF_FILE ?? '',
+      SESSION_HISTORY_DIR: this.#opts.tokens?.SESSION_HISTORY_DIR ?? '',
+      TASK_NAME: this.#opts.tokens?.TASK_NAME ?? '',
+      TASK_SLUG: this.#opts.tokens?.TASK_SLUG ?? '',
+      WORKTREE: this.#opts.tokens?.WORKTREE ?? this.#opts.cwd,
+      PLAYBOOK_KEY: this.#opts.playbook.key,
+      PHASE_KEY: step.key,
+      PHASE_TITLE: step.title,
       TICKET_FILE: this.#opts.tokens?.TICKET_FILE ?? '',
       PROMPT_EXTRA: this.#opts.tokens?.PROMPT_EXTRA ?? '',
     };
-    const lines = [step.prompt.replace(/\{\{(\w+)\}\}/g, (_, k: string) => tokens[k] ?? ''), '', '## Engine assignment', `Execution ${e.id} of step "${step.key}".`, '', 'Read exactly these inputs:'];
+    const lines = [step.prompt.replace(/(?<!\\)\{\{(\w+)\}\}/g, (_, k: string) => tokens[k] ?? ''), '', '## Engine assignment', `Execution ${e.id} of step "${step.key}".`, '', 'Read exactly these inputs:'];
     const bound = Object.entries(inputs).flatMap(([slot, paths]) => paths.map((p) => `  ${slot} -> ${p}`));
     lines.push(...(bound.length ? bound : ['  (none)']));
-    lines.push('', 'Write only these outputs. Publish any subset; at least one must be a nonempty file:');
-    lines.push(...Object.entries(outputs).map(([role, p]) => `  ${role} -> ${p}`));
+    lines.push('', 'Write only these outputs. At least one must be a nonempty file. A required output must be present:');
+    lines.push(...step.outputs.map((output) => `  ${output.path} -> ${outputs[output.path]}${output.required ? ' (required)' : ''}`));
     lines.push('', 'When the files are written and verified, give a brief handoff, then call the completion tool once and finish without starting more work.');
     return lines.join('\n');
   }

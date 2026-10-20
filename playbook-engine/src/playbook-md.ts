@@ -59,8 +59,8 @@ export function parsePlaybookMd(text: string): Result {
     }
     const outputs: Output[] = [];
     for (const [i, rawOut] of (shape.array(raw as Record<string, unknown>, 'outputs', at) ?? []).entries()) {
-      const t = shape.table(rawOut as Record<string, unknown>, `${at}.outputs[${i}]`, ['path']);
-      outputs.push({ path: String(t.path ?? '') });
+      const t = shape.table(rawOut as Record<string, unknown>, `${at}.outputs[${i}]`, ['path'], ['required']);
+      outputs.push({ path: String(t.path ?? ''), ...(t.required === true ? { required: true } : {}) });
     }
     steps.push({
       key: String(s.key ?? ''),
@@ -117,22 +117,28 @@ class Shape {
   }
 
   /** Check a table's field set and types; returns the raw values (already-reported problems become undefined). */
-  table(obj: Record<string, unknown>, at: string, fields: string[]): Record<string, unknown> {
+  table(obj: Record<string, unknown>, at: string, fields: string[], optional: string[] = []): Record<string, unknown> {
     const prefix = at ? `${at}.` : '';
+    const allowed = new Set([...fields, ...optional]);
     const out: Record<string, unknown> = {};
-    for (const k of Object.keys(obj)) if (!fields.includes(k)) this.#d.push({ code: 'unknown_field', message: `unknown field ${prefix}${k}` });
-    for (const f of fields) {
-      const v = obj[f];
-      const kind = KIND[f];
-      if (v === undefined) {
-        this.#d.push({ code: 'missing_field', message: `required field ${prefix}${f} is missing` });
-      } else if (!IS[kind](v)) {
-        this.#d.push({ code: 'invalid_field_type', message: `${prefix}${f} must be ${kind}` });
-      } else {
-        out[f] = v;
-      }
-    }
+    for (const k of Object.keys(obj)) if (!allowed.has(k)) this.#d.push({ code: 'unknown_field', message: `unknown field ${prefix}${k}` });
+    for (const f of fields) this.#take(obj, out, prefix, f, true);
+    for (const f of optional) this.#take(obj, out, prefix, f, false);
     return out;
+  }
+
+  #take(obj: Record<string, unknown>, out: Record<string, unknown>, prefix: string, field: string, must: boolean) {
+    const v = obj[field];
+    const kind = KIND[field];
+    if (v === undefined) {
+      if (must) this.#d.push({ code: 'missing_field', message: `required field ${prefix}${field} is missing` });
+      return;
+    }
+    if (!IS[kind](v)) {
+      this.#d.push({ code: 'invalid_field_type', message: `${prefix}${field} must be ${kind}` });
+      return;
+    }
+    out[field] = v;
   }
 
   array(obj: Record<string, unknown>, field: string, at = ''): unknown[] | undefined {
@@ -159,6 +165,7 @@ const KIND: Record<string, Kind> = {
   outputs: 'array',
   path: 'string',
   mode: 'string',
+  required: 'boolean',
 };
 const IS: Record<Kind, (v: unknown) => boolean> = {
   integer: (v) => typeof v === 'number' && Number.isInteger(v),

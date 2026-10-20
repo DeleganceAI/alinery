@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use super::{accept_phase_completion, execution_config_identity, now_secs, refuse_harness_launch, set_pi_session_opener, start_auto_advance_reconciler, Registry};
+use super::{accept_phase_completion, execution_config_identity, now_secs, refuse_harness_launch, set_pi_session_opener, Registry};
 use alinery_core::{playbook_socket_path, CompletionOutcome, LaunchFields, PlaybookState, SessionState};
 
 pub fn run() {
@@ -63,7 +63,7 @@ pub fn run() {
     };
     let reg: Registry = Arc::new(Mutex::new(std::collections::HashMap::new()));
     let host = Arc::new(None);
-    start_auto_advance_reconciler(repo.clone(), reg.clone(), namespace.clone(), app_config.clone(), host.clone());
+    // Vinculum's engine ticks the graph. This helper must not reconcile beside it.
     let nonces = Arc::new(Mutex::new(load_nonces(&repo)));
     for stream in listener.incoming().flatten() {
         let repo = repo.clone();
@@ -83,6 +83,11 @@ pub fn run() {
 }
 
 fn open_on_pi_daemon(repo: &Path, lane: &str, launch: &LaunchFields) -> Result<(), String> {
+    // Task sessions belong to the engine. A root chat has no task slug and still opens here.
+    // Ok without spawned() leaves a playbook execution Starting; the engine session is the live one.
+    if !launch.task_slug.is_empty() {
+        return Ok(());
+    }
     let socket = alinery_core::alineryd_socket_path(repo, (!lane.is_empty()).then_some(lane));
     let token = std::env::var("ALINERY_PI_LAUNCH_TOKEN").unwrap_or_default();
     let prompt = alinery_core::resolve_launch_prompt(repo, launch)?;
