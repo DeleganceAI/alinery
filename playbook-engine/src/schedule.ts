@@ -27,6 +27,16 @@
  *      does not itself resolve back to this trigger alone, which would join two
  *      independent families by position.
  *   6. A binding already recorded is never reserved twice.
+ *
+ * Cost
+ * ----
+ * Two things keep a tick proportional to new work rather than to history.
+ * A trigger that already has a bound execution is final (every occurrence
+ * upstream of it existed before it did, so its companions cannot change) and
+ * is skipped before any resolution. And "is execution P upstream of Q" is one
+ * bit test against Q's ancestor bitset, built once per execution and kept in
+ * a SchedulerCache across ticks. Neither changes a result; an empty cache
+ * recomputes the same answers.
  */
 import { collectionInput, type Input, matches, overlaps, type Playbook, type Step } from './playbook.ts';
 import { type Ambiguity, available, isDone, type Occurrence, occurrences, type State } from './state.ts';
@@ -51,6 +61,17 @@ export interface Schedule {
   blocked: Blocked[];
 }
 
+/**
+ * Derived facts that never change once an execution is reserved. Safe to keep
+ * for the life of an engine and safe to throw away: it only saves work.
+ */
+export class SchedulerCache {
+  /** Execution id → dense index in reservation order. Ancestors always have smaller indices. */
+  readonly index = new Map<string, number>();
+  /** Execution id → bitset over indices of its ancestors, itself included. Memory is E²/16 bytes in the worst case. */
+  readonly ancestors = new Map<string, Uint32Array>();
+}
+
 /** A candidate binding for one slot: one occurrence, or one closed collection. */
 interface Cand {
   key: string;
@@ -60,27 +81,51 @@ interface Cand {
 
 type Pick = { kind: 'one'; cand: Cand } | { kind: 'none' } | { kind: 'many'; cands: Cand[] };
 
-export function schedule(pb: Playbook, state: State): Schedule {
+export function schedule(pb: Playbook, state: State, cache = new SchedulerCache()): Schedule {
   const out: Schedule = { reservations: [], ambiguities: [], blocked: [] };
   const occs = available(state);
   const byId = new Map(occurrences(state).map((o) => [o.id, o]));
   const exec = (id: string | null) => (id === null ? undefined : state.executions.get(id));
+  const stepOf = new Map(pb.steps.map((s) => [s.key, s]));
 
-  // Executions upstream of an execution, itself included.
-  const ancMemo = new Map<string, Set<string>>();
-  const ancestors = (execId: string): Set<string> => {
-    let set = ancMemo.get(execId);
-    if (set) return set;
-    set = new Set([execId]);
-    ancMemo.set(execId, set);
+  // ---- ancestry as bitsets ---------------------------------------------------
+  for (const id of state.executions.keys()) if (!cache.index.has(id)) cache.index.set(id, cache.index.size);
+  const ancestorBits = (execId: string): Uint32Array => {
+    let bits = cache.ancestors.get(execId);
+    if (bits) return bits;
+    const i = cache.index.get(execId)!;
+    bits = new Uint32Array((i >> 5) + 1);
+    bits[i >> 5] |= 1 << (i & 31);
     for (const id of Object.values(state.executions.get(execId)!.inputs).flat()) {
       const producer = byId.get(id)?.producer;
-      if (producer) for (const x of ancestors(producer)) set.add(x);
+      if (!producer) continue;
+      const parent = ancestorBits(producer);
+      for (let w = 0; w < parent.length; w++) bits[w] |= parent[w];
     }
-    return set;
+    cache.ancestors.set(execId, bits);
+    return bits;
   };
+  /** Is execution `p` upstream of execution `q`, or `q` itself? */
+  const isAncestor = (p: string, q: string): boolean => {
+    const i = cache.index.get(p)!;
+    const bits = ancestorBits(q);
+    return i >> 5 < bits.length && ((bits[i >> 5] >>> (i & 31)) & 1) === 1;
+  };
+  /** Does any member of the candidate descend from execution `p`? */
+  const descendsFrom = (c: Cand, p: string): boolean =>
+    c.ids.some((id) => {
+      const producer = byId.get(id)!.producer;
+      return producer !== null && isAncestor(p, producer);
+    });
 
-  // Occurrences an execution read, transitively. Used for source coverage.
+  const isDownstream = (c: Cand, of: Cand) => [...of.producers].some((p) => p !== null && !c.producers.has(p) && descendsFrom(c, p));
+  /** Seeds are upstream of everything. */
+  const isUpstreamOrSibling = (c: Cand, of: Cand) => c.producers.has(null) || [...c.producers].some((p) => p !== null && descendsFrom(of, p));
+  const shadows = (newer: Cand, older: Cand) =>
+    newer !== older &&
+    (older.producers.has(null) ? !newer.producers.has(null) : [...older.producers].some((p) => p !== null && !newer.producers.has(p) && descendsFrom(newer, p)));
+
+  // Occurrences an execution read, transitively. Used only for source coverage of a closing collection.
   const readMemo = new Map<string, Set<string>>();
   const readBy = (execId: string): Set<string> => {
     let set = readMemo.get(execId);
@@ -95,26 +140,22 @@ export function schedule(pb: Playbook, state: State): Schedule {
     return set;
   };
 
-  // Executions upstream of a candidate, its producers included.
-  const candAnc = new Map<string, Set<string>>();
-  const anc = (c: Cand): Set<string> => {
-    let set = candAnc.get(c.key);
-    if (set) return set;
-    set = new Set();
-    candAnc.set(c.key, set);
-    for (const id of c.ids) {
-      const producer = byId.get(id)!.producer;
-      if (producer) for (const x of ancestors(producer)) set.add(x);
+  // ---- what is already bound ---------------------------------------------------
+  const groupOf = (m: Occurrence) => exec(m.producer)?.origin ?? m.producer ?? 'seed';
+  const collectionKey = (slot: Input, origin: string) => `${slot.path}@${origin}`;
+  const bound = new Set<string>();
+  const boundTriggers = new Set<string>();
+  for (const e of state.executions.values()) {
+    bound.add(bindingKey(e.step, e.inputs));
+    for (const slot of stepOf.get(e.step)!.inputs) {
+      const ids = e.inputs[slot.path];
+      if (!ids?.length) continue;
+      const key = slot.mode === 'complete' ? collectionKey(slot, groupOf(byId.get(ids[0])!)) : ids[0];
+      boundTriggers.add(`${e.step} ${slot.path} ${key}`);
     }
-    return set;
-  };
-
-  const isDownstream = (c: Cand, of: Cand) => [...of.producers].some((p) => p !== null && !c.producers.has(p) && anc(c).has(p));
-  /** Seeds are upstream of everything. */
-  const isUpstreamOrSibling = (c: Cand, of: Cand) => c.producers.has(null) || [...c.producers].some((p) => p !== null && anc(of).has(p));
-  const shadows = (newer: Cand, older: Cand) =>
-    newer !== older &&
-    (older.producers.has(null) ? !newer.producers.has(null) : [...older.producers].some((p) => p !== null && !newer.producers.has(p) && anc(newer).has(p)));
+  }
+  const isBoundTrigger = (step: Step, slot: Input, key: string) => boundTriggers.has(`${step.key} ${slot.path} ${key}`);
+  const reported = new Set(state.ambiguities.map(ambiguityKey));
 
   const single = (o: Occurrence): Cand => ({ key: o.id, ids: [o.id], producers: new Set([o.producer]) });
   const candMemo = new Map<string, Cand[]>();
@@ -138,9 +179,6 @@ export function schedule(pb: Playbook, state: State): Schedule {
     return cands.length === 0 ? { kind: 'none' } : { kind: 'many', cands };
   };
 
-  const bound = new Set([...state.executions.values()].map((e) => bindingKey(e.step, e.inputs)));
-  const reported = new Set(state.ambiguities.map(ambiguityKey));
-
   for (const step of pb.steps) {
     // A step with no inputs runs exactly once, at the start.
     if (step.inputs.length === 0) {
@@ -153,6 +191,7 @@ export function schedule(pb: Playbook, state: State): Schedule {
     for (const slot of triggerSlots) {
       const others = step.inputs.filter((i) => i !== slot);
       for (const trigger of candidatesFor(step, slot)) {
+        if (isBoundTrigger(step, slot, trigger.key)) continue; // final: see "Cost" above
         if (others.some((k) => candidatesFor(step, k).some((c) => isDownstream(c, trigger)))) continue; // not the most downstream element
 
         const inputs: Record<string, string[]> = { [slot.path]: trigger.ids };
@@ -208,11 +247,17 @@ export function schedule(pb: Playbook, state: State): Schedule {
   function closedCollections(step: Step, slot: Input): Cand[] {
     const groups = new Map<string, Occurrence[]>();
     for (const m of occs.filter((o) => matches(slot.path, o.role))) {
-      const g = exec(m.producer)?.origin ?? m.producer ?? 'seed';
+      const g = groupOf(m);
       groups.set(g, [...(groups.get(g) ?? []), m]);
     }
     const result: Cand[] = [];
     for (const [origin, members] of groups) {
+      const cand: Cand = { key: collectionKey(slot, origin), ids: members.map((m) => m.id), producers: new Set(members.map((m) => m.producer)) };
+      // Closure is final: a collection bound once stays closed, and its membership cannot grow.
+      if (isBoundTrigger(step, slot, cand.key)) {
+        result.push(cand);
+        continue;
+      }
       // Published directly by the root (or seeds): closed as soon as it is available.
       const direct = members.every((m) => !exec(m.producer)?.origin);
       if (!direct) {
@@ -234,7 +279,7 @@ export function schedule(pb: Playbook, state: State): Schedule {
           continue;
         }
       }
-      result.push({ key: `${slot.path}@${origin}`, ids: members.map((m) => m.id), producers: new Set(members.map((m) => m.producer)) });
+      result.push(cand);
     }
     return result;
   }

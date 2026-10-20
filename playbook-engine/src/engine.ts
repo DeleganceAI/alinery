@@ -30,7 +30,7 @@ import { join, resolve } from 'node:path';
 import { inspectOutputs } from './accept.ts';
 import type { CompletionReply, Harness, Launch } from './harness.ts';
 import { type Playbook, type Step, validatePlaybook } from './playbook.ts';
-import { type Blocked, schedule } from './schedule.ts';
+import { type Blocked, schedule, SchedulerCache } from './schedule.ts';
 import { type Ambiguity, appendLog, apply, type Event, type Execution, fold, type Occurrence, occurrences, readLog, type State } from './state.ts';
 
 export interface EngineOptions {
@@ -58,6 +58,8 @@ export class Engine {
   #state: State;
   /** Executions whose shutdown this process has already requested. Rebuilt lazily after restart; stop() is idempotent. */
   readonly #stopping = new Set<string>();
+  /** Derived ancestry, kept across ticks. Purely an optimisation; see schedule.ts. */
+  readonly #cache = new SchedulerCache();
 
   private constructor(opts: EngineOptions, state: State) {
     this.#opts = opts;
@@ -147,7 +149,7 @@ export class Engine {
 
   /** Why eligible-looking work is not running: unresolved ambiguities and collections still waiting on contributors. */
   diagnose(): { ambiguities: Ambiguity[]; blocked: Blocked[] } {
-    return { ambiguities: this.#state.ambiguities, blocked: schedule(this.#opts.playbook, this.#state).blocked };
+    return { ambiguities: this.#state.ambiguities, blocked: schedule(this.#opts.playbook, this.#state, this.#cache).blocked };
   }
 
   // ---- tick phases ---------------------------------------------------------
@@ -173,7 +175,7 @@ export class Engine {
   }
 
   #reserve(): void {
-    const { reservations, ambiguities } = schedule(this.#opts.playbook, this.#state);
+    const { reservations, ambiguities } = schedule(this.#opts.playbook, this.#state, this.#cache);
     for (const a of ambiguities) this.#append({ t: 'ambiguity', ambiguity: a });
     for (const r of reservations) {
       const id = `e${this.#state.executions.size + 1}`;
