@@ -2185,4 +2185,12 @@ describe("Vinculum session chat", () => {
     await waitFor(() => expect(sessionPrompt).toHaveBeenCalledWith("session", "hello"));
     expect(rpcWriteSession).not.toHaveBeenCalled();
   });
+
+  it("stops a session stuck waiting for completion permission", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "waiting_for_approval", correlation_id: "completion-permission:x" }));
+    renderSession({ intent: "attach" });
+    fireEvent.click(await screen.findByRole("button", { name: "Abort turn" }));
+    await waitFor(() => expect(sessionAbort).toHaveBeenCalledWith("session"));
+    expect(rpcWriteSession).not.toHaveBeenCalled();
+  });
 });

@@ -7,7 +7,9 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { Type } from "@earendil-works/pi-ai";
 import { Harness, LiveDoc, createRegistry, defineDoc, defineExtension, defineTool, type Conversation, type Harness as OpenedHarness } from "@earendil-works/pi-durable";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import { installAlineryProvider, modelSources, resolveModelId } from "./provider.ts";
 
 const PROTOCOL = 17;
@@ -85,7 +87,42 @@ mkdirSync(dirname(uiSocket), { recursive: true });
 const models = createModels();
 installAlineryProvider(models, appConfig);
 const registry = createRegistry();
+registry.install(codingExtension());
 registry.install(phaseExtension());
+
+const fileWrite = createWriteTool();
+const PHASE_WRITE = "xd://alinery_phase_complete";
+
+function codingExtension() {
+  return defineExtension({
+    name: "coding-tools",
+    tools: [
+      createReadTool(),
+      defineTool({
+        name: fileWrite.name,
+        description: fileWrite.description,
+        parameters: fileWrite.parameters,
+        // The playbook prompt adds `i` beside path and content. The write schema does not, and a failed validation never reaches the xd:// completion path.
+        prepareArguments(args) {
+          if (!args || typeof args !== "object" || Array.isArray(args)) return { path: "", content: "" };
+          const record = args as { path?: unknown; content?: unknown };
+          return {
+            path: typeof record.path === "string" ? record.path : "",
+            content: typeof record.content === "string" ? record.content : "",
+          };
+        },
+        execute: async (args, api, ctx) => {
+          const path = args.path.trim();
+          if (path === PHASE_WRITE) return requestPhase(api.conversationId);
+          if (path.startsWith("xd://")) return { output: [{ type: "text", text: `Unsupported internal path ${path}.` }], isError: true };
+          return fileWrite.execute(args, api, ctx);
+        },
+      }),
+      createEditTool(),
+      createBashTool(),
+    ],
+  });
+}
 
 function phaseExtension() {
   return defineExtension({
@@ -93,17 +130,16 @@ function phaseExtension() {
     tools: [
       defineTool({
         name: "alinery_phase_complete",
-        description: "Commit a phase completion request. Do not mark the phase completed.",
-        parameters: Type.Object({ phase: Type.String(), executionId: Type.String(), nonce: Type.String() }),
-        execute: async (args, api, ctx) => {
-          await api.commit(async (tx) => {
-            const doc = await tx.doc(PhaseRequest, api.conversationId);
-            doc.phase = args.phase;
-            doc.executionId = args.executionId;
-            doc.nonce = args.nonce;
-          }, ctx);
-          return { output: [{ type: "text", text: "phase request committed" }] };
+        description:
+          "Request completion of the current engine-assigned Alinery Playbook execution. " +
+          "When its work, checks, and at least one valid assigned artifact are ready, send the user-facing handoff, then call this tool in the same assistant turn. " +
+          "Takes no arguments: the session already knows the execution. Do not invent a phase, execution id, or nonce. " +
+          "A write to xd://alinery_phase_complete is the same request.",
+        parameters: Type.Object({}),
+        prepareArguments() {
+          return {};
         },
+        execute: async (_args, api) => requestPhase(api.conversationId),
       }),
     ],
   });
@@ -196,6 +232,7 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
     {
       models,
       registry,
+      env: (target) => new NodeExecutionEnv({ cwd: sessionCwd(target.conversationId) }),
       conversationCreated: async (tx, conversation) => {
         await tx.doc(Attention, conversation.id);
         await tx.doc(PhaseRequest, conversation.id);
@@ -357,11 +394,62 @@ function watch(row: Live, harness: OpenedHarness, conversationId: string) {
   });
 }
 
-async function forwardPhase(row: Live, value: { phase: string; executionId: string; nonce: string }) {
-  const reply = await helper({ op: "phase_request", task_slug: row.taskSlug, session_id: row.id, phase: value.phase, execution_id: value.executionId, nonce: value.nonce });
+function rowForConversation(conversationId: string): Live | undefined {
+  for (const row of live.values()) if (row.conversationId === conversationId) return row;
+  return undefined;
+}
+
+function sessionCwd(conversationId: string): string {
+  const row = rowForConversation(conversationId);
+  if (!row) return repo;
+  const worktree = readMeta(row.taskSlug, row.id).worktree;
+  return typeof worktree === "string" && worktree && existsSync(worktree) ? worktree : repo;
+}
+
+function phaseResultText(reply: Record<string, unknown>): string {
+  if (typeof reply.error === "string" && reply.error) return `Alinery rejected phase completion: ${reply.error}. Keep this session open and resolve the error.`;
+  if (reply.outcome === "accepted") return "Alinery accepted phase completion. Do no further work; this session is finishing.";
+  if (reply.outcome === "waiting_for_approval") {
+    return "Completion permission is still locked. Keep this session open. Do not call the completion tool again until the user grants permission or tells you to continue the work.";
+  }
+  if (reply.outcome === "waiting_for_input") {
+    const diagnostics = Array.isArray(reply.diagnostics) ? reply.diagnostics.filter((item) => typeof item === "string").join("\n") : "";
+    const detail = diagnostics ? `\n${diagnostics}` : "";
+    return `Assigned publications need correction.${detail}\nWrite the assigned artifacts, then call alinery_phase_complete again. Individual outputs may be omitted.`;
+  }
+  if (reply.forwarded === false) return "This session has no playbook execution to complete.";
+  return "Phase completion was not accepted. Keep this session open.";
+}
+
+function applyPhaseReply(row: Live, reply: Record<string, unknown>) {
   if (reply.outcome === "waiting_for_approval") row.agent = { state: "waiting_for_approval", correlation_id: String(reply.correlation_id ?? "") };
   if (reply.outcome === "waiting_for_input") row.agent = { state: "waiting_for_input", correlation_id: String(reply.correlation_id ?? "") };
+  if (reply.outcome === "accepted") row.agent = { state: "idle" };
   if (reply.playbook) row.playbook = { state: String(reply.playbook) };
+}
+
+async function requestPhase(conversationId: string) {
+  const row = rowForConversation(conversationId);
+  if (!row) return { output: [{ type: "text" as const, text: "No session is open for this completion." }], isError: true };
+  if (!row.taskSlug) return { output: [{ type: "text" as const, text: phaseResultText({ forwarded: false }) }] };
+  const meta = readMeta(row.taskSlug, row.id);
+  const nonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const reply = await helper({
+    op: "phase_request",
+    task_slug: row.taskSlug,
+    session_id: row.id,
+    phase: String(meta.phase ?? ""),
+    execution_id: String(meta.execution_id ?? ""),
+    nonce,
+  });
+  applyPhaseReply(row, reply);
+  row.seenNonce = nonce;
+  return { output: [{ type: "text" as const, text: phaseResultText(reply) }], isError: reply.outcome !== "accepted" };
+}
+
+async function forwardPhase(row: Live, value: { phase: string; executionId: string; nonce: string }) {
+  const reply = await helper({ op: "phase_request", task_slug: row.taskSlug, session_id: row.id, phase: value.phase, execution_id: value.executionId, nonce: value.nonce });
+  applyPhaseReply(row, reply);
 }
 
 function helper(request: unknown, body?: Buffer): Promise<Record<string, unknown>> {
@@ -652,7 +740,15 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
         reply(socket, { ok: true });
         return;
       }
-      await conversation.abort(context);
+      try {
+        await conversation.abort(context);
+      } catch (error) {
+        // A completion wait is local agent state, not a live run. Abort still has to release it.
+        if (row.agent.state !== "waiting_for_approval" && row.agent.state !== "waiting_for_input") throw error;
+      }
+      if (row.agent.state === "waiting_for_approval" || row.agent.state === "waiting_for_input") {
+        row.agent = { state: row.liveRun ? "busy" : "idle" };
+      }
       reply(socket, { ok: true });
     } catch (error) {
       reply(socket, { error: String(error) });

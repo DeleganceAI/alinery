@@ -1790,7 +1790,9 @@ export function SessionView({
   });
   const chatStatus: SessionChatStatus = chat.sessionMeta.isCompacting || pendingUiReply ? "waiting_approval" : turnActive ? "running" : "idle";
   const agentState = observedState?.agent?.state;
-  const composerCanAbort = canAbortChatSession(messageReadiness) && agentState !== "waiting_for_approval";
+  // A real approval card sets `pendingUiReply`, which already switches the composer to waiting and hides Stop.
+  // Vinculum completion permission is only an agent state: no card is coming, and Stop has to stay available.
+  const composerCanAbort = canAbortChatSession(messageReadiness);
   const sendNowEnabled =
     turnActive &&
     agentState !== "waiting_for_input" &&
