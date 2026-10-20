@@ -99,6 +99,28 @@ pub(super) fn serve(stream: &mut UnixStream, repo: &Path, reg: &Registry, host: 
                     }
                     Ok(json!({"ok":true,"completion":completion}))
                 }
+                Some("stop_execution") => {
+                    let request = serde_json::from_value(value.get("request").cloned().ok_or("missing request")?).map_err(|e| e.to_string())?;
+                    execution::stop_execution(repo, reg, &request).map(|result| json!({"ok":true,"result":result}))
+                }
+                Some("restart_execution") => {
+                    let request = serde_json::from_value(value.get("request").cloned().ok_or("missing request")?).map_err(|e| e.to_string())?;
+                    execution::restart_execution(repo, reg, lane, config, host, &request).map(|result| json!({"ok":true,"result":result}))
+                }
+                Some(op @ ("preview_execution_artifacts" | "submit_execution_artifacts")) => {
+                    let request = serde_json::from_value(value.get("request").cloned().ok_or("missing request")?).map_err(|e| e.to_string())?;
+                    let artifacts: Vec<alinery_core::SuppliedExecutionArtifact> =
+                        serde_json::from_value(value.get("artifacts").cloned().ok_or("missing artifacts")?).map_err(|e| e.to_string())?;
+                    if op == "preview_execution_artifacts" {
+                        execution::preview_execution_artifacts(repo, &request, &artifacts).map(|result| json!({"ok":true,"result":result}))
+                    } else {
+                        let result = execution::submit_execution_artifacts(repo, reg, &request, &artifacts)?;
+                        if matches!(result, alinery_core::CompletionOutcome::Accepted { .. }) {
+                            start_auto_advance_once(repo.to_path_buf(), reg.clone(), lane.into(), config.to_path_buf(), host.clone());
+                        }
+                        Ok(json!({"ok":true,"result":result}))
+                    }
+                }
                 _ => Err("operation unavailable on UI control channel".into()),
             }
         })();

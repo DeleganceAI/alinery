@@ -4358,28 +4358,74 @@ dialog.modal::backdrop {
 }
 .session-actions-heading {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  padding: 12px 16px;
+  height: auto;
+  padding: 18px 20px;
 }
 .session-actions-heading h3 {
   margin: 0;
 }
 .session-handoff-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 12px 16px;
+  display: grid;
+  gap: 4px;
+  padding: 8px 12px;
 }
 .session-handoff-actions > span {
   flex-basis: 100%;
   overflow-wrap: anywhere;
 }
 .session-actions-dialog .session-execution-bar {
+  display: block;
+  border-top: 1px solid var(--border);
   border-bottom: 0;
-  padding: 12px 16px;
+  padding: 16px 20px;
 }
+.session-actions-subtitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.session-actions-activity {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.session-action-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.session-action-row > svg { flex-shrink: 0; color: var(--text-muted); }
+.session-action-row > span { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.session-action-row strong { font-size: 13px; font-weight: 600; }
+.session-action-row > span > span { color: var(--text-muted); font-size: 12px; line-height: 1.45; }
+.session-action-row:hover:not(:disabled) { background: var(--surface-subtle); }
+.session-action-row:disabled { opacity: 0.5; cursor: default; }
+.session-action-row:focus-visible, .session-action-file:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.session-action-stop > svg:first-child, .session-action-stop strong { color: var(--danger); }
+.session-action-context { display: grid; gap: 12px; margin: 0 0 20px; font-size: 12px; }
+.session-action-context > div { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 12px; }
+.session-action-context dt { color: var(--text-muted); }
+.session-action-context dd { margin: 0; overflow-wrap: anywhere; }
+.session-action-file { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.session-action-file:disabled { color: var(--text); cursor: default; }
+.session-action-file:hover:not(:disabled) { text-decoration: underline; }
+.session-actions-dialog .session-execution { color: var(--text-muted); font-size: 11px; overflow-wrap: anywhere; }
 .session-view-hatch {
   flex: 0 0 auto;
 }

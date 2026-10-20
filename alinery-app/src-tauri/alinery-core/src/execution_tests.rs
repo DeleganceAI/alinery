@@ -411,7 +411,7 @@ fn observed_wildcard_member_disappearance_is_not_omission() {
         .collect();
     assert_eq!(observed, [assignment.relative_path.replace('*', "observed")]);
     fs::remove_file(root.join(&observed[0])).unwrap();
-    assert!(validate_assigned_paths(&root, assignment, &physical, observed).is_err());
+    assert!(validate_assigned_paths(&root, assignment, &physical, observed, &[]).is_err());
 }
 
 #[test]
@@ -421,7 +421,7 @@ fn unobserved_exact_path_is_omitted_at_validation_boundary() {
     let assignment = &f.state.executions[&id].outputs[0];
     let physical = ArtifactSelector::parse(&assignment.relative_path).unwrap();
     assert_eq!(
-        validate_assigned_paths(&crate::artifacts_dir(&f.repo, "task"), assignment, &physical, vec![assignment.relative_path.clone()]),
+        validate_assigned_paths(&crate::artifacts_dir(&f.repo, "task"), assignment, &physical, vec![assignment.relative_path.clone()], &[]),
         Ok(Vec::new())
     );
 }
@@ -1387,4 +1387,45 @@ fn migration_preflights_all_records_and_converts_same_lane() {
     drop(guard);
     drop(crate::repo_ownership::acquire(&f.repo, "lane", "").unwrap());
     assert_eq!(fs::read(archived.join("execution.json")).unwrap(), bytes, "resumed conversion must be idempotent");
+}
+
+#[test]
+fn supplied_wildcard_publications_merge_existing_members_without_writing() {
+    let mut f = Fixture::new("{path=\"items/*.md\"}", false, false, 1);
+    let id = f.reserve(true);
+    f.write_output(&id, 0, Some("existing"));
+    let record = &f.state.executions[&id];
+    let supplied = crate::SuppliedExecutionArtifact {
+        relative_path: record.outputs[0].relative_path.replace('*', "supplied"),
+        content: "new evidence".into(),
+    };
+    let publications = inspect_supplied_execution_publications(&f.repo, "task", record, std::slice::from_ref(&supplied)).unwrap();
+    let logical: BTreeSet<_> = publications.iter().map(|p| p.logical_path.as_str()).collect();
+    assert_eq!(logical, BTreeSet::from(["items/existing.md", "items/supplied.md"]));
+    assert!(!crate::artifacts_dir(&f.repo, "task").join(&supplied.relative_path).exists());
+    assert_eq!(inspect_execution_publications(&f.repo, "task", record).unwrap().len(), 1);
+}
+
+#[test]
+#[cfg(unix)]
+fn supplied_artifacts_reject_symlink_parents_and_final_targets() {
+    let mut f = Fixture::new("{path=\"nested/result.md\"}", false, false, 1);
+    let id = f.reserve(true);
+    let record = &f.state.executions[&id];
+    let supplied = crate::SuppliedExecutionArtifact {
+        relative_path: record.outputs[0].relative_path.clone(),
+        content: "evidence".into(),
+    };
+    let root = crate::artifacts_dir(&f.repo, "task");
+    let target = root.join(&supplied.relative_path);
+    fs::create_dir_all(target.parent().unwrap()).unwrap();
+    let outside = f.repo.join("outside.md");
+    fs::write(&outside, "untouched").unwrap();
+    std::os::unix::fs::symlink(&outside, &target).unwrap();
+    assert!(inspect_supplied_execution_publications(&f.repo, "task", record, std::slice::from_ref(&supplied)).is_err());
+    fs::remove_file(&target).unwrap();
+    fs::remove_dir(target.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&f.repo, target.parent().unwrap()).unwrap();
+    assert!(inspect_supplied_execution_publications(&f.repo, "task", record, &[supplied]).is_err());
+    assert_eq!(fs::read_to_string(outside).unwrap(), "untouched");
 }

@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronRight, FileText } from "lucide-react";
+import { ArrowRight, ChevronRight, Ellipsis, FileText } from "lucide-react";
 import { useMemo, useState } from "react";
 import { RunningIndicator } from "./Indicators";
 import { buildTaskRunGraph, type RunGraphNode } from "./runGraphModel";
@@ -20,6 +20,7 @@ export function SessionLineage({
   readableArtifactPaths,
   onOpenSession,
   onOpenArtifact,
+  onOpenActions,
 }: {
   id: string;
   name: string;
@@ -32,6 +33,7 @@ export function SessionLineage({
   readableArtifactPaths: string[];
   onOpenSession?: (session: SessionMeta) => void;
   onOpenArtifact: (path: string) => void;
+  onOpenActions?: () => void;
 }) {
   const [expanded, setExpanded] = useState(() => {
     try {
@@ -44,8 +46,15 @@ export function SessionLineage({
   const key = `session:${id}`;
   const current = graph.nodes.get(key);
   const execution = current && "session" in current ? current.execution : undefined;
-  const incoming = graph.connections.filter((connection) => connection.to === key);
-  const outgoing = graph.connections.filter((connection) => connection.from === key);
+  const ownerKey = execution ? `session:${execution.owner_session_id}` : key;
+  const owner = graph.nodes.get(ownerKey);
+  const canonicalKey = (nodeKey: string) => {
+    const node = graph.nodes.get(nodeKey);
+    return node && "session" in node && node.execution ? `session:${node.execution.owner_session_id}` : nodeKey;
+  };
+  // Resume edges within one execution are attempts, not playbook transitions.
+  const incoming = graph.connections.filter((connection) => canonicalKey(connection.to) === ownerKey && canonicalKey(connection.from) !== ownerKey);
+  const outgoing = graph.connections.filter((connection) => canonicalKey(connection.from) === ownerKey && canonicalKey(connection.to) !== ownerKey);
   const upstream = new Set(incoming.map((connection) => connection.from));
   const downstream = new Set(outgoing.map((connection) => connection.to));
   // Control-flow parents also cover handoffs without a published artifact edge.
@@ -54,14 +63,12 @@ export function SessionLineage({
       const record = executionView?.state.executions[parent];
       if (record) upstream.add(`session:${record.owner_session_id}`);
     }
-    if (execution.owner_session_id === id) {
-      for (const record of Object.values(executionView?.state.executions ?? {})) {
-        if (record.parent_execution_ids.includes(execution.id)) downstream.add(`session:${record.owner_session_id}`);
-      }
+    for (const record of Object.values(executionView?.state.executions ?? {})) {
+      if (record.parent_execution_ids.includes(execution.id)) downstream.add(`session:${record.owner_session_id}`);
     }
   }
   const relatedNodes = (keys: Set<string>) =>
-    [...keys].flatMap((nodeKey) => {
+    [...new Set([...keys].map(canonicalKey))].flatMap((nodeKey) => {
       const node = graph.nodes.get(nodeKey);
       return node ? [node] : [];
     });
@@ -71,7 +78,7 @@ export function SessionLineage({
     ...new Map(connections.flatMap((connection) => connection.artifacts).map((artifact) => [artifact.id, artifact])).values(),
   ];
   const inputs = uniqueArtifacts(incoming);
-  const outputs = uniqueArtifacts(outgoing);
+  const outputs = ownerKey === key ? uniqueArtifacts(outgoing) : [];
   const publishedPaths = new Set(outputs.map((artifact) => artifact.relative_path));
   const unpublishedOutputs =
     execution?.owner_session_id === id ? execution.outputs.filter((output) => !publishedPaths.has(output.relative_path) && artifactPaths.includes(output.relative_path)) : [];
@@ -84,7 +91,8 @@ export function SessionLineage({
     );
   const completed = execution?.owner_session_id === id && execution.lifecycle === "completed";
   const stale = Boolean(error) || (executionView != null && executionView.live?.status !== "available");
-  const newestVisible = newest && (newest.id === id || [...before, ...after].some((node) => "session" in node && node.session.id === newest.id));
+  const newestVisible =
+    newest && (newest.id === id || newest.id === execution?.owner_session_id || [...before, ...after].some((node) => "session" in node && node.session.id === newest.id));
   const sessionLabel = (session: SessionDisplayMeta) => {
     if (session.name) return session.name;
     const node = graph.nodes.get(`session:${session.id}`);
@@ -113,6 +121,7 @@ export function SessionLineage({
         className="session-lineage-node"
         key={node.key}
         disabled={!onOpenSession}
+        aria-current={node.session.id === id ? "step" : undefined}
         title={`${sessionLabel(node.session)} · ${node.session.id}`}
         onClick={() => onOpenSession?.(node.session)}
       >
@@ -125,6 +134,26 @@ export function SessionLineage({
       </button>
     );
   };
+  const previousAttempts = (node: RunGraphNode | undefined) => {
+    if (!node || !("session" in node) || !node.execution?.previous_session_ids.length) return null;
+    const attempts = node.execution.previous_session_ids.flatMap((attemptId) => {
+      const attempt = graph.nodes.get(`session:${attemptId}`);
+      return attempt ? [attempt] : [];
+    });
+    if (!attempts.length) return null;
+    return (
+      <details className="session-lineage-attempts" key={`${node.execution.id}:${id}`} open={node.execution.previous_session_ids.includes(id) || undefined}>
+        <summary>Previous attempts ({attempts.length})</summary>
+        {attempts.map(sessionLink)}
+      </details>
+    );
+  };
+  const stepLink = (node: RunGraphNode) => (
+    <div className="session-lineage-step" key={node.key}>
+      {sessionLink(node)}
+      {previousAttempts(node)}
+    </div>
+  );
   const artifactLink = (artifact: ArtifactOccurrence) => (
     <button
       type="button"
@@ -167,7 +196,7 @@ export function SessionLineage({
         <div className="session-lineage-flow" role="group" aria-label="Session neighborhood">
           <div className="session-lineage-column">
             <h3>Previous sessions</h3>
-            {before.length ? before.map(sessionLink) : <span className="session-lineage-empty">No previous sessions</span>}
+            {before.length ? before.map(stepLink) : <span className="session-lineage-empty">No previous sessions</span>}
           </div>
           <ArrowRight className="session-lineage-arrow" size={16} aria-hidden="true" />
           <div className="session-lineage-column">
@@ -176,14 +205,37 @@ export function SessionLineage({
           </div>
           <ArrowRight className="session-lineage-arrow" size={16} aria-hidden="true" />
           <div className="session-lineage-column">
-            <h3>This session</h3>
-            <div className="session-lineage-node session-lineage-current" aria-current="step" title={id}>
-              <strong>{name || phase || "Unnamed session"}</strong>
-              <small>
-                {activityLabel(id)}
-                {newest?.id === id && <span className="session-lineage-newest">Newest</span>}
-              </small>
+            <div className="session-lineage-heading">
+              <h3>{execution ? "This step" : "This session"}</h3>
             </div>
+            {ownerKey !== key && owner ? (
+              <>
+                <span className="session-lineage-empty">Current attempt</span>
+                {sessionLink(owner)}
+                <span className="session-lineage-empty">Viewing a previous attempt</span>
+              </>
+            ) : (
+              <div className="session-lineage-node session-lineage-current" aria-current="step" title={id}>
+                {onOpenActions && execution?.owner_session_id === id && (
+                  <button
+                    type="button"
+                    className="btn ghost small icon-btn session-lineage-actions"
+                    aria-label="Current step actions"
+                    aria-haspopup="dialog"
+                    onClick={onOpenActions}
+                  >
+                    <Ellipsis size={16} aria-hidden="true" />
+                  </button>
+                )}
+                <strong>{name || phase || "Unnamed session"}</strong>
+                <small>
+                  {execution?.previous_session_ids.length ? <span>Current attempt</span> : null}
+                  {activityLabel(id)}
+                  {newest?.id === id && <span className="session-lineage-newest">Newest</span>}
+                </small>
+              </div>
+            )}
+            {previousAttempts(owner)}
           </div>
           <ArrowRight className="session-lineage-arrow" size={16} aria-hidden="true" />
           <div className="session-lineage-column">
@@ -202,12 +254,14 @@ export function SessionLineage({
                 <small>{readableArtifactPaths.includes(output.relative_path) ? "Not yet published" : "Not yet readable"}</small>
               </button>
             ))}
-            {!outputs.length && !unpublishedOutputs.length && <span className="session-lineage-empty">None produced yet</span>}
+            {!outputs.length && !unpublishedOutputs.length && (
+              <span className="session-lineage-empty">{ownerKey !== key ? "Outputs belong to the current attempt" : "None produced yet"}</span>
+            )}
           </div>
           <ArrowRight className="session-lineage-arrow" size={16} aria-hidden="true" />
           <div className="session-lineage-column">
             <h3>Next sessions</h3>
-            {after.length ? after.map(sessionLink) : <span className="session-lineage-empty">None created yet</span>}
+            {after.length ? after.map(stepLink) : <span className="session-lineage-empty">None created yet</span>}
           </div>
         </div>
         {(stale || (newest && !newestVisible)) && (

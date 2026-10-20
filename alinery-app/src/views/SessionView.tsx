@@ -1,5 +1,5 @@
-import { ArrowLeft, Ellipsis, MessageSquare, Pencil, X } from "lucide-react";
-import type { KeyboardEvent } from "react";
+import { ArrowLeft, ArrowRight, ChevronRight, Ellipsis, FileUp, MessageSquare, Pencil, RotateCcw, Square, X } from "lucide-react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ArtifactComment, ArtifactCommentAnchor } from "../ArtifactMarkdown";
@@ -34,7 +34,8 @@ import {
   needsUiReply,
   settleRefusedSend,
 } from "../chatTranscript";
-import { confirmDanger, confirmStopAndSwitch } from "../confirm";
+import { askConfirm, confirmDanger, confirmStopAndSwitch } from "../confirm";
+import { RunningIndicator } from "../Indicators";
 import * as ipc from "../ipc";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 import {
@@ -61,6 +62,7 @@ import {
 } from "../ompRpc";
 import { SessionLineage } from "../SessionLineage";
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
+import { observationDisplayKind } from "../sessionAttention";
 import { appendGeneratedText, canAbortChatSession, isTurnActive, OMP_INTERRUPT_DATA, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
 import type { ContextAction } from "../shared";
 import {
@@ -83,6 +85,7 @@ import type {
   AppearancePrefs,
   ArtifactListItem,
   ArtifactTreeNode,
+  EndExecutionRequest,
   HostedCatalogView,
   LifecycleState,
   NameCommit,
@@ -92,12 +95,14 @@ import type {
   SessionMessageActionProvenance,
   SessionMeta,
   SessionObservation,
+  SuppliedExecutionArtifact,
   Task,
   TaskExecutionReply,
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
 import { readTaskExecution } from "../useExecutionObservation";
+import { ArtifactHandoffPage } from "./ArtifactHandoffPage";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatModelDialog } from "./ChatModelDialog";
@@ -190,6 +195,20 @@ async function prepareChatSend(taskSlug: string, repoPath: string, caption: stri
     images.push({ type: "image", data: image.data, mimeType: image.mime_type });
   }
   return { message: buildPromptMessage(caption, files, repoPath, taskSlug), images, copied };
+}
+
+async function confirmRecovery(title: string, body: ReactNode, acceptLabel: string): Promise<boolean> {
+  return (
+    (await askConfirm({
+      title,
+      body,
+      choices: [
+        { key: "cancel", label: "Cancel", tone: "ghost" },
+        { key: "confirm", label: acceptLabel, tone: "danger" },
+      ],
+      defaultKey: "cancel",
+    })) === "confirm"
+  );
 }
 
 export function SessionView({
@@ -376,6 +395,9 @@ export function SessionView({
   const [lineageObservations, setLineageObservations] = useState<Record<string, SessionObservation>>({});
   const [lineageError, setLineageError] = useState("");
   const executionAvailable = executionView?.live?.status === "available" && !executionError;
+  const [artifactEntryOpen, setArtifactEntryOpen] = useState(false);
+  const [artifactEntryError, setArtifactEntryError] = useState("");
+  const artifactAuthorization = useRef<EndExecutionRequest | null>(null);
   const [completionBusy, setCompletionBusy] = useState(false);
   const continuationInFlight = useRef(false);
   const [continuationMessage, setContinuationMessage] = useState("");
@@ -696,6 +718,9 @@ export function SessionView({
     followContinuation.current = null;
     continuationInFlight.current = false;
     setCompletionBusy(false);
+    setArtifactEntryOpen(false);
+    setArtifactEntryError("");
+    artifactAuthorization.current = null;
     setExecutionView(null);
     setExecutionError("");
     setLineageSessions([]);
@@ -2003,7 +2028,7 @@ export function SessionView({
   const continuationShown = execution?.continuation_mode === "manual" && execution.lifecycle !== "queued" && executionAssessment?.terminality !== "terminal";
   const requestedHere = requestedContinuation?.id === execution?.id && requestedContinuation?.revision === execution?.ready_revision;
   const invalidatedHere = invalidatedReady?.id === execution?.id && invalidatedReady?.revision === execution?.ready_revision;
-  const continuationPending = completionBusy || requestedHere || execution?.continuation_requested_revision != null || !!execution?.receipt_id || endAccepted;
+  const continuationPending = requestedHere || execution?.continuation_requested_revision != null || !!execution?.receipt_id || endAccepted;
   const continuationReason =
     executionError ||
     (!executionAvailable ? "Continuation unavailable: the execution owner cannot be queried." : "") ||
@@ -2015,6 +2040,7 @@ export function SessionView({
     (execution?.lifecycle !== "running" ? "Waiting for the accepted handoff and session exit." : "") ||
     (pendingUiReply ? "Resolve the pending approval or question before continuing." : "") ||
     (continuationPending ? "Continuation requested; waiting for the handoff." : "") ||
+    (completionBusy ? "A session action is in progress." : "") ||
     (invalidatedHere || messageSending || execution?.ready_revision == null ? "Waiting for renewed readiness after review." : "") ||
     (executionAssessment?.terminality !== "nonterminal" ? "Waiting for an authoritative continuation assessment." : "");
   const continueReadyExecution = async () => {
@@ -2079,7 +2105,15 @@ export function SessionView({
   };
   const unacceptedOwner = execution?.owner_session_id === id && execution.receipt_id == null && execution.lifecycle !== "queued" && !endAccepted;
   const canEnd = unacceptedOwner && executionAvailable && Boolean(continuationReason);
-  const canReplace = unacceptedOwner && execution.shutdown_confirmed && executionAvailable && Boolean(onOpenReplacement);
+  const canRecover = unacceptedOwner && executionAvailable;
+  const canRestart = canRecover && Boolean(onOpenReplacement || onOpenSession);
+  const openArtifactEntry = () => {
+    if (!canRecover || completionBusy) return;
+    artifactAuthorization.current = null;
+    setArtifactEntryError("");
+    setSessionActionsOpen(false);
+    setArtifactEntryOpen(true);
+  };
   const refreshHandoff = async (epoch = executionEpoch.current) => {
     try {
       const next = await readTaskExecution(repoPath, taskSlug);
@@ -2100,15 +2134,19 @@ export function SessionView({
     try {
       const prepared = await ipc.prepareEndExecution(taskSlug, execution.id, id, repoPath);
       if (epoch !== executionEpoch.current) return;
+      if (prepared.diagnostics.length) {
+        setSessionActionsOpen(false);
+        setArtifactEntryError("There are no usable saved artifacts to continue with. Add or repair the output for this step.");
+        artifactAuthorization.current = null;
+        setArtifactEntryOpen(true);
+        return;
+      }
       if (
-        !(await confirmDanger(
+        !(await confirmRecovery(
           "End session and continue?",
           <div>
-            <p>This interrupts the current work and ends this session. Unsaved or unfinished work may be lost.</p>
-            <p>
-              After shutdown is confirmed, Alinery validates the assigned artifacts below. Only valid outputs can be accepted as a handoff; this does not declare the whole Playbook
-              complete.
-            </p>
+            <p>Stop the agent and use its saved artifacts to continue the playbook. Any work still in progress will be interrupted.</p>
+            <h4>Saved artifacts</h4>
             <ul>
               {prepared.artifacts.map((path) => (
                 <li key={path}>
@@ -2116,12 +2154,9 @@ export function SessionView({
                 </li>
               ))}
             </ul>
-            {prepared.diagnostics.map((diagnostic) => (
-              <p key={diagnostic}>{diagnostic}</p>
-            ))}
-            <p>If validation fails, the session stays stopped. You can repair the artifacts and retry, or explicitly replace the stopped session in this same execution.</p>
+            <p>The artifacts will be checked again after the session stops. If they cannot be used, the next step will not start.</p>
           </div>,
-          "End session and continue",
+          "End & continue",
         ))
       )
         return;
@@ -2156,31 +2191,130 @@ export function SessionView({
       }
     }
   };
-  const replaceStoppedSession = async () => {
-    if (continuationInFlight.current || !canReplace || !execution) return;
+  const recoverSession = async (action: "restart" | "stop") => {
+    if (continuationInFlight.current || completionBusy || !execution || !canRecover || (action === "restart" && !canRestart)) return;
     const epoch = executionEpoch.current;
     continuationInFlight.current = true;
     setCompletionBusy(true);
     try {
+      const prepared = await ipc.prepareEndExecution(taskSlug, execution.id, id, repoPath);
+      if (epoch !== executionEpoch.current) return;
+      const restart = action === "restart";
       if (
-        !(await confirmDanger(
-          "Replace stopped session?",
-          "Start a replacement in the same unfinished execution, preserving its assigned inputs and outputs? This does not accept the existing artifacts.",
-          "Replace stopped session",
+        !(await confirmRecovery(
+          restart ? "Restart this step?" : "End this session?",
+          restart ? (
+            <>
+              <p>
+                Stop this agent and start a fresh attempt at the same step with the same inputs. Session history is kept, and existing worktree changes are left in place.
+                Restarting does not itself advance the playbook or undo code changes.
+              </p>
+              <p>
+                <strong>Warning:</strong> The restarted agent may overwrite existing artifacts, including downstream artifacts, and worktree files. Previous artifact contents may
+                not be recoverable.
+              </p>
+            </>
+          ) : (
+            "Stop this agent without starting another session or advancing the playbook. Saved files and session history are kept. Any work still in progress will be interrupted."
+          ),
+          restart ? "Restart step" : "End session",
         ))
       )
         return;
       if (epoch !== executionEpoch.current) return;
-      const reply = await ipc.createSessionForRepo({
-        repoPath,
-        request: { task_slug: taskSlug, target: { kind: "primary", step_key: execution.candidate.step_key, execution_id: execution.id }, start: true },
-      });
-      if (epoch !== executionEpoch.current) return;
-      if (reply.errors?.length) toast.error(reply.errors.map((error) => error.message).join("\n"));
-      onOpenReplacement?.(reply.session);
+      followContinuation.current = null;
+      if (restart) {
+        const reply = await ipc.restartExecution(prepared.request, repoPath);
+        if (epoch !== executionEpoch.current) return;
+        if (reply.errors?.length) toast.error(reply.errors.map((error) => error.message).join("\n"));
+        (onOpenReplacement ?? onOpenSession)?.(reply.session);
+      } else {
+        const result = await ipc.stopExecution(prepared.request, repoPath);
+        if (epoch !== executionEpoch.current) return;
+        setSessionActionsOpen(true);
+        setEndMessage(
+          result.shutdown_confirmed ? "Session ended. The playbook has not advanced." : "Waiting for the session to stop. Refresh status before trying another action.",
+        );
+      }
     } catch (error) {
       if (epoch !== executionEpoch.current) return;
-      setEndMessage(`Replacement outcome unavailable: ${String(error)}. Refresh status before retrying; the current owner may have changed.`);
+      setSessionActionsOpen(true);
+      setEndMessage(`Could not finish this action: ${String(error)}. Refresh status before retrying.`);
+    } finally {
+      if (epoch === executionEpoch.current) await refreshHandoff(epoch);
+      if (epoch === executionEpoch.current) {
+        continuationInFlight.current = false;
+        setCompletionBusy(false);
+      }
+    }
+  };
+  const previewArtifacts = async (artifacts: SuppliedExecutionArtifact[]) => {
+    if (!execution || !canRecover || completionBusy) throw new Error("This step is not available for an artifact handoff.");
+    const epoch = executionEpoch.current;
+    setCompletionBusy(true);
+    setArtifactEntryError("");
+    artifactAuthorization.current = null;
+    try {
+      const prepared = await ipc.prepareEndExecution(taskSlug, execution.id, id, repoPath);
+      if (epoch !== executionEpoch.current) throw new Error("The selected session changed.");
+      const preview = await ipc.previewExecutionArtifacts(prepared.request, artifacts, repoPath);
+      if (epoch !== executionEpoch.current) throw new Error("The selected session changed.");
+      artifactAuthorization.current = prepared.request;
+      return preview;
+    } finally {
+      if (epoch === executionEpoch.current) setCompletionBusy(false);
+    }
+  };
+  const submitArtifacts = async (artifacts: SuppliedExecutionArtifact[]) => {
+    const request = artifactAuthorization.current;
+    if (!request || !canRecover || completionBusy || continuationInFlight.current) throw new Error("Check the artifacts again before continuing.");
+    const epoch = executionEpoch.current;
+    continuationInFlight.current = true;
+    setCompletionBusy(true);
+    setArtifactEntryError("");
+    try {
+      if (
+        !(await confirmRecovery(
+          "Continue with these artifacts?",
+          <div>
+            <p>
+              Stop this session and use the artifacts below to continue the playbook. Existing files at these paths will be replaced. Any work still in progress will be
+              interrupted.
+            </p>
+            <ul>
+              {artifacts.map((artifact) => (
+                <li key={artifact.relative_path}>
+                  <code>{artifact.relative_path}</code>
+                </li>
+              ))}
+            </ul>
+            <p>The artifacts will be checked again before the handoff. Session history and worktree changes are kept.</p>
+          </div>,
+          "End & continue",
+        ))
+      )
+        return;
+      if (epoch !== executionEpoch.current) return;
+      const outcome = await ipc.submitExecutionArtifacts(request, artifacts, repoPath);
+      if (epoch !== executionEpoch.current) return;
+      if (outcome.status === "accepted") {
+        setEndAccepted(true);
+        setArtifactEntryOpen(false);
+        setSessionActionsOpen(true);
+        setEndMessage("Artifacts accepted. Continuing the playbook.");
+      } else {
+        throw new Error(
+          outcome.status === "invalid_outputs"
+            ? outcome.diagnostics.join("\n")
+            : "reason" in outcome
+              ? outcome.reason
+              : "Handoff is not yet accepted. Check the session status before retrying.",
+        );
+      }
+    } catch (error) {
+      if (epoch !== executionEpoch.current) return;
+      setArtifactEntryError(String(error));
+      throw error;
     } finally {
       if (epoch === executionEpoch.current) await refreshHandoff(epoch);
       if (epoch === executionEpoch.current) {
@@ -2194,7 +2328,7 @@ export function SessionView({
       <div className="session-continuation" role="status" aria-label="Playbook status">
         Playbook complete
       </div>
-    ) : continuationShown || canEnd ? (
+    ) : continuationShown ? (
       <section className="session-continuation" aria-label="Playbook continuation">
         {continuationShown && (
           <span
@@ -2227,11 +2361,6 @@ export function SessionView({
               </span>
             )}
           </span>
-        )}
-        {canEnd && (
-          <button type="button" className="btn ghost small" disabled={completionBusy} onClick={() => void endAndContinue()}>
-            End &amp; continue…
-          </button>
         )}
       </section>
     ) : null;
@@ -2365,7 +2494,35 @@ export function SessionView({
 
   const finalizedNotice = task ? finalizedSubtaskNotice(task, parentTask) : "";
   const awaitingName = display != null && awaitingSessionName({ ...display.session, harness: display.session.harness || harness }, observation);
+  const openStepArtifact = (path: string) => {
+    setSelectedArtifactNode(findOwnedArtifactNode(artifactTree, path) ?? null);
+    setSelectedArtifact(path);
+    setArtifactMode("preview");
+    setArtifactErr("");
+    setSessionActionsOpen(false);
+  };
+  const stepArtifactLink = (label: string, path: string) => (
+    <button type="button" className="session-action-file" title={path} disabled={!findOwnedArtifactNode(artifactTree, path)} onClick={() => openStepArtifact(path)}>
+      {label}
+    </button>
+  );
 
+  if (artifactEntryOpen && execution) {
+    return (
+      <ArtifactHandoffPage
+        stepTitle={executionStep?.title ?? execution.candidate.step_key}
+        outputs={execution.outputs}
+        destinations={destinations}
+        busy={completionBusy}
+        error={artifactEntryError || (!canRecover ? "This step is no longer available for an artifact handoff." : "")}
+        onPreview={previewArtifacts}
+        onSubmit={submitArtifacts}
+        onCancel={() => {
+          if (!completionBusy) setArtifactEntryOpen(false);
+        }}
+      />
+    );
+  }
   return (
     <div className="sessionview">
       <div className="sessionhd">
@@ -2438,7 +2595,21 @@ export function SessionView({
       {sessionActionsOpen && (
         <Dialog ariaLabel="Session actions" className="session-actions-dialog" onClose={() => setSessionActionsOpen(false)}>
           <header className="session-actions-heading">
-            <h3>Session actions</h3>
+            <div>
+              <h3>Session actions</h3>
+              {execution && (
+                <p className="session-actions-subtitle">
+                  {executionStep?.title ?? execution.candidate.step_key} · Attempt{" "}
+                  {execution.owner_session_id === id ? execution.previous_session_ids.length + 1 : execution.previous_session_ids.indexOf(id) + 1}
+                  {observation && observationDisplayKind(observation) === "busy" && (
+                    <span className="session-actions-activity">
+                      <RunningIndicator />
+                      Working…
+                    </span>
+                  )}
+                </p>
+              )}
+            </div>
             <button type="button" className="btn ghost small icon-btn" aria-label="Close session actions" data-autofocus onClick={() => setSessionActionsOpen(false)}>
               <X size={16} aria-hidden="true" />
             </button>
@@ -2446,9 +2617,74 @@ export function SessionView({
           {(unacceptedOwner || endMessage) && (
             <section className="session-handoff-actions" aria-label="Session handoff">
               {endMessage && <span role="status">{endMessage}</span>}
-              {canReplace && (
-                <button type="button" className="btn small" disabled={completionBusy} onClick={() => void replaceStoppedSession()}>
-                  Replace stopped session
+              {canRestart && (
+                <button
+                  type="button"
+                  className="session-action-row"
+                  aria-label="Restart this step…"
+                  aria-describedby="restart-step-description"
+                  disabled={completionBusy}
+                  onClick={() => void recoverSession("restart")}
+                >
+                  <RotateCcw size={18} aria-hidden="true" />
+                  <span>
+                    <strong>Restart this step…</strong>
+                    <span id="restart-step-description">Start a fresh agent with the same inputs. Keep saved files and code changes.</span>
+                  </span>
+                  <ChevronRight size={16} aria-hidden="true" />
+                </button>
+              )}
+              {canRecover && (
+                <>
+                  <button
+                    type="button"
+                    className="session-action-row"
+                    aria-label="Continue with an artifact…"
+                    aria-describedby="artifact-step-description"
+                    disabled={completionBusy}
+                    onClick={openArtifactEntry}
+                  >
+                    <FileUp size={18} aria-hidden="true" />
+                    <span>
+                      <strong>Continue with an artifact…</strong>
+                      <span id="artifact-step-description">Upload or paste the output for this step.</span>
+                    </span>
+                    <ChevronRight size={16} aria-hidden="true" />
+                  </button>
+                </>
+              )}
+              {canEnd && (
+                <button
+                  type="button"
+                  className="session-action-row"
+                  aria-label="End & continue…"
+                  aria-describedby="saved-step-description"
+                  disabled={completionBusy}
+                  onClick={() => void endAndContinue()}
+                >
+                  <ArrowRight size={18} aria-hidden="true" />
+                  <span>
+                    <strong>End &amp; continue…</strong>
+                    <span id="saved-step-description">Stop the agent and hand off its saved artifacts.</span>
+                  </span>
+                  <ChevronRight size={16} aria-hidden="true" />
+                </button>
+              )}
+              {canRecover && (
+                <button
+                  type="button"
+                  className="session-action-row session-action-stop"
+                  aria-label="End session…"
+                  aria-describedby="end-step-description"
+                  disabled={completionBusy}
+                  onClick={() => void recoverSession("stop")}
+                >
+                  <Square size={18} aria-hidden="true" />
+                  <span>
+                    <strong>End session…</strong>
+                    <span id="end-step-description">Stop here without advancing the playbook.</span>
+                  </span>
+                  <ChevronRight size={16} aria-hidden="true" />
                 </button>
               )}
               {endMessage && (
@@ -2460,10 +2696,65 @@ export function SessionView({
           )}
           {execution && executionView && (
             <div className="session-execution-bar">
+              <dl className="session-action-context" aria-label="Step context">
+                <div>
+                  <dt>Inputs</dt>
+                  <dd>
+                    {Object.entries(execution.candidate.inputs).length
+                      ? Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) =>
+                          ids.map((occurrenceId) => {
+                            const occurrence = executionView.state.occurrences[occurrenceId];
+                            return <div key={occurrenceId}>{occurrence ? stepArtifactLink(selector, occurrence.relative_path) : <span>{selector} · Unavailable</span>}</div>;
+                          }),
+                        )
+                      : "No input artifacts"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Outputs</dt>
+                  <dd>
+                    {execution.owner_session_id !== id
+                      ? "Belong to the current attempt"
+                      : execution.outputs.map((output) => {
+                          const published = Object.values(executionView.state.occurrences).filter(
+                            (item) => item.producer_execution_id === execution.id && item.selector === output.selector,
+                          );
+                          return (
+                            <div key={output.relative_path}>
+                              {published.length ? (
+                                published.map((item) => (
+                                  <div key={item.id}>
+                                    {stepArtifactLink(item.logical_path, item.relative_path)} <span className="dim">· Handed off</span>
+                                  </div>
+                                ))
+                              ) : (
+                                <>
+                                  {stepArtifactLink(output.selector, output.relative_path)}{" "}
+                                  <span className="dim">· {execution.receipt_id ? "Not produced" : "Not yet handed off"}</span>
+                                </>
+                              )}
+                            </div>
+                          );
+                        })}
+                    {execution.owner_session_id === id && !execution.outputs.length && "No output artifacts"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Next step</dt>
+                  <dd>
+                    {executionAssessment?.terminality === "terminal"
+                      ? "No next step from here"
+                      : execution.continuation_mode === "automatic"
+                        ? "Continues automatically when ready"
+                        : "Waits for you to continue"}
+                  </dd>
+                </div>
+              </dl>
               <details className="session-execution" aria-label="Session execution">
-                <summary>
-                  {executionStep?.title ?? execution.candidate.step_key} · {execution.lifecycle} · Owner {execution.owner_session_id}
-                </summary>
+                <summary>Technical details</summary>
+                <p>
+                  State: {execution.lifecycle} · Owner <span className="mono">{execution.owner_session_id}</span>
+                </p>
                 <p className="mono">Execution {execution.id}</p>
                 {execution.owner_session_id !== id && <p>This is a previous owner. Current owner: {execution.owner_session_id}.</p>}
                 {execution.lifecycle === "finishing" && <p>Outputs accepted; waiting for confirmed shutdown. The session remains interactive until it exits.</p>}
@@ -2753,6 +3044,7 @@ export function SessionView({
           )}
           <SessionLineage
             key={displayScope}
+            onOpenActions={() => setSessionActionsOpen(true)}
             id={id}
             name={display?.session.name || ""}
             phase={executionStep?.title ?? phase}
@@ -2763,12 +3055,7 @@ export function SessionView({
             artifactPaths={artifactNames}
             readableArtifactPaths={artifactNames.filter((path) => findOwnedArtifactNode(artifactTree, path))}
             onOpenSession={onOpenSession}
-            onOpenArtifact={(path) => {
-              setSelectedArtifactNode(findOwnedArtifactNode(artifactTree, path) ?? null);
-              setSelectedArtifact(path);
-              setArtifactMode("preview");
-              setArtifactErr("");
-            }}
+            onOpenArtifact={openStepArtifact}
           />
           {modelDialog && (
             <ChatModelDialog

@@ -54,6 +54,7 @@ import type {
   DownloadStatusRow,
   EndExecutionPreparation,
   EndExecutionRequest,
+  ExecutionArtifactsPreview,
   GitHubIssue,
   GlobalSettings,
   HostedCatalogView,
@@ -90,8 +91,10 @@ import type {
   SessionObservation,
   SessionStatusRef,
   StagedUpdate,
+  StopExecutionReply,
   StorageInfo,
   SubtaskManagerState,
+  SuppliedExecutionArtifact,
   Task,
   TaskActivityRef,
   TaskActivitySummary,
@@ -329,6 +332,12 @@ export const continueExecution = (request: ContinueExecutionRequest, repoPath?: 
 export const prepareEndExecution = (taskSlug: string, executionId: string, sessionId: string, repoPath?: string) =>
   invoke<EndExecutionPreparation>("prepare_end_execution", { taskSlug, executionId, sessionId, repoPath });
 export const endExecution = (request: EndExecutionRequest, repoPath?: string) => invoke<CompletionOutcome>("end_execution", { request, repoPath });
+export const stopExecution = (request: EndExecutionRequest, repoPath?: string) => invoke<StopExecutionReply>("stop_execution", { request, repoPath });
+export const restartExecution = (request: EndExecutionRequest, repoPath?: string) => invoke<CreateExecutionSessionReply>("restart_execution", { request, repoPath });
+export const previewExecutionArtifacts = (request: EndExecutionRequest, artifacts: SuppliedExecutionArtifact[], repoPath?: string) =>
+  invoke<ExecutionArtifactsPreview>("preview_execution_artifacts", { request, artifacts, repoPath });
+export const submitExecutionArtifacts = (request: EndExecutionRequest, artifacts: SuppliedExecutionArtifact[], repoPath?: string) =>
+  invoke<CompletionOutcome>("submit_execution_artifacts", { request, artifacts, repoPath });
 export const startSession = (taskSlug: string, sessionId: string, repoPath?: string) => invoke<CreateExecutionSessionReply>("start_session", { taskSlug, sessionId, repoPath });
 export const detachSession = (id: string, attachId: number) => invoke<void>("detach_session", { id, attachId });
 export const ensureDrawerTerminal = () => invoke<SessionMeta>("ensure_drawer_terminal");

@@ -772,10 +772,10 @@ fn owned_execution<'a>(state: &'a mut TaskExecutionState, id: &str, session_id: 
     Ok(record)
 }
 
-fn assigned_members(repo: &Path, slug: &str, assignment: &OutputAssignment) -> Result<Vec<(String, String)>, String> {
+fn assigned_members(repo: &Path, slug: &str, assignment: &OutputAssignment, supplied: &[crate::SuppliedExecutionArtifact]) -> Result<Vec<(String, String)>, String> {
     let physical = ArtifactSelector::parse(&assignment.relative_path)?;
     let root = crate::shared::resolve_artifact_directory(repo, &format!(".alinery/tasks/{slug}/artifacts"))?;
-    let paths = if physical.wildcard {
+    let mut paths = if physical.wildcard {
         let probe = if physical.directory.is_empty() {
             "__assignment_probe.md".to_string()
         } else {
@@ -785,7 +785,15 @@ fn assigned_members(repo: &Path, slug: &str, assignment: &OutputAssignment) -> R
         let mut paths = Vec::new();
         let entries = match fs::read_dir(parent) {
             Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return validate_assigned_paths(
+                    &root,
+                    assignment,
+                    &physical,
+                    supplied.iter().filter(|a| physical.matches(&a.relative_path)).map(|a| a.relative_path.clone()).collect(),
+                    supplied,
+                )
+            }
             Err(error) => return Err(format!("read assigned output directory: {error}")),
         };
         for entry in entries {
@@ -805,24 +813,35 @@ fn assigned_members(repo: &Path, slug: &str, assignment: &OutputAssignment) -> R
     } else {
         vec![assignment.relative_path.clone()]
     };
-    validate_assigned_paths(&root, assignment, &physical, paths)
+    paths.extend(supplied.iter().filter(|a| physical.matches(&a.relative_path)).map(|a| a.relative_path.clone()));
+    paths.sort();
+    paths.dedup();
+    validate_assigned_paths(&root, assignment, &physical, paths, supplied)
 }
 
-fn validate_assigned_paths(root: &Path, assignment: &OutputAssignment, physical: &ArtifactSelector, paths: Vec<String>) -> Result<Vec<(String, String)>, String> {
+fn validate_assigned_paths(
+    root: &Path,
+    assignment: &OutputAssignment,
+    physical: &ArtifactSelector,
+    paths: Vec<String>,
+    supplied: &[crate::SuppliedExecutionArtifact],
+) -> Result<Vec<(String, String)>, String> {
     let logical = ArtifactSelector::parse(&assignment.selector)?;
     let mut members = Vec::new();
     for relative in paths {
         let path = crate::resolve_artifact_path(root, &relative)?;
-        let meta = match fs::symlink_metadata(&path) {
-            Ok(meta) => meta,
-            // An enumerated wildcard member disappearing is an inspection failure, not omission.
-            Err(error) if !physical.wildcard && error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(format!("assigned output {relative}: {error}")),
-        };
-        if !meta.is_file() || meta.file_type().is_symlink() || meta.len() == 0 {
-            return Err(format!("assigned output '{relative}' must be a nonempty regular file"));
+        if !supplied.iter().any(|a| a.relative_path == relative) {
+            let meta = match fs::symlink_metadata(&path) {
+                Ok(meta) => meta,
+                // An enumerated wildcard member disappearing is an inspection failure, not omission.
+                Err(error) if !physical.wildcard && error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(format!("assigned output {relative}: {error}")),
+            };
+            if !meta.is_file() || meta.file_type().is_symlink() || meta.len() == 0 {
+                return Err(format!("assigned output '{relative}' must be a nonempty regular file"));
+            }
+            fs::File::open(&path).map_err(|error| format!("read assigned output '{relative}': {error}"))?;
         }
-        fs::File::open(&path).map_err(|error| format!("read assigned output '{relative}': {error}"))?;
         let logical_path = if physical.wildcard {
             let name = relative.rsplit('/').next().ok_or("invalid output filename")?;
             let slot = name
@@ -846,10 +865,41 @@ fn validate_assigned_paths(root: &Path, assignment: &OutputAssignment, physical:
 
 /// The enclosing transaction must commit before returning this outcome to the runner.
 pub fn inspect_execution_publications(repo: &Path, slug: &str, record: &ExecutionRecord) -> Result<Vec<ValidatedPublication>, Vec<String>> {
+    inspect_supplied_execution_publications(repo, slug, record, &[])
+}
+
+pub fn inspect_supplied_execution_publications(
+    repo: &Path,
+    slug: &str,
+    record: &ExecutionRecord,
+    supplied: &[crate::SuppliedExecutionArtifact],
+) -> Result<Vec<ValidatedPublication>, Vec<String>> {
+    let mut seen = std::collections::BTreeSet::new();
+    for artifact in supplied {
+        if artifact.content.trim().is_empty() || artifact.content.contains('\0') {
+            return Err(vec![format!("supplied artifact '{}' must contain nonblank text", artifact.relative_path)]);
+        }
+        if !seen.insert(&artifact.relative_path) {
+            return Err(vec![format!("duplicate supplied artifact '{}'", artifact.relative_path)]);
+        }
+        if let Err(error) = crate::validate_artifact_filename(&artifact.relative_path) {
+            return Err(vec![error]);
+        }
+        if ArtifactSelector::parse(&artifact.relative_path).is_ok_and(|selector| selector.wildcard) {
+            return Err(vec!["supplied artifacts must name a concrete wildcard member".into()]);
+        }
+        if !record
+            .outputs
+            .iter()
+            .any(|a| ArtifactSelector::parse(&a.relative_path).is_ok_and(|s| s.matches(&artifact.relative_path)))
+        {
+            return Err(vec![format!("unassigned artifact '{}'", artifact.relative_path)]);
+        }
+    }
     let mut publications = Vec::new();
     let mut diagnostics = Vec::new();
     for assignment in &record.outputs {
-        match assigned_members(repo, slug, assignment) {
+        match assigned_members(repo, slug, assignment, supplied) {
             Ok(members) => publications.extend(members.into_iter().map(|(logical_path, relative_path)| ValidatedPublication {
                 selector: assignment.selector.clone(),
                 logical_path,

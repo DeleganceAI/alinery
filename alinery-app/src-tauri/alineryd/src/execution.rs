@@ -531,7 +531,12 @@ pub(super) fn prepare_end_execution(repo: &Path, reg: &Registry, request: &Prepa
             return Err("current execution process disposition is unknown".into());
         }
     }
-    let diagnostics = inspect_execution_publications(repo, &request.task_slug, &record).err().unwrap_or_default();
+    let inspected = inspect_execution_publications(repo, &request.task_slug, &record);
+    let artifacts = inspected
+        .as_ref()
+        .map(|items| items.iter().map(|item| item.relative_path.clone()).collect())
+        .unwrap_or_default();
+    let diagnostics = inspected.err().unwrap_or_default();
     Ok(EndExecutionPreparation {
         request: EndExecutionRequest {
             task_slug: request.task_slug.clone(),
@@ -540,12 +545,16 @@ pub(super) fn prepare_end_execution(repo: &Path, reg: &Registry, request: &Prepa
             process_incarnation: process.incarnation,
             work_revision: record.work_revision,
         },
-        artifacts: record.outputs.iter().map(|output| output.relative_path.clone()).collect(),
+        artifacts,
         diagnostics,
     })
 }
 
 pub(super) fn end_execution(repo: &Path, reg: &Registry, request: &EndExecutionRequest) -> Result<CompletionOutcome, String> {
+    stop_execution_boundary(repo, reg, request, true)
+}
+
+fn stop_execution_boundary(repo: &Path, reg: &Registry, request: &EndExecutionRequest, accept: bool) -> Result<CompletionOutcome, String> {
     let stale = |reason: String| CompletionOutcome::Stale { reason };
     let (meta, process, _) = match end_identity(repo, &request.task_slug, &request.execution_id, &request.session_id) {
         Ok(identity) => identity,
@@ -563,6 +572,9 @@ pub(super) fn end_execution(repo: &Path, reg: &Registry, request: &EndExecutionR
             return Ok(Some(stale("execution owner or work revision changed".into())));
         }
         if let Some(receipt_id) = &record.receipt_id {
+            if !accept {
+                return Err("execution is already accepted".into());
+            }
             return Ok(Some(if record.human_end.as_ref() == Some(request) {
                 CompletionOutcome::Accepted { receipt_id: receipt_id.clone() }
             } else {
@@ -620,6 +632,12 @@ pub(super) fn end_execution(repo: &Path, reg: &Registry, request: &EndExecutionR
         exited(repo, &request.task_slug, Some(&process), &meta.daemon_namespace, code);
     }
     reconcile_exits(repo, &request.task_slug, &meta.daemon_namespace)?;
+    if !accept {
+        sync_execution_state(repo, &request.task_slug)?;
+        return Ok(CompletionOutcome::Waiting {
+            reason: "execution stopped without publication".into(),
+        });
+    }
     let outcome = mutate_execution_state(repo, &request.task_slug, &meta.daemon_namespace, "accept human stopped handoff", |definition, state| {
         if read_process(repo, &request.task_slug, &request.session_id)?.as_ref() != Some(&process)
             || state
@@ -635,6 +653,203 @@ pub(super) fn end_execution(repo: &Path, reg: &Registry, request: &EndExecutionR
         sync_execution_state(repo, &request.task_slug)?;
     }
     Ok(outcome)
+}
+
+fn recovery_identity(repo: &Path, request: &EndExecutionRequest) -> Result<(SessionMeta, ExecutionRecord), String> {
+    let (meta, process, record) = end_identity(repo, &request.task_slug, &request.execution_id, &request.session_id)?;
+    task_for_owner(repo, &request.task_slug, &meta.daemon_namespace)?;
+    if process.incarnation != request.process_incarnation || record.work_revision != request.work_revision {
+        return Err("execution owner or work revision changed".into());
+    }
+    if record.receipt_id.is_some() {
+        return Err("execution is already accepted".into());
+    }
+    Ok((meta, record))
+}
+
+pub(super) fn stop_execution(repo: &Path, reg: &Registry, request: &EndExecutionRequest) -> Result<StopExecutionReply, String> {
+    recovery_identity(repo, request)?;
+    let result = stop_execution_boundary(repo, reg, request, false)?;
+    if let CompletionOutcome::Stale { reason } = result {
+        return Err(reason);
+    }
+    let (_, record) = recovery_identity(repo, request)?;
+    Ok(StopExecutionReply {
+        shutdown_confirmed: record.shutdown_confirmed,
+    })
+}
+
+pub(super) fn restart_execution(
+    repo: &Path,
+    reg: &Registry,
+    lane: &str,
+    config: &Path,
+    host: &ProtectedHost,
+    request: &EndExecutionRequest,
+) -> Result<CreateExecutionSessionReply, String> {
+    if !stop_execution(repo, reg, request)?.shutdown_confirmed {
+        return Err("process exit and output drain are not proven; retry restart".into());
+    }
+    let (meta, record) = recovery_identity(repo, request)?;
+    create_session_authorized(
+        repo,
+        reg,
+        lane,
+        config,
+        host,
+        CreateExecutionSessionRequest {
+            task_slug: request.task_slug.clone(),
+            target: ExecutionSessionTarget::Primary {
+                step_key: record.candidate.step_key,
+                execution_id: Some(request.execution_id.clone()),
+                input_occurrence_ids: None,
+            },
+            start: true,
+            launch_override: None,
+            prompt_extra: Some(meta.prompt_extra),
+            handoff_artifact: (!meta.handoff_artifact.is_empty()).then_some(meta.handoff_artifact),
+        },
+        Some(request),
+    )
+}
+
+pub(super) fn preview_execution_artifacts(repo: &Path, request: &EndExecutionRequest, artifacts: &[SuppliedExecutionArtifact]) -> Result<ExecutionArtifactsPreview, String> {
+    alinery_core::with_task_mutation_lock_waiting(repo, "preview supplied artifacts", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
+        let (_, record) = recovery_identity(repo, request)?;
+        let state = read_execution_state(repo, &request.task_slug)?;
+        let definition = read_task_playbook(repo, &request.task_slug, &state)?;
+        preview_supplied(repo, request, artifacts, &definition, &state, &record)
+    })
+}
+
+fn preview_supplied(
+    repo: &Path,
+    request: &EndExecutionRequest,
+    artifacts: &[SuppliedExecutionArtifact],
+    definition: &alinery_core::playbook::NormalizedPlaybook,
+    state: &TaskExecutionState,
+    record: &ExecutionRecord,
+) -> Result<ExecutionArtifactsPreview, String> {
+    use alinery_core::playbook_scheduler::{assess_execution, ExecutionAssessment, Terminality};
+    if artifacts
+        .iter()
+        .any(|artifact| state.occurrences.values().any(|occurrence| occurrence.relative_path == artifact.relative_path))
+    {
+        return Err("supplied content cannot overwrite a published artifact".into());
+    }
+    match inspect_supplied_execution_publications(repo, &request.task_slug, record, artifacts) {
+        Ok(publications) => Ok(ExecutionArtifactsPreview {
+            assessment: assess_execution(definition, state, &request.execution_id, &publications)?,
+            diagnostics: Vec::new(),
+        }),
+        Err(diagnostics) => Ok(ExecutionArtifactsPreview {
+            assessment: ExecutionAssessment {
+                destinations: Vec::new(),
+                terminality: Terminality::Unresolved,
+                reasons: Vec::new(),
+            },
+            diagnostics,
+        }),
+    }
+}
+
+pub(super) fn submit_execution_artifacts(repo: &Path, reg: &Registry, request: &EndExecutionRequest, artifacts: &[SuppliedExecutionArtifact]) -> Result<CompletionOutcome, String> {
+    let preview = preview_execution_artifacts(repo, request, artifacts)?;
+    if !preview.diagnostics.is_empty() {
+        return Ok(CompletionOutcome::InvalidOutputs { diagnostics: preview.diagnostics });
+    }
+    if preview.assessment.terminality == alinery_core::playbook_scheduler::Terminality::Unresolved {
+        return Ok(CompletionOutcome::Waiting {
+            reason: "execution destinations remain unresolved".into(),
+        });
+    }
+    if !stop_execution(repo, reg, request)?.shutdown_confirmed {
+        return Ok(CompletionOutcome::Waiting {
+            reason: "process exit and output drain are not proven; retry submission".into(),
+        });
+    }
+    let (meta, _) = recovery_identity(repo, request)?;
+    let outcome = mutate_execution_state(repo, &request.task_slug, &meta.daemon_namespace, "accept supplied artifact handoff", |definition, state| {
+        let (_, record) = recovery_identity(repo, request)?;
+        let preview = preview_supplied(repo, request, artifacts, definition, state, &record)?;
+        if !preview.diagnostics.is_empty() {
+            return Ok(CompletionOutcome::InvalidOutputs { diagnostics: preview.diagnostics });
+        }
+        if preview.assessment.terminality == alinery_core::playbook_scheduler::Terminality::Unresolved {
+            return Ok(CompletionOutcome::Waiting {
+                reason: "execution destinations remain unresolved".into(),
+            });
+        }
+        for artifact in artifacts {
+            save_supplied_artifact(repo, &request.task_slug, artifact)?;
+        }
+        accept_human_end(repo, &request.task_slug, definition, state, request)
+    })?;
+    sync_execution_state(repo, &request.task_slug)?;
+    Ok(outcome)
+}
+
+// Traverse from a trusted repository descriptor. Neither a replaced directory
+// symlink nor a final-file symlink can redirect human-supplied bytes.
+fn save_supplied_artifact(repo: &Path, slug: &str, artifact: &SuppliedExecutionArtifact) -> Result<(), String> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    alinery_core::artifact_file_path(repo, slug, &artifact.relative_path)?;
+    let relative = format!(".alinery/tasks/{slug}/artifacts/{}", artifact.relative_path);
+    let mut components = relative.split('/').peekable();
+    let mut directory = fs::File::open(repo).map_err(|e| e.to_string())?;
+    while let Some(component) = components.next() {
+        let name = CString::new(component).map_err(|e| e.to_string())?;
+        if components.peek().is_none() {
+            let temporary = CString::new(format!(".recovery-{}", uuid::Uuid::new_v4())).unwrap();
+            let fd = unsafe {
+                libc::openat(
+                    directory.as_raw_fd(),
+                    temporary.as_ptr(),
+                    libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                    0o600,
+                )
+            };
+            if fd < 0 {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+            let mut file = unsafe { fs::File::from_raw_fd(fd) };
+            let result = (|| {
+                file.write_all(artifact.content.as_bytes()).map_err(|e| e.to_string())?;
+                file.sync_all().map_err(|e| e.to_string())?;
+                if unsafe { libc::renameat(directory.as_raw_fd(), temporary.as_ptr(), directory.as_raw_fd(), name.as_ptr()) } != 0 {
+                    return Err(std::io::Error::last_os_error().to_string());
+                }
+                directory.sync_all().map_err(|e| e.to_string())
+            })();
+            if result.is_err() {
+                unsafe {
+                    libc::unlinkat(directory.as_raw_fd(), temporary.as_ptr(), 0);
+                }
+            }
+            return result;
+        }
+        if unsafe { libc::mkdirat(directory.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() != std::io::ErrorKind::AlreadyExists {
+                return Err(error.to_string());
+            }
+        } else {
+            directory.sync_all().map_err(|e| e.to_string())?;
+        }
+        let fd = unsafe {
+            libc::openat(
+                directory.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        directory = unsafe { fs::File::from_raw_fd(fd) };
+    }
+    Err("missing artifact filename".into())
 }
 
 /// Captured at spawn, never reconstructed from an Exited projection or a PID.
@@ -1101,6 +1316,18 @@ pub(super) fn create_session(
     host: &ProtectedHost,
     request: CreateExecutionSessionRequest,
 ) -> Result<CreateExecutionSessionReply, String> {
+    create_session_authorized(repo, reg, lane, config, host, request, None)
+}
+
+fn create_session_authorized(
+    repo: &Path,
+    reg: &Registry,
+    lane: &str,
+    config: &Path,
+    host: &ProtectedHost,
+    request: CreateExecutionSessionRequest,
+    expected: Option<&EndExecutionRequest>,
+) -> Result<CreateExecutionSessionReply, String> {
     let slug = request.task_slug.as_str();
     if !slug.is_empty() && alinery_core::safe_component(slug) != Some(slug) {
         return Err("invalid task slug".into());
@@ -1117,6 +1344,9 @@ pub(super) fn create_session(
     {
         let defaults = product(repo, config)?;
         let id = mutate_execution_state(repo, slug, lane, "create execution session", |definition, state| {
+            if let Some(expected) = expected {
+                recovery_identity(repo, expected)?;
+            }
             let id = if let Some(id) = execution_id {
                 let record = state.executions.get(id).ok_or("unknown execution")?;
                 if &record.candidate.step_key != step_key {
@@ -1155,6 +1385,20 @@ pub(super) fn create_session(
             };
             if request.start {
                 request_execution_start(state, &id)?;
+            }
+            if expected.is_some() {
+                // Do not replace the stopped owner until its fresh session can
+                // actually be projected. Failed preparation retains recovery.
+                let record = state.executions.get(&id).ok_or("missing execution")?;
+                project(
+                    repo,
+                    slug,
+                    state,
+                    definition,
+                    record,
+                    request.prompt_extra.as_deref().unwrap_or(""),
+                    request.handoff_artifact.as_deref().unwrap_or(""),
+                )?;
             }
             Ok(id)
         })?;

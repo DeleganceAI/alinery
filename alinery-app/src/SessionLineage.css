@@ -115,10 +115,9 @@ button.session-lineage-node:hover:not(:disabled),
 }
 
 .session-lineage-working {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 4px;
-  vertical-align: middle;
 }
 
 .session-lineage-newest {
@@ -168,4 +167,42 @@ button.session-lineage-node:hover:not(:disabled),
   color: var(--accent);
   font: inherit;
   cursor: pointer;
+}
+
+.session-lineage-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.session-lineage-step,
+.session-lineage-attempts {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.session-lineage-attempts > summary {
+  padding: 5px 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.session-lineage-attempts > .session-lineage-node {
+  margin-top: 5px;
+}
+
+.session-lineage-current {
+  position: relative;
+}
+.session-lineage-current:has(.session-lineage-actions) > strong {
+  padding-right: 30px;
+}
+.session-lineage-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
 }

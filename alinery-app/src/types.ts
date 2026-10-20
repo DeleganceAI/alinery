@@ -720,6 +720,9 @@ export type ContinueExecutionRequest = { task_slug: string; execution_id: string
 export type PrepareEndExecutionRequest = { task_slug: string; execution_id: string; session_id: string };
 export type EndExecutionRequest = PrepareEndExecutionRequest & { process_incarnation: string; work_revision: number };
 export type EndExecutionPreparation = { request: EndExecutionRequest; artifacts: string[]; diagnostics: string[] };
+export type SuppliedExecutionArtifact = { relative_path: string; content: string };
+export type StopExecutionReply = { shutdown_confirmed: boolean };
+export type ExecutionArtifactsPreview = { assessment: ExecutionAssessment; diagnostics: string[] };
 export type OutputAssignment = { selector: string; relative_path: string; discriminator: number };
 export type ExecutionCandidate = {
   step_key: string;

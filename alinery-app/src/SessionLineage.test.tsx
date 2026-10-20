@@ -226,3 +226,81 @@ it("shows activity only for observed busy agents, never from running execution l
     expect(screen.queryByText(/^(Idle|Needs input|Needs approval|running)$/)).toBeNull();
   }
 });
+
+it("groups resumed owners and their histories as one next step, not extra successors", () => {
+  const root = executionRecord({ id: "root", owner_session_id: "root", lifecycle: "completed" });
+  const child = executionRecord({ id: "child", owner_session_id: "current", previous_session_ids: ["old"], parent_execution_ids: ["root"] });
+  const view = executionReply([root, child]);
+  view.state.occurrences.result = { ...view.state.occurrences["input-a"], id: "result", producer_execution_id: "root", relative_path: "result.md" };
+  child.candidate = { ...child.candidate, inputs: { result: ["result"] } };
+  const sessions = [session("root", 1), session("old", 2), { ...session("current", 3), resume_of: "old" }];
+  const onOpenSession = vi.fn();
+  const props = {
+    name: "Work",
+    phase: "worker",
+    sessions,
+    executionView: view,
+    artifactPaths: [],
+    readableArtifactPaths: ["result.md"],
+    error: "",
+    onOpenSession,
+    onOpenArtifact: vi.fn(),
+  };
+  const rendered = render(<SessionLineage {...props} id="root" />);
+  expect(screen.getByText("Session Navigator").closest("summary")?.textContent).toContain("1 next session");
+  fireEvent.click(screen.getByText("Session Navigator"));
+  const next = screen.getByRole("heading", { name: "Next sessions" }).parentElement;
+  if (!next) throw new Error("Missing next-session group");
+  expect(within(next).getByRole("button", { name: /current.*Newest/ })).toBeDefined();
+  expect(within(next).getByText("Previous attempts (1)").closest("details")?.open).toBe(false);
+  fireEvent.click(within(next).getByText("Previous attempts (1)"));
+  expect(within(next).getByText("Previous attempts (1)").closest("details")?.open).toBe(true);
+  fireEvent.click(within(next).getByRole("button", { name: "old" }));
+  expect(onOpenSession).toHaveBeenLastCalledWith(sessions[1]);
+
+  rendered.rerender(<SessionLineage {...props} id="current" />);
+  const previous = screen.getByRole("heading", { name: "Previous sessions" }).parentElement;
+  if (!previous) throw new Error("Missing previous-session group");
+  expect(within(previous).getByRole("button", { name: "root" })).toBeDefined();
+  expect(within(previous).queryByRole("button", { name: "old" })).toBeNull();
+  expect(screen.getByRole("heading", { name: "Next sessions" }).parentElement?.textContent).toContain("None created yet");
+});
+
+it("keeps an old attempt selected inside its step and links to the current owner without claiming its outputs", () => {
+  const record = executionRecord({ id: "work", owner_session_id: "current", previous_session_ids: ["old"], lifecycle: "completed" });
+  const next = executionRecord({ id: "next", owner_session_id: "next", parent_execution_ids: ["work"] });
+  const view = executionReply([record, next]);
+  view.state.occurrences.result = { ...view.state.occurrences["input-a"], id: "result", producer_execution_id: "work", relative_path: "result.md" };
+  next.candidate = { ...next.candidate, inputs: { result: ["result"] } };
+  const sessions = [session("old", 1), { ...session("current", 2), resume_of: "old" }, session("next", 3)];
+  const onOpenSession = vi.fn();
+  render(
+    <SessionLineage
+      id="old"
+      name="old"
+      phase="worker"
+      sessions={sessions}
+      executionView={view}
+      artifactPaths={["result.md"]}
+      readableArtifactPaths={["result.md"]}
+      error=""
+      onOpenSession={onOpenSession}
+      onOpenArtifact={vi.fn()}
+      onOpenActions={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByText("Session Navigator"));
+  const step = screen.getByRole("heading", { name: "This step" }).parentElement?.parentElement;
+  if (!step) throw new Error("Missing current-step group");
+  expect(within(step).getByRole("button", { name: "old" }).getAttribute("aria-current")).toBe("step");
+  expect(within(step).getByText("Previous attempts (1)").closest("details")?.open).toBe(true);
+  fireEvent.click(within(step).getByRole("button", { name: "current" }));
+  expect(onOpenSession).toHaveBeenLastCalledWith(sessions[1]);
+  expect(screen.queryByRole("button", { name: "Current step actions" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "result.md" })).toBeNull();
+  expect(screen.getByText("Outputs belong to the current attempt")).toBeDefined();
+  const successors = screen.getByRole("heading", { name: "Next sessions" }).parentElement;
+  if (!successors) throw new Error("Missing next-session group");
+  expect(within(successors).getByRole("button", { name: /next.*Newest/ })).toBeDefined();
+  expect(within(successors).queryByRole("button", { name: "current" })).toBeNull();
+});

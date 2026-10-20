@@ -1745,6 +1745,10 @@ fn human_end_holds_claims_until_output_drain_and_retries_exact_authorization() {
 }
 
 fn human_control(fixture: &Fixture, op: &str, request: Value) -> Value {
+    human_control_message(fixture, json!({"op":op,"request":request}))
+}
+
+fn human_control_message(fixture: &Fixture, message: Value) -> Value {
     use std::io::{BufRead, Write};
     let mut stream = std::os::unix::net::UnixStream::connect(&fixture.client.socket_path).unwrap();
     stream.set_read_timeout(Some(Duration::from_secs(100))).unwrap();
@@ -1753,7 +1757,7 @@ fn human_control(fixture: &Fixture, op: &str, request: Value) -> Value {
     let mut line = String::new();
     reader.read_line(&mut line).unwrap();
     assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["ok"], true);
-    writeln!(stream, "{}", json!({"op":op,"request":request})).unwrap();
+    writeln!(stream, "{message}").unwrap();
     line.clear();
     reader.read_line(&mut line).unwrap();
     serde_json::from_str(&line).unwrap()
@@ -2992,4 +2996,123 @@ fn shared_exact_queued_manual_bindings_survive_quiescent_restart() {
             1
         );
     }
+}
+
+#[test]
+fn recovery_stop_and_restart_preserve_binding_without_publishing() {
+    let fixture = Fixture::new();
+    let created = fixture.create(false, false);
+    for root in &created.executions {
+        fixture.start(root);
+        fixture.wait_state("root running", |s| s.executions[&root.id].lifecycle == ExecutionLifecycle::Running);
+        fixture.finish(root);
+    }
+    fixture.wait_state("join bound", |s| s.executions.values().any(|r| r.candidate.step_key == "join"));
+    let bound = fixture.persisted();
+    let first = bound.executions.values().find(|r| r.candidate.step_key == "join").unwrap();
+    assert!(!first.candidate.inputs.is_empty());
+    fixture.wait_state("owner running", |s| s.executions[&first.id].lifecycle == ExecutionLifecycle::Running);
+    let stopped = human_control(&fixture, "stop_execution", prepare_human_end(&fixture, first));
+    assert_eq!(stopped["result"]["shutdown_confirmed"], true, "{stopped}");
+    let extra = "Preserve the review constraints and inspect both assigned inputs.";
+    let handoff = created.executions[0].outputs[0].relative_path.clone();
+    let configured = fixture
+        .client
+        .create_execution_session(&CreateExecutionSessionRequest {
+            task_slug: "fixture".into(),
+            target: ExecutionSessionTarget::Primary {
+                step_key: first.candidate.step_key.clone(),
+                execution_id: Some(first.id.clone()),
+                input_occurrence_ids: None,
+            },
+            launch_override: None,
+            prompt_extra: Some(extra.into()),
+            handoff_artifact: Some(handoff.clone()),
+            start: true,
+        })
+        .unwrap();
+    let first = configured.execution.as_ref().unwrap();
+    fixture.wait_state("configured owner running", |s| s.executions[&first.id].lifecycle == ExecutionLifecycle::Running);
+    fixture.outputs(first);
+    let request = prepare_human_end(&fixture, first);
+    let stopped = human_control(&fixture, "stop_execution", request.clone());
+    assert_eq!(stopped["result"]["shutdown_confirmed"], true, "{stopped}");
+    let state = fixture.persisted();
+    assert!(state.executions[&first.id].receipt_id.is_none());
+    assert!(!state.occurrences.values().any(|o| o.producer_execution_id.as_deref() == Some(&first.id)));
+    let restarted = human_control(&fixture, "restart_execution", request.clone());
+    let replacement: CreateExecutionSessionReply = serde_json::from_value(restarted["result"].clone()).unwrap();
+    assert_ne!(replacement.session.id, first.owner_session_id);
+    assert_eq!(replacement.session.prompt_extra, extra);
+    assert_eq!(replacement.session.handoff_artifact, handoff);
+    wait(|| fixture.root.join(format!("token-{}", replacement.session.id)).is_file());
+    fixture.bind(&replacement.session.id);
+    let seed = fs::read_to_string(fixture.root.join(format!("seed-input-{}", replacement.session.id))).unwrap();
+    assert!(seed.contains(extra), "replacement process must receive the retained extra instructions");
+    let record = replacement.execution.unwrap();
+    assert_eq!(record.candidate.inputs, first.candidate.inputs);
+    assert_eq!(record.outputs, first.outputs);
+    assert!(record.receipt_id.is_none());
+    assert!(human_control(&fixture, "stop_execution", request)["error"].is_string());
+}
+
+#[test]
+fn recovery_supplied_artifacts_validate_before_stop_and_publish_normally() {
+    let fixture = Fixture::new();
+    let created = fixture.create(false, false);
+    let first = created.executions.iter().find(|r| r.candidate.step_key == "first").unwrap();
+    fixture.start(first);
+    fixture.wait_state("owner running", |s| s.executions[&first.id].lifecycle == ExecutionLifecycle::Running);
+    let request = prepare_human_end(&fixture, first);
+    let output = &first.outputs[0].relative_path;
+    let before = fixture.persisted();
+    for (path, content) in [(output.as_str(), " \n "), ("../escape.md", "outside"), ("unassigned.md", "unassigned")] {
+        let result = human_control_message(
+            &fixture,
+            json!({"op":"submit_execution_artifacts","request":request,"artifacts":[{"relative_path":path,"content":content}]}),
+        );
+        assert_eq!(result["result"]["status"], "invalid_outputs", "{result}");
+        assert_eq!(fixture.persisted(), before, "invalid input cannot stop or mutate execution");
+    }
+    let artifacts: Vec<_> = first
+        .outputs
+        .iter()
+        .map(|a| json!({"relative_path":a.relative_path,"content":"Human supplied recovery artifact"}))
+        .collect();
+    let preview = human_control_message(&fixture, json!({"op":"preview_execution_artifacts","request":request,"artifacts":artifacts}));
+    assert_eq!(preview["result"]["diagnostics"], json!([]), "{preview}");
+    assert!(!fixture.root.join(".alinery/tasks/fixture/artifacts").join(output).exists());
+    assert_eq!(fixture.persisted(), before, "preview is read-only");
+    let result = human_control_message(&fixture, json!({"op":"submit_execution_artifacts","request":request,"artifacts":artifacts}));
+    assert_eq!(result["result"]["status"], "accepted", "{result}");
+    let state = fixture.persisted();
+    assert!(state.executions[&first.id].shutdown_confirmed);
+    assert!(state.executions[&first.id].receipt_id.is_some());
+    assert!(state
+        .occurrences
+        .values()
+        .any(|o| &o.relative_path == output && o.producer_execution_id.as_deref() == Some(&first.id)));
+    assert!(human_control(&fixture, "restart_execution", request.clone())["error"].is_string());
+    assert!(human_control_message(&fixture, json!({"op":"submit_execution_artifacts","request":request,"artifacts":artifacts}))["error"].is_string());
+}
+
+#[test]
+fn recovery_restart_without_optional_handoff_starts_fresh_owner() {
+    let fixture = Fixture::new();
+    let created = fixture.create(false, false);
+    let first = created.executions.iter().find(|record| record.candidate.step_key == "first").unwrap();
+    fixture.start(first);
+    fixture.wait_state("default owner running", |state| state.executions[&first.id].lifecycle == ExecutionLifecycle::Running);
+    let request = prepare_human_end(&fixture, first);
+    let restarted = human_control(&fixture, "restart_execution", request);
+    let replacement: CreateExecutionSessionReply = serde_json::from_value(restarted["result"].clone()).unwrap();
+    assert_ne!(replacement.session.id, first.owner_session_id);
+    let record = replacement.execution.unwrap();
+    assert_eq!(record.outputs, first.outputs);
+    assert!(record.receipt_id.is_none());
+    fixture.wait_state("default replacement running", |state| {
+        state.executions[&first.id].owner_session_id == replacement.session.id && state.executions[&first.id].lifecycle == ExecutionLifecycle::Running
+    });
+    wait(|| fixture.root.join(format!("token-{}", replacement.session.id)).is_file());
+    fixture.bind(&replacement.session.id);
 }

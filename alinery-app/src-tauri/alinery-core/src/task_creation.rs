@@ -249,6 +249,24 @@ pub struct EndExecutionPreparation {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct SuppliedExecutionArtifact {
+    pub relative_path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StopExecutionReply {
+    pub shutdown_confirmed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionArtifactsPreview {
+    pub assessment: crate::playbook_scheduler::ExecutionAssessment,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ContinueExecutionRequest {
     pub task_slug: String,
     pub execution_id: String,

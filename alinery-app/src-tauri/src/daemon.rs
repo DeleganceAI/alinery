@@ -424,6 +424,92 @@ pub(crate) async fn end_execution(
     .map_err(|error| format!("end execution task: {error}"))?
 }
 
+#[tauri::command]
+pub(crate) async fn stop_execution(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_path: Option<String>,
+    request: alinery_core::EndExecutionRequest,
+) -> Result<alinery_core::StopExecutionReply, String> {
+    let repo = match repo_path {
+        Some(path) => target_repo_for_app(&app, &path)?,
+        None => require_owned_active_repo(&state)?,
+    };
+    require_repo_owned(&state, &repo)?;
+    let app_config = app_config_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let daemon = task_daemon_for(&repo, &request.task_slug, &app_config)?;
+        daemon_client::UiControlConnection::connect(&daemon)?.stop_execution(&request)
+    })
+    .await
+    .map_err(|error| format!("stop_execution task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn restart_execution(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_path: Option<String>,
+    request: alinery_core::EndExecutionRequest,
+) -> Result<alinery_core::CreateExecutionSessionReply, String> {
+    let repo = match repo_path {
+        Some(path) => target_repo_for_app(&app, &path)?,
+        None => require_owned_active_repo(&state)?,
+    };
+    require_repo_owned(&state, &repo)?;
+    let app_config = app_config_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let daemon = task_daemon_for(&repo, &request.task_slug, &app_config)?;
+        daemon_client::UiControlConnection::connect(&daemon)?.restart_execution(&request)
+    })
+    .await
+    .map_err(|error| format!("restart_execution task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn preview_execution_artifacts(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_path: Option<String>,
+    request: alinery_core::EndExecutionRequest,
+    artifacts: Vec<alinery_core::SuppliedExecutionArtifact>,
+) -> Result<alinery_core::ExecutionArtifactsPreview, String> {
+    let repo = match repo_path {
+        Some(path) => target_repo_for_app(&app, &path)?,
+        None => require_owned_active_repo(&state)?,
+    };
+    require_repo_owned(&state, &repo)?;
+    let app_config = app_config_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let daemon = task_daemon_for(&repo, &request.task_slug, &app_config)?;
+        daemon_client::UiControlConnection::connect(&daemon)?.preview_execution_artifacts(&request, &artifacts)
+    })
+    .await
+    .map_err(|error| format!("preview_execution_artifacts task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn submit_execution_artifacts(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_path: Option<String>,
+    request: alinery_core::EndExecutionRequest,
+    artifacts: Vec<alinery_core::SuppliedExecutionArtifact>,
+) -> Result<alinery_core::CompletionOutcome, String> {
+    let repo = match repo_path {
+        Some(path) => target_repo_for_app(&app, &path)?,
+        None => require_owned_active_repo(&state)?,
+    };
+    require_repo_owned(&state, &repo)?;
+    let app_config = app_config_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let daemon = task_daemon_for(&repo, &request.task_slug, &app_config)?;
+        daemon_client::UiControlConnection::connect(&daemon)?.submit_execution_artifacts(&request, &artifacts)
+    })
+    .await
+    .map_err(|error| format!("submit_execution_artifacts task: {error}"))?
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn open_daemon_session(
     client: &DaemonClient,

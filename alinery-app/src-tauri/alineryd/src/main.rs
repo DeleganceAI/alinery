@@ -1237,7 +1237,13 @@ fn handle_conn(
 
     match op {
         "ui_control" => ui_control::serve(&mut stream, repo, reg, protected_host, daemon_namespace, app_config),
-        "continue_execution" | "prepare_end_execution" | "end_execution" => reply(&mut stream, json!({"error":"continuation requires an authenticated UI control connection"})),
+        "continue_execution"
+        | "prepare_end_execution"
+        | "end_execution"
+        | "stop_execution"
+        | "restart_execution"
+        | "preview_execution_artifacts"
+        | "submit_execution_artifacts" => reply(&mut stream, json!({"error":"continuation requires an authenticated UI control connection"})),
         "create_task" => {
             let result: Result<Value, String> = (|| {
                 // Keep the reservation through typed decoding and provisioning, including errors.

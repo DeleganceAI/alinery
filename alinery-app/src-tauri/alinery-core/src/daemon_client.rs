@@ -43,8 +43,35 @@ impl UiControlConnection {
     pub fn end_execution(&mut self, request: &crate::EndExecutionRequest) -> Result<crate::CompletionOutcome, String> {
         self.end_control("end_execution", request, "completion")
     }
+    pub fn stop_execution(&mut self, request: &crate::EndExecutionRequest) -> Result<crate::StopExecutionReply, String> {
+        self.end_control("stop_execution", request, "result")
+    }
+    pub fn restart_execution(&mut self, request: &crate::EndExecutionRequest) -> Result<crate::CreateExecutionSessionReply, String> {
+        self.end_control("restart_execution", request, "result")
+    }
+    pub fn preview_execution_artifacts(
+        &mut self,
+        request: &crate::EndExecutionRequest,
+        artifacts: &[crate::SuppliedExecutionArtifact],
+    ) -> Result<crate::ExecutionArtifactsPreview, String> {
+        self.artifact_control("preview_execution_artifacts", request, artifacts)
+    }
+    pub fn submit_execution_artifacts(&mut self, request: &crate::EndExecutionRequest, artifacts: &[crate::SuppliedExecutionArtifact]) -> Result<crate::CompletionOutcome, String> {
+        self.artifact_control("submit_execution_artifacts", request, artifacts)
+    }
+    fn artifact_control<T: serde::de::DeserializeOwned>(
+        &mut self,
+        op: &str,
+        request: &crate::EndExecutionRequest,
+        artifacts: &[crate::SuppliedExecutionArtifact],
+    ) -> Result<T, String> {
+        self.control_reply(json!({"op":op,"request":request,"artifacts":artifacts}), "result")
+    }
     fn end_control<T: serde::de::DeserializeOwned>(&mut self, op: &str, request: &impl serde::Serialize, field: &str) -> Result<T, String> {
-        writeln!(self.stream, "{}", json!({"op":op,"request":request})).map_err(|e| e.to_string())?;
+        self.control_reply(json!({"op":op,"request":request}), field)
+    }
+    fn control_reply<T: serde::de::DeserializeOwned>(&mut self, message: Value, field: &str) -> Result<T, String> {
+        writeln!(self.stream, "{message}").map_err(|e| e.to_string())?;
         self.stream.flush().map_err(|e| e.to_string())?;
         let value: Value = serde_json::from_str(&read_reply_line(&mut self.stream, DAEMON_CONTROL_TIMEOUT)?).map_err(|e| e.to_string())?;
         if let Some(error) = reply_error(&value) {
