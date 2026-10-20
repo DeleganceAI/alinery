@@ -36,7 +36,7 @@ function isDevLaunch(args) {
   return args.find((arg) => TAURI_SUBCOMMANDS.has(arg)) === "dev";
 }
 
-// The experimental PI durable daemon is deliberately not an externalBin, so no
+// The Vinculum daemon is deliberately not an externalBin, so no
 // cargo or tauri step compiles it. These two launches compile it beside the app
 // executable they are about to run; every other subcommand leaves it alone.
 export function piDaemonCompile(args) {
@@ -218,7 +218,7 @@ async function compilePiDaemon(sourceRoot, release) {
     child.on("exit", (exit) => resolve(exit ?? 1));
   });
   if (code !== 0) {
-    console.error(`alinery-pi-daemon: compile failed (exit ${code}); the experimental PI durable toggle stays unavailable`);
+    console.error(`alinery-vinculum-daemon: compile failed (exit ${code}); Vinculum stays unavailable`);
   }
 }
 

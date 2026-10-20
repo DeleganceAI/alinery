@@ -458,7 +458,7 @@ fn log_global_diff(app_config: &Path, prev: &GlobalSettings, next: &GlobalSettin
         next.experiments.show_original_kanban,
     );
     push_changed_bool(&mut fields, "experiments.show_chat", prev.experiments.show_chat, next.experiments.show_chat);
-    push_changed_bool(&mut fields, "experiments.pi_durable", prev.experiments.pi_durable, next.experiments.pi_durable);
+    push_changed_bool(&mut fields, "experiments.vinculum", prev.experiments.vinculum, next.experiments.vinculum);
     push_opt_secret(
         &mut fields,
         "experiments.grok_api_key",
@@ -694,6 +694,15 @@ mod tests {
         let saved = load_global_settings(&app_config);
         assert!(saved.experiments.show_chat);
         assert!(!saved.experiments.show_original_kanban, "saving Chat keeps the Kanban opt-out");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn vinculum_opt_in_still_loads_the_old_key() {
+        let (dir, app_config) = temp_app("alinery_vinculum_alias");
+        assert!(!load_global_settings(&app_config).experiments.vinculum);
+        fs::write(&app_config, "[global.experiments]\npi_durable = true\n").unwrap();
+        assert!(load_global_settings(&app_config).experiments.vinculum);
         let _ = fs::remove_dir_all(dir);
     }
 

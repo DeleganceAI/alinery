@@ -678,8 +678,9 @@ pub struct ExperimentalFeatures {
     pub show_original_kanban: bool,
     /// Chat tab (threads under repositories). Off until opted in.
     pub show_chat: bool,
-    /// Experimental Pi Durable harness. Off until opted in, so a missing flag keeps the release daemon.
-    pub pi_durable: bool,
+    /// Retained Vinculum opt-in. The old key `pi_durable` still loads. This branch starts Vinculum either way.
+    #[serde(alias = "pi_durable")]
+    pub vinculum: bool,
     /// Grok key for the experimental daemon. Empty is unset. Kept when the toggle turns off.
     pub grok_api_key: String,
 }
@@ -689,7 +690,7 @@ impl Default for ExperimentalFeatures {
         Self {
             show_original_kanban: true,
             show_chat: false,
-            pi_durable: false,
+            vinculum: false,
             grok_api_key: String::new(),
         }
     }

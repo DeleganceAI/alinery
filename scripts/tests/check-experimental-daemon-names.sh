@@ -31,7 +31,7 @@ fi
 
 # The release resolver may still match alineryd / alineryd-*. It must not be
 # taught to return the experimental names.
-if grep -nE 'alinery-pi-daemon|alinery-playbook' "$RESOLVER"; then
+if grep -nE 'alinery-pi-daemon|alinery-vinculum-daemon|alinery-playbook' "$RESOLVER"; then
   fail "release resolver mentions an experimental binary"
 else
   echo "ok   - release resolver does not return the experimental names"

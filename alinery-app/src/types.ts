@@ -240,8 +240,8 @@ export type ExperimentalFeatures = {
   show_original_kanban?: boolean;
   /** Chat tab, shown after Kanban. Absent = hidden; true shows the tab. */
   show_chat?: boolean;
-  /** Experimental Pi Durable harness. Absent = off, so current installs keep the release daemon. */
-  pi_durable?: boolean;
+  /** Retained Vinculum opt-in. Absent = off. This branch starts Vinculum either way; a saved `pi_durable` key still loads. */
+  vinculum?: boolean;
   /** Grok key for the experimental daemon. Empty or absent is unset. */
   grok_api_key?: string;
 };

@@ -136,7 +136,7 @@ Do **not** consider the change done until this passes. For sidecar/bundler work 
 
 Live GUI verify is opt-in only, when the user asks to see the app. For a local `tauri dev` OMP session, run `scripts/dev-fetch-omp.sh` once so `/Applications/Alinery.omp/omp` exists. The resolver never falls back to PATH.
 
-`npm run tauri dev` and `npm run tauri build` also compile the experimental `alinery-pi-daemon` beside the app executable they are about to run, by invoking `scripts/dev-fetch-bun.sh --no-download` for the launch's cargo profile. It stays out of `externalBin` and out of every bundle, the launch never reaches the network for a toolchain, and a missing Bun or a failed compile only prints a line. Run the script bare to fetch the pinned Bun and compile by hand; it short-circuits an up-to-date output.
+`npm run tauri dev` and `npm run tauri build` also compile the experimental `alinery-vinculum-daemon` beside the app executable they are about to run, by invoking `scripts/dev-fetch-bun.sh --no-download` for the launch's cargo profile. Its agent runtime is pi-durable. It stays out of `externalBin` and out of every bundle, the launch never reaches the network for a toolchain, and a missing Bun or a failed compile only prints a line. Run the script bare to fetch the pinned Bun and compile by hand; it short-circuits an up-to-date output.
 
 ## App version bump (marketing semver)
 

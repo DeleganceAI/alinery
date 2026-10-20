@@ -12,6 +12,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import { installAlineryProvider, modelSources, resolveModelId } from "./provider.ts";
 
+// Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
 const PROTOCOL = 17;
 const context = BACKGROUND_CONTEXT;
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -58,9 +59,9 @@ function flag(name: string): string {
 const repo = flag("--repo");
 const appConfig = flag("--app-config");
 const namespace = flag("--socket-namespace");
-const buildId = flag("--build-id") || "alinery-pi-daemon";
+const buildId = flag("--build-id") || "alinery-vinculum-daemon";
 if (!repo || !appConfig) {
-  console.error("alinery-pi-daemon: missing --repo or --app-config");
+  console.error("alinery-vinculum-daemon: missing --repo or --app-config");
   process.exit(2);
 }
 

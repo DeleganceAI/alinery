@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Fetch Bun at or above scripts/bun-pin.txt, install the exact Pi Durable 1.3.0
-# packages, and compile alinery-pi-daemon beside the app executable for one cargo
+# Fetch Bun at or above scripts/bun-pin.txt, install the pinned pi-durable 1.3.0
+# packages, and compile alinery-vinculum-daemon beside the app executable for one cargo
 # profile. `npm run tauri dev` and `npm run tauri build` run this with
 # --no-download; run it bare to allow the Bun download.
 # Never a sidecar. Never invoked from scripts/check.sh.
@@ -8,7 +8,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PIN_FILE="$ROOT/scripts/bun-pin.txt"
 PIN="$(tr -d '[:space:]' < "$PIN_FILE")"
-PKG="$ROOT/alinery-app/src-tauri/pi-daemon"
+PKG="$ROOT/alinery-app/src-tauri/vinculum-daemon"
 TARGET="$(cargo metadata --format-version 1 --no-deps --manifest-path "$ROOT/alinery-app/src-tauri/Cargo.toml" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).target_directory')"
 INSTALL="${TMPDIR:-/tmp}/alinery-bun-$PIN"
 
@@ -25,7 +25,7 @@ for arg in "$@"; do
     *) echo "unknown option: $arg (want --check, --release, --force, --no-download)" >&2; exit 2 ;;
   esac
 done
-DEST="$TARGET/$PROFILE/alinery-pi-daemon"
+DEST="$TARGET/$PROFILE/alinery-vinculum-daemon"
 
 version_ok() {
   local got="$1" need="$2"
@@ -52,7 +52,7 @@ if [ "$FORCE" = 0 ] && [ -f "$DEST" ]; then
     fi
   done
   if [ "$stale" = 0 ]; then
-    echo "alinery-pi-daemon: $DEST (up to date)"
+    echo "alinery-vinculum-daemon: $DEST (up to date)"
     exit 0
   fi
 fi
@@ -66,7 +66,7 @@ if [ -z "$BUN" ] && command -v bun >/dev/null 2>&1 && version_ok "$(bun --versio
 fi
 if [ -z "$BUN" ]; then
   if [ "$DOWNLOAD" = 0 ]; then
-    echo "alinery-pi-daemon: skipped (Bun $PIN is not installed; run scripts/dev-fetch-bun.sh to fetch it)"
+    echo "alinery-vinculum-daemon: skipped (Bun $PIN is not installed; run scripts/dev-fetch-bun.sh to fetch it)"
     exit 0
   fi
   mkdir -p "$INSTALL"
@@ -87,7 +87,7 @@ subprocess.run(["$DEST", "--protocol-version"], check=True, stdout=subprocess.DE
 print(f"{time.perf_counter()-t:.3f}")
 PY
 )"
-echo "alinery-pi-daemon: $DEST"
+echo "alinery-vinculum-daemon: $DEST"
 echo "size_bytes: $BYTES"
 echo "cold_start_seconds: $START"
 echo "compiler: $GOT"

@@ -1,7 +1,8 @@
 //! Vinculum process supervision.
 //!
-//! The UI socket is `alinery-pi-daemon`. `alinery-playbook` is the helper beside it.
-//! Nothing in this module starts release `alineryd`.
+//! The binary beside the app is `alinery-vinculum-daemon`. The UI socket stays
+//! `alineryd.sock`, which is the path the app already opens. `alinery-playbook`
+//! is still the helper beside it. Nothing in this module starts release `alineryd`.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
@@ -126,7 +127,7 @@ fn start_helper(repo: &Path, app_config: &Path) -> Result<(), String> {
 }
 
 fn start_pi_daemon(repo: &Path, app_config: &Path) -> Result<(), String> {
-    let binary = resolve_alongside("alinery-pi-daemon").ok_or("alinery-pi-daemon binary not found beside the app")?;
+    let binary = resolve_alongside("alinery-vinculum-daemon").ok_or("alinery-vinculum-daemon binary not found beside the app")?;
     let library = ownership_library().ok_or("ownership library not found beside the app")?;
     let library = library.to_string_lossy().into_owned();
     let mut env = vec![("ALINERY_PI_LAUNCH_TOKEN", PI_LAUNCH_TOKEN.clone()), ("ALINERY_OWNERSHIP_LIB", library)];

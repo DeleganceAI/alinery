@@ -4,7 +4,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PIN="$ROOT/scripts/bun-pin.txt"
 SCRIPT="$ROOT/scripts/dev-fetch-bun.sh"
-PKG="$ROOT/alinery-app/src-tauri/pi-daemon/package.json"
+PKG="$ROOT/alinery-app/src-tauri/vinculum-daemon/package.json"
 CHECK="$ROOT/scripts/check.sh"
 fails=0
 

@@ -1,7 +1,7 @@
 /**
  * The harness boundary.
  *
- * A Harness is whatever runs an agent for one execution: Pi Durable, OMP, or a
+ * A Harness is whatever runs an agent for one execution: Vinculum, OMP, or a
  * fake used in tests. The engine never touches processes, PTYs or sockets. It
  * calls the five methods below and reads back a deliberately small status
  * vocabulary.
