@@ -3,6 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { parse } from "smol-toml";
 import { Engine } from "playbook-engine/src/engine.ts";
 import type { CompletionReply, Harness, Launch, SessionStatus } from "playbook-engine/src/harness.ts";
 import { parsePlaybookMd } from "playbook-engine/src/playbook-md.ts";
@@ -23,6 +24,9 @@ type Running = { slug: string; engine: Engine };
 const running = new Map<string, Running>();
 const bound = new Map<string, { slug: string; execId: string }>();
 const rejected = new Set<string>();
+const held = new Set<string>();
+let hooks: SessionHooks | null = null;
+let repoRoot = "";
 
 function playbookView(execution: Execution): PlaybookView {
   if (execution.status === "done") return { state: "completed" };
@@ -116,17 +120,26 @@ function openTask(repo: string, slug: string, hooks: SessionHooks) {
     console.error(`vinculum: ${slug} playbook: ${parsed.diagnostics.map((d) => d.message).join("; ")}`);
     return;
   }
+  let cwd = repo;
+  let taskName = parsed.playbook.title;
+  try {
+    const task = parse(readFileSync(join(taskDir, "task.md"), "utf8")) as { name?: string; worktree?: string; has_worktree?: boolean };
+    if (typeof task.name === "string" && task.name) taskName = task.name;
+    if (task.has_worktree !== false && task.worktree && existsSync(task.worktree)) cwd = task.worktree;
+  } catch {
+    /* task.md is optional until create finishes */
+  }
   const engine = Engine.open({
     playbook: parsed.playbook,
     harness: harnessFor(slug, hooks),
     logPath: join(taskDir, "engine.jsonl"),
     artifactsDir: join(taskDir, "artifacts"),
-    cwd: repo,
+    cwd,
     tokens: {
       TICKET_FILE: ticketPath(taskDir) ?? "",
       TASK_SLUG: slug,
-      TASK_NAME: parsed.playbook.title,
-      WORKTREE: repo,
+      TASK_NAME: taskName,
+      WORKTREE: cwd,
     },
   });
   const ticket = ticketPath(taskDir);
@@ -144,14 +157,34 @@ function discover(repo: string, hooks: SessionHooks) {
   }
 }
 
-export function startGraphs(repo: string, hooks: SessionHooks) {
+export function holdTask(slug: string) {
+  held.add(slug);
+}
+
+export function engineExecutions(slug: string): Execution[] {
+  return [...(running.get(slug)?.engine.state.executions.values() ?? [])];
+}
+
+export async function runTask(slug: string) {
+  if (!hooks) return;
+  held.delete(slug);
+  openTask(repoRoot, slug, hooks);
+  const task = running.get(slug);
+  if (task) await task.engine.tick();
+}
+
+export function startGraphs(repo: string, sessionHooks: SessionHooks) {
+  hooks = sessionHooks;
+  repoRoot = repo;
   let ticking = false;
   const tick = async () => {
     if (ticking) return;
     ticking = true;
     try {
-      discover(repo, hooks);
-      for (const task of running.values()) await task.engine.tick();
+      discover(repo, sessionHooks);
+      for (const task of running.values()) {
+        if (!held.has(task.slug)) await task.engine.tick();
+      }
     } catch (error) {
       console.error(`vinculum playbook tick: ${error}`);
     } finally {

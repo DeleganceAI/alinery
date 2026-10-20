@@ -11,6 +11,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import { completeSession, engineAxis, enginePlaybook, permitSession, startGraphs } from "./graph.ts";
+import { getTaskExecution, taskOp } from "./tasks.ts";
 import { installAlineryProvider, modelSources, resolveModelId } from "./provider.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
@@ -518,7 +519,7 @@ function executionOwnership(reply: Record<string, unknown>): { owning_lane: stri
 
 async function taskOpenAllowed(taskSlug: string): Promise<{ ok: true } | { ok: false; reply: Record<string, unknown> }> {
   if (!taskSlug) return { ok: true };
-  const reply = await helper({ op: "get_task_execution", request: { task_slug: taskSlug } });
+  const reply = getTaskExecution(repo, taskSlug, lane, identity);
   const ownership = executionOwnership(reply);
   if (!ownership || ownership.owning_lane !== lane || ownership.owning_app_config_identity !== identity) {
     return { ok: false, reply };
@@ -826,8 +827,11 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
     return;
   }
   if (["get_task_execution", "create_execution_session", "start_session", "create_task", "create_subtask"].includes(op)) {
-    const forwarded = await helper(header, body ?? undefined);
-    reply(socket, forwarded);
+    try {
+      reply(socket, (await taskOp(repo, lane, identity, op, header, body, (id, taskSlug, model, prompt) => openSession(id, taskSlug, model, prompt).then(() => undefined))) ?? { error: "unhandled" });
+    } catch (error) {
+      reply(socket, { error: String(error) });
+    }
     return;
   }
   reply(socket, { error: "unknown-op" });
