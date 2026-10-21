@@ -85,10 +85,20 @@ export function Kanban({
     boardRef.current?.querySelector(".card.sel")?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   }, [selectedTaskKey]);
 
-  const load = () =>
-    (async () => {
+  const load = useRef<() => void>(() => {});
+  useEffect(() => {
+    let alive = true;
+    let inFlight = false;
+    let refreshPending = false;
+    const fetchBoard = async (refresh = false) => {
+      if (inFlight) {
+        refreshPending ||= refresh;
+        return;
+      }
+      inFlight = true;
       try {
         const [baseColumns, allTasks] = await Promise.all([ipc.listKanbanColumns(allRepos), ipc.listBoardTasks(allRepos)]);
+        if (!alive) return;
         const tasks = allTasks.filter((task) => showArchived || !task.archived);
         setTaskTotal(allTasks.length);
         const cols = [...baseColumns];
@@ -105,16 +115,26 @@ export function Kanban({
         setSelectedTaskKey((prev) => (prev && tasks.some((task) => taskKey(task) === prev) ? prev : tasks[0] ? taskKey(tasks[0]) : ""));
         setErr(null);
       } catch (e) {
-        setErr({ msg: "Couldn't load the board.", detail: String(e) });
+        if (alive) setErr({ msg: "Couldn't load the board.", detail: String(e) });
       } finally {
-        setLoaded(true);
+        inFlight = false;
+        if (alive) {
+          setLoaded(true);
+          if (refreshPending) {
+            refreshPending = false;
+            void fetchBoard();
+          }
+        }
       }
-    })();
-
-  useEffect(() => {
-    load();
-    const timer = window.setInterval(load, 3000);
-    return () => window.clearInterval(timer);
+    };
+    load.current = () => void fetchBoard(true);
+    void fetchBoard();
+    const timer = window.setInterval(() => void fetchBoard(), 3000);
+    return () => {
+      alive = false;
+      load.current = () => {};
+      window.clearInterval(timer);
+    };
   }, [allRepos, showArchived]);
 
   useEffect(() => {
@@ -131,7 +151,7 @@ export function Kanban({
       setErr(failure);
       return;
     }
-    void load();
+    load.current();
   };
 
   const cardsIn = (columnIndex: number) => (byColumn[columns[columnIndex]?.key] ?? []).filter((task) => showChildren || !task.parent_task);

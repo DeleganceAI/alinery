@@ -1455,8 +1455,10 @@ pub(crate) async fn stop_daemon(app: AppHandle, path: Option<String>) -> Result<
 
 /// Live sessions on this app's lane, for explicit close/stop warnings. Not ownership proof.
 #[tauri::command]
-pub(crate) fn repo_live_sessions(path: String) -> u32 {
-    connect_current_daemon(Path::new(path.trim())).map(|client| client.live_session_count()).unwrap_or(0)
+pub(crate) async fn repo_live_sessions(path: String) -> Result<u32, String> {
+    tauri::async_runtime::spawn_blocking(move || connect_current_daemon(Path::new(path.trim()))?.live_session_count())
+        .await
+        .map_err(|error| format!("count repository sessions: {error}"))?
 }
 
 // DELIBERATE TEARDOWN ORIGIN (B4). Stop one repo's daemon and sessions without deciding

@@ -923,15 +923,13 @@ impl DaemonClient {
         self.version_checked().unwrap_or_default()
     }
 
-    pub fn live_session_count(&self) -> u32 {
-        self.session_statuses_observed()
-            .map(|sessions| {
-                sessions
-                    .iter()
-                    .filter(|session| matches!(session.state.process, ProcessState::Starting | ProcessState::Alive))
-                    .count() as u32
-            })
-            .unwrap_or(0)
+    pub fn live_session_count(&self) -> Result<u32, String> {
+        self.session_statuses_observed().map(|sessions| {
+            sessions
+                .iter()
+                .filter(|session| matches!(session.state.process, ProcessState::Starting | ProcessState::Alive))
+                .count() as u32
+        })
     }
 
     pub fn detach_session(&self, id: &str, attach_id: u64) -> Result<(), String> {

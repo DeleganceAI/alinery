@@ -997,9 +997,10 @@ pub(crate) fn retained_task_definition(repo: &Path, task: &Task) -> Result<Optio
         return Ok(None);
     }
     // Display uses the task-owned snapshot, never a live owner or the mutable library.
-    // The shared reader checks both the stored state and the retained source's integrity.
-    saved_task_execution_for(repo, &task.slug)
-        .map(|execution| Some(execution.definition))
+    // Validate the saved state and definition without projecting every execution's continuation.
+    alinery_core::execution::read_execution_state(repo, &task.slug)
+        .and_then(|state| alinery_core::execution::read_task_playbook(repo, &task.slug, &state))
+        .map(Some)
         .map_err(|error| format!("task {}: {error}", task_dir(repo, &task.slug).display()))
 }
 
@@ -1114,13 +1115,17 @@ pub(crate) async fn list_board_tasks(app: AppHandle, all_repos: bool) -> Result<
     } else {
         vec![active_repo()?.to_string_lossy().to_string()]
     };
-    let mut out = vec![];
-    for repo_path in dedupe_known_repos(repos) {
-        let repo = PathBuf::from(&repo_path);
-        out.extend(board_tasks_from_loaded(&repo, &repo_path, list_tasks_for_repo(&repo)?)?);
-    }
-    out.sort_by_key(|task| task.task.created);
-    Ok(out)
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut out = vec![];
+        for repo_path in dedupe_known_repos(repos) {
+            let repo = PathBuf::from(&repo_path);
+            out.extend(board_tasks_from_loaded(&repo, &repo_path, list_tasks_for_repo(&repo)?)?);
+        }
+        out.sort_by_key(|task| task.task.created);
+        Ok(out)
+    })
+    .await
+    .map_err(|error| format!("load board tasks: {error}"))?
 }
 
 #[tauri::command]

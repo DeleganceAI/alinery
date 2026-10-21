@@ -201,6 +201,24 @@ fn recording_lane_with_response(socket_path: PathBuf, response: impl Fn(&str) ->
 }
 
 #[test]
+fn repository_live_count_reports_unavailable_instead_of_zero() {
+    let repo = activity_repo("live-count-error");
+    let socket = current_alineryd_socket_path(&repo);
+    let (_, server) = recording_lane_with_response(socket.clone(), |op| {
+        if op == "shutdown" {
+            serde_json::json!({"ok": true}).to_string()
+        } else {
+            serde_json::json!({"error": "session observation unavailable"}).to_string()
+        }
+    });
+    let result = tauri::async_runtime::block_on(crate::repo_live_sessions(repo.display().to_string()));
+    DaemonClient::connect_path_checked(socket).unwrap().call(&crate::daemon_client::shutdown_request()).unwrap();
+    server.join().unwrap();
+    fs::remove_dir_all(repo).unwrap();
+    assert!(result.is_err(), "failed observation must not report zero live sessions");
+}
+
+#[test]
 fn app_lifecycle_targets_the_namespaced_lane_not_production() {
     let repo = activity_repo("app-lifecycle-lane");
     let production_path = alinery_core::alineryd_socket_path(&repo, None);
@@ -210,7 +228,7 @@ fn app_lifecycle_targets_the_namespaced_lane_not_production() {
     let (production_requests, production) = recording_lane(production_path.clone(), 7);
     let (current_requests, current) = recording_lane(current_path.clone(), 2);
 
-    let live_sessions = crate::repo_live_sessions(repo.display().to_string());
+    let live_sessions = tauri::async_runtime::block_on(crate::repo_live_sessions(repo.display().to_string())).unwrap();
     let version = crate::connect_current_daemon(&repo).expect("poller probe must connect to the current lane").version();
     assert_eq!(version.protocol, Some(PROTOCOL_VERSION));
     let state = AppState::default();
