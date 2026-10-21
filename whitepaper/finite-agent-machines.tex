@@ -557,12 +557,58 @@ relies on the agent following its instructions.
 
 \subsection{Artifact Identity and Causal Dependencies}
 
-Repeated work requires the engine to distinguish an artifact's logical role
-from a particular publication of that role. A logical role such as
-\texttt{review.md} identifies a kind of output in the Playbook; an
-\emph{artifact occurrence} records one execution's accepted publication,
-including its concrete path and producer. Two publications remain distinct
-even if they have the same logical role and identical contents. Alinery
+A Playbook names the artifacts each step requires as inputs and may produce
+as outputs. Those names connect the steps: an output of one step
+can be an input to another. Figure~\ref{fig:playbook-read-step}
+shows the input and output fields of the reading step from the complete
+Playbook in Appendix~\ref{app:alinery}. The input pattern
+\texttt{source-request-*.md} names a collection of source requests, and
+\texttt{mode = "each"} asks the engine to create a separate reading execution,
+with its own agent session, for each request. If the discovery agent publishes
+500 source-request artifacts, the engine schedules 500 reading executions,
+each carried out in a separate agent session. The Playbook author does not
+specify that number in advance; the number of requests the discovery agent
+produces determines how many reading sessions are needed. A limit on live
+sessions controls how many run concurrently, with the remainder queued.
+Each reading agent may produce an assessment named \texttt{assessment.md}.
+
+\begin{figure}[t]
+\begin{lstlisting}[
+  basicstyle=\fontencoding{T1}\ttfamily\fontsize{8}{10}\selectfont,
+  backgroundcolor=\color{codebg},
+  keywordstyle=\color{codeink}\bfseries,
+  morekeywords={key,title,inputs,outputs,path,mode},
+  morestring={[b]"},
+  stringstyle=\color{teal!55!black},
+  frame=single,rulecolor=\color{black!15},
+  framerule=0.3pt,framesep=7pt,
+  xleftmargin=8pt,xrightmargin=8pt,
+  aboveskip=6pt,belowskip=6pt,
+  columns=fullflexible,keepspaces=true]
+[[step]]
+key   = "read"
+title = "Read"
+
+inputs = [
+  { path = "source-request-*.md",
+    mode = "each" }
+]
+outputs = [
+  { path = "assessment.md" }
+]
+\end{lstlisting}
+\caption{Excerpt from a Playbook showing the reading step's named inputs
+and outputs. Other fields and instructions are omitted.}
+\label{fig:playbook-read-step}
+\end{figure}
+
+If three sources are read, the engine must distinguish the three resulting
+assessments even though the Playbook gives them the same output name.
+The name \texttt{assessment.md} specifies a \emph{logical role}: the kind of
+artifact a step produces or requires. An \emph{artifact occurrence}
+identifies one accepted publication of that output and records its file path
+and the execution that produced it. Two occurrences remain distinct even
+when they have the same logical role and identical contents. Alinery
 assigns separate physical paths to occurrences, while generated depth
 numbers and collision suffixes help people navigate the files. Scheduling
 uses the recorded occurrences and relationships, independently of those
@@ -594,9 +640,10 @@ artifact occurrences.
 
 \subsection{Publication, Acceptance, and Process Shutdown}
 
-An artifact file can exist before the engine permits another execution to
-consume it. Agents write ordinary files at their assigned paths and then
-request completion. The engine checks the requesting execution's ownership
+An agent hands off its results by writing artifacts to its assigned file
+paths and requesting completion. The engine accepts those artifacts before
+making them available to subsequent steps; writing the files alone does not
+complete the handoff. To accept the results, the engine checks the requesting execution's ownership
 and permission, inspects the assigned outputs, and requires at least one
 valid assigned artifact overall. Artifact validation checks for nonempty
 regular files at permitted assigned paths; it does not evaluate the claims
