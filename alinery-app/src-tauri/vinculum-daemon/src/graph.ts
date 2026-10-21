@@ -27,6 +27,10 @@ const rejected = new Set<string>();
 const held = new Set<string>();
 let hooks: SessionHooks | null = null;
 let repoRoot = "";
+let markReady: () => void = () => {};
+const engineReady = new Promise<void>((resolve) => {
+  markReady = resolve;
+});
 
 function playbookView(execution: Execution): PlaybookView {
   if (execution.status === "done") return { state: "completed" };
@@ -114,6 +118,12 @@ function openTask(repo: string, slug: string, hooks: SessionHooks) {
   const taskDir = join(repo, ".alinery", "tasks", slug);
   const sourcePath = join(taskDir, "playbook.md");
   if (!existsSync(sourcePath)) return;
+  try {
+    const execution = JSON.parse(readFileSync(join(taskDir, "execution.json"), "utf8")) as { creation?: string };
+    if (execution.creation !== "ready") return;
+  } catch {
+    return;
+  }
   const parsed = parsePlaybookMd(readFileSync(sourcePath, "utf8"));
   if (!parsed.playbook) {
     rejected.add(slug);
@@ -144,6 +154,9 @@ function openTask(repo: string, slug: string, hooks: SessionHooks) {
   });
   const ticket = ticketPath(taskDir);
   if (ticket && engine.state.seeds.length === 0) engine.seed([{ role: "ticket.md", path: ticket }]);
+  for (const execution of engine.state.executions.values()) {
+    if (execution.sessionId) bound.set(execution.sessionId, { slug, execId: execution.id });
+  }
   running.set(slug, { slug, engine });
 }
 
@@ -166,6 +179,7 @@ export function engineExecutions(slug: string): Execution[] {
 }
 
 export async function runTask(slug: string) {
+  await engineReady;
   if (!hooks) return;
   held.delete(slug);
   openTask(repoRoot, slug, hooks);
@@ -176,6 +190,7 @@ export async function runTask(slug: string) {
 export function startGraphs(repo: string, sessionHooks: SessionHooks) {
   hooks = sessionHooks;
   repoRoot = repo;
+  markReady();
   let ticking = false;
   const tick = async () => {
     if (ticking) return;

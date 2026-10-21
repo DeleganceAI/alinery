@@ -1,4 +1,4 @@
-import { createConnection, createServer, type Socket } from "node:net";
+import { createServer, type Socket } from "node:net";
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, unlinkSync, existsSync, statSync, realpathSync, readlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { dlopen, FFIType, ptr, CString } from "bun:ffi";
@@ -11,11 +11,12 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import { completeSession, engineAxis, enginePlaybook, permitSession, startGraphs } from "./graph.ts";
-import { getTaskExecution, taskOp } from "./tasks.ts";
+import { getTaskExecution, ownershipLibrary, taskOp } from "./tasks.ts";
+import { attachShell, detachPty, hasPty, isPty, killPty, resizePty, startShell, writePty } from "./terminal.ts";
 import { installAlineryProvider, modelSources, resolveModelId } from "./provider.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 17;
+const PROTOCOL = 18;
 const context = BACKGROUND_CONTEXT;
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
   kind: "alinery.attention",
@@ -72,15 +73,14 @@ const sources = modelSources(appConfig);
 console.error(`hosted catalog ready=${sources.hosted}`);
 console.error(`XAI_API_KEY set=${sources.grok}`);
 if (!sources.hosted && !sources.grok) {
-  console.error("neither hosted inference nor XAI_API_KEY is usable");
-  process.exit(1);
+  console.error("neither hosted inference nor XAI_API_KEY is usable; terminals and task records still run");
 }
 
 const lane = namespace;
 const identity = appConfigIdentity(appConfig);
 acquireOwnership(repo, lane, identity);
+startKeepAwake(ownershipLibrary());
 const uiSocket = join(repo, ".alinery", `${namespace ? `alineryd-${namespace}` : "alineryd"}.sock`);
-const helperSocket = join(repo, ".alinery", `${namespace ? `alinery-playbook-${namespace}` : "alinery-playbook"}.sock`);
 try {
   unlinkSync(uiSocket);
 } catch {
@@ -90,12 +90,11 @@ mkdirSync(dirname(uiSocket), { recursive: true });
 
 const models = createModels();
 installAlineryProvider(models, appConfig);
+const fileWrite = createWriteTool();
+const PHASE_WRITE = "xd://alinery_phase_complete";
 const registry = createRegistry();
 registry.install(codingExtension());
 registry.install(phaseExtension());
-
-const fileWrite = createWriteTool();
-const PHASE_WRITE = "xd://alinery_phase_complete";
 
 function codingExtension() {
   return defineExtension({
@@ -158,9 +157,24 @@ function appConfigIdentity(path: string): string {
   return hash.toString(16).padStart(16, "0");
 }
 
+let releaseKeepAwake = () => undefined as void;
+
+function startKeepAwake(library: string) {
+  const lib = dlopen(library, {
+    alinery_keep_awake_start: { args: [FFIType.cstring], returns: FFIType.void },
+    alinery_keep_awake_sessions: { args: [FFIType.u32], returns: FFIType.void },
+    alinery_keep_awake_release: { args: [], returns: FFIType.void },
+  });
+  lib.symbols.alinery_keep_awake_start(ptr(Buffer.from(`${appConfig}\0`)));
+  setInterval(() => {
+    const count = [...live.values()].filter((row) => row.process !== "exited").length;
+    lib.symbols.alinery_keep_awake_sessions(count);
+  }, 1000);
+  releaseKeepAwake = () => lib.symbols.alinery_keep_awake_release();
+}
+
 function acquireOwnership(repoPath: string, laneName: string, configIdentity: string) {
-  const library = process.env.ALINERY_OWNERSHIP_LIB;
-  if (!library) throw new Error("ALINERY_OWNERSHIP_LIB is not set");
+  const library = ownershipLibrary();
   const lib = dlopen(library, {
     alinery_pi_acquire: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.i32 },
     alinery_pi_acquire_error: { args: [], returns: FFIType.cstring },
@@ -194,6 +208,30 @@ function writeMeta(taskSlug: string, id: string, patch: Record<string, unknown>)
   mkdirSync(dirname(path), { recursive: true });
   const current = readMeta(taskSlug, id);
   writeFileSync(path, JSON.stringify({ ...current, ...patch, id }));
+}
+
+function startRecordedShell(id: string, taskSlug: string) {
+  if (hasPty(id)) return;
+  const cwd = String(readMeta(taskSlug, id).worktree || repo);
+  startShell(id, cwd, metaPath(taskSlug, id).replace(/\.meta\.json$/, ".scrollback"), 80, 24, () => {
+    const row = live.get(id);
+    if (row) row.process = "exited";
+    writeMeta(taskSlug, id, { ended_at: Math.floor(Date.now() / 1000) });
+  });
+  if (!live.has(id)) {
+    live.set(id, {
+      id,
+      taskSlug,
+      process: "alive",
+      agent: { state: "idle" },
+      playbook: { state: "in_progress" },
+      harness: null,
+      conversationId: "",
+      liveRun: false,
+      seenNonce: "",
+      executionId: "",
+    });
+  }
 }
 
 function sessionState(row: Live) {
@@ -437,74 +475,18 @@ async function requestPhase(conversationId: string) {
   const row = rowForConversation(conversationId);
   if (!row) return { output: [{ type: "text" as const, text: "No session is open for this completion." }], isError: true };
   if (!row.taskSlug) return { output: [{ type: "text" as const, text: phaseResultText({ forwarded: false }) }] };
-  const meta = readMeta(row.taskSlug, row.id);
   const nonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   const local = await completeSession(row.id);
-  if (local) {
-    applyPhaseReply(row, local);
-    row.seenNonce = nonce;
-    return { output: [{ type: "text" as const, text: phaseResultText(local) }], isError: local.outcome !== "accepted" };
-  }
-  const reply = await helper({
-    op: "phase_request",
-    task_slug: row.taskSlug,
-    session_id: row.id,
-    phase: String(meta.phase ?? ""),
-    execution_id: String(meta.execution_id ?? ""),
-    nonce,
-  });
-  applyPhaseReply(row, reply);
+  if (!local) return { output: [{ type: "text" as const, text: phaseResultText({ forwarded: false }) }], isError: true };
+  applyPhaseReply(row, local);
   row.seenNonce = nonce;
-  return { output: [{ type: "text" as const, text: phaseResultText(reply) }], isError: reply.outcome !== "accepted" };
+  return { output: [{ type: "text" as const, text: phaseResultText(local) }], isError: local.outcome !== "accepted" };
 }
 
 async function forwardPhase(row: Live, value: { phase: string; executionId: string; nonce: string }) {
+  void value;
   const local = await completeSession(row.id);
-  if (local) {
-    applyPhaseReply(row, local);
-    return;
-  }
-  const reply = await helper({ op: "phase_request", task_slug: row.taskSlug, session_id: row.id, phase: value.phase, execution_id: value.executionId, nonce: value.nonce });
-  applyPhaseReply(row, reply);
-}
-
-function helper(request: unknown, body?: Buffer): Promise<Record<string, unknown>> {
-  return new Promise((resolve) => {
-    const socket = createConnection(helperSocket);
-    const chunks: Buffer[] = [];
-    let settled = false;
-    const finish = (value: Record<string, unknown>) => {
-      if (settled) return;
-      settled = true;
-      socket.end();
-      resolve(value);
-    };
-    // One reply is one JSON line. split("\n")[0] is the whole buffer until that byte arrives, so a split read parsed a prefix, closed the socket, and reported bad-helper-reply after create_task had already committed.
-    const takeLine = () => {
-      const buffered = Buffer.concat(chunks);
-      const newline = buffered.indexOf(0x0a);
-      if (newline < 0) return;
-      try {
-        const parsed: unknown = JSON.parse(buffered.subarray(0, newline).toString("utf8"));
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) finish({ error: "bad-helper-reply" });
-        else finish(parsed as Record<string, unknown>);
-      } catch {
-        finish({ error: "bad-helper-reply" });
-      }
-    };
-    socket.on("data", (chunk) => {
-      chunks.push(Buffer.from(chunk));
-      takeLine();
-    });
-    socket.on("error", (error) => finish({ error: String(error) }));
-    socket.on("end", () => {
-      if (!settled) finish({ error: "bad-helper-reply" });
-    });
-    socket.on("connect", () => {
-      socket.write(`${JSON.stringify(request)}\n`);
-      if (body) socket.write(body);
-    });
-  });
+  if (local) applyPhaseReply(row, local);
 }
 
 function executionOwnership(reply: Record<string, unknown>): { owning_lane: string; owning_app_config_identity: string } | null {
@@ -623,15 +605,11 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
     return;
   }
   if (op === "list") {
-    const axis = await helper({ op: "playbook_axis" });
     const byId = new Map<string, { state: string; reason?: string }>();
     for (const row of engineAxis()) byId.set(row.id, row.playbook);
-    for (const row of (axis.sessions as Array<{ id: string; playbook: { state: string; reason?: string } }> | undefined) ?? []) {
-      if (!byId.has(row.id)) byId.set(row.id, row.playbook);
-    }
     const sessions = [...live.values()]
       .filter((row) => row.id !== "__omp-setup__")
-      .map((row) => ({ id: row.id, ...sessionState({ ...row, playbook: byId.get(row.id) ?? row.playbook }), transport: "rpc" }));
+      .map((row) => ({ id: row.id, ...sessionState({ ...row, playbook: byId.get(row.id) ?? row.playbook }), transport: isPty(row.id) ? "pty" : "rpc" }));
     reply(socket, { sessions });
     return;
   }
@@ -642,14 +620,14 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
       return;
     }
     const fromEngine = enginePlaybook(row.id);
-    const axis = fromEngine ? undefined : await helper({ op: "playbook_axis" });
-    const match = fromEngine ?? ((axis?.sessions as Array<{ id: string; playbook: { state: string; reason?: string } }> | undefined) ?? []).find((item) => item.id === row.id)?.playbook;
-    reply(socket, { ...sessionState({ ...row, playbook: match ?? row.playbook }), transport: "rpc" });
+    reply(socket, { ...sessionState({ ...row, playbook: fromEngine ?? row.playbook }), transport: isPty(row.id) ? "pty" : "rpc" });
     return;
   }
   if (op === "shutdown") {
+    releaseKeepAwake();
     const now = Math.floor(Date.now() / 1000);
     for (const row of live.values()) {
+      if (isPty(row.id)) killPty(row.id);
       writeMeta(row.taskSlug, row.id, { ended_at: now, exit_code: 0 });
       row.process = "exited";
     }
@@ -667,6 +645,51 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
   }
   if (op === "spawn" || op === "attach" || op === "resume") {
     const id = String(header.id ?? "");
+    const taskSlug = String(header.task_slug ?? "");
+    if (isPty(id) || String(readMeta(taskSlug, id).harness ?? "") === "no-harness") {
+      const cols = Number(header.cols ?? 0);
+      const rows = Number(header.rows ?? 0);
+      const attachId = Number(header.attach_id ?? 0);
+      if (!hasPty(id)) {
+        if (op === "attach") {
+          reply(socket, { error: "unknown-session" });
+          return;
+        }
+        const owned = await taskOpenAllowed(taskSlug);
+        if (!owned.ok) {
+          reply(socket, ownershipRefusal(owned.reply));
+          return;
+        }
+        const cwd = String(header.cwd ?? repo);
+        startShell(id, cwd || repo, metaPath(taskSlug, id).replace(/\.meta\.json$/, ".scrollback"), cols, rows, () => {
+          const row = live.get(id);
+          if (row) row.process = "exited";
+          writeMeta(taskSlug, id, { ended_at: Math.floor(Date.now() / 1000) });
+        });
+        if (!live.has(id)) {
+          live.set(id, {
+            id,
+            taskSlug,
+            process: "alive",
+            agent: { state: "idle" },
+            playbook: { state: "in_progress" },
+            harness: null,
+            conversationId: "",
+            liveRun: false,
+            seenNonce: "",
+            executionId: "",
+          });
+        }
+      }
+      const row = live.get(id);
+      if (row && row.process !== "exited") row.process = "alive";
+      if (!attachShell(id, socket, attachId, cols, rows)) {
+        reply(socket, { error: "unknown-session" });
+        return;
+      }
+      kept.add(socket);
+      return;
+    }
     if (op !== "attach" && id && !live.has(id)) {
       const taskSlug = String(header.task_slug ?? "");
       const owned = await taskOpenAllowed(taskSlug);
@@ -684,8 +707,10 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
     return;
   }
   if (op === "detach" || op === "kill") {
+    const id = String(header.id ?? "");
+    if (op === "detach") detachPty(id, Number(header.attach_id ?? 0));
     if (op === "kill") {
-      const id = String(header.id ?? "");
+      if (isPty(id)) killPty(id);
       const row = live.get(id);
       if (row) {
         const harness = row.harness;
@@ -702,30 +727,20 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
     return;
   }
   if (op === "write" || op === "resize" || op === "send_message") {
+    const id = String(header.id ?? "");
+    if (op === "write" && writePty(id, String(header.data ?? ""))) {
+      reply(socket, { ok: true });
+      return;
+    }
+    if (op === "resize" && resizePty(id, Number(header.cols ?? 0), Number(header.rows ?? 0))) {
+      reply(socket, { ok: true });
+      return;
+    }
     reply(socket, { error: "unsupported" });
     return;
   }
   if (op === "event") {
     reply(socket, { error: "event-rejected" });
-    return;
-  }
-  if (op === "pi_open") {
-    if (header.token !== process.env.ALINERY_PI_LAUNCH_TOKEN) {
-      reply(socket, { error: "bad-launch-token" });
-      return;
-    }
-    const taskSlug = String(header.task_slug ?? "");
-    const owned = await taskOpenAllowed(taskSlug);
-    if (!owned.ok) {
-      reply(socket, ownershipRefusal(owned.reply));
-      return;
-    }
-    try {
-      await openSession(String(header.id ?? ""), taskSlug, String(header.model ?? ""), typeof header.prompt === "string" ? header.prompt : "");
-      reply(socket, { ok: true });
-    } catch (error) {
-      reply(socket, { error: String(error) });
-    }
     return;
   }
   if (op === "transcript" || op === "prompt" || op === "abort") {
@@ -823,12 +838,18 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
       reply(socket, { ok: true }, true);
       return;
     }
-    reply(socket, await helper(header, body ?? undefined), true);
+    reply(socket, { error: "session has no engine execution to permit" });
     return;
   }
   if (["get_task_execution", "create_execution_session", "start_session", "create_task", "create_subtask"].includes(op)) {
     try {
-      reply(socket, (await taskOp(repo, lane, identity, op, header, body, (id, taskSlug, model, prompt) => openSession(id, taskSlug, model, prompt).then(() => undefined))) ?? { error: "unhandled" });
+      reply(socket, (await taskOp(repo, lane, identity, op, header, body, (id, taskSlug, model, prompt) => {
+        if (String(readMeta(taskSlug, id).harness ?? "") === "no-harness") {
+          startRecordedShell(id, taskSlug);
+          return Promise.resolve();
+        }
+        return openSession(id, taskSlug, model, prompt).then(() => undefined);
+      })) ?? { error: "unhandled" });
     } catch (error) {
       reply(socket, { error: String(error) });
     }
@@ -870,7 +891,8 @@ const server = createServer((socket) => {
   });
 });
 
-function resumeInterrupted() {
+async function resumeInterrupted() {
+  const pending: Promise<unknown>[] = [];
   const roots = [join(repo, ".alinery", "sessions"), join(repo, ".alinery", "tasks")];
   for (const root of roots) {
     if (!existsSync(root)) continue;
@@ -885,25 +907,29 @@ function resumeInterrupted() {
         const id = name.slice(0, -".pi.sqlite".length);
         const meta = readMeta(taskSlug, id);
         if (meta.started_at && !meta.ended_at) {
-          void taskOpenAllowed(taskSlug).then((owned) => {
-            if (!owned.ok) {
-              console.error(`resume skipped ${id}: ownership`);
-              return;
-            }
-            return openSession(id, taskSlug, String(meta.model ?? ""));
-          }).catch((error) => {
-            console.error(`resume failed ${id}: ${error}`);
-          });
+          pending.push(
+            taskOpenAllowed(taskSlug)
+              .then((owned) => {
+                if (!owned.ok) {
+                  console.error(`resume skipped ${id}: ownership`);
+                  return;
+                }
+                return openSession(id, taskSlug, String(meta.model ?? ""));
+              })
+              .catch((error) => {
+                console.error(`resume failed ${id}: ${error}`);
+              }),
+          );
         }
       }
     };
     walk(root, "");
   }
+  await Promise.all(pending);
 }
 
 server.listen(uiSocket, () => {
-  resumeInterrupted();
-  startGraphs(repo, {
+  void resumeInterrupted().then(() => startGraphs(repo, {
     open: (id, taskSlug, model, prompt) => openSession(id, taskSlug, model, prompt).then(() => undefined),
     async status(id) {
       const row = live.get(id);
@@ -940,5 +966,5 @@ server.listen(uiSocket, () => {
       const row = live.get(id);
       if (row) row.executionId = executionId;
     },
-  });
+  }));
 });

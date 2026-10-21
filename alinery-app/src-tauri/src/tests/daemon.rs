@@ -1739,7 +1739,16 @@ fn two_legacy_owners_require_two_confirmations() {
         let install = TakeoverRepo::new();
         let executable = install.0.join("app-tests");
         fs::hard_link(std::env::current_exe().unwrap(), &executable).unwrap();
-        std::os::unix::fs::symlink(Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/alineryd"), install.0.join("alineryd")).unwrap();
+        let debug = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug");
+        std::os::unix::fs::symlink(debug.join("alinery-vinculum-daemon"), install.0.join("alinery-vinculum-daemon")).unwrap();
+        let library = if cfg!(target_os = "macos") {
+            "libalinery_core.dylib"
+        } else if cfg!(target_os = "windows") {
+            "alinery_core.dll"
+        } else {
+            "libalinery_core.so"
+        };
+        std::os::unix::fs::symlink(debug.join(library), install.0.join(library)).unwrap();
         let result = Command::new(executable)
             .args(["--exact", "tests::daemon::two_legacy_owners_require_two_confirmations", "--nocapture"])
             .env("ALINERY_TEST_TAKEOVER_INSTALL", "1")
@@ -1994,7 +2003,7 @@ fn replacement_start_failure_preserves_history_without_restarting_owner() {
         let install = TakeoverRepo::new();
         let executable = install.0.join("app-tests");
         fs::hard_link(std::env::current_exe().unwrap(), &executable).unwrap();
-        fs::write(install.0.join("alineryd"), "not an executable").unwrap();
+        fs::write(install.0.join("alinery-vinculum-daemon"), "not an executable").unwrap();
         let result = Command::new(executable)
             .args([
                 "--exact",

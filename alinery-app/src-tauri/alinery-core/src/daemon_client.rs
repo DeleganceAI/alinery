@@ -164,12 +164,12 @@ pub fn peer_process_identity(stream: &UnixStream) -> Result<PeerProcessIdentity,
     Ok(PeerProcessIdentity { uid, pid, start })
 }
 
-/// Source-audited shutdown request/ack dialects (9/10/12/15 historical, 16 current).
+/// Source-audited shutdown request/ack dialects (9/10/12/15/16 historical, 18 current).
 /// Gaps are deliberate: normal protocol compatibility is not shutdown authority.
-/// Protocol 16 added `CreateTaskRequest.step_models`; shutdown is still
+/// Protocol 18 dropped the OMP process ops. Shutdown is still
 /// `{"op":"shutdown"}` acknowledged by `{"ok":true}`.
 pub fn audited_shutdown_protocol(protocol: Option<u32>) -> bool {
-    matches!(protocol, Some(9 | 10 | 12 | 15 | 16))
+    matches!(protocol, Some(9 | 10 | 12 | 15 | 16 | 18))
 }
 
 /// One request on one authenticated stream. No operation reconnects or retries.
@@ -1114,20 +1114,31 @@ pub fn ensure_compatible_daemon(repo: &Path, app_config: &Path, namespace: Optio
     Err(DaemonClientError::Launch("daemon did not start".into()))
 }
 
-pub fn resolve_alineryd_path() -> Option<PathBuf> {
-    let executable = std::env::current_exe().ok()?;
-    let directory = executable.parent()?;
+fn daemon_in(directory: &Path) -> Option<PathBuf> {
     if let Ok(entries) = fs::read_dir(directory) {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if name == "alineryd" || name.starts_with("alineryd-") {
+            if name == "alinery-vinculum-daemon" || name.starts_with("alinery-vinculum-daemon-") {
                 return Some(entry.path());
             }
         }
     }
-    let development = directory.join("alineryd");
+    let development = directory.join("alinery-vinculum-daemon");
     development.exists().then_some(development)
+}
+
+pub fn resolve_alineryd_path() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let directory = executable.parent()?;
+    if let Some(found) = daemon_in(directory) {
+        return Some(found);
+    }
+    // `cargo test` runs from target/<profile>/deps. The built daemon sits next to that directory.
+    if directory.file_name().and_then(|name| name.to_str()) == Some("deps") {
+        return directory.parent().and_then(daemon_in);
+    }
+    None
 }
 
 pub fn file_content_id(path: &Path) -> Option<String> {
@@ -1165,7 +1176,7 @@ pub fn configure_host_guard_environment(command: &mut Command, host_executable: 
 }
 
 pub fn spawn_daemon_detached(repo: &Path, app_config: &Path, namespace: Option<&str>, host_executable: Option<&Path>) -> Result<(), String> {
-    let daemon = resolve_alineryd_path().ok_or("alineryd binary not found")?;
+    let daemon = resolve_alineryd_path().ok_or("alinery-vinculum-daemon binary not found")?;
     let mut command = Command::new(daemon);
     command
         .arg("--repo")
@@ -1183,7 +1194,7 @@ pub fn spawn_daemon_detached(repo: &Path, app_config: &Path, namespace: Option<&
         command.arg("--socket-namespace").arg(namespace);
     }
     configure_detached_process(&mut command);
-    command.spawn().map(|_| ()).map_err(|error| format!("spawn alineryd: {error}"))
+    command.spawn().map(|_| ()).map_err(|error| format!("spawn alinery-vinculum-daemon: {error}"))
 }
 
 #[cfg(test)]

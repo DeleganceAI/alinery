@@ -3,7 +3,7 @@
 # packages, and compile alinery-vinculum-daemon beside the app executable for one cargo
 # profile. `npm run tauri dev` and `npm run tauri build` run this with
 # --no-download; run it bare to allow the Bun download.
-# Never a sidecar. Never invoked from scripts/check.sh.
+# copy-sidecar.sh invokes this and places the binary as the Tauri sidecar.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PIN_FILE="$ROOT/scripts/bun-pin.txt"

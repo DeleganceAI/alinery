@@ -1,6 +1,6 @@
 // OMP journal and RPC scenarios below are skipped. Chat on this branch talks to Vinculum
 // (transcript, prompt, abort) and does not attach or open a terminal.
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import uiConfirm from "../chat/fixtures/live-extension_ui_confirm.json";
 import uiWidget from "../chat/fixtures/live-extension_ui_request.json";
