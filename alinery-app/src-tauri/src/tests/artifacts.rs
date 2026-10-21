@@ -431,15 +431,10 @@ struct HandoffDaemonFixture {
 impl HandoffDaemonFixture {
     fn new() -> Self {
         // Match the real-daemon prerequisite used by mcp/tests/stdio_protocol.rs.
-        let binary = std::env::current_exe()
-            .unwrap()
-            .parent()
-            .and_then(Path::parent)
-            .unwrap()
-            .join(format!("alineryd{}", std::env::consts::EXE_SUFFIX));
+        let binary = std::env::current_exe().unwrap().parent().and_then(Path::parent).unwrap().join("alinery-vinculum-daemon");
         assert!(
             binary.is_file(),
-            "build the sibling alineryd binary before running artifact handoff tests: {}",
+            "build the sibling alinery-vinculum-daemon binary before running artifact handoff tests: {}",
             binary.display()
         );
         // Keep Unix socket paths short, including on macOS.
@@ -458,11 +453,19 @@ impl HandoffDaemonFixture {
         }
         let app_config = repo.join(".alinery/app.toml");
         fs::write(&app_config, "").unwrap();
+        let library = binary.parent().unwrap().join(if cfg!(target_os = "macos") {
+            "libalinery_core.dylib"
+        } else if cfg!(target_os = "windows") {
+            "alinery_core.dll"
+        } else {
+            "libalinery_core.so"
+        });
         let child = Command::new(binary)
             .arg("--repo")
             .arg(&repo)
             .arg("--app-config")
             .arg(&app_config)
+            .env("ALINERY_OWNERSHIP_LIB", library)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::inherit())
             .spawn()

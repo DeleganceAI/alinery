@@ -1372,7 +1372,7 @@ export function SessionView({
       void ipc.sessionTranscript(id).then(
         (messages) => {
           if (cancelled) return;
-          setChat((current) => {
+          setChat(() => {
             const next = applyVinculumTranscript(messages);
             chatRef.current = next;
             return next;

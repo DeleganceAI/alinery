@@ -2134,7 +2134,7 @@ export function Settings({
             <div className="settings-subsection">
               <h2>Misc</h2>
               {/* Each repository's daemon reads this pref and holds the idle-sleep inhibit
-                (alineryd/src/idle_inhibit.rs); the note states the same rule it enforces. */}
+                (alinery-core idle_inhibit); the note states the same rule it enforces. */}
               <Checkbox
                 checked={global.power?.keep_awake ?? false}
                 disabled={!isGlobal}

@@ -1039,12 +1039,8 @@ pub(crate) async fn session_statuses(app: AppHandle, ids: Vec<String>, task_slug
 
 #[tauri::command]
 pub(crate) fn restate_session(state: State<'_, AppState>, id: String, transport: String) -> Result<(), String> {
-    let _repo = require_owned_active_repo(&state)?;
-    if transport != "pty" && transport != "rpc" {
-        return Err("missing transport".into());
-    }
-    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
-    daemon.restate_session(&id, &transport)
+    let _ = (state, id, transport);
+    Err("OMP process sessions are not available".into())
 }
 
 /// Bring up the reserved setup session and return its id.
@@ -1054,9 +1050,8 @@ pub(crate) fn restate_session(state: State<'_, AppState>, id: String, transport:
 /// active repo's daemon, which is the one that owns it.
 #[tauri::command]
 pub(crate) fn omp_setup_session(state: State<'_, AppState>) -> Result<String, String> {
-    let _repo = require_owned_active_repo(&state)?;
-    let daemon = state.daemon().ok_or("daemon not connected")?;
-    daemon.omp_setup()
+    let _ = state;
+    Err("OMP process sessions are not available".into())
 }
 
 #[tauri::command]
@@ -1089,16 +1084,14 @@ pub(crate) async fn session_set_model(state: State<'_, AppState>, id: String, mo
 
 #[tauri::command]
 pub(crate) async fn rpc_write_session(state: State<'_, AppState>, id: String, payload: Value) -> Result<(), String> {
-    let _repo = require_owned_active_repo(&state)?;
-    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
-    off_main_thread("rpc write", move || daemon.rpc_write_session(&id, &payload)).await
+    let _ = (state, id, payload);
+    Err("OMP process sessions are not available".into())
 }
 
 #[tauri::command]
 pub(crate) async fn rpc_attach_session(state: State<'_, AppState>, app: AppHandle, id: String, attach_id: u64, stream_token: u64, on_line: Channel<String>) -> Result<(), String> {
-    let _repo = require_owned_active_repo(&state)?;
-    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
-    off_main_thread("rpc attach", move || attach_rpc_stream(app, &daemon, id, attach_id, stream_token, on_line)).await
+    let _ = (state, app, id, attach_id, stream_token, on_line);
+    Err("OMP process sessions are not available".into())
 }
 
 /// Daemon socket I/O waits up to DAEMON_CONTROL_TIMEOUT (a daemon blocked writing a full OMP
@@ -1106,43 +1099,6 @@ pub(crate) async fn rpc_attach_session(state: State<'_, AppState>, app: AppHandl
 /// the whole window; these run on the blocking pool instead.
 pub(crate) async fn off_main_thread<T: Send + 'static>(what: &str, work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(work).await.map_err(|error| format!("{what}: {error}"))?
-}
-
-/// Attach to a session's RPC lines and pump them into `on_line` until the daemon closes the
-/// stream, then emit `session_stream_closed`. Shared by chat and session chat.
-pub(crate) fn attach_rpc_stream(app: AppHandle, daemon: &DaemonClient, id: String, attach_id: u64, stream_token: u64, on_line: Channel<String>) -> Result<(), String> {
-    let mut stream = daemon.send(&daemon_client::rpc_attach_request(&id, attach_id))?;
-    let line = read_socket_line(&mut stream).map_err(|error| match error {
-        SocketReadError::Closed => "daemon closed".to_string(),
-        SocketReadError::TimedOut => format!("daemon not responding after {}", format_daemon_timeout(DAEMON_CONTROL_TIMEOUT)),
-    })?;
-    let response: Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
-    if let Some(error) = daemon_client::reply_error(&response) {
-        return Err(error.to_string());
-    }
-    // The control timeout guards the ack only. This stream is quiet for as long as OMP is (idle,
-    // or a silent tool run); keeping a read timeout cut every quiet chat after 100s.
-    stream.set_read_timeout(None).map_err(|error| error.to_string())?;
-    let event_id = id;
-    std::thread::spawn(move || {
-        use std::io::{BufRead, BufReader};
-        let mut reader = BufReader::new(stream);
-        let mut buf = String::new();
-        loop {
-            buf.clear();
-            match reader.read_line(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {
-                    let line = buf.trim_end_matches(['\n', '\r']).to_string();
-                    if on_line.send(line).is_err() {
-                        break;
-                    }
-                }
-            }
-        }
-        let _ = app.emit("session_stream_closed", json!({ "id": event_id, "attach_id": attach_id, "stream_token": stream_token }));
-    });
-    Ok(())
 }
 
 #[tauri::command]

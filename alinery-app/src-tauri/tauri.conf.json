@@ -33,9 +33,10 @@
     "resources": {
       "../../LICENSE": "LICENSE",
       "../../NOTICE": "NOTICE",
-      "../../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md"
+      "../../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md",
+      "resources/ownership/": "ownership/"
     },
-    "externalBin": ["alineryd", "alinery-mcp", "alinery-runner"],
+    "externalBin": ["alinery-vinculum-daemon", "alinery-mcp"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

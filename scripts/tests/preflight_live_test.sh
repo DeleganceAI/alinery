@@ -54,9 +54,9 @@ proc_state() {
 
 command -v nc >/dev/null 2>&1 || { echo "SKIP: nc(1) unavailable"; exit 0; }
 
-ALINERYD="$ROOT/alinery-app/src-tauri/target/debug/alineryd"
+ALINERYD="$ROOT/alinery-app/src-tauri/target/debug/alinery-vinculum-daemon"
 if [ ! -x "$ALINERYD" ]; then
-  echo "SKIP: $ALINERYD not built (cargo build -p alineryd)"
+  echo "SKIP: $ALINERYD not built (scripts/dev-fetch-bun.sh)"
   exit 0
 fi
 
@@ -75,7 +75,8 @@ git -C "$TMPR" init -q .
 mkdir -p "$TMPR/.alinery"
 
 # --- bring up a real daemon -----------------------------------------------------------
-"$ALINERYD" --repo "$TMPR" --build-id live-test --app-config /nonexistent/app.toml \
+ALINERY_OWNERSHIP_LIB="$ROOT/alinery-app/src-tauri/target/debug/libalinery_core.dylib" \
+  "$ALINERYD" --repo "$TMPR" --build-id live-test --app-config /nonexistent/app.toml \
   >"$TMPR/alineryd.log" 2>&1 &
 DAEMON_PID=$!
 SOCK="$(repo_daemon_socket "$TMPR")"

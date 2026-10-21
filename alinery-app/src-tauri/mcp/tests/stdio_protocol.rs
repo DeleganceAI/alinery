@@ -35,17 +35,20 @@ impl Fixture {
         fs::create_dir_all(root.join(".alinery")).unwrap();
         let app_config = root.join(".alinery/app.toml");
         fs::write(&app_config, "").unwrap();
-        let daemon_binary = std::env::current_exe()
-            .unwrap()
-            .parent()
-            .and_then(Path::parent)
-            .unwrap()
-            .join(format!("alineryd{}", std::env::consts::EXE_SUFFIX));
+        let daemon_binary = std::env::current_exe().unwrap().parent().and_then(Path::parent).unwrap().join("alinery-vinculum-daemon");
+        let library = daemon_binary.parent().unwrap().join(if cfg!(target_os = "macos") {
+            "libalinery_core.dylib"
+        } else if cfg!(target_os = "windows") {
+            "alinery_core.dll"
+        } else {
+            "libalinery_core.so"
+        });
         let daemon = Command::new(daemon_binary)
             .arg("--repo")
             .arg(&root)
             .arg("--app-config")
             .arg(&app_config)
+            .env("ALINERY_OWNERSHIP_LIB", library)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()

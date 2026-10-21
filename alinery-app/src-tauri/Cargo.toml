@@ -44,7 +44,7 @@ tauri = { version = "2", features = ["test"] }
 workspace = true
 
 [workspace]
-members = ["alineryd", "alinery-core", "mcp", "runner"]
+members = ["alinery-core", "mcp"]
 default-members = ["."]
 
 [workspace.lints.clippy]

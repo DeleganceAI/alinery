@@ -1,44 +1,58 @@
-//! Settings → General → Misc → "Keep this computer awake": block idle system sleep while at least one
-//! session is live and not Idle.
-//!
-//! The daemon owns the hold, not the app: quit-leave-running destroys the app and keeps the
-//! daemon, which is exactly when the machine still has work to stay awake for. Each per-repo
-//! daemon holds at most one inhibit; IOKit and logind aggregate them and idle sleep returns
-//! after the last release, so there is no cross-daemon coordinator. The pref is re-read from
-//! the app config on a poll instead of being pushed over the socket, which keeps the wire
-//! protocol unchanged, and the poll never runs under the registry lock, so spawn and reap
-//! paths cannot deadlock against it.
+//! Settings → General → Misc → "Keep this computer awake": block idle system sleep while a
+//! Vinculum session is live. The daemon owns the hold, because quit-leave-running destroys the
+//! app and keeps the daemon. Vinculum reports the live count; a live Pi session or a live
+//! terminal counts. Each per-repo daemon holds at most one inhibit.
 //!
 //! Idle-only by construction: every backend blocks idle system sleep and nothing else. The
 //! display can still sleep, closing the lid still sleeps, and explicit sleep still works.
 
+use std::ffi::{c_char, CStr};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use alinery_core::{
-    append_exception, append_info, load_global_settings, normalized_session_status, quote_log_value, HarnessAdapter, NormalizedSessionStatus, ProcessState, SessionState,
-};
+use crate::{append_exception, append_info, load_global_settings, quote_log_value};
+
+static LIVE_SESSIONS: AtomicUsize = AtomicUsize::new(0);
+static KEEPER: Mutex<Option<Handle>> = Mutex::new(None);
+
+/// # Safety
+///
+/// `app_config` must be null or a valid NUL-terminated path for the duration of the call.
+#[no_mangle]
+pub unsafe extern "C" fn alinery_keep_awake_start(app_config: *const c_char) {
+    if app_config.is_null() {
+        return;
+    }
+    let Ok(path) = (unsafe { CStr::from_ptr(app_config) }).to_str() else {
+        return;
+    };
+    let mut slot = KEEPER.lock().unwrap_or_else(|error| error.into_inner());
+    if slot.is_some() {
+        return;
+    }
+    *slot = Some(start(PathBuf::from(path), || LIVE_SESSIONS.load(Ordering::Relaxed)));
+}
+
+#[no_mangle]
+pub extern "C" fn alinery_keep_awake_sessions(live: u32) {
+    LIVE_SESSIONS.store(live as usize, Ordering::Relaxed);
+}
+
+#[no_mangle]
+pub extern "C" fn alinery_keep_awake_release() {
+    if let Some(handle) = KEEPER.lock().unwrap_or_else(|error| error.into_inner()).take() {
+        handle.release();
+    }
+}
 
 /// Idle sleep is minutes away, so a second of lag after the last session goes Idle is invisible.
 const POLL: Duration = Duration::from_secs(1);
 
 fn should_hold(keep_awake: bool, live_sessions: usize) -> bool {
     keep_awake && live_sessions > 0
-}
-
-/// Whether one registry row keeps the machine awake: live, not the setup session, and not
-/// showing the Idle badge. The badge is `observationDisplayKind` returning "idle"
-/// (`sessionAttention.ts`): a supported adapter whose normalized status is Idle. Unsupported
-/// adapters (Terminal) never show Idle, so a live Terminal always counts. The setup session
-/// is the accounts-dialog probe, not work, and it stays Starting for its whole life.
-pub(crate) fn session_holds(id: &str, state: &SessionState) -> bool {
-    if id == crate::OMP_SETUP_SESSION_ID || !matches!(state.process, ProcessState::Starting | ProcessState::Alive) {
-        return false;
-    }
-    let idle_badge = state.adapter != HarnessAdapter::Unsupported && normalized_session_status(state) == NormalizedSessionStatus::Idle;
-    !idle_badge
 }
 
 trait InhibitBackend {
@@ -129,7 +143,7 @@ impl Handle {
 }
 
 /// Starts the poll even when the pref is off, so a later toggle in Settings is seen.
-/// `live_sessions` counts registry rows for which `session_holds` is true.
+/// `live_sessions` is the count Vinculum last reported.
 pub(crate) fn start(app_config: PathBuf, live_sessions: impl Fn() -> usize + Send + 'static) -> Handle {
     spawn(platform::backend(), app_config, POLL, live_sessions)
 }
@@ -363,27 +377,8 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alinery_core::{AgentState, PlaybookState};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Instant;
-
-    fn session(adapter: HarnessAdapter, process: ProcessState, agent: AgentState, playbook: PlaybookState) -> SessionState {
-        SessionState {
-            process,
-            agent,
-            playbook,
-            adapter,
-            ..Default::default()
-        }
-    }
-
-    fn omp(process: ProcessState, agent: AgentState) -> SessionState {
-        session(HarnessAdapter::Omp, process, agent, PlaybookState::InProgress)
-    }
-
-    fn holding(states: &[SessionState]) -> usize {
-        states.iter().filter(|state| session_holds("s", state)).count()
-    }
 
     #[test]
     fn should_hold_needs_the_pref_and_a_holding_session() {
@@ -392,49 +387,6 @@ mod tests {
         assert!(!should_hold(true, 0));
         assert!(should_hold(true, 1));
         assert!(should_hold(true, 4));
-        let only_idle = [omp(ProcessState::Alive, AgentState::Idle), omp(ProcessState::Alive, AgentState::Idle)];
-        assert!(!should_hold(true, holding(&only_idle)), "a repo of Idle sessions lets the computer sleep");
-    }
-
-    #[test]
-    fn idle_exited_and_setup_sessions_do_not_hold() {
-        assert!(!session_holds("s", &omp(ProcessState::Alive, AgentState::Idle)), "the Idle badge");
-        assert!(!session_holds("s", &omp(ProcessState::Exited { code: Some(0) }, AgentState::Busy)));
-        assert!(!session_holds("s", &omp(ProcessState::Exited { code: None }, AgentState::Unknown)));
-        assert!(!session_holds(crate::OMP_SETUP_SESSION_ID, &omp(ProcessState::Starting, AgentState::Unknown)));
-        assert!(!session_holds(crate::OMP_SETUP_SESSION_ID, &omp(ProcessState::Alive, AgentState::Busy)));
-    }
-
-    #[test]
-    fn every_live_label_other_than_idle_holds() {
-        let input = AgentState::WaitingForInput { correlation_id: "c".into() };
-        let approval = AgentState::WaitingForApproval { correlation_id: "c".into() };
-        let failed = PlaybookState::Failed { reason: "boom".into() };
-        let cases = [
-            ("Running", omp(ProcessState::Alive, AgentState::Busy)),
-            ("Starting", omp(ProcessState::Starting, AgentState::Unknown)),
-            ("Starting with an Idle agent", omp(ProcessState::Starting, AgentState::Idle)),
-            ("Loading", omp(ProcessState::Alive, AgentState::Unknown)),
-            ("Needs input", omp(ProcessState::Alive, input)),
-            ("Needs approval", omp(ProcessState::Alive, approval)),
-            (
-                "Ready to advance",
-                session(HarnessAdapter::Omp, ProcessState::Alive, AgentState::Idle, PlaybookState::ReadyToAdvance),
-            ),
-            ("Completed", session(HarnessAdapter::Omp, ProcessState::Alive, AgentState::Idle, PlaybookState::Completed)),
-            ("Failed", session(HarnessAdapter::Omp, ProcessState::Alive, AgentState::Idle, failed)),
-            (
-                "Terminal",
-                session(HarnessAdapter::Unsupported, ProcessState::Alive, AgentState::Unknown, PlaybookState::InProgress),
-            ),
-            (
-                "Terminal never shows Idle",
-                session(HarnessAdapter::Unsupported, ProcessState::Alive, AgentState::Idle, PlaybookState::InProgress),
-            ),
-        ];
-        for (label, state) in cases {
-            assert!(session_holds("s", &state), "{label} must hold");
-        }
     }
 
     #[derive(Default)]
@@ -567,7 +519,7 @@ mod tests {
         Handle::noop().release();
         assert_eq!(fake.counts(), (3, 3));
 
-        let log = std::fs::read_to_string(alinery_core::log_path(&app_config)).unwrap();
+        let log = std::fs::read_to_string(crate::log_path(&app_config)).unwrap();
         assert_eq!(log.matches("power.idle-inhibit acquired").count(), 3, "{log}");
         assert_eq!(log.matches("power.idle-inhibit released").count(), 3, "{log}");
         assert!(!log.contains(&*dir.to_string_lossy()), "{log}");
