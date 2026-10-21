@@ -15,6 +15,7 @@ type CoreLib = {
   symbols: {
     alinery_provision_task: (repo: ReturnType<typeof ptr>, lane: ReturnType<typeof ptr>, identity: ReturnType<typeof ptr>, request: ReturnType<typeof ptr>) => number | null;
     alinery_create_subtask: (repo: ReturnType<typeof ptr>, lane: ReturnType<typeof ptr>, identity: ReturnType<typeof ptr>, request: ReturnType<typeof ptr>) => number | null;
+    alinery_set_session_name: (repo: ReturnType<typeof ptr>, taskSlug: ReturnType<typeof ptr>, sessionId: ReturnType<typeof ptr>, name: ReturnType<typeof ptr>) => number | null;
     alinery_string_free: (reply: number | null) => void;
   };
 };
@@ -39,6 +40,7 @@ function core(): CoreLib {
   coreLib = dlopen(library, {
     alinery_provision_task: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
     alinery_create_subtask: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
+    alinery_set_session_name: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
     alinery_string_free: { args: [FFIType.ptr], returns: FFIType.void },
   }) as CoreLib;
   return coreLib;
@@ -46,6 +48,18 @@ function core(): CoreLib {
 
 function cstr(value: string) {
   return ptr(Buffer.from(`${value}\0`));
+}
+
+export type SessionNameReply = { error: string } | { status: "saved" | "unchanged"; value: { name: string; source: "auto" | "user" } };
+
+/** Automatic name only. A human rename stays on the app command, and this call will not replace it. */
+export function suggestSessionName(repo: string, slug: string, id: string, name: string): SessionNameReply {
+  const lib = core();
+  const reply = lib.symbols.alinery_set_session_name(cstr(repo), cstr(slug), cstr(id), cstr(name));
+  const text = reply ? new CString(reply).toString() : "";
+  if (reply) lib.symbols.alinery_string_free(reply);
+  if (!text) return { error: "empty session name reply" };
+  return JSON.parse(text) as SessionNameReply;
 }
 
 function coreCall(op: "alinery_provision_task" | "alinery_create_subtask", repo: string, lane: string, identity: string, request: string): Request {
@@ -195,7 +209,7 @@ function rejectHandoff(repo: string, slug: string, name: string): string | undef
   return undefined;
 }
 
-function taskWorktree(repo: string, slug: string): string {
+export function taskWorktree(repo: string, slug: string): string {
   try {
     const text = readFileSync(join(repo, ".alinery", "tasks", slug, "task.md"), "utf8");
     const match = text.match(/^worktree\s*=\s*["']([^"']+)["']/m);
@@ -204,6 +218,15 @@ function taskWorktree(repo: string, slug: string): string {
     /* the repo is the worktree until create finishes */
   }
   return repo;
+}
+
+// SessionMeta requires worktree and created. A patch keeps values already on the file.
+// A file that does not have them, including one this daemon is creating, gets them now.
+export function completeSessionMeta(current: Record<string, unknown>, patch: Record<string, unknown>, id: string, worktree: string, now: number): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...current, ...patch, id };
+  if (typeof next.worktree !== "string" || next.worktree === "") next.worktree = worktree;
+  if (typeof next.created !== "number" || !Number.isFinite(next.created)) next.created = now;
+  return next;
 }
 
 function reservedExecution(id: string, step: string, sessionId: string, harness: string, model: string, startRequested: boolean) {

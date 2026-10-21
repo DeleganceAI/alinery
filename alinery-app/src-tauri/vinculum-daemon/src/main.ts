@@ -6,14 +6,15 @@ import type { WatchHandle } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { Type } from "@earendil-works/pi-ai";
-import { Harness, LiveDoc, createRegistry, defineDoc, defineExtension, defineTool, type Conversation, type Harness as OpenedHarness } from "@earendil-works/pi-durable";
+import { Harness, LiveDoc, createRegistry, defineDoc, defineExtension, defineTool, section, type Conversation, type Harness as OpenedHarness } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import { completeSession, engineAxis, enginePlaybook, permitSession, startGraphs } from "./graph.ts";
-import { getTaskExecution, ownershipLibrary, taskOp } from "./tasks.ts";
+import { CHAT_TITLE_PROMPT, SESSION_NAME_INSTRUCTION, chatTitleBucket, cleanChatTitle } from "./naming.ts";
+import { completeAlineryText, installAlineryProvider, modelSources, resolveModelId } from "./provider.ts";
+import { completeSessionMeta, getTaskExecution, ownershipLibrary, suggestSessionName, taskOp, taskWorktree } from "./tasks.ts";
 import { attachShell, detachPty, hasPty, isPty, killPty, resizePty, startShell, writePty } from "./terminal.ts";
-import { installAlineryProvider, modelSources, resolveModelId } from "./provider.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
 const PROTOCOL = 18;
@@ -46,6 +47,8 @@ type Live = {
   liveRun: boolean;
   seenNonce: string;
   executionId: string;
+  titledBucket: number;
+  titleInFlight: boolean;
 };
 
 const live = new Map<string, Live>();
@@ -95,6 +98,7 @@ const PHASE_WRITE = "xd://alinery_phase_complete";
 const registry = createRegistry();
 registry.install(codingExtension());
 registry.install(phaseExtension());
+registry.install(namingExtension());
 
 function codingExtension() {
   return defineExtension({
@@ -148,6 +152,33 @@ function phaseExtension() {
   });
 }
 
+const sessionNameTool = defineTool({
+  name: "alinery_set_session_name",
+  description: "Suggest this session's short work name. An existing name, including a human correction, is preserved.",
+  parameters: Type.Object({ name: Type.String() }),
+  execute: async (args, api) => {
+    const row = rowForConversation(api.conversationId);
+    if (!row?.taskSlug) return { output: [{ type: "text", text: "Only a task session can name itself this way." }], isError: true };
+    const outcome = suggestSessionName(repo, row.taskSlug, row.id, args.name);
+    if ("error" in outcome) return { output: [{ type: "text", text: outcome.error }], isError: true };
+    return { output: [{ type: "text", text: `Session name: ${outcome.value.name}` }] };
+  },
+});
+
+function namingExtension() {
+  return defineExtension({
+    name: "alinery-session-name",
+    tools: [sessionNameTool],
+    sections: [
+      section("session-name", (input) => {
+        const row = rowForConversation(input.conversationId);
+        if (!row?.taskSlug || sessionNameSource(row.taskSlug, row.id)) return undefined;
+        return SESSION_NAME_INSTRUCTION;
+      }),
+    ],
+  });
+}
+
 function appConfigIdentity(path: string): string {
   let hash = 0xcbf29ce484222325n;
   for (const byte of Buffer.from(path)) {
@@ -195,6 +226,15 @@ function metaPath(taskSlug: string, id: string): string {
   return taskSlug ? join(repo, ".alinery", "tasks", taskSlug, "sessions", `${id}.meta.json`) : join(repo, ".alinery", "sessions", `${id}.meta.json`);
 }
 
+function sessionNameSource(taskSlug: string, id: string): string | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(metaPath(taskSlug, id).replace(/\.meta\.json$/, ".name.json"), "utf8")) as { source?: unknown };
+    return typeof parsed.source === "string" ? parsed.source : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function readMeta(taskSlug: string, id: string): Record<string, unknown> {
   try {
     return JSON.parse(readFileSync(metaPath(taskSlug, id), "utf8")) as Record<string, unknown>;
@@ -206,8 +246,36 @@ function readMeta(taskSlug: string, id: string): Record<string, unknown> {
 function writeMeta(taskSlug: string, id: string, patch: Record<string, unknown>) {
   const path = metaPath(taskSlug, id);
   mkdirSync(dirname(path), { recursive: true });
-  const current = readMeta(taskSlug, id);
-  writeFileSync(path, JSON.stringify({ ...current, ...patch, id }));
+  const worktree = taskSlug ? taskWorktree(repo, taskSlug) : repo;
+  const next = completeSessionMeta(readMeta(taskSlug, id), patch, id, worktree, Math.floor(Date.now() / 1000));
+  writeFileSync(path, JSON.stringify(next));
+}
+
+// Files already on disk from a writer that omitted SessionMeta's required fields.
+// Invalid JSON is left alone. This runs before the socket listens, so a list cannot
+// observe the incomplete file this process is about to repair.
+function repairSessionMetas() {
+  const repairDir = (dir: string, taskSlug: string) => {
+    if (!existsSync(dir)) return;
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith(".meta.json")) continue;
+      let meta: Record<string, unknown>;
+      try {
+        const parsed = JSON.parse(readFileSync(join(dir, name), "utf8")) as unknown;
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+        meta = parsed as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      if (typeof meta.worktree === "string" && meta.worktree !== "" && typeof meta.created === "number") continue;
+      writeMeta(taskSlug, name.slice(0, -".meta.json".length), {});
+    }
+  };
+  const tasksRoot = join(repo, ".alinery", "tasks");
+  if (existsSync(tasksRoot)) {
+    for (const slug of readdirSync(tasksRoot)) repairDir(join(tasksRoot, slug, "sessions"), slug);
+  }
+  repairDir(join(repo, ".alinery", "sessions"), "");
 }
 
 function startRecordedShell(id: string, taskSlug: string) {
@@ -230,6 +298,8 @@ function startRecordedShell(id: string, taskSlug: string) {
       liveRun: false,
       seenNonce: "",
       executionId: "",
+      titledBucket: 0,
+      titleInFlight: false,
     });
   }
 }
@@ -261,6 +331,8 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
     liveRun: false,
     seenNonce: "",
     executionId: "",
+    titledBucket: 0,
+    titleInFlight: false,
   };
   live.set(id, row);
   const meta = readMeta(taskSlug, id);
@@ -295,6 +367,10 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
     await tx.doc(Attention, root.id);
     await tx.doc(PhaseRequest, root.id);
   }, context);
+  if (!taskSlug) {
+    await root.configure({ tools: { remove: [sessionNameTool] } }, context);
+    row.titledBucket = chatTitleBucket(await userMessageCount(root));
+  }
   watch(row, harness, root.id);
   if (exists) harness.resume();
   await seedPrompt(root, prompt);
@@ -388,6 +464,50 @@ function formatTranscript(messages: ReadonlyArray<ShownMessage>): Array<{ role: 
   return out;
 }
 
+async function modelMessages(conversation: Conversation) {
+  const messages: Awaited<ReturnType<Conversation["context"]>>["messages"] = [];
+  let cursor: Awaited<ReturnType<Conversation["entries"]>>["next"];
+  for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
+    const page = await conversation.entries({ order: "ascending" }, 200, cursor, context);
+    for (const entry of page.items) messages.push(...(entry.model ?? []));
+    cursor = page.next;
+    if (!cursor) break;
+  }
+  return messages;
+}
+
+async function userMessageCount(conversation: Conversation): Promise<number> {
+  return (await modelMessages(conversation)).filter((message) => message.role === "user").length;
+}
+
+async function maybeTitleChat(row: Live) {
+  if (row.taskSlug || row.titleInFlight || !row.harness || !row.conversationId) return;
+  const conversation = await conversationFor(row);
+  if (!conversation) return;
+  const bucket = chatTitleBucket(await userMessageCount(conversation));
+  if (bucket === 0 || bucket === row.titledBucket) return;
+  if (sessionNameSource(row.taskSlug, row.id) === "user") {
+    row.titledBucket = bucket;
+    return;
+  }
+  row.titleInFlight = true;
+  try {
+    const reply = await completeAlineryText(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""), [
+      ...(await modelMessages(conversation)),
+      { role: "user", content: CHAT_TITLE_PROMPT, timestamp: Date.now() },
+    ]);
+    const name = cleanChatTitle(reply);
+    if (!name) return;
+    const outcome = suggestSessionName(repo, "", row.id, name);
+    if ("error" in outcome) return;
+    row.titledBucket = bucket;
+  } catch (error) {
+    console.error(`chat title failed for ${row.id}: ${error}`);
+  } finally {
+    row.titleInFlight = false;
+  }
+}
+
 async function conversationFor(row: Live): Promise<Conversation | null> {
   if (!row.harness || !row.conversationId) return null;
   return (await row.harness.conversation(row.conversationId, context)) ?? null;
@@ -423,9 +543,11 @@ function watch(row: Live, harness: OpenedHarness, conversationId: string) {
     }
   });
   attach(harness.watchDoc(LiveDoc, conversationId, context), (value) => {
-    row.liveRun = Boolean(value?.run);
-    if (row.agent.state === "waiting_for_input" || row.agent.state === "waiting_for_approval") return;
-    row.agent = { state: row.liveRun ? "busy" : "idle" };
+    const running = Boolean(value?.run);
+    const finished = row.liveRun && !running;
+    row.liveRun = running;
+    if (row.agent.state !== "waiting_for_input" && row.agent.state !== "waiting_for_approval") row.agent = { state: running ? "busy" : "idle" };
+    if (finished && !row.taskSlug) void maybeTitleChat(row);
   });
   attach(harness.watchDoc(PhaseRequest, conversationId, context), (value) => {
     if (!value?.nonce || value.nonce === row.seenNonce) return;
@@ -928,6 +1050,7 @@ async function resumeInterrupted() {
   await Promise.all(pending);
 }
 
+repairSessionMetas();
 server.listen(uiSocket, () => {
   void resumeInterrupted().then(() => startGraphs(repo, {
     open: (id, taskSlug, model, prompt) => openSession(id, taskSlug, model, prompt).then(() => undefined),
