@@ -67,10 +67,9 @@ const slugifyTaskName = (value: string) => {
 
 export type StepModelSource = "playbook-step" | "playbook-default" | "task-default" | "product-default" | "override";
 
-const STEP_MODEL_CAPTION: Record<StepModelSource, string> = {
+const STEP_MODEL_CAPTION: Record<Exclude<StepModelSource, "task-default">, string> = {
   "playbook-step": "Playbook step",
   "playbook-default": "Playbook default",
-  "task-default": "Task default",
   "product-default": "Product default",
   override: "Override",
 };
@@ -1274,7 +1273,9 @@ export function CreateTaskPage({
                           onChange={(value) => onStepModelChange(step.key, value)}
                           onOpenPicker={() => setPicking(step.key)}
                         />
-                        <span className={`step-model-badge${display.source === "override" ? " is-override" : ""}`}>{display.source ? STEP_MODEL_CAPTION[display.source] : ""}</span>
+                        {display.source && display.source !== "task-default" && (
+                          <span className={`step-model-badge${display.source === "override" ? " is-override" : ""}`}>{STEP_MODEL_CAPTION[display.source]}</span>
+                        )}
                       </div>
                     </div>
                   );
