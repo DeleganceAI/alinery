@@ -976,9 +976,17 @@ fn daemon_conflicts(repo: &Path, app_config_identity: &str) -> DaemonConflict {
     conflict
 }
 
+#[derive(Debug, serde::Serialize)]
+#[serde(untagged)]
 pub(crate) enum EnsureDaemonError {
     Mismatch(Box<DaemonConflict>),
     Failed(String),
+}
+
+impl From<String> for EnsureDaemonError {
+    fn from(error: String) -> Self {
+        Self::Failed(error)
+    }
 }
 
 impl std::fmt::Display for EnsureDaemonError {

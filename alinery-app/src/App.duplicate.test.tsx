@@ -133,7 +133,12 @@ vi.mock("./toast", async (importOriginal) => {
 vi.mock("./BackgroundFX", () => ({ BackgroundFX: () => null }));
 vi.mock("./Boot", () => ({ Boot: () => null }));
 vi.mock("./HotkeyBar", () => ({ HotkeyBar: () => null }));
-vi.mock("./DaemonConflictBanner", () => ({ DaemonConflictBanner: () => null, RepoBusyBanner: () => null, HostGuardWarning: () => null }));
+vi.mock("./DaemonConflictBanner", () => ({
+  DaemonConflictBanner: () => null,
+  RepoBusyBanner: () => null,
+  HostGuardWarning: () => null,
+  showRepoOpenFailure: (_repo: string, cause: unknown) => String(cause),
+}));
 vi.mock("./WindowChrome", () => ({ ResizeHandles: () => null, WindowControls: () => null, useWindowFullscreen: () => false }));
 vi.mock("./useDaemonStatus", () => ({ useDaemonStatus: () => ({ repo_busy: false, conflict: null, refresh: () => {} }) }));
 vi.mock("./useMcpStatus", () => ({ useMcpStatus: () => ({}) }));

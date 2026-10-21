@@ -27,7 +27,7 @@ import { GlobalSearch, type SearchItem } from "./CommandPalette";
 import type { QueuedFollowUp } from "./chat/queue";
 import { chatVisibilityFromAppearance } from "./chat/visibility";
 import { askConfirm, ConfirmHost, confirmDanger } from "./confirm";
-import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner } from "./DaemonConflictBanner";
+import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner, showRepoOpenFailure } from "./DaemonConflictBanner";
 import { ACTIVE_GRID_VIEW_STORAGE_KEY, DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute, trailingTabDigit } from "./gridViews";
 import { HotkeyBar } from "./HotkeyBar";
 import { ORB_SPEED } from "./Indicators";
@@ -583,6 +583,9 @@ export default function App() {
       const cfg = await ipc.setActiveRepo(path, drawerSessionIds);
       if (cfg.active_repo !== previousRepo) clearDrawerUi();
       return { ...cfg, appearance: applyAppearance(cfg.appearance) };
+    } catch (cause) {
+      const message = showRepoOpenFailure(path, cause);
+      throw cause instanceof Error ? cause : new Error(message);
     } finally {
       endRepoSwitch();
     }

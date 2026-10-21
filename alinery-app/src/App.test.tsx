@@ -1448,6 +1448,38 @@ describe("repository switch keeps the current page", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Repository" })).toHaveProperty("title", "All repos"));
   }
 
+  it("keeps the selected repository and shows owner details when connection is refused", async () => {
+    await renderApp();
+    ipcMocks.setActiveRepo.mockRejectedValueOnce({
+      repo: "/other",
+      app_protocol: 19,
+      app_config_identity: "current-config",
+      owners: [
+        {
+          lane: "old",
+          pid: 66765,
+          protocol: 17,
+          build_id: "old-build",
+          app_config_identity: "other-config",
+          impact: { status: "known", sessions: [{ id: "live-session", name: null }] },
+          takeover_unavailable: "Shutdown compatibility is not established for this daemon.",
+        },
+      ],
+      issues: [],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Repository" }));
+    fireEvent.click(screen.getByTitle("/other"));
+    const dialog = await screen.findByRole("alertdialog", { name: "Couldn't open other" });
+    expect(dialog.textContent).toContain("protocol 17");
+    expect(dialog.textContent).toContain("live-session");
+    expect(dialog.textContent).toContain("Shutdown compatibility is not established");
+    expect(screen.getByRole("button", { name: "Repository" })).toHaveProperty("title", "/repo");
+    expect(within(dialog).queryByRole("button", { name: /take over/i })).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(screen.getByRole("button", { name: "Repository" })).toHaveProperty("title", "/repo");
+  });
+
   it("stays on kanban, settings, and notifications instead of bouncing to the task list", async () => {
     await renderApp();
 
@@ -1542,6 +1574,19 @@ describe("addRepo", () => {
     await waitFor(() => expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/canonical", []));
     expect(ipcMocks.initPickedFolder).not.toHaveBeenCalled();
     expect(screen.queryByRole("alertdialog", { name: "Initialize Git?" })).toBeNull();
+  });
+
+  it("keeps the workspace unopened when its first daemon connection fails", async () => {
+    const add = await openPicker();
+    ipcMocks.pickRepoDialog.mockResolvedValue("/unavailable");
+    ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "checkout", root: "/unavailable" });
+    ipcMocks.setActiveRepo.mockRejectedValueOnce("daemon did not start");
+    fireEvent.click(add);
+    const dialog = await screen.findByRole("alertdialog", { name: "Couldn't open unavailable" });
+    expect(within(dialog).getByText("daemon did not start")).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(screen.getByRole("button", { name: "Add a repository" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Repository" })).toBeNull();
   });
 
   it("leaves an absent folder unchanged when initialize is cancelled", async () => {
