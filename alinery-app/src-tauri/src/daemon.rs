@@ -788,23 +788,195 @@ pub(crate) fn list_task_activity_for_refs(refs: &[TaskActivityRef], app_config_i
     activity
 }
 
-/// A repo whose daemon ownership or compatibility cannot be established safely.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct TakeoverSession {
+    pub(crate) id: String,
+    pub(crate) name: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(crate) enum TakeoverImpact {
+    Known { sessions: Vec<TakeoverSession> },
+    Unknown { detail: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct DaemonOwnerConflict {
+    pub(crate) lane: String,
+    pub(crate) pid: Option<i32>,
+    pub(crate) protocol: Option<u32>,
+    pub(crate) build_id: Option<String>,
+    pub(crate) app_config_identity: Option<String>,
+    pub(crate) impact: TakeoverImpact,
+    pub(crate) takeover_unavailable: Option<String>,
+}
+
 #[derive(Clone, Debug, serde::Serialize)]
 pub(crate) struct DaemonConflict {
     pub(crate) repo: String,
-    pub(crate) reason: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) detail: Option<String>,
-    /// `None` when the running daemon predates protocol versioning.
-    pub(crate) daemon_protocol: Option<u32>,
     pub(crate) app_protocol: u32,
-    pub(crate) daemon_app_config_identity: Option<String>,
-    pub(crate) app_config_identity: Option<String>,
-    pub(crate) live_sessions: u32,
+    pub(crate) app_config_identity: String,
+    pub(crate) owners: Vec<DaemonOwnerConflict>,
+    pub(crate) issues: Vec<String>,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub(crate) struct TakeoverPreview {
+    pub(crate) confirmation_id: String,
+    pub(crate) repo: String,
+    pub(crate) owner: DaemonOwnerConflict,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(crate) enum TakeoverOutcome {
+    Attached,
+    Blocked { conflict: DaemonConflict },
+    Reconfirm { preview: TakeoverPreview },
+}
+
+pub(crate) struct PreparedTakeover {
+    repo: PathBuf,
+    identity: daemon_client::PeerProcessIdentity,
+    owner: DaemonOwnerConflict,
+    expires: Instant,
+}
+
+#[cfg(test)]
+thread_local! { static TAKEOVER_TEST_TIME: Cell<Option<Instant>> = const { Cell::new(None) }; }
+
+fn takeover_now() -> Instant {
+    #[cfg(test)]
+    if let Some(now) = TAKEOVER_TEST_TIME.with(Cell::get) {
+        return now;
+    }
+    Instant::now()
+}
+
+#[cfg(test)]
+pub(crate) fn with_takeover_time<T>(now: Instant, action: impl FnOnce() -> T) -> T {
+    struct Reset(Option<Instant>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            TAKEOVER_TEST_TIME.with(|time| time.set(self.0));
+        }
+    }
+    let _reset = Reset(TAKEOVER_TEST_TIME.with(|time| time.replace(Some(now))));
+    action()
+}
+
+fn takeover_session_names(repo: &Path, lane: &str, sessions: &mut [TakeoverSession]) {
+    let Ok(tasks) = list_tasks_for_repo(repo) else { return };
+    let mut names = HashMap::<String, Option<String>>::new();
+    for task in tasks {
+        let Ok(metadata) = list_sessions_for_repo(repo, &task.slug) else { continue };
+        for meta in metadata {
+            if meta.daemon_namespace != lane || !sessions.iter().any(|session| session.id == meta.id) {
+                continue;
+            }
+            let name = alinery_core::read_session_name(repo, &task.slug, &meta.id).ok().flatten().map(|value| value.name);
+            // Duplicate metadata is ambiguous, not permission to guess a displayed name.
+            names.entry(meta.id).and_modify(|name| *name = None).or_insert(name);
+        }
+    }
+    for session in sessions {
+        session.name = names.remove(&session.id).flatten();
+    }
+}
+
+fn observe_takeover_owner(
+    repo: &Path,
+    lane: &str,
+    expected: Option<&daemon_client::PeerProcessIdentity>,
+    app_config_identity: &str,
+) -> Result<(daemon_client::PeerProcessIdentity, DaemonOwnerConflict), String> {
+    let socket = alinery_core::alineryd_socket_path(repo, Some(lane));
+    let connection = daemon_client::BoundDaemonConnection::connect(&socket, expected, daemon_client::DAEMON_OBSERVATION_TIMEOUT)?;
+    let identity = connection.identity().clone();
+    let version = connection.version()?;
+    let unavailable = if !daemon_client::audited_shutdown_protocol(version.protocol) {
+        Some("Shutdown compatibility is not established for this daemon; stop it from its original application.".into())
+    } else if lane == alineryd_socket_namespace().as_deref().unwrap_or("") && daemon_client::classify_version_reply(&version, &alineryd_build_id(), app_config_identity).usable() {
+        Some("This daemon is already compatible; reconnect instead of taking it over.".into())
+    } else {
+        None
+    };
+    // Failure to bind the list request is stale identity, never unknown session impact.
+    let connection = daemon_client::BoundDaemonConnection::connect(&socket, Some(&identity), daemon_client::DAEMON_OBSERVATION_TIMEOUT)?;
+    let impact = match connection.sessions() {
+        Ok(sessions) => {
+            let mut sessions = sessions
+                .into_iter()
+                .filter(|session| matches!(session.state.process, ProcessState::Starting | ProcessState::Alive))
+                .map(|session| TakeoverSession { id: session.id, name: None })
+                .collect::<Vec<_>>();
+            sessions.sort_by(|left, right| left.id.cmp(&right.id));
+            sessions.dedup_by(|left, right| left.id == right.id);
+            takeover_session_names(repo, lane, &mut sessions);
+            TakeoverImpact::Known { sessions }
+        }
+        Err(detail) => TakeoverImpact::Unknown { detail },
+    };
+    // Even a failed list exchange must not conceal a replacement during observation.
+    drop(daemon_client::BoundDaemonConnection::connect(
+        &socket,
+        Some(&identity),
+        daemon_client::DAEMON_OBSERVATION_TIMEOUT,
+    )?);
+    Ok((
+        identity.clone(),
+        DaemonOwnerConflict {
+            lane: lane.into(),
+            pid: Some(identity.pid()),
+            protocol: version.protocol,
+            build_id: version.build_id,
+            app_config_identity: version.app_config_identity,
+            impact,
+            takeover_unavailable: unavailable,
+        },
+    ))
+}
+
+fn daemon_conflicts(repo: &Path, app_config_identity: &str) -> DaemonConflict {
+    let mut conflict = DaemonConflict {
+        repo: repo.display().to_string(),
+        app_protocol: PROTOCOL_VERSION,
+        app_config_identity: app_config_identity.into(),
+        owners: Vec::new(),
+        issues: Vec::new(),
+    };
+    match alinery_core::repo_ownership::inspect_owners(repo) {
+        Err(error) => conflict.issues.push(error),
+        Ok(report) => {
+            conflict.issues = report.issues;
+            for observation in report.lanes {
+                if let Some(issue) = observation.issue {
+                    conflict.issues.push(issue);
+                }
+                if !observation.reachable {
+                    continue;
+                }
+                let owner = match observe_takeover_owner(repo, &observation.lane, None, app_config_identity) {
+                    Ok((_, owner)) => owner,
+                    Err(detail) => DaemonOwnerConflict {
+                        lane: observation.lane,
+                        pid: None,
+                        protocol: None,
+                        build_id: None,
+                        app_config_identity: None,
+                        impact: TakeoverImpact::Unknown { detail: detail.clone() },
+                        takeover_unavailable: Some(detail),
+                    },
+                };
+                conflict.owners.push(owner);
+            }
+        }
+    }
+    conflict
 }
 
 pub(crate) enum EnsureDaemonError {
-    /// Ownership or compatibility could not be established. No owner is killed.
     Mismatch(Box<DaemonConflict>),
     Failed(String),
 }
@@ -812,78 +984,30 @@ pub(crate) enum EnsureDaemonError {
 impl std::fmt::Display for EnsureDaemonError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EnsureDaemonError::Mismatch(c) if c.reason == "ownership" => {
-                write!(
-                    f,
-                    "project ownership unavailable for {}: {}",
-                    c.repo,
-                    c.detail.as_deref().unwrap_or("previous owner has not stopped")
-                )
-            }
-            EnsureDaemonError::Mismatch(c) if c.reason == "app_config" => {
-                write!(f, "daemon for {} uses a different app configuration ({} live session(s))", c.repo, c.live_sessions)
-            }
-            EnsureDaemonError::Mismatch(c) => write!(
+            Self::Mismatch(conflict) => write!(
                 f,
-                "daemon for {} speaks protocol {}, this app speaks {} ({} live session(s))",
-                c.repo,
-                c.daemon_protocol.map(|p| p.to_string()).unwrap_or_else(|| "<pre-gate>".into()),
-                c.app_protocol,
-                c.live_sessions
+                "project ownership unavailable for {}: {} owner(s); {}",
+                conflict.repo,
+                conflict.owners.len(),
+                conflict.issues.join("; ")
             ),
-            EnsureDaemonError::Failed(e) => f.write_str(e),
+            Self::Failed(error) => f.write_str(error),
         }
     }
 }
 
-// Connect to the repo's daemon, spawning it (detached, so it OUTLIVES the app — that's
-// the whole point) if none is answering. Retries the connect briefly while alineryd binds.
-//
-// INVARIANT: this function never kills a live session. It does not send `shutdown` —
-// not conditionally, not "only when stale". Reuse requires matching protocol and app-config
-// identity; a mismatch is reported and left alone. Deliberate teardown is confined to
-// `stop_daemon`, `close_repo_daemon`, and `restore_backup`, each behind an explicit click.
-// (Guarded by scripts/tests/check-no-auto-session-kill.sh.)
-/// Probe a connected client's hard reuse fields. Used on *every* successful connect —
-/// including post-spawn — so a race that attaches a pre-existing foreign daemon
-/// cannot skip the gate by riding the "we just spawned" path.
-/// The pure half: a `version` reply plus the app's build/config identities decide reuse.
-/// Split out from the socket call so both `ensure_daemon` branches can be tested without
-/// a live daemon — the post-spawn branch is exactly the one that used to skip this.
-pub(crate) fn classify_version(
-    version: &daemon_client::DaemonVersionReply,
-    app_build: &str,
-    app_config_identity: &str,
-    repo: &Path,
-    live_sessions: impl FnOnce() -> u32,
-) -> Result<DaemonCompat, EnsureDaemonError> {
-    let compat = daemon_client::classify_version_reply(version, app_build, app_config_identity);
-    if compat.usable() {
-        return Ok(compat);
-    }
-    let reason = match compat {
-        DaemonCompat::ProtocolMismatch => "protocol",
-        DaemonCompat::AppConfigMismatch => "app_config",
-        DaemonCompat::Current | DaemonCompat::BuildDrift => unreachable!(),
-    };
-    Err(EnsureDaemonError::Mismatch(Box::new(DaemonConflict {
-        repo: repo.display().to_string(),
-        reason: reason.into(),
-        detail: None,
-        daemon_protocol: version.protocol,
-        app_protocol: PROTOCOL_VERSION,
-        daemon_app_config_identity: version.app_config_identity.clone(),
-        app_config_identity: Some(app_config_identity.to_string()),
-        live_sessions: live_sessions(),
-    })))
-}
-
+/// Normal attachment is never a shutdown origin. Build drift remains reusable.
 pub(crate) fn classify_connected_daemon(client: &DaemonClient, repo: &Path, app_config_identity: &str) -> Result<(DaemonCompat, bool), EnsureDaemonError> {
-    let version = client.version();
-    let host_guard_warning = version.host_guard_warning();
-    // `live_session_count` is a second round-trip; only a mismatch pays for it.
-    let compat = classify_version(&version, &alineryd_build_id(), app_config_identity, repo, || client.live_session_count())?;
-    Ok((compat, host_guard_warning))
+    let version = client.version_checked().map_err(|error| {
+        let mut conflict = daemon_conflicts(repo, app_config_identity);
+        conflict.issues.push(error);
+        EnsureDaemonError::Mismatch(Box::new(conflict))
+    })?;
+    let compat = daemon_client::classify_version_reply(&version, &alineryd_build_id(), app_config_identity);
+    if !compat.usable() {
+        return Err(EnsureDaemonError::Mismatch(Box::new(daemon_conflicts(repo, app_config_identity))));
+    }
+    Ok((compat, version.host_guard_warning()))
 }
 
 pub(crate) fn ensure_daemon(repo: &Path, app_config: &Path) -> Result<(DaemonClient, DaemonCompat, String, bool), EnsureDaemonError> {
@@ -893,16 +1017,11 @@ pub(crate) fn ensure_daemon(repo: &Path, app_config: &Path) -> Result<(DaemonCli
         return Ok((client, compat, app_config_identity, host_guard_warning));
     }
     alinery_core::repo_ownership::check_available(repo).map_err(|detail| {
-        EnsureDaemonError::Mismatch(Box::new(DaemonConflict {
-            repo: repo.display().to_string(),
-            reason: "ownership".into(),
-            detail: Some(detail),
-            daemon_protocol: None,
-            app_protocol: PROTOCOL_VERSION,
-            daemon_app_config_identity: None,
-            app_config_identity: Some(app_config_identity.clone()),
-            live_sessions: 0,
-        }))
+        let mut conflict = daemon_conflicts(repo, &app_config_identity);
+        if !conflict.issues.contains(&detail) {
+            conflict.issues.push(detail);
+        }
+        EnsureDaemonError::Mismatch(Box::new(conflict))
     })?;
     spawn_daemon_detached(repo, app_config).map_err(EnsureDaemonError::Failed)?;
     for _ in 0..40 {
@@ -919,72 +1038,193 @@ pub(crate) fn ensure_daemon(repo: &Path, app_config: &Path) -> Result<(DaemonCli
 /// Conflicts are remembered for the blocking banner; the poller retries without
 /// stopping another owner or replacing a held lock.
 pub(crate) fn attach_repo_daemon(state: &AppState, repo: &Path, app_config: &Path) {
-    // Single choke point for bringing a daemon up, so one check covers the poller, the
-    // footer poll and every command: once "close all repos" has run, nothing resurrects.
-    if state.is_quitting() {
+    if state.is_quitting() || state.is_closing(repo) {
         return;
     }
-    // A close is in flight — its socket-gone gap is not a crash to recover from.
-    if state.is_closing(repo) {
+    let lifecycle = state.repo_lifecycle(repo);
+    let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+    let Ok(Some(config)) = read_existing_app_config(app_config) else { return };
+    if !config.known_repos.iter().any(|known| Path::new(known) == repo) {
         return;
     }
-    // B6: daemon ownership follows retained GUI ownership for every known repository,
-    // not only the active selection. Claim a free repo here; never spawn or adopt for a
-    // repository another alinery window holds.
-    if !state.claim_repo(repo) {
+    attach_repo_daemon_locked(state, repo, app_config, &guard);
+}
+
+pub(crate) fn attach_repo_daemon_locked(state: &AppState, repo: &Path, app_config: &Path, _guard: &std::sync::MutexGuard<'_, ()>) {
+    if state.is_quitting() || state.is_closing(repo) || !state.claim_repo(repo) {
         return;
     }
+    let result = ensure_daemon(repo, app_config);
+    // Close/quit can be requested while a bounded probe is in flight.
+    if state.is_quitting() || state.is_closing(repo) {
+        return;
+    }
+    match result {
+        Ok((client, compat, identity, warning)) => state.set_daemon(repo, client, compat, identity, warning),
+        Err(EnsureDaemonError::Mismatch(conflict)) => state.set_daemon_conflict(repo, *conflict),
+        Err(error) => alinery_core::append_exception(
+            app_config,
+            &format!(
+                "app.daemon-start-failed repo={} err={}",
+                alinery_core::quote_log_value(&repo.display().to_string()),
+                alinery_core::quote_log_value(&error.to_string()),
+            ),
+        ),
+    }
+}
+
+fn takeover_allowed(state: &AppState, repo: &Path) -> Result<(), String> {
+    if state.is_quitting() || state.is_closing(repo) {
+        return Err("project is closing; takeover cancelled".into());
+    }
+    Ok(())
+}
+
+fn selected_owner_present(repo: &Path, lane: &str) -> Result<(), String> {
+    let report = alinery_core::repo_ownership::inspect_owners(repo)?;
+    if !report.lanes.iter().any(|owner| owner.lane == lane && owner.reachable) {
+        return Err("selected daemon is no longer a reachable project owner; refresh and select again".into());
+    }
+    Ok(())
+}
+
+fn remember_takeover(state: &AppState, repo: PathBuf, identity: daemon_client::PeerProcessIdentity, owner: DaemonOwnerConflict, now: Instant) -> TakeoverPreview {
+    let preview = TakeoverPreview {
+        confirmation_id: uuid::Uuid::new_v4().to_string(),
+        repo: repo.display().to_string(),
+        owner: owner.clone(),
+    };
+    let mut prepared = state.prepared_takeovers.lock().unwrap_or_else(|error| error.into_inner());
+    prepared.retain(|_, value| value.repo != repo && value.expires > now);
+    prepared.insert(
+        preview.confirmation_id.clone(),
+        PreparedTakeover {
+            repo,
+            identity,
+            owner,
+            expires: now + Duration::from_secs(120),
+        },
+    );
+    preview
+}
+
+pub(crate) fn prepare_repo_takeover_blocking(
+    state: &AppState,
+    app_config: &Path,
+    repo_path: &str,
+    owner_lane: &str,
+    known: impl Fn() -> Vec<String>,
+) -> Result<TakeoverPreview, String> {
+    let repo = validate_known_target_repo(&known(), repo_path)?;
+    takeover_allowed(state, &repo)?;
+    let lifecycle = state.repo_lifecycle(&repo);
+    let _guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+    takeover_allowed(state, &repo)?;
+    validate_known_target_repo(&known(), repo_path)?;
+    selected_owner_present(&repo, owner_lane)?;
+    let (identity, owner) = observe_takeover_owner(&repo, owner_lane, None, &alinery_core::app_config_identity(app_config))?;
+    if let Some(reason) = &owner.takeover_unavailable {
+        return Err(reason.clone());
+    }
+    Ok(remember_takeover(state, repo, identity, owner, takeover_now()))
+}
+
+#[tauri::command]
+pub(crate) async fn prepare_repo_takeover(app: AppHandle, repo_path: String, owner_lane: String) -> Result<TakeoverPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        prepare_repo_takeover_blocking(&app.state::<AppState>(), &app_config_path(&app)?, &repo_path, &owner_lane, || {
+            load_app_config(&app).known_repos
+        })
+    })
+    .await
+    .map_err(|error| format!("prepare takeover task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) fn cancel_repo_takeover(state: State<'_, AppState>, confirmation_id: String) -> Result<(), String> {
+    state.prepared_takeovers.lock().unwrap_or_else(|error| error.into_inner()).remove(&confirmation_id);
+    Ok(())
+}
+
+pub(crate) fn confirm_repo_takeover_blocking(
+    state: &AppState,
+    app_config: &Path,
+    confirmation_id: &str,
+    known: impl Fn() -> Vec<String>,
+    attached: impl FnOnce(&Path),
+) -> Result<TakeoverOutcome, String> {
+    // Consume before any fallible operation, including lock waits. A failed attempt is not reusable consent.
+    let preparation = state
+        .prepared_takeovers
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .remove(confirmation_id)
+        .ok_or("takeover confirmation is cancelled, expired, or already used")?;
+    let repo = &preparation.repo;
+    takeover_allowed(state, repo)?;
+    let lifecycle = state.repo_lifecycle(repo);
+    let _guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+    takeover_allowed(state, repo)?;
+    if preparation.expires <= takeover_now() {
+        return Err("takeover confirmation expired; prepare again".into());
+    }
+    validate_known_target_repo(&known(), &repo.display().to_string())?;
+    let reservation = state.reserve_repo(repo)?.ok_or("repo-busy: another Alinery window owns this project")?;
+    selected_owner_present(repo, &preparation.owner.lane)?;
+    let (identity, owner) = observe_takeover_owner(repo, &preparation.owner.lane, Some(&preparation.identity), &alinery_core::app_config_identity(app_config))?;
+    if let Some(reason) = &owner.takeover_unavailable {
+        return Err(reason.clone());
+    }
+    if owner != preparation.owner {
+        return Ok(TakeoverOutcome::Reconfirm {
+            preview: remember_takeover(state, repo.clone(), identity, owner, takeover_now()),
+        });
+    }
+    takeover_allowed(state, repo)?;
+    validate_known_target_repo(&known(), &repo.display().to_string())?;
+    let socket = alinery_core::alineryd_socket_path(repo, Some(&owner.lane));
+    // DELIBERATE TEARDOWN ORIGIN: exactly this consumed, process-bound confirmation.
+    let connection = daemon_client::BoundDaemonConnection::connect(&socket, Some(&preparation.identity), daemon_client::DAEMON_CONTROL_TIMEOUT)?;
+    takeover_allowed(state, repo)?;
+    if preparation.expires <= takeover_now() {
+        return Err("takeover confirmation expired; prepare again".into());
+    }
+    connection.shutdown().map_err(|error| format!("selected daemon shutdown failed: {error}"))?;
+    daemon_client::wait_for_daemon_gone(repo, &owner.lane).map_err(|error| format!("selected daemon exit not established: {error}"))?;
+    takeover_allowed(state, repo)?;
+    validate_known_target_repo(&known(), &repo.display().to_string())?;
     match ensure_daemon(repo, app_config) {
-        Ok((client, compat, app_config_identity, host_guard_warning)) => {
-            // Re-check before *storing*, not just before starting: `ensure_daemon` can
-            // block for ~2s spawning and retrying, which is ample time for the user to
-            // quit or close this repo underneath us. Storing then would record a client
-            // for a repo on its way out of the config, and would undo the `clear_daemon`
-            // that the concurrent teardown has already done.
-            //
-            // Dropped, never shut down. This is a bring-up path
-            // (`check-no-auto-session-kill.sh` enforces that) and the client may be an
-            // *adopted* daemon full of live harnesses rather than one we just spawned —
-            // stopping it to unwind our own race would kill exactly the work that guard
-            // exists to protect. Nothing is silently orphaned either way: if we did
-            // respawn into a teardown, the socket is back before `wait_for_daemon_gone`
-            // is satisfied, so `close_repo_daemon` fails closed and tells the user the
-            // repo did not close.
-            if state.is_quitting() || state.is_closing(repo) {
-                return;
-            }
-            state.set_daemon(repo, client, compat, app_config_identity, host_guard_warning);
+        Ok((client, compat, config, warning)) => {
+            takeover_allowed(state, repo)?;
+            reservation.commit(state);
+            state.set_daemon(repo, client, compat, config, warning);
+            attached(repo);
+            Ok(TakeoverOutcome::Attached)
         }
         Err(EnsureDaemonError::Mismatch(conflict)) => {
-            eprintln!(
-                "daemon {} mismatch for {}: daemon protocol {:?}, app protocol {}, {} live session(s)",
-                conflict.reason, conflict.repo, conflict.daemon_protocol, conflict.app_protocol, conflict.live_sessions
-            );
-            alinery_core::append_exception(
-                app_config,
-                &format!(
-                    "app.daemon-mismatch repo={} reason={} daemon_protocol={} app_protocol={} live={}",
-                    alinery_core::quote_log_value(&conflict.repo),
-                    alinery_core::quote_log_value(&conflict.reason),
-                    conflict.daemon_protocol.map(|p| p.to_string()).unwrap_or_else(|| "none".into()),
-                    conflict.app_protocol,
-                    conflict.live_sessions
-                ),
-            );
-            state.set_daemon_conflict(repo, *conflict);
+            state.set_daemon_conflict(repo, (*conflict).clone());
+            Ok(TakeoverOutcome::Blocked { conflict: *conflict })
         }
-        Err(e) => {
-            eprintln!("daemon start failed for {}: {e}", repo.display());
-            alinery_core::append_exception(
-                app_config,
-                &format!(
-                    "app.daemon-start-failed repo={} err={}",
-                    alinery_core::quote_log_value(&repo.display().to_string()),
-                    alinery_core::quote_log_value(&e.to_string())
-                ),
-            );
-        }
+        Err(error) => Err(format!("selected daemon stopped, but replacement failed: {error}")),
     }
+}
+
+#[tauri::command]
+pub(crate) async fn confirm_repo_takeover(app: AppHandle, confirmation_id: String) -> Result<TakeoverOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        confirm_repo_takeover_blocking(
+            &state,
+            &app_config_path(&app)?,
+            &confirmation_id,
+            || load_app_config(&app).known_repos,
+            |repo| {
+                ensure_mcp_server(&app, repo, true);
+            },
+        )
+    })
+    .await
+    .map_err(|error| format!("confirm takeover task: {error}"))?
 }
 
 // Locate the alineryd binary: a sibling of the app exe (bundled as `alineryd` or
@@ -1081,22 +1321,8 @@ pub(crate) fn client_for_session(state: &AppState, repo: &Path, task_slug: &str,
                 // then every write/resize/detach for this session id spoke the current
                 // wire at it. The primary `ensure_daemon` paths have been gated since the
                 // first review; this route was the way around them.
-                classify_connected_daemon(&c, repo, &app_config_identity).map_err(|error| match error {
-                    EnsureDaemonError::Mismatch(conflict) if conflict.reason == "app_config" => {
-                        format!(
-                            "repo-app-config-mismatch: the daemon owning session {id} \
-                                 uses a different app configuration ({} live session(s)).",
-                            conflict.live_sessions
-                        )
-                    }
-                    EnsureDaemonError::Mismatch(conflict) => format!(
-                        "repo-protocol-mismatch: the daemon owning session {id} speaks \
-                             protocol {:?}, this app speaks {}. Stop that session's daemon \
-                             ({} live session(s)) before using it here.",
-                        conflict.daemon_protocol, conflict.app_protocol, conflict.live_sessions
-                    ),
-                    EnsureDaemonError::Failed(message) => message,
-                })?;
+                let version = c.version_checked()?;
+                daemon_client::classify_observed_version(&version, &alineryd_build_id(), &app_config_identity).map_err(|error| error.to_string())?;
                 state.session_routes.lock().unwrap_or_else(|e| e.into_inner()).insert(id.to_string(), c.clone());
                 Ok(c)
             }
@@ -1171,42 +1397,52 @@ pub(crate) fn spawn_daemon_detached(repo: &Path, app_config: &Path) -> Result<()
 // all-repositories stop is this command called once per repo in scope, so every kill
 // still carries its own named confirmation.
 #[tauri::command]
-pub(crate) fn stop_daemon(app: AppHandle, state: State<'_, AppState>, path: Option<String>) -> Result<(), String> {
-    let repo = match path.as_deref().map(str::trim) {
-        Some(p) if !p.is_empty() => PathBuf::from(p),
-        _ => active_repo()?,
-    };
-    // Explicit Settings stop remains available for an incompatible daemon on this
-    // build's lane, but never while another GUI holds the project.
-    let reservation = state.reserve_repo(&repo)?.ok_or("repo-busy: another Alinery window owns this project")?;
-    let daemon = connect_current_daemon(&repo)?;
-    reservation.commit(&state);
-    let closing = state.mark_closing(&repo);
-    // The MCP child is bound to the active repo only; stopping another repo's sessions
-    // must not take it down with them.
-    let is_active = active_repo().ok().as_deref() == Some(repo.as_path());
-    if is_active {
-        state.kill_mcp(); // R2
-    }
-    daemon.call(&daemon_client::shutdown_request()).map(|_| ())?;
-    wait_for_daemon_gone(&repo)?;
-    // Own-lane teardown — drops cached foreign session routes too.
-    state.clear_daemon(&repo);
-    drop(closing);
+pub(crate) async fn stop_daemon(app: AppHandle, path: Option<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let repo = match path.as_deref().map(str::trim) {
+            Some(p) if !p.is_empty() => PathBuf::from(p),
+            _ => active_repo()?,
+        };
+        takeover_allowed(&state, &repo)?;
+        let lifecycle = state.repo_lifecycle(&repo);
+        let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+        takeover_allowed(&state, &repo)?;
+        validate_known_target_repo(&load_app_config(&app).known_repos, &repo.display().to_string())?;
+        // Explicit Settings stop remains available for an incompatible daemon on this
+        // build's lane, but never while another GUI holds the project.
+        let reservation = state.reserve_repo(&repo)?.ok_or("repo-busy: another Alinery window owns this project")?;
+        let daemon = connect_current_daemon(&repo)?;
+        reservation.commit(&state);
+        let closing = state.mark_closing(&repo);
+        // The MCP child is bound to the active repo only; stopping another repo's sessions
+        // must not take it down with them.
+        let is_active = active_repo().ok().as_deref() == Some(repo.as_path());
+        if is_active {
+            state.kill_mcp_for_repo(&repo);
+        }
+        daemon.call(&daemon_client::shutdown_request()).map(|_| ())?;
+        daemon_client::wait_for_daemon_gone(&repo, alineryd_socket_namespace().as_deref().unwrap_or(""))?;
+        // Own-lane teardown — drops cached foreign session routes too.
+        state.clear_daemon(&repo);
+        drop(closing);
 
-    // Restart what we just stopped, for this repo only.
-    let app_config = app_config_path(&app)?;
-    attach_repo_daemon(&state, &repo, &app_config);
-    if is_active {
-        ensure_mcp_server(&app, &repo);
-    }
-    emit(
-        &app,
-        alinery_core::TelemetryEvent::DaemonStop {
-            source: alinery_core::TelemetrySource::App,
-        },
-    );
-    Ok(())
+        // Restart what we just stopped, for this repo only.
+        let app_config = app_config_path(&app)?;
+        attach_repo_daemon_locked(&state, &repo, &app_config, &guard);
+        if is_active {
+            ensure_mcp_server(&app, &repo, false);
+        }
+        emit(
+            &app,
+            alinery_core::TelemetryEvent::DaemonStop {
+                source: alinery_core::TelemetrySource::App,
+            },
+        );
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("stop daemon task: {error}"))?
 }
 
 /// Live sessions on this app's lane, for explicit close/stop warnings. Not ownership proof.
@@ -1215,32 +1451,12 @@ pub(crate) fn repo_live_sessions(path: String) -> u32 {
     connect_current_daemon(Path::new(path.trim())).map(|client| client.live_session_count()).unwrap_or(0)
 }
 
-/// A quiet socket is not exit proof: wait for the daemon's process lease as well.
-pub(crate) fn wait_for_daemon_gone(repo: &Path) -> Result<(), String> {
-    for _ in 0..40 {
-        match UnixStream::connect(current_alineryd_socket_path(repo)) {
-            Ok(_) => {}
-            Err(error) if matches!(error.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused) => {
-                if alinery_core::lockfile::try_lock_exclusive(&current_alineryd_lock_path(repo))
-                    .map_err(|error| format!("cannot establish daemon exit: {error}"))?
-                    .is_some()
-                {
-                    return Ok(());
-                }
-            }
-            Err(error) => return Err(format!("cannot establish daemon exit: {error}")),
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    Err(format!("daemon for {} has not released its socket and process lock", repo.display()))
-}
-
 // DELIBERATE TEARDOWN ORIGIN (B4). Stop one repo's daemon and sessions without deciding
 // when the app-level repository ownership ends. `remove_repo` releases the flock only
 // after delisting succeeds; `close_all_repos` releases each successfully closed repo.
 //
 // Fail-closed: if a daemon still answers after shutdown+wait, do NOT clear state.
-pub(crate) fn close_repo_daemon(state: &AppState, repo: &Path) -> Result<(), String> {
+pub(crate) fn close_repo_daemon(state: &AppState, repo: &Path, _guard: &std::sync::MutexGuard<'_, ()>) -> Result<(), String> {
     // Shutdown opens a window in which the repo is still listed and its socket is going
     // away — indistinguishable, to the poller, from a daemon that just crashed. Hold the
     // repo closed for the whole teardown so nothing respawns into the gap. The guard
@@ -1250,7 +1466,7 @@ pub(crate) fn close_repo_daemon(state: &AppState, repo: &Path) -> Result<(), Str
         daemon
             .call(&daemon_client::shutdown_request())
             .map_err(|e| format!("shutdown failed for {}: {e}", repo.display()))?;
-        wait_for_daemon_gone(repo)?;
+        daemon_client::wait_for_daemon_gone(repo, alineryd_socket_namespace().as_deref().unwrap_or(""))?;
     }
     // Lock markers are permanent; only releasing the kernel lock ends ownership.
     state.clear_daemon(repo);
@@ -1293,48 +1509,58 @@ pub(crate) fn execute_close_repo_acknowledgment_plan(
 // Daemon teardown remains centralized in `close_repo_daemon`; each caller releases the
 // GUI flock at its own successful app-lifecycle commit point.
 #[tauri::command]
-pub(crate) fn close_all_repos(app: AppHandle, state: State<'_, AppState>) -> Result<u32, String> {
-    // Latch FIRST: the poller ticks every 5s and the footer polls every 1.5s, and both
-    // spawn a daemon for a repo that has none. Tearing down before shutting those off
-    // would race them into resurrecting the processes the user just asked us to stop.
-    state.begin_quit();
-    // Stop the app-managed session producer before freezing the plan. The quit latch
-    // already prevents the GUI pollers and commands from starting replacement work.
-    state.kill_mcp();
-    // `sanitize_app_config` keeps a non-empty `active_repo` inside `known_repos`, so this
-    // list is the complete set of repos this app has open.
-    let repos = load_app_config(&app)
-        .known_repos
-        .into_iter()
-        .filter_map(|repo| {
-            let repo = PathBuf::from(repo.trim());
-            if repo.as_os_str().is_empty() {
-                return None;
-            }
-            // B6: quitting closes *our* repos. A repo another alinery holds is that window's
-            // to tear down — skipping it is correct, not a failure.
-            if !state.owns_repo(&repo) && gui_lock_held_elsewhere(&repo) {
-                return None;
-            }
-            Some(repo)
-        })
-        .collect::<Vec<_>>();
-    // Freeze every repository's session references before the first blocking shutdown.
-    // Repository order and teardown duration therefore cannot change acknowledgment.
-    let plan = close_repo_acknowledgment_plan(&repos);
-    let (closed_repos, errors) = execute_close_repo_acknowledgment_plan(&plan, |repo| close_repo_daemon(&state, repo));
-    for repo in &closed_repos {
-        state.release_repo(repo);
-    }
-    let closed = u32::try_from(closed_repos.len()).map_err(|_| "closed repository count overflow".to_string())?;
-    if !errors.is_empty() {
-        // The latch stays set. Quitting is still the user's stated intent and the dialog
-        // asks them to confirm it; only their choosing to come back clears it, via
-        // `cancel_quit`. Clearing it here would let the poller start respawning daemons
-        // underneath a dialog that is still on its way to `destroy()`.
-        return Err(format!("closed {closed} repo(s); failed: {}", errors.join("; ")));
-    }
-    Ok(closed)
+pub(crate) async fn close_all_repos(app: AppHandle) -> Result<u32, String> {
+    app.state::<AppState>().begin_quit();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        // Latch FIRST: the poller ticks every 5s and the footer polls every 1.5s, and both
+        // spawn a daemon for a repo that has none. Tearing down before shutting those off
+        // would race them into resurrecting the processes the user just asked us to stop.
+        // Stop the app-managed session producer before freezing the plan. The quit latch
+        // already prevents the GUI pollers and commands from starting replacement work.
+        state.kill_mcp();
+        // `sanitize_app_config` keeps a non-empty `active_repo` inside `known_repos`, so this
+        // list is the complete set of repos this app has open.
+        let repos = load_app_config(&app)
+            .known_repos
+            .into_iter()
+            .filter_map(|repo| {
+                let repo = PathBuf::from(repo.trim());
+                if repo.as_os_str().is_empty() {
+                    return None;
+                }
+                // B6: quitting closes *our* repos. A repo another alinery holds is that window's
+                // to tear down — skipping it is correct, not a failure.
+                if !state.owns_repo(&repo) && gui_lock_held_elsewhere(&repo) {
+                    return None;
+                }
+                Some(repo)
+            })
+            .collect::<Vec<_>>();
+        // Freeze every repository's session references before the first blocking shutdown.
+        // Repository order and teardown duration therefore cannot change acknowledgment.
+        let plan = close_repo_acknowledgment_plan(&repos);
+        let (closed_repos, errors) = execute_close_repo_acknowledgment_plan(&plan, |repo| {
+            let lifecycle = state.repo_lifecycle(repo);
+            let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+            let reservation = state.reserve_repo(repo)?.ok_or("repo-busy: another Alinery window owns this project")?;
+            close_repo_daemon(&state, repo, &guard)?;
+            state.release_repo(repo);
+            drop(reservation);
+            Ok(())
+        });
+        let closed = u32::try_from(closed_repos.len()).map_err(|_| "closed repository count overflow".to_string())?;
+        if !errors.is_empty() {
+            // The latch stays set. Quitting is still the user's stated intent and the dialog
+            // asks them to confirm it; only their choosing to come back clears it, via
+            // `cancel_quit`. Clearing it here would let the poller start respawning daemons
+            // underneath a dialog that is still on its way to `destroy()`.
+            return Err(format!("closed {closed} repo(s); failed: {}", errors.join("; ")));
+        }
+        Ok(closed)
+    })
+    .await
+    .map_err(|error| format!("close repositories task: {error}"))?
 }
 
 /// Abandon a quit that did not complete: `close_all_repos` failed on some repo and the
@@ -1392,6 +1618,11 @@ pub(crate) fn spawn_daemon_poller(app: AppHandle) {
             if state.is_closing(&repo) {
                 continue;
             }
+            let lifecycle = state.repo_lifecycle(&repo);
+            let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+            if state.is_quitting() || state.is_closing(&repo) || !load_app_config(&app).known_repos.iter().any(|known| Path::new(known) == repo) {
+                continue;
+            }
             // Every repo managed by this poller is open in this alinery window, so retain
             // its un-namespaced GUI flock before any connect, adoption, or spawn action.
             if !state.claim_repo(&repo) {
@@ -1400,11 +1631,14 @@ pub(crate) fn spawn_daemon_poller(app: AppHandle) {
             }
             // Connect-don't-stat: dead lane socket files remain on disk, so probe the socket.
             let probe = connect_current_daemon(&repo).ok();
-            let version = probe.as_ref().map(|c| c.version());
+            let version = probe.as_ref().and_then(|client| client.version_checked().ok());
             let compat = version.as_ref().map(|reply| {
                 let build = app_build.get_or_insert_with(alineryd_build_id);
                 daemon_client::classify_version_reply(reply, build, &app_config_identity)
             });
+            if state.is_quitting() || state.is_closing(&repo) {
+                continue;
+            }
             match poller_action(compat) {
                 PollerAction::Leave => {
                     if let (Some(client), Some(compat), Some(version)) = (probe, compat, version.as_ref()) {
@@ -1416,25 +1650,12 @@ pub(crate) fn spawn_daemon_poller(app: AppHandle) {
                         }
                     }
                 }
-                PollerAction::Spawn => attach_repo_daemon(&state, &repo, &app_config),
-                PollerAction::SurfaceConflict => {
-                    // A live incompatible owner is never replaced by this app.
-                    state.set_daemon_conflict(
-                        &repo,
-                        DaemonConflict {
-                            repo: repo.display().to_string(),
-                            detail: None,
-                            reason: match compat {
-                                Some(DaemonCompat::AppConfigMismatch) => "app_config".into(),
-                                _ => "protocol".into(),
-                            },
-                            daemon_protocol: version.as_ref().and_then(|reply| reply.protocol),
-                            app_protocol: PROTOCOL_VERSION,
-                            daemon_app_config_identity: version.as_ref().and_then(|reply| reply.app_config_identity.clone()),
-                            app_config_identity: Some(app_config_identity.clone()),
-                            live_sessions: probe.map(|client| client.live_session_count()).unwrap_or(0),
-                        },
-                    );
+                PollerAction::Spawn if probe.is_none() => attach_repo_daemon_locked(&state, &repo, &app_config, &guard),
+                PollerAction::Spawn | PollerAction::SurfaceConflict => {
+                    let conflict = daemon_conflicts(&repo, &app_config_identity);
+                    if !state.is_quitting() && !state.is_closing(&repo) {
+                        state.set_daemon_conflict(&repo, conflict);
+                    }
                 }
             }
         }
@@ -1483,10 +1704,8 @@ pub(crate) async fn daemon_status(state: State<'_, AppState>) -> Result<DaemonSt
     let active = active_repo().ok();
     let repo = active.as_ref().map(|r| r.display().to_string()).unwrap_or_default();
     let conflict = active.as_ref().and_then(|r| state.daemon_conflict(r));
-    // Re-attempt on every poll so the banner clears by itself the moment the other
-    // alinery quits — no relaunch, no button. Not while quitting: `close_all_repos` just
-    // handed the flock back and a poll in flight must not take it again.
-    let repo_busy = !state.is_quitting() && conflict.is_none() && active.as_ref().is_some_and(|r| !state.claim_repo(r));
+    // Status is observational. The ordered lifecycle poller owns GUI claims.
+    let repo_busy = !state.is_quitting() && conflict.is_none() && active.as_ref().is_some_and(|repo| !state.owns_repo(repo) && gui_lock_held_elsewhere(repo));
     let build_drift = active.as_ref().and_then(|r| state.daemon_compat(r)) == Some(DaemonCompat::BuildDrift);
     let host_guard_warning = active.as_ref().is_some_and(|repo| state.daemon_host_guard_warning(repo));
     let offline = || DaemonStatus {

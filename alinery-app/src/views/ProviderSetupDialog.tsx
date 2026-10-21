@@ -4,7 +4,7 @@ import { settleOpenUrl } from "../chat/openUrl";
 import { isInteractivePromptLoginError, needsProviderSetup, shouldOfferProviderSetup } from "../chat/providers";
 import { loginReply, requireWritten, setModelReply } from "../chat/send";
 import type { ProvidersDialogTab } from "../chat/slash";
-import { applyRpcLine, type ChatTranscriptState, dismissPendingUi, emptyTranscript, isPresentationUi, type PendingUi } from "../chatTranscript";
+import { applyRpcLine, type ChatModelOption, type ChatTranscriptState, dismissPendingUi, emptyTranscript, isPresentationUi, type PendingUi } from "../chatTranscript";
 import * as ipc from "../ipc";
 import {
   cancelExtensionUi,
@@ -45,6 +45,27 @@ export type ProviderSetupClose =
 
 const DAEMON_BACKOFF_MS = [250, 500, 1000, 2000] as const;
 
+/** Last successful `get_available_models` rows for this JS realm. An app restart drops it. */
+let lastCatalogue: ChatModelOption[] | undefined;
+
+/** Test isolation. The cache is otherwise the JS realm, so an app restart drops it. */
+export function resetProviderSetupCatalogue(): void {
+  lastCatalogue = undefined;
+}
+
+function sameCatalogue(cached: ChatModelOption[] | undefined, next: ChatModelOption[]): boolean {
+  if (!cached || cached.length !== next.length) return false;
+  return cached.every((row, index) => row.provider === next[index]?.provider && row.id === next[index]?.id);
+}
+
+/** A successful catalogue reply, matching the `get_available_models` branch in `applyRpcLine`. */
+function successfulModelsReply(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const rec = value as Record<string, unknown>;
+  const data = rec.data;
+  return rec.type === "response" && rec.command === "get_available_models" && rec.success !== false && data !== null && typeof data === "object" && !Array.isArray(data);
+}
+
 export function ProviderSetupDialog({
   mode,
   initialTab = "accounts",
@@ -58,8 +79,9 @@ export function ProviderSetupDialog({
   /** `/model provider/id` typed in a chat: filters the Models tab to it. */
   preselect?: string;
   /**
-   * Form pickers (create task/session, review handoff) land on Accounts once the catalogue
-   * is ready and this install still needs setup. Settings model field omits this.
+   * Form pickers land on Accounts once login providers and hosted state have settled
+   * and this install still needs setup. The setup session's probe model is not that
+   * evidence. Settings omits this.
    */
   unsignedOpensAccounts?: boolean;
   /**
@@ -77,10 +99,12 @@ export function ProviderSetupDialog({
   const [livePromotedIds, setLivePromotedIds] = useState<string[]>([]);
   const [tab, setTab] = useState<ProvidersDialogTab>(initialTab);
   const [catalogueStatus, setCatalogueStatus] = useState<"connecting" | "ready" | "failed">("connecting");
+  const [modelsSettled, setModelsSettled] = useState(false);
   // Same store the old ModelInput picker used, so stars survive the swap rather than resetting.
   const [favorites, setFavorites] = useState<string[]>([]);
   const [hosted, setHosted] = useState<HostedCatalogView | null>(null);
   const [hostedLoaded, setHostedLoaded] = useState(false);
+  const chatRef = useRef(emptyTranscript());
   const sessionIdRef = useRef("");
   const loginApplyRef = useRef<string | null>(null);
   const loginOpenUrlRef = useRef(false);
@@ -96,7 +120,18 @@ export function ProviderSetupDialog({
         // `applyRpcLine` takes the parsed value, not the raw line: handed a string it silently
         // no-ops, so every provider row would vanish without an error anywhere.
         const value: unknown = JSON.parse(line);
-        setChat((current) => applyRpcLine(current, value));
+        const next = applyRpcLine(chatRef.current, value);
+        chatRef.current = next;
+        setChat(next);
+        // Publish only a live successful catalogue. A close that already set `cancelled`
+        // returned above, so a racing reply cannot become the next open's cache.
+        if (successfulModelsReply(value)) {
+          const nextModels = next.sessionMeta.models ?? [];
+          if (!sameCatalogue(lastCatalogue, nextModels)) {
+            lastCatalogue = nextModels.map((row) => ({ provider: row.provider, id: row.id }));
+          }
+          setModelsSettled(true);
+        }
         if (modelApplyRef.current) {
           const reply = setModelReply(value);
           if (reply) {
@@ -235,7 +270,9 @@ export function ProviderSetupDialog({
   const openBrowser = useCallback(async (request: PendingUi) => {
     try {
       await settleOpenUrl(sessionIdRef.current, request.id, request.launchUrl || request.url, setModelError);
-      setChat((current) => dismissPendingUi(current, request.id));
+      const next = dismissPendingUi(chatRef.current, request.id);
+      chatRef.current = next;
+      setChat(next);
     } catch (error) {
       handledUiRef.current.delete(request.id);
       setModelError(String(error));
@@ -265,7 +302,9 @@ export function ProviderSetupDialog({
     handledUiRef.current.add(requestId);
     try {
       requireWritten(await ipc.rpcWriteSession(sessionIdRef.current, response));
-      setChat((current) => dismissPendingUi(current, requestId));
+      const next = dismissPendingUi(chatRef.current, requestId);
+      chatRef.current = next;
+      setChat(next);
     } catch (error) {
       handledUiRef.current.delete(requestId);
       setModelError(String(error));
@@ -330,7 +369,11 @@ export function ProviderSetupDialog({
   // in-session offer cannot disagree about what "set up" means.
   const providers = chat.sessionMeta.loginProviders;
   const models = chat.sessionMeta.models ?? [];
-  const status = providers !== undefined ? "ready" : catalogueStatus;
+  // Accounts is ready when login providers arrive. Models is not: a pending
+  // `get_available_models` must stay "Connecting…", or paint this process's last catalogue.
+  const accountsStatus = providers !== undefined ? "ready" : catalogueStatus;
+  const shownModels = modelsSettled ? models : (lastCatalogue ?? []);
+  const modelsStatus = modelsSettled || lastCatalogue ? "ready" : catalogueStatus === "failed" ? "failed" : "connecting";
   const decided = mode === "manual" || (hostedLoaded && providers !== undefined && providers.length > 0);
   const offer =
     mode === "manual" ||
@@ -347,12 +390,13 @@ export function ProviderSetupDialog({
     if (mode === "auto" && decided && !offer) onClose("not-needed");
   }, [mode, decided, offer, onClose]);
   useEffect(() => {
-    if (!unsignedOpensAccounts || unsignedSwitchedRef.current || status !== "ready") return;
-    if (needsProviderSetup(providers ?? [], chat.sessionMeta.model, models)) {
+    if (!unsignedOpensAccounts || unsignedSwitchedRef.current) return;
+    if (!hostedLoaded || providers === undefined) return;
+    if (needsProviderSetup(providers, undefined, shownModels, hosted?.ready === true)) {
       unsignedSwitchedRef.current = true;
       setTab("accounts");
     }
-  }, [unsignedOpensAccounts, status, providers, chat.sessionMeta.model, models]);
+  }, [unsignedOpensAccounts, hostedLoaded, providers, shownModels, hosted]);
   if (mode === "auto" && (!decided || !offer)) return null;
   if (mode === "manual" && !offer) return null;
 
@@ -360,15 +404,15 @@ export function ProviderSetupDialog({
     <ChatModelDialog
       tab={tab}
       setup={mode === "auto"}
-      models={models}
-      current={chat.sessionMeta.model}
+      models={shownModels}
+      current={onPick ? undefined : chat.sessionMeta.model}
       preselect={preselect}
       loginProviders={chat.sessionMeta.loginProviders ?? []}
       livePromotedIds={livePromotedIds}
       modelRoles={modelRoles}
       hosted={hosted}
       favorites={favorites}
-      catalogueStatus={status}
+      catalogueStatus={tab === "models" ? modelsStatus : accountsStatus}
       onToggleFavorite={(model, favorite) => {
         // Optimistic: the store is the authority, but a star that lags a click reads as broken.
         setFavorites((prev) => (favorite ? [...prev, model] : prev.filter((row) => row !== model)));

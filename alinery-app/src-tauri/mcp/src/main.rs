@@ -1242,6 +1242,7 @@ fn create_task(repo: &Path, app_config: Option<&Path>, daemon_namespace: &str, a
             },
             auto_advance_steps: None,
             max_live_sessions,
+            step_models: Default::default(),
             start: optional_argument::<bool>(args, "start")?.unwrap_or(false),
         };
         let (client, _) = alinery_core::ensure_compatible_daemon(repo, &config, (!daemon_namespace.is_empty()).then_some(daemon_namespace)).map_err(|error| error.to_string())?;

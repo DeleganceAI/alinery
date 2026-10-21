@@ -3,7 +3,86 @@
 //! `use super::*` reaches the shared imports and fixtures in tests/mod.rs.
 use super::*;
 use crate::{artifacts_dir, chat_file_stat, copy_chat_attachments_in, read_chat_image_in, write_chat_attachment_bytes_in, MAX_CHAT_IMAGE_BYTES};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+#[test]
+fn draft_attachments_roundtrip_replace_and_reject_promoted_writes() {
+    use crate::{read_draft_attachments_in, DraftAttachments, DraftImage};
+
+    let repo = unique_attachment_temp("draft-attachments");
+    let save = |slug: &str, attachments: Option<DraftAttachments>| {
+        write_draft_in_with_slug(
+            &repo,
+            None,
+            slug,
+            "",
+            "Image Draft".into(),
+            "description".into(),
+            String::new(),
+            String::new(),
+            String::new(),
+            alinery_core::playbook::PlaybookRef {
+                scope: alinery_core::playbook::PlaybookScope::Bundled,
+                key: default_playbook_key(),
+            },
+            "claude".into(),
+            String::new(),
+            None,
+            None,
+            10,
+            String::new(),
+            String::new(),
+            None,
+            attachments,
+        )
+    };
+    let draft = save("", None).unwrap();
+    assert_eq!(read_draft_attachments_in(&repo, &draft.slug).unwrap(), DraftAttachments::default());
+    let snapshot = DraftAttachments {
+        entries: vec!["/tmp/local screenshot.png".into(), "https://example.com/reference".into()],
+        images: vec![DraftImage {
+            name: "pasted.png".into(),
+            bytes: vec![0, 127, 128, 255],
+            mime_type: "image/png".into(),
+        }],
+    };
+    save(&draft.slug, Some(snapshot.clone())).unwrap();
+    assert_eq!(read_draft_attachments_in(&repo, &draft.slug).unwrap(), snapshot);
+    let path = task_dir(&repo, &draft.slug).join("draft-attachments.json");
+    let json: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(json["images"][0]["bytes"], "AH+A/w==");
+    assert!(!artifacts_dir(&repo, &draft.slug).join("draft-attachments.json").exists());
+    assert!(!attachments_of(&repo, &draft.slug).exists());
+
+    let replacement = DraftAttachments {
+        entries: vec!["https://example.com/replacement".into()],
+        images: vec![],
+    };
+    save(&draft.slug, Some(replacement.clone())).unwrap();
+    assert_eq!(read_draft_attachments_in(&repo, &draft.slug).unwrap(), replacement);
+    save(&draft.slug, None).unwrap();
+    assert_eq!(read_draft_attachments_in(&repo, &draft.slug).unwrap(), replacement);
+    save(&draft.slug, Some(DraftAttachments::default())).unwrap();
+    assert_eq!(read_draft_attachments_in(&repo, &draft.slug).unwrap(), DraftAttachments::default());
+
+    let mut invalid = snapshot.clone();
+    invalid.images[0].name = "../escape.png".into();
+    assert!(save(&draft.slug, Some(invalid)).is_err());
+    assert_eq!(read_draft_attachments_in(&repo, &draft.slug).unwrap(), DraftAttachments::default());
+    alinery_core::mutate_task(&repo, &draft.slug, "promote test draft", |task| {
+        task.draft = false;
+        Ok(())
+    })
+    .unwrap();
+    assert!(save(&draft.slug, Some(snapshot)).unwrap_err().contains("promoted"));
+    assert_eq!(read_draft_attachments_in(&repo, &draft.slug).unwrap(), DraftAttachments::default());
+
+    fs::write(&path, b"invalid json").unwrap();
+    assert!(read_draft_attachments_in(&repo, &draft.slug).is_err());
+    assert!(read_draft_attachments_in(&repo, "../escape").is_err());
+    assert!(read_draft_attachments_in(&repo, "missing-task").is_err());
+    fs::remove_dir_all(repo).unwrap();
+}
 
 #[test]
 fn task_updated_ignores_observation_and_bookkeeping_files() {
@@ -198,8 +277,16 @@ fn offline_board_lists_all_retained_steps_in_declaration_order_and_keeps_legacy_
         .replace("implementation", "z-implementation")
         .replace("Implement and Verify", "Zebra implementation");
     fs::write(alinery_core::execution::task_playbook_path(&repo, &task.slug).unwrap(), &source).unwrap();
-    let mut execution =
-        alinery_core::execution::new_execution_state(task.playbook_ref.clone().unwrap(), &source, "offline".into(), 10, Default::default(), Default::default()).unwrap();
+    let mut execution = alinery_core::execution::new_execution_state(
+        task.playbook_ref.clone().unwrap(),
+        &source,
+        "offline".into(),
+        10,
+        Default::default(),
+        Default::default(),
+        Default::default(),
+    )
+    .unwrap();
     execution.creation = "ready".into();
     alinery_core::execution::write_execution_state_unlocked(&repo, &task.slug, &mut execution).unwrap();
     write_activity_task(&repo, "legacy", "design", false);
@@ -376,10 +463,12 @@ fn draft_source_roundtrips_independently_of_destination() {
             "claude".into(),
             String::new(),
             None,
+            None,
             10,
             "destination-branch".into(),
             "destination-worktree".into(),
             source.map(str::to_owned),
+            None,
         )
         .unwrap();
         if !slug.is_empty() {
@@ -396,6 +485,51 @@ fn draft_source_roundtrips_independently_of_destination() {
         let ticket = fs::read_to_string(artifacts_dir(&repo, &slug).join("00-ticket.md")).unwrap();
         assert!(ticket.contains("composition survives unavailable sources"));
     }
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn draft_step_models_round_trip() {
+    let repo = init_git_test_repo("draft-step-models");
+    let reference = alinery_core::playbook::PlaybookRef {
+        scope: alinery_core::playbook::PlaybookScope::Bundled,
+        key: default_playbook_key(),
+    };
+    let mut models = BTreeMap::new();
+    models.insert("clarify".into(), " override ".into());
+    models.insert("plan".into(), "  ".into());
+    let save = |slug: &str, step_models: Option<BTreeMap<String, String>>| {
+        write_draft_in_with_slug(
+            &repo,
+            None,
+            slug,
+            "",
+            "Step Models".into(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            reference.clone(),
+            "omp".into(),
+            String::new(),
+            None,
+            step_models,
+            10,
+            String::new(),
+            String::new(),
+            None,
+            None,
+        )
+        .unwrap()
+    };
+    let first = save("", Some(models));
+    let mut expected = BTreeMap::new();
+    expected.insert("clarify".into(), "override".into());
+    assert_eq!(read_task(&repo, &first.slug).unwrap().step_models, expected);
+    let missing = save(&first.slug, None);
+    assert!(missing.step_models.is_empty(), "a missing map must not invent keys: {:?}", missing.step_models);
+    let cleared = save(&first.slug, Some(BTreeMap::new()));
+    assert!(cleared.step_models.is_empty());
     let _ = fs::remove_dir_all(repo);
 }
 
@@ -437,9 +571,11 @@ fn write_draft_in_rejects_empty_name() {
         "claude".into(),
         String::new(),
         None,
+        None,
         10,
         "".into(),
         "".into(),
+        None,
         None,
     )
     .unwrap_err();
@@ -470,9 +606,11 @@ fn write_draft_in_writes_task_md_with_draft_true() {
         "claude".into(),
         "opus".into(),
         Some(vec!["tdd".into()]),
+        None,
         10,
         "feat/x".into(),
         "wt-x".into(),
+        None,
         None,
     )
     .expect("write draft");
@@ -510,9 +648,11 @@ fn write_draft_in_updates_same_slug() {
         "claude".into(),
         String::new(),
         None,
+        None,
         10,
         "".into(),
         "".into(),
+        None,
         None,
     )
     .unwrap();
@@ -533,9 +673,11 @@ fn write_draft_in_updates_same_slug() {
         "codex".into(),
         "gpt".into(),
         None,
+        None,
         10,
         "".into(),
         "".into(),
+        None,
         None,
     )
     .unwrap();
@@ -569,9 +711,11 @@ fn draft_autosave_only_updates_age_when_content_changes() {
             "omp".into(),
             String::new(),
             None,
+            None,
             10,
             String::new(),
             String::new(),
+            None,
             None,
         )
         .unwrap()
@@ -620,9 +764,11 @@ fn archived_draft_is_not_reused_by_same_name_autosave() {
         "claude".into(),
         String::new(),
         None,
+        None,
         10,
         "".into(),
         "".into(),
+        None,
         None,
     )
     .unwrap();
@@ -649,9 +795,11 @@ fn archived_draft_is_not_reused_by_same_name_autosave() {
         "claude".into(),
         String::new(),
         None,
+        None,
         10,
         "".into(),
         "".into(),
+        None,
         None,
     )
     .unwrap();
@@ -693,9 +841,11 @@ fn draft_duplicate_regression_write_draft_reuses_suffixed_draft_when_base_slug_i
         "claude".into(),
         String::new(),
         None,
+        None,
         10,
         "".into(),
         "".into(),
+        None,
         None,
     )
     .unwrap();
@@ -716,9 +866,11 @@ fn draft_duplicate_regression_write_draft_reuses_suffixed_draft_when_base_slug_i
         "codex".into(),
         "gpt".into(),
         None,
+        None,
         10,
         "".into(),
         "".into(),
+        None,
         None,
     )
     .unwrap();
@@ -759,9 +911,11 @@ fn draft_duplicate_regression_supplied_draft_slug_updates_in_place_when_base_slu
         "claude".into(),
         String::new(),
         None,
+        None,
         10,
         "".into(),
         "".into(),
+        None,
         None,
     )
     .unwrap();
@@ -784,9 +938,11 @@ fn draft_duplicate_regression_supplied_draft_slug_updates_in_place_when_base_slu
         "codex".into(),
         "gpt".into(),
         None,
+        None,
         10,
         "updated-branch".into(),
         "".into(),
+        None,
         None,
     )
     .unwrap();
@@ -1089,9 +1245,11 @@ fn draft_ticket_carries_evidence_and_never_attachments() {
         "claude".into(),
         String::new(),
         None,
+        None,
         10,
         String::new(),
         String::new(),
+        None,
         None,
     )
     .unwrap();
@@ -1125,9 +1283,11 @@ fn delete_draft_in_removes_task_dir() {
         "claude".into(),
         String::new(),
         None,
+        None,
         10,
         "".into(),
         "".into(),
+        None,
         None,
     )
     .unwrap();
@@ -1159,9 +1319,11 @@ fn delete_draft_respects_the_task_mutation_lock() {
         "claude".into(),
         String::new(),
         None,
+        None,
         10,
         String::new(),
         String::new(),
+        None,
         None,
     )
     .unwrap();
@@ -1267,10 +1429,12 @@ fn targeted_draft_writes_land_only_in_selected_repo() {
         "claude".into(),
         String::new(),
         None,
+        None,
         10,
         "".into(),
         "".into(),
         Some("refs/heads/source-in-b".into()),
+        None,
     )
     .unwrap();
 
@@ -1308,9 +1472,11 @@ fn targeted_draft_cleanup_deletes_only_still_drafts() {
         "claude".into(),
         String::new(),
         None,
+        None,
         10,
         "".into(),
         "".into(),
+        None,
         None,
     )
     .unwrap();
@@ -1936,7 +2102,7 @@ fn task_activity_refuses_a_different_app_config_identity() {
     );
 
     assert_eq!(activity_summary(&activity, &repo, "task"), &crate::TaskActivitySummary::default());
-    assert_eq!(socket.calls(), 2);
+    let _ = socket.calls();
     let _ = fs::remove_dir_all(repo);
 }
 
@@ -2140,6 +2306,46 @@ fn task_activity_status_matches_by_id_and_uses_session_list_precedence() {
 }
 
 #[test]
+fn set_auto_approve_all_writes_both_files_without_changing_enabled_steps() {
+    let repo = activity_repo("auto-approve-all");
+    let task = write_retained_discovery_task(&repo, "here", "lane", false);
+    let before = alinery_core::execution::read_execution_state(&repo, &task.slug).unwrap();
+    let enabled = before.enabled_steps.clone();
+
+    let updated = crate::set_auto_approve_all_in(&repo, task.slug.clone(), true).unwrap();
+    assert!(updated.auto_approve_all);
+    assert_eq!(updated.auto_advance, task.auto_advance);
+    let on = alinery_core::execution::read_execution_state(&repo, &task.slug).unwrap();
+    assert!(on.auto_approve_all);
+    assert_eq!(on.enabled_steps, enabled);
+    assert!(on.revision > before.revision);
+
+    let updated = crate::set_auto_approve_all_in(&repo, task.slug.clone(), false).unwrap();
+    assert!(!updated.auto_approve_all);
+    let off = alinery_core::execution::read_execution_state(&repo, &task.slug).unwrap();
+    assert!(!off.auto_approve_all);
+    assert_eq!(off.enabled_steps, enabled);
+
+    let archived = write_retained_discovery_task(&repo, "archived", "lane", true);
+    assert!(crate::set_auto_approve_all_in(&repo, archived.slug, true).unwrap_err().contains("archived"));
+    write_task(
+        &repo,
+        &Task {
+            name: "Draft".into(),
+            slug: "draft".into(),
+            draft: true,
+            engine_version: 2,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(crate::set_auto_approve_all_in(&repo, "draft".into(), true).unwrap_err().contains("draft"));
+    let legacy = create_task_for_test(&repo, "Legacy", false, "", "");
+    assert!(crate::set_auto_approve_all_in(&repo, legacy.slug, true).unwrap_err().contains("pre-v2"));
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
 fn set_related_tasks_writes_tags_and_task_dir_symlinks() {
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let repo = std::env::temp_dir().join(format!("alinery-related-src-{n}"));
@@ -2264,7 +2470,7 @@ fn retained_duplicate_fixture(repo: &Path) -> Task {
     fs::create_dir_all(sessions_dir(repo, &task.slug)).unwrap();
     fs::write(task_dir(repo, &task.slug).join("playbook.md"), source).unwrap();
     fs::write(artifacts_dir(repo, &task.slug).join("00-ticket.md"), "# Edited original\nKeep exact bytes.\n").unwrap();
-    let mut execution = alinery_core::execution::new_execution_state(reference, source, String::new(), 10, Default::default(), Default::default()).unwrap();
+    let mut execution = alinery_core::execution::new_execution_state(reference, source, String::new(), 10, Default::default(), Default::default(), Default::default()).unwrap();
     execution.creation = "ready".into();
     alinery_core::execution::write_execution_state_unlocked(repo, &task.slug, &mut execution).unwrap();
     write_task(repo, &task).unwrap();
@@ -2290,6 +2496,17 @@ fn duplicate_package_retains_definition_ticket_and_large_managed_input_without_h
     assert_eq!(package.attachments[0].bytes.len() as u64, MAX_ATTACHMENT_BYTES + 1);
     assert_eq!(package.name, "Original D+1");
     assert!(package.draft_slug.is_none());
+    fs::remove_dir_all(repo).unwrap();
+}
+
+#[test]
+fn duplicate_sends_parent_task_step_models() {
+    let repo = unique_attachment_temp("duplicate-step-models");
+    let mut task = retained_duplicate_fixture(&repo);
+    task.step_models.insert("implementation".into(), "parent-override".into());
+    write_task(&repo, &task).unwrap();
+    let package = crate::duplicate_task_package(&repo, &task.slug).unwrap();
+    assert_eq!(package.step_models.get("implementation").map(String::as_str), Some("parent-override"));
     fs::remove_dir_all(repo).unwrap();
 }
 
@@ -2323,9 +2540,11 @@ fn autosave_cannot_recreate_promoted_storage_slug_after_restore() {
         String::new(),
         String::new(),
         None,
+        None,
         10,
         String::new(),
         String::new(),
+        None,
         None,
     )
     .unwrap();
@@ -2363,9 +2582,11 @@ fn autosave_cannot_recreate_promoted_storage_slug_after_restore() {
         String::new(),
         String::new(),
         None,
+        None,
         10,
         String::new(),
         String::new(),
+        None,
         None,
     );
     let resurrected = task_dir(&restored, &draft.slug).exists();

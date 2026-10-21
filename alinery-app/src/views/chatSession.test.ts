@@ -19,6 +19,9 @@ describe("chatSession", () => {
     expect(sendCommand("hi", false)).toMatchObject({ type: "prompt", message: "hi" });
     expect(sendCommand("again", true)).toMatchObject({ type: "follow_up", message: "again" });
     expect(sendNowCommand("stop")).toMatchObject({ type: "abort_and_prompt", message: "stop" });
+    const images = [{ type: "image" as const, data: "aa", mimeType: "image/png" }];
+    expect(sendCommand("look", false, images)).toMatchObject({ type: "prompt", message: "look", images });
+    expect(sendNowCommand("look", images)).toMatchObject({ type: "abort_and_prompt", message: "look", images });
   });
 
   it("aborts with the official abort command", () => {

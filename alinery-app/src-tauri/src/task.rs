@@ -250,6 +250,7 @@ pub(crate) fn duplicate_task_package(repo: &Path, source_slug: &str) -> Result<C
         launch_defaults: source.launch_defaults,
         auto_advance_steps: Some(source.auto_advance),
         max_live_sessions: Some(source.max_live_sessions),
+        step_models: source.step_models,
         start: true,
     })
 }
@@ -348,9 +349,14 @@ fn attachment_dir_bytes(dir: &Path) -> u64 {
 // Infallible by construction: a bad attachment is data, never control flow. Runs strictly after
 // the git block so it can never reach a rollback_task_dir call site.
 pub(crate) fn copy_task_attachments(repo: &Path, slug: &str, entries: &[String]) -> (Vec<String>, Vec<String>, Vec<String>) {
-    let dir = alinery_core::attachments_dir(repo, slug);
+    copy_attachments_into(&alinery_core::attachments_dir(repo, slug), entries)
+}
+
+/// Copy local files into `dir`. `http(s)` entries are recorded and never fetched.
+/// Returns `(urls, copied names, failures)`.
+pub(crate) fn copy_attachments_into(dir: &Path, entries: &[String]) -> (Vec<String>, Vec<String>, Vec<String>) {
     let (mut urls, mut copied, mut failures) = (vec![], vec![], vec![]);
-    let mut batch_bytes: u64 = attachment_dir_bytes(&dir);
+    let mut batch_bytes: u64 = attachment_dir_bytes(dir);
     for entry in entries {
         let entry = entry.trim();
         if entry.is_empty() {
@@ -385,11 +391,11 @@ pub(crate) fn copy_task_attachments(repo: &Path, slug: &str, entries: &[String])
             failures.push(format!("{entry} — unusable file name"));
             continue;
         };
-        if let Err(e) = fs::create_dir_all(&dir) {
+        if let Err(e) = fs::create_dir_all(dir) {
             failures.push(format!("{entry} — {e}"));
             continue;
         }
-        let Some(target) = unique_attachment_name(&dir, base) else {
+        let Some(target) = unique_attachment_name(dir, base) else {
             failures.push(format!("{entry} — too many name collisions"));
             continue;
         };
@@ -461,18 +467,21 @@ pub(crate) fn copy_chat_attachments(task_slug: String, paths: Vec<String>) -> Re
 
 pub(crate) fn write_chat_attachment_bytes_in(repo: &Path, task_slug: &str, file_name: &str, bytes: &[u8]) -> Result<String, String> {
     let slug = alinery_core::safe_component(task_slug).ok_or("invalid task slug")?;
+    write_attachment_bytes_into(&alinery_core::attachments_dir(repo, slug), file_name, bytes)
+}
+
+pub(crate) fn write_attachment_bytes_into(dir: &Path, file_name: &str, bytes: &[u8]) -> Result<String, String> {
     let base = alinery_core::safe_component(file_name).ok_or_else(|| format!("invalid attachment name: {file_name}"))?;
     let len = bytes.len() as u64;
     if len > MAX_ATTACHMENT_BYTES {
         return Err(format!("{file_name} — larger than 25 MB"));
     }
-    let dir = alinery_core::attachments_dir(repo, slug);
-    let batch_bytes = attachment_dir_bytes(&dir);
+    let batch_bytes = attachment_dir_bytes(dir);
     if batch_bytes + len > MAX_ATTACHMENT_SET_BYTES {
         return Err(format!("{file_name} — attachment set would exceed 100 MB"));
     }
-    fs::create_dir_all(&dir).map_err(|e| format!("{file_name} — {e}"))?;
-    let Some(target) = unique_attachment_name(&dir, base) else {
+    fs::create_dir_all(dir).map_err(|e| format!("{file_name} — {e}"))?;
+    let Some(target) = unique_attachment_name(dir, base) else {
         return Err(format!("{file_name} — too many name collisions"));
     };
     fs::write(dir.join(&target), bytes).map_err(|e| format!("{file_name} — {e}"))?;
@@ -480,22 +489,30 @@ pub(crate) fn write_chat_attachment_bytes_in(repo: &Path, task_slug: &str, file_
 }
 
 #[tauri::command]
-pub(crate) fn write_chat_attachment_bytes(task_slug: String, file_name: String, bytes: Vec<u8>) -> Result<String, String> {
-    write_chat_attachment_bytes_in(&active_repo()?, &task_slug, &file_name, &bytes)
+pub(crate) fn write_chat_attachment_bytes(app: AppHandle, task_slug: String, file_name: String, bytes: Vec<u8>, repo_path: Option<String>) -> Result<String, String> {
+    let repo = match repo_path {
+        Some(path) => target_repo_for_app(&app, &path)?,
+        None => active_repo()?,
+    };
+    write_chat_attachment_bytes_in(&repo, &task_slug, &file_name, &bytes)
 }
 
-pub(crate) fn read_chat_image_in(repo: &Path, task_slug: &str, name: &str) -> Result<ChatImage, String> {
-    let path = attachment_path_in(repo, task_slug, name)?;
-    let meta = fs::metadata(&path).map_err(|e| format!("{name} — {e}"))?;
+pub(crate) fn read_chat_image_file(path: &Path, name: &str) -> Result<ChatImage, String> {
+    let meta = fs::metadata(path).map_err(|e| format!("{name} — {e}"))?;
     if meta.len() > MAX_CHAT_IMAGE_BYTES {
         return Err(format!("{name} — larger than 5 MB"));
     }
     let mime_type = chat_image_mime(name)?;
-    let bytes = fs::read(&path).map_err(|e| format!("{name} — {e}"))?;
+    let bytes = fs::read(path).map_err(|e| format!("{name} — {e}"))?;
     Ok(ChatImage {
         mime_type,
         data: alinery_core::rpc_chunk::encode_base64(&bytes),
     })
+}
+
+pub(crate) fn read_chat_image_in(repo: &Path, task_slug: &str, name: &str) -> Result<ChatImage, String> {
+    let path = attachment_path_in(repo, task_slug, name)?;
+    read_chat_image_file(Path::new(&path), name)
 }
 
 #[tauri::command]
@@ -571,6 +588,58 @@ pub(crate) fn draft_slug_for_name(repo: &Path, base: &str, name: &str) -> String
     }
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct DraftAttachments {
+    pub(crate) entries: Vec<String>,
+    pub(crate) images: Vec<DraftImage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct DraftImage {
+    pub(crate) name: String,
+    #[serde(with = "alinery_core::rpc_chunk::base64_bytes")]
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) mime_type: String,
+}
+
+fn validate_draft_attachments(attachments: &DraftAttachments) -> Result<(), String> {
+    let mut total = 0;
+    for image in &attachments.images {
+        alinery_core::safe_component(&image.name).ok_or_else(|| format!("invalid attachment name: {}", image.name))?;
+        let len = image.bytes.len() as u64;
+        if len > MAX_ATTACHMENT_BYTES {
+            return Err(format!("{} — larger than 25 MB", image.name));
+        }
+        if len > MAX_ATTACHMENT_SET_BYTES - total {
+            return Err("attachment set would exceed 100 MB".into());
+        }
+        total += len;
+    }
+    Ok(())
+}
+
+pub(crate) fn read_draft_attachments_in(repo: &Path, slug: &str) -> Result<DraftAttachments, String> {
+    let slug = alinery_core::safe_component(slug).ok_or("invalid draft slug")?;
+    read_task(repo, slug)?;
+    let path = task_dir(repo, slug).join("draft-attachments.json");
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(DraftAttachments::default()),
+        Err(error) => return Err(format!("read {}: {error}", path.display())),
+    };
+    let attachments = serde_json::from_slice(&bytes).map_err(|error| format!("read {}: {error}", path.display()))?;
+    validate_draft_attachments(&attachments)?;
+    Ok(attachments)
+}
+
+#[tauri::command]
+pub(crate) async fn read_draft_attachments_for_repo(app: AppHandle, repo_path: String, slug: String) -> Result<DraftAttachments, String> {
+    let repo = target_repo_for_app(&app, &repo_path)?;
+    tauri::async_runtime::spawn_blocking(move || read_draft_attachments_in(&repo, &slug))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 pub(crate) fn write_draft_in_with_slug(
     repo: &Path,
     app_config: Option<&Path>,
@@ -585,10 +654,12 @@ pub(crate) fn write_draft_in_with_slug(
     harness: String,
     model: String,
     auto_advance: Option<Vec<String>>,
+    step_models: Option<std::collections::BTreeMap<String, String>>,
     max_live_sessions: u32,
     branch_name: String,
     worktree_name: String,
     draft_base_ref: Option<String>,
+    draft_attachments: Option<DraftAttachments>,
 ) -> Result<Task, String> {
     alinery_core::with_task_mutation_lock_waiting(repo, "write draft", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
         write_draft_in_with_slug_unlocked(
@@ -605,10 +676,12 @@ pub(crate) fn write_draft_in_with_slug(
             harness,
             model,
             auto_advance,
+            step_models,
             max_live_sessions,
             branch_name,
             worktree_name,
             draft_base_ref,
+            draft_attachments,
         )
     })
 }
@@ -627,10 +700,12 @@ fn write_draft_in_with_slug_unlocked(
     harness: String,
     model: String,
     auto_advance: Option<Vec<String>>,
+    step_models: Option<std::collections::BTreeMap<String, String>>,
     max_live_sessions: u32,
     branch_name: String,
     worktree_name: String,
     draft_base_ref: Option<String>,
+    draft_attachments: Option<DraftAttachments>,
 ) -> Result<Task, String> {
     if max_live_sessions == 0 {
         return Err("maximum live sessions must be positive".into());
@@ -655,6 +730,9 @@ fn write_draft_in_with_slug_unlocked(
         }
     };
 
+    if let Some(attachments) = &draft_attachments {
+        validate_draft_attachments(attachments)?;
+    }
     fs::create_dir_all(tasks_dir(repo)).map_err(|e| e.to_string())?;
     fs::create_dir_all(task_dir(repo, &slug)).map_err(|e| e.to_string())?;
 
@@ -693,6 +771,15 @@ fn write_draft_in_with_slug_unlocked(
         max_live_sessions,
         launch_defaults: alinery_core::execution::LaunchChoices { harness, model },
         auto_advance: auto_advance.unwrap_or_default(),
+        auto_approve_all: false,
+        step_models: step_models
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(key, value)| {
+                let trimmed = value.trim();
+                (!trimmed.is_empty()).then(|| (key, trimmed.to_string()))
+            })
+            .collect(),
         draft: true,
         draft_base_ref,
         parent_task: String::new(),
@@ -728,11 +815,15 @@ fn write_draft_in_with_slug_unlocked(
             write_bytes_atomic(&path, ticket.as_bytes())?;
         }
     }
+    if let Some(attachments) = draft_attachments {
+        let bytes = serde_json::to_vec(&attachments).map_err(|error| error.to_string())?;
+        write_bytes_atomic(&task_dir(repo, &slug).join("draft-attachments.json"), &bytes)?;
+    }
     Ok(task)
 }
 
 #[tauri::command]
-pub(crate) fn write_draft(
+pub(crate) async fn write_draft(
     app: AppHandle,
     state: State<'_, AppState>,
     name: String,
@@ -745,36 +836,45 @@ pub(crate) fn write_draft(
     harness: String,
     model: String,
     auto_advance: Option<Vec<String>>,
+    step_models: Option<std::collections::BTreeMap<String, String>>,
     max_live_sessions: u32,
     branch_name: String,
     worktree_name: String,
     draft_slug: String,
     draft_base_ref: Option<String>,
+    draft_attachments: Option<DraftAttachments>,
 ) -> Result<Task, String> {
     let repo = require_owned_active_repo(&state)?;
-    write_draft_in_with_slug(
-        &repo,
-        Some(&app_config_path(&app)?),
-        &draft_slug,
-        &task_slug,
-        name,
-        description,
-        evidence,
-        linear_id,
-        github_issue,
-        playbook,
-        harness,
-        model,
-        auto_advance,
-        max_live_sessions,
-        branch_name,
-        worktree_name,
-        draft_base_ref,
-    )
+    let app_config = app_config_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        write_draft_in_with_slug(
+            &repo,
+            Some(&app_config),
+            &draft_slug,
+            &task_slug,
+            name,
+            description,
+            evidence,
+            linear_id,
+            github_issue,
+            playbook,
+            harness,
+            model,
+            auto_advance,
+            step_models,
+            max_live_sessions,
+            branch_name,
+            worktree_name,
+            draft_base_ref,
+            draft_attachments,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn write_draft_for_repo(
+pub(crate) async fn write_draft_for_repo(
     app: AppHandle,
     state: State<'_, AppState>,
     repo_path: String,
@@ -788,33 +888,42 @@ pub(crate) fn write_draft_for_repo(
     harness: String,
     model: String,
     auto_advance: Option<Vec<String>>,
+    step_models: Option<std::collections::BTreeMap<String, String>>,
     max_live_sessions: u32,
     branch_name: String,
     worktree_name: String,
     draft_slug: String,
     draft_base_ref: Option<String>,
+    draft_attachments: Option<DraftAttachments>,
 ) -> Result<Task, String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
-    write_draft_in_with_slug(
-        &repo,
-        Some(&app_config_path(&app)?),
-        &draft_slug,
-        &task_slug,
-        name,
-        description,
-        evidence,
-        linear_id,
-        github_issue,
-        playbook,
-        harness,
-        model,
-        auto_advance,
-        max_live_sessions,
-        branch_name,
-        worktree_name,
-        draft_base_ref,
-    )
+    let app_config = app_config_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        write_draft_in_with_slug(
+            &repo,
+            Some(&app_config),
+            &draft_slug,
+            &task_slug,
+            name,
+            description,
+            evidence,
+            linear_id,
+            github_issue,
+            playbook,
+            harness,
+            model,
+            auto_advance,
+            step_models,
+            max_live_sessions,
+            branch_name,
+            worktree_name,
+            draft_base_ref,
+            draft_attachments,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 // M6: remove a draft task directory entirely (archive is insufficient — leaves task.md).
@@ -1114,6 +1223,38 @@ pub(crate) fn set_related_tasks_in(repo: &Path, slug: String, related: Vec<aline
         alinery_core::sync_related_artifact_links(repo, &task.slug, &task.related_tasks)?;
         Ok(task)
     })
+}
+
+pub(crate) fn set_auto_approve_all_in(repo: &Path, slug: String, enabled: bool) -> Result<Task, String> {
+    alinery_core::with_task_mutation_lock_waiting(repo, "set auto approve all", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
+        let mut task = read_task(repo, &slug)?;
+        if task.archived {
+            return Err("task is archived — read-only".into());
+        }
+        if task.draft {
+            return Err("draft tasks have no execution to override".into());
+        }
+        if task.engine_version < 2 {
+            return Err("pre-v2 tasks have no automatic completion to override".into());
+        }
+        // Completion reads execution.json, not task.md. Write the task first so a failed
+        // execution write leaves the engine off rather than approving while the file says off.
+        let mut state = alinery_core::execution::read_execution_state(repo, &slug)?;
+        task.auto_approve_all = enabled;
+        write_task_unlocked(repo, &task)?;
+        if state.auto_approve_all != enabled {
+            alinery_core::execution::set_execution_auto_approve_all(&mut state, enabled);
+            alinery_core::execution::write_execution_state_unlocked(repo, &slug, &mut state)?;
+        }
+        Ok(task)
+    })
+}
+
+#[tauri::command]
+pub(crate) fn set_auto_approve_all_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String, enabled: bool) -> Result<Task, String> {
+    let repo = target_repo_for_app(&app, &repo_path)?;
+    require_repo_owned(&state, &repo)?;
+    set_auto_approve_all_in(&repo, slug, enabled)
 }
 
 #[tauri::command]

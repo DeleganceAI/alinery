@@ -135,7 +135,7 @@ vi.mock("./Boot", () => ({ Boot: () => null }));
 vi.mock("./HotkeyBar", () => ({ HotkeyBar: () => null }));
 vi.mock("./DaemonConflictBanner", () => ({ DaemonConflictBanner: () => null, RepoBusyBanner: () => null, HostGuardWarning: () => null }));
 vi.mock("./WindowChrome", () => ({ ResizeHandles: () => null, WindowControls: () => null, useWindowFullscreen: () => false }));
-vi.mock("./useDaemonStatus", () => ({ useDaemonStatus: () => ({ repo_busy: false, conflict: null }) }));
+vi.mock("./useDaemonStatus", () => ({ useDaemonStatus: () => ({ repo_busy: false, conflict: null, refresh: () => {} }) }));
 vi.mock("./useMcpStatus", () => ({ useMcpStatus: () => ({}) }));
 // Both board views are stubbed the same way: the duplicate coordinator is what is under test
 // here, and it does not care which board raised the request. Grid is the default board, so it is
@@ -161,7 +161,7 @@ vi.mock("./views/TaskDetail", () => ({
 Object.defineProperty(globalThis, "localStorage", {
   configurable: true,
   value: {
-    getItem: vi.fn(() => null),
+    getItem: vi.fn((key: string) => (key === "alinery.onboardingCompleted.v1" ? "1" : null)),
     setItem: vi.fn(),
   },
 });

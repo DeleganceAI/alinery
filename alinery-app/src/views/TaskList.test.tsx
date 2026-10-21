@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EMPTY_STATE_ART } from "../emptyStateArt";
 import { mockIpc } from "../test/mockIpc";
@@ -191,15 +191,20 @@ describe("Task List relationship projection", () => {
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ slug: "child" }));
   });
 
-  it("retains archived child history beneath its parent when Show archived is on", async () => {
+  it("includes archived child history alongside active tasks and can hide it again", async () => {
     scenario.tasks = [task("parent", { created: 1 }), task("child", { parent_task: "parent", archived: true, created: 2 })];
     render(<TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} onCreate={() => {}} registerNav={() => {}} />);
     await screen.findByText("PARENT");
     expect(screen.queryByText("CHILD")).toBeNull();
 
-    fireEvent.click(screen.getByText("Show archived"));
+    fireEvent.click(screen.getByRole("button", { name: "Include archived" }));
     await screen.findByText("CHILD");
     expect([...document.querySelectorAll(".task-name-text")].map((node) => node.textContent)).toEqual(["PARENT", "CHILD"]);
+    expect(screen.getByRole("button", { name: "Include archived", pressed: true })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Include archived" }));
+    await waitFor(() => expect(screen.queryByText("CHILD")).toBeNull());
+    expect(screen.getByText("PARENT")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Include archived", pressed: false })).toBeDefined();
   });
 
   it("marks a visible child whose parent is filtered out", async () => {
@@ -236,13 +241,9 @@ describe("TaskList empty", () => {
     render(<TaskList allRepos={false} onOpen={onOpen} onDuplicate={() => {}} onOpenActiveSession={onOpenActiveSession} registerNav={() => {}} onCreate={() => {}} />);
 
     const activeButton = await screen.findByRole("button", { name: "Design" });
-    expect(screen.getByText("Active session")).toBeDefined();
-    expect(screen.queryByLabelText("Running")).toBeNull();
-    expect(screen.getAllByLabelText("Needs input")).toHaveLength(1);
-    expect(screen.queryByText("Needs input")).toBeNull();
-    expect(screen.queryByText("Needs approval")).toBeNull();
-    expect(screen.queryByText("Failed")).toBeNull();
-    expect(screen.queryByText("Completed")).toBeNull();
+    const table = within(screen.getByRole("table"));
+    expect(table.queryByLabelText("Running")).toBeNull();
+    expect(table.getAllByLabelText("Needs input")).toHaveLength(1);
 
     fireEvent.click(activeButton);
     await waitFor(() => expect(onOpenActiveSession).toHaveBeenCalledWith(row, summary().active_session));
@@ -335,14 +336,15 @@ describe("Task List column sorting", () => {
     expect(screen.getByRole("button", { name: "Sort by Sessions" }).closest("th")?.getAttribute("aria-sort")).toBe("ascending");
   });
 
-  it("ignores an obsolete saved column and still allows choosing a valid sort", async () => {
-    window.localStorage.setItem("alinery:task-list:sort", JSON.stringify({ field: "removed-column", direction: "desc" }));
-    scenario.tasks = [task("alpha", { created: 1 }), task("beta", { created: 2 })];
+  it.each([null, JSON.stringify({ field: "removed-column", direction: "desc" })])("shows recently updated tasks first without a valid saved sort (%s)", async (saved) => {
+    if (saved !== null) window.localStorage.setItem("alinery:task-list:sort", saved);
+    scenario.tasks = [task("alpha", { created: 1, updated: 30 }), task("beta", { created: 2, updated: 20 }), task("legacy", { created: 25, updated: 0 })];
     render(<TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
     await screen.findByText("ALPHA");
-    expect(names()).toEqual(["ALPHA", "BETA"]);
+    expect(names()).toEqual(["ALPHA", "LEGACY", "BETA"]);
+    expect(screen.getByRole("button", { name: "Sort by Updated" }).closest("th")?.getAttribute("aria-sort")).toBe("descending");
     fireEvent.click(screen.getByRole("button", { name: "Sort by Created" }));
-    expect(names()).toEqual(["BETA", "ALPHA"]);
+    expect(names()).toEqual(["LEGACY", "BETA", "ALPHA"]);
   });
 
   it("sorts every column in both directions using displayed values, numeric counts, and missing activity last", async () => {
@@ -361,7 +363,6 @@ describe("Task List column sorting", () => {
     const onOpen = vi.fn();
     render(<TaskList allRepos={false} onOpen={onOpen} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
     await screen.findByRole("button", { name: "Build" });
-    expect(names()).toEqual(["Zulu", "Alpha", "Beta"]);
 
     const cases = [
       { label: "Name", direction: "ascending", first: ["Alpha", "Beta", "Zulu"], second: ["Zulu", "Beta", "Alpha"] },
@@ -417,7 +418,7 @@ describe("Task List column sorting", () => {
     act(() => requireNav(nav).openSelected());
     expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ slug: "child-2" }));
 
-    fireEvent.click(screen.getByText("Show archived"));
+    fireEvent.click(screen.getByRole("button", { name: "Include archived" }));
     await screen.findByText("ARCHIVED");
     expect(names()).toEqual(["ALPHA", "ZULU", "ARCHIVED", "CHILD-2", "CHILD-10"]);
     act(() => requireNav(nav).openSelected());
@@ -473,6 +474,136 @@ describe("Task List age refresh", () => {
       expect([...(row?.querySelectorAll(".age-cell") ?? [])].map((cell) => cell.getAttribute("title"))).toEqual([absolute, absolute]);
       act(() => requireNav(nav).openSelected());
       expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ repo_path: "/r", slug: "a-task", created: epoch, updated: epoch }));
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("Task List filters", () => {
+  const names = () => [...document.querySelectorAll(".task-name-text")].map((node) => node.textContent);
+  const selectedName = () => document.querySelector("tr.sel .task-name-text")?.textContent;
+
+  it("keeps parent context and every keyboard action on visible rows while searching", async () => {
+    scenario.tasks = [
+      task("parent", { name: "Payments epic", created: 1 }),
+      task("child", { name: "Fix refund rounding", parent_task: "parent", branch: "fix-refunds", created: 2 }),
+      task("other", { name: "Docs refresh", playbook_title: "Writing", created: 3 }),
+    ];
+    const onOpen = vi.fn();
+    const onDuplicate = vi.fn();
+    let nav: BoardNav | null = null;
+    render(
+      <TaskList
+        allRepos={false}
+        onOpen={onOpen}
+        onDuplicate={onDuplicate}
+        onOpenActiveSession={() => {}}
+        onCreate={() => {}}
+        registerNav={(next) => {
+          if (next) nav = next;
+        }}
+      />,
+    );
+    await screen.findByText("Payments epic");
+    await navReady(() => nav);
+    expect(selectedName()).toBe("Payments epic");
+
+    const search = screen.getByRole("searchbox", { name: "Search tasks" });
+    fireEvent.change(search, { target: { value: "REFUNDS" } });
+    expect(names()).toEqual(["Fix refund rounding"]);
+    expect(screen.getByText("Child of Payments epic")).toBeDefined();
+    expect(selectedName()).toBe("Fix refund rounding");
+
+    act(() => requireNav(nav).moveRow(-1));
+    act(() => requireNav(nav).moveRow(1));
+    act(() => requireNav(nav).openSelected());
+    expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ slug: "child" }));
+    act(() => requireNav(nav).duplicateSelected());
+    expect(onDuplicate).toHaveBeenLastCalledWith(expect.objectContaining({ slug: "child" }));
+    act(() => requireNav(nav).archiveSelected());
+    expect(screen.getByRole("alertdialog", { name: "Archive task" }).textContent).toContain("Fix refund rounding");
+    fireEvent.click(screen.getByText("Cancel"));
+
+    fireEvent.change(search, { target: { value: "writing" } });
+    expect(names()).toEqual(["Docs refresh"]);
+    expect(selectedName()).toBe("Docs refresh");
+
+    fireEvent.change(search, { target: { value: "no such task" } });
+    expect(names()).toEqual([]);
+    expect(screen.queryByText("No tasks yet.")).toBeNull();
+    onOpen.mockClear();
+    onDuplicate.mockClear();
+    act(() => {
+      requireNav(nav).openSelected();
+      requireNav(nav).duplicateSelected();
+      requireNav(nav).archiveSelected();
+    });
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(onDuplicate).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(search).toHaveProperty("value", "");
+    expect(names()).toEqual(["Payments epic", "Fix refund rounding", "Docs refresh"]);
+    expect(document.querySelectorAll(".task-name-cell.nested")).toHaveLength(1);
+    expect(screen.queryByText(/^Child of/)).toBeNull();
+    expect(selectedName()).toBe("Docs refresh");
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+  });
+
+  it("filters by status and playbook and keeps filters and selection through polls", async () => {
+    vi.useFakeTimers();
+    try {
+      scenario.tasks = [task("alpha", { created: 1 }), task("beta", { created: 2 }), task("gamma", { created: 3, playbook_title: "Hotfix" }), task("unknown", { created: 5 })];
+      activity = {
+        "/r:alpha": summary({ status: "running" }),
+        "/r:beta": summary({ status: null, active_session: null }),
+        "/r:gamma": summary({ status: null, active_session: null }),
+      };
+      const onOpen = vi.fn();
+      let nav: BoardNav | null = null;
+      render(
+        <TaskList
+          allRepos={false}
+          onOpen={onOpen}
+          onDuplicate={() => {}}
+          onOpenActiveSession={() => {}}
+          onCreate={() => {}}
+          registerNav={(next) => {
+            nav = next;
+          }}
+        />,
+      );
+      await navReady(() => nav);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByLabelText("Running")).toBeDefined();
+
+      const status = screen.getByRole("combobox", { name: "Status" });
+      const playbook = screen.getByRole("combobox", { name: "Playbook" });
+      fireEvent.change(status, { target: { value: "none" } });
+      expect(names()).toEqual(["BETA", "GAMMA"]);
+      fireEvent.change(playbook, { target: { value: "Hotfix" } });
+      expect(names()).toEqual(["GAMMA"]);
+      fireEvent.change(playbook, { target: { value: "" } });
+      expect(names()).toEqual(["BETA", "GAMMA"]);
+      fireEvent.click(screen.getByText("GAMMA"));
+
+      scenario.tasks = [task("gamma", { created: 3, playbook_title: "Hotfix" }), task("delta", { created: 4 }), task("alpha", { created: 1 }), task("beta", { created: 2 })];
+      activity["/r:delta"] = summary({ status: null, active_session: null });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(status).toHaveProperty("value", "none");
+      expect(names()).toEqual(["BETA", "GAMMA", "DELTA"]);
+      expect(selectedName()).toBe("GAMMA");
+
+      act(() => requireNav(nav).moveRow(-5));
+      act(() => requireNav(nav).openSelected());
+      expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ slug: "beta" }));
     } finally {
       cleanup();
       vi.useRealTimers();

@@ -624,3 +624,67 @@ pub(crate) async fn read_chat_omp(
     body.extend_from_slice(&window.data);
     Ok(tauri::ipc::Response::new(body))
 }
+
+fn chat_thread_attachment_dir(repo: &Path, id: &str) -> Result<PathBuf, String> {
+    let _ = load_root_omp(repo, id)?;
+    Ok(alinery_core::chat_attachments_dir(repo, id))
+}
+
+pub(crate) fn copy_chat_thread_attachments_in(repo: &Path, id: &str, paths: &[String]) -> Result<CopyChatAttachmentsResult, String> {
+    let dir = chat_thread_attachment_dir(repo, id)?;
+    let (_urls, copied, failures) = copy_attachments_into(&dir, paths);
+    Ok(CopyChatAttachmentsResult { copied, failures })
+}
+
+pub(crate) fn write_chat_thread_attachment_bytes_in(repo: &Path, id: &str, file_name: &str, bytes: &[u8]) -> Result<String, String> {
+    let dir = chat_thread_attachment_dir(repo, id)?;
+    write_attachment_bytes_into(&dir, file_name, bytes)
+}
+
+pub(crate) fn read_chat_thread_image_in(repo: &Path, id: &str, name: &str) -> Result<ChatImage, String> {
+    load_root_omp(repo, id)?;
+    let name = alinery_core::safe_component(name).ok_or_else(|| format!("invalid attachment name: {name}"))?;
+    let dir = alinery_core::chat_attachments_dir(repo, id);
+    let path = alinery_core::resolve_artifact_path(&dir, name)?;
+    if !path.is_file() {
+        return Err(format!("attachment not found: {name}"));
+    }
+    read_chat_image_file(&path, name)
+}
+
+#[tauri::command]
+pub(crate) async fn copy_chat_thread_attachments(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_path: String,
+    id: String,
+    paths: Vec<String>,
+) -> Result<CopyChatAttachmentsResult, String> {
+    let repo = owned_chat_repo(&app, &state, &repo_path)?;
+    tauri::async_runtime::spawn_blocking(move || copy_chat_thread_attachments_in(&repo, &id, &paths))
+        .await
+        .map_err(|error| format!("copy chat attachments: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn write_chat_thread_attachment_bytes(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_path: String,
+    id: String,
+    file_name: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    let repo = owned_chat_repo(&app, &state, &repo_path)?;
+    tauri::async_runtime::spawn_blocking(move || write_chat_thread_attachment_bytes_in(&repo, &id, &file_name, &bytes))
+        .await
+        .map_err(|error| format!("write chat attachment: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn read_chat_thread_image(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, name: String) -> Result<ChatImage, String> {
+    let repo = owned_chat_repo(&app, &state, &repo_path)?;
+    tauri::async_runtime::spawn_blocking(move || read_chat_thread_image_in(&repo, &id, &name))
+        .await
+        .map_err(|error| format!("read chat image: {error}"))?
+}

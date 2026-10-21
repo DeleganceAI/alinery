@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { afterPaint } from "../afterPaint";
 import * as ipc from "../ipc";
 import { PlaybookGraph, selectorsOverlap } from "../PlaybookGraph";
+import { type PastedImage, stagePastedImages } from "../pastedImages";
 import { Checkbox, InlineStatus, ModelInput, ompDefaultModel, orderPlaybookCandidates, playbookRefKey, samePlaybookRef } from "../shared";
 import * as taskMutationGuard from "../taskMutationGuard";
 import { toast } from "../toast";
@@ -21,24 +22,6 @@ import type {
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 type ErrState = { msg: string; detail: string } | null;
-type PastedImage = { id: string; file: File; name: string; previewUrl: string; previewUnavailable: boolean };
-
-const MAX_PASTED_IMAGE_BYTES = 25 * 1024 * 1024;
-const MAX_PASTED_SET_BYTES = 100 * 1024 * 1024;
-const IMAGE_EXTENSIONS: Record<string, string> = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/gif": "gif",
-  "image/webp": "webp",
-  "image/avif": "avif",
-  "image/bmp": "bmp",
-  "image/tiff": "tiff",
-  "image/heic": "heic",
-  "image/heif": "heif",
-  "image/x-icon": "ico",
-  "image/vnd.microsoft.icon": "ico",
-  "image/svg+xml": "svg",
-};
 
 function encodeImage(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -82,6 +65,52 @@ const slugifyTaskName = (value: string) => {
   return slug || (value.trim() ? "task" : "");
 };
 
+export type StepModelSource = "playbook-step" | "playbook-default" | "task-default" | "product-default" | "override";
+
+const STEP_MODEL_CAPTION: Record<StepModelSource, string> = {
+  "playbook-step": "Playbook step",
+  "playbook-default": "Playbook default",
+  "task-default": "Task default",
+  "product-default": "Product default",
+  override: "Override",
+};
+
+export function stepModelDisplay(args: { stepModel: string; playbookDefaultModel: string; taskModel: string; productModel: string; override: string | undefined }): {
+  value: string;
+  source: StepModelSource | null;
+} {
+  const inherited = [
+    ["playbook-step", args.stepModel],
+    ["playbook-default", args.playbookDefaultModel],
+    ["task-default", args.taskModel],
+    ["product-default", args.productModel],
+  ] as const;
+  const hit = inherited.find(([, value]) => value.trim() !== "");
+  const inheritedValue = hit ? hit[1].trim() : "";
+  const override = args.override?.trim() ?? "";
+  if (override && override !== inheritedValue) return { value: override, source: "override" };
+  if (!hit) return { value: "", source: null };
+  return { value: inheritedValue, source: hit[0] };
+}
+
+function persistedStepModels(source: ScopedPlaybook | null, stepModels: Record<string, string>, taskModel: string, productModel: string): Record<string, string> {
+  if (!source) return {};
+  const next: Record<string, string> = {};
+  for (const step of source.definition.step) {
+    const raw = stepModels[step.key];
+    if (raw === undefined) continue;
+    const inherited = stepModelDisplay({
+      stepModel: step.model,
+      playbookDefaultModel: source.definition.default_model,
+      taskModel,
+      productModel,
+      override: undefined,
+    }).value;
+    const trimmed = raw.trim();
+    if (trimmed && trimmed !== inherited) next[step.key] = trimmed;
+  }
+  return next;
+}
 export function CreateTaskPage({
   onCancel,
   onCreated,
@@ -89,6 +118,7 @@ export function CreateTaskPage({
   onOpened = () => {},
   initialDraft,
   initialPlaybook,
+  initialPreset,
   activeRepo,
   knownRepos,
 }: {
@@ -98,10 +128,11 @@ export function CreateTaskPage({
   onOpened?: () => void;
   initialDraft?: BoardTask;
   initialPlaybook?: PlaybookRef;
+  initialPreset?: { name: string; description: string; evidence?: string };
   activeRepo: string;
   knownRepos: string[];
 }) {
-  const initialTaskSlug = initialDraft?.requested_slug || slugifyTaskName(initialDraft?.name ?? "");
+  const initialTaskSlug = initialDraft?.requested_slug || slugifyTaskName(initialDraft?.name ?? initialPreset?.name ?? "");
   const [repoPath, setRepoPath] = useState(initialDraft?.repo_path ?? activeRepo);
   const [baseRef, setBaseRef] = useState<string | null>(initialDraft?.draft_base_ref ?? null);
   const baseRefRef = useRef(baseRef);
@@ -111,15 +142,17 @@ export function CreateTaskPage({
   const [branchRevision, setBranchRevision] = useState(0);
   const branchRequest = useRef(0);
   const branchSnapshotRequest = useRef(-1);
-  const [pickModel, setPickModel] = useState(false);
-  const [name, setName] = useState(initialDraft?.name ?? "");
+  const [picking, setPicking] = useState<null | "task" | string>(null);
+  const [name, setName] = useState(initialDraft?.name ?? initialPreset?.name ?? "");
   const [taskSlug, setTaskSlug] = useState(initialTaskSlug);
   const [slugEdited, setSlugEdited] = useState(!!initialDraft?.requested_slug && initialDraft.requested_slug !== slugifyTaskName(initialDraft.name));
-  const [desc, setDesc] = useState("");
-  const [evidence, setEvidence] = useState("");
+  const [desc, setDesc] = useState(initialPreset?.description ?? "");
+  const [evidence, setEvidence] = useState(initialPreset?.evidence ?? "");
   const [attachments, setAttachments] = useState<string[]>([]);
   const [images, setImages] = useState<PastedImage[]>([]);
   const imagesRef = useRef<PastedImage[]>([]);
+  const [draftAttachmentsReady, setDraftAttachmentsReady] = useState(!initialDraft);
+  const [draftAttachmentsError, setDraftAttachmentsError] = useState("");
   const [linearImages, setLinearImages] = useState<LinearImage[]>([]);
   const [linearImageErrors, setLinearImageErrors] = useState<string[]>([]);
   const importGeneration = useRef(0);
@@ -152,6 +185,8 @@ export function CreateTaskPage({
   const [catalogRevision, setCatalogRevision] = useState(0);
   const resetAutoAdvance = useRef(!initialDraft);
   const [autoAdvance, setAutoAdvance] = useState<string[]>(initialDraft?.auto_advance ?? []);
+  const [stepModels, setStepModels] = useState<Record<string, string>>(initialDraft?.step_models ?? {});
+  const [productModel, setProductModel] = useState("");
   const harness = "omp";
   const [model, setModel] = useState("");
   const [defaultModel, setDefaultModel] = useState("");
@@ -166,6 +201,7 @@ export function CreateTaskPage({
   const clearingRef = useRef(false);
   const [clearing, setClearing] = useState(false);
   const draftSaveInFlightRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingDraftSave = useRef<(() => void) | null>(null);
   const draftIdentities = useRef(new Map(initialDraft ? [[initialDraft.repo_path, initialDraft.slug]] : []));
   const draftWriteGeneration = useRef(0);
   const targetRequest = useRef(0);
@@ -190,6 +226,7 @@ export function CreateTaskPage({
 
   useEffect(
     () => () => {
+      pendingDraftSave.current?.();
       attachmentGeneration.current += 1;
       importGeneration.current += 1;
       for (const image of imagesRef.current) URL.revokeObjectURL(image.previewUrl);
@@ -198,48 +235,43 @@ export function CreateTaskPage({
     [],
   );
 
+  useEffect(() => {
+    if (!initialDraft) return;
+    let alive = true;
+    const generation = attachmentGeneration.current;
+    ipc
+      .readDraftAttachmentsForRepo(initialDraft.repo_path, initialDraft.slug)
+      .then((saved) => {
+        if (!alive || generation !== attachmentGeneration.current) return;
+        const restored: PastedImage[] = [];
+        try {
+          for (const image of saved.images) {
+            const bytes = Uint8Array.from(atob(image.bytes), (character) => character.charCodeAt(0));
+            const file = new File([bytes], image.name, { type: image.mime_type });
+            restored.push({ id: crypto.randomUUID(), file, name: image.name, previewUrl: URL.createObjectURL(file), previewUnavailable: false });
+          }
+        } catch (error) {
+          for (const image of restored) URL.revokeObjectURL(image.previewUrl);
+          throw error;
+        }
+        // Pasting or adding paths while the read is pending must not be lost.
+        updateImages([...restored, ...imagesRef.current]);
+        setAttachments((current) => [...new Set([...saved.entries, ...current])]);
+        setDraftAttachmentsReady(true);
+      })
+      .catch((error) => {
+        if (alive && generation === attachmentGeneration.current) setDraftAttachmentsError(`Couldn't load draft attachments: ${error}`);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [initialDraft?.repo_path, initialDraft?.slug]);
+
   const onPasteImage = (event: React.ClipboardEvent<HTMLTextAreaElement | HTMLInputElement>) => {
-    const errors: string[] = [];
-    const files: File[] = [];
-    let hasImage = false;
-    for (const item of Array.from(event.clipboardData.items)) {
-      if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
-      hasImage = true;
-      const file = item.getAsFile();
-      if (file?.type.startsWith("image/")) files.push(file);
-      else errors.push("Couldn't read an image from the clipboard.");
-    }
-    if (!files.length) {
-      for (const file of Array.from(event.clipboardData.files)) {
-        if (file.type.startsWith("image/")) files.push(file);
-      }
-    }
-    if (!hasImage && !files.length) return;
-    if (!event.clipboardData.getData("text/plain")) event.preventDefault();
     if (creatingRef.current) return;
-    let total = imagesRef.current.reduce((sum, image) => sum + image.file.size, 0);
-    const added: PastedImage[] = [];
-    for (const file of files) {
-      if (!file.size) {
-        errors.push(`${file.name} — pasted image is empty.`);
-      } else if (file.size > MAX_PASTED_IMAGE_BYTES) {
-        errors.push(`${file.name} — pasted image exceeds 25 MiB.`);
-      } else if (file.size > MAX_PASTED_SET_BYTES - total) {
-        errors.push(`${file.name} — pasted images would exceed 100 MiB.`);
-      } else {
-        const id = crypto.randomUUID();
-        const extension =
-          file.name
-            .split(/[\\/]/)
-            .pop()
-            ?.match(/\.(png|jpe?g|gif|webp|avif|bmp|tiff?|heic|heif|ico|svg)$/i)?.[1]
-            .toLowerCase() ??
-          IMAGE_EXTENSIONS[file.type.toLowerCase()] ??
-          "img";
-        added.push({ id, file, name: `pasted-image-${id}.${extension}`, previewUrl: URL.createObjectURL(file), previewUnavailable: false });
-        total += file.size;
-      }
-    }
+    const { added, errors, hasImage } = stagePastedImages(event.clipboardData, imagesRef.current);
+    if (!hasImage) return;
+    if (!event.clipboardData.getData("text/plain")) event.preventDefault();
     setPasteErrors(errors);
     if (added.length) {
       dirtyRef.current = true;
@@ -322,6 +354,7 @@ export function CreateTaskPage({
         );
         setPlaybookQuery("");
         const resolvedDefaultModel = ompDefaultModel(c.defaults) || (account?.signedIn ? "alinery/DeepSeek-V4.1-Flash" : "");
+        setProductModel(ompDefaultModel(c.defaults));
         setDefaultModel(resolvedDefaultModel);
         if (catalog.diagnostics.length) {
           setErr({ msg: "Some playbook sources could not be loaded.", detail: catalog.diagnostics.map((diagnostic) => diagnostic.message).join("\n") });
@@ -394,17 +427,51 @@ export function CreateTaskPage({
     };
   }, [repoPath, playbook, catalogLoading, playbookNeedsReselection, catalogRevision]);
 
+  useEffect(() => {
+    if (!selectedSource) return;
+    setStepModels((current) => {
+      const next = persistedStepModels(selectedSource, current, model, productModel);
+      const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(next);
+      if (currentKeys.length === nextKeys.length && nextKeys.every((key) => current[key] === next[key])) return current;
+      return next;
+    });
+  }, [selectedSource, model, productModel]);
+
+  const onStepModelChange = (stepKey: string, value: string) => {
+    dirtyRef.current = true;
+    const step = selectedSource?.definition.step.find((item) => item.key === stepKey);
+    const inherited = step
+      ? stepModelDisplay({
+          stepModel: step.model,
+          playbookDefaultModel: selectedSource?.definition.default_model ?? "",
+          taskModel: model,
+          productModel,
+          override: undefined,
+        }).value
+      : "";
+    const trimmed = value.trim();
+    setStepModels((current) => {
+      const next = { ...current };
+      if (!trimmed || trimmed === inherited) delete next[stepKey];
+      else next[stepKey] = trimmed;
+      return next;
+    });
+  };
   // Debounced draft write — only after user edit and when setting is on.
   useEffect(() => {
-    if (!draftAutosave || !dirtyRef.current || creatingRef.current || taskMutationGuard.currentKind() || !validCap) return;
+    if (!draftAttachmentsReady || !draftAutosave || !dirtyRef.current || creatingRef.current || taskMutationGuard.currentKind() || !validCap) return;
     const n = name.trim();
     if (!n || !playbook || !harness) return;
     const target = repoPath;
     const generation = draftWriteGeneration.current;
-    const handle = window.setTimeout(() => {
+    const savePending = () => {
+      pendingDraftSave.current = null;
       if (!dirtyRef.current || creatingRef.current || taskMutationGuard.currentKind() || generation !== draftWriteGeneration.current) return;
       const save = draftSaveInFlightRef.current
         .then(async () => {
+          if (creatingRef.current || taskMutationGuard.currentKind() || generation !== draftWriteGeneration.current) return;
+          const savedImages = await Promise.all(images.map(async (image) => ({ name: image.name, bytes: await encodeImage(image.file), mime_type: image.file.type })));
           if (creatingRef.current || taskMutationGuard.currentKind() || generation !== draftWriteGeneration.current) return;
           const t = await ipc.writeDraftForRepo({
             repoPath: target,
@@ -418,11 +485,13 @@ export function CreateTaskPage({
             harness,
             model,
             autoAdvance,
+            stepModels: persistedStepModels(selectedSource, stepModels, model, productModel),
             maxLiveSessions: cap,
             branchName: branchName.trim(),
             worktreeName: worktreeName.trim(),
             taskSlug,
             draftBaseRef: baseRef,
+            draftAttachments: { entries: attachments, images: savedImages },
           });
           draftIdentities.current.set(target, t.slug);
           setDraftOrigins((origins) =>
@@ -434,13 +503,21 @@ export function CreateTaskPage({
           if (repoRef.current === target) setErr({ msg: "Couldn't save the draft.", detail: String(e) });
         });
       draftSaveInFlightRef.current = save;
-    }, 400);
-    return () => window.clearTimeout(handle);
+    };
+    pendingDraftSave.current = savePending;
+    const handle = window.setTimeout(savePending, 400);
+    return () => {
+      window.clearTimeout(handle);
+      if (pendingDraftSave.current === savePending) pendingDraftSave.current = null;
+    };
   }, [
     repoPath,
     name,
     desc,
     evidence,
+    images,
+    attachments,
+    draftAttachmentsReady,
     linearImages,
     linearId,
     githubIssue,
@@ -455,6 +532,9 @@ export function CreateTaskPage({
     draftAutosave,
     maxLiveSessions,
     mutationKind,
+    stepModels,
+    productModel,
+    selectedSource,
   ]);
 
   // onDragDropEvent carries `paths` on "enter" and "drop" only, and "enter" fires first —
@@ -508,7 +588,7 @@ export function CreateTaskPage({
           : "Choose an available committed starting branch."
         : "";
   const create = () => {
-    if (importingRef.current || clearingRef.current || branchSnapshotRequest.current !== branchRequest.current) return;
+    if (!draftAttachmentsReady || importingRef.current || clearingRef.current || branchSnapshotRequest.current !== branchRequest.current) return;
     const n = name.trim();
     if (!n || !taskSlug || !sourceReady || !selectedSource || !startingBranchReady || baseRef === null || modelNeedsReselection || !validCap) return;
     if (creatingRef.current) {
@@ -557,6 +637,7 @@ export function CreateTaskPage({
             playbook: { reference: selectedSource.source.reference, source: selectedSource.source_text },
             launch_defaults: { harness, model },
             auto_advance_steps: autoAdvance,
+            step_models: persistedStepModels(selectedSource, stepModels, model, productModel),
             max_live_sessions: cap,
             start,
             branch_name: branchName.trim() || undefined,
@@ -740,6 +821,8 @@ export function CreateTaskPage({
     draftWriteGeneration.current += 1;
     const reset = () => {
       attachmentGeneration.current += 1;
+      setDraftAttachmentsReady(true);
+      setDraftAttachmentsError("");
       invalidateStartingBranches(true);
       for (const image of imagesRef.current) URL.revokeObjectURL(image.previewUrl);
       updateImages([]);
@@ -767,6 +850,7 @@ export function CreateTaskPage({
       setPlaybook(null);
       setSelectedSource(null);
       setAutoAdvance([]);
+      setStepModels({});
       setModel("");
       setPlaybookNeedsReselection(false);
       setModelNeedsReselection(false);
@@ -1107,80 +1191,114 @@ export function CreateTaskPage({
               </div>
             ))}
             {pasteErrors.length > 0 && <InlineStatus tone="error">{pasteErrors.join("\n")}</InlineStatus>}
-            <div className="hint">Paste images in Description, Evidence / pointers, or Attachments. Images attach on Create and are not saved with the draft.</div>
+            {!draftAttachmentsReady && <InlineStatus tone={draftAttachmentsError ? "error" : "warning"}>{draftAttachmentsError || "Loading draft attachments…"}</InlineStatus>}
+            <div className="hint">Paste images in Description, Evidence / pointers, or Attachments. Pasted images are saved with the draft when autosave is enabled.</div>
             <div className="hint">
               Local files are copied into the task. Attachment URLs are recorded, never fetched. Linear description images download on import. Drop files anywhere on this form.
             </div>
           </div>
-          {!!selectedSource?.definition.step.length && (
-            <div className="create-field create-continuation">
-              <span>After each step</span>
-              <div className="hint">Choose when the next step starts.</div>
-              {selectedSource.definition.step.map((step) => {
-                const hasDestination = selectedSource.definition.step.some((consumer) =>
-                  step.outputs.some((output) => consumer.inputs.some((input) => selectorsOverlap(output.path, input.path))),
-                );
-                const automatic = autoAdvance.includes(step.key);
-                return (
-                  <div className="create-continuation-row" key={step.key}>
-                    <span className="create-continuation-label">{step.title}</span>
-                    {hasDestination ? (
-                      <div className="create-continuation-choices" role="group" aria-label={step.title}>
-                        {[true, false].map((value) => (
-                          <button
-                            key={String(value)}
-                            type="button"
-                            aria-pressed={automatic === value}
-                            disabled={creating || clearing || creatingRef.current}
-                            onClick={() => {
-                              if (automatic === value) return;
-                              dirtyRef.current = true;
-                              setAutoAdvance((cur) => (value ? [...cur, step.key] : cur.filter((key) => key !== step.key)));
-                            }}
-                          >
-                            <span className="create-continuation-check" aria-hidden="true">
-                              {automatic === value ? "✓" : ""}
-                            </span>
-                            {value ? "Continue automatically" : "Wait for me"}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="create-continuation-complete">Playbook complete</span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          <label className="create-field">
-            <span>Model</span>
+          <label className="create-field task-default-model">
+            <span>Task Default Model</span>
             <ModelInput
               harness="omp"
               repoPath={repoPath}
+              ariaLabel="Task Default Model"
               value={model}
               onChange={(v) => {
                 dirtyRef.current = true;
                 setModel(v);
                 setModelNeedsReselection(false);
               }}
-              onOpenPicker={() => setPickModel(true)}
+              onOpenPicker={() => setPicking("task")}
             />
-            {pickModel && (
-              <ProviderSetupDialog
-                mode="manual"
-                initialTab="models"
-                unsignedOpensAccounts
-                onPick={(next) => {
-                  dirtyRef.current = true;
-                  setModel(next);
-                  setModelNeedsReselection(false);
-                }}
-                onClose={() => setPickModel(false)}
-              />
-            )}
             {modelNeedsReselection && <InlineStatus tone="error">Select a model available in this repository.</InlineStatus>}
           </label>
+          {!!selectedSource?.definition.step.length && (
+            <div className="create-field">
+              <span>Step settings</span>
+              <div className="step-model-list">
+                <div className="step-model-head">
+                  <span>Step</span>
+                  <span>After each step</span>
+                  <span>Step model / source</span>
+                </div>
+                {selectedSource.definition.step.map((step) => {
+                  const hasDestination = selectedSource.definition.step.some((consumer) =>
+                    step.outputs.some((output) => consumer.inputs.some((input) => selectorsOverlap(output.path, input.path))),
+                  );
+                  const automatic = autoAdvance.includes(step.key);
+                  const display = stepModelDisplay({
+                    stepModel: step.model,
+                    playbookDefaultModel: selectedSource.definition.default_model,
+                    taskModel: model,
+                    productModel,
+                    override: stepModels[step.key],
+                  });
+                  return (
+                    <div key={step.key} className="step-model-row">
+                      <span className="create-continuation-label">{step.title}</span>
+                      <div className="step-continuation-control" data-label="After each step">
+                        {hasDestination ? (
+                          <div className="create-continuation-choices" role="group" aria-label={step.title}>
+                            {[true, false].map((value) => (
+                              <button
+                                key={String(value)}
+                                type="button"
+                                aria-pressed={automatic === value}
+                                disabled={creating || clearing || creatingRef.current}
+                                onClick={() => {
+                                  if (automatic === value) return;
+                                  dirtyRef.current = true;
+                                  setAutoAdvance((cur) => (value ? [...cur, step.key] : cur.filter((key) => key !== step.key)));
+                                }}
+                              >
+                                <span className="create-continuation-check" aria-hidden="true">
+                                  {automatic === value ? "✓" : ""}
+                                </span>
+                                {value ? "Continue automatically" : "Wait for me"}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="create-continuation-complete">Playbook complete</span>
+                        )}
+                      </div>
+                      <div className="step-model-control" data-label="Step model / source">
+                        <ModelInput
+                          harness="omp"
+                          repoPath={repoPath}
+                          prefillRemembered={false}
+                          placeholder="Inherits"
+                          ariaLabel={`${step.title} model`}
+                          value={display.value}
+                          onChange={(value) => onStepModelChange(step.key, value)}
+                          onOpenPicker={() => setPicking(step.key)}
+                        />
+                        <span className={`step-model-badge${display.source === "override" ? " is-override" : ""}`}>{display.source ? STEP_MODEL_CAPTION[display.source] : ""}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {picking && (
+            <ProviderSetupDialog
+              mode="manual"
+              initialTab="models"
+              unsignedOpensAccounts
+              onPick={(next) => {
+                dirtyRef.current = true;
+                if (picking === "task") {
+                  setModel(next);
+                  setModelNeedsReselection(false);
+                } else if (picking) {
+                  onStepModelChange(picking, next);
+                }
+              }}
+              onClose={() => setPicking(null)}
+            />
+          )}
           <div className="crow worktree-row">
             <span>Dedicated task worktree</span>
             <label className="create-field grow">
@@ -1265,7 +1383,12 @@ export function CreateTaskPage({
                 Open task
               </button>
             ) : (
-              <button type="button" className="btn" disabled={creating || clearing || importing || creatingRef.current || !!createBlockedReason || !taskSlug} onClick={create}>
+              <button
+                type="button"
+                className="btn"
+                disabled={!draftAttachmentsReady || creating || clearing || importing || creatingRef.current || !!createBlockedReason || !taskSlug}
+                onClick={create}
+              >
                 {creating ? "Creating…" : "Create task"}
               </button>
             )}

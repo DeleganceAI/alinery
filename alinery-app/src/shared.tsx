@@ -1,20 +1,4 @@
-import {
-  ArrowRight,
-  ArrowUpCircle,
-  Check,
-  ChevronDown,
-  CircleAlert,
-  CircleCheck,
-  FolderOpen,
-  FolderPlus,
-  Info,
-  Package,
-  Plus,
-  RotateCw,
-  Search,
-  TriangleAlert,
-  X,
-} from "lucide-react";
+import { ArrowUpCircle, Check, ChevronDown, CircleAlert, CircleCheck, FolderPlus, Info, Package, Plus, Search, TriangleAlert, X } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { type OrbState, ThinkingOrb } from "thinking-orbs";
@@ -26,7 +10,7 @@ import { IdleDot, ORB_SPEED, ORB_STATE, RunningIndicator, StateIcon } from "./In
 import * as ipc from "./ipc";
 import { BrandMark } from "./Logo";
 import { deriveModelRows } from "./modelFavorites";
-import { type ObservationDisplayKind, observationDisplayKind } from "./sessionAttention";
+import { type ObservationDisplayKind, observationDisplayKind, sessionDisplayKind } from "./sessionAttention";
 import { useTabPill } from "./tabMotion";
 import { toast } from "./toast";
 import type {
@@ -211,6 +195,11 @@ export function sameLifecycleMaps(left: Record<string, LifecycleState>, right: R
     })
   );
 }
+function sameStringMap(left: Record<string, string> | undefined, right: Record<string, string> | undefined): boolean {
+  const a = Object.keys(left ?? {}).sort();
+  const b = Object.keys(right ?? {}).sort();
+  return a.length === b.length && a.every((key, index) => key === b[index] && left?.[key] === right?.[key]);
+}
 
 export function sameTask(left: Task, right: Task): boolean {
   return (
@@ -235,6 +224,8 @@ export function sameTask(left: Task, right: Task): boolean {
     left.draft_base_ref === right.draft_base_ref &&
     left.auto_advance.length === right.auto_advance.length &&
     left.auto_advance.every((edge, index) => edge === right.auto_advance[index]) &&
+    (left.auto_approve_all ?? false) === (right.auto_approve_all ?? false) &&
+    sameStringMap(left.step_models, right.step_models) &&
     (left.related_tasks ?? []).length === (right.related_tasks ?? []).length &&
     (left.related_tasks ?? []).every((tag, index) => {
       const other = (right.related_tasks ?? [])[index];
@@ -275,6 +266,8 @@ export function sameBoardTasks(left: BoardTask[], right: BoardTask[]) {
         task.draft_base_ref === other.draft_base_ref &&
         task.auto_advance.length === other.auto_advance.length &&
         task.auto_advance.every((value, i) => value === other.auto_advance[i]) &&
+        (task.auto_approve_all ?? false) === (other.auto_approve_all ?? false) &&
+        sameStringMap(task.step_models, other.step_models) &&
         task.repo_path === other.repo_path &&
         task.session_count === other.session_count &&
         task.playbook_title === other.playbook_title &&
@@ -586,6 +579,10 @@ export function Dialog({
       className={`modal${className ? ` ${className}` : ""}`}
       role={role}
       aria-label={ariaLabel}
+      onKeyDown={(e) => {
+        // Keep native Escape cancellation, but do not also trigger page Back.
+        if (e.key === "Escape") e.stopPropagation();
+      }}
       onCancel={(e) => {
         e.preventDefault();
         onClose();
@@ -999,6 +996,8 @@ export function obsLabel(kind: ObservationDisplayKind): string {
       return "Ready to advance";
     case "exited":
       return "Exited";
+    case "never_started":
+      return "Not started";
     case "loading":
       return "Loading";
     case "unsupported":
@@ -1030,6 +1029,8 @@ function obsTooltip(kind: ObservationDisplayKind): string {
       return "Phase completed — ready to advance to the next step";
     case "exited":
       return "Session is not live in the current daemon";
+    case "never_started":
+      return "Session has not started";
     case "loading":
       return "Waiting for the first semantic adapter event";
     case "unsupported":
@@ -1056,6 +1057,14 @@ function attentionReason(kind: ObservationDisplayKind): "idle" | "waiting_for_in
   if (kind === "waiting_for_input") return "waiting_for_input";
   if (kind === "waiting_for_approval") return "waiting_for_approval";
   return null;
+}
+
+// Both standalone dots and filtered collections use the same transition policy.
+export function notifySessionAttentionTransition(previous: ObservationDisplayKind | null, current: ObservationDisplayKind, repoPath: string, slug: string) {
+  const reason = attentionReason(current);
+  if (previous === "busy" && reason !== null) {
+    ipc.notifySessionAttention(repoPath, slug, reason).catch(() => {});
+  }
 }
 
 // Whether this kind should suppress the dot in minimal mode (only show for notable states).
@@ -1117,23 +1126,18 @@ export function StatusDot({
   const currentPolledObs = polledObs?.key === pollKey ? polledObs.observation : null;
   const obs = observation ?? currentPolledObs;
   const observedKind: ObservationDisplayKind = obs ? observationDisplayKind(obs) : "loading";
-  const acknowledgedTerminalExit = exitAcknowledged && (!obs?.state || obs.state.process.state === "exited");
-  const kind: ObservationDisplayKind = acknowledgedTerminalExit ? "exited" : superseded && (observedKind === "idle" || observedKind === "exited") ? "stale" : observedKind;
+  const kind = sessionDisplayKind(obs, superseded, exitCode, exitAcknowledged);
 
   // Attention notifications: fire on transitions into idle/waiting states.
   // Never notify for unsupported/unknown; artifact presence never triggers.
   useEffect(() => {
     const prev = prevKind.current?.key === pollKey ? prevKind.current.kind : null;
     prevKind.current = { key: pollKey, kind: observedKind };
-    if (!notifyTransitions || !slug || !repoPath || prev === null || prev === observedKind) return;
-    const wasBusy = prev === "busy";
-    const reason = attentionReason(observedKind);
-    if (wasBusy && reason !== null) {
-      ipc.notifySessionAttention(repoPath, slug, reason).catch(() => {});
-    }
+    if (!notifyTransitions || !slug || !repoPath) return;
+    notifySessionAttentionTransition(prev, observedKind, repoPath, slug);
   }, [observedKind, notifyTransitions, pollKey, repoPath, slug]);
 
-  if (!exitAcknowledged && exitCode != null && exitCode !== 0 && kind !== "busy" && kind !== "starting" && kind !== "waiting_for_input" && kind !== "waiting_for_approval") {
+  if (kind === "failed" && !exitAcknowledged && exitCode != null && exitCode !== 0) {
     return (
       <span
         className="statusdot statusdot-badge statusdot-failed"
@@ -1376,72 +1380,13 @@ export function TaskActivityIndicators({ activity }: { activity: TaskActivitySum
   return <span className="task-activity-indicators">{indicator}</span>;
 }
 
-export function RepoPicker({
-  appConfig,
-  error,
-  onSelect,
-  onRemove,
-  onAdd,
-}: {
-  appConfig: AppConfig;
-  error: string;
-  onSelect: (path: string) => void;
-  onRemove: (path: string) => void;
-  onAdd: () => void;
-}) {
-  return (
-    <div className="picker">
-      <div className="picker-mark" aria-hidden="true">
-        <FolderOpen size={22} strokeWidth={1.7} />
-      </div>
-      <p className="picker-eyebrow">Welcome to Alinery</p>
-      <h2>Bring a repository into focus</h2>
-      <p className="picker-lede">
-        Choose a local folder to organize tasks, sessions, and project context in one place. If it is not a Git repository, Alinery asks before initializing one.
-      </p>
-      {appConfig.known_repos.length > 0 && (
-        <div className="picker-repos">
-          <p className="picker-label">Your repositories</p>
-          <div className="picker-repo-list">
-            {appConfig.known_repos.map((repo) => (
-              <div key={repo} className="repobtn-row">
-                <button type="button" className="repobtn" title={repo} onClick={() => onSelect(repo)}>
-                  <span className="repobtn-copy">
-                    <strong>{repoName(repo)}</strong>
-                    <span>{repo}</span>
-                  </span>
-                  <ArrowRight size={16} strokeWidth={1.6} aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  className="repobtn-x"
-                  title={`Remove ${repoName(repo)} from Alinery (repo files are untouched)`}
-                  aria-label={`Remove ${repoName(repo)}`}
-                  onClick={() => onRemove(repo)}
-                >
-                  <X size={16} strokeWidth={1.5} aria-hidden="true" />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      <button type="button" className="btn picker-action" onClick={onAdd}>
-        <FolderPlus size={16} strokeWidth={1.6} aria-hidden="true" />
-        Add a repository
-      </button>
-      <p className="picker-footnote">Your files stay on this Mac. A folder that is not a Git repository is initialized only after you confirm.</p>
-      {error && (
-        <InlineStatus tone="error" detail={error}>
-          Couldn't open the repository. Pick another, or add one below.
-        </InlineStatus>
-      )}
-    </div>
-  );
-}
-
 const rememberedModelKey = (harness: string, repoPath?: string) => (repoPath ? `alinery.lastmodel.${repoPath}:${harness}` : `alinery.lastmodel.${harness}`);
 
+/**
+ * Model selector: a select-style trigger showing the chosen `provider/id`, opening either the
+ * host's picker (`onOpenPicker`, the account-aware OMP dialog) or this component's own
+ * per-harness list. The empty value means the harness default; the clear control restores it.
+ */
 export function ModelInput({
   harness,
   value,
@@ -1452,6 +1397,7 @@ export function ModelInput({
   prefillRemembered = true,
   onOpenPicker,
   ariaLabel = "Model",
+  placeholder = "Harness default",
 }: {
   harness: string;
   value: string;
@@ -1464,12 +1410,14 @@ export function ModelInput({
   /**
    * Host the providers/models dialog instead of this component's own picker.
    *
-   * Model picking now lives in one place across the app, and it is the surface that also knows
+   * Model picking lives in one place across the app, and it is the surface that also knows
    * about accounts -- so a model you cannot reach because you are not signed in tells you so.
    * `shared` cannot import it directly (that would cycle through `views`), so the page opens it
    * and this becomes a plain trigger.
    */
   onOpenPicker?: () => void;
+  /** Shown when no model is chosen. */
+  placeholder?: string;
 }) {
   const [models, setModels] = useState<string[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -1619,27 +1567,50 @@ export function ModelInput({
   const visible = deriveModelRows(models, favorites, q);
   const sel = Math.min(idx, Math.max(0, visible.length - 1));
   const occurrenceByModel = new Map<string, number>();
+  const custom = q.trim();
+  // A plain filter word stays a filter; a `provider/id` or a term with no matches is an id to use.
+  const customOffered = custom.length > 0 && !models.includes(custom) && (visible.length === 0 || custom.includes("/"));
+  const open = onOpenPicker ?? refresh;
+  const clear = () => {
+    onChange("");
+    onCommit?.("");
+  };
 
   return (
-    <div className="model-input" style={style}>
+    <div className="model-select" style={style}>
       <input
-        className="field-input"
+        className="model-select-trigger field-input"
+        role="combobox"
+        readOnly
         aria-label={ariaLabel}
+        aria-haspopup="dialog"
+        aria-expanded={pickerOpen}
+        aria-busy={busy || undefined}
+        title={value || placeholder}
         value={value}
-        placeholder="Model (empty = harness default)"
+        placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        onBlur={() => onCommit?.(value)}
+        onClick={() => {
+          if (!busy) open();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
+            e.preventDefault();
+            if (!busy) open();
+          } else if ((e.key === "Backspace" || e.key === "Delete") && value) {
+            e.preventDefault();
+            clear();
+          }
+        }}
       />
-      <button
-        type="button"
-        className="btn ghost small"
-        title={onOpenPicker ? "Browse models" : "Refresh model list"}
-        aria-label={onOpenPicker ? "Browse models" : "Refresh model list"}
-        disabled={busy}
-        onClick={onOpenPicker ?? refresh}
-      >
-        {busy ? "…" : <RotateCw size={14} strokeWidth={1.5} aria-hidden="true" />}
-      </button>
+      <span className="model-select-caret" aria-hidden="true">
+        {busy ? "…" : <ChevronDown size={14} strokeWidth={1.6} />}
+      </span>
+      {value && (
+        <button type="button" className="model-select-clear" aria-label={`Clear ${ariaLabel.toLowerCase()}`} title="Use harness default" onClick={clear}>
+          <X size={13} strokeWidth={1.6} aria-hidden="true" />
+        </button>
+      )}
       {!onOpenPicker && pickerOpen && (
         <Dialog onClose={() => setPickerOpen(false)} ariaLabel={`Select model — ${harness}`}>
           <div className="mh">
@@ -1654,7 +1625,7 @@ export function ModelInput({
               className="field-input"
               aria-label="Filter models"
               value={q}
-              placeholder="Filter models…"
+              placeholder="Filter models or type a model id…"
               autoComplete="off"
               data-autofocus=""
               style={{ marginBottom: 8 }}
@@ -1676,6 +1647,7 @@ export function ModelInput({
                 } else if (e.key === "Enter") {
                   e.preventDefault();
                   if (visible[sel]) pick(visible[sel].model);
+                  else if (customOffered) pick(custom);
                 } else if (e.key === "Escape") {
                   e.preventDefault();
                   setPickerOpen(false);
@@ -1683,7 +1655,7 @@ export function ModelInput({
               }}
             />
             <ul className="list" aria-label="Models" ref={modelListRef} style={{ maxHeight: "50vh", overflowY: "auto" }}>
-              {visible.length === 0 && <li className="row disabled">No matching models</li>}
+              {visible.length === 0 && !customOffered && <li className="row disabled">No matching models</li>}
               {visible.map((row, i) => {
                 const action = row.favorite ? "Remove" : "Add";
                 const label = `${action} ${row.model} ${row.favorite ? "from" : "to"} favorites`;
@@ -1710,6 +1682,18 @@ export function ModelInput({
                   </li>
                 );
               })}
+              {customOffered && (
+                <li className={`row${visible.length === 0 ? " sel" : ""}`}>
+                  <button type="button" className="model-selection-button" aria-label={`Use custom model ${custom}`} onClick={() => pick(custom)}>
+                    <div className="rt">
+                      <div className="rtt">
+                        Use <code>{custom}</code>
+                      </div>
+                      <div className="rts">Custom model id, not from the harness list</div>
+                    </div>
+                  </button>
+                </li>
+              )}
             </ul>
           </div>
         </Dialog>

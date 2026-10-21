@@ -92,6 +92,9 @@ pub struct OutputAssignment {
     pub selector: String,
     pub relative_path: String,
     pub discriminator: u64,
+    /// Missing on records reserved before required outputs existed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -160,7 +163,12 @@ pub struct TaskExecutionState {
     pub reference: PlaybookRef,
     pub max_live_sessions: u32,
     pub enabled_steps: BTreeSet<String>,
+    // Live override. Does not rewrite `enabled_steps`; completion checks it separately.
+    #[serde(default)]
+    pub auto_approve_all: bool,
     pub launch_defaults: LaunchChoices,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub step_models: BTreeMap<String, String>,
     pub contexts: BTreeMap<String, ExecutionContext>,
     pub executions: BTreeMap<String, ExecutionRecord>,
     pub occurrences: BTreeMap<String, ArtifactOccurrence>,
@@ -337,6 +345,7 @@ pub fn new_execution_state(
     max_live_sessions: u32,
     enabled_steps: BTreeSet<String>,
     launch_defaults: LaunchChoices,
+    step_models: BTreeMap<String, String>,
 ) -> Result<TaskExecutionState, String> {
     if max_live_sessions == 0 {
         return Err("maximum live sessions must be positive".into());
@@ -358,6 +367,7 @@ pub fn new_execution_state(
             return Err(format!("unknown enabled step '{key}'"));
         }
     }
+    let step_models = normalize_step_models(&definition, &step_models)?;
     let root = ExecutionContext {
         id: "root".into(),
         parent_id: None,
@@ -375,13 +385,28 @@ pub fn new_execution_state(
         reference,
         max_live_sessions,
         enabled_steps,
+        auto_approve_all: false,
         launch_defaults,
+        step_models,
         initial_start_requested: false,
         contexts: BTreeMap::from([(root.id.clone(), root)]),
         executions: BTreeMap::new(),
         occurrences: BTreeMap::new(),
         collections: BTreeMap::new(),
     })
+}
+fn normalize_step_models(definition: &NormalizedPlaybook, raw: &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, String> {
+    let mut normalized = BTreeMap::new();
+    for (key, value) in raw {
+        if !definition.step.iter().any(|step| &step.key == key) {
+            return Err(format!("unknown step model '{key}'"));
+        }
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            normalized.insert(key.clone(), trimmed.to_string());
+        }
+    }
+    Ok(normalized)
 }
 
 pub fn install_seed(state: &mut TaskExecutionState, logical_path: &str, relative_path: &str) -> Result<String, String> {
@@ -451,6 +476,7 @@ pub fn resolve_execution_launch(
     task: &LaunchChoices,
     product: &LaunchChoices,
     explicit: Option<&LaunchChoices>,
+    step_models: &BTreeMap<String, String>,
 ) -> Result<LaunchChoices, String> {
     fn first<'a>(values: impl IntoIterator<Item = &'a str>) -> String {
         values.into_iter().find(|s| !s.trim().is_empty()).unwrap_or("").trim().to_string()
@@ -466,6 +492,7 @@ pub fn resolve_execution_launch(
         ]),
         model: first([
             explicit.map_or("", |v| v.model.as_str()),
+            step_models.get(&step.key).map(String::as_str).unwrap_or(""),
             &step.model,
             &definition.default_model,
             &task.model,
@@ -667,6 +694,7 @@ pub fn reserve_execution(
                     selector: output.path.clone(),
                     relative_path,
                     discriminator: instance,
+                    required: output.required,
                 });
                 output_selectors.push(physical);
                 break;
@@ -674,7 +702,7 @@ pub fn reserve_execution(
             instance = instance.checked_add(1).ok_or("artifact instance overflow")?;
         }
     }
-    let launch = resolve_execution_launch(definition, step, &state.launch_defaults, product, explicit)?;
+    let launch = resolve_execution_launch(definition, step, &state.launch_defaults, product, explicit, &state.step_models)?;
     let id = uuid::Uuid::new_v4().to_string();
     let record = ExecutionRecord {
         id: id.clone(),
@@ -909,6 +937,14 @@ pub fn inspect_supplied_execution_publications(
             Err(error) => diagnostics.push(error),
         }
     }
+    for assignment in &record.outputs {
+        if assignment.required && !publications.iter().any(|publication| publication.selector == assignment.selector) {
+            diagnostics.push(format!(
+                "required output '{}' was not published; completion stays rejected until that nonempty file exists",
+                assignment.selector
+            ));
+        }
+    }
     if diagnostics.is_empty() && publications.is_empty() {
         diagnostics.push("Completion requires at least one valid assigned artifact overall; no publications were found.".into());
     }
@@ -965,6 +1001,7 @@ pub fn report_execution_ready(
     session_id: &str,
     expected_work_revision: u64,
 ) -> Result<CompletionOutcome, String> {
+    let auto_approve_all = state.auto_approve_all;
     let record = owned_execution(state, id, session_id)?;
     if let Some(receipt_id) = &record.receipt_id {
         return Ok(CompletionOutcome::Accepted { receipt_id: receipt_id.clone() });
@@ -1003,7 +1040,7 @@ pub fn report_execution_ready(
         });
     }
     let record = owned_execution(state, id, session_id)?;
-    let automatic = record.continuation_mode == ContinuationMode::Automatic || key.terminality == Terminality::Terminal;
+    let automatic = auto_approve_all || record.continuation_mode == ContinuationMode::Automatic || key.terminality == Terminality::Terminal;
     record.last_ready_revision = Some(expected_work_revision);
     record.ready_revision = Some(expected_work_revision);
     record.ready_assessment = Some(key);
@@ -1030,6 +1067,19 @@ pub fn request_execution_continuation(state: &mut TaskExecutionState, id: &str, 
     }
     record.continuation_requested_revision = Some(ready_revision);
     Ok(CompletionOutcome::Requested { ready_revision })
+}
+
+/// Enabling the task override authorizes current ready work without changing step policy.
+/// Disabling it does not revoke continuation already requested, just like an explicit Continue.
+pub fn set_execution_auto_approve_all(state: &mut TaskExecutionState, enabled: bool) {
+    state.auto_approve_all = enabled;
+    if enabled {
+        for record in state.executions.values_mut() {
+            if record.lifecycle == ExecutionLifecycle::Running && record.receipt_id.is_none() && record.human_end.is_none() && record.ready_revision == Some(record.work_revision) {
+                record.continuation_requested_revision = record.ready_revision;
+            }
+        }
+    }
 }
 
 pub fn finalize_execution_continuation(
@@ -1230,11 +1280,14 @@ pub fn execution_assignment_prompt(repo: &Path, slug: &str, state: &TaskExecutio
     for assignment in &record.outputs {
         let _ = writeln!(
             prompt,
-            "Write: {} (logical {}; possible publication{})",
+            "Write: {} (logical {}; {}{})",
             root.join(&assignment.relative_path).display(),
             assignment.selector,
+            if assignment.required { "required publication" } else { "possible publication" },
             if assignment.relative_path.contains('*') {
                 ", wildcard family with zero or finitely many valid members"
+            } else if assignment.required {
+                "; omitting this exact nonempty file rejects completion"
             } else {
                 ""
             }
@@ -1259,6 +1312,9 @@ pub fn execution_assignment_prompt(repo: &Path, slug: &str, state: &TaskExecutio
         "Correct invalid outputs before retrying. Resolve delivery or ownership failures rather than claiming success. Only an accepted tool result confirms completion. After acceptance, do no further work; allow ordinary shutdown. Only successors whose declared inputs are satisfied by accepted publications become eligible after confirmed process exit; completion does not promise every possible successor will run.\n\n",
         "Do not modify other executions' artifacts.\n",
     ));
+    if record.outputs.iter().any(|assignment| assignment.required) {
+        prompt.push_str("An exact output marked required above is not optional. Omitting it rejects completion and leaves this execution running. That exception supersedes the possible-publication sentence for those paths only.\n");
+    }
     Ok(prompt)
 }
 

@@ -28,7 +28,8 @@ struct Serve {
 impl Serve {
     fn start() -> Self {
         let n = ROOT_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("alinery-mcp-exit-{}-{n}", std::process::id()));
+        // /tmp, not temp_dir(): the mcp socket has to fit in macOS's 104-byte sun_path.
+        let root = PathBuf::from(format!("/tmp/alinery-mcp-exit-{}-{n}", std::process::id()));
         fs::create_dir_all(root.join(".alinery")).expect("mkdir .alinery");
         let socket = alinery_core::mcp_socket_path(&root, None);
         let child = Command::new(env!("CARGO_BIN_EXE_alinery-mcp"))

@@ -16,65 +16,28 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { ChatComposer } from "../ChatComposer";
-import { formatContextUsage } from "../chat/format";
-import { applySendPlan, commandOutputText, planChatSend, requireWritten } from "../chat/send";
-import { type McpServerRow, type ProvidersDialogTab, parseMcpListOutput } from "../chat/slash";
-import type { SessionChatStatus } from "../chat/types";
+import { requireWritten } from "../chat/send";
 import type { ChatPrefs } from "../chat/visibility";
-import {
-  appendHarnessNotice,
-  appendOptimisticAbort,
-  appendOptimisticUser,
-  type ChatTranscriptState,
-  carryOver,
-  emptyTranscript,
-  matchingSendFailure,
-  matchingSendSuccess,
-  needsUiReply,
-  settleRefusedSend,
-} from "../chatTranscript";
+import { emptyTranscript } from "../chatTranscript";
 import { askConfirm, confirmDanger, confirmStopAndSwitch } from "../confirm";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { NameEditor } from "../NameEditor";
-import { compactCommand, getStateCommand, promptCommand, setAutoCompactionCommand, setThinkingLevelCommand } from "../ompRpc";
+import { setThinkingLevelCommand } from "../ompRpc";
 import { SessionTerminal } from "../SessionTerminal";
-import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
-import { isTurnActive, OMP_INTERRUPT_DATA } from "../sessionMessage";
+import type { ObservationDisplayKind } from "../sessionAttention";
+import { OMP_INTERRUPT_DATA } from "../sessionMessage";
 import { Checkbox, Dialog, InlineStatus, LoadingState, obsLabel, StatusMarker } from "../shared";
+import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
-import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatPane } from "./ChatPane";
-import { ChatToolsDialog } from "./ChatToolsDialog";
-import {
-  abortTurnCommand,
-  applyChatValue,
-  applyModelCommand,
-  applyPlainSend,
-  attachHandshake,
-  chatTerminalIo,
-  olderPageState,
-  parseChatLine,
-  queueRefreshCommand,
-  readJournalThrough,
-  sendCommand,
-  sendNowCommand,
-} from "./chatSession";
-import { ProviderSetupDialog } from "./ProviderSetupDialog";
+import { abortTurnCommand } from "./chatSession";
+import { ChatSessionContext, ChatSessionProvider, chatActivity, errorMessage, threadKey, threadLabel, useChatRegistry, useChatThread } from "./chatThreadSession";
 import { ThinkingSelect } from "./ThinkingSelect";
-import { useChatUiReplies } from "./useChatUiReplies";
-
-function threadLabel(thread: ChatThread): string {
-  if (thread.name) return thread.name;
-  return `Chat ${thread.session.id.slice(0, 8)}`;
-}
-
-function threadKey(thread: ChatThread): string {
-  return `${thread.repo_path}:${thread.session.id}`;
-}
 
 /** The shortest path tail that tells this repo apart from every other one shown: `alinery`, or `work/alinery` beside `oss/alinery`. */
 export function repoLabel(path: string, all: string[]): string {
@@ -95,10 +58,6 @@ function repoGroups(repos: string[], threads: ChatThread[]): { path: string; row
     path,
     rows: threads.filter((thread) => thread.repo_path === path).sort((a, b) => Number(Boolean(b.session.pinned)) - Number(Boolean(a.session.pinned))),
   }));
-}
-
-function errorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
 }
 
 /**
@@ -122,33 +81,6 @@ function OpenReposNotice({ repos, error, className }: { repos: string[] | null; 
 
 const NO_TRANSCRIPT = emptyTranscript();
 
-/** A value read for one thread. Shown only while that thread is the selected one, so nothing from A is visible or actionable once B is picked. */
-type Keyed<T> = { key: string; value: T };
-
-/**
- * The RPC link to the selected thread's OMP. `offline` is a thread with no process to talk to
- * (never started, exited, or in its terminal): its history is readable and that is not an error.
- */
-type Link = { state: "connecting" } | { state: "ready" } | { state: "offline" } | { state: "failed"; detail: string };
-
-/**
- * Busy comes from the turn itself (live transcript first, then the observation poll), the same
- * predicate task sessions use, and decides whether a send queues. The displayed kind is the observed
- * one; the transcript only moves it to Running in the gap before the poll sees the turn, and a
- * booting OMP (process up, agent not yet `ready`) has no turn, so a new thread reads Idle.
- */
-function chatActivity(observation: SessionObservation | null, transcript: ChatTranscriptState): { status: SessionChatStatus; turnActive: boolean; kind: ObservationDisplayKind } {
-  const raw = observation ? observationDisplayKind(observation) : null;
-  // OMP that died mid-turn never sends turn_end, and the daemon keeps its last agent state: neither is a running turn.
-  const exited = observation?.state ? observation.state.process.state === "exited" : raw === "exited";
-  const turnActive = !exited && isTurnActive({ pendingTurn: transcript.pendingTurn, turnOpen: transcript.turnOpen, agentState: observation?.state?.agent?.state });
-  const status: SessionChatStatus = raw === "waiting_for_approval" ? "waiting_approval" : turnActive ? "running" : "idle";
-  // Nothing observed yet is Loading, never Idle.
-  if (raw === null) return { status, turnActive, kind: "loading" };
-  const quiet = raw === "loading" || raw === "starting" || raw === "idle";
-  return { status, turnActive, kind: quiet ? (turnActive ? "busy" : "idle") : raw };
-}
-
 /** `session_list_statuses` keys a root session as `repo::id` (empty task slug). */
 function railKey(thread: ChatThread): string {
   return `${thread.repo_path}::${thread.session.id}`;
@@ -167,22 +99,9 @@ function mayBeRunning(thread: ChatThread, observation: SessionObservation | unde
   return thread.session.started_at != null && thread.session.ended_at == null;
 }
 
-function interruptedWithoutJournal(thread: ChatThread, transcript: ChatTranscriptState): boolean {
-  return thread.session.ended_at != null && thread.session.harness_resume_token.length === 0 && transcript.entries.length === 0;
-}
-
-/** Drops a thread's draft only if it is still the text that was sent: an edit made meanwhile stays. */
-function clearDraft(key: string, text: string) {
-  return (current: Record<string, string>) => {
-    if (current[key] !== text) return current;
-    const { [key]: _sent, ...rest } = current;
-    return rest;
-  };
-}
-
 const RESUME_IN_CHECKOUT = "The conversation is kept. Continuing it later opens in the repository checkout, on whatever branch is checked out then, not on this worktree's branch.";
 
-export function ChatView({ active = true, terminalFontSize, visibility }: { active?: boolean; terminalFontSize: number; visibility: ChatPrefs }) {
+function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?: boolean; terminalFontSize: number; visibility: ChatPrefs }) {
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -194,36 +113,9 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
   const dirs = openRepos ?? [];
   const [pickedRepo, setRepoPath] = useState("");
   const [createWorktree, setCreateWorktree] = useState(false);
-  // Per thread, so a half-written message stays with the thread it was written for.
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  // Read where the render's `drafts` could be a tick old: two refusals landing together each see the other's restore.
-  const draftsRef = useRef(drafts);
-  draftsRef.current = drafts;
-  // Sends awaiting OMP's verdict, by command id. The daemon acks the stdin write, not the send: a
-  // refusal arrives later as a response and settles only its own send. `entryId` is the row the send
-  // added, null until the write is acked. Kept across a thread switch, so a refusal replayed on the
-  // way back still finds its send.
-  const awaitingVerdicts = useRef(new Map<string, { key: string; text: string; entryId: string | null; refused: boolean }>());
-  const [sendingKey, setSendingKey] = useState<string | null>(null);
-  const [error, setError] = useState("");
-  const [observed, setObserved] = useState<Keyed<SessionObservation> | null>(null);
-  const [loaded, setLoaded] = useState<Keyed<ChatTranscriptState> | null>(null);
-  const [link, setLink] = useState<Keyed<Link> | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(() => new Set());
-  const [providersDialog, setProvidersDialog] = useState<{ tab: ProvidersDialogTab; preselect: string } | null>(null);
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const [mcpDialog, setMcpDialog] = useState<{ rows: McpServerRow[]; empty: boolean } | null>(null);
-  // The thread whose `/mcp list` output should open the MCP dialog rather than only land in the transcript.
-  const mcpListWait = useRef<string | null>(null);
   const [railObservations, setRailObservations] = useState<Record<string, SessionObservation>>({});
-  // A send that had to start or resume its thread first. It is delivered after that thread's
-  // handshake and only to that thread; selecting any other thread cancels it, and its text stays
-  // in the thread's composer.
-  const pendingPrompt = useRef<{ key: string; text: string } | null>(null);
-  // A fresh attach id per run (`ipc.nextAttachId`): a re-run for the same thread (back from
-  // Terminal) must not let the previous run's fire-and-forget detach drop the new attach.
-  const [attachEpoch, setAttachEpoch] = useState(0);
   const [hatchBusy, setHatchBusy] = useState(false);
   // Hidden behind another tab the view stays mounted; its pollers skip their ticks.
   const activeRef = useRef(active);
@@ -319,220 +211,98 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
 
   const selected = useMemo(() => threads.find((thread) => threadKey(thread) === selectedKey) ?? null, [threads, selectedKey]);
   const selectionKey = selected ? threadKey(selected) : null;
-  const transcript = loaded && loaded.key === selectionKey ? loaded.value : NO_TRANSCRIPT;
-  const transcriptRef = useRef(transcript);
-  transcriptRef.current = transcript;
-  const observation = observed && observed.key === selectionKey ? observed.value : null;
-  const connection: Link = link && link.key === selectionKey ? link.value : { state: "connecting" };
-  /** Applies only while `key`'s transcript is the loaded one: a reply that lands after a switch is dropped. */
-  const updateTranscript = useCallback((key: string, update: (current: ChatTranscriptState) => ChatTranscriptState) => {
-    setLoaded((current) => (current?.key === key ? { key, value: update(current.value) } : current));
-  }, []);
+  const registry = useChatRegistry();
+  useEffect(() => {
+    const take = () => {
+      const focus = registry.takeFocus();
+      if (focus) setSelectedKey(focus);
+    };
+    take();
+    return registry.listenFocus(take);
+  }, [registry]);
 
-  // The handshake pushes the setting on every attach; `compactionPushed` keeps the effect below to
-  // real toggles instead of repeating it when the poll first reports the process alive.
-  const autoCompactionRef = useRef(visibility.autoCompaction);
-  autoCompactionRef.current = visibility.autoCompaction;
-  const compactionPushed = useRef("");
+  const commitThreads = (archived: boolean, resetArchived: boolean) =>
+    ipc.listChatThreads(archived).then((rows) => {
+      flushSync(() => {
+        if (resetArchived) setShowArchived(false);
+        setThreads(rows);
+      });
+    });
+
+  const chat = useChatThread(selected, {
+    active,
+    autoCompaction: visibility.autoCompaction,
+    isFocused: (key) => selectedKeyRef.current === key,
+    onReload: () => commitThreads(showArchivedRef.current, false),
+    onResumeRefresh: () => commitThreads(false, true),
+    onRebind: (key) => {
+      flushSync(() => {
+        setShowArchived(false);
+        setSelectedKey(key);
+      });
+    },
+  });
+  const { transcript, observation, connection, activity } = chat;
+  const error = chat.error;
+  const setError = chat.setError;
+  const body = chat.draft;
+  const sending = chat.sending;
+  const loadingOlder = chat.loadingOlder;
+  const loadOlder = chat.loadOlder;
+  const uiPrompt = chat.prompt;
+  const sendNowEnabled = chat.sendNowEnabled;
+  const statusKind = activity.kind;
+  const processLive = chat.processLive;
+  const inTerminal = chat.inTerminal;
+  const terminalIo = chat.terminalIo;
+  const contextUsage = chat.contextUsage;
+  const modelLabel = chat.modelLabel;
+  const blocked = chat.blocked;
+  const disconnected = chat.disconnected;
+  const send = (override?: string) => {
+    chat.send(override);
+  };
+  const sendNow = () => {
+    chat.sendNow();
+  };
+  const abort = () => {
+    chat.abort();
+  };
+  const [dropping, setDropping] = useState(false);
+  const inTerminalRef = useRef(inTerminal);
+  inTerminalRef.current = inTerminal;
+  const stagePathsRef = useRef(chat.stagePaths);
+  stagePathsRef.current = chat.stagePaths;
+  useEffect(() => {
+    if (!active || !selectionKey) return;
+    const un = ipc.getCurrentWebview().onDragDropEvent((event) => {
+      if (inTerminalRef.current) return;
+      if (event.payload.type === "enter" || event.payload.type === "over") {
+        setDropping(true);
+        return;
+      }
+      if (event.payload.type === "leave") {
+        setDropping(false);
+        return;
+      }
+      const { paths } = event.payload;
+      setDropping(false);
+      stagePathsRef.current(paths);
+    });
+    return () => {
+      un.then((finish) => finish());
+    };
+  }, [active, selectionKey]);
   const turnWasActive = useRef(false);
-
   const selectedId = selected?.session.id;
   const selectedRepo = selected?.repo_path;
-  // Per thread, not per attach: a reconnect re-runs the attach effect below, and an open dialog, a
-  // half-typed name, an awaited `/mcp list` or a turn that spans the reconnect must survive it.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the selected thread is the trigger.
+  // A reconnect keeps a half-typed rename. Switching threads does not. The ids are the trigger, not values the effect reads.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: selected thread identity.
   useEffect(() => {
     turnWasActive.current = false;
     setRenaming(false);
-    setProvidersDialog(null);
-    setToolsOpen(false);
-    setMcpDialog(null);
-    mcpListWait.current = null;
   }, [selectedId, selectedRepo]);
-  useEffect(() => {
-    if (!selected || !selectedRepo || !selectedId) return;
-    const repo = selectedRepo;
-    const id = selectedId;
-    const key = `${repo}:${id}`;
-    compactionPushed.current = `${key}:${autoCompactionRef.current}`;
-    const attachId = ipc.nextAttachId();
-    if (pendingPrompt.current && pendingPrompt.current.key !== key) {
-      pendingPrompt.current = null;
-      setSendingKey(null);
-    }
-    const claimed = pendingPrompt.current;
-    // Read now, before anything lands: the rebuild below reaches back at least this far.
-    const through = transcriptRef.current.fileStart;
-    let cancelled = false;
-    setError((current) => (current === "cannot continue" ? "" : current));
-    setLink({ key, value: { state: "connecting" } });
-    // OMP gone: the link goes offline and the list reloads, so the row carries ended_at and a send
-    // resumes the thread instead of writing to a dead session. Once per run.
-    let endedSeen = false;
-    const ended = () => {
-      if (cancelled || endedSeen) return;
-      endedSeen = true;
-      setLink({ key, value: { state: "offline" } });
-      void reload().catch(() => {});
-    };
-    // Live stream closed mid-turn: re-read the journal and reattach, while OMP is still up in
-    // chat. A hatch to Terminal also closes this stream; that process is PTY and is left alone.
-    // An unreadable status reattaches anyway: the attach itself reports offline or failed.
-    const stopClosed = ipc.onStreamClosed(
-      id,
-      attachId,
-      () => {
-        ipc.chatSessionStatus(repo, id).then(
-          (next) => {
-            if (cancelled || next.transport === "pty") return;
-            if (next.transport === "rpc" && next.lifecycle.state === "live") setAttachEpoch((epoch) => epoch + 1);
-            else ended();
-          },
-          () => {
-            if (!cancelled) setAttachEpoch((epoch) => epoch + 1);
-          },
-        );
-      },
-      () => {
-        if (!cancelled) setLink({ key, value: { state: "failed", detail: "The live connection closed repeatedly, so automatic reconnection stopped. Reconnect to try again." } });
-      },
-    );
-    // Polled like a task session's status: OMP's `ready` and every turn end land after this runs.
-    // A failed read keeps the last observation; null would read Loading mid-turn.
-    const observe = () => {
-      if (!activeRef.current) return;
-      ipc
-        .chatSessionStatus(repo, id)
-        .then((next) => {
-          if (cancelled) return;
-          setObserved({ key, value: next });
-          // The daemon keeps an exited process's clients open, so no stream close reports it.
-          if (selected.session.ended_at == null && (next.lifecycle.state === "exited" || next.lifecycle.state === "live_exited")) ended();
-        })
-        .catch(() => {});
-    };
-    observe();
-    const timer = window.setInterval(observe, 1500);
-    const dropClaim = (message: string) => {
-      if (!claimed || pendingPrompt.current !== claimed) return;
-      pendingPrompt.current = null;
-      setSendingKey(null);
-      setError(message);
-    };
-    // Attach only once the journal is in, as task sessions do: the handshake replies (commands,
-    // state, models) must land on the journal-built transcript, not be replaced by it.
-    readJournalThrough((end, want) => ipc.readChatOmp({ repoPath: repo, id, end, want }), through)
-      .then(
-        (next) => {
-          if (cancelled) return;
-          setLoaded((current) => ({ key, value: carryOver(current?.key === key ? current.value : undefined, next) }));
-          if (interruptedWithoutJournal(selected, next)) setError("cannot continue");
-        },
-        () => {
-          if (cancelled) return;
-          // A reattach that cannot read keeps the rows it has; only a first load has nothing to keep.
-          setLoaded((current) => (current?.key === key ? current : { key, value: emptyTranscript() }));
-          if (selected.session.ended_at != null && selected.session.harness_resume_token.length === 0) setError("cannot continue");
-        },
-      )
-      .then(async () => {
-        if (cancelled) return;
-        // Never started, ended or archived: there is no process, only history. Not a broken link.
-        if (selected.session.started_at == null || selected.session.ended_at != null || selected.session.archived) {
-          setLink({ key, value: { state: "offline" } });
-          dropClaim("Ava is not running in this thread, so the message was not sent. It is still in the composer.");
-          return;
-        }
-        try {
-          await ipc.chatRpcAttach({
-            repoPath: repo,
-            id,
-            attachId,
-            streamToken: 1,
-            onLine: (line) => {
-              if (cancelled) return;
-              const value = parseChatLine(line);
-              updateTranscript(key, (current) => applyChatValue(current, value));
-              for (const [commandId, awaiting] of awaitingVerdicts.current) {
-                if (awaiting.key !== key) continue;
-                const refused = matchingSendFailure(value, commandId);
-                if (refused !== null) {
-                  awaiting.refused = true;
-                  awaitingVerdicts.current.delete(commandId);
-                  // The composer takes the text back unless something else is being written there: then
-                  // the row stays, marked not sent, and neither message is lost.
-                  const draft = draftsRef.current[key] ?? "";
-                  const restore = draft.trim() === "" || draft === awaiting.text;
-                  if (restore) {
-                    draftsRef.current = { ...draftsRef.current, [key]: awaiting.text };
-                    setDrafts((current) => ({ ...current, [key]: awaiting.text }));
-                  }
-                  // The row's id is read in the updater, which runs after the one that added the row.
-                  updateTranscript(key, (current) => settleRefusedSend(current, awaiting.entryId, awaiting.text, restore));
-                  setError(`Not sent: ${refused}`);
-                  break;
-                }
-                if (matchingSendSuccess(value, commandId)) {
-                  awaitingVerdicts.current.delete(commandId);
-                  break;
-                }
-              }
-              if (mcpListWait.current === key) {
-                const listed = commandOutputText(value);
-                if (listed !== null) {
-                  mcpListWait.current = null;
-                  const parsed = parseMcpListOutput(listed);
-                  setMcpDialog(parsed === "empty" ? { rows: [], empty: true } : { rows: parsed, empty: false });
-                }
-              }
-              const refresh = queueRefreshCommand(value);
-              if (refresh)
-                ipc
-                  .chatRpcWrite(repo, id, refresh)
-                  .then(requireWritten)
-                  .catch((cause: unknown) => setError(errorMessage(cause)));
-            },
-          });
-          // The attach runs off the main thread, so cleanup's detach can reach the daemon before
-          // the attach registers, and the daemon ignores a detach for an id it does not know yet.
-          // Detach again once it has landed. The id is this run's alone (`ipc.nextAttachId`), so
-          // this can never drop a newer attach.
-          if (cancelled) {
-            ipc.chatDetach(repo, id, attachId).catch(() => {});
-            return;
-          }
-          for (const command of attachHandshake(autoCompactionRef.current)) {
-            requireWritten(await ipc.chatRpcWrite(repo, id, command));
-          }
-        } catch (cause) {
-          if (cancelled) return;
-          const detail = errorMessage(cause);
-          const offline = detail === "unknown-session" || detail === "wrong-transport";
-          setLink({ key, value: offline ? { state: "offline" } : { state: "failed", detail } });
-          dropClaim(offline ? "Ava is not running in this thread, so the message was not sent. It is still in the composer." : `Not sent: ${detail}`);
-          return;
-        }
-        if (cancelled) return;
-        setLink({ key, value: { state: "ready" } });
-        if (!claimed) return;
-        try {
-          await writeSend(key, repo, id, sendCommand(claimed.text, false), claimed.text, (current) => applyPlainSend(current, claimed.text, false));
-        } catch (cause) {
-          if (!cancelled) dropClaim(errorMessage(cause));
-          return;
-        }
-        if (pendingPrompt.current === claimed) pendingPrompt.current = null;
-        setSendingKey((current) => (current === key ? null : current));
-      });
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-      stopClosed();
-      ipc.chatDetach(repo, id, attachId).catch(() => {});
-    };
-  }, [selectedId, selectedRepo, attachEpoch]);
 
-  const activity = chatActivity(observation, transcript);
   // A thread is titled by its own model after a turn ends (the first message, then every 10th), and the
   // reply can take a while on a slow or thinking model. So the open thread's name is re-read every 3s
   // for up to a minute after each turn, and the list is reloaded once when it changes.
@@ -565,66 +335,6 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     }, 3000);
     return () => window.clearInterval(timer);
   }, [activity.turnActive]);
-  const statusKind = activity.kind;
-  const processLive = observation?.state?.process.state === "alive";
-  const setSelectedTranscript = useCallback(
-    (update: (current: ChatTranscriptState) => ChatTranscriptState) => {
-      if (selectionKey) updateTranscript(selectionKey, update);
-    },
-    [selectionKey, updateTranscript],
-  );
-  const uiReplies = useChatUiReplies({
-    repo: selectedRepo ?? null,
-    id: selectedId ?? null,
-    live: processLive,
-    transcript,
-    setTranscript: setSelectedTranscript,
-    onError: setError,
-  });
-  const uiPrompt = uiReplies.prompt;
-  const body = selectionKey ? (drafts[selectionKey] ?? "") : "";
-  const sending = selectionKey !== null && sendingKey === selectionKey;
-  const pendingUiReply = transcript.pendingUi.some((request) => needsUiReply(request.method));
-  const agentState = observation?.state?.agent?.state;
-  const sendNowEnabled =
-    connection.state === "ready" &&
-    activity.status === "running" &&
-    agentState !== "waiting_for_input" &&
-    agentState !== "waiting_for_approval" &&
-    !pendingUiReply &&
-    body.trim().length > 0;
-
-  // Older rows come off the journal on demand, as in a task session. A page that lands after the
-  // reader moved to another thread is dropped by the keyed update.
-  const olderBusy = useRef(false);
-  const [loadingOlder, setLoadingOlder] = useState(false);
-  const loadOlder = useCallback(() => {
-    const from = transcriptRef.current.fileStart;
-    if (olderBusy.current || from == null || from === 0 || !selectedRepo || !selectedId) return;
-    const key = `${selectedRepo}:${selectedId}`;
-    olderBusy.current = true;
-    setLoadingOlder(true);
-    ipc
-      .readChatOmp({ repoPath: selectedRepo, id: selectedId, end: from })
-      .then((buffer) => updateTranscript(key, (current) => olderPageState(current, buffer)))
-      .catch(() => undefined)
-      .finally(() => {
-        olderBusy.current = false;
-        setLoadingOlder(false);
-      });
-  }, [selectedRepo, selectedId, updateTranscript]);
-  useEffect(() => {
-    if (!processLive || !selectedRepo || !selectedId) return;
-    const key = `${selectedRepo}:${selectedId}:${visibility.autoCompaction}`;
-    if (compactionPushed.current === key) return;
-    compactionPushed.current = key;
-    ipc
-      .chatRpcWrite(selectedRepo, selectedId, setAutoCompactionCommand(visibility.autoCompaction))
-      .then(requireWritten)
-      .catch((cause: unknown) => setError(errorMessage(cause)));
-  }, [visibility.autoCompaction, processLive, selectedRepo, selectedId]);
-  const inTerminal = processLive && observation?.transport === "pty";
-  const terminalIo = useMemo(() => (selectedRepo && selectedId ? chatTerminalIo(selectedRepo, selectedId) : undefined), [selectedRepo, selectedId]);
 
   /**
    * The escape hatch: restart this thread's OMP on the same journal in its terminal UI, or back
@@ -634,7 +344,6 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     if (!selected || !selectionKey || hatchBusy) return;
     const repo = selected.repo_path;
     const id = selected.session.id;
-    const key = selectionKey;
     const target = inTerminal ? "rpc" : "pty";
     setError("");
     try {
@@ -645,9 +354,9 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
       setHatchBusy(true);
       await ipc.chatRestate(repo, id, target);
       const next = await ipc.chatSessionStatus(repo, id);
-      setObserved({ key, value: next });
+      chat.setObserved(next);
       // Back in chat: re-read the journal (turns typed in the terminal) and reattach RPC.
-      if (target === "rpc") setAttachEpoch((epoch) => epoch + 1);
+      if (target === "rpc") chat.reconnect();
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -748,167 +457,6 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
     }
   }
 
-  /**
-   * Writes a command and, once the daemon acks it, adds the send's row and clears its draft: a failed
-   * write keeps the draft and adds no row. A prompt is then awaiting OMP's verdict (`awaitingVerdicts`).
-   * One refused before the ack never gets a row, and its draft stays.
-   */
-  async function writeSend(
-    key: string,
-    repo: string,
-    id: string,
-    command: { id: string; type: string },
-    text: string,
-    addRow: (current: ChatTranscriptState) => { state: ChatTranscriptState; entryId: string },
-  ) {
-    const verdict = { key, text, entryId: null as string | null, refused: false };
-    const judged = command.type === "prompt" || command.type === "follow_up" || command.type === "abort_and_prompt";
-    if (judged) awaitingVerdicts.current.set(command.id, verdict);
-    try {
-      requireWritten(await ipc.chatRpcWrite(repo, id, command));
-    } catch (cause) {
-      awaitingVerdicts.current.delete(command.id);
-      if (!verdict.refused && (draftsRef.current[key] ?? "") !== text) {
-        updateTranscript(key, (current) => appendHarnessNotice(current, "input_recovery", `${errorMessage(cause)}\nOriginal input:\n${text}`));
-      }
-      throw cause;
-    }
-    if (verdict.refused) return;
-    updateTranscript(key, (current) => {
-      const added = addRow(current);
-      verdict.entryId = added.entryId;
-      return added.state;
-    });
-    setDrafts(clearDraft(key, text));
-  }
-
-  /**
-   * The draft stays in the composer until the write lands, so a failed send loses nothing. A thread
-   * with no process is started or resumed first, and the text goes out after that thread's handshake.
-   */
-  async function send(override?: string) {
-    if (!selected || !selectionKey || sending) return;
-    const key = selectionKey;
-    const text = override ?? drafts[key] ?? "";
-    if (!text.trim()) return;
-    const repo = selected.repo_path;
-    const id = selected.session.id;
-    setError("");
-    if (selected.session.ended_at != null || selected.session.archived) {
-      setSendingKey(key);
-      try {
-        const successor = await ipc.resumeChatThread(repo, id);
-        const next = `${repo}:${successor.id}`;
-        // The text moves to the successor, the thread it now belongs to.
-        setDrafts((current) => {
-          const { [key]: moved, ...rest } = current;
-          return { ...rest, [next]: moved ?? text };
-        });
-        const rows = await ipc.listChatThreads(false);
-        setShowArchived(false);
-        setThreads(rows);
-        if (selectedKeyRef.current !== key) {
-          // The reader moved on while it resumed: nothing is sent, and the text waits in the successor.
-          setSendingKey(null);
-          return;
-        }
-        pendingPrompt.current = { key: next, text };
-        setSendingKey(next);
-        setSelectedKey(next);
-      } catch (cause) {
-        setSendingKey(null);
-        setError(errorMessage(cause));
-      }
-      return;
-    }
-    if (selected.session.started_at == null) {
-      setSendingKey(key);
-      try {
-        const started = await ipc.startChatThread(repo, id);
-        if (started.start === "failed") {
-          setSendingKey(null);
-          setError(started.errors?.[0]?.message ?? "start failed");
-          return;
-        }
-        await reload();
-        if (selectedKeyRef.current !== key) {
-          setSendingKey(null);
-          return;
-        }
-        pendingPrompt.current = { key, text };
-        // The first attach found no process; this one runs the handshake and then delivers the text.
-        setAttachEpoch((epoch) => epoch + 1);
-      } catch (cause) {
-        setSendingKey(null);
-        setError(errorMessage(cause));
-      }
-      return;
-    }
-    if (connection.state !== "ready") {
-      setError(connection.state === "failed" ? "Not connected to Ava, so nothing was sent. Reconnect, then send again." : "Still connecting to Ava. Send again in a moment.");
-      return;
-    }
-    const busy = activity.turnActive;
-    const plan = planChatSend(text, transcript.commands, busy);
-    const dispatch = plan.dispatch;
-    if (dispatch.kind === "open-providers") {
-      setDrafts(clearDraft(key, text));
-      setProvidersDialog({ tab: dispatch.tab, preselect: dispatch.args });
-      return;
-    }
-    if (dispatch.kind === "hatch") {
-      // Terminal-only in OMP: nothing to write over RPC. The notice points at the terminal button.
-      updateTranscript(key, (current) => applySendPlan(current, text, plan).state);
-      setDrafts(clearDraft(key, text));
-      return;
-    }
-    // Same routing as a task session's `dispatchChatPlan`: these have typed RPC or a dialog of their own.
-    const command =
-      dispatch.kind === "compact"
-        ? compactCommand(dispatch.customInstructions)
-        : dispatch.kind === "get-tools"
-          ? getStateCommand()
-          : dispatch.kind === "mcp-list"
-            ? promptCommand("/mcp list")
-            : sendCommand(text, busy);
-    if (dispatch.kind === "mcp-list") mcpListWait.current = key;
-    setSendingKey(key);
-    try {
-      await writeSend(key, repo, id, command, text, (current) => applySendPlan(current, text, plan));
-      if (dispatch.kind === "get-tools") setToolsOpen(true);
-    } catch (cause) {
-      if (mcpListWait.current === key) mcpListWait.current = null;
-      setError(errorMessage(cause));
-    } finally {
-      setSendingKey((current) => (current === key ? null : current));
-    }
-  }
-
-  async function sendNow() {
-    if (!selected || !selectionKey || !body.trim()) return;
-    const key = selectionKey;
-    const text = body;
-    setError("");
-    try {
-      await writeSend(key, selected.repo_path, selected.session.id, sendNowCommand(text), text, (current) => {
-        const state = appendOptimisticUser(current, text, "prompt");
-        return { state, entryId: state.entries[state.entries.length - 1]?.id ?? "" };
-      });
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  }
-
-  function abort() {
-    if (!selected || !selectionKey) return;
-    const key = selectionKey;
-    ipc
-      .chatRpcWrite(selected.repo_path, selected.session.id, abortTurnCommand())
-      .then(requireWritten)
-      .then(() => updateTranscript(key, (current) => appendOptimisticAbort(current)))
-      .catch((cause: unknown) => setError(String(cause)));
-  }
-
   function pickThinking(level: string) {
     if (!selected) return;
     ipc
@@ -916,11 +464,6 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
       .then(requireWritten)
       .catch((cause: unknown) => setError(String(cause)));
   }
-
-  const contextUsage = formatContextUsage(transcript.sessionMeta.contextUsage?.tokens, transcript.sessionMeta.contextUsage?.contextWindow);
-  const modelLabel = transcript.sessionMeta.model || selected?.session.model || "Model";
-  const blocked = error === "cannot continue";
-  const disconnected = connection.state === "failed" && !inTerminal ? connection.detail : null;
 
   function startThreadIn(path: string) {
     setRepoPath(path);
@@ -1126,7 +669,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
               <>
                 {inTerminal ? null : (
                   <>
-                    <button type="button" className="btn ghost small chat-model-btn" onClick={() => setProvidersDialog({ tab: "models", preselect: "" })} title="Change model">
+                    <button type="button" className="btn ghost small chat-model-btn" onClick={() => chat.setProvidersDialog({ tab: "models", preselect: "" })} title="Change model">
                       <span className="chat-model-label">{modelLabel}</span>
                       <ChevronDown size={14} aria-hidden="true" />
                     </button>
@@ -1194,7 +737,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
             entries={transcript.entries}
             status={activity.status}
             visibility={visibility}
-            onApprove={uiReplies.approve}
+            onApprove={chat.approve}
             onLoadOlder={loadOlder}
             loadingOlder={loadingOlder}
             atStart={transcript.fileStart === 0}
@@ -1215,7 +758,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
             <span>
               Lost the connection to Ava in this thread. Replies and approvals will not show until it reconnects. <span className="chat-banner-detail">{disconnected}</span>
             </span>
-            <button type="button" className="btn small" onClick={() => setAttachEpoch((epoch) => epoch + 1)}>
+            <button type="button" className="btn small" onClick={() => chat.reconnect()}>
               Reconnect
             </button>
           </div>
@@ -1231,7 +774,7 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
           </div>
         ) : null}
         {!inTerminal && uiPrompt ? (
-          <ChatExtensionPrompt request={uiPrompt} onSubmit={(value) => void uiReplies.reply(uiPrompt.id, value)} onCancel={() => void uiReplies.cancel(uiPrompt.id)} />
+          <ChatExtensionPrompt request={uiPrompt} onSubmit={(value) => void chat.reply(uiPrompt.id, value)} onCancel={() => void chat.cancelUi(uiPrompt.id)} />
         ) : null}
         {/* No composer without a thread: drafts are per thread, so the box would swallow every keystroke. */}
         {inTerminal || !selected ? null : (
@@ -1241,12 +784,22 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
             catalog={transcript.commands}
             sending={sending}
             showHints={visibility.showComposerHints}
-            allowAttach={false}
+            attachments={chat.attachments}
+            dropping={dropping}
+            onAttach={() => {
+              void ipc
+                .pickAttachmentFilesDialog()
+                .then((paths) => chat.stagePaths(paths))
+                .catch((error: unknown) => toast.error(String(error)));
+            }}
+            onRemoveAttachment={(id) => chat.removeAttachment(id)}
+            onClear={() => chat.clearComposer()}
+            onPasteFiles={chat.stageBlobs}
             onBodyChange={(next) => {
-              if (selectionKey) setDrafts((current) => ({ ...current, [selectionKey]: next }));
+              if (selectionKey) chat.setDraft(next);
             }}
             onSend={() => {
-              void send();
+              send();
             }}
             onAbort={abort}
             onSendNow={sendNowEnabled ? () => void sendNow() : undefined}
@@ -1301,35 +854,18 @@ export function ChatView({ active = true, terminalFontSize, visibility }: { acti
           </div>
         </Dialog>
       ) : null}
-      {providersDialog && selected ? (
-        // The setup session's dialog, not a bare ChatModelDialog: it owns the hosted catalogue, tab
-        // state and login, which a thread's own RPC stream does not. Credentials are app-wide.
-        <ProviderSetupDialog
-          mode="manual"
-          initialTab={providersDialog.tab}
-          preselect={providersDialog.preselect}
-          onPick={(model) => {
-            const slash = model.indexOf("/");
-            ipc
-              .chatRpcWrite(selected.repo_path, selected.session.id, applyModelCommand(model.slice(0, slash), model.slice(slash + 1)))
-              .then(requireWritten)
-              .catch((cause: unknown) => setError(String(cause)));
-          }}
-          onClose={() => setProvidersDialog(null)}
-        />
-      ) : null}
-      {toolsOpen ? <ChatToolsDialog tools={transcript.sessionMeta.dumpTools ?? []} onClose={() => setToolsOpen(false)} /> : null}
-      {mcpDialog ? (
-        <ChatMcpDialog
-          rows={mcpDialog.rows}
-          empty={mcpDialog.empty}
-          onPrompt={(message) => {
-            setMcpDialog(null);
-            void send(message);
-          }}
-          onClose={() => setMcpDialog(null)}
-        />
-      ) : null}
     </div>
   );
+}
+
+export function ChatView(props: { active?: boolean; terminalFontSize: number; visibility: ChatPrefs }) {
+  const existing = useContext(ChatSessionContext);
+  if (!existing) {
+    return (
+      <ChatSessionProvider>
+        <ChatViewBody {...props} />
+      </ChatSessionProvider>
+    );
+  }
+  return <ChatViewBody {...props} />;
 }

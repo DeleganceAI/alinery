@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { buildPromptMessage, taskAttachmentDir } from "../chat/attachments";
 import { askConfirm } from "../confirm";
 import * as ipc from "../ipc";
+import { type PastedImage, stagePastedImages } from "../pastedImages";
 import { ExecutionAvailabilityNotice, InlineStatus, ModelInput, repoName, taskKey } from "../shared";
 import type { BoardTask, SessionTypeChoice, TaskExecutionReply } from "../types";
 import { readTaskExecution } from "../useExecutionObservation";
@@ -33,6 +35,27 @@ export function CreateSessionPage({
   const [executionError, setExecutionError] = useState("");
   const [decisionPending, setDecisionPending] = useState(false);
   const decisionRef = useRef(false);
+  const [images, setImages] = useState<PastedImage[]>([]);
+  const imagesRef = useRef<PastedImage[]>([]);
+  const savedImages = useRef(new Map<string, string>());
+  const launchingRef = useRef(false);
+  const [pasteErrors, setPasteErrors] = useState<string[]>([]);
+  const updateImages = (next: PastedImage[]) => {
+    imagesRef.current = next;
+    setImages(next);
+  };
+  const clearImages = () => {
+    for (const image of imagesRef.current) URL.revokeObjectURL(image.previewUrl);
+    updateImages([]);
+    savedImages.current.clear();
+    setPasteErrors([]);
+  };
+  useEffect(
+    () => () => {
+      for (const image of imagesRef.current) URL.revokeObjectURL(image.previewUrl);
+    },
+    [],
+  );
   const task = tasks.find((candidate) => taskKey(candidate) === taskId);
   const records = Object.values(executionView?.state.executions ?? {});
   const [mode, executionId] = selection.split(":");
@@ -105,8 +128,8 @@ export function CreateSessionPage({
   }, [task?.repo_path, task?.slug]);
 
   const changeContext = async (apply: () => void) => {
-    if (decisionRef.current) return;
-    if (!prompt) {
+    if (decisionRef.current || launchingRef.current) return;
+    if (!prompt && !imagesRef.current.length) {
       apply();
       return;
     }
@@ -115,7 +138,7 @@ export function CreateSessionPage({
     try {
       const answer = await askConfirm({
         title: "Change session settings?",
-        body: "Discard the additional instructions before changing the task or execution?",
+        body: "Discard the additional instructions and pasted images before changing the task or execution?",
         choices: [
           { key: "discard", label: "Discard edits" },
           { key: "cancel", label: "Cancel", tone: "ghost" },
@@ -125,6 +148,7 @@ export function CreateSessionPage({
       });
       if (answer === "discard") {
         setPrompt("");
+        clearImages();
         apply();
       }
     } finally {
@@ -135,7 +159,7 @@ export function CreateSessionPage({
 
   const disabled = busy || decisionPending || !task?.worktree || !exactTaskLoaded || !executionAvailable || (!auxiliary && !execution);
   const launch = async () => {
-    if (disabled || !task) return;
+    if (disabled || !task || launchingRef.current) return;
     let choice: SessionTypeChoice;
     if (auxiliary) choice = { kind: "auxiliary" };
     else if (existing && execution) choice = { kind: "existing", session_id: execution.owner_session_id };
@@ -145,19 +169,35 @@ export function CreateSessionPage({
           ? { kind: "primary", step_key: execution.candidate.step_key, execution_id: execution.id }
           : { kind: "primary", step_key: execution.candidate.step_key, input_occurrence_ids: Object.values(execution.candidate.inputs).flat() };
     else return;
+    launchingRef.current = true;
     setBusy(true);
     setError("");
     try {
+      let instructions = prompt;
+      if (effectiveHarness !== "no-harness" && !existing) {
+        const copied: { name: string }[] = [];
+        for (const image of imagesRef.current) {
+          let name = savedImages.current.get(image.id);
+          if (!name) {
+            const bytes = Array.from(new Uint8Array(await image.file.arrayBuffer()));
+            name = await ipc.writeChatAttachmentBytes(task.slug, image.name, bytes, task.repo_path);
+            savedImages.current.set(image.id, name);
+          }
+          copied.push({ name });
+        }
+        instructions = buildPromptMessage(instructions, copied, taskAttachmentDir(task.repo_path, task.slug));
+      }
       await onCreated(
         task,
         choice,
         effectiveHarness,
         effectiveHarness === "no-harness" || existing ? "" : model,
-        effectiveHarness === "no-harness" || existing || !prompt ? undefined : prompt,
+        effectiveHarness === "no-harness" || existing || !instructions ? undefined : instructions,
       );
     } catch (cause) {
       setError(String(cause));
     } finally {
+      launchingRef.current = false;
       setBusy(false);
     }
   };
@@ -327,8 +367,45 @@ export function CreateSessionPage({
             value={prompt}
             disabled={effectiveHarness === "no-harness" || existing || busy || decisionPending}
             onChange={(event) => setPrompt(event.target.value)}
+            onPaste={(event) => {
+              if (effectiveHarness === "no-harness" || existing || launchingRef.current || decisionRef.current) return;
+              const { added, errors, hasImage } = stagePastedImages(event.clipboardData, imagesRef.current);
+              if (!hasImage) return;
+              if (!event.clipboardData.getData("text/plain")) event.preventDefault();
+              setPasteErrors(errors);
+              if (added.length) updateImages([...imagesRef.current, ...added]);
+            }}
           />
         </label>
+        {images.map((image) => (
+          <div key={image.id} className="attachment-row">
+            {image.previewUnavailable ? (
+              <span className="hint">Preview unavailable</span>
+            ) : (
+              <img
+                className="attachment-thumbnail"
+                src={image.previewUrl}
+                alt={`Preview of ${image.name}`}
+                onError={() => updateImages(imagesRef.current.map((item) => (item.id === image.id ? { ...item, previewUnavailable: true } : item)))}
+              />
+            )}
+            <span className="attachment-row-name">{image.name}</span>
+            <button
+              type="button"
+              className="btn ghost small"
+              disabled={busy || decisionPending}
+              aria-label={`Remove ${image.name}`}
+              onClick={() => {
+                URL.revokeObjectURL(image.previewUrl);
+                updateImages(imagesRef.current.filter((item) => item.id !== image.id));
+              }}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+        {pasteErrors.length > 0 && <InlineStatus tone="error">{pasteErrors.join("\n")}</InlineStatus>}
+        {effectiveHarness !== "no-harness" && !existing && <p className="hint">Paste images into Additional instructions. Images are saved as task attachments when you launch.</p>}
         <p className="hint">
           Instructions supplement the retained step prompt. The daemon appends authoritative input/output assignments and completion rules. Existing queued sessions retain their
           recorded launch choices.

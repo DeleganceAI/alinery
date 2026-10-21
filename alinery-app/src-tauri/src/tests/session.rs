@@ -1560,3 +1560,47 @@ fn read_chat_journal_uses_root_sessions_dir() {
     assert_eq!(window.data, b"root-journal\n");
     let _ = fs::remove_dir_all(repo);
 }
+
+#[test]
+fn chat_thread_attachments_land_beside_the_session_and_reject_escape() {
+    let repo = init_git_test_repo("chat-attach");
+    plant_chat(&repo, "s-j", "omp", 1, false, false, &repo.to_string_lossy(), "", None, None, None);
+    let src = repo.join("notes.pdf");
+    fs::write(&src, b"hello").unwrap();
+
+    assert!(crate::copy_chat_thread_attachments_in(&repo, "s-missing", &[src.to_string_lossy().into()]).is_err());
+    assert!(!alinery_core::chat_attachments_dir(&repo, "s-missing").exists());
+    match crate::copy_chat_thread_attachments_in(&repo, "../s-j", &[src.to_string_lossy().into()]) {
+        Err(error) => assert!(error.contains("invalid"), "{error}"),
+        Ok(_) => panic!("escaped session id was copied"),
+    }
+
+    let copied = crate::copy_chat_thread_attachments_in(&repo, "s-j", &[src.to_string_lossy().into(), "https://x/y".into()]).unwrap();
+    assert_eq!(copied.copied, vec!["notes.pdf".to_string()]);
+    assert!(copied.failures.is_empty(), "{:?}", copied.failures);
+    let dir = alinery_core::chat_attachments_dir(&repo, "s-j");
+    assert_eq!(fs::read(dir.join("notes.pdf")).unwrap(), b"hello");
+    assert!(!repo.join(".alinery/tasks").exists());
+
+    let urls_only = crate::copy_chat_thread_attachments_in(&repo, "s-j", &["https://x/y".into()]).unwrap();
+    assert!(urls_only.copied.is_empty());
+
+    assert!(crate::write_chat_thread_attachment_bytes_in(&repo, "s-j", "../note.png", b"x").is_err());
+    assert!(!repo.join(".alinery/sessions/note.png").exists());
+    let written = crate::write_chat_thread_attachment_bytes_in(&repo, "s-j", "shot.png", b"png").unwrap();
+    assert_eq!(written, "shot.png");
+    let image = crate::read_chat_thread_image_in(&repo, "s-j", "shot.png").unwrap();
+    assert_eq!(image.mime_type, "image/png");
+    assert_eq!(image.data, alinery_core::rpc_chunk::encode_base64(b"png"));
+    assert!(crate::read_chat_thread_image_in(&repo, "s-j", "../shot.png").is_err());
+    assert!(crate::read_chat_thread_image_in(&repo, "s-j", "notes.pdf").is_err());
+
+    let too_big = vec![0u8; (MAX_ATTACHMENT_BYTES as usize) + 1];
+    assert!(crate::write_chat_thread_attachment_bytes_in(&repo, "s-j", "huge.bin", &too_big).is_err());
+    assert!(!dir.join("huge.bin").exists());
+
+    fs::File::create(dir.join("already.bin")).unwrap().set_len(MAX_ATTACHMENT_SET_BYTES).unwrap();
+    assert!(crate::write_chat_thread_attachment_bytes_in(&repo, "s-j", "extra.bin", b"hello").is_err());
+    assert!(!dir.join("extra.bin").exists());
+    let _ = fs::remove_dir_all(repo);
+}

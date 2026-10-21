@@ -10,6 +10,8 @@ default_harness = "omp"
 key = "research"
 title = "Research"
 short = "research"
+# Root-only: read the original task ticket through TICKET_FILE. Depending on the
+# recurring ticket role would put research back inside the slice loop.
 inputs = []
 outputs = [{ path = "research.md" }]
 model = ""
@@ -44,7 +46,8 @@ key = "plan-slices"
 title = "Plan Slices"
 short = "plan-slices"
 inputs = [{ path = "research.md", mode = "single" }, { path = "requirements.md", mode = "single" }, { path = "design.md", mode = "single" }]
-outputs = [{ path = "tasks.md" }, { path = "slice-*.md" }]
+# Publishes the first next-slice.md. The seed ticket is the original request and is not a slice.
+outputs = [{ path = "tasks.md", required = true }, { path = "slice-*.md" }, { path = "next-slice.md", required = true }]
 model = ""
 harness = ""
 is_coding_step = false
@@ -54,7 +57,7 @@ auto_advance_default = false
 key = "next-slice"
 title = "Next Slice"
 short = "next-slice"
-inputs = [{ path = "ticket.md", mode = "single" }, { path = "tasks.md", mode = "single" }]
+inputs = [{ path = "next-slice.md", mode = "single" }, { path = "tasks.md", mode = "single" }]
 outputs = [{ path = "current-slice.md" }]
 model = ""
 harness = ""
@@ -87,8 +90,8 @@ auto_advance_default = true
 key = "validate"
 title = "Validate"
 short = "validate"
-inputs = [{ path = "ticket.md", mode = "single" }, { path = "tasks.md", mode = "single" }, { path = "review.md", mode = "single" }, { path = "requirements.md", mode = "single" }, { path = "design.md", mode = "single" }]
-outputs = [{ path = "ticket.md" }, { path = "validation-report.md" }]
+inputs = [{ path = "next-slice.md", mode = "single" }, { path = "tasks.md", mode = "single" }, { path = "review.md", mode = "single" }, { path = "requirements.md", mode = "single" }, { path = "design.md", mode = "single" }]
+outputs = [{ path = "next-slice.md" }, { path = "validation-report.md" }]
 model = ""
 harness = ""
 is_coding_step = false
@@ -120,7 +123,7 @@ Additional user instructions:
 
 # Research
 
-Read `{{TICKET_FILE}}`. This step has no assigned artifact inputs, so that file is the original task request. Do not treat a later implementation ticket as a reason to research again.
+Read `{{TICKET_FILE}}`. This step has no assigned artifact inputs, so that file is the original task request. Later slices do not rebind it, and a slice ledger is not a reason to research again.
 
 Scan the repository read-only. Write `research.md` covering what exists today, the gap this request opens, constraints, reusable code, and unknowns that would change the requirements. Do not choose a design or draft requirements. Do not modify repository files.
 
@@ -201,7 +204,9 @@ Read the assigned research, requirements, and design. Break the approved design 
 
 Write `tasks.md` as the index: slice ids in order, each followed by that slice's full text. Also write one `slice-<id>.md` per slice, with the same text, as the assigned `slice-*.md` family. Every slice includes its id, the requirement ids it discharges, `_Boundary:` (repository paths it may touch), `_Depends:` (slice ids or interfaces it consumes), and the test that proves it.
 
-Write both before completing. The slice family must be a finite nonempty set. If the work cannot be sliced, ask and do not complete. Stay until the human accepts the slice set. Do not implement. Do not modify repository files.
+Also write `next-slice.md` for the first slice only. Name the first id in `tasks.md` order. That is not the first `slice-*.md` filename, and not an id guessed from the original request. Include `supersedes: none`. Do not include a slice body or implementation notes. The body stays in `slice-<id>.md` and in the matching `tasks.md` entry. Do not copy the original request, `{{TICKET_FILE}}`, or design notes into this ledger.
+
+`tasks.md` and `next-slice.md` are required publications. Completing without either file is rejected and this session stays running. The slice family is still a possible publication, but it must be a finite nonempty set before you complete. If the work cannot be sliced, ask and do not complete. Stay until the human accepts the slice set. Do not implement. Do not modify repository files.
 
 <!-- alinery:step next-slice -->
 
@@ -224,11 +229,11 @@ Additional user instructions:
 
 # Next Slice
 
-Read only the assigned ticket and the assigned `tasks.md`. Write `current-slice.md` for exactly one slice.
+Read the assigned `next-slice.md` and the assigned `tasks.md`. Write `current-slice.md` for exactly one slice. Do not read the original task ticket. It is the whole request, not a slice.
 
-If the ticket contains a full slice body, copy that body. Otherwise, if it names a slice id, copy that slice from `tasks.md`. Otherwise copy the first slice embedded in `tasks.md`. Carry forward any implementation notes from the ticket.
+If the ledger contains `supersedes: slice-<id>.md` and a full replacement slice body, copy that body. That field names the original slice file the repair replaces, and the repair wins over both that file and the `tasks.md` entry. Otherwise the ledger names a slice id and `supersedes: none`: copy that slice from the assigned `tasks.md`. If the ledger names no id, stop and ask. Do not guess a slice from the original request, and do not copy the first embedded slice unless the ledger names that id.
 
-Do not scan the artifacts directory for `slice-*.md`. Accepted slice files are the original plan; a repair lives in the ticket, not in those files. Do not implement. Do not modify repository files.
+Carry implementation notes only when the ledger contains them. Do not scan the artifacts directory for `slice-*.md`. Those files are the original plan; a repair lives in the ledger. Do not implement. Do not modify repository files.
 
 <!-- alinery:step implement -->
 
@@ -282,7 +287,7 @@ Read the assigned slice, implementation report, requirements, and design. Do not
 
 Write `review.md`. Judge spec compliance, boundary fit, and RED-phase evidence when the slice required a failing test first. Copy the report's notes for later slices into the review. Either accept, or reject with one full replacement slice using the same annotations: id, requirement ids, `_Boundary:`, `_Depends:`, and the proving test.
 
-Do not write `slice-*.md` or `ticket.md`.
+Do not write `slice-*.md` or `next-slice.md`.
 
 <!-- alinery:step validate -->
 
@@ -305,13 +310,13 @@ Additional user instructions:
 
 # Validate
 
-Read the assigned ticket, `tasks.md`, review, requirements, and design. This is the only step that may write a new `ticket.md`. That ticket is a ledger for the next slice, not a rewrite of the original request. When you write one, include the slice id to bind next, the full slice body when it is not just the next index entry, the completed slice ids, the attempt count for the active slice, and the implementation notes from the review.
+Read the assigned `next-slice.md`, `tasks.md`, review, requirements, and design. The assigned ledger already names a slice id, including on the first pass. This step writes the next ledger at its assigned `next-slice.md` path. That ledger is for the next slice, not a rewrite of the original request. When you write one, include the slice id to bind next, `supersedes: slice-<id>.md` when the ledger carries a replacement body (otherwise `supersedes: none`), the full slice body when it is not just the next index entry, the completed slice ids, the attempt count for the active slice, and the implementation notes from the review.
 
-The assigned ticket's attempt count is the number of rejections already sent back for this slice. The original task ticket has none.
+The assigned ledger's attempt count is the number of rejections already sent back for this slice. A ledger from plan-slices has none.
 
-- The review rejects this slice and the ticket does not already record a rejection of it: write the repair ticket, with the replacement slice from the review and attempt count 1, then complete.
-- The review rejects this slice again: do not write a ticket. Explain the repeated rejection and ask the human.
-- The review accepts and slices remain: write a ticket naming the next slice id and the notes, then complete. Do not repeat the slice body when `tasks.md` already has it.
-- Nothing remains: compare the work with the requirements and the design in `validation-report.md`. Record requirement coverage, boundary violations, evidence references, checks performed and what was not run. End with `GO`, `NO-GO`, or `MANUAL_VERIFY_REQUIRED`, with the actual human disposition. A settled, human-approved terminal disposition may complete with this report and no `ticket.md`. If the human instead requests a repair, write that actionable ticket with the required ledger and complete.
+- The review rejects this slice and the ledger does not already record a rejection of it: write the repair ledger, with the replacement slice from the review, `supersedes: slice-<id>.md` for that slice, and attempt count 1, then complete.
+- The review rejects this slice again: do not write a ledger. Explain the repeated rejection and ask the human.
+- The review accepts and slices remain: write a ledger naming the next slice id and the notes, then complete. Do not repeat the slice body when `tasks.md` already has it.
+- Nothing remains: compare the work with the requirements and the design in `validation-report.md`. Record requirement coverage, boundary violations, evidence references, checks performed and what was not run. End with `GO`, `NO-GO`, or `MANUAL_VERIFY_REQUIRED`, with the actual human disposition. A settled, human-approved terminal disposition may complete with this report and no `next-slice.md`. If the human instead requests a repair, write that actionable ledger and complete.
 
-Repeated rejection and pending manual verification still require human direction; do not invent approval or claim an unperformed check passed. A human may explicitly conclude with `NO-GO` or with documented manual verification still required; record that decision and its limits rather than implying implementation approval. While the decision or required work remains unsettled, stay interactive. Successful stopping leaves the assigned validation report and no new ticket, then follows the ordinary completion and confirmed-exit handshake. Do not fabricate a dummy ticket to force another slice.
+Repeated rejection and pending manual verification still require human direction; do not invent approval or claim an unperformed check passed. A human may explicitly conclude with `NO-GO` or with documented manual verification still required; record that decision and its limits rather than implying implementation approval. While the decision or required work remains unsettled, stay interactive. Successful stopping leaves the assigned validation report and no new ledger, then follows the ordinary completion and confirmed-exit handshake. Do not fabricate a dummy ledger to force another slice.

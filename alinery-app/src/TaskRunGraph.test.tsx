@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 import { buildTaskRunGraph } from "./runGraphModel";
 import { TaskRunGraph } from "./TaskRunGraph";
-import type { ArtifactOccurrence, SessionDisplayMeta } from "./types";
+import type { ArtifactOccurrence, SessionDisplayMeta, SessionObservation } from "./types";
 import { executionRecord, executionReply } from "./views/executionTestFixture";
 
 vi.mock("./ipc", async () => {
@@ -44,6 +44,39 @@ const occurrence = (id: string, producer: string | null, path = `${id}.md`): Art
 });
 
 afterEach(cleanup);
+
+it("keeps queued owners queued after observation polling and shows live activity once started", () => {
+  const worker = session("worker");
+  const record = { ...execution("worker"), lifecycle: "queued" as const };
+  const observation: SessionObservation = { lifecycle: { state: "never_started" }, state: null, checkpoint: {} };
+  const props = { sessions: [worker], state: executionReply([record]).state, onOpenSession: vi.fn(), onOpenArtifact: vi.fn() };
+  const { rerender } = render(<TaskRunGraph {...props} />);
+  const node = () => screen.getByRole("button", { name: "Open session worker" });
+  expect(within(node()).getByText("queued")).toBeTruthy();
+  rerender(<TaskRunGraph {...props} observations={{ worker: observation }} />);
+  expect(within(node()).getByText("queued")).toBeTruthy();
+  expect(within(node()).queryByText("Exited")).toBeNull();
+  rerender(
+    <TaskRunGraph
+      {...props}
+      state={executionReply([{ ...record, lifecycle: "running" }]).state}
+      observations={{
+        worker: {
+          ...observation,
+          lifecycle: { state: "live" },
+          state: {
+            process: { state: "alive" },
+            agent: { state: "busy" },
+            playbook: { state: "in_progress" },
+            adapter: "omp",
+            message_adapter: "omp_bracketed_paste",
+          },
+        },
+      }}
+    />,
+  );
+  expect(within(node()).getByText("Running")).toBeTruthy();
+});
 
 it("zooms out to one percent with buttons and wheel, and resets from the lower bound", () => {
   render(<TaskRunGraph sessions={[session("worker")]} state={null} onOpenSession={vi.fn()} onOpenArtifact={vi.fn()} />);

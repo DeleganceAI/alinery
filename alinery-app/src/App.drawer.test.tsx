@@ -96,7 +96,7 @@ vi.mock("./Boot", () => ({ Boot: () => null }));
 vi.mock("./HotkeyBar", () => ({ HotkeyBar: () => null }));
 vi.mock("./DaemonConflictBanner", () => ({ DaemonConflictBanner: () => null, RepoBusyBanner: () => null, HostGuardWarning: () => null }));
 vi.mock("./WindowChrome", () => ({ ResizeHandles: () => null, WindowControls: () => null, useWindowFullscreen: () => false }));
-vi.mock("./useDaemonStatus", () => ({ useDaemonStatus: () => ({ repo_busy: false, conflict: null }) }));
+vi.mock("./useDaemonStatus", () => ({ useDaemonStatus: () => ({ repo_busy: false, conflict: null, refresh: () => {} }) }));
 vi.mock("./useMcpStatus", () => ({ useMcpStatus: () => ({}) }));
 vi.mock("./views/Kanban", () => ({ Kanban: () => null }));
 vi.mock("./views/Grid", () => ({ Grid: () => null }));
@@ -142,7 +142,7 @@ async function renderApp(config: AppConfig = appConfig) {
   const { default: App } = await import("./App");
   render(<App />);
   if (config.active_repo) await screen.findByRole("button", { name: "Repository" });
-  else await screen.findByText("token:attention");
+  else await screen.findByRole("heading", { name: "Select a repository" });
 }
 
 // A cleared drawer is unmounted, so its last recorded props are stale; the shortcut only
@@ -172,6 +172,7 @@ function requireFn(value: unknown, name: string): (...args: string[]) => void {
 
 beforeEach(() => {
   cleanup();
+  window.localStorage.setItem("alinery.onboardingCompleted.v1", "1");
   vi.stubGlobal(
     "ResizeObserver",
     class {

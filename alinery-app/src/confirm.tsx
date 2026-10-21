@@ -38,6 +38,8 @@ export type ConfirmRequest = {
    * (quit) should set this to leave-running / cancel, never "close all".
    */
   defaultKey?: string;
+  /** Withdraw this request when its owning operation is disposed. */
+  signal?: AbortSignal;
 };
 
 type Pending = { req: ConfirmRequest; resolve: (key: string) => void };
@@ -48,7 +50,7 @@ const listeners = new Set<Fn>();
 export function askConfirm(req: ConfirmRequest): Promise<string> {
   const cancelKey = req.cancelKey ?? "cancel";
   // No host mounted (tests, teardown) ⇒ cancel. Never hang, never assume "yes".
-  if (listeners.size === 0) return Promise.resolve(cancelKey);
+  if (listeners.size === 0 || req.signal?.aborted) return Promise.resolve(cancelKey);
   return new Promise<string>((resolve) => {
     let done = false;
     const once = (key: string) => {
@@ -63,10 +65,11 @@ export function askConfirm(req: ConfirmRequest): Promise<string> {
 }
 
 /** Two-button danger confirmation. `true` = the user accepted. */
-export function confirmDanger(title: string, body: ReactNode, acceptLabel = "Confirm"): Promise<boolean> {
+export function confirmDanger(title: string, body: ReactNode, acceptLabel = "Confirm", signal?: AbortSignal): Promise<boolean> {
   return askConfirm({
     title,
     body,
+    signal,
     // Visual order: danger first (product convention); focus stays on Cancel
     // so Enter does not accept destroy.
     choices: [
@@ -101,6 +104,19 @@ export function ConfirmHost() {
       listeners.delete(l);
     };
   }, []);
+
+  useEffect(() => {
+    const signal = pending?.req.signal;
+    if (!pending || !signal) return;
+    const withdraw = () => {
+      pending.resolve(pending.req.cancelKey ?? "cancel");
+      // An old operation must never dismiss a newer, unrelated confirmation.
+      setPending((current) => (current === pending ? null : current));
+    };
+    if (signal.aborted) withdraw();
+    else signal.addEventListener("abort", withdraw, { once: true });
+    return () => signal.removeEventListener("abort", withdraw);
+  }, [pending]);
 
   const answer = (key: string) => {
     setPending(null);

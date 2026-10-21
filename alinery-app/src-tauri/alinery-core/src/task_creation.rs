@@ -5,7 +5,11 @@ use crate::{
     RelatedTaskRef, SessionMeta, Task,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
 
 pub const MAX_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
 pub const MAX_ATTACHMENT_SET_BYTES: u64 = 100 * 1024 * 1024;
@@ -82,6 +86,8 @@ pub struct CreateTaskRequest {
     pub launch_defaults: LaunchChoices,
     #[serde(default)]
     pub auto_advance_steps: Option<Vec<String>>,
+    #[serde(default)]
+    pub step_models: BTreeMap<String, String>,
     #[serde(default)]
     pub max_live_sessions: Option<u32>,
     pub start: bool,
@@ -340,6 +346,7 @@ pub fn provision_task_with_reservation(
         request.max_live_sessions.unwrap_or(10),
         enabled,
         request.launch_defaults.clone(),
+        request.step_models.clone(),
     )?;
     state.owning_app_config_identity = app_config_identity.into();
     state.initial_start_requested = request.start;
@@ -436,6 +443,7 @@ pub fn provision_task_with_reservation(
             related_tasks: request.related_tasks.clone(),
             parent_task: request.parent_task.clone(),
             auto_advance: state.enabled_steps.iter().cloned().collect(),
+            step_models: state.step_models.clone(),
             engine_version: 2,
             playbook_ref: Some(state.reference.clone()),
             max_live_sessions: state.max_live_sessions,
@@ -1310,6 +1318,74 @@ mod tests {
             .any(|p| p.file_name().unwrap() == "explicit trees"));
         assert_eq!(git(&repo, &["for-each-ref", "--format=%(refname)", "refs/heads/old-feat"]), "refs/heads/old-feat\n");
         assert!(git(&repo, &["worktree", "list"]).contains("explicit trees"));
+        fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[test]
+    fn create_stores_trimmed_step_model_without_rewriting_retained_source() {
+        let mut value = serde_json::to_value(request("step-model")).unwrap();
+        value["step_models"] = serde_json::json!({ "implementation": "  task-override  " });
+        let request = serde_json::from_value::<CreateTaskRequest>(value).expect("step_models must be accepted");
+        let repo = repo();
+        let reply = provision_task(&repo, "", "fixture", &request).expect("known step model key");
+        assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+        let task = reply.task.unwrap();
+        let md = fs::read_to_string(crate::task_dir(&repo, &task.slug).join("task.md")).unwrap();
+        assert!(md.contains("task-override"), "{md}");
+        assert!(!md.contains("  task-override  "), "{md}");
+        let state = fs::read_to_string(execution_state_path(&repo, &task.slug).unwrap()).unwrap();
+        assert!(state.contains("\"task-override\""), "{state}");
+        let playbook = fs::read_to_string(task_playbook_path(&repo, &task.slug).unwrap()).unwrap();
+        assert!(!playbook.contains("task-override"), "{playbook}");
+        assert!(playbook.contains("model = \"\""), "retained source must stay the library text");
+        fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[test]
+    fn create_rejects_unknown_step_model_key() {
+        let mut value = serde_json::to_value(request("unknown-step-model")).unwrap();
+        value["step_models"] = serde_json::json!({ "nope": "" });
+        let request = serde_json::from_value::<CreateTaskRequest>(value).expect("step_models must be accepted");
+        let repo = repo();
+        let error = provision_task(&repo, "", "fixture", &request).expect_err("unknown step model must fail");
+        assert!(error.contains("unknown step model 'nope'"), "{error}");
+        assert!(crate::list_tasks_for_repo(&repo)
+            .iter()
+            .all(|task| task.slug != "unknown-step-model" || !matches!(read_execution_state(&repo, &task.slug), Ok(state) if state.creation == "ready")));
+        fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[test]
+    fn create_drops_empty_step_models() {
+        for (branch, value) in [("empty-step-model", ""), ("blank-step-model", "   ")] {
+            let mut json = serde_json::to_value(request(branch)).unwrap();
+            json["step_models"] = serde_json::json!({ "implementation": value });
+            let request = serde_json::from_value::<CreateTaskRequest>(json).expect("step_models must be accepted");
+            let repo = repo();
+            let reply = provision_task(&repo, "", "fixture", &request).expect("empty step model is dropped");
+            assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+            let task = reply.task.unwrap();
+            assert!(task.step_models.is_empty(), "{value:?} stored {:?}", task.step_models);
+            let state = read_execution_state(&repo, &task.slug).unwrap();
+            assert!(state.step_models.is_empty(), "{value:?} stored {:?}", state.step_models);
+            fs::remove_dir_all(repo).unwrap();
+        }
+    }
+
+    #[test]
+    fn create_omitted_step_models_keeps_playbook_pin() {
+        let mut request = request("omitted-step-model");
+        request.playbook.source = request.playbook.source.replace("model = \"\"", "model = \"library-pin\"");
+        let repo = repo();
+        let reply = provision_task(&repo, "", "fixture", &request).expect("omitted step_models");
+        assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+        let task = reply.task.unwrap();
+        assert!(task.step_models.is_empty());
+        let state = read_execution_state(&repo, &task.slug).unwrap();
+        assert!(state.step_models.is_empty());
+        let playbook = fs::read_to_string(task_playbook_path(&repo, &task.slug).unwrap()).unwrap();
+        assert!(playbook.contains("model = \"library-pin\""), "{playbook}");
+        assert_eq!(state.definition_identity, definition_identity(playbook.as_bytes()));
         fs::remove_dir_all(repo).unwrap();
     }
 }

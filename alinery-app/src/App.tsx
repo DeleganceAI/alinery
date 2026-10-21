@@ -1,6 +1,7 @@
 import {
   Archive,
   Bell,
+  BookOpen,
   ChevronRight,
   Copy,
   FolderPlus,
@@ -22,7 +23,6 @@ import { flushSync } from "react-dom";
 import { ThinkingOrb } from "thinking-orbs";
 import { afterPaint } from "./afterPaint";
 import { applyAppearance, DEFAULT_APPEARANCE } from "./appearance";
-import alineryIcon from "./assets/alinery-icon-white-plain.png";
 import { GlobalSearch, type SearchItem } from "./CommandPalette";
 import type { QueuedFollowUp } from "./chat/queue";
 import { chatVisibilityFromAppearance } from "./chat/visibility";
@@ -34,9 +34,10 @@ import { ORB_SPEED } from "./Indicators";
 import * as ipc from "./ipc";
 import { LaunchSourceBar } from "./LaunchSourceBar";
 import { BrandMark } from "./Logo";
+import { isOnboardingCompleted, markOnboardingCompleted, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset } from "./onboarding";
 import { PRIORITY_SESSION_SORT, type SessionSort } from "./sessionAttention";
 import { EMPTY_SESSION_MESSAGE_DRAFT, type SessionMessageDraft, sessionMessageDraftKey } from "./sessionMessage";
-import { ALL_REPOS, isDevelopmentProductName, LoadingState, RepoPicker, repoName, TopBar } from "./shared";
+import { ALL_REPOS, Dialog, isDevelopmentProductName, LoadingState, repoName, TopBar } from "./shared";
 import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, type DrawerTab, TerminalDrawer } from "./TerminalDrawer";
 import { gridViewIdOf, isPrimaryTab, primaryTabOf, viewFadeClass } from "./tabMotion";
 import * as taskMutationGuard from "./taskMutationGuard";
@@ -72,11 +73,14 @@ import { useUpdateStatus } from "./useUpdateStatus";
 import { ChatView } from "./views/ChatView";
 import { CreateSessionPage } from "./views/CreateSessionPage";
 import { CreateTaskPage } from "./views/CreateTaskPage";
+import { ChatSessionProvider } from "./views/chatThreadSession";
 import { Grid } from "./views/Grid";
 import { Kanban } from "./views/Kanban";
 import { NotificationsList } from "./views/NotificationsList";
+import { OnboardingFlow } from "./views/OnboardingFlow";
 import { Playbooks } from "./views/Playbooks";
 import { ProviderSetupDialog } from "./views/ProviderSetupDialog";
+import { focusQuickChatComposer, QuickChat } from "./views/QuickChat";
 import { SessionsList } from "./views/SessionsList";
 import type { SessionSendRecovery } from "./views/SessionView";
 import { SECTIONS as SETTINGS_SECTIONS, Settings } from "./views/Settings";
@@ -85,6 +89,29 @@ import { ResizeHandles, useWindowFullscreen, WindowControls } from "./WindowChro
 
 /** Per-install: asked once, then the Settings button is the way back. */
 const OMP_SETUP_DISMISSED_KEY = "alinery.ompSetupDismissed";
+/** Breathing room between the wizard closing and the usage-sharing question. */
+const TELEMETRY_PROMPT_DELAY_MS = 800;
+
+/** Resolves once the question is answered or deferred; the write happens in the background. */
+function promptTelemetryConsent(): Promise<void> {
+  return askConfirm({
+    title: "Share anonymous usage?",
+    body: "Alinery can send anonymized product-usage events (app open, tasks, sessions, settings). Never paths, task names, prompts, artifacts, or tokens. Change anytime in Settings → General.",
+    choices: TELEMETRY_CONSENT_CHOICES,
+    defaultKey: "opt-out",
+    cancelKey: "later",
+  }).then((answer) => {
+    if (answer === "later") return;
+    ipc
+      .readGlobalSettings()
+      .then((global) => {
+        const result = telemetryConsentWrite(global.telemetry, answer);
+        if (result === "later") return;
+        return ipc.writeGlobalSettings({ ...global, telemetry: result.next });
+      })
+      .catch(() => {});
+  });
+}
 
 // Resolve and apply the appearance before first paint; the stored config
 // re-applies as soon as it loads.
@@ -155,13 +182,26 @@ export default function App() {
   const [chatVisited, setChatVisited] = useState(false);
   const [scope, setScope] = useState<RepoScope>("active");
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
+  // Closed until config loads. First run (no repository) opens at Step 01; a configured
+  // install that has never completed the guide gets it once, resuming a saved step or
+  // starting at Playbooks. Finish, Skip and Esc mark completion; replay never clears it.
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState<OnboardingStepId | undefined>(undefined);
+  const [manualProviderSetup, setManualProviderSetup] = useState<{ tab: "models" | "accounts"; onPick?: (model: string) => void } | null>(null);
+  // The usage-sharing question never sits on top of the wizard; when it is still owed it is
+  // asked shortly after onboarding finishes, and the auto provider offer waits for its answer
+  // so the two dialogs never stack.
+  const telemetryUnpromptedRef = useRef(false);
+  const telemetryPromptTimerRef = useRef<number | undefined>(undefined);
+  const [consentPending, setConsentPending] = useState(false);
+  useEffect(() => () => window.clearTimeout(telemetryPromptTimerRef.current), []);
   // Repo open is the first moment we can ask whether this install can actually run an agent:
   // before then there is no daemon to ask, which is why the empty state deliberately does
   // nothing. Dismissal is persisted so someone deliberately running unauthenticated is asked
   // once; Settings -> Chat is the way back in.
   const [setupOffer, setSetupOffer] = useState(false);
   useEffect(() => {
-    if (!appConfig?.active_repo) return;
+    if (!appConfig?.active_repo || onboardingOpen || consentPending) return;
     let dismissed = false;
     try {
       dismissed = localStorage.getItem(OMP_SETUP_DISMISSED_KEY) === "1";
@@ -169,7 +209,7 @@ export default function App() {
       /* private mode or blocked storage: offer rather than stay silent */
     }
     if (!dismissed) setSetupOffer(true);
-  }, [appConfig?.active_repo]);
+  }, [appConfig?.active_repo, onboardingOpen, consentPending]);
   const [repoErr, setRepoErr] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchData, setSearchData] = useState<SearchData>(EMPTY_SEARCH_DATA);
@@ -202,6 +242,7 @@ export default function App() {
   };
   // Global left terminal drawer — ephemeral; not persisted.
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [quickChatOpen, setQuickChatOpen] = useState(false);
   const [drawerWidth, setDrawerWidth] = useState(DRAWER_DEFAULT_WIDTH);
   const [drawer, setDrawer] = useState<DrawerHandle | null>(null);
   const [drawerCreating, setDrawerCreating] = useState(false);
@@ -270,7 +311,7 @@ export default function App() {
     navRef.current = n;
   }, []);
 
-  const daemon = useDaemonStatus();
+  const daemon = useDaemonStatus(appConfig?.active_repo ?? "");
   const mcp = useMcpStatus();
   const noticeSnapshot = useSessionNoticeSnapshot(Boolean(appConfig?.active_repo));
   useDockBadgeCount(noticeSnapshot.rows, appConfig?.global?.notifications, noticeSnapshot.loaded);
@@ -427,24 +468,16 @@ export default function App() {
       .then((cfg) => {
         const normalized = applyAppearance(cfg.appearance);
         setAppConfig({ ...cfg, appearance: normalized });
+        const firstRun = !cfg.active_repo;
+        const wizardOpens = firstRun || !isOnboardingCompleted();
+        if (wizardOpens) {
+          setOnboardingStep(firstRun ? undefined : readSavedOnboardingStep(true));
+          setOnboardingOpen(true);
+        }
         if (shouldAskTelemetryConsent(cfg.global?.telemetry)) {
-          void askConfirm({
-            title: "Share anonymous usage?",
-            body: "Alinery can send anonymized product-usage events (app open, tasks, sessions, settings). Never paths, task names, prompts, artifacts, or tokens. Change anytime in Settings → General.",
-            choices: TELEMETRY_CONSENT_CHOICES,
-            defaultKey: "opt-out",
-            cancelKey: "later",
-          }).then((answer) => {
-            if (answer === "later") return;
-            ipc
-              .readGlobalSettings()
-              .then((global) => {
-                const result = telemetryConsentWrite(global.telemetry, answer);
-                if (result === "later") return;
-                return ipc.writeGlobalSettings({ ...global, telemetry: result.next });
-              })
-              .catch(() => {});
-          });
+          // Never on top of the wizard: the prompt is deferred until onboarding finishes.
+          if (wizardOpens) telemetryUnpromptedRef.current = true;
+          else promptTelemetryConsent();
         }
       })
       .catch((e) => {
@@ -565,17 +598,19 @@ export default function App() {
     return current;
   };
 
-  const setRepo = async (path: string) => {
+  const setRepo = async (path: string): Promise<boolean> => {
     const p = path.trim();
-    if (!p) return;
+    if (!p) return false;
     setRepoErr("");
     try {
       const cfg = await switchActiveRepo(p);
       setAppConfig(cfg);
       setScope("active");
       setView(viewAfterScopeChange);
+      return true;
     } catch (e) {
       setRepoErr(String(e));
+      return false;
     }
   };
 
@@ -757,19 +792,18 @@ export default function App() {
     });
   };
 
-  const addRepo = async () => {
+  const addRepo = async (): Promise<boolean> => {
     setRepoErr("");
     try {
       const path = await ipc.pickRepoDialog();
-      if (!path) return;
+      if (!path) return false;
       const classified = await ipc.classifyPickedFolder(path);
       if (classified.kind === "checkout") {
-        await setRepo(classified.root);
-        return;
+        return await setRepo(classified.root);
       }
       if (classified.kind === "refused") {
         setRepoErr(classified.message);
-        return;
+        return false;
       }
       const choice = await askConfirm({
         title: "Initialize Git?",
@@ -779,11 +813,12 @@ export default function App() {
           { key: "cancel", label: "Cancel", tone: "ghost" },
         ],
       });
-      if (choice !== "init") return;
+      if (choice !== "init") return false;
       const initialized = await ipc.initPickedFolder(classified.path);
-      await setRepo(initialized.root);
+      return await setRepo(initialized.root);
     } catch (e) {
       setRepoErr(String(e));
+      return false;
     }
   };
 
@@ -796,7 +831,7 @@ export default function App() {
     const wasActive = path === appConfig?.active_repo;
     const live = await liveSessions(path);
     const ok = await confirmDanger(
-      `Close ${repoName(path)}?`,
+      `Remove ${repoName(path)}?`,
       <>
         <p>Its session daemon is stopped and the repo is removed from the list. Files on disk are untouched.</p>
         {live > 0 && (
@@ -805,7 +840,7 @@ export default function App() {
           </p>
         )}
       </>,
-      "Close repo",
+      "Remove repository",
     );
     if (!ok) return;
     try {
@@ -1014,14 +1049,68 @@ export default function App() {
     setView(dest);
   };
 
-  const openCreate = (initialPlaybook?: PlaybookRef) => {
+  const completeOnboarding = () => {
+    markOnboardingCompleted();
+    setOnboardingStep(undefined);
+    setOnboardingOpen(false);
+    if (telemetryUnpromptedRef.current) {
+      telemetryUnpromptedRef.current = false;
+      setConsentPending(true);
+      // Let the workspace paint first so the question lands on the board, not mid-transition.
+      window.clearTimeout(telemetryPromptTimerRef.current);
+      telemetryPromptTimerRef.current = window.setTimeout(() => {
+        void promptTelemetryConsent().finally(() => setConsentPending(false));
+      }, TELEMETRY_PROMPT_DELAY_MS);
+    }
+  };
+
+  const openCreate = (initialPlaybook?: PlaybookRef, initialPreset?: StarterTaskPreset) => {
     setSearchOpen(false);
     if (taskMutationGuard.refuseIfBusy()) return;
     // Every task-creation entrypoint lands here. Paint the opening toast, then the
     // form. The form clears the toast on its first frame; catalog loading follows.
     const from = view;
     flushSync(() => setBusy("open-create"));
-    void afterPaint().then(() => setView({ kind: "create", from, initialPlaybook }));
+    void afterPaint().then(() => setView({ kind: "create", from, initialPlaybook, initialPreset }));
+  };
+
+  const handleLaunchStarterTask = async (playbookRef: PlaybookRef, preset: StarterTaskPreset) => {
+    if (!appConfig?.active_repo) return;
+    if (!taskMutationGuard.claim("create")) return;
+    const repoPath = appConfig.active_repo;
+    flushSync(() => setBusy("create"));
+    await afterPaint();
+    try {
+      const [scoped, repoCfg] = await Promise.all([ipc.readPlaybook(playbookRef, repoPath), ipc.readConfigForRepo(repoPath)]);
+      const auto_advance_steps = scoped.definition.step.filter((s) => s.auto_advance_default).map((s) => s.key);
+      const harness = scoped.definition.default_harness || repoCfg.defaults?.harness || "omp";
+      const model = scoped.definition.default_model || repoCfg.defaults?.model || "";
+      const result = await ipc.createTaskForRepo({
+        repoPath,
+        request: {
+          name: preset.name,
+          description: preset.description,
+          evidence: preset.evidence,
+          playbook: { reference: scoped.source.reference, source: scoped.source_text },
+          launch_defaults: { harness, model },
+          auto_advance_steps,
+          start: true,
+        },
+      });
+      if (result.creation !== "ready" || result.start === "failed" || result.errors.length) {
+        toast.error(`Task creation needs attention: ${result.errors.map((error) => error.message).join("; ") || "Open the task to inspect its status."}`);
+      }
+      completeOnboarding();
+      refreshBoards();
+      if (result.task) {
+        const fromView: View = { kind: "grid", gridViewId: gridViews[0]?.id ?? DEFAULT_GRID_VIEW_ID };
+        const taskView: View = { kind: "task", slug: result.task.slug, repoPath, from: fromView, initialTask: result.task };
+        setView(taskView);
+      }
+    } finally {
+      taskMutationGuard.release();
+      setBusy(null);
+    }
   };
 
   const duplicateTask = async ({ repoPath, sourceSlug }: { repoPath: string; sourceSlug: string }) => {
@@ -1066,7 +1155,8 @@ export default function App() {
     }
   };
 
-  const overlayOpen = searchOpen || diagramZoomOpen;
+  const onboardingVisible = Boolean(appConfig?.active_repo) && onboardingOpen && view.kind !== "playbooks";
+  const overlayOpen = searchOpen || diagramZoomOpen || onboardingVisible;
   // Avoid stuck overlayOpen after leaving task/session with zoom still flagged open.
   useEffect(() => {
     if (view.kind !== "task" && view.kind !== "session") setDiagramZoomOpen(false);
@@ -1091,7 +1181,7 @@ export default function App() {
     isFullscreen,
     board,
     toggleSearch: () => {
-      if (!hasRepo) return;
+      if (!hasRepo || onboardingVisible) return;
       setSearchOpen((open) => !open);
     },
     openCreate: () => {
@@ -1139,6 +1229,10 @@ export default function App() {
     killTerminalDrawer: () => {
       void killDrawer();
     },
+    toggleQuickChat: () => {
+      if (showChat && !onboardingVisible) setQuickChatOpen((open) => !open);
+    },
+    focusQuickChat: () => !onboardingVisible && showChat && quickChatOpen && focusQuickChatComposer(),
   });
 
   // Actions call the same callbacks as their direct shortcuts.
@@ -1181,10 +1275,16 @@ export default function App() {
             toast("Syncing…");
           }),
           action("terminal", pi(Terminal), "Toggle terminal drawer", "⌘`", () => void toggleTerminalDrawer()),
+          ...(showChat ? [action("quick-chat", pi(MessageSquare), "Toggle pinned chats", "⌘/", () => setQuickChatOpen((open) => !open))] : []),
+          ...(showChat && quickChatOpen ? [action("quick-chat-focus", pi(MessageSquare), "Focus pinned chat", "⌘>", () => focusQuickChatComposer())] : []),
           action("kill-terminal", pi(X), "Kill terminal drawer", "⌘⇧`", () => void killDrawer()),
         ]
       : []),
     action("playbooks", pi(List), "Go to Playbooks", "", () => switchTop("playbooks", { instant: true })),
+    action("onboarding-guide", pi(BookOpen), "Replay playbook onboarding guide", "", () => {
+      setOnboardingStep("playbooks");
+      setOnboardingOpen(true);
+    }),
     action("appearance", pi(SunMoon), "Appearance: cycle system / light / dark", "⌘G", cycleAppearance),
     action("add-repo", pi(FolderPlus), "Add repo", "", addRepo),
   ];
@@ -1234,97 +1334,109 @@ export default function App() {
   ];
 
   const chrome = (content: ReactNode, header?: ReactNode) => (
-    <>
-      {setupOffer && (
-        <ProviderSetupDialog
-          mode="auto"
-          onClose={(reason) => {
-            setSetupOffer(false);
-            // Only a real dismissal is remembered. Self-closing because the install is already
-            // set up must not suppress the offer if those credentials later go away.
-            if (reason === "dismissed") {
-              try {
-                localStorage.setItem(OMP_SETUP_DISMISSED_KEY, "1");
-              } catch {
-                /* nothing to do: the offer simply comes back next launch */
+    <ChatSessionProvider>
+      <>
+        {manualProviderSetup && (
+          <ProviderSetupDialog
+            mode="manual"
+            initialTab={manualProviderSetup.tab}
+            unsignedOpensAccounts={manualProviderSetup.tab === "models"}
+            onPick={manualProviderSetup.onPick}
+            onClose={() => setManualProviderSetup(null)}
+          />
+        )}
+        {!manualProviderSetup && setupOffer && !onboardingOpen && (
+          <ProviderSetupDialog
+            mode="auto"
+            onClose={(reason) => {
+              setSetupOffer(false);
+              // Only a real dismissal is remembered. Self-closing because the install is already
+              // set up must not suppress the offer if those credentials later go away.
+              if (reason === "dismissed") {
+                try {
+                  localStorage.setItem(OMP_SETUP_DISMISSED_KEY, "1");
+                } catch {
+                  /* nothing to do: the offer simply comes back next launch */
+                }
               }
-            }
-          }}
-        />
-      )}
-      <ResizeHandles />
-      <div className="app-shell">
-        <div className={drawerOpen ? "app app-with-drawer" : "app"} style={drawerOpen ? ({ ["--drawer-width" as string]: `${drawerWidth}px` } as CSSProperties) : undefined}>
-          {(drawerOpen || (drawer?.tabs.length ?? 0) > 0) && (
-            <TerminalDrawer
-              open={drawerOpen}
-              width={drawerWidth}
-              onWidthChange={(w) => setDrawerWidth(clampDrawerWidth(w))}
-              tabs={drawer?.tabs ?? []}
-              activeId={drawer?.activeId ?? null}
-              terminalFontSize={appearance.terminal_font_size}
-              onSelect={selectDrawerTab}
-              creating={drawerCreating}
-              onClose={(id) => void closeDrawerTab(id)}
-              onNew={() => void addDrawerTab()}
-              onKillAll={() => void killDrawer()}
-              onTabExited={removeDrawerTab}
-              view={view}
-              scope={scope}
-              activeRepo={appConfig?.active_repo}
-            />
-          )}
-          <div className={drawerOpen ? "app-main-column" : undefined} style={drawerOpen ? undefined : { display: "contents" }}>
-            {daemon.repo_busy && appConfig?.active_repo && <RepoBusyBanner repo={appConfig.active_repo} onPickRepo={() => void addRepo()} />}
-            <DaemonConflictBanner conflict={daemon.conflict} />
-            <HostGuardWarning visible={daemon.host_guard_warning} />
-            {repoErr && appConfig?.active_repo && (
-              <div className="daemon-conflict" role="alert">
-                <strong>{repoErr}</strong>
-                <button type="button" className="daemon-conflict-dismiss" aria-label="Dismiss error" title="Dismiss" onClick={() => setRepoErr("")}>
-                  <X size={16} strokeWidth={1.5} aria-hidden="true" />
-                </button>
-              </div>
+            }}
+          />
+        )}
+        <ResizeHandles />
+        <div className="app-shell">
+          <div className={drawerOpen ? "app app-with-drawer" : "app"} style={drawerOpen ? ({ ["--drawer-width" as string]: `${drawerWidth}px` } as CSSProperties) : undefined}>
+            {(drawerOpen || (drawer?.tabs.length ?? 0) > 0) && (
+              <TerminalDrawer
+                open={drawerOpen}
+                width={drawerWidth}
+                onWidthChange={(w) => setDrawerWidth(clampDrawerWidth(w))}
+                tabs={drawer?.tabs ?? []}
+                activeId={drawer?.activeId ?? null}
+                terminalFontSize={appearance.terminal_font_size}
+                onSelect={selectDrawerTab}
+                creating={drawerCreating}
+                onClose={(id) => void closeDrawerTab(id)}
+                onNew={() => void addDrawerTab()}
+                onKillAll={() => void killDrawer()}
+                onTabExited={removeDrawerTab}
+                view={view}
+                scope={scope}
+                activeRepo={appConfig?.active_repo}
+              />
             )}
-            {header}
-            {/* Backend ownership gate is the source of truth; blank main so the busy
-              banner is the only actionable surface (defense-in-depth). */}
-            <main>
-              {daemon.repo_busy ? null : content}
-              {playbooksVisited && (
-                <div className="view playbooks-view" hidden={view.kind !== "playbooks" || daemon.repo_busy}>
-                  <Playbooks repoPath={appConfig?.active_repo || undefined} onCreateTask={(reference) => openCreate(reference)} />
+            <div className={drawerOpen ? "app-main-column" : undefined} style={drawerOpen ? undefined : { display: "contents" }}>
+              <HostGuardWarning visible={daemon.host_guard_warning} />
+              {repoErr && appConfig?.active_repo && (
+                <div className="daemon-conflict" role="alert">
+                  <strong>{repoErr}</strong>
+                  <button type="button" className="daemon-conflict-dismiss" aria-label="Dismiss error" title="Dismiss" onClick={() => setRepoErr("")}>
+                    <X size={16} strokeWidth={1.5} aria-hidden="true" />
+                  </button>
                 </div>
               )}
-              {/* Kept mounted once visited, like Playbooks: the open thread, per-thread drafts and the
+              {header}
+              {daemon.repo_busy && appConfig?.active_repo && <RepoBusyBanner repo={appConfig.active_repo} onPickRepo={() => void addRepo()} />}
+              <DaemonConflictBanner conflict={daemon.conflict} onRefresh={daemon.refresh} />
+              {/* Backend ownership gate is the source of truth; blank main so the busy
+              strip is the only actionable surface (defense-in-depth). */}
+              <main>
+                {daemon.repo_busy ? null : content}
+                {playbooksVisited && (
+                  <div className="view playbooks-view" hidden={view.kind !== "playbooks" || daemon.repo_busy}>
+                    <Playbooks repoPath={appConfig?.active_repo || undefined} onCreateTask={(reference) => openCreate(reference)} />
+                  </div>
+                )}
+                {/* Kept mounted once visited, like Playbooks: the open thread, per-thread drafts and the
                 reading position survive a trip to Tasks or Settings. Hidden, it stops polling. */}
-              {showChat && (chatVisited || view.kind === "chat") && (
-                <div className="view" hidden={view.kind !== "chat" || daemon.repo_busy}>
-                  <ChatView active={view.kind === "chat" && !daemon.repo_busy} terminalFontSize={appearance.terminal_font_size} visibility={chatViewVisibility} />
-                </div>
-              )}
-            </main>
-            <HotkeyBar
-              view={view.kind}
-              daemon={daemon}
-              mcp={mcp}
-              showHints={Boolean(appConfig?.active_repo)}
-              version={appVersion}
-              gridViewName={view.kind === "grid" ? gridViews.find((gridView) => gridView.id === view.gridViewId)?.name : undefined}
-              gridViewShortcut={
-                view.kind === "grid" && gridViews.some((gridView) => gridView.id === view.gridViewId)
-                  ? gridViewShortcut(gridViews.findIndex((gridView) => gridView.id === view.gridViewId))
-                  : undefined
-              }
-            />
+                {showChat && (chatVisited || view.kind === "chat") && (
+                  <div className="view" hidden={view.kind !== "chat" || daemon.repo_busy}>
+                    <ChatView active={view.kind === "chat" && !daemon.repo_busy} terminalFontSize={appearance.terminal_font_size} visibility={chatViewVisibility} />
+                  </div>
+                )}
+              </main>
+              <HotkeyBar
+                view={view.kind}
+                daemon={daemon}
+                mcp={mcp}
+                showHints={Boolean(appConfig?.active_repo)}
+                version={appVersion}
+                gridViewName={view.kind === "grid" ? gridViews.find((gridView) => gridView.id === view.gridViewId)?.name : undefined}
+                gridViewShortcut={
+                  view.kind === "grid" && gridViews.some((gridView) => gridView.id === view.gridViewId)
+                    ? gridViewShortcut(gridViews.findIndex((gridView) => gridView.id === view.gridViewId))
+                    : undefined
+                }
+              />
+            </div>
           </div>
+          {isDev && <LaunchSourceBar sourceRoot={DEV_LAUNCH_ROOT} />}
+          {showChat ? <QuickChat open={quickChatOpen} visibility={chatViewVisibility} onOpenInChat={() => switchTop("chat")} onHide={() => setQuickChatOpen(false)} /> : null}
         </div>
-        {isDev && <LaunchSourceBar sourceRoot={DEV_LAUNCH_ROOT} />}
-      </div>
-      <GlobalSearch open={searchOpen && hasRepo} items={searchItems} loading={searchLoading} error={searchError} onClose={() => setSearchOpen(false)} />
-      <Toast busy={busy} />
-      <ConfirmHost />
-    </>
+        <GlobalSearch open={searchOpen && hasRepo} items={searchItems} loading={searchLoading} error={searchError} onClose={() => setSearchOpen(false)} />
+        <Toast busy={busy} />
+        <ConfirmHost />
+      </>
+    </ChatSessionProvider>
   );
 
   const minimalHeader = (
@@ -1355,12 +1467,22 @@ export default function App() {
     );
   if (!appConfig.active_repo)
     return chrome(
-      <div className="view scroll first-run-view" hidden={view.kind === "playbooks"}>
-        <img className="first-run-logo" src={alineryIcon} alt="Alinery" />
-        <p className="first-run-tagline">
-          Increase your <span>token:attention</span> ratio.
-        </p>
-        <RepoPicker appConfig={appConfig} error={repoErr} onSelect={setRepo} onRemove={removeRepo} onAdd={addRepo} />
+      <div hidden={view.kind === "playbooks"} style={{ display: view.kind === "playbooks" ? "none" : "contents" }}>
+        <OnboardingFlow
+          appConfig={appConfig}
+          repoError={repoErr}
+          initialStep="workspace"
+          onSelectRepo={setRepo}
+          onAddRepo={addRepo}
+          onRemoveRepo={removeRepo}
+          onOpenProviderSetup={(tab, onPick) => setManualProviderSetup({ tab, onPick })}
+          onCompleteToWorkspace={completeOnboarding}
+          onOpenCreateWithPlaybook={(playbook, preset) => {
+            completeOnboarding();
+            openCreate(playbook, preset);
+          }}
+          onLaunchStarterTask={handleLaunchStarterTask}
+        />
       </div>,
       minimalHeader,
     );
@@ -1394,8 +1516,29 @@ export default function App() {
     />
   );
 
+  const onboardingModal = onboardingVisible && (
+    <Dialog className="onboarding-overlay" ariaLabel="Alinery onboarding" onClose={completeOnboarding}>
+      <OnboardingFlow
+        appConfig={appConfig}
+        repoError={repoErr}
+        initialStep={onboardingStep}
+        onSelectRepo={setRepo}
+        onAddRepo={addRepo}
+        onRemoveRepo={removeRepo}
+        onOpenProviderSetup={(tab, onPick) => setManualProviderSetup({ tab, onPick })}
+        onCompleteToWorkspace={completeOnboarding}
+        onOpenCreateWithPlaybook={(playbook, preset) => {
+          completeOnboarding();
+          openCreate(playbook, preset);
+        }}
+        onLaunchStarterTask={handleLaunchStarterTask}
+      />
+    </Dialog>
+  );
+
   const content = (
     <>
+      {onboardingModal}
       {view.kind !== "grid" && (
         <div key={isPrimaryTab(view.kind) ? view.kind : "nested"} className={isPrimaryTab(view.kind) ? viewFadeClass(navInstant) : undefined}>
           {view.kind === "list" && (
@@ -1416,6 +1559,7 @@ export default function App() {
               <CreateTaskPage
                 initialDraft={view.kind === "create" ? view.draft : undefined}
                 initialPlaybook={view.initialPlaybook}
+                initialPreset={view.initialPreset}
                 activeRepo={appConfig.active_repo}
                 knownRepos={appConfig.known_repos}
                 onBusy={setBusy}
@@ -1673,6 +1817,13 @@ export default function App() {
               registerNav={registerNav}
               storageKey={sharedGridStorageKey(gridView.id, legacyGridScopeKey)}
               initialPreset={gridView.id === DEFAULT_GRID_VIEW_ID ? "progress" : "steps"}
+              onCreate={(playbook, preset) => openCreate(playbook, preset)}
+              onOpenPlaybooks={() => switchTop("playbooks")}
+              onReplayOnboarding={() => {
+                setOnboardingStep("playbooks");
+                setOnboardingOpen(true);
+              }}
+              liveStatusExplainedFor={daemon.conflict?.repo}
             />
           </div>
         );

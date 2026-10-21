@@ -103,9 +103,11 @@ fn write_draft_in_emits_task_draft_create_only_on_first_write() {
             "claude".into(),
             String::new(),
             None,
+            None,
             10,
             "".into(),
             "".into(),
+            None,
             None,
         );
         assert!(draft.is_ok(), "{draft:?}");
@@ -129,9 +131,11 @@ fn write_draft_in_emits_task_draft_create_only_on_first_write() {
             "claude".into(),
             String::new(),
             None,
+            None,
             10,
             "".into(),
             "".into(),
+            None,
             None,
         )
         .unwrap();

@@ -126,6 +126,9 @@ export type Task = {
   max_live_sessions?: number;
   launch_defaults?: LaunchChoices;
   auto_advance: string[];
+  /** When true, every playbook step may complete automatically. Absent or false keeps `auto_advance`. */
+  auto_approve_all?: boolean;
+  step_models?: Record<string, string>;
   /** M6: true while still being drafted on CreateTaskPage. */
   draft: boolean;
   draft_base_ref?: string | null;
@@ -613,7 +616,7 @@ export type NormalizedStep = {
   is_coding_step: boolean;
   auto_advance_default: boolean;
   inputs: InputSelector[];
-  outputs: { path: string }[];
+  outputs: { path: string; required?: boolean }[];
   model: string;
   harness: string;
   prompt: string;
@@ -780,6 +783,7 @@ export type TaskExecutionState = {
   reference: PlaybookRef;
   max_live_sessions: number;
   enabled_steps: string[];
+  auto_approve_all?: boolean;
   launch_defaults: LaunchChoices;
   executions: Record<string, ExecutionRecord>;
   occurrences: Record<string, ArtifactOccurrence>;
@@ -829,6 +833,7 @@ export type CreateTaskRequest = {
   base_ref?: string | null;
   launch_defaults?: LaunchChoices;
   auto_advance_steps?: string[] | null;
+  step_models?: Record<string, string>;
   max_live_sessions?: number | null;
   start: boolean;
 };
@@ -937,7 +942,7 @@ export type View =
   | { kind: "notifications" }
   | { kind: "playbooks" }
   | { kind: "settings"; section?: SettingsSectionKey }
-  | { kind: "create"; from: View; draft?: BoardTask; initialPlaybook?: PlaybookRef }
+  | { kind: "create"; from: View; draft?: BoardTask; initialPlaybook?: PlaybookRef; initialPreset?: { name: string; description: string; evidence?: string } }
   | { kind: "createSession"; from: View; initialTask?: { repo_path: string; slug: string } }
   | { kind: "task"; slug: string; from: View; repoPath?: string; initialTask?: Task }
   | {
@@ -1021,19 +1026,34 @@ export type ArtifactReviewPendingStatus = {
   review: string;
 };
 
-// Mirrors Rust `DaemonConflict`: daemon reuse or exclusive project ownership is blocked.
-// Nothing was killed to discover this.
+export type TakeoverImpact = { status: "known"; sessions: { id: string; name: string | null }[] } | { status: "unknown"; detail: string };
+
+export type DaemonOwnerConflict = {
+  lane: string;
+  pid: number | null;
+  protocol: number | null;
+  build_id: string | null;
+  app_config_identity: string | null;
+  impact: TakeoverImpact;
+  takeover_unavailable: string | null;
+};
+
+// Observations only: neither conflict discovery nor preview authorizes shutdown.
 export type DaemonConflict = {
   repo: string;
-  reason: "protocol" | "app_config" | "ownership";
-  detail?: string;
-  /** null when the running daemon predates protocol versioning. */
-  daemon_protocol: number | null;
   app_protocol: number;
-  daemon_app_config_identity: string | null;
-  app_config_identity: string | null;
-  live_sessions: number;
+  app_config_identity: string;
+  owners: DaemonOwnerConflict[];
+  issues: string[];
 };
+
+export type TakeoverPreview = {
+  confirmation_id: string;
+  repo: string;
+  owner: DaemonOwnerConflict;
+};
+
+export type TakeoverOutcome = { status: "attached" } | { status: "blocked"; conflict: DaemonConflict } | { status: "reconfirm"; preview: TakeoverPreview };
 
 export type DaemonStatus = {
   reachable: boolean;

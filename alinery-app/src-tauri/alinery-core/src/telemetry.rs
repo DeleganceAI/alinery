@@ -18,7 +18,7 @@ pub const TELEMETRY_STREAM: &str = "alinery_usage";
 // reaching OpenObserve — OSS has no ingest-only *role*, so the network layer is the
 // enforcement boundary). Never the OpenObserve root user; that stays on the
 // firewalled admin/query port (see scripts/telemetry/APP.md).
-const INGEST_USER: &str = "alinery-ingest@example.com";
+const INGEST_USER: &str = "saga-ingest@example.com";
 const INGEST_PASSWORD: &str = "XYXXx1fbYiiCgDlp";
 const SEND_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -873,6 +873,6 @@ endpoint = "{endpoint}"
 
     #[test]
     fn basic_auth_matches_production_ingest_pair() {
-        assert_eq!(basic_auth_value(), "YWxpbmVyeS1pbmdlc3RAZXhhbXBsZS5jb206WFlYWHgxZmJZaWlDZ0RscA==");
+        assert_eq!(basic_auth_value(), "c2FnYS1pbmdlc3RAZXhhbXBsZS5jb206WFlYWHgxZmJZaWlDZ0RscA==");
     }
 }

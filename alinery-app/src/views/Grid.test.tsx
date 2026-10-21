@@ -860,6 +860,18 @@ describe("configurable task grid", () => {
     expect(laneStepNames(screen.getByLabelText("Release app retained steps"))).toEqual(["Queued", "Implementation", "PR"]);
   });
 
+  it("leaves a conflicted repository's saved-progress notice to the shell strip", async () => {
+    ipcMock.getTaskExecution.mockImplementation(async (slug, repoPath) => {
+      const retained = taskExecutions[`${repoPath}:${slug}`];
+      return slug === "review-queue" ? retained : { ...retained, live: { status: "foreign_owner", detail: "Owned elsewhere" } };
+    });
+    render(<Grid repoPaths={["/repo-a", "/repo-b"]} allRepos onOpen={() => {}} registerNav={() => {}} initialPreset="progress" liveStatusExplainedFor="/repo-a" />);
+    await screen.findByLabelText("Build API retained steps");
+    await act(async () => {});
+    expect(screen.queryByText(/Showing saved progress/)).toBeNull();
+    expect(laneStepNames(screen.getByLabelText("Build API retained steps"))).toEqual(["Research", "Design", "Implementation"]);
+  });
+
   it("keeps availability notices dismissed across polling but resurfaces changed conditions without hiding storage errors", async () => {
     vi.useFakeTimers();
     let status: "offline" | "foreign_owner" | "available" = "offline";

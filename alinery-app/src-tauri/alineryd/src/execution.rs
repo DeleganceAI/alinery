@@ -1354,7 +1354,14 @@ fn create_session_authorized(
                 }
                 let launch = if let Some(override_choices) = &request.launch_override {
                     let step = definition.step.iter().find(|step| &step.key == step_key).ok_or("unknown execution step")?;
-                    Some(resolve_execution_launch(definition, step, &state.launch_defaults, &defaults, Some(override_choices))?)
+                    Some(resolve_execution_launch(
+                        definition,
+                        step,
+                        &state.launch_defaults,
+                        &defaults,
+                        Some(override_choices),
+                        &state.step_models,
+                    )?)
                 } else {
                     None
                 };
@@ -1635,6 +1642,7 @@ mod bookkeeping_tests {
                 1,
                 if review { BTreeSet::new() } else { BTreeSet::from(["work".into()]) },
                 LaunchChoices::default(),
+                Default::default(),
             )
             .unwrap();
             state.creation = "ready".into();

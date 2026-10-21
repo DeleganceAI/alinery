@@ -292,6 +292,9 @@ describe("re-render comparators", () => {
     expect(sameBoardTasks([task()], [task()])).toBe(true);
     expect(sameBoardTasks([task()], [task({ current_phase: "review" })])).toBe(false);
     expect(sameBoardTasks([task()], [task({ auto_advance: ["x"] })])).toBe(false);
+    expect(sameBoardTasks([task()], [task({ auto_approve_all: true })])).toBe(false);
+    expect(sameTask(task(), task({ auto_approve_all: true }))).toBe(false);
+    expect(sameTask(task(), task({ auto_approve_all: false }))).toBe(true);
   });
 
   it("sameTask notices a saved starting branch change", () => {
@@ -303,6 +306,12 @@ describe("re-render comparators", () => {
     expect(sameTask(saved, cleared)).toBe(false);
   });
 
+  it("sameTask notices a step model override", () => {
+    const saved = task({ draft: true });
+    const overridden = { ...saved, step_models: { build: "override" } } as typeof saved;
+    expect(sameTask(saved, overridden)).toBe(false);
+  });
+
   it("sameBoardTasks notices a saved starting branch change", () => {
     const saved = { ...task({ draft: true }), draft_base_ref: "refs/heads/release" };
     const changed = { ...saved, draft_base_ref: "refs/heads/main" };
@@ -310,6 +319,12 @@ describe("re-render comparators", () => {
     expect(sameBoardTasks([saved], [{ ...saved }])).toBe(true);
     expect(sameBoardTasks([saved], [changed])).toBe(false);
     expect(sameBoardTasks([saved], [cleared])).toBe(false);
+  });
+
+  it("sameBoardTasks notices a step model override", () => {
+    const saved = task({ draft: true });
+    const overridden = { ...saved, step_models: { build: "override" } } as typeof saved;
+    expect(sameBoardTasks([saved], [overridden])).toBe(false);
   });
 
   it("sameBoardTasks notices changed retained step metadata and declaration order", () => {

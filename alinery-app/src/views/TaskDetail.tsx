@@ -1,4 +1,4 @@
-import { ArrowLeft, List, Network, Pencil } from "lucide-react";
+import { ArrowLeft, List, Network, Pencil, Square } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -14,6 +14,7 @@ import { CopyArtifactButton, CopyTextButton, copyTextToClipboard } from "../chat
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
+import { abortCommand } from "../ompRpc";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PullRequestIndicator } from "../PullRequestIndicator";
 import {
@@ -30,6 +31,7 @@ import {
   sessionStartedAt,
   sessionUpdatedAt,
 } from "../sessionAttention";
+import { canAbortChatSession } from "../sessionMessage";
 import {
   ArchiveTaskModal,
   ArtifactProvenanceBadges,
@@ -225,6 +227,7 @@ export function TaskDetail({
   const loadWarning = combineLoadWarnings(sessionsError, artifactsError);
   const [busy, setBusy] = useState("");
   const sessionArchivePending = useRef(false);
+  const sessionStopPending = useRef(false);
   const [editingName, setEditingName] = useState<string | null>(null);
   const nameTrigger = useRef<HTMLButtonElement | null>(null);
   const editorVersion = useRef(0);
@@ -915,6 +918,32 @@ export function TaskDetail({
     );
   };
 
+  const autoApproveAll = task?.auto_approve_all === true;
+  const setAutoApproveAll = (enabled: boolean) => {
+    if (!task || task.archived || task.draft || (task.engine_version ?? 2) < 2 || busy === "auto-approve") return;
+    setBusy("auto-approve");
+    setErr(null);
+    const epoch = taskMutationEpoch.current;
+    ipc
+      .setAutoApproveAllForRepo(repoPath, slug, enabled)
+      .then((updated) => {
+        if (!scope.alive || scopeRef.current !== scope) return;
+        if (epoch === taskMutationEpoch.current) {
+          taskMutationEpoch.current += 1;
+          setTask(updated);
+          setExecutionView((current) => (current ? { ...current, state: { ...current.state, auto_approve_all: updated.auto_approve_all === true } } : current));
+        } else {
+          void load();
+        }
+      })
+      .catch((e) => {
+        if (scope.alive && scopeRef.current === scope && epoch === taskMutationEpoch.current) setErr({ msg: "Couldn't update Auto Approval All.", detail: String(e) });
+      })
+      .finally(() => {
+        if (scope.alive && scopeRef.current === scope) setBusy("");
+      });
+  };
+
   const relatedTags = task?.related_tasks ?? [];
   const relatedCandidates = boardTasks.filter((candidate) => {
     if (candidate.archived || candidate.draft) return false;
@@ -1109,6 +1138,20 @@ export function TaskDetail({
           <div className="crow task-actions-row">
             <button type="button" className="btn ghost small" disabled={!task || duplicating} title="Duplicate task (⌘D)" onClick={() => task && onDuplicate(task)}>
               {duplicating ? "Duplicating…" : "Duplicate Task · ⌘D"}
+            </button>
+            <button
+              type="button"
+              className={`btn ghost small auto-approve${autoApproveAll ? " on" : ""}`}
+              aria-pressed={autoApproveAll}
+              disabled={!task || task.archived || task.draft || (task.engine_version ?? 2) < 2 || busy === "auto-approve"}
+              title={
+                autoApproveAll
+                  ? "Auto Approval All is on. Every playbook step may complete without an approval card. Turn off to restore the steps chosen at creation."
+                  : "Auto Approval All is off. This task keeps the automatic-completion steps chosen at creation."
+              }
+              onClick={() => setAutoApproveAll(!autoApproveAll)}
+            >
+              Auto Approval All
             </button>
             {task?.archived ? (
               task.parent_task ? (
@@ -1460,6 +1503,22 @@ export function TaskDetail({
                     const harnessLabel = `${harnessDisplayName(s.harness)}${s.model ? ` · ${s.model}` : ""}`;
                     const unreadCompletion = classifySessionNotice(s, obs ?? undefined) === "unread_completion";
                     const openable = Boolean(task?.worktree) && !s.archived;
+                    const canStop =
+                      !s.archived &&
+                      s.harness === "omp" &&
+                      obs?.transport === "rpc" &&
+                      obs.state?.agent.state !== "waiting_for_approval" &&
+                      canAbortChatSession({
+                        connection: "open",
+                        lifecycle: obs.lifecycle,
+                        process: obs.state?.process ?? null,
+                        agent: obs.state?.agent ?? null,
+                        messageAdapter: obs.state?.message_adapter ?? "unsupported",
+                        body: "",
+                        composing: false,
+                        sending: false,
+                        interrupting: !!busy,
+                      });
                     return (
                       <tr
                         key={s.id}
@@ -1516,6 +1575,30 @@ export function TaskDetail({
                         </td>
                         <td className="session-actions">
                           <div className="session-actions-inner">
+                            <button
+                              type="button"
+                              className="btn ghost small chat-composer-abort"
+                              disabled={!canStop}
+                              aria-label={busy === `stop-session:${s.id}` ? "Stopping…" : "Stop"}
+                              title="Interrupt the current turn without killing the session"
+                              onClick={async () => {
+                                if (!canStop || sessionStopPending.current) return;
+                                sessionStopPending.current = true;
+                                setBusy(`stop-session:${s.id}`);
+                                setErr(null);
+                                try {
+                                  await ipc.rpcWriteSession(s.id, abortCommand());
+                                  await load();
+                                } catch (error) {
+                                  setErr({ msg: "Couldn't interrupt the session.", detail: String(error) });
+                                } finally {
+                                  sessionStopPending.current = false;
+                                  setBusy("");
+                                }
+                              }}
+                            >
+                              <Square className="chat-composer-icon" fill="currentColor" />
+                            </button>
                             <KillButton id={s.id} slug={slug} repoPath={repoPath} live={isLive} onKilled={load} />
                             <button type="button" className="btn ghost small" disabled={s.archived || !!busy} onClick={() => void archiveSession(s.id)}>
                               {busy === `archive-session:${s.id}` ? "Archiving session…" : "Archive"}
@@ -1752,7 +1835,7 @@ export function TaskDetail({
                   title={executionView?.definition.title ?? "Retained task playbook"}
                   steps={steps}
                   countsByStep={Object.fromEntries(steps.map((step) => [step.key, activeExecutions.filter((execution) => execution.candidate.step_key === step.key).length]))}
-                  selectedAutoAdvance={executionView?.state.enabled_steps}
+                  selectedAutoAdvance={autoApproveAll ? steps.map((step) => step.key) : executionView?.state.enabled_steps}
                 />
               </div>
             ) : sideTab === "history" ? (

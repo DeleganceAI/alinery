@@ -221,11 +221,19 @@ pub(crate) fn list_backups(app: AppHandle, repo_path: Option<String>) -> Result<
     alinery_core::list_backups(&repo, &settings)
 }
 
+pub(crate) fn require_restore_authority(state: &AppState, repo: &Path, known: &[String]) -> Result<(), String> {
+    if state.is_quitting() {
+        return Err("application is quitting; restore cancelled".into());
+    }
+    validate_known_target_repo(known, &repo.display().to_string())?;
+    require_repo_owned(state, repo)
+}
+
 /// Destructive, and confirmed in the UI before it gets here: stop the daemon (its ptys and
 /// MCP child hold the data we are about to replace), clear the curated set, extract.
 /// Worktrees, locks, and sockets are deliberately left alone.
 #[tauri::command]
-pub(crate) async fn restore_backup(app: AppHandle, state: State<'_, AppState>, repo_path: Option<String>, backup_path: String) -> Result<(), String> {
+pub(crate) async fn restore_backup(app: AppHandle, repo_path: Option<String>, backup_path: String) -> Result<(), String> {
     let repo = backup_repo_for(&app, repo_path)?;
     let zip = PathBuf::from(&backup_path);
     // Reject a foreign archive while the repo is still intact and the daemon still up.
@@ -233,28 +241,30 @@ pub(crate) async fn restore_backup(app: AppHandle, state: State<'_, AppState>, r
     // Same slot as a backup: an auto zip firing mid-restore would archive half-cleared data.
     // Guard, not a manual finish: every `?` below must release the slot (see BackupSlot).
     let _slot = BackupSlot::claim(backup_key(&repo)?).ok_or("a backup or restore for this repository is already running")?;
-    // DELIBERATE TEARDOWN ORIGIN (destructive restore, confirmed in the UI before it gets
-    // here). Unlike B1's stop-all this must NOT restart the daemon: a live daemon would
-    // hold the very data we are about to replace.
-    //
-    // Teardown from the SOCKET, not only the Connected map entry: Conflicted and
-    // uncached-but-live daemons still write storage. Abort restore if anything still
-    // answers after shutdown+wait — leave backup queue slot + on-disk data untouched.
-    require_repo_owned(&state, &repo)?;
-    let is_active_mcp = active_repo().ok().as_deref() == Some(repo.as_path());
-    if is_active_mcp {
-        state.kill_mcp();
-    }
-    if let Ok(daemon) = DaemonClient::connect_path_checked(current_alineryd_socket_path(&repo)) {
-        daemon
-            .call(&daemon_client::shutdown_request())
-            .map_err(|e| format!("could not stop daemon before restore: {e}"))?;
-        wait_for_daemon_gone(&repo).map_err(|e| format!("{e}; restore aborted so live sessions cannot write over the archive"))?;
-    }
-    state.clear_daemon(&repo);
-    // Clear + extract is as slow as the zip: blocking pool, same reason as backup_now.
-    let result = tauri::async_runtime::spawn_blocking(move || restore_backup_into(&repo, &zip)).await;
-    result.map_err(|e| format!("restore task: {e}"))??;
+    let worker_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = worker_app.state::<AppState>();
+        let _closing = state.mark_closing(&repo);
+        let lifecycle = state.repo_lifecycle(&repo);
+        let _guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+        require_restore_authority(&state, &repo, &load_app_config(&worker_app).known_repos)?;
+        if active_repo().ok().as_deref() == Some(repo.as_path()) {
+            state.kill_mcp_for_repo(&repo);
+        }
+        // DELIBERATE TEARDOWN ORIGIN: confirmed restore holds lifecycle ordering
+        // through extraction, so no queued attach can publish against half-restored data.
+        if let Ok(daemon) = DaemonClient::connect_path_checked(current_alineryd_socket_path(&repo)) {
+            daemon
+                .call(&daemon_client::shutdown_request())
+                .map_err(|error| format!("could not stop daemon before restore: {error}"))?;
+            daemon_client::wait_for_daemon_gone(&repo, alineryd_socket_namespace().as_deref().unwrap_or(""))
+                .map_err(|error| format!("{error}; restore aborted so live sessions cannot write over the archive"))?;
+        }
+        state.clear_daemon(&repo);
+        restore_backup_into(&repo, &zip)
+    })
+    .await
+    .map_err(|error| format!("restore task: {error}"))??;
     emit(
         &app,
         alinery_core::TelemetryEvent::BackupRestore {

@@ -1,3 +1,4 @@
+import type { UserRowAttachment } from "../chat/attachments";
 import { decodeOmpPage } from "../chat/ompFile";
 import { queuedCountFromGetState, trimQueuedFollowUps } from "../chat/queue";
 import { applySendPlan } from "../chat/send";
@@ -11,6 +12,7 @@ import {
   getAvailableModelsCommand,
   getStateCommand,
   getSubagentsCommand,
+  type ImageContent,
   negotiateProtocolCommand,
   promptCommand,
   setAutoCompactionCommand,
@@ -100,18 +102,18 @@ export function attachHandshake(autoCompaction: boolean) {
  * OMP drains follow-ups only after an assistant/toolResult message, so a follow-up on an empty
  * session is accepted and never run.
  */
-export function sendCommand(text: string, busy: boolean) {
-  return busy ? followUpCommand(text) : promptCommand(text);
+export function sendCommand(text: string, busy: boolean, images?: ImageContent[]) {
+  return busy ? followUpCommand(text, undefined, images) : promptCommand(text, undefined, images);
 }
 
 /** The optimistic row for a send that resumed the thread: plain text, so it claims the turn. */
-export function applyPlainSend(state: ChatTranscriptState, text: string, busy: boolean): { state: ChatTranscriptState; entryId: string } {
-  return applySendPlan(state, text, { dispatch: { kind: "plain", message: text }, invokesModel: true, optimisticKind: busy ? "follow_up" : "prompt" });
+export function applyPlainSend(state: ChatTranscriptState, text: string, busy: boolean, attachments?: UserRowAttachment[]): { state: ChatTranscriptState; entryId: string } {
+  return applySendPlan(state, text, { dispatch: { kind: "plain", message: text }, invokesModel: true, optimisticKind: busy ? "follow_up" : "prompt" }, attachments);
 }
 
 /** Send now: abort the running turn and prompt with this text instead of queueing it. */
-export function sendNowCommand(text: string) {
-  return abortAndPromptCommand(text);
+export function sendNowCommand(text: string, images?: ImageContent[]) {
+  return abortAndPromptCommand(text, undefined, images);
 }
 
 export function abortTurnCommand() {

@@ -14,6 +14,7 @@ const commands = {
   "git_ops.rs": ["remove_worktree", "remove_worktree_for_repo", "push_and_compare_url", "push_and_compare_url_for_repo", "commit_worktree", "commit_worktree_for_repo"],
   "session.rs": ["archive_session", "archive_session_for_repo"],
   "settings.rs": ["delete_all_archived_storage"],
+  "daemon.rs": ["prepare_repo_takeover", "confirm_repo_takeover"],
 };
 let failures = 0;
 for (const [file, names] of Object.entries(commands)) {
@@ -40,5 +41,5 @@ for (const [file, names] of Object.entries(commands)) {
   }
 }
 if (failures) process.exit(1);
-console.log("OK: 12 blocking user commands are async and reach spawn_blocking");
+console.log("OK: blocking user commands are async and reach spawn_blocking");
 JS

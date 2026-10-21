@@ -1,6 +1,13 @@
-import { cleanup, createEvent, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, createEvent, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ConfirmHost, confirmStopAndSwitch } from "./confirm";
+import type * as IpcFixtures from "./test/mockIpc";
 import { type Handlers, useHotkeys } from "./useHotkeys";
+
+vi.mock("./ipc", async () => {
+  const { mockIpc } = await vi.importActual<typeof IpcFixtures>("./test/mockIpc");
+  return mockIpc();
+});
 
 afterEach(cleanup);
 
@@ -43,6 +50,8 @@ const handlers = (overrides: Partial<Handlers> = {}): Handlers => ({
   moveCol: vi.fn(),
   toggleTerminalDrawer: vi.fn(),
   killTerminalDrawer: vi.fn(),
+  toggleQuickChat: vi.fn(),
+  focusQuickChat: vi.fn(() => false),
   ...overrides,
 });
 
@@ -66,10 +75,40 @@ function commandCallbacks(value: Handlers) {
     value.moveCol,
     value.toggleTerminalDrawer,
     value.killTerminalDrawer,
+    value.toggleQuickChat,
+    value.focusQuickChat,
   ];
 }
 
 describe("useHotkeys", () => {
+  it("cancels Switch to Terminal with Escape without navigating back", async () => {
+    const active = handlers({ board: null });
+    render(
+      <>
+        <Probe handlers={active} />
+        <ConfirmHost />
+      </>,
+    );
+    let answer!: Promise<boolean>;
+    act(() => {
+      answer = confirmStopAndSwitch("pty");
+    });
+    const dialog = screen.getByRole("alertdialog", { name: "Switch to Terminal?" });
+    const cancel = screen.getByText("Cancel", { selector: "button" });
+    expect(document.activeElement).toBe(cancel);
+
+    // jsdom does not perform Escape's native dialog-cancel default action.
+    // Dispatch the key first, then the browser's cancel event separately.
+    expect(fireEvent.keyDown(cancel, { key: "Escape" })).toBe(true);
+    expect(active.back).not.toHaveBeenCalled();
+    fireEvent(dialog, new Event("cancel", { cancelable: true }));
+    await expect(answer).resolves.toBe(false);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(active.back).toHaveBeenCalledOnce();
+  });
+
   it("opens search with Command-K before an overlay takes ownership", () => {
     const active = handlers({ overlayOpen: true });
     render(<Probe handlers={active} />);
@@ -204,6 +243,81 @@ describe("useHotkeys", () => {
     fireEvent.keyDown(document.body, { key: "5", metaKey: true });
     expect(active.goChat).toHaveBeenCalledOnce();
     expect(active.goKanban).not.toHaveBeenCalled();
+  });
+
+  it.each(["input", "textarea", "editable"])("toggles pinned chats from %s", (label) => {
+    const active = handlers();
+    render(<Probe handlers={active} controls />);
+    const target = screen.getByLabelText(label);
+    const event = createEvent.keyDown(target, { key: "/", code: "Slash", metaKey: true, cancelable: true });
+    fireEvent(target, event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(active.toggleQuickChat).toHaveBeenCalledOnce();
+  });
+
+  it.each(["input", "textarea", "editable"])("toggles pinned chats from Control-slash in %s", (label) => {
+    const active = handlers();
+    render(<Probe handlers={active} controls />);
+    const target = screen.getByLabelText(label);
+    const event = createEvent.keyDown(target, { key: "/", code: "Slash", ctrlKey: true, cancelable: true });
+    fireEvent(target, event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(active.toggleQuickChat).toHaveBeenCalledOnce();
+  });
+
+  it("does not toggle pinned chats from Shift-slash", () => {
+    const active = handlers();
+    render(<Probe handlers={active} />);
+    const shifted = createEvent.keyDown(document.body, { key: "?", code: "Slash", metaKey: true, shiftKey: true, cancelable: true });
+    fireEvent(document.body, shifted);
+    const ctrlShifted = createEvent.keyDown(document.body, { key: "?", code: "Slash", ctrlKey: true, shiftKey: true, cancelable: true });
+    fireEvent(document.body, ctrlShifted);
+    expect(shifted.defaultPrevented).toBe(false);
+    expect(ctrlShifted.defaultPrevented).toBe(false);
+    expect(active.toggleQuickChat).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["meta", true],
+    ["ctrl", false],
+  ] as const)("focuses the pinned chat composer from %s+>", (_name, meta) => {
+    const active = handlers({ focusQuickChat: vi.fn(() => true) });
+    render(<Probe handlers={active} controls />);
+    const target = screen.getByLabelText("textarea");
+    const event = createEvent.keyDown(target, {
+      key: ">",
+      code: "Period",
+      metaKey: meta,
+      ctrlKey: !meta,
+      shiftKey: true,
+      cancelable: true,
+    });
+    fireEvent(target, event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(active.focusQuickChat).toHaveBeenCalledOnce();
+    expect(active.toggleQuickChat).not.toHaveBeenCalled();
+  });
+
+  it("accepts Shift+Period when the key event reports the unshifted character", () => {
+    const active = handlers({ focusQuickChat: vi.fn(() => true) });
+    render(<Probe handlers={active} />);
+    const event = createEvent.keyDown(document.body, { key: ".", code: "Period", metaKey: true, shiftKey: true, cancelable: true });
+    fireEvent(document.body, event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(active.focusQuickChat).toHaveBeenCalledOnce();
+  });
+
+  it("leaves the key alone when the floater cannot take focus, and ignores Command-period", () => {
+    const active = handlers();
+    render(<Probe handlers={active} controls />);
+    const target = screen.getByLabelText("textarea");
+    const missed = createEvent.keyDown(target, { key: ">", code: "Period", ctrlKey: true, shiftKey: true, cancelable: true });
+    fireEvent(target, missed);
+    const plain = createEvent.keyDown(target, { key: ".", code: "Period", metaKey: true, cancelable: true });
+    fireEvent(target, plain);
+    expect(missed.defaultPrevented).toBe(false);
+    expect(plain.defaultPrevented).toBe(false);
+    expect(active.focusQuickChat).toHaveBeenCalledOnce();
   });
 
   it.each(["input", "textarea", "editable"])("does not open chat from %s", (label) => {

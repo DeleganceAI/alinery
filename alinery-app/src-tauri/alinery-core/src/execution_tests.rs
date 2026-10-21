@@ -24,6 +24,7 @@ impl Fixture {
             cap,
             enabled,
             LaunchChoices::default(),
+            BTreeMap::new(),
         )
         .unwrap();
         state.creation = "ready".into();
@@ -90,6 +91,131 @@ fn persist_owner_fixture(f: &mut Fixture) {
     fs::write(crate::task_dir(&f.repo, "task").join("task.md"), toml::to_string(&task).unwrap()).unwrap();
     fs::write(task_playbook_path(&f.repo, "task").unwrap(), &f.source).unwrap();
     write_execution_state_unlocked(&f.repo, "task", &mut f.state).unwrap();
+}
+
+#[test]
+fn repo_partial_write_failure_is_retryable_without_ownership_guard() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, true, 10);
+    let completed = f.reserve(true);
+    let owner = f.run(&completed);
+    f.write_output(&completed, 0, None);
+    report_execution_ready(&f.repo, "task", &f.definition, &mut f.state, &completed, &owner, 0).unwrap();
+    confirm_execution_exit(&mut f.state, &completed, &owner, Some(0)).unwrap();
+    let uncertain = f.reserve(true);
+    f.run(&uncertain);
+    let queued = f.reserve(true);
+    persist_owner_fixture(&mut f);
+    let archived = crate::task_dir(&f.repo, "archived");
+    fs::create_dir_all(&archived).unwrap();
+    let task = crate::Task {
+        name: "Archived".into(),
+        slug: "archived".into(),
+        archived: true,
+        engine_version: 2,
+        ..Default::default()
+    };
+    fs::write(archived.join("task.md"), toml::to_string(&task).unwrap()).unwrap();
+    fs::write(archived.join("playbook.md"), &f.source).unwrap();
+    write_execution_state_unlocked(&f.repo, "archived", &mut f.state.clone()).unwrap();
+    let artifact = crate::artifacts_dir(&f.repo, "task").join(&f.state.executions[&completed].outputs[0].relative_path);
+    let output = fs::read(&artifact).unwrap();
+    let result = crate::repo_ownership::with_adoption_write_failure(1, || crate::repo_ownership::acquire(&f.repo, "next", "next-config"));
+    assert!(result.is_err(), "partial adoption must not return a usable guard");
+    let adopted = ["archived", "task"]
+        .into_iter()
+        .filter(|slug| read_execution_state(&f.repo, slug).unwrap().owning_lane == "next")
+        .count();
+    assert_eq!(adopted, 1, "fixture must exercise a real partial durable batch");
+    for path in [
+        crate::alinery_dir(&f.repo).join(".repo-owner.lock"),
+        crate::alineryd_lock_path(&f.repo, Some("lane")),
+        crate::alineryd_lock_path(&f.repo, Some("next")),
+    ] {
+        let lease = crate::lockfile::try_lock_exclusive(&path).unwrap().expect("failed acquire must release every lease");
+        drop(lease);
+    }
+    let _guard = crate::repo_ownership::acquire(&f.repo, "next", "next-config").unwrap();
+    for slug in ["archived", "task"] {
+        let mut state = read_execution_state(&f.repo, slug).unwrap();
+        assert_eq!(state.owning_lane, "next");
+        assert_eq!(state.owning_app_config_identity, "next-config");
+        assert_eq!(state.executions[&completed], f.state.executions[&completed]);
+        assert_eq!(state.executions[&queued], f.state.executions[&queued]);
+        assert_eq!(state.occurrences, f.state.occurrences);
+        assert_eq!(state.executions[&uncertain].lifecycle, ExecutionLifecycle::Interrupted);
+        assert!(!state.executions[&uncertain].shutdown_confirmed);
+        assert_eq!(state.executions[&uncertain].owner_session_id, f.state.executions[&uncertain].owner_session_id);
+        assert!(recover_execution_owner(&mut state, &uncertain).is_err());
+    }
+    assert_eq!(fs::read(artifact).unwrap(), output);
+}
+
+#[test]
+fn repo_round_trip_adopts_active_and_archived_tasks_preserving_evidence() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, true, 10);
+    let completed = f.reserve(true);
+    let owner = f.run(&completed);
+    f.write_output(&completed, 0, None);
+    report_execution_ready(&f.repo, "task", &f.definition, &mut f.state, &completed, &owner, 0).unwrap();
+    confirm_execution_exit(&mut f.state, &completed, &owner, Some(0)).unwrap();
+    let uncertain = f.reserve(true);
+    f.run(&uncertain);
+    let queued = f.reserve(true);
+    persist_owner_fixture(&mut f);
+    let archived = crate::task_dir(&f.repo, "archived");
+    fs::create_dir_all(&archived).unwrap();
+    let task = crate::Task {
+        name: "Archived".into(),
+        slug: "archived".into(),
+        archived: true,
+        engine_version: 2,
+        ..Default::default()
+    };
+    fs::write(archived.join("task.md"), toml::to_string(&task).unwrap()).unwrap();
+    fs::write(archived.join("playbook.md"), &f.source).unwrap();
+    write_execution_state_unlocked(&f.repo, "archived", &mut f.state.clone()).unwrap();
+    let metadata = fs::read(archived.join("task.md")).unwrap();
+    let artifact = crate::artifacts_dir(&f.repo, "task").join(&f.state.executions[&completed].outputs[0].relative_path);
+    let output = fs::read(&artifact).unwrap();
+    for (lane, config) in [("dev", "dev-config"), ("", "production-config"), ("dev", "second-dev-config")] {
+        let guard = crate::repo_ownership::acquire(&f.repo, lane, config).unwrap();
+        for slug in ["task", "archived"] {
+            let mut state = read_execution_state(&f.repo, slug).unwrap();
+            assert_eq!((state.owning_lane.as_str(), state.owning_app_config_identity.as_str()), (lane, config));
+            assert_eq!(state.executions[&completed], f.state.executions[&completed]);
+            assert_eq!(state.executions[&queued], f.state.executions[&queued]);
+            assert_eq!(state.occurrences, f.state.occurrences);
+            assert_eq!(state.contexts, f.state.contexts);
+            assert_eq!(state.collections, f.state.collections);
+            let record = &state.executions[&uncertain];
+            assert_eq!(record.lifecycle, ExecutionLifecycle::Interrupted);
+            assert_eq!(record.owner_session_id, f.state.executions[&uncertain].owner_session_id);
+            assert!(!record.shutdown_confirmed);
+            assert!(recover_execution_owner(&mut state, &uncertain).is_err());
+            assert!(!claim_execution_launch(&mut state, &uncertain).unwrap());
+        }
+        assert_eq!(fs::read(&artifact).unwrap(), output);
+        assert_eq!(fs::read(archived.join("task.md")).unwrap(), metadata);
+        drop(guard);
+    }
+}
+
+#[test]
+fn repo_failed_preflight_can_retry_without_retaining_leases() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, false, 1);
+    persist_owner_fixture(&mut f);
+    let before = fs::read(execution_state_path(&f.repo, "task").unwrap()).unwrap();
+    let path = crate::task_dir(&f.repo, "task").join("playbook.md");
+    fs::write(&path, "invalid retained playbook").unwrap();
+    assert!(crate::repo_ownership::acquire(&f.repo, "dev", "new-config").is_err());
+    assert_eq!(fs::read(execution_state_path(&f.repo, "task").unwrap()).unwrap(), before);
+    let lease = crate::lockfile::try_lock_exclusive(&crate::alinery_dir(&f.repo).join(".repo-owner.lock")).unwrap().unwrap();
+    drop(lease);
+    fs::write(path, &f.source).unwrap();
+    let _guard = crate::repo_ownership::acquire(&f.repo, "dev", "new-config").unwrap();
+    let state = read_execution_state(&f.repo, "task").unwrap();
+    assert_eq!(state.owning_lane, "dev");
+    assert_eq!(state.owning_app_config_identity, "new-config");
 }
 
 #[test]
@@ -589,6 +715,136 @@ fn capacity_and_coding_ownership_survive_review_and_finishing() {
 }
 
 #[test]
+fn auto_approve_all_advances_ready_work_without_another_report_and_off_restores_manual_gate() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, false, 10);
+    f.add_consumer("result.md");
+    let devised = f.state.enabled_steps.clone();
+    let id = f.reserve(false);
+    let owner = f.run(&id);
+    f.write_output(&id, 0, None);
+    assert_eq!(
+        report_execution_ready(&f.repo, "task", &f.definition, &mut f.state, &id, &owner, 0).unwrap(),
+        CompletionOutcome::Ready { ready_revision: 0 }
+    );
+    set_execution_auto_approve_all(&mut f.state, true);
+    assert!(matches!(
+        finalize_execution_continuation(&f.repo, "task", &f.definition, &mut f.state, &id, &owner, 0).unwrap(),
+        CompletionOutcome::Accepted { .. }
+    ));
+    confirm_execution_exit(&mut f.state, &id, &owner, Some(0)).unwrap();
+    let mut next_step = f.definition.step[0].clone();
+    next_step.key = "next-work".into();
+    f.definition.step.push(next_step);
+    let again = reserve_execution(
+        &f.repo,
+        "task",
+        &f.definition,
+        &mut f.state,
+        ExecutionCandidate {
+            step_key: "next-work".into(),
+            context_id: "root".into(),
+            inputs: BTreeMap::new(),
+            complete_collection_id: None,
+            each_collection_id: None,
+            each_member_id: None,
+            manual: false,
+        },
+        &LaunchChoices::default(),
+        None,
+        true,
+    )
+    .unwrap();
+    let owner = f.run(&again);
+    f.write_output(&again, 0, None);
+    set_execution_auto_approve_all(&mut f.state, false);
+    assert_eq!(
+        report_execution_ready(&f.repo, "task", &f.definition, &mut f.state, &again, &owner, 0).unwrap(),
+        CompletionOutcome::Ready { ready_revision: 0 }
+    );
+    assert!(matches!(
+        finalize_execution_continuation(&f.repo, "task", &f.definition, &mut f.state, &again, &owner, 0).unwrap(),
+        CompletionOutcome::Stale { .. }
+    ));
+    assert_eq!(f.state.enabled_steps, devised);
+    assert_eq!(f.state.executions[&again].continuation_mode, ContinuationMode::Manual);
+}
+
+#[test]
+fn auto_approve_all_revalidates_ready_artifacts_and_rejects_stale_readiness() {
+    let mut f = Fixture::new("{path=\"result.md\", required=true}", false, false, 10);
+    f.add_consumer("result.md");
+    let id = f.reserve(false);
+    let owner = f.run(&id);
+    f.write_output(&id, 0, None);
+    assert_eq!(
+        report_execution_ready(&f.repo, "task", &f.definition, &mut f.state, &id, &owner, 0).unwrap(),
+        CompletionOutcome::Ready { ready_revision: 0 }
+    );
+    fs::remove_file(crate::artifacts_dir(&f.repo, "task").join(&f.state.executions[&id].outputs[0].relative_path)).unwrap();
+    set_execution_auto_approve_all(&mut f.state, true);
+    assert!(matches!(
+        finalize_execution_continuation(&f.repo, "task", &f.definition, &mut f.state, &id, &owner, 0).unwrap(),
+        CompletionOutcome::InvalidOutputs { .. }
+    ));
+    f.write_output(&id, 0, None);
+    assert!(matches!(
+        finalize_execution_continuation(&f.repo, "task", &f.definition, &mut f.state, &id, &owner, 0).unwrap(),
+        CompletionOutcome::Stale { .. }
+    ));
+    assert!(f.state.occurrences.is_empty());
+    assert!(f.state.executions[&id].receipt_id.is_none());
+}
+
+#[test]
+fn auto_approve_all_still_requires_outputs_and_shared_supplied_validation() {
+    let mut f = Fixture::new("{path=\"result.md\", required=true}, {path=\"notes.md\"}", false, false, 1);
+    f.add_consumer("result.md");
+    set_execution_auto_approve_all(&mut f.state, true);
+    let id = f.reserve(false);
+    let owner = f.run(&id);
+    f.write_output(&id, 1, None);
+    assert!(matches!(
+        report_execution_ready(&f.repo, "task", &f.definition, &mut f.state, &id, &owner, 0).unwrap(),
+        CompletionOutcome::InvalidOutputs { .. }
+    ));
+    let record = &f.state.executions[&id];
+    let notes = crate::SuppliedExecutionArtifact {
+        relative_path: record.outputs[1].relative_path.clone(),
+        content: "notes alone are insufficient".into(),
+    };
+    assert!(inspect_supplied_execution_publications(&f.repo, "task", record, &[notes]).is_err());
+    let result = crate::SuppliedExecutionArtifact {
+        relative_path: record.outputs[0].relative_path.clone(),
+        content: "required result".into(),
+    };
+    assert!(inspect_supplied_execution_publications(&f.repo, "task", record, &[result]).is_ok());
+    f.write_output(&id, 0, None);
+    assert!(matches!(
+        report_execution_ready(&f.repo, "task", &f.definition, &mut f.state, &id, &owner, 0).unwrap(),
+        CompletionOutcome::Accepted { .. }
+    ));
+}
+
+#[test]
+fn auto_approve_all_missing_from_saved_files_stays_off() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, false, 1);
+    persist_owner_fixture(&mut f);
+    let execution_path = execution_state_path(&f.repo, "task").unwrap();
+    let mut execution: serde_json::Value = serde_json::from_slice(&fs::read(&execution_path).unwrap()).unwrap();
+    execution.as_object_mut().unwrap().remove("auto_approve_all");
+    fs::write(&execution_path, serde_json::to_vec_pretty(&execution).unwrap()).unwrap();
+    assert!(!read_execution_state(&f.repo, "task").unwrap().auto_approve_all);
+
+    let task_path = crate::task_dir(&f.repo, "task").join("task.md");
+    let saved = fs::read_to_string(&task_path).unwrap();
+    assert!(saved.contains("auto_approve_all = false"), "saved task should record the default before it is stripped");
+    let task = saved.replace("auto_approve_all = false\n", "");
+    assert!(!task.contains("auto_approve_all"));
+    fs::write(&task_path, task).unwrap();
+    assert!(!crate::read_task(&f.repo, "task").unwrap().auto_approve_all);
+}
+
+#[test]
 fn stopped_owner_recovery_retires_old_readiness_without_retrying() {
     let mut f = Fixture::new("{path=\"result.md\"}", true, false, 1);
     let id = f.reserve(false);
@@ -875,6 +1131,7 @@ fn task_rejects_unsupported_graph_harness_before_provisioning() {
         1,
         BTreeSet::new(),
         LaunchChoices::default(),
+        BTreeMap::new(),
     )
     .is_err());
 }
@@ -928,7 +1185,10 @@ fn join_depth_uses_all_actual_parents_independent_of_completion_order() {
                     mode: InputMode::Single,
                 })
                 .collect();
-            step.outputs = vec![OutputSelector { path: output.into() }];
+            step.outputs = vec![OutputSelector {
+                path: output.into(),
+                required: false,
+            }];
             step
         })
         .collect();
@@ -942,6 +1202,7 @@ fn join_depth_uses_all_actual_parents_independent_of_completion_order() {
             10,
             f.definition.step.iter().map(|step| step.key.clone()).collect(),
             LaunchChoices::default(),
+            BTreeMap::new(),
         )
         .unwrap();
         f.state.creation = "ready".into();
@@ -1428,4 +1689,186 @@ fn supplied_artifacts_reject_symlink_parents_and_final_targets() {
     std::os::unix::fs::symlink(&f.repo, target.parent().unwrap()).unwrap();
     assert!(inspect_supplied_execution_publications(&f.repo, "task", record, &[supplied]).is_err());
     assert_eq!(fs::read_to_string(outside).unwrap(), "untouched");
+}
+
+fn reserve_work(f: &mut Fixture, product_model: &str) -> String {
+    reserve_execution(
+        &f.repo,
+        "task",
+        &f.definition,
+        &mut f.state,
+        ExecutionCandidate {
+            step_key: "work".into(),
+            context_id: "root".into(),
+            inputs: BTreeMap::new(),
+            complete_collection_id: None,
+            each_collection_id: None,
+            each_member_id: None,
+            manual: true,
+        },
+        &LaunchChoices {
+            harness: "omp".into(),
+            model: product_model.into(),
+        },
+        None,
+        true,
+    )
+    .unwrap()
+}
+
+#[test]
+fn reserved_launch_keeps_playbook_pin_when_execution_state_has_no_step_models() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, true, 1);
+    f.definition.step[0].model = "step-pin".into();
+    f.state.launch_defaults = LaunchChoices {
+        harness: "omp".into(),
+        model: "task-model".into(),
+    };
+    let id = reserve_work(&mut f, "product-model");
+    assert_eq!(f.state.executions[&id].launch.harness, "omp");
+    assert_eq!(f.state.executions[&id].launch.model, "step-pin");
+}
+
+#[test]
+fn reserved_launch_uses_persisted_step_model_ahead_of_playbook_pin() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, true, 1);
+    f.definition.step[0].model = "step-pin".into();
+    f.state.launch_defaults = LaunchChoices {
+        harness: "omp".into(),
+        model: "task-model".into(),
+    };
+    let mut value = serde_json::to_value(&f.state).unwrap();
+    value["step_models"] = serde_json::json!({ "work": "task-override" });
+    let path = execution_state_path(&f.repo, "task").unwrap();
+    fs::write(&path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+    f.state = read_execution_state(&f.repo, "task").unwrap();
+    let id = reserve_work(&mut f, "product-model");
+    assert_eq!(f.state.executions[&id].launch.harness, "omp");
+    assert_eq!(
+        f.state.executions[&id].launch.model, "task-override",
+        "persisted step_models must beat playbook pin step-pin, task-model, and product-model"
+    );
+}
+
+fn chain_source(default_model: &str, plan_model: &str) -> String {
+    format!(
+        "+++\nversion = 2\nkey = \"fixture\"\ntitle = \"Fixture\"\ndescription = \"\"\ndefault_model = \"{default_model}\"\ndefault_harness = \"omp\"\n[[step]]\nkey = \"clarify\"\ntitle = \"Clarify\"\nshort = \"\"\ninputs = []\noutputs = [{{path=\"clarify.md\"}}]\nmodel = \"step-pin\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = false\n[[step]]\nkey = \"plan\"\ntitle = \"Plan\"\nshort = \"\"\ninputs = []\noutputs = [{{path=\"plan.md\"}}]\nmodel = \"{plan_model}\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = false\n+++\n<!-- alinery:step clarify -->\nClarify.\n<!-- alinery:step plan -->\nPlan.\n"
+    )
+}
+
+fn launch_model(
+    default_model: &str,
+    plan_model: &str,
+    step_key: &str,
+    task_model: &str,
+    product_model: &str,
+    explicit: Option<&LaunchChoices>,
+    step_models: &BTreeMap<String, String>,
+) -> Result<LaunchChoices, String> {
+    let definition = parse_playbook_md(&chain_source(default_model, plan_model)).unwrap();
+    let step = definition.step.iter().find(|step| step.key == step_key).unwrap();
+    let task = LaunchChoices {
+        harness: "omp".into(),
+        model: task_model.into(),
+    };
+    let product = LaunchChoices {
+        harness: "omp".into(),
+        model: product_model.into(),
+    };
+    resolve_execution_launch(&definition, step, &task, &product, explicit, step_models)
+}
+
+#[test]
+fn step_model_override_beats_playbook_pin_and_task_model() {
+    let mut map = BTreeMap::new();
+    map.insert("clarify".into(), "task-override".into());
+    let launch = launch_model("playbook-wide", "", "clarify", "task-model", "product-model", None, &map).unwrap();
+    assert_eq!(launch.model, "task-override");
+    assert_eq!(launch.harness, "omp");
+}
+
+#[test]
+fn step_model_absent_keeps_playbook_pin_over_task_model() {
+    let launch = launch_model("playbook-wide", "", "clarify", "task-model", "product-model", None, &BTreeMap::new()).unwrap();
+    assert_eq!(launch.model, "step-pin");
+}
+
+#[test]
+fn step_model_absent_empty_playbook_uses_task_model() {
+    let launch = launch_model("", "", "plan", "task-model", "product-model", None, &BTreeMap::new()).unwrap();
+    assert_eq!(launch.model, "task-model");
+}
+
+#[test]
+fn step_model_absent_empty_chain_uses_product_model() {
+    let launch = launch_model("", "", "plan", "", "product-model", None, &BTreeMap::new()).unwrap();
+    assert_eq!(launch.model, "product-model");
+}
+
+#[test]
+fn step_model_explicit_nonempty_beats_map() {
+    let mut map = BTreeMap::new();
+    map.insert("clarify".into(), "task-override".into());
+    let once = LaunchChoices {
+        harness: "omp".into(),
+        model: "once".into(),
+    };
+    let launch = launch_model("playbook-wide", "", "clarify", "task-model", "product-model", Some(&once), &map).unwrap();
+    assert_eq!(launch.model, "once");
+    assert_eq!(launch.harness, "omp");
+}
+
+#[test]
+fn step_model_empty_explicit_does_not_win() {
+    let mut map = BTreeMap::new();
+    map.insert("clarify".into(), "task-override".into());
+    let empty = LaunchChoices {
+        harness: "omp".into(),
+        model: String::new(),
+    };
+    let launch = launch_model("playbook-wide", "", "clarify", "task-model", "product-model", Some(&empty), &map).unwrap();
+    assert_eq!(launch.model, "task-override");
+}
+
+#[test]
+fn step_model_explicit_none_does_not_win() {
+    let mut map = BTreeMap::new();
+    map.insert("plan".into(), "task-override".into());
+    let launch = launch_model("", "", "plan", "task-model", "product-model", None, &map).unwrap();
+    assert_eq!(launch.model, "task-override");
+}
+
+#[test]
+fn step_model_whitespace_does_not_win() {
+    let mut map = BTreeMap::new();
+    map.insert("clarify".into(), "  ".into());
+    let launch = launch_model("playbook-wide", "", "clarify", "task-model", "product-model", None, &map).unwrap();
+    assert_eq!(launch.model, "step-pin");
+}
+
+#[test]
+fn step_model_other_step_does_not_affect_this_step() {
+    let mut map = BTreeMap::new();
+    map.insert("plan".into(), "task-override".into());
+    let launch = launch_model("playbook-wide", "", "clarify", "task-model", "product-model", None, &map).unwrap();
+    assert_eq!(launch.model, "step-pin");
+}
+
+#[test]
+fn step_model_non_omp_explicit_harness_still_errors() {
+    let once = LaunchChoices {
+        harness: "no-harness".into(),
+        model: "once".into(),
+    };
+    let err = launch_model("playbook-wide", "", "clarify", "task-model", "product-model", Some(&once), &BTreeMap::new()).unwrap_err();
+    assert!(err.contains("unsupported graph harness"), "{err}");
+}
+
+#[test]
+fn step_model_missing_field_parses_as_empty_map() {
+    let f = Fixture::new("{path=\"result.md\"}", false, true, 1);
+    let mut value = serde_json::to_value(&f.state).unwrap();
+    value.as_object_mut().unwrap().remove("step_models");
+    let state: TaskExecutionState = serde_json::from_value(value).unwrap();
+    assert!(state.step_models.is_empty());
 }

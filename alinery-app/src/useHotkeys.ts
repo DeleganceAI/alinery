@@ -32,6 +32,9 @@ export type Handlers = {
   moveCol: (d: number) => void;
   toggleTerminalDrawer: () => void;
   killTerminalDrawer: () => void;
+  toggleQuickChat: () => void;
+  /** True when the caret landed in the floater. False leaves the key alone. */
+  focusQuickChat: () => boolean;
 };
 
 // One global keydown listener installed once at App level (plan §5.3). Reads the latest
@@ -46,10 +49,21 @@ export function useHotkeys(handlers: Handlers) {
       const k = e.key;
       const appCommand = e.metaKey;
 
-      // 1. ⌘K always toggles search.
+      // 1. ⌘K always toggles search. ⌘/ and Ctrl+/ always toggle pinned chats, including from a text field.
+      //    ⌘> and Ctrl+> (Shift+Period on a US keyboard) move the caret into that window when it is open.
       if (appCommand && k.toLowerCase() === "k") {
         e.preventDefault();
         H.toggleSearch();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.code === "Slash" && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        H.toggleQuickChat();
+        return;
+      }
+      const greaterThan = e.key === ">" || (e.shiftKey && e.code === "Period");
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && greaterThan) {
+        if (H.focusQuickChat()) e.preventDefault();
         return;
       }
       // 2. An overlay owns its own keys (search/create modal handle arrows/enter/esc).

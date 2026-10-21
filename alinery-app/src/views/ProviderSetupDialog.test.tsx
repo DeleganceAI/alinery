@@ -1,7 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockIpc } from "../test/mockIpc";
-import { ProviderSetupDialog } from "./ProviderSetupDialog";
+import type { HostedCatalogView } from "../types";
+import { ProviderSetupDialog, resetProviderSetupCatalogue } from "./ProviderSetupDialog";
 
 const mocks = vi.hoisted(() => ({
   ompSetupSession: vi.fn(),
@@ -26,6 +27,49 @@ const providersLine = (rows: { id: string; authenticated: boolean }[]) =>
     data: { providers: rows.map((row) => ({ id: row.id, name: row.id, available: true, authenticated: row.authenticated })) },
   });
 
+const stateLine = (model: string) => {
+  const slash = model.indexOf("/");
+  return JSON.stringify({
+    type: "response",
+    id: "p1",
+    command: "get_state",
+    success: true,
+    data: { model: { provider: model.slice(0, slash), id: model.slice(slash + 1) } },
+  });
+};
+
+const modelsLine = (rows: { provider: string; id: string }[]) =>
+  JSON.stringify({
+    type: "response",
+    id: "p1",
+    command: "get_available_models",
+    success: true,
+    data: { models: rows },
+  });
+
+const unsettledHosted = {
+  provider: "alinery",
+  defaultModel: "alinery/Qwen3.6-35B-A3B",
+  baseUrl: "https://inference.alinery.ai/v1",
+  plansUrl: "https://accounts.alinery.ai/plans",
+  models: [] as { id: string; name: string; contextWindow: number; maxTokens: number; price: number }[],
+  ready: false,
+  upsell: "sign-in" as const,
+  source: "empty" as const,
+};
+
+function renderModelsPicker(lines: string[], unsignedOpensAccounts = false) {
+  mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
+  mocks.readOmpModelRoles.mockResolvedValue({});
+  mocks.hostedCatalog.mockResolvedValue(unsettledHosted);
+  mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
+  mocks.detachSession.mockResolvedValue(undefined);
+  mocks.rpcAttachSession.mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
+    await Promise.resolve();
+    for (const line of lines) onLine(line);
+  });
+  render(<ProviderSetupDialog mode="manual" initialTab="models" unsignedOpensAccounts={unsignedOpensAccounts} onClose={vi.fn()} />);
+}
 function mountWith(lines: string[], mode: "auto" | "manual" = "auto", hostedReady = false) {
   const onClose = vi.fn();
   mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
@@ -74,6 +118,7 @@ afterEach(() => {
   cleanup();
   vi.useRealTimers();
   vi.clearAllMocks();
+  resetProviderSetupCatalogue();
 });
 
 describe("ProviderSetupDialog", () => {
@@ -216,7 +261,7 @@ describe("ProviderSetupDialog", () => {
     mocks.rpcAttachSession.mockImplementation(async () => undefined);
     render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
     expect(screen.getByText("Connecting…")).toBeTruthy();
-    expect(screen.queryByText("No models match.")).toBeNull();
+
     expect(screen.queryByText("No Chat-capable providers yet.")).toBeNull();
   });
 
@@ -250,7 +295,7 @@ describe("ProviderSetupDialog", () => {
     });
     vi.useRealTimers();
     expect(screen.getByText(/daemon not connected/i)).toBeTruthy();
-    expect(screen.queryByText("No models match.")).toBeNull();
+
     expect(screen.queryByText("No Chat-capable providers yet.")).toBeNull();
   });
 
@@ -319,5 +364,116 @@ describe("ProviderSetupDialog", () => {
     });
     render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
     await waitFor(() => expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true"));
+  });
+
+  it("stays on Models and waits for the catalogue when a signed-in provider is not the setup probe", async () => {
+    renderModelsPicker(
+      [
+        stateLine("openai-codex/gpt-5.6-luna"),
+        providersLine([
+          { id: "xai-oauth", authenticated: true },
+          { id: "openai-codex", authenticated: false },
+        ]),
+      ],
+      true,
+    );
+    await waitFor(() => expect(mocks.rpcAttachSession).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("tab", { name: "Accounts" }).getAttribute("aria-selected")).toBe("false");
+    expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByText("Connecting…")).toBeTruthy();
+
+    await emit({ type: "response", command: "get_available_models", success: true, data: { models: [{ provider: "xai-oauth", id: "grok-4.7" }] } });
+    expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("paints the process catalogue immediately and replaces it only when the payload differs", async () => {
+    renderModelsPicker([modelsLine([{ provider: "xai-oauth", id: "grok-4.7" }])], true);
+    expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
+    cleanup();
+
+    renderModelsPicker(
+      [
+        stateLine("openai-codex/gpt-5.6-luna"),
+        providersLine([
+          { id: "xai-oauth", authenticated: true },
+          { id: "openai-codex", authenticated: false },
+        ]),
+      ],
+      true,
+    );
+    expect(screen.getByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
+
+    await emit({ type: "response", command: "get_available_models", success: true, data: { models: [{ provider: "xai-oauth", id: "grok-4.7" }] } });
+    expect(screen.getByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
+
+    await emit({ type: "response", command: "get_available_models", success: true, data: { models: [{ provider: "xai-oauth", id: "grok-4.6" }] } });
+    expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.6" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "xai-oauth/grok-4.7" })).toBeNull();
+  });
+
+  it("does not open Accounts for a hosted-ready install, including before hosted settles", async () => {
+    // ES2020 lib: Promise.withResolvers is not in this tsconfig.
+    let resolveHosted: (view: HostedCatalogView) => void = () => undefined;
+    const hostedPromise = new Promise<HostedCatalogView>((resolve) => {
+      resolveHosted = resolve;
+    });
+    mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
+    mocks.readOmpModelRoles.mockResolvedValue({});
+    mocks.hostedCatalog.mockReturnValue(hostedPromise);
+    mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
+    mocks.detachSession.mockResolvedValue(undefined);
+    mocks.rpcAttachSession.mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
+      await Promise.resolve();
+      onLine(providersLine([{ id: "anthropic", authenticated: false }]));
+    });
+    render(<ProviderSetupDialog mode="manual" initialTab="models" unsignedOpensAccounts onClose={vi.fn()} />);
+    await waitFor(() => expect(mocks.rpcAttachSession).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("tab", { name: "Accounts" }).getAttribute("aria-selected")).toBe("false");
+    expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true");
+
+    await act(async () => {
+      resolveHosted({
+        ...unsettledHosted,
+        models: [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 1 }],
+        ready: true,
+        upsell: null,
+        source: "live",
+      });
+    });
+    await waitFor(() => expect(mocks.hostedCatalog).toHaveBeenCalled());
+    expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "Accounts" }).getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("keeps Settings on Models and connecting until the model reply", async () => {
+    renderModelsPicker([stateLine("openai-codex/gpt-5.6-luna"), providersLine([{ id: "xai-oauth", authenticated: true }])]);
+    await waitFor(() => expect(mocks.rpcAttachSession).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByText("Connecting…")).toBeTruthy();
+
+    await emit({ type: "response", command: "get_available_models", success: true, data: { models: [{ provider: "xai-oauth", id: "grok-4.7" }] } });
+    expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
+  });
+
+  it("keeps the cached catalogue when setup attach fails", async () => {
+    renderModelsPicker([modelsLine([{ provider: "xai-oauth", id: "grok-4.7" }])], true);
+    expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
+    cleanup();
+
+    mocks.ompSetupSession.mockRejectedValue(new Error("setup exploded"));
+    render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
+
+    expect(screen.getByText(/setup exploded/)).toBeTruthy();
   });
 });

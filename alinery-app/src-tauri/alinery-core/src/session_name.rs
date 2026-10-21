@@ -185,6 +185,7 @@ mod tests {
             1,
             Default::default(),
             LaunchChoices::default(),
+            Default::default(),
         )
         .unwrap();
         state.executions.insert(

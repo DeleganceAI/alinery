@@ -95,6 +95,8 @@ import type {
   StorageInfo,
   SubtaskManagerState,
   SuppliedExecutionArtifact,
+  TakeoverOutcome,
+  TakeoverPreview,
   Task,
   TaskActivityRef,
   TaskActivitySummary,
@@ -229,6 +231,9 @@ export const closeAllRepos = () => invoke<number>("close_all_repos");
 export const daemonStatus = () => invoke<DaemonStatus>("daemon_status");
 export const repoLiveSessions = (path: string) => invoke<number>("repo_live_sessions", { path });
 export const stopDaemon = (path: string | null) => invoke<void>("stop_daemon", { path });
+export const prepareRepoTakeover = (repoPath: string, ownerLane: string) => invoke<TakeoverPreview>("prepare_repo_takeover", { repoPath, ownerLane });
+export const confirmRepoTakeover = (confirmationId: string) => invoke<TakeoverOutcome>("confirm_repo_takeover", { confirmationId });
+export const cancelRepoTakeover = (confirmationId: string) => invoke<void>("cancel_repo_takeover", { confirmationId });
 
 // ── git_ops.rs ────────────────────────────────────────────────────────
 export const commitWorktree = (slug: string, message: string) => invoke<void>("commit_worktree", { slug, message });
@@ -415,7 +420,10 @@ export const listBoardTasks = (allRepos: boolean) => invoke<BoardTask[]>("list_b
 export const listTaskActivity = (refs: TaskActivityRef[]) => invoke<Record<string, TaskActivitySummary>>("list_task_activity", { refs });
 export const listTaskPullRequests = (tasks: TaskActivityRef[]) => invoke<Record<string, PullRequestSnapshot>>("list_task_pull_requests", { tasks });
 export const listTasks = (repoPath?: string) => invoke<Task[]>("list_tasks", { repoPath });
+export const setAutoApproveAllForRepo = (repoPath: string, slug: string, enabled: boolean) => invoke<Task>("set_auto_approve_all_for_repo", { repoPath, slug, enabled });
 export const setRelatedTasksForRepo = (repoPath: string, slug: string, related: RelatedTaskRef[]) => invoke<Task>("set_related_tasks_for_repo", { repoPath, slug, related });
+export type DraftAttachments = { entries: string[]; images: { name: string; bytes: string; mime_type: string }[] };
+export const readDraftAttachmentsForRepo = (repoPath: string, slug: string) => invoke<DraftAttachments>("read_draft_attachments_for_repo", { repoPath, slug });
 export const writeDraftForRepo = (a: {
   repoPath: string;
   name: string;
@@ -428,20 +436,27 @@ export const writeDraftForRepo = (a: {
   harness: string;
   model: string;
   autoAdvance?: string[] | null;
+  stepModels?: Record<string, string> | null;
   maxLiveSessions: number;
   branchName: string;
   worktreeName: string;
   draftSlug: string;
   draftBaseRef?: string | null;
+  draftAttachments?: DraftAttachments;
 }) => invoke<Task>("write_draft_for_repo", a);
 export type ChatFileStat = { name: string; bytes: number };
 export type CopyChatAttachmentsResult = { copied: string[]; failures: string[] };
 export type ChatImage = { mime_type: string; data: string };
 export const chatFileStat = (path: string) => invoke<ChatFileStat>("chat_file_stat", { path });
 export const copyChatAttachments = (taskSlug: string, paths: string[]) => invoke<CopyChatAttachmentsResult>("copy_chat_attachments", { taskSlug, paths });
-export const writeChatAttachmentBytes = (taskSlug: string, fileName: string, bytes: number[] | Uint8Array) =>
-  invoke<string>("write_chat_attachment_bytes", { taskSlug, fileName, bytes });
+export const writeChatAttachmentBytes = (taskSlug: string, fileName: string, bytes: number[] | Uint8Array, repoPath?: string) =>
+  invoke<string>("write_chat_attachment_bytes", { taskSlug, fileName, bytes, repoPath });
 export const readChatImage = (taskSlug: string, name: string) => invoke<ChatImage>("read_chat_image", { taskSlug, name });
+export const copyChatThreadAttachments = (repoPath: string, id: string, paths: string[]) =>
+  invoke<CopyChatAttachmentsResult>("copy_chat_thread_attachments", { repoPath, id, paths });
+export const writeChatThreadAttachmentBytes = (repoPath: string, id: string, fileName: string, bytes: number[] | Uint8Array) =>
+  invoke<string>("write_chat_thread_attachment_bytes", { repoPath, id, fileName, bytes });
+export const readChatThreadImage = (repoPath: string, id: string, name: string) => invoke<ChatImage>("read_chat_thread_image", { repoPath, id, name });
 export const readAttachmentImage = (taskSlug: string, name: string, nodeId?: string) => invoke<ArrayBuffer>("read_attachment_image", { taskSlug, name, nodeId });
 
 // ── playbook.rs ───────────────────────────────────────────────────────
