@@ -22,15 +22,22 @@ DAEMON="$BUILT/alinery-vinculum-daemon"
 [ -f "$DAEMON" ] || { echo "ERROR: $DAEMON was not compiled" >&2; exit 1; }
 SIDE="$DIR/alinery-vinculum-daemon-$TRIPLE"
 MCP_SIDE="$DIR/alinery-mcp-$TRIPLE"
-cp "$DAEMON" "$SIDE"
-cp "$BUILT/alinery-mcp" "$MCP_SIDE"
+# Identical bytes still bump mtime, and these paths sit in the Tauri dev watch.
+copy_if_changed() {
+  if [ -f "$2" ] && cmp -s "$1" "$2"; then
+    return
+  fi
+  cp "$1" "$2"
+}
+copy_if_changed "$DAEMON" "$SIDE"
+copy_if_changed "$BUILT/alinery-mcp" "$MCP_SIDE"
 case "$(uname -s)" in
   Darwin) LIB="libalinery_core.dylib" ;;
   Linux) LIB="libalinery_core.so" ;;
   *) LIB="alinery_core.dll" ;;
 esac
 mkdir -p "$DIR/resources/ownership"
-cp "$BUILT/$LIB" "$DIR/resources/ownership/$LIB"
+copy_if_changed "$BUILT/$LIB" "$DIR/resources/ownership/$LIB"
 chmod +x "$SIDE" "$MCP_SIDE"
 echo "sidecar ready: $SIDE"
 echo "mcp sidecar ready: $MCP_SIDE"
