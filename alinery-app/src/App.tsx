@@ -1555,6 +1555,7 @@ export default function App() {
           {view.kind === "create" && (
             <div className="view nopad">
               <CreateTaskPage
+                key={view.draft ? JSON.stringify([view.draft.repo_path, view.draft.slug]) : "new"}
                 initialDraft={view.kind === "create" ? view.draft : undefined}
                 initialPlaybook={view.initialPlaybook}
                 initialPreset={view.initialPreset}

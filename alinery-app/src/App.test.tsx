@@ -811,6 +811,41 @@ async function openGlobalSession() {
 }
 
 describe("draft routing", () => {
+  it("loads a saved draft selected through search while the real new-task form is open", async () => {
+    actualCreation.enabled = true;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    ipcMocks.listBoardTasks.mockResolvedValue([activeDraft]);
+    vi.mocked(ipc.readConfigForRepo).mockResolvedValue({ defaults: { playbook: activeDraft.playbook_ref, draft_autosave: false } } as Config);
+    vi.mocked(ipc.taskSourceBranchesForRepo).mockResolvedValue({
+      branches: [{ full_ref: "refs/heads/main", name: "main" }],
+      head: { kind: "branch", full_ref: "refs/heads/main", name: "main" },
+      selected: null,
+    });
+    vi.mocked(ipc.listHarnessModelsForRepo).mockResolvedValue([]);
+    vi.mocked(ipc.getCurrentWebview, { partial: true }).mockReturnValue({ onDragDropEvent: async () => () => {} });
+    vi.mocked(ipc.readArtifactForRepo).mockResolvedValue("# Active Draft\n\nSaved description.");
+    vi.mocked(ipc.readDraftAttachmentsForRepo).mockResolvedValue({ entries: [], images: [] });
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    expect(await screen.findByPlaceholderText("New task name…")).toHaveProperty("value", "");
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    const search = screen.getByRole("combobox", { name: "Search actions, tasks, and sessions" });
+    fireEvent.change(search, { target: { value: "Active Draft" } });
+    await within(screen.getByRole("listbox")).findByText("Active Draft");
+    fireEvent.keyDown(search, { key: "Enter" });
+    await waitFor(() => expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Active Draft"));
+    expect(screen.getByPlaceholderText("task-slug")).toHaveProperty("value", "active-draft");
+    await screen.findByDisplayValue("Saved description.");
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+  });
+
   it("opens active drafts in Create Task and archived drafts in Task Detail", async () => {
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: "open active draft" }));
