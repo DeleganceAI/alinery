@@ -15,9 +15,10 @@ import { completeConfiguredText, modelSources, resolveModel, type ResolvedModel 
 import { openProviderRuntime } from "./runtime.ts";
 import { completeSessionMeta, getTaskExecution, ownershipLibrary, suggestSessionName, taskOp, taskWorktree } from "./tasks.ts";
 import { attachShell, detachPty, hasPty, isPty, killPty, resizePty, startShell, writePty } from "./terminal.ts";
+import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 19;
+const PROTOCOL = 20;
 const context = BACKGROUND_CONTEXT;
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
   kind: "alinery.attention",
@@ -399,32 +400,20 @@ async function seedPrompt(conversation: Conversation, prompt: string) {
   await conversation.submit({ type: "input", content: prompt, whenBusy: "followUp" }, context);
 }
 
-function textOf(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((part) => {
-      if (!part || typeof part !== "object" || !("text" in part)) return "";
-      const text = part.text;
-      return typeof text === "string" ? text : "";
-    })
-    .filter((text) => text.length > 0)
-    .join("\n");
-}
-
-type ShownMessage = { role?: string; content?: unknown; errorMessage?: string };
-
-// conversation.context() is the next model request. It drops assistant messages whose stop reason is error, aborted, or deferred, so a failed turn never reaches the pane. The transcript is the stored entries, plus the in-flight partial.
-async function transcriptMessages(row: Live, conversation: Conversation): Promise<ShownMessage[]> {
-  const messages: ShownMessage[] = [];
+// conversation.context() is the next model request. It drops assistant messages whose stop reason is error, aborted, or deferred, so a failed turn never reaches the pane. The transcript is the stored entries, plus the in-flight partial. Nested tool slots stay out.
+async function transcriptMessages(row: Live, conversation: Conversation): Promise<{ messages: TranscriptSource[]; tools: TranscriptToolSlot[] }> {
+  const messages: TranscriptSource[] = [];
   let cursor: Awaited<ReturnType<Conversation["entries"]>>["next"];
   for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
     const page = await conversation.entries({ order: "ascending" }, 200, cursor, context);
     for (const entry of page.items) {
       const model = entry.model;
       if (!Array.isArray(model)) continue;
-      for (const message of model) {
-        if (message && typeof message === "object") messages.push(message as ShownMessage);
+      for (let index = 0; index < model.length; index += 1) {
+        const message = model[index];
+        if (!message || typeof message !== "object") continue;
+        const id = model.length === 1 ? String(entry.id) : `${String(entry.id)}:${index}`;
+        messages.push(transcriptSource(id, message));
       }
     }
     cursor = page.next;
@@ -433,40 +422,12 @@ async function transcriptMessages(row: Live, conversation: Conversation): Promis
   const live = row.harness ? await row.harness.documentState(LiveDoc, conversation.id, context) : undefined;
   try {
     const partial = live?.value?.generation?.message;
-    if (partial) messages.push(partial);
-    else if (live?.value?.generation?.retry?.error) messages.push({ role: "assistant", errorMessage: live.value.generation.retry.error });
+    if (partial && typeof partial === "object") messages.push(transcriptSource("live", partial, true));
+    else if (live?.value?.generation?.retry?.error) messages.push(transcriptSource("live", { role: "assistant", errorMessage: live.value.generation.retry.error }));
+    return { messages, tools: transcriptToolSlots(live?.value?.tools) };
   } finally {
     live?.dispose();
   }
-  return messages;
-}
-
-function formatTranscript(messages: ReadonlyArray<ShownMessage>): Array<{ role: "user" | "assistant" | "tool"; text: string }> {
-  const out: Array<{ role: "user" | "assistant" | "tool"; text: string }> = [];
-  for (const message of messages) {
-    if (message.role === "user") {
-      const text = textOf(message.content).trim();
-      if (text) out.push({ role: "user", text });
-      continue;
-    }
-    if (message.role !== "assistant") continue;
-    const prose: string[] = [];
-    if (Array.isArray(message.content)) {
-      for (const part of message.content) {
-        if (!part || typeof part !== "object") continue;
-        const record = part as { type?: string; text?: string; name?: string };
-        if (record.type === "toolCall" || record.type === "tool_call") {
-          const name = record.name?.trim();
-          if (name) out.push({ role: "tool", text: name });
-          continue;
-        }
-        if (record.type === "text" && record.text?.trim()) prose.push(record.text.trim());
-      }
-    }
-    if (prose.length > 0) out.push({ role: "assistant", text: prose.join("\n") });
-    else if (message.errorMessage?.trim()) out.push({ role: "assistant", text: message.errorMessage.trim() });
-  }
-  return out;
 }
 
 async function modelMessages(conversation: Conversation) {
@@ -883,7 +844,8 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
         return;
       }
       if (op === "transcript") {
-        reply(socket, { messages: formatTranscript(await transcriptMessages(row, conversation)) });
+        const transcript = await transcriptMessages(row, conversation);
+        reply(socket, { messages: formatTranscript(transcript.messages, transcript.tools) });
         return;
       }
       if (op === "prompt") {

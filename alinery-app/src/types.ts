@@ -596,6 +596,8 @@ export type ChatMessage = {
   toolName?: string;
   toolCallId?: string;
   isError?: boolean;
+  /** A Vinculum tool result whose call is still running. Absent once the stored result has replaced it. */
+  streaming?: boolean;
 };
 
 // Mirrors alinery-core's LifecycleState (serde tag = "state", snake_case). Derived by the

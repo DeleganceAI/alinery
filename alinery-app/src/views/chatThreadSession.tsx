@@ -5,7 +5,16 @@ import { prepareChatAttachments } from "../chat/prepareAttachments";
 import { applySendPlan, planChatSend } from "../chat/send";
 import type { McpServerRow, ProvidersDialogTab } from "../chat/slash";
 import type { SessionChatStatus } from "../chat/types";
-import { appendOptimisticAbort, appendOptimisticUser, applyVinculumTranscript, type ChatTranscriptState, emptyTranscript, needsUiReply, type PendingUi } from "../chatTranscript";
+import {
+  appendOptimisticAbort,
+  appendOptimisticUser,
+  applyVinculumTranscript,
+  type ChatTranscriptState,
+  emptyTranscript,
+  needsUiReply,
+  type PendingUi,
+  watchVinculumTranscript,
+} from "../chatTranscript";
 import * as ipc from "../ipc";
 import { compactCommand, getStateCommand, type ImageContent, promptCommand } from "../ompRpc";
 import type { SessionTerminalIo } from "../SessionTerminal";
@@ -648,16 +657,12 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       registry.setSending(null);
       registry.setError(message);
     };
-    const pullTranscript = () => {
-      ipc.chatTranscript(repo, id).then(
-        (messages) => {
-          if (!cancelled) updateTranscript(() => applyVinculumTranscript(messages));
-        },
-        () => undefined,
-      );
-    };
-    pullTranscript();
-    const transcriptTimer = window.setInterval(pullTranscript, 1000);
+    const stopTranscript = watchVinculumTranscript(
+      () => ipc.chatTranscript(repo, id),
+      (messages) => {
+        if (!cancelled) updateTranscript(() => applyVinculumTranscript(messages));
+      },
+    );
     if (threadNow.session.started_at == null || threadNow.session.ended_at != null || threadNow.session.archived) {
       setConnection({ state: "offline" });
       dropClaim("Ava is not running in this thread, so the message was not sent. It is still in the composer.");
@@ -685,7 +690,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     return () => {
       cancelled = true;
       window.clearInterval(timer);
-      window.clearInterval(transcriptTimer);
+      stopTranscript();
       stopClosed();
     };
   }, [epoch, repo, id]);

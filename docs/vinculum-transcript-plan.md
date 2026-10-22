@@ -1,6 +1,6 @@
 # Vinculum transcript: thinking and tool calls
 
-Status: not started. A plan only.
+Status: done. The transcript reply carries thinking, text, tool-call, and tool-result parts. A live partial uses id `live`. A tool still `pending` or `running` stays a running tool-call row and, when the slot has output, a running tool-result row. Protocol is 20. The thinking picker and the model label are still `docs/vinculum-model-thinking-plan.md`.
 
 This is a working note, not a product contract. `README.md` is human-edited and is not the place for it.
 
@@ -40,7 +40,7 @@ The per-session thinking picker, and the model label that has to move with it, a
 
 The 100 ms partial is already finer than the view. While a session is busy, poll the transcript faster than the current 1 s. Idle stays at 1 s. No new op.
 
-`TranscriptMessage` has to grow the parts, because the Rust client is what the views receive. That is a reply-format change, so bump `PROTOCOL_VERSION` and the assertion in `protocol.rs` that pins it at 18. App and daemon ship together on this branch. A protocol bump means a running daemon is not reused; restart `tauri dev` after it.
+`TranscriptMessage` carries the parts, because the Rust client is what the views receive. That reply-format change is `PROTOCOL_VERSION` 20 (the assertion in `protocol.rs`). App and daemon ship together on this branch. A protocol bump means a running daemon is not reused; restart `tauri dev` after it.
 
 Leave the Show thinking and Show tools switches, and their defaults, alone. With the switches on, chat and session chat show the same rails OMP did. With them off, a live turn still reads "Working…", which is what a running status with no visible thinking or tool row already does.
 

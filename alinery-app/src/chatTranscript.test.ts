@@ -10,6 +10,7 @@ import {
   applyFilePage,
   applyRpcLine,
   applyRpcLines,
+  applyVinculumTranscript,
   type ChatTranscriptState,
   carryOver,
   dismissPendingUi,
@@ -18,6 +19,7 @@ import {
   mapHydratedMessage,
   matchingSendFailure,
   settleRefusedSend,
+  vinculumTranscriptPollMs,
 } from "./chatTranscript";
 import type { ChatMessage } from "./types";
 
@@ -1514,5 +1516,73 @@ describe("carryOver", () => {
     expect(next.entries.map((entry) => entry.id)).toEqual(["f:m2", "f:m3", "e1"]);
     expect(next.entries[2]).toMatchObject({ type: "prompt", text: "refused", failed: true });
     expect(next.entrySeq).toBe(1);
+  });
+});
+
+describe("applyVinculumTranscript", () => {
+  const reply = [
+    { id: "u1", role: "user", content: [{ type: "text", text: "hi" }] },
+    {
+      id: "live",
+      role: "assistant",
+      streaming: true,
+      content: [
+        { type: "thinking", thinking: "plan" },
+        { type: "redactedThinking" },
+        { type: "text", text: "Hel" },
+        { type: "toolCall", id: "c1", name: "read", arguments: { path: "a.ts" } },
+      ],
+    },
+  ];
+
+  it("builds thinking, tool-call, and tool-result rows, and a longer partial keeps the earlier row ids", () => {
+    const state = applyVinculumTranscript(reply);
+    expect(state.entries.map((entry) => entry.type)).toEqual(["prompt", "thinking", "redacted_thinking", "text", "tool_call"]);
+    expect(state.entries[1]).toMatchObject({ id: "f:live:thinking:0", type: "thinking", text: "plan", streaming: true });
+    expect(state.entries[4]).toMatchObject({ id: "f:live:tool:c1", type: "tool_call", tool: "read", status: "running", args: '{"path":"a.ts"}' });
+    const ids = state.entries.map((entry) => entry.id);
+
+    const grown = applyVinculumTranscript([
+      reply[0],
+      {
+        ...reply[1],
+        content: [
+          { type: "thinking", thinking: "plan" },
+          { type: "redactedThinking" },
+          { type: "text", text: "Hello" },
+          { type: "toolCall", id: "c1", name: "read", arguments: { path: "a.ts" } },
+        ],
+      },
+    ]);
+    expect(grown.entries.map((entry) => entry.id)).toEqual(ids);
+    expect(grown.entries[3]).toMatchObject({ id: "f:live:text:0", text: "Hello" });
+    expect(vinculumTranscriptPollMs(reply)).toBe(200);
+    expect(vinculumTranscriptPollMs([reply[0]])).toBe(1000);
+  });
+
+  it("keeps a committed tool call running while its slot has output", () => {
+    const state = applyVinculumTranscript([
+      {
+        id: "a1",
+        role: "assistant",
+        runningToolIds: ["c2"],
+        content: [
+          { type: "text", text: "Running." },
+          { type: "toolCall", id: "c1", name: "read", arguments: {} },
+          { type: "toolCall", id: "c2", name: "bash", arguments: { command: "ls" } },
+        ],
+      },
+      { id: "r1", role: "toolResult", toolName: "read", toolCallId: "c1", content: [{ type: "text", text: "stored" }] },
+      { id: "live:c2", role: "toolResult", streaming: true, toolName: "bash", toolCallId: "c2", content: [{ type: "text", text: "partial out" }] },
+    ]);
+    const calls = state.entries.flatMap((entry) => (entry.type === "tool_call" ? [{ id: entry.id, status: entry.status, tool: entry.tool }] : []));
+    expect(calls).toEqual([
+      { id: "f:a1:tool:c1", status: "ok", tool: "read" },
+      { id: "f:a1:tool:c2", status: "running", tool: "bash" },
+    ]);
+    expect(state.entries.filter((entry) => entry.type === "tool_result")).toMatchObject([
+      { id: "f:r1", tool: "read", text: "stored", status: "ok" },
+      { id: "f:live:c2", tool: "bash", text: "partial out", status: "running" },
+    ]);
   });
 });

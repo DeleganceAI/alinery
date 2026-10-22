@@ -213,7 +213,7 @@ function toolResultEntry(message: ChatMessage) {
     type: "tool_result" as const,
     tool: message.toolName ?? "tool",
     text: message.content.map((part) => (part.type === "text" ? part.text : "")).join(""),
-    status: message.isError ? ("error" as const) : ("ok" as const),
+    status: message.isError ? ("error" as const) : message.streaming ? ("running" as const) : ("ok" as const),
   };
 }
 
@@ -541,19 +541,74 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
  * everything after it. Live entries are identified by their ids never starting with `f:`, so they
  * survive a page landing and always sort after the file content.
  */
-export type VinculumMessage = { role: string; text: string };
+export type VinculumMessage = {
+  id?: string;
+  role: string;
+  /** Older replies were a single string. A part list wins when it is present. */
+  text?: string;
+  content?: unknown;
+  streaming?: boolean;
+  toolName?: string;
+  toolCallId?: string;
+  isError?: boolean;
+  runningToolIds?: string[];
+};
 
-/** Replace the pane with the daemon transcript. Row ids stay stable while messages are only appended. */
+export const VINCULUM_TRANSCRIPT_IDLE_MS = 1000;
+/** The daemon already folds the partial about every 100ms. Idle stays on the slow poll. */
+export const VINCULUM_TRANSCRIPT_BUSY_MS = 200;
+
+export function vinculumTranscriptPollMs(messages: readonly VinculumMessage[]): number {
+  const busy = messages.some((message) => message.streaming === true || (message.runningToolIds?.length ?? 0) > 0);
+  return busy ? VINCULUM_TRANSCRIPT_BUSY_MS : VINCULUM_TRANSCRIPT_IDLE_MS;
+}
+
+/** Poll until `stop`. A busy reply (live partial or a tool still running) shortens the next wait. */
+export function watchVinculumTranscript(load: () => Promise<VinculumMessage[]>, apply: (messages: VinculumMessage[]) => void): () => void {
+  let timer = 0;
+  let stopped = false;
+  const pull = () => {
+    load().then(
+      (messages) => {
+        if (stopped) return;
+        apply(messages);
+        timer = window.setTimeout(pull, vinculumTranscriptPollMs(messages));
+      },
+      () => {
+        if (!stopped) timer = window.setTimeout(pull, VINCULUM_TRANSCRIPT_IDLE_MS);
+      },
+    );
+  };
+  pull();
+  return () => {
+    stopped = true;
+    window.clearTimeout(timer);
+  };
+}
+
+function vinculumChatMessage(message: VinculumMessage, index: number): ChatMessage | null {
+  const raw = message.content !== undefined ? message : { ...message, content: [{ type: "text", text: message.text ?? "" }] };
+  const mapped = mapHydratedMessage(raw, message.id && message.id.length > 0 ? message.id : `v${index}`);
+  if (!mapped) return null;
+  if (message.streaming && mapped.role === "toolResult") mapped.streaming = true;
+  const running = new Set(message.runningToolIds ?? []);
+  if (!message.streaming && running.size === 0) return mapped;
+  mapped.content = mapped.content.map((part) => {
+    if (message.streaming && (part.type === "thinking" || part.type === "text" || part.type === "toolCall")) return { ...part, streaming: true };
+    if (part.type === "toolCall" && part.id && running.has(part.id)) return { ...part, streaming: true };
+    return part;
+  });
+  return mapped;
+}
+
+/** Replace the pane with the daemon transcript. Row ids are the entry id plus the part key, so a growing partial does not remount earlier rows. */
 export function applyVinculumTranscript(messages: VinculumMessage[]): ChatTranscriptState {
   const page = {
     start: 0,
-    messages: messages.map(
-      (message, index): ChatMessage => ({
-        rowId: `v${index}`,
-        role: message.role === "user" ? "user" : message.role === "tool" ? "toolResult" : "assistant",
-        content: [{ type: "text", text: message.text }],
-      }),
-    ),
+    messages: messages.flatMap((message, index) => {
+      const mapped = vinculumChatMessage(message, index);
+      return mapped ? [mapped] : [];
+    }),
   };
   return { ...applyFilePage(emptyTranscript(), page, "initial"), ready: true, fileStart: 0 };
 }

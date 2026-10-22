@@ -419,10 +419,34 @@ pub fn omp_setup_request() -> Value {
     json!({"op": ops::OMP_SETUP})
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+/// One stored or in-flight message. `content` is the part list the pane already maps
+/// (`thinking`, `text`, `toolCall`, `redactedThinking`, `toolResult` text). `id` is the Pi
+/// entry id, or `live` for the partial. A running tool call id stays in `running_tool_ids`
+/// after that assistant entry has committed.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct TranscriptMessage {
+    #[serde(default)]
+    pub id: String,
     pub role: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub text: String,
+    #[serde(default)]
+    pub content: Vec<Value>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub streaming: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_error: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub running_tool_ids: Vec<String>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 pub fn transcript_request(id: &str) -> Value {
@@ -1597,6 +1621,36 @@ mod tests {
         .unwrap();
         assert_eq!(status.prompt.unwrap().kind, "secret");
         assert!(matches!(status.events[0], ProviderLoginEvent::AuthUrl { .. }));
+        let messages: Vec<TranscriptMessage> = serde_json::from_value(json!([
+            {
+                "id": "e1",
+                "role": "assistant",
+                "streaming": true,
+                "runningToolIds": ["c1"],
+                "content": [
+                    {"type": "thinking", "thinking": "plan"},
+                    {"type": "redactedThinking"},
+                    {"type": "text", "text": "hello"},
+                    {"type": "toolCall", "id": "c1", "name": "read", "arguments": {"path": "a.ts"}}
+                ]
+            },
+            {
+                "id": "e2",
+                "role": "toolResult",
+                "toolName": "read",
+                "toolCallId": "c1",
+                "isError": false,
+                "content": [{"type": "text", "text": "body"}]
+            }
+        ]))
+        .unwrap();
+        assert!(messages[0].streaming);
+        assert_eq!(messages[0].running_tool_ids, vec!["c1".to_string()]);
+        assert_eq!(messages[1].tool_name.as_deref(), Some("read"));
+        assert_eq!(messages[1].tool_call_id.as_deref(), Some("c1"));
+        let replayed = serde_json::to_value(&messages[0]).unwrap();
+        assert_eq!(replayed["content"][3]["arguments"]["path"], "a.ts");
+        assert_eq!(replayed["content"][1]["type"], "redactedThinking");
     }
 
     #[test]

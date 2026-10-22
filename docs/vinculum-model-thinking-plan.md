@@ -81,7 +81,7 @@ Put `model`, `thinking`, and `thinking_levels` on the transcript reply, next to 
 
 `set_model` and `set_thinking_level` return the same three fields with `ok: true`, so the pane can move the label before the next poll. A poll is still the source of truth and overwrites that optimistic value.
 
-This is a reply-format change. `PROTOCOL_VERSION` is 19. Bump it, and bump the assertion in `protocol.rs` that pins 19 to the provider ops. App and daemon ship together. A running daemon is not reused; restart `tauri dev` after it.
+This is a reply-format change. `PROTOCOL_VERSION` is 20 after the transcript parts landed. Bump it again, and bump the assertion in `protocol.rs` that pins 20 to those parts. App and daemon ship together. A running daemon is not reused; restart `tauri dev` after it.
 
 Do not fold this into the thinking-and-tool-call transcript work. That plan changes what is inside each message. This one adds fields beside the list. Either can land first. The sentence in `docs/vinculum-transcript-plan.md` that said not to add a thinking control now points here.
 
@@ -97,4 +97,4 @@ Terminal (`no-harness`) sessions have neither control. Do not send them these op
 
 ## Not in this pass
 
-No change to Show thinking or Show tools. No thinking text in the transcript; that stays `docs/vinculum-transcript-plan.md`. No per-message model stamp. No second protocol. No live model discovery. The harness key stays `omp`.
+No change to Show thinking or Show tools. Thinking text and tool rows are already on the transcript reply (`docs/vinculum-transcript-plan.md`); this pass only adds the model and thinking level beside that list. No per-message model stamp. No second protocol. No live model discovery. The harness key stays `omp`.

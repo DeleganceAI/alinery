@@ -23,6 +23,7 @@
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { ProviderCatalog, ProviderLoginStatus } from "./chat/providers";
+import type { VinculumMessage } from "./chatTranscript";
 import type {
   AccountSignOutResult,
   AccountStatus,
@@ -288,7 +289,7 @@ export const archiveChatThread = (repoPath: string, sessionId: string, removeWor
 export const removeChatWorktree = (repoPath: string, sessionId: string) => invoke<void>("remove_chat_worktree", { repoPath, sessionId });
 export const resumeChatThread = (repoPath: string, sessionId: string) => invoke<SessionMeta>("resume_chat_thread", { repoPath, sessionId });
 export const chatBranchLabel = (repoPath: string, sessionId: string) => invoke<ChatBranch>("chat_branch_label", { repoPath, sessionId });
-export type VinculumMessage = { role: string; text: string };
+export type { VinculumMessage };
 export const chatTranscript = (repoPath: string, id: string) => invoke<VinculumMessage[]>("chat_transcript", { repoPath, id });
 export const chatPrompt = (repoPath: string, id: string, text: string) => invoke<void>("chat_prompt", { repoPath, id, text });
 export const chatAbort = (repoPath: string, id: string) => invoke<void>("chat_abort", { repoPath, id });

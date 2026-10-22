@@ -38,6 +38,7 @@ import {
   matchingSendSuccess,
   needsUiReply,
   settleRefusedSend,
+  watchVinculumTranscript,
 } from "../chatTranscript";
 import { completionPrompt } from "../completionPrompt";
 import { confirmDanger, confirmStopAndSwitch } from "../confirm";
@@ -1370,27 +1371,17 @@ export function SessionView({
 
   useEffect(() => {
     if (!vinculum || !showChat) return;
-    let cancelled = false;
-    const pull = () => {
-      void ipc.sessionTranscript(id).then(
-        (messages) => {
-          if (cancelled) return;
-          setChat(() => {
-            const next = applyVinculumTranscript(messages);
-            chatRef.current = next;
-            return next;
-          });
-          setTerminalConnection("open");
-        },
-        () => undefined,
-      );
-    };
-    pull();
-    const timer = window.setInterval(pull, 1000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
+    return watchVinculumTranscript(
+      () => ipc.sessionTranscript(id),
+      (messages) => {
+        setChat(() => {
+          const next = applyVinculumTranscript(messages);
+          chatRef.current = next;
+          return next;
+        });
+        setTerminalConnection("open");
+      },
+    );
   }, [vinculum, showChat, id]);
   useEffect(() => {
     if (vinculum || !liveRpc) return;
