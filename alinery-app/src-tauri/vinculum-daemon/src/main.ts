@@ -16,10 +16,12 @@ import { openProviderRuntime } from "./runtime.ts";
 import { completeSessionMeta, getTaskExecution, ownershipLibrary, suggestSessionName, taskOp, taskWorktree } from "./tasks.ts";
 import { attachShell, detachPty, hasPty, isPty, killPty, resizePty, startShell, writePty } from "./terminal.ts";
 import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinking, seedLevel, seedUnsetThinking, setModelRefusal, turnControls } from "./sessionControls.ts";
+import { McpHub } from "./mcp.ts";
+import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 21;
+const PROTOCOL = 22;
 const context = BACKGROUND_CONTEXT;
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
   kind: "alinery.attention",
@@ -207,6 +209,15 @@ startKeepAwake(ownershipLibrary());
 registry.install(codingExtension());
 registry.install(phaseExtension());
 registry.install(namingExtension());
+const agentDir = vinculumAgentDir(appConfig);
+registry.install(
+  defineExtension({
+    name: "alinery-skills",
+    sections: [section("skills", () => skillCatalog(agentDir))],
+  }),
+);
+const mcpHub = new McpHub(registry, { repo, appConfig, agentDir });
+void mcpHub.refresh();
 
 function acquireOwnership(repoPath: string, laneName: string, configIdentity: string) {
   const library = ownershipLibrary();
@@ -716,6 +727,7 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
     return;
   }
   if (op === "shutdown") {
+    mcpHub.close();
     releaseKeepAwake();
     const now = Math.floor(Date.now() / 1000);
     for (const row of live.values()) {
@@ -999,6 +1011,14 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
       return;
     }
     reply(socket, { error: "session has no engine execution to permit" });
+    return;
+  }
+  if (op === "vinculum_customizations") {
+    try {
+      reply(socket, await mcpHub.refresh());
+    } catch {
+      reply(socket, { error: "could not read customizations" });
+    }
     return;
   }
   if (["get_task_execution", "create_execution_session", "start_session", "create_task", "create_subtask"].includes(op)) {

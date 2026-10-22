@@ -9321,6 +9321,14 @@ dialog.modal::backdrop {
   margin-top: 4px;
   font-size: calc(12px * var(--ui-scale));
 }
+.vinculum-customization-groups {
+  display: grid;
+  gap: 16px;
+}
+.vinculum-customization-groups h5 {
+  margin: 0 0 8px;
+  font-size: calc(13px * var(--ui-scale));
+}
 .grid-view-settings-list {
   display: grid;
   gap: 10px;

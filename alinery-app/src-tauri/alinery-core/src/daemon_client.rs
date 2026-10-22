@@ -356,6 +356,7 @@ pub mod ops {
     pub const PROVIDER_LOGIN_REPLY: &str = "provider_login_reply";
     pub const CUSTOM_PROVIDER_SAVE: &str = "custom_provider_save";
     pub const CUSTOM_PROVIDER_DELETE: &str = "custom_provider_delete";
+    pub const VINCULUM_CUSTOMIZATIONS: &str = "vinculum_customizations";
 }
 
 pub fn is_known_open_intent(intent: &str) -> bool {
@@ -512,6 +513,26 @@ pub fn provider_login_reply_request(login_id: &str, value: &str, cancel: bool) -
 
 pub fn custom_provider_save_request(id: &str, name: &str, base_url: &str, api_key: &str, keep_key: bool, models: &[String]) -> Value {
     json!({"op": ops::CUSTOM_PROVIDER_SAVE, "id": id, "name": name, "base_url": base_url, "api_key": api_key, "keep_key": keep_key, "models": models})
+}
+
+pub fn vinculum_customizations_request() -> Value {
+    json!({"op": ops::VINCULUM_CUSTOMIZATIONS})
+}
+
+/// Built-in tool names and MCP connection state. `error` is a fixed string. No command, url, header, or env.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct VinculumMcpServer {
+    pub name: String,
+    pub builtin: bool,
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct VinculumCustomizations {
+    pub tools: Vec<String>,
+    pub servers: Vec<VinculumMcpServer>,
 }
 
 pub fn custom_provider_delete_request(id: &str) -> Value {
@@ -1191,6 +1212,10 @@ impl DaemonClient {
         typed_reply(self.call(&custom_provider_delete_request(id))?)
     }
 
+    pub fn vinculum_customizations(&self) -> Result<VinculumCustomizations, String> {
+        typed_reply(self.call(&vinculum_customizations_request())?)
+    }
+
     /// Returns the reserved setup session id to attach to.
     pub fn omp_setup(&self) -> Result<String, String> {
         let reply = self.call(&omp_setup_request())?;
@@ -1632,6 +1657,14 @@ mod tests {
         assert_eq!(set_model_request("s1", "xai/grok-4.6"), json!({"op": "set_model", "id": "s1", "model": "xai/grok-4.6"}));
         assert_eq!(set_thinking_level_request("s1", "high"), json!({"op": "set_thinking_level", "id": "s1", "level": "high"}));
         assert_eq!(provider_catalog_request(), json!({"op": "provider_catalog"}));
+        assert_eq!(vinculum_customizations_request(), json!({"op": "vinculum_customizations"}));
+        let customizations: VinculumCustomizations = serde_json::from_value(json!({
+            "tools": ["read", "bash"],
+            "servers": [{"name": "alinery", "builtin": true, "state": "error", "error": "bundled alinery-mcp was not found"}]
+        }))
+        .unwrap();
+        assert!(customizations.servers[0].builtin);
+        assert_eq!(customizations.servers[0].error.as_deref(), Some("bundled alinery-mcp was not found"));
         assert_eq!(
             provider_login_start_request("anthropic", "oauth"),
             json!({"op": "provider_login_start", "provider": "anthropic", "method": "oauth"})

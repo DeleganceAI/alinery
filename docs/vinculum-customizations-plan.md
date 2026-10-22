@@ -1,6 +1,6 @@
 # Vinculum customizations, skills, and MCP
 
-Status: not started. This is a working note, not a product contract. `README.md` is human-edited and is not the place for it.
+Status: implemented on this branch. This is a working note, not a product contract. `README.md` is human-edited and is not the place for it.
 
 The Harness page still has the OMP customizations block: open the configuration folder, copy instructions for an outside AI, and a list of installed skills, extensions, MCP servers, and plugin packages. That block has to stay, and it has to describe Vinculum. Vinculum's agent runtime is pi-durable (`@earendil-works/pi-durable` 1.3.0), from the Pi project. It is not OMP, and this build does not ship an OMP binary.
 

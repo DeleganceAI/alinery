@@ -248,8 +248,11 @@ export type ExperimentalFeatures = {
 export type GridViewDefinition = { id: string; name: string; slot: number };
 export type UpdateRelease = { version: string; url: string; sha256: string; size: number; protocol_version: number; published_at: string };
 export type UpdateStatus = { current: string; available: UpdateRelease | null; checked_at: number };
-export type OmpCustomization = { name: string; kind: string; source: string; path: string | null };
-export type OmpCustomizations = { items: OmpCustomization[]; errors: string[] };
+export type VinculumCustomization = { name: string; kind: string; source: string; path: string | null; offered?: boolean };
+export type VinculumCustomizations = { items: VinculumCustomization[]; errors: string[] };
+export type VinculumMcpServer = { name: string; builtin: boolean; state: "connected" | "disabled" | "error" | string; error?: string };
+export type VinculumDaemonCustomizations = { tools: string[]; servers: VinculumMcpServer[] };
+export type SkillInstall = { name: string; exists: boolean };
 export type StagedUpdate = { version: string; app_path: string; scratch_dir: string };
 export type GlobalSettings = {
   notifications: NotificationPrefs;

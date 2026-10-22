@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::lockfile::lock_exclusive_blocking;
-use crate::paths::omp_home_dirs;
+use crate::paths::vinculum_home_dirs;
 use crate::write_owner_only_bytes;
 
 const HOSTED_PROVIDER: &str = "alinery";
@@ -83,7 +83,7 @@ pub fn inference_path(config_dir: &Path) -> PathBuf {
 }
 
 pub fn models_yml_path(app_config: &Path) -> PathBuf {
-    omp_home_dirs(app_config).0.join("models.yml")
+    vinculum_home_dirs(app_config).0.join("models.yml")
 }
 
 /// Directory that holds `auth.json` / `inference.json` for this `app.toml`.

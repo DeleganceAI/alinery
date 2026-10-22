@@ -76,6 +76,8 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 
 mod account;
+#[path = "vinculum_customizations.rs"]
+mod agent_customizations;
 mod app_config;
 mod artifacts;
 mod backup;
@@ -88,7 +90,6 @@ mod hosted;
 mod imports;
 mod mcp;
 mod notify;
-mod omp_customizations;
 mod omp_update;
 mod paths;
 mod pi_durable;
@@ -102,6 +103,7 @@ mod telemetry;
 mod update;
 
 use account::*;
+use agent_customizations::*;
 use app_config::*;
 use artifacts::*;
 use backup::*;
@@ -114,7 +116,6 @@ use hosted::*;
 use imports::*;
 use mcp::*;
 use notify::*;
-use omp_customizations::*;
 use omp_update::*;
 use paths::*;
 use pi_durable::*;
@@ -366,9 +367,13 @@ pub fn run() {
             omp_agent_sessions_dir,
             read_omp_model_roles,
             write_omp_model_roles,
-            open_omp_config_dir,
-            omp_customization_prompt,
-            read_omp_customizations,
+            open_vinculum_agent_dir,
+            vinculum_customization_prompt,
+            read_vinculum_customizations,
+            pick_vinculum_skill_dialog,
+            install_vinculum_skill,
+            delete_vinculum_skill,
+            vinculum_customizations,
         ])
         .build(context)
         .expect("error while building tauri application")

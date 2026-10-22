@@ -54,8 +54,8 @@ import type {
   UpdateStatus,
 } from "../types";
 import { type McpStatus, type McpStatusHandle, mcpDotColor, mcpStatusLabel } from "../useMcpStatus";
-import { OmpCustomizations } from "./OmpCustomizations";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
+import { VinculumCustomizations } from "./VinculumCustomizations";
 
 /** Kebab menu for a connected row: the actions that only make sense once a connection exists.
  *  Follows RepoSelect's dropdown idiom — outside click and Escape close it, Escape returns focus. */
@@ -1625,7 +1625,7 @@ export function Settings({
             Providers &amp; accounts
           </button>
           {providersOpen && <ProviderSetupDialog mode="manual" onClose={() => setProvidersOpen(false)} />}
-          <OmpCustomizations />
+          <VinculumCustomizations />
         </section>
         <section className="harness-settings-section" aria-labelledby="session-defaults-title">
           <h3 id="session-defaults-title">Session defaults</h3>

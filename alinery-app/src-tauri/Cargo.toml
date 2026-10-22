@@ -36,6 +36,7 @@ portable-pty = "0.9"
 alinery-core = { path = "alinery-core" }
 uuid = { version = "1", features = ["v4"] }
 pulldown-cmark = { version = "0.13", default-features = false }
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }

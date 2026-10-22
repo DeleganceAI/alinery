@@ -59,7 +59,6 @@ import type {
   LinearTicket,
   McpStatus,
   NormalizedPlaybook,
-  OmpCustomizations,
   PickerPreferences,
   PlaybookCatalog,
   PlaybookRef,
@@ -85,6 +84,7 @@ import type {
   SessionNotificationClearRef,
   SessionObservation,
   SessionStatusRef,
+  SkillInstall,
   StagedUpdate,
   StorageInfo,
   SubtaskManagerState,
@@ -97,6 +97,8 @@ import type {
   TaskSourceBranches,
   UpdateResult,
   UpdateStatus,
+  VinculumCustomizations,
+  VinculumDaemonCustomizations,
 } from "./types";
 
 export { getName, getVersion } from "@tauri-apps/api/app";
@@ -479,11 +481,13 @@ export const applyUpdate = (version: string) => invoke<void>("apply_update", { v
 export const ompAgentSessionsDir = () => invoke<string>("omp_agent_sessions_dir");
 export const readOmpModelRoles = () => invoke<Record<string, string>>("read_omp_model_roles");
 export const writeOmpModelRoles = (roles: Record<string, string>) => invoke<Record<string, string>>("write_omp_model_roles", { roles });
-export const openOmpConfigDir = () => invoke<void>("open_omp_config_dir");
-export const ompCustomizationPrompt = () => invoke<string>("omp_customization_prompt");
-
-// ── omp_customizations.rs ─────────────────────────────────────────────
-export const readOmpCustomizations = () => invoke<OmpCustomizations>("read_omp_customizations");
+export const openVinculumAgentDir = () => invoke<void>("open_vinculum_agent_dir");
+export const vinculumCustomizationPrompt = () => invoke<string>("vinculum_customization_prompt");
+export const readVinculumCustomizations = () => invoke<VinculumCustomizations>("read_vinculum_customizations");
+export const pickVinculumSkillDialog = () => invoke<string | null>("pick_vinculum_skill_dialog");
+export const installVinculumSkill = (sourcePath: string, replace: boolean) => invoke<SkillInstall>("install_vinculum_skill", { sourcePath, replace });
+export const deleteVinculumSkill = (name: string) => invoke<void>("delete_vinculum_skill", { name });
+export const vinculumCustomizations = () => invoke<VinculumDaemonCustomizations>("vinculum_customizations");
 
 // One attach-id space per daemon session, shared by every pane that can attach to it (terminal,
 // chat, session chat). Per-pane counters collided: one pane's detach dropped another's stream.

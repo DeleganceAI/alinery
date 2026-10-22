@@ -1101,6 +1101,12 @@ pub(crate) async fn provider_catalog(state: State<'_, AppState>) -> Result<aline
 }
 
 #[tauri::command]
+pub(crate) async fn vinculum_customizations(state: State<'_, AppState>) -> Result<alinery_core::daemon_client::VinculumCustomizations, String> {
+    let daemon = active_daemon(&state)?;
+    off_main_thread("vinculum customizations", move || daemon.vinculum_customizations()).await
+}
+
+#[tauri::command]
 pub(crate) async fn provider_logout(state: State<'_, AppState>, provider: String) -> Result<alinery_core::daemon_client::ProviderCatalog, String> {
     let daemon = active_daemon(&state)?;
     off_main_thread("provider logout", move || daemon.provider_logout(&provider)).await
