@@ -33,7 +33,10 @@ export type ChatProvidersDialogProps = {
   onTabChange: (tab: ProvidersDialogTab) => void;
   onApplyModel: (provider: string, modelId: string) => void;
   onLogin: (providerId: string) => void;
-  onHatchTerminalLogin: (providerId?: string) => void;
+  onLogout?: (providerId: string) => void;
+  /** Custom endpoint ids. They have models and are not an Accounts sign-in row. */
+  configuredIds?: string[];
+  footer?: ReactNode;
   onAssignRole: (role: string, model: string | null) => void;
   onSignIn?: () => void;
   onSubscribe?: () => void;
@@ -42,9 +45,8 @@ export type ChatProvidersDialogProps = {
 };
 
 function advancedHint(row: AdvancedProviderRow): string {
-  if (row.reason === "env") return row.readyViaEnv ? "ready via env" : "set env or Terminal";
-  if (row.reason === "live-promote") return "needs Terminal";
-  return "Terminal /login";
+  if (row.reason === "env") return row.readyViaEnv ? "ready" : "not configured";
+  return "sign-in did not finish";
 }
 
 function CostBand({ price }: { price: number }) {
@@ -136,7 +138,9 @@ export function ChatModelDialog({
   onTabChange,
   onApplyModel,
   onLogin,
-  onHatchTerminalLogin,
+  onLogout,
+  configuredIds = [],
+  footer,
   onAssignRole,
   onSignIn,
   onSubscribe,
@@ -152,7 +156,10 @@ export function ChatModelDialog({
   }, [preselect]);
 
   const listed = useMemo(() => mergeGrokModels(mergeHostedModels(models, hosted), grok), [models, hosted, grok]);
-  const { chatLogin, advanced } = useMemo(() => partitionProviders({ loginProviders, models: listed, livePromotedIds }), [loginProviders, listed, livePromotedIds]);
+  const { chatLogin, advanced } = useMemo(
+    () => partitionProviders({ loginProviders, models: listed, livePromotedIds, configuredIds }),
+    [loginProviders, listed, livePromotedIds, configuredIds],
+  );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -195,7 +202,7 @@ export function ChatModelDialog({
 
         {tab === "accounts" ? (
           <>
-            <p className="dim">Sign in with browser OAuth or paste-code. Chat never collects API keys.</p>
+            <p className="dim">Sign in with an API key or the provider's browser login. The key is stored for this app, not in the transcript.</p>
             {error ? <p className="chat-face-danger">{error}</p> : null}
             {children}
             <ul className="chat-model-list">
@@ -204,11 +211,17 @@ export function ChatModelDialog({
               {catalogueStatus === "ready" && chatLogin.length === 0 && !hosted ? <li className="dim">No Chat-capable providers yet.</li> : null}
               {chatLogin.map((p) => {
                 const busy = loginBusy === p.id;
+                const canSignOut = p.authenticated && p.stored === true && !!onLogout;
                 return (
                   <li key={p.id}>
-                    <button type="button" className="chat-model-item" disabled={!!loginBusy || p.authenticated} onClick={() => onLogin(p.id)}>
+                    <button
+                      type="button"
+                      className="chat-model-item"
+                      disabled={!!loginBusy || (p.authenticated && !canSignOut)}
+                      onClick={() => (canSignOut ? onLogout?.(p.id) : onLogin(p.id))}
+                    >
                       <span>{p.name}</span>
-                      <span className="chat-work-meta">{p.authenticated ? "signed in" : busy ? "signing in…" : "sign in"}</span>
+                      <span className="chat-work-meta">{canSignOut ? "sign out" : p.authenticated ? "signed in" : busy ? "signing in…" : "sign in"}</span>
                     </button>
                   </li>
                 );
@@ -221,14 +234,14 @@ export function ChatModelDialog({
                 </button>
                 {advancedOpen ? (
                   <>
-                    <p className="dim">These need Terminal /login or an environment variable on the Alinery process. Chat will not collect keys.</p>
+                    <p className="dim">These already have models without a sign-in step.</p>
                     <ul className="chat-model-list">
                       {advanced.map((row) => (
                         <li key={row.id}>
-                          <button type="button" className="chat-model-item" onClick={() => onHatchTerminalLogin(row.id)}>
+                          <div className="chat-model-item">
                             <span>{row.name}</span>
                             <span className="chat-work-meta">{advancedHint(row)}</span>
-                          </button>
+                          </div>
                         </li>
                       ))}
                     </ul>
@@ -236,6 +249,7 @@ export function ChatModelDialog({
                 ) : null}
               </div>
             ) : null}
+            {footer}
           </>
         ) : (
           <>

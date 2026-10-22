@@ -4,7 +4,6 @@ import { dirname, join } from "node:path";
 import { dlopen, FFIType, ptr, CString } from "bun:ffi";
 import type { WatchHandle } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { createModels } from "@earendil-works/pi-ai/models";
 import { Type } from "@earendil-works/pi-ai";
 import { Harness, LiveDoc, createRegistry, defineDoc, defineExtension, defineTool, section, type Conversation, type Harness as OpenedHarness } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
@@ -12,12 +11,13 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import { completeSession, engineAxis, enginePlaybook, permitSession, startGraphs } from "./graph.ts";
 import { CHAT_TITLE_PROMPT, SESSION_NAME_INSTRUCTION, chatTitleBucket, cleanChatTitle } from "./naming.ts";
-import { completeAlineryText, installAlineryProvider, modelSources, resolveModelId } from "./provider.ts";
+import { completeConfiguredText, modelSources, resolveModel, type ResolvedModel } from "./provider.ts";
+import { openProviderRuntime } from "./runtime.ts";
 import { completeSessionMeta, getTaskExecution, ownershipLibrary, suggestSessionName, taskOp, taskWorktree } from "./tasks.ts";
 import { attachShell, detachPty, hasPty, isPty, killPty, resizePty, startShell, writePty } from "./terminal.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 18;
+const PROTOCOL = 19;
 const context = BACKGROUND_CONTEXT;
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
   kind: "alinery.attention",
@@ -82,7 +82,6 @@ if (!sources.hosted && !sources.grok) {
 const lane = namespace;
 const identity = appConfigIdentity(appConfig);
 acquireOwnership(repo, lane, identity);
-startKeepAwake(ownershipLibrary());
 const uiSocket = join(repo, ".alinery", `${namespace ? `alineryd-${namespace}` : "alineryd"}.sock`);
 try {
   unlinkSync(uiSocket);
@@ -91,14 +90,11 @@ try {
 }
 mkdirSync(dirname(uiSocket), { recursive: true });
 
-const models = createModels();
-installAlineryProvider(models, appConfig);
+const providers = openProviderRuntime(appConfig);
+const models = providers.models;
 const fileWrite = createWriteTool();
 const PHASE_WRITE = "xd://alinery_phase_complete";
 const registry = createRegistry();
-registry.install(codingExtension());
-registry.install(phaseExtension());
-registry.install(namingExtension());
 
 function codingExtension() {
   return defineExtension({
@@ -203,6 +199,12 @@ function startKeepAwake(library: string) {
   }, 1000);
   releaseKeepAwake = () => lib.symbols.alinery_keep_awake_release();
 }
+
+// These consts are initialized above. Calling the extensions any earlier reads sessionNameTool and releaseKeepAwake in the temporal dead zone, and the bundled daemon exits before it listens.
+startKeepAwake(ownershipLibrary());
+registry.install(codingExtension());
+registry.install(phaseExtension());
+registry.install(namingExtension());
 
 function acquireOwnership(repoPath: string, laneName: string, configIdentity: string) {
   const library = ownershipLibrary();
@@ -356,12 +358,12 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
     context,
   );
   row.harness = harness;
-  const modelId = resolveModelId(appConfig, model);
-  if (!modelId) throw new Error("no model is configured");
-  const root = await harness.root(context, exists ? undefined : { agent: { model: { provider: "alinery", modelId } } });
+  const resolved = resolveModel(appConfig, model);
+  if (!resolved) throw new Error("no model is configured");
+  const root = await harness.root(context, exists ? undefined : { agent: { model: resolved } });
   row.conversationId = root.id;
-  await ensureModel(root, modelId);
-  if (!String(readMeta(taskSlug, id).model ?? "").trim()) writeMeta(taskSlug, id, { model: `alinery/${modelId}` });
+  await ensureModel(root, resolved);
+  if (!String(readMeta(taskSlug, id).model ?? "").trim()) writeMeta(taskSlug, id, { model: `${resolved.provider}/${resolved.modelId}` });
   // Resumed conversations were created before this hook existed. tx.doc loads an existing doc and creates a missing one.
   await root.commit(async (tx) => {
     await tx.doc(Attention, root.id);
@@ -378,11 +380,14 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
   return row;
 }
 
-async function ensureModel(conversation: Conversation, modelId: string, force = false) {
+async function ensureModel(conversation: Conversation, resolved: ResolvedModel, force = false) {
   const agent = await conversation.agent(context);
-  if (agent.model?.modelId === modelId) return;
-  if (!force && agent.model?.modelId) return;
-  await conversation.configure({ model: { provider: "alinery", modelId } }, context);
+  const current = agent.model;
+  if (current?.provider === resolved.provider && current.modelId === resolved.modelId) return;
+  // An old `alinery/grok-*` meta is xAI at read time. Reconfigure that session without rewriting the file.
+  const remap = current?.provider === "alinery" && resolved.provider === "xai" && current.modelId === resolved.modelId;
+  if (!force && current?.modelId && !remap) return;
+  await conversation.configure({ model: resolved }, context);
 }
 
 async function seedPrompt(conversation: Conversation, prompt: string) {
@@ -492,7 +497,7 @@ async function maybeTitleChat(row: Live) {
   }
   row.titleInFlight = true;
   try {
-    const reply = await completeAlineryText(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""), [
+    const reply = await completeConfiguredText(models, appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""), [
       ...(await modelMessages(conversation)),
       { role: "user", content: CHAT_TITLE_PROMPT, timestamp: Date.now() },
     ]);
@@ -887,12 +892,12 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
           reply(socket, { error: "empty-prompt" });
           return;
         }
-        const modelId = resolveModelId(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
-        if (!modelId) {
+        const resolved = resolveModel(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
+        if (!resolved) {
           reply(socket, { error: "no model is configured" });
           return;
         }
-        await ensureModel(conversation, modelId);
+        await ensureModel(conversation, resolved);
         await conversation.submit({ type: "input", content: text, whenBusy: "followUp" }, context);
         reply(socket, { ok: true });
         return;
@@ -919,8 +924,8 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
       return;
     }
     const requested = typeof header.model === "string" ? header.model : "";
-    const modelId = resolveModelId(appConfig, requested);
-    if (!modelId) {
+    const resolved = resolveModel(appConfig, requested);
+    if (!resolved) {
       reply(socket, { error: "no model is configured" });
       return;
     }
@@ -930,11 +935,70 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
         reply(socket, { error: "unknown-session" });
         return;
       }
-      await ensureModel(conversation, modelId, true);
-      writeMeta(row.taskSlug, row.id, { model: requested.includes("/") ? requested : `alinery/${modelId}` });
+      await ensureModel(conversation, resolved, true);
+      writeMeta(row.taskSlug, row.id, { model: `${resolved.provider}/${resolved.modelId}` });
       reply(socket, { ok: true });
     } catch (error) {
       reply(socket, { error: String(error) });
+    }
+    return;
+  }
+  if (
+    op === "provider_catalog" ||
+    op === "provider_logout" ||
+    op === "provider_login_start" ||
+    op === "provider_login_poll" ||
+    op === "provider_login_reply" ||
+    op === "custom_provider_save" ||
+    op === "custom_provider_delete"
+  ) {
+    try {
+      if (op === "provider_catalog") {
+        reply(socket, await providers.catalog());
+        return;
+      }
+      if (op === "provider_logout") {
+        reply(socket, await providers.logout(typeof header.provider === "string" ? header.provider : ""));
+        return;
+      }
+      if (op === "provider_login_start") {
+        const method = header.method === "oauth" ? "oauth" : header.method === "api_key" ? "api_key" : "";
+        if (!method) {
+          reply(socket, { error: "login method must be api_key or oauth" });
+          return;
+        }
+        reply(socket, providers.startLogin(typeof header.provider === "string" ? header.provider : "", method));
+        return;
+      }
+      if (op === "provider_login_poll") {
+        reply(socket, providers.pollLogin(typeof header.login_id === "string" ? header.login_id : ""));
+        return;
+      }
+      if (op === "provider_login_reply") {
+        const loginId = typeof header.login_id === "string" ? header.login_id : "";
+        if (header.cancel === true) providers.cancelLogin(loginId);
+        else providers.replyLogin(loginId, typeof header.value === "string" ? header.value : "");
+        reply(socket, { ok: true });
+        return;
+      }
+      if (op === "custom_provider_delete") {
+        reply(socket, await providers.deleteCustom(typeof header.id === "string" ? header.id : ""));
+        return;
+      }
+      const typedKey = typeof header.api_key === "string" ? header.api_key.trim() : "";
+      reply(
+        socket,
+        await providers.saveCustom({
+          id: typeof header.id === "string" ? header.id : "",
+          name: typeof header.name === "string" ? header.name : "",
+          baseUrl: typeof header.base_url === "string" ? header.base_url : "",
+          apiKey: typedKey || undefined,
+          clearKey: !typedKey && header.keep_key !== true,
+          models: Array.isArray(header.models) ? header.models.filter((model): model is string => typeof model === "string") : [],
+        }),
+      );
+    } catch (error) {
+      reply(socket, { error: error instanceof Error ? error.message : String(error) });
     }
     return;
   }
@@ -1066,9 +1130,9 @@ server.listen(uiSocket, () => {
       const row = live.get(id);
       const conversation = row ? await conversationFor(row) : null;
       if (!row || !conversation) throw new Error(`unknown session ${id}`);
-      const modelId = resolveModelId(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
-      if (!modelId) throw new Error("no model is configured");
-      await ensureModel(conversation, modelId);
+      const resolved = resolveModel(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
+      if (!resolved) throw new Error("no model is configured");
+      await ensureModel(conversation, resolved);
       await conversation.submit({ type: "input", content: text, whenBusy: "followUp" }, context);
     },
     async stop(id) {

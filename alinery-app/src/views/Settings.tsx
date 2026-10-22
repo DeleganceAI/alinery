@@ -54,7 +54,6 @@ import type {
   UpdateStatus,
 } from "../types";
 import { type McpStatus, type McpStatusHandle, mcpDotColor, mcpStatusLabel } from "../useMcpStatus";
-import { useOmpUpdateStatus } from "../useOmpUpdateStatus";
 import { OmpCustomizations } from "./OmpCustomizations";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
@@ -287,12 +286,9 @@ export function Settings({
   const [updateCheckFailed, setUpdateCheckFailed] = useState(false);
   const displayedUpdate = update ?? localUpdate;
   const checkingUpdates = onCheckNow ? updateChecking : localChecking;
-  const ompUpdate = useOmpUpdateStatus();
-  const [ompUpdating, setOmpUpdating] = useState(false);
   const [providersOpen, setProvidersOpen] = useState(false);
   // Keyed by the choice row that opened it, so one hosted dialog serves every default-model field.
   const [pickModelFor, setPickModelFor] = useState<string | null>(null);
-  const [ompError, setOmpError] = useState("");
   const [playbookCatalog, setPlaybookCatalog] = useState<PlaybookCatalog | null>(null);
   const [playbookError, setPlaybookError] = useState("");
 
@@ -393,11 +389,6 @@ export function Settings({
       .then(setLocalUpdate)
       .catch(() => {});
   }, [activeSection, onCheckNow]);
-
-  useEffect(() => {
-    if (activeSection !== "harness") return;
-    void ompUpdate.checkNow();
-  }, [activeSection, ompUpdate.checkNow]);
 
   const loadScope = (nextScope: SettingsScope) => {
     if (nextScope.kind === "global") {
@@ -1625,67 +1616,15 @@ export function Settings({
     const hitsActiveRepo = targets.some((target) => target.repo === activeRepo);
     return (
       <>
-        <section className="omp-settings" aria-labelledby="omp-settings-title">
+        <section className="omp-settings" aria-labelledby="providers-settings-title">
           <div className="omp-settings-heading">
-            <h3 id="omp-settings-title">OMP</h3>
-            <p className="hint">The coding harness bundled with this Alinery installation.</p>
+            <h3 id="providers-settings-title">Providers</h3>
+            <p className="hint">Sign in to model providers for this installation.</p>
           </div>
-          <section aria-labelledby="omp-installation-title">
-            <h4 id="omp-installation-title">Installation &amp; providers</h4>
-            {/* A version alone cannot answer "which install is this", which is the question anyone
-              reading this panel is actually asking. Paths wrap rather than truncate: one you
-              cannot read in full is one you retype wrong. */}
-            <div className="omp-installation-paths dim">
-              <div>Installed: {ompUpdate.status.installed || "not found"}</div>
-              {ompUpdate.status.binary_path && <div>Binary: {ompUpdate.status.binary_path}</div>}
-              {ompUpdate.status.config_dir && <div>Config: {ompUpdate.status.config_dir}</div>}
-            </div>
-            {/* Until now the accounts dialog was only reachable by being broken -- it opened when
-              setup was missing, or from a slash command inside a live chat. This is the way in
-              that is not an error state. */}
-            <button type="button" className="btn ghost small" onClick={() => setProvidersOpen(true)}>
-              Providers &amp; accounts
-            </button>
-            {providersOpen && <ProviderSetupDialog mode="manual" onClose={() => setProvidersOpen(false)} />}
-            {ompUpdate.status.available && (
-              <div className="field omp-update-offer">
-                <div style={{ marginBottom: 8 }}>Update available: {ompUpdate.status.available.version}</div>
-                <button
-                  type="button"
-                  className="btn small"
-                  disabled={ompUpdating}
-                  onClick={() => {
-                    void (async () => {
-                      const ok = await confirmDanger(
-                        `Update OMP to ${ompUpdate.status.available?.version}?`,
-                        <p>Live sessions keep running on the current binary. New sessions use the updated one.</p>,
-                        "Update OMP",
-                      );
-                      if (!ok) return;
-                      setOmpUpdating(true);
-                      setOmpError("");
-                      try {
-                        await ipc.updateOmp();
-                        ompUpdate.clearOffer();
-                        await ompUpdate.checkNow();
-                      } catch (e) {
-                        setOmpError(String(e));
-                      } finally {
-                        setOmpUpdating(false);
-                      }
-                    })();
-                  }}
-                >
-                  {ompUpdating ? "Updating…" : "Update OMP"}
-                </button>
-                {ompError ? (
-                  <div className="dim" style={{ color: "var(--danger)", marginTop: 6 }}>
-                    {ompError}
-                  </div>
-                ) : null}
-              </div>
-            )}
-          </section>
+          <button type="button" className="btn ghost small" onClick={() => setProvidersOpen(true)}>
+            Providers &amp; accounts
+          </button>
+          {providersOpen && <ProviderSetupDialog mode="manual" onClose={() => setProvidersOpen(false)} />}
           <OmpCustomizations />
         </section>
         <section className="harness-settings-section" aria-labelledby="session-defaults-title">
@@ -2255,7 +2194,7 @@ export function Settings({
         return (
           <div className="settings-subsection">
             <h2>Harness</h2>
-            <p>Manage OMP, session defaults, and background session daemons.</p>
+            <p>Providers, session defaults, and background session daemons.</p>
             {renderHarness()}
           </div>
         );

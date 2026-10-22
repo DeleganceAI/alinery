@@ -111,7 +111,7 @@ describe("partitionProviders", () => {
     expect(advanced).toEqual([expect.objectContaining({ id: "openrouter", reason: "env", readyViaEnv: true })]);
   });
 
-  it("moves documented RPC-incompatible login rows to Advanced", () => {
+  it("keeps an API-key provider in the accounts list", () => {
     const { chatLogin, advanced } = partitionProviders({
       loginProviders: providers([
         { id: "anthropic", name: "Anthropic" },
@@ -119,8 +119,17 @@ describe("partitionProviders", () => {
       ]),
       models: [],
     });
-    expect(chatLogin.map((p) => p.id)).toEqual(["anthropic"]);
-    expect(advanced).toEqual([expect.objectContaining({ id: "baseten", reason: "rpc-incompatible" })]);
+    expect(chatLogin.map((p) => p.id)).toEqual(["anthropic", "baseten"]);
+    expect(advanced).toEqual([]);
+  });
+
+  it("leaves a configured custom endpoint out of Advanced", () => {
+    const { advanced } = partitionProviders({
+      loginProviders: providers([{ id: "anthropic", authenticated: true }]),
+      models: [{ provider: "local", id: "llama" }],
+      configuredIds: ["local"],
+    });
+    expect(advanced).toEqual([]);
   });
 
   it("promotes live interactive-prompt failures into Advanced", () => {

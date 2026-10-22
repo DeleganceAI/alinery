@@ -22,6 +22,7 @@
 // Add a wrapper when a view needs one, not before.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import type { ProviderCatalog, ProviderLoginStatus } from "./chat/providers";
 import type {
   AccountSignOutResult,
   AccountStatus,
@@ -58,7 +59,6 @@ import type {
   McpStatus,
   NormalizedPlaybook,
   OmpCustomizations,
-  OmpUpdateStatus,
   PickerPreferences,
   PlaybookCatalog,
   PlaybookRef,
@@ -358,6 +358,14 @@ export const sessionListStatuses = (refs: SessionStatusRef[]) => invoke<Record<s
 export const sessionTranscript = (id: string) => invoke<VinculumMessage[]>("session_transcript", { id });
 export const sessionPrompt = (id: string, text: string) => invoke<void>("session_prompt", { id, text });
 export const sessionSetModel = (id: string, model: string) => invoke<void>("session_set_model", { id, model });
+export const providerCatalog = () => invoke<ProviderCatalog>("provider_catalog");
+export const providerLogout = (provider: string) => invoke<ProviderCatalog>("provider_logout", { provider });
+export const providerLoginStart = (provider: string, method: "api_key" | "oauth") => invoke<ProviderLoginStatus>("provider_login_start", { provider, method });
+export const providerLoginPoll = (loginId: string) => invoke<ProviderLoginStatus>("provider_login_poll", { loginId });
+export const providerLoginReply = (loginId: string, value: string, cancel: boolean) => invoke<void>("provider_login_reply", { loginId, value, cancel });
+export const customProviderSave = (input: { id: string; name: string; baseUrl: string; apiKey: string; keepKey: boolean; models: string[] }) =>
+  invoke<ProviderCatalog>("custom_provider_save", input);
+export const customProviderDelete = (id: string) => invoke<ProviderCatalog>("custom_provider_delete", { id });
 export const sessionAbort = (id: string) => invoke<void>("session_abort", { id });
 export const sessionStatus = (id: string, taskSlug: string | null) => invoke<SessionObservation>("session_status", { id, taskSlug });
 export const sessionStatuses = (ids: string[], taskSlug: string) => invoke<Record<string, SessionObservation>>("session_statuses", { ids, taskSlug });
@@ -465,8 +473,6 @@ export const downloadUpdate = (version: string) => invoke<StagedUpdate>("downloa
 export const applyUpdate = (version: string) => invoke<void>("apply_update", { version });
 
 // ── omp_update.rs ─────────────────────────────────────────────────────
-export const checkOmpUpdate = () => invoke<OmpUpdateStatus>("check_omp_update");
-export const updateOmp = () => invoke<string>("update_omp");
 export const ompAgentSessionsDir = () => invoke<string>("omp_agent_sessions_dir");
 export const readOmpModelRoles = () => invoke<Record<string, string>>("read_omp_model_roles");
 export const writeOmpModelRoles = (roles: Record<string, string>) => invoke<Record<string, string>>("write_omp_model_roles", { roles });

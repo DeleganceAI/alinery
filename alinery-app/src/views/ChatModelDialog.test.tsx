@@ -18,7 +18,6 @@ describe("ChatModelDialog", () => {
     onTabChange: vi.fn(),
     onApplyModel: vi.fn(),
     onLogin: vi.fn(),
-    onHatchTerminalLogin: vi.fn(),
     onAssignRole: vi.fn(),
     onClose: vi.fn(),
   };
@@ -54,7 +53,7 @@ describe("ChatModelDialog", () => {
     expect(html).not.toContain("openrouter");
   });
 
-  it("lists Advanced rows when expanded: env-only and RPC-incompatible", () => {
+  it("lists an API-key provider as sign-in and an env-only provider as ready", () => {
     const html = renderToStaticMarkup(
       <ChatModelDialog
         {...base}
@@ -70,9 +69,10 @@ describe("ChatModelDialog", () => {
     expect(html).toContain("Anthropic");
     expect(html).toContain("signed in");
     expect(html).toContain("Baseten");
+    expect(html).toContain("sign in");
     expect(html).toContain("openrouter");
-    expect(html).toContain("Terminal /login");
-    expect(html).toContain("ready via env");
+    expect(html).toContain("ready");
+    expect(html).not.toContain("Terminal /login");
   });
 
   it("shows Connecting… instead of ready-empty copy while the catalogue is connecting", () => {

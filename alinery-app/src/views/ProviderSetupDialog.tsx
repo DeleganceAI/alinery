@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ModelRolesMap } from "../chat/modelRoles";
 import { settleOpenUrl } from "../chat/openUrl";
-import { mergeGrokModels, mergeHostedModels, needsProviderSetup, shouldOfferProviderSetup } from "../chat/providers";
+import { useProviderAccess } from "../chat/providerAccess";
+import { needsProviderSetup, shouldOfferProviderSetup } from "../chat/providers";
 import type { ProvidersDialogTab } from "../chat/slash";
 import { type ChatTranscriptState, dismissPendingUi, emptyTranscript, isPresentationUi, type PendingUi } from "../chatTranscript";
 import * as ipc from "../ipc";
@@ -10,6 +11,7 @@ import type { HostedCatalogView } from "../types";
 import { ChatEntryRow } from "./ChatEntryRow";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatModelDialog } from "./ChatModelDialog";
+import { CustomEndpointForm, ProviderAccessPanel } from "./ProviderAccessPanel";
 
 export type ProviderSetupMode =
   /** Opened by the user: show the dialog regardless of what the providers turn out to be. */
@@ -57,8 +59,7 @@ export function ProviderSetupDialog({
   const [modelRoles, setModelRoles] = useState<ModelRolesMap>({});
   const [modelError, setModelError] = useState<string | null>(null);
   const [tab, setTab] = useState<ProvidersDialogTab>(initialTab);
-  const [catalogueStatus, setCatalogueStatus] = useState<"connecting" | "ready">("connecting");
-  const [modelsSettled, setModelsSettled] = useState(false);
+  const access = useProviderAccess(true);
   // Same store the old ModelInput picker used, so stars survive the swap rather than resetting.
   const [favorites, setFavorites] = useState<string[]>([]);
   const [hosted, setHosted] = useState<HostedCatalogView | null>(null);
@@ -106,18 +107,6 @@ export function ProviderSetupDialog({
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (!hostedLoaded) return;
-    const models = mergeGrokModels(mergeHostedModels([], hosted), grokReady);
-    setChat((current) => {
-      const next = { ...current, sessionMeta: { ...current.sessionMeta, models, loginProviders: [] } };
-      chatRef.current = next;
-      return next;
-    });
-    setModelsSettled(true);
-    setCatalogueStatus("ready");
-  }, [hostedLoaded, hosted, grokReady]);
 
   const openBrowser = useCallback(async (request: PendingUi) => {
     try {
@@ -178,9 +167,17 @@ export function ProviderSetupDialog({
     });
   }, []);
 
-  const startLogin = useCallback((providerId: string) => {
-    setModelError(`${providerId} has no OMP login session. Use the Alinery account, or save a Grok key in Settings.`);
-  }, []);
+  const startLogin = useCallback(
+    (providerId: string) => {
+      const row = access.loginProviders.find((provider) => provider.id === providerId);
+      if (row?.apiKey && row.oauth) {
+        access.choose(row);
+        return;
+      }
+      void access.start(providerId, row?.oauth && !row.apiKey ? "oauth" : "api_key");
+    },
+    [access],
+  );
 
   const assignRole = useCallback(
     async (role: string, model: string | null) => {
@@ -200,14 +197,12 @@ export function ProviderSetupDialog({
   // providers come back, and dismisses itself when they say this install is already set up. That
   // keeps one attach and one predicate behind both entry points, so the repo-open offer and the
   // in-session offer cannot disagree about what "set up" means.
-  const providers = chat.sessionMeta.loginProviders;
-  const models = chat.sessionMeta.models ?? [];
-  // Accounts is ready when login providers arrive. Models is not: a pending
-  // `get_available_models` must stay "Connecting…", or paint this process's last catalogue.
-  const accountsStatus = providers !== undefined ? "ready" : catalogueStatus;
+  const providers = access.loginProviders;
+  const models = access.models;
+  const accountsStatus = access.settled ? "ready" : "connecting";
   const shownModels = models;
-  const modelsStatus = modelsSettled ? "ready" : "connecting";
-  const decided = mode === "manual" || hostedLoaded;
+  const modelsStatus = hostedLoaded && access.settled ? "ready" : "connecting";
+  const decided = mode === "manual" || (hostedLoaded && access.settled);
   const offer =
     mode === "manual" ||
     shouldOfferProviderSetup({
@@ -240,12 +235,13 @@ export function ProviderSetupDialog({
       models={shownModels}
       current={chat.sessionMeta.model}
       preselect={preselect}
-      loginProviders={chat.sessionMeta.loginProviders ?? []}
+      loginProviders={providers}
       livePromotedIds={[]}
       modelRoles={modelRoles}
       hosted={hosted}
       grok={grokReady}
       favorites={favorites}
+      configuredIds={access.custom.map((row) => row.id)}
       catalogueStatus={tab === "models" ? modelsStatus : accountsStatus}
       onToggleFavorite={(model, favorite) => {
         // Optimistic: the store is the authority, but a star that lags a click reads as broken.
@@ -255,8 +251,8 @@ export function ProviderSetupDialog({
           .then(setFavorites)
           .catch((error) => setModelError(String(error)));
       }}
-      error={modelError}
-      loginBusy={null}
+      error={modelError || access.error}
+      loginBusy={access.busy}
       onTabChange={setTab}
       onApplyModel={(provider, modelId) => {
         if (onPick) {
@@ -266,9 +262,8 @@ export function ProviderSetupDialog({
         }
         void applyModel(provider, modelId);
       }}
-      onLogin={(providerId) => void startLogin(providerId)}
-      // No pty here to drop into, so say where /login lives rather than silently doing nothing.
-      onHatchTerminalLogin={() => setModelError("This provider needs Terminal /login. Open a session and switch it to Terminal.")}
+      onLogin={(providerId) => startLogin(providerId)}
+      onLogout={(providerId) => void access.logout(providerId)}
       onAssignRole={(role, model) => void assignRole(role, model)}
       onSignIn={() => {
         void ipc
@@ -288,8 +283,13 @@ export function ProviderSetupDialog({
       onBuyCredits={() => {
         void ipc.accountOpen().catch((error) => setModelError(String(error)));
       }}
-      onClose={() => onClose("dismissed")}
+      onClose={() => {
+        void access.cancel();
+        onClose("dismissed");
+      }}
+      footer={<CustomEndpointForm access={access} />}
     >
+      <ProviderAccessPanel access={access} />
       {chat.entries
         .filter((entry) => entry.type === "approval" && !handledUiRef.current.has(entry.requestId))
         .map((entry) => (

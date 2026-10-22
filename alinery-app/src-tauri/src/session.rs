@@ -1082,6 +1082,61 @@ pub(crate) async fn session_set_model(state: State<'_, AppState>, id: String, mo
     off_main_thread("set model", move || daemon.set_model(&id, &model)).await
 }
 
+fn active_daemon(state: &AppState) -> Result<alinery_core::daemon_client::DaemonClient, String> {
+    let _repo = require_owned_active_repo(state)?;
+    state.daemon().ok_or_else(|| "daemon not connected".to_string())
+}
+
+#[tauri::command]
+pub(crate) async fn provider_catalog(state: State<'_, AppState>) -> Result<alinery_core::daemon_client::ProviderCatalog, String> {
+    let daemon = active_daemon(&state)?;
+    off_main_thread("provider catalog", move || daemon.provider_catalog()).await
+}
+
+#[tauri::command]
+pub(crate) async fn provider_logout(state: State<'_, AppState>, provider: String) -> Result<alinery_core::daemon_client::ProviderCatalog, String> {
+    let daemon = active_daemon(&state)?;
+    off_main_thread("provider logout", move || daemon.provider_logout(&provider)).await
+}
+
+#[tauri::command]
+pub(crate) async fn provider_login_start(state: State<'_, AppState>, provider: String, method: String) -> Result<alinery_core::daemon_client::ProviderLoginStatus, String> {
+    let daemon = active_daemon(&state)?;
+    off_main_thread("provider login", move || daemon.provider_login_start(&provider, &method)).await
+}
+
+#[tauri::command]
+pub(crate) async fn provider_login_poll(state: State<'_, AppState>, login_id: String) -> Result<alinery_core::daemon_client::ProviderLoginStatus, String> {
+    let daemon = active_daemon(&state)?;
+    off_main_thread("provider login poll", move || daemon.provider_login_poll(&login_id)).await
+}
+
+#[tauri::command]
+pub(crate) async fn provider_login_reply(state: State<'_, AppState>, login_id: String, value: String, cancel: bool) -> Result<(), String> {
+    let daemon = active_daemon(&state)?;
+    off_main_thread("provider login reply", move || daemon.provider_login_reply(&login_id, &value, cancel)).await
+}
+
+#[tauri::command]
+pub(crate) async fn custom_provider_save(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+    base_url: String,
+    api_key: String,
+    keep_key: bool,
+    models: Vec<String>,
+) -> Result<alinery_core::daemon_client::ProviderCatalog, String> {
+    let daemon = active_daemon(&state)?;
+    off_main_thread("custom provider", move || daemon.custom_provider_save(&id, &name, &base_url, &api_key, keep_key, &models)).await
+}
+
+#[tauri::command]
+pub(crate) async fn custom_provider_delete(state: State<'_, AppState>, id: String) -> Result<alinery_core::daemon_client::ProviderCatalog, String> {
+    let daemon = active_daemon(&state)?;
+    off_main_thread("custom provider delete", move || daemon.custom_provider_delete(&id)).await
+}
+
 #[tauri::command]
 pub(crate) async fn rpc_write_session(state: State<'_, AppState>, id: String, payload: Value) -> Result<(), String> {
     let _ = (state, id, payload);

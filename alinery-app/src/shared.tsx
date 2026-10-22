@@ -8,7 +8,6 @@ import {
   FolderOpen,
   FolderPlus,
   Info,
-  Package,
   Plus,
   RotateCw,
   Search,
@@ -39,7 +38,6 @@ import type {
   GridViewDefinition,
   KanbanColumn,
   LifecycleState,
-  OmpUpdateStatus,
   PickerPreferences,
   PlaybookCandidate,
   PlaybookRef,
@@ -635,8 +633,6 @@ export function TopBar({
   update,
   onUpgrade,
   updating,
-  ompUpdate,
-  onOmpUpdateClick,
 }: {
   isDev: boolean;
   active: Tab;
@@ -657,8 +653,6 @@ export function TopBar({
   onCreate: () => void;
   update?: UpdateStatus | null;
   onUpgrade?: () => void;
-  ompUpdate?: OmpUpdateStatus | null;
-  onOmpUpdateClick?: () => void;
   updating?: boolean;
 }) {
   const includeAll = active !== "settings";
@@ -713,20 +707,6 @@ export function TopBar({
             }}
           >
             <ArrowUpCircle size={16} strokeWidth={1.5} aria-hidden="true" />
-          </button>
-        )}
-        {ompUpdate?.available && (
-          <button
-            type="button"
-            className="iconbtn omp-update"
-            title={`OMP update ${ompUpdate.available.version}`}
-            aria-label={`OMP update ${ompUpdate.available.version}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onOmpUpdateClick?.();
-            }}
-          >
-            <Package size={16} strokeWidth={1.5} aria-hidden="true" />
           </button>
         )}
       </div>

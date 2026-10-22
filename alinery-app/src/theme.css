@@ -9273,16 +9273,6 @@ dialog.modal::backdrop {
 .harness-settings-section > h3 {
   margin-bottom: 14px;
 }
-.omp-installation-paths {
-  display: grid;
-  gap: 4px;
-  margin-bottom: 12px;
-  font-size: calc(12px * var(--ui-scale));
-  overflow-wrap: anywhere;
-}
-.omp-update-offer {
-  margin-top: 14px;
-}
 .omp-customization-actions,
 .omp-inventory-heading {
   display: flex;

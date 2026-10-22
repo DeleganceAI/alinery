@@ -16,6 +16,7 @@ import type { ModelRolesMap } from "../chat/modelRoles";
 import { decodeOmpPage } from "../chat/ompFile";
 import { settleOpenUrl as settleBrowserUrl } from "../chat/openUrl";
 import { prepareChatAttachments } from "../chat/prepareAttachments";
+import { useProviderAccess } from "../chat/providerAccess";
 import { isInteractivePromptLoginError, shouldOfferProviderSetup } from "../chat/providers";
 import { latestQueuedFollowUp, type QueuedFollowUp, queuedCountFromGetState, queuedTextsNotInEntries, reconcileQueuedFollowUps } from "../chat/queue";
 import { applySendPlan, commandOutputText, loginReply, planChatSend, setModelReply } from "../chat/send";
@@ -105,6 +106,7 @@ import { ChatModelDialog } from "./ChatModelDialog";
 import { ChatPane } from "./ChatPane";
 import { ChatToolsDialog } from "./ChatToolsDialog";
 import { readJournalThrough } from "./chatSession";
+import { CustomEndpointForm, ProviderAccessPanel } from "./ProviderAccessPanel";
 import { SessionActionPanel } from "./SessionActionPanel";
 import { ThinkingSelect } from "./ThinkingSelect";
 
@@ -320,6 +322,7 @@ export function SessionView({
   const [chat, setChat] = useState<ChatTranscriptState>(emptyTranscript);
   const [modelDialog, setModelDialog] = useState<{ tab: ProvidersDialogTab; preselect: string; setup?: boolean } | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
+  const providerAccess = useProviderAccess(harness === "omp");
   const [modelRoles, setModelRoles] = useState<ModelRolesMap>({});
   const [hosted, setHosted] = useState<HostedCatalogView | null>(null);
   const [hostedLoaded, setHostedLoaded] = useState(false);
@@ -1677,8 +1680,8 @@ export function SessionView({
         turnOpen: chat.turnOpen,
         agentState: observation?.state?.agent?.state,
       }),
-      providers: chat.sessionMeta.loginProviders ?? [],
-      models: chat.sessionMeta.models ?? [],
+      providers: vinculum ? providerAccess.loginProviders : (chat.sessionMeta.loginProviders ?? []),
+      models: vinculum ? providerAccess.models : (chat.sessionMeta.models ?? []),
       currentModel: chat.sessionMeta.model,
       hostedReady: hosted?.ready === true,
     });
@@ -1697,6 +1700,9 @@ export function SessionView({
     modelDialog,
     hosted,
     hostedLoaded,
+    vinculum,
+    providerAccess.loginProviders,
+    providerAccess.models,
   ]);
   const observedState = observation?.state;
   const messageReadiness = {
@@ -1903,7 +1909,15 @@ export function SessionView({
     }
   };
   const startChatLogin = async (providerId: string) => {
-    if (vinculum) return;
+    if (vinculum) {
+      const row = providerAccess.loginProviders.find((provider) => provider.id === providerId);
+      if (row?.apiKey && row.oauth) {
+        providerAccess.choose(row);
+        return;
+      }
+      await providerAccess.start(providerId, row?.oauth && !row.apiKey ? "oauth" : "api_key");
+      return;
+    }
     setModelError(null);
     setLoginBusy(providerId);
     loginApplyRef.current = providerId;
@@ -1915,21 +1929,6 @@ export function SessionView({
       loginOpenUrlRef.current = null;
       setLoginBusy(null);
       setModelError(String(error));
-    }
-  };
-  const hatchTerminalLogin = async (_providerId?: string) => {
-    setModelDialog(null);
-    setModelError(null);
-    setLoginBusy(null);
-    loginApplyRef.current = null;
-    loginOpenUrlRef.current = null;
-    try {
-      const switched = await switchTransport("pty");
-      if (!switched) return;
-      await ipc.writeSession(id, "/login\n");
-      toast("Opened Terminal for /login. Finish provider setup there.", "info");
-    } catch (error) {
-      toast(String(error), "error");
     }
   };
   const assignModelRole = async (role: string, model: string | null) => {
@@ -2268,20 +2267,21 @@ export function SessionView({
             <ChatModelDialog
               tab={modelDialog.tab}
               setup={modelDialog.setup}
-              models={chat.sessionMeta.models ?? []}
+              models={vinculum ? providerAccess.models : (chat.sessionMeta.models ?? [])}
               current={chat.sessionMeta.model}
               preselect={modelDialog.preselect}
-              loginProviders={chat.sessionMeta.loginProviders ?? []}
+              loginProviders={vinculum ? providerAccess.loginProviders : (chat.sessionMeta.loginProviders ?? [])}
               livePromotedIds={livePromotedIds}
+              configuredIds={providerAccess.custom.map((row) => row.id)}
               modelRoles={modelRoles}
               hosted={hosted}
               grok={grokReady}
-              error={modelError}
-              loginBusy={loginBusy}
+              error={modelError || providerAccess.error}
+              loginBusy={vinculum ? providerAccess.busy : loginBusy}
               onTabChange={(tab) => setModelDialog((current) => (current ? { ...current, tab, setup: false } : current))}
               onApplyModel={(provider, modelId) => void applyChatModel(provider, modelId)}
               onLogin={(providerId) => void startChatLogin(providerId)}
-              onHatchTerminalLogin={(providerId) => void hatchTerminalLogin(providerId)}
+              onLogout={vinculum ? (providerId) => void providerAccess.logout(providerId) : undefined}
               onAssignRole={(role, model) => void assignModelRole(role, model)}
               onSignIn={() => {
                 void ipc
@@ -2302,13 +2302,17 @@ export function SessionView({
                 void ipc.accountOpen().catch((error) => setModelError(String(error)));
               }}
               onClose={() => {
+                void providerAccess.cancel();
                 setModelDialog(null);
                 setModelError(null);
                 setLoginBusy(null);
                 loginApplyRef.current = null;
                 loginOpenUrlRef.current = null;
               }}
-            />
+              footer={vinculum ? <CustomEndpointForm access={providerAccess} /> : null}
+            >
+              {vinculum ? <ProviderAccessPanel access={providerAccess} /> : null}
+            </ChatModelDialog>
           )}
           {toolsOpen && <ChatToolsDialog tools={chat.sessionMeta.dumpTools ?? []} onClose={() => setToolsOpen(false)} />}
           {mcpDialog && (
