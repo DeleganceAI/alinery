@@ -1,9 +1,9 @@
 // One-command manual smoke for the real OMP extension -> alinery-runner result path.
 //
-// The local socket deliberately simulates three daemon outcomes for consecutive
-// alinery_phase_complete calls: invalid outputs, acknowledgement timeout,
-// then acceptance. It does not replace alineryd's semantic integration tests; it makes
-// the model-visible OMP tool-result boundary deterministic and easy to inspect.
+// The local socket simulates invalid outputs, acknowledgement timeout, then ready
+// across consecutive readiness reports. The OMP extension automatically retries
+// transport failures; the runner-only self-test exposes delivery_failed directly.
+// This is a transport diagnostic, not alineryd's durable continuation validation.
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -21,12 +21,20 @@ const socketPath = path.join(root, "alineryd.sock");
 const sessionId = "manual-completion-smoke";
 const eventToken = "manual-completion-smoke-token";
 let completionAttempts = 0;
+const control = {
+  process_incarnation: "manual-smoke-incarnation",
+  capability_revision: 0,
+  work_revision: 0,
+  continuation_requested_revision: null,
+  available: false,
+  reason: "not bound",
+};
 
 const transportEnvironment = {
   ALINERY_SESSION_ID: sessionId,
   ALINERY_DAEMON_SOCKET: socketPath,
   ALINERY_DAEMON_NAMESPACE: "manual-completion-smoke",
-  ALINERY_EVENT_PROTOCOL_VERSION: "3",
+  ALINERY_EVENT_PROTOCOL_VERSION: "4",
   ALINERY_EVENT_TOKEN: eventToken,
 };
 
@@ -57,19 +65,39 @@ const server = createServer((connection) => {
       return;
     }
 
-    if (request.event?.type !== "phase_completed") {
+    const event = request.event;
+    if (event?.type === "continuation_bind" || event?.type === "continuation_revoke") {
+      assert.equal(event.expected_capability_revision, control.capability_revision);
+      control.capability_revision += 1;
+      control.available = event.type === "continuation_bind";
+      control.reason = control.available ? null : event.reason;
+      if (!control.available) control.work_revision += 1;
+    }
+    if (event?.type === "continuation_poll" || event?.type === "continuation_bind" || event?.type === "continuation_revoke" || event?.type?.startsWith("native_")) {
+      if (event.process_incarnation !== undefined) assert.equal(event.process_incarnation, control.process_incarnation);
+      if (event.type === "native_work_entered") control.work_revision += 1;
+      connection.end(`${JSON.stringify({ ok: true, control })}\n`);
+      return;
+    }
+    if (event?.type !== "readiness_reported") {
       connection.end('{"ok":true}\n');
       return;
     }
 
+    assert.equal(event.process_incarnation, control.process_incarnation);
+    assert.equal(event.expected_work_revision, control.work_revision);
     completionAttempts += 1;
     if (completionAttempts === 1) {
+      if (!process.argv.includes("--self-test"))
+        process.stdout.write("\nReadiness report 1: invalid_outputs. Ask OMP to call alinery_phase_complete once more and end its turn.\n");
       connection.end('{"ok":true,"completion":{"status":"invalid_outputs","diagnostics":["At least one valid assigned artifact must be published"]}}\n');
     } else if (completionAttempts === 2) {
-      // Deliberately leave the connection unanswered. alinery-runner must time out,
-      // and the OMP tool must render delivery_failed rather than false success.
+      // Deliberately leave the connection unanswered so the runner times out.
+      // Runner-only calls return delivery_failed; OMP retries this same report.
+      if (!process.argv.includes("--self-test")) process.stdout.write("\nReadiness report 2: withholding ACK; waiting for OMP's automatic transport retry.\n");
     } else {
-      connection.end('{"ok":true,"completion":{"status":"accepted","receipt_id":"manual-smoke-receipt"}}\n');
+      connection.end(`${JSON.stringify({ ok: true, completion: { status: "ready", ready_revision: control.work_revision } })}\n`);
+      if (!process.argv.includes("--self-test")) process.stdout.write("\nReadiness report 3: ready. Keep the session open for review; exit manually after inspection.\n");
     }
   });
 });
@@ -79,7 +107,7 @@ await new Promise((resolve, reject) => {
   server.listen(socketPath, resolve);
 });
 
-function runResultEmit() {
+function runResultEmit(event) {
   return new Promise((resolve, reject) => {
     const child = spawn(runnerPath, ["emit", "--result"], {
       env: transportEnvironment,
@@ -93,19 +121,32 @@ function runResultEmit() {
     child.stderr.on("data", (chunk) => (stderr += chunk));
     child.once("error", reject);
     child.once("close", (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(
-      JSON.stringify({
-        type: "phase_completed",
-        omp_session_id: "omp-manual-smoke",
-      }),
-    );
+    child.stdin.end(JSON.stringify(event));
   });
 }
 
 async function selfTest() {
+  async function expectControl(event, expected) {
+    const { code, stdout, stderr } = await runResultEmit(event);
+    assert.deepEqual({ code, result: JSON.parse(stdout), stderr }, { code: 0, result: expected, stderr: "" });
+  }
+  await expectControl({ type: "continuation_poll" }, { ...control });
+  await expectControl(
+    { type: "continuation_bind", omp_session_id: "omp-manual-smoke", groups: ["primary_control"], operation_id: "bind", expected_capability_revision: 0 },
+    { ...control, capability_revision: 1, available: true, reason: null },
+  );
+  await expectControl({ type: "native_work_entered", process_incarnation: control.process_incarnation, operation_id: "work" }, { ...control, work_revision: 1 });
+  await expectControl({ type: "native_work_settled", process_incarnation: control.process_incarnation, operation_id: "work" }, { ...control });
+  await expectControl({ type: "continuation_poll", process_incarnation: control.process_incarnation }, { ...control });
   const results = [];
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    results.push(await runResultEmit());
+    results.push(
+      await runResultEmit({
+        type: "readiness_reported",
+        process_incarnation: control.process_incarnation,
+        expected_work_revision: control.work_revision,
+      }),
+    );
   }
 
   assert.deepEqual(
@@ -124,29 +165,33 @@ async function selfTest() {
         stderr: "",
       },
       { code: 3, result: { status: "delivery_failed" }, stderr: "" },
-      { code: 0, result: { status: "accepted", receipt_id: "manual-smoke-receipt" }, stderr: "" },
+      { code: 0, result: { status: "ready", ready_revision: 1 }, stderr: "" },
     ],
   );
-  process.stdout.write("completion smoke fixture self-test passed: invalid_outputs -> delivery_failed -> accepted\n");
+  assert.equal(completionAttempts, 3);
+  process.stdout.write("readiness smoke fixture self-test passed: control/native ACKs; invalid_outputs -> delivery_failed -> ready\n");
 }
 
 async function runOmpSmoke() {
   const ompBinary = process.env.OMP_BIN;
   if (!ompBinary || !path.isAbsolute(ompBinary)) throw new Error("Set OMP_BIN to the absolute packaged OMP binary path; PATH fallback is not allowed.");
   const prompt = [
-    "This is an Alinery completion feedback smoke test.",
-    "Call alinery_phase_complete exactly three times, even when an earlier call rejects or fails.",
-    "After each call, state the exact tool result before making the next call.",
-    "Do not use any other tools. After accepted completion do no further work; let ordinary OMP shutdown finish.",
+    "This is an Alinery readiness feedback smoke test.",
+    "Call alinery_phase_complete once, state its exact tool result, then end your turn.",
+    "If it reports waiting for selected native work, ending the turn lets that work settle and readiness be reported automatically.",
+    "Do not use any other tools or retry in this turn. Keep this session open for review and the operator's next instruction.",
   ].join(" ");
 
   process.stdout.write(
     [
       "Starting real OMP with a deterministic fake alineryd acknowledgement sequence:",
       "  1. invalid_outputs: At least one valid assigned artifact must be published",
-      "  2. delivery_failed: acknowledgement timeout",
-      "  3. accepted",
-      "Inspect the tool results and ordinary automatic exit. This fake-daemon smoke does not prove durable acceptance or successor gating.\n",
+      "  2. acknowledgement timeout: runner delivery_failed; OMP automatically retries",
+      "  3. ready: handoff validated, session stays open for review",
+      "After report 1 appears, ask OMP to call alinery_phase_complete once more and end its turn.",
+      "Calls may return waiting until the native turn settles; inspect the readiness reports below.",
+      "After the timeout retry reaches ready, exit OMP manually. Ready does not automatically exit.",
+      "This fake-daemon smoke does not prove artifact validation, durable readiness, acceptance, or successor gating.\n",
     ].join("\n"),
   );
 
@@ -166,9 +211,9 @@ async function runOmpSmoke() {
   });
 
   if (completionAttempts !== 3) {
-    throw new Error(`OMP emitted ${completionAttempts} completion attempt(s); expected exactly 3`);
+    throw new Error(`OMP emitted ${completionAttempts} readiness report(s); expected exactly 3 (including one transport retry)`);
   }
-  process.stdout.write(`Observed all three authenticated phase-completion requests in the expected order (OMP exit ${code}).\n`);
+  process.stdout.write(`Observed all three authenticated readiness reports in the expected order (OMP exit ${code}).\n`);
 }
 
 // No external model or credentials: the real pinned runtime talks only to a

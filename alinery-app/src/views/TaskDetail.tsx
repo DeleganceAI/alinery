@@ -11,6 +11,7 @@ import type { ArtifactPaneTab } from "../artifactClassification";
 import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassification";
 import { classifyAttachment } from "../chat/attachments";
 import { CopyArtifactButton, CopyTextButton, copyTextToClipboard } from "../chat/CopyMessage";
+import { requireWritten } from "../chat/send";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
@@ -1587,7 +1588,7 @@ export function TaskDetail({
                                 setBusy(`stop-session:${s.id}`);
                                 setErr(null);
                                 try {
-                                  await ipc.rpcWriteSession(s.id, abortCommand());
+                                  requireWritten(await ipc.rpcWriteSession(s.id, abortCommand()));
                                   await load();
                                 } catch (error) {
                                   setErr({ msg: "Couldn't interrupt the session.", detail: String(error) });

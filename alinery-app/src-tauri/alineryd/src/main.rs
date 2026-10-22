@@ -2382,7 +2382,19 @@ fn spawn_session(
         if let Some(prompt) = seeded.take() {
             let prompt_writer = Arc::clone(&writer);
             let (result_sender, result_receiver) = mpsc::sync_channel(1);
-            let prompt_owner = execution::owner(reg, &launch.id)?;
+            #[cfg(test)]
+            spawn_rollback::BEFORE_SEED_OWNER.with(|hook| {
+                if let Some(hook) = hook.borrow_mut().take() {
+                    hook(&lifecycle);
+                }
+            });
+            let prompt_owner = match execution::owner(reg, &launch.id) {
+                Ok(owner) => owner,
+                Err(error) => {
+                    rollback_spawn!();
+                    return Err(error);
+                }
+            };
             let prompt_repo = repo.to_path_buf();
             std::thread::spawn(move || {
                 let result = match controlled_dispatch(&prompt_repo, &prompt_owner, "internal-pty-seed", true, false, |_| {
@@ -3825,6 +3837,92 @@ fn set_live_playbook(reg: &Registry, id: &str, playbook: PlaybookState) -> Resul
         publish_live_transition(&mut inner, &meta_path, candidate)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod spawn_rollback {
+    use super::*;
+    use std::cell::RefCell;
+
+    type BeforeSeedOwner = Box<dyn FnOnce(&Arc<(Mutex<SpawnLifecycle>, Condvar)>)>;
+    thread_local! {
+        pub(super) static BEFORE_SEED_OWNER: RefCell<Option<BeforeSeedOwner>> = RefCell::new(None);
+    }
+
+    #[test]
+    fn seeded_spawn_owner_loss_aborts_and_reaps_reader() {
+        let repo = env::temp_dir().join(format!("alinery-spawn-owner-loss-{}", uuid::Uuid::new_v4()));
+        let meta_path = session_meta_path(&repo, "", "seed-owner-loss");
+        fs::create_dir_all(meta_path.parent().unwrap()).unwrap();
+        let app_config = repo.join("app.toml");
+        fs::write(&app_config, "").unwrap();
+        fs::write(
+            repo.join(".alinery/harnesses.toml"),
+            r#"[[harness]]
+key = "omp"
+name = "stdin fixture"
+binary = "/bin/cat"
+args = []
+model_arg = []
+prompt_injection = "stdin"
+adapter = "unsupported"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            &meta_path,
+            serde_json::to_vec(&json!({
+                "id": "seed-owner-loss",
+                "created": 1,
+                "worktree": repo,
+                "harness": "omp",
+                "generic": true,
+                "prompt": "seed must never be delivered"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let launch = read_meta_launch_fields(&repo, "", "seed-owner-loss").unwrap();
+        let reg: Registry = Arc::new(Mutex::new(HashMap::new()));
+        let hook_reg = reg.clone();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        BEFORE_SEED_OWNER.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move |lifecycle| {
+                // Force the registry removal boundary of Kill, without racing spawn.
+                let session = hook_reg.lock().unwrap().remove("seed-owner-loss").unwrap();
+                let pid = session.pid.unwrap();
+                unsafe { libc::killpg(pid as i32, libc::SIGKILL) };
+                sender.send((lifecycle.clone(), session.inner.clone(), pid)).unwrap();
+            }));
+        });
+        let result = spawn_session(&reg, &repo, launch, None, false, SessionTransport::Pty, false, None, "", &app_config, &Arc::new(None));
+        BEFORE_SEED_OWNER.with(|hook| hook.borrow_mut().take());
+        let (lifecycle, inner, pid) = receiver.recv_timeout(Duration::from_secs(3)).expect("seed owner boundary reached");
+        let aborted = {
+            let (lock, ready) = &*lifecycle;
+            let mut state = lock.lock().unwrap();
+            let aborted = *state == SpawnLifecycle::Aborted;
+            // Release the reader even when running this regression against the old code.
+            *state = SpawnLifecycle::Aborted;
+            ready.notify_all();
+            aborted
+        };
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !inner.lock().unwrap().reaped_and_drained && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let reaped = inner.lock().unwrap().reaped_and_drained;
+        let meta: Value = serde_json::from_slice(&fs::read(&meta_path).unwrap()).unwrap();
+        fs::remove_dir_all(&repo).unwrap();
+
+        assert_eq!(result, Err("unknown-session".into()));
+        assert!(aborted, "owner lookup failure must release the Pending reader");
+        assert!(reaped, "aborted child must be reaped and its PTY drained");
+        assert_eq!(unsafe { libc::kill(pid as i32, 0) }, -1, "child must not survive rollback");
+        assert!(reg.lock().unwrap().is_empty());
+        assert!(meta.get("started_at").is_none());
+        assert!(meta.get("ended_at").is_none(), "aborted startup must not publish a committed exit");
+    }
 }
 
 #[cfg(test)]

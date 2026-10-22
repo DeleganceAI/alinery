@@ -7,6 +7,7 @@ import { navReady, requireNav } from "../test/nav";
 import type {
   BoardNav,
   BoardTask,
+  DispatchOutcome,
   ExecutionAvailability,
   SessionDisplayMeta,
   SessionMeta,
@@ -268,7 +269,7 @@ beforeEach(() => {
   ipcSpies.recoverSubtaskManager.mockResolvedValue({ session: { ...manager, subtask_slug: "child" }, execution: null, start: "started" });
   ipcSpies.restoreTaskForRepo.mockReset().mockResolvedValue(undefined);
   ipcSpies.archiveSessionForRepo.mockReset();
-  ipcSpies.rpcWriteSession.mockReset().mockResolvedValue(undefined);
+  ipcSpies.rpcWriteSession.mockReset().mockResolvedValue({ status: "written" });
   ipcSpies.renameSession.mockReset().mockImplementation(async ({ sessionId, name }: { sessionId: string; name: string }) => {
     scenario.sessions = scenario.sessions.map((item) => (item.id === sessionId ? { ...item, name, name_source: "user" } : item));
     return { name, source: "user" };
@@ -824,10 +825,10 @@ describe("task session archive pending feedback", () => {
 });
 
 describe("task session row Stop", () => {
-  it("aborts the current turn without opening or archiving the session, guards repeats, and allows retry", async () => {
+  it.each(["not_sent", "unknown"] as const)("reports %s abort delivery without opening or archiving, guards repeats, and allows retry", async (status) => {
     scenario.sessions = [session({ id: "stop-me", harness: "omp" })];
     mocks.sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("busy"), transport: "rpc" } });
-    const pending = deferred<void>();
+    const pending = deferred<DispatchOutcome>();
     ipcSpies.rpcWriteSession.mockReturnValueOnce(pending.promise);
     const { onOpenSession } = await renderDetail();
     const stop = await screen.findByRole("button", { name: "Stop" });
@@ -841,7 +842,7 @@ describe("task session row Stop", () => {
     expect(onOpenSession).not.toHaveBeenCalled();
     expect(ipcSpies.archiveSessionForRepo).not.toHaveBeenCalled();
     expect((screen.getByRole("button", { name: "Stopping…" }) as HTMLButtonElement).disabled).toBe(true);
-    await act(async () => pending.reject(new Error("abort delivery failed")));
+    await act(async () => pending.resolve({ status, reason: "abort delivery failed" }));
     expect(screen.getByText(/abort delivery failed/)).toBeDefined();
     mocks.sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("idle"), transport: "rpc" } });
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));

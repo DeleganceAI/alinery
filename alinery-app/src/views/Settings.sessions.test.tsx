@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE, normalizeChatView } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
@@ -66,6 +66,8 @@ const mocks = vi.hoisted(() => ({
   updateOmp: vi.fn(),
   confirmDanger: vi.fn(),
   askConfirm: vi.fn(),
+  repoLiveSessions: vi.fn(),
+  stopDaemon: vi.fn(),
 }));
 
 vi.mock("../ipc", () =>
@@ -77,7 +79,8 @@ vi.mock("../ipc", () =>
     checkOmpUpdate: mocks.checkOmpUpdate,
     updateOmp: mocks.updateOmp,
     storageInfo: () => new Promise(() => {}),
-    repoLiveSessions: async () => 0,
+    repoLiveSessions: mocks.repoLiveSessions,
+    stopDaemon: mocks.stopDaemon,
     listHarnessModels: async () => [],
     listHarnessModelsForRepo: async () => [],
     getVersion: async () => "0.0.0",
@@ -115,12 +118,12 @@ const mcp: McpStatusHandle = {
   refresh: () => {},
 };
 
-function renderSection(initialSection: "harness" | "sessionsView" | "chat", appearance: AppearancePrefs = DEFAULT_APPEARANCE) {
+function renderSection(initialSection: "harness" | "sessionsView" | "chat", appearance: AppearancePrefs = DEFAULT_APPEARANCE, knownRepos = ["/r"]) {
   render(
     <Settings
       mcp={mcp}
       activeRepo="/r"
-      knownRepos={["/r"]}
+      knownRepos={knownRepos}
       appearance={appearance}
       onAppearanceChange={() => {}}
       onNotificationsChange={() => {}}
@@ -153,11 +156,106 @@ beforeEach(() => {
     .mockImplementation(async (appearance: typeof DEFAULT_APPEARANCE) => ({ active_repo: "/r", known_repos: ["/r"], mcp_enabled: true, appearance }));
   mocks.confirmDanger.mockReset().mockResolvedValue(true);
   mocks.askConfirm.mockReset().mockResolvedValue("update");
+  mocks.repoLiveSessions.mockReset().mockResolvedValue(0);
+  mocks.stopDaemon.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+describe("Harness live session observations", () => {
+  function deferredCount() {
+    let resolve!: (count: number) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<number>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    return { promise, resolve, reject };
+  }
+
+  async function openService(knownRepos = ["/r"]) {
+    renderSection("harness", DEFAULT_APPEARANCE, knownRepos);
+    const summary = await screen.findByText(/Session service/);
+    fireEvent.click(summary);
+    return summary.closest("details") as HTMLElement;
+  }
+
+  it("publishes successful repos independently of failed and pending peers", async () => {
+    const slow = deferredCount();
+    mocks.repoLiveSessions.mockImplementation((repo: string) => (repo === "/r" ? Promise.resolve(3) : repo === "/failed" ? Promise.reject(new Error("offline")) : slow.promise));
+    const service = await openService(["/r", "/failed", "/slow"]);
+    await waitFor(() => {
+      expect(within(service).getByText(/r — 3 live sessions/)).toBeTruthy();
+      expect(within(service).getByText(/failed — Unknown/)).toBeTruthy();
+      expect(within(service).getByText(/slow — Checking/)).toBeTruthy();
+    });
+    expect(service.textContent).not.toContain("No live sessions");
+    await act(async () => slow.resolve(2));
+    expect(within(service).getByText(/slow — 2 live sessions/)).toBeTruthy();
+  });
+
+  it("retains cached zero during pending and failed refreshes, including shutdown confirmation", async () => {
+    const intervals = vi.spyOn(globalThis, "setInterval");
+    const refresh = deferredCount();
+    mocks.repoLiveSessions.mockResolvedValueOnce(0).mockReturnValueOnce(refresh.promise);
+    const service = await openService();
+    await waitFor(() => expect(within(service).getByText(/r — 0 live sessions — Last checked/)).toBeTruthy());
+    const tick = intervals.mock.calls.find((call) => call[1] === 2000)?.[0];
+    if (typeof tick !== "function") throw new Error("Session polling callback was not registered");
+    act(() => tick());
+    expect(within(service).getByText(/r — 0 live sessions.*Checking latest count/)).toBeTruthy();
+    act(() => tick());
+    expect(mocks.repoLiveSessions).toHaveBeenCalledTimes(2);
+    await act(async () => refresh.reject(new Error("offline")));
+    expect(within(service).getByText(/r — 0 live sessions.*Last checked.*Could not fetch latest count/)).toBeTruthy();
+    expect(service.textContent).not.toContain("No live sessions");
+    mocks.confirmDanger.mockResolvedValueOnce(false);
+    fireEvent.click(within(service).getByRole("button", { name: /Stop all sessions/ }));
+    await waitFor(() => expect(mocks.confirmDanger).toHaveBeenCalled());
+    const confirmation = render(mocks.confirmDanger.mock.calls[0][1]);
+    expect(confirmation.container.textContent).toContain("Could not fetch latest count");
+    expect(confirmation.container.textContent).toContain("Last checked");
+    expect(confirmation.container.textContent).toContain("Current live session counts are not confirmed");
+    expect(confirmation.container.textContent).not.toContain("No live sessions");
+    expect(mocks.stopDaemon).not.toHaveBeenCalled();
+  });
+
+  it("warns for uncached failures but still honors explicit shutdown authorization and refreshes afterwards", async () => {
+    mocks.repoLiveSessions.mockRejectedValueOnce(new Error("offline")).mockResolvedValue(0);
+    const service = await openService();
+    await waitFor(() => expect(within(service).getByText(/r — Unknown/)).toBeTruthy());
+    fireEvent.click(within(service).getByRole("button", { name: /Stop all sessions/ }));
+    await waitFor(() => expect(mocks.stopDaemon).toHaveBeenCalledWith("/r"));
+    const confirmation = render(mocks.confirmDanger.mock.calls[0][1]);
+    expect(confirmation.container.textContent).toContain("Unknown");
+    expect(confirmation.container.textContent).not.toContain("No live sessions");
+    await waitFor(() => expect(within(service).getByText(/r — 0 live sessions — Last checked/)).toBeTruthy());
+  });
+
+  it("ignores old scope responses while preserving successful per-repo cache", async () => {
+    const intervals = vi.spyOn(globalThis, "setInterval");
+    const oldRefresh = deferredCount();
+    const currentRefresh = deferredCount();
+    mocks.repoLiveSessions.mockImplementation((repo: string) => (repo === "/other" ? Promise.resolve(1) : Promise.resolve(4)));
+    const service = await openService(["/r", "/other"]);
+    await waitFor(() => expect(within(service).getByText(/r — 4 live sessions/)).toBeTruthy());
+    mocks.repoLiveSessions.mockImplementation((repo: string) => (repo === "/r" ? oldRefresh.promise : Promise.resolve(1)));
+    const tick = intervals.mock.calls.find((call) => call[1] === 2000)?.[0];
+    if (typeof tick !== "function") throw new Error("Session polling callback was not registered");
+    act(() => tick());
+    mocks.repoLiveSessions.mockImplementation((repo: string) => (repo === "/r" ? currentRefresh.promise : Promise.resolve(1)));
+    fireEvent.click(screen.getByRole("button", { name: "r" }));
+    expect(within(service).getByText(/r — 4 live sessions.*Checking latest count/)).toBeTruthy();
+    expect(within(service).queryByText(/other —/)).toBeNull();
+    await act(async () => oldRefresh.resolve(99));
+    expect(service.textContent).not.toContain("99 live sessions");
+    await act(async () => currentRefresh.reject(new Error("offline")));
+    expect(within(service).getByText(/r — 4 live sessions.*Could not fetch latest count/)).toBeTruthy();
+  });
 });
 
 describe("Harness settings model default", () => {

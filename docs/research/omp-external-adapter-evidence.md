@@ -21,7 +21,7 @@ Those task artifacts are local Alinery data, **not files included in this Git co
 - Native source inspected: commit `a1b254047d12e143b7c6011536e918c6c35c5906` in the OMP source repository, via exact-commit extraction rather than checkout HEAD.
 - Hash-guarded drivers read sibling files and use exact source-text anchors. One driver also uses a repository-root-relative fixture path. Keeping all paths and bytes intact preserves those dependencies and historical report identities.
 - `alinery-app/biome.jsonc` explicitly excludes **only these 29 frozen filenames**. This is intentional archival treatment, not a relaxation for production files, maintained tests or future diagnostics. No wildcard exemption was added, no rules were disabled globally, and no script was registered in normal test commands.
-- The separate, already-tracked `external_composition_smoke.mjs`, provider-service and manual-completion diagnostics are not part of this freeze/exclusion. Their existing check behavior remains unchanged.
+- The separate `external_composition_smoke.mjs`, provider-service and manual-completion diagnostics were added by this PR. They are unfrozen, outside the 29-file manifest and its formatter exclusions, and may change as the supported runtime contracts evolve. Their standalone commands are not covered by the frozen-evidence integrity check.
 - Never run bulk format/fix over this evidence, rewrite expected hashes to conceal drift, or turn expected coverage-gap exits into success. Extend a reviewed new copy for future work; preserve the historical bytes and report the new identity.
 
 Verify the frozen set without launching OMP:
@@ -104,7 +104,7 @@ These are opt-in research commands with intentionally incomplete outcomes, not t
 
 Start with observable behavior the practical adapter actually ships: ready vs accepted, real review invalidation, controlled ingress versus Continue in both orders, exact undelivered-input preservation, immutable receipt replay, authoritative exit-and-drain confirmation, and selected native boundaries genuinely installed in the stock CLI.
 
-The already-tracked `external_composition_smoke.mjs` contains useful earlier native delegation/queued-review/stale-intent/input-retention oracles. The committed daemon/extension bookkeeping regressions cover their separate reliability fix. New production tests should exercise the real implementation and reject plausible regressions, not import a historical local Set as durable authority.
+The unfrozen `external_composition_smoke.mjs`, added by this PR, contains useful native delegation/queued-review/stale-intent/input-retention oracles. The committed daemon/extension bookkeeping regressions cover their separate reliability fix. New production tests should exercise the real implementation and reject plausible regressions, not import a historical local Set as durable authority.
 
 Only extract the smallest relevant deterministic cases. Do not promote every private workflow, failed-candidate implementation or provider experiment into permanent CI. Keep limitations explicit, retain counterexamples for future harness work, and avoid broad exception rules that silently remove useful admitted work.
 

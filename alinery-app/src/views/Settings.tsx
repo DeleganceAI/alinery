@@ -336,27 +336,41 @@ export function Settings({
   // or every open repository under "All repositories". The footer's daemon poll only knows
   // the ACTIVE repo, so the loss-of-work numbers come from a per-repo probe instead.
   const sessionTargets = useMemo(() => (scope.kind === "repo" ? (scope.repoPath ? [scope.repoPath] : []) : repoOptions), [scope, repoOptions]);
-  const [liveByRepo, setLiveByRepo] = useState<Record<string, number>>({});
+  const [liveByRepo, setLiveByRepo] = useState<Record<string, { count?: number; checkedAt?: number; pending: boolean; error: boolean }>>({});
+  const refreshLiveSessions = useRef<(targets: string[]) => void>(() => {});
   const [sessionsBusy, setSessionsBusy] = useState(false);
 
-  // Unreachable daemon ⇒ 0 (the command swallows that), so a repo never disappears from the list.
-  const probeLiveSessions = (targets: string[]) =>
-    Promise.all(targets.map((repo) => ipc.repoLiveSessions(repo).then((live) => [repo, live] as const))).then((pairs) => Object.fromEntries(pairs));
-
+  // Keep the last successful observation; one failed or slow repo must not hide its peers.
   useEffect(() => {
     if (activeSection !== "harness") return;
     let alive = true;
-    const tick = () =>
-      probeLiveSessions(sessionTargets)
-        .then((next) => alive && setLiveByRepo(next))
-        .catch(() => {});
+    const pending = new Set<string>();
+    const probe = (targets: string[]) => {
+      if (!alive) return;
+      for (const repo of targets) {
+        if (!sessionTargets.includes(repo) || pending.has(repo)) continue;
+        pending.add(repo);
+        setLiveByRepo((previous) => ({ ...previous, [repo]: { ...previous[repo], pending: true, error: previous[repo]?.error ?? false } }));
+        ipc.repoLiveSessions(repo).then(
+          (count) => {
+            pending.delete(repo);
+            if (alive) setLiveByRepo((previous) => ({ ...previous, [repo]: { count, checkedAt: Date.now(), pending: false, error: false } }));
+          },
+          () => {
+            pending.delete(repo);
+            if (alive) setLiveByRepo((previous) => ({ ...previous, [repo]: { ...previous[repo], pending: false, error: true } }));
+          },
+        );
+      }
+    };
+    refreshLiveSessions.current = probe;
+    const tick = () => probe(sessionTargets);
     tick();
     const t = setInterval(tick, 2000);
     return () => {
       alive = false;
       clearInterval(t);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection, sessionTargets]);
 
   useEffect(() => {
@@ -793,6 +807,7 @@ export function Settings({
   // restarts each daemon it stops. A repo whose daemon is unreachable or conflicted is
   // reported, never silently counted as stopped.
   const stopScopedSessions = async (repos: string[], label: string) => {
+    const refresh = refreshLiveSessions.current;
     setSessionsBusy(true);
     const problems: string[] = [];
     for (const repo of repos) {
@@ -803,9 +818,7 @@ export function Settings({
       }
     }
     setSessionsBusy(false);
-    probeLiveSessions(repos)
-      .then(setLiveByRepo)
-      .catch(() => {});
+    refresh(repos);
     const stopped = repos.length - problems.length;
     if (problems.length === 0) {
       report(`Sessions stopped for ${label}; daemon${repos.length === 1 ? "" : "s"} restarted`);
@@ -1640,9 +1653,27 @@ export function Settings({
   const renderHarness = () => {
     // Acts on the SETTINGS scope — the repo picked in the scope bar, or every open
     // repository under "All repositories". Live counts come from a per-repo probe.
-    const targets = sessionTargets.map((repo) => ({ repo, live: liveByRepo[repo] ?? 0 }));
-    const live = targets.reduce((sum, target) => sum + target.live, 0);
     const plural = (n: number) => (n === 1 ? "" : "s");
+    const targets = sessionTargets.map((repo) => {
+      const observation = liveByRepo[repo];
+      const count = observation?.count;
+      const qualification = observation?.error ? "Could not fetch latest count" : observation?.pending ? "Checking latest count" : "";
+      const checked = observation?.checkedAt != null ? `Last checked ${new Date(observation.checkedAt).toLocaleString()}` : "";
+      const status = count == null ? (observation?.error ? "Unknown" : "Checking…") : `${count} live session${plural(count)}`;
+      return { repo, count, uncertain: count == null || !!qualification, description: [status, checked, qualification].filter(Boolean).join(" — ") };
+    });
+    const live = targets.reduce((sum, target) => sum + (target.count ?? 0), 0);
+    const uncertain = targets.some((target) => target.uncertain);
+    const summary = targets.some((target) => target.count == null)
+      ? targets.some((target) => target.count == null && liveByRepo[target.repo]?.error)
+        ? "Live sessions: Unknown"
+        : "Checking live sessions…"
+      : `${live} live session${plural(live)}${uncertain ? " (last known)" : ""}`;
+    const lossWarning = uncertain
+      ? "Current live session counts are not confirmed. Stopping may kill in-flight harness work, including sessions not reflected in the last known counts."
+      : live > 0
+        ? `${live} live session${plural(live)} will be killed. Any unsaved, in-flight harness work is lost.`
+        : "No live sessions.";
     const scopeName = isGlobal ? (targets.length ? `all ${targets.length} open repositor${targets.length === 1 ? "y" : "ies"}` : "") : repoName(selectedRepo);
     const hitsActiveRepo = targets.some((target) => target.repo === activeRepo);
     return (
@@ -1734,10 +1765,7 @@ export function Settings({
         </section>
         <details className="harness-disclosure harness-session-service">
           <summary>
-            Session service{" "}
-            <span className="dim">
-              {live} live session{plural(live)}
-            </span>
+            Session service <span className="dim">{summary}</span>
           </summary>
           <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 10 }}>
             Sessions run in a background daemon that survives app quit. Stopping them affects <strong>{scopeName || "the selected repository"}</strong>
@@ -1745,13 +1773,13 @@ export function Settings({
             {hitsActiveRepo ? ", and also restarts the MCP server" : ""}. A fresh daemon is started immediately afterwards.
           </div>
           <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 10, color: live > 0 ? "var(--danger)" : undefined }}>
-            {live > 0 ? `${live} live session${plural(live)} will be killed. Any unsaved, in-flight harness work is lost.` : "No live sessions."}
+            {lossWarning}
           </div>
-          {isGlobal && targets.length > 1 && (
+          {targets.length > 0 && (
             <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 10 }}>
               {targets.map((target) => (
-                <div key={target.repo} title={target.repo} style={{ color: target.live > 0 ? "var(--danger)" : undefined }}>
-                  {repoName(target.repo)} — {target.live} live session{plural(target.live)}
+                <div key={target.repo} title={target.repo} style={{ color: (target.count ?? 0) > 0 ? "var(--danger)" : undefined }}>
+                  {repoName(target.repo)} — {target.description}
                 </div>
               ))}
             </div>
@@ -1762,29 +1790,31 @@ export function Settings({
             disabled={!targets.length || sessionsBusy}
             onClick={() => {
               void (async () => {
-                const breakdown = isGlobal && targets.length > 1 && (
+                const breakdown = (
                   <ul className="confirm-list">
                     {targets.map((t) => (
                       <li key={t.repo}>
                         <span className="confirm-repo">{repoName(t.repo)}</span>
-                        <span className="dim">
-                          {t.live} live session{plural(t.live)}
-                        </span>
+                        <span className="dim">{t.description}</span>
                       </li>
                     ))}
                   </ul>
                 );
                 const ok = await confirmDanger(
-                  live > 0 ? `Stop ${live} live session${plural(live)} in ${scopeName}?` : `Restart the session daemon${plural(targets.length)} for ${scopeName}?`,
+                  uncertain
+                    ? `Stop sessions in ${scopeName}?`
+                    : live > 0
+                      ? `Stop ${live} live session${plural(live)} in ${scopeName}?`
+                      : `Restart the session daemon${plural(targets.length)} for ${scopeName}?`,
                   <>
                     {breakdown}
-                    {live > 0 ? (
-                      <p className="confirm-loss">In-flight harness work is lost. This cannot be undone.</p>
+                    {uncertain || live > 0 ? (
+                      <p className="confirm-loss">{lossWarning} This cannot be undone.</p>
                     ) : (
                       <p>No live sessions — the daemon is replaced with a fresh one.</p>
                     )}
                   </>,
-                  live > 0 ? "Stop sessions" : "Restart daemon",
+                  uncertain || live > 0 ? "Stop sessions" : "Restart daemon",
                 );
                 if (!ok) return;
                 await stopScopedSessions(
