@@ -1,6 +1,6 @@
 # Vinculum model change and thinking level
 
-Status: not started. A plan only.
+Status: done. The transcript reply carries `model`, `thinking`, and `thinking_levels`. `set_model` and `set_thinking_level` return the same three fields. A new session takes the settings thinking level once, at open. Protocol is 21.
 
 This is a working note, not a product contract. `README.md` is human-edited and is not the place for it.
 

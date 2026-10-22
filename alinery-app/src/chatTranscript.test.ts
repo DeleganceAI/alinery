@@ -1585,4 +1585,16 @@ describe("applyVinculumTranscript", () => {
       { id: "f:live:c2", tool: "bash", text: "partial out", status: "running" },
     ]);
   });
+
+  it("keeps the model and thinking level when a later poll only appends a message", () => {
+    const controls = { model: "xai/grok-4.6", thinking: "high", thinking_levels: ["off", "low", "high"] };
+    const first = applyVinculumTranscript({ messages: [reply[0]], ...controls });
+    expect(first.sessionMeta).toMatchObject({ model: "xai/grok-4.6", thinking: "high", thinkingLevels: ["off", "low", "high"] });
+    const second = applyVinculumTranscript({ messages: [...reply], ...controls });
+    expect(second.messages).toHaveLength(2);
+    expect(second.sessionMeta).toMatchObject({ model: "xai/grok-4.6", thinking: "high", thinkingLevels: ["off", "low", "high"] });
+    const quiet = applyVinculumTranscript({ messages: [reply[0]], model: "alinery/DeepSeek", thinking: "off", thinking_levels: [] });
+    expect(quiet.sessionMeta.thinking).toBe("off");
+    expect(quiet.sessionMeta.thinkingLevels).toEqual([]);
+  });
 });

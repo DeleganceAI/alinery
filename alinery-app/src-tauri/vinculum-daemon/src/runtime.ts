@@ -2,12 +2,22 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { resolveAzureBaseUrl } from "@earendil-works/pi-ai/api/azure-openai-config";
+import { setBedrockProviderModule } from "@earendil-works/pi-ai/api/bedrock-converse-stream.lazy";
+import { stream as bedrockStream, streamSimple as bedrockStreamSimple } from "@earendil-works/pi-ai/api/bedrock-converse-stream";
+import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { CreateModelsOptions, MutableModels } from "@earendil-works/pi-ai/models";
 import { credentialPath, openCredentialStore } from "./credentials.ts";
 import { customProviderPath, openCustomProviders, type CustomProviderPublic } from "./customProviders.ts";
 import { createLoginBroker, type LoginStatus } from "./login.ts";
 import { installAlineryProvider } from "./provider.ts";
+
+// Pi loads these through a variable import so a bundler will not follow them.
+// Inside the compiled daemon that import is `./xai.js` or `./bedrock-converse-stream.js`
+// from the binary itself, and the file is not there. Register the static copies instead.
+registerBunOAuthFlows();
+setBedrockProviderModule({ stream: bedrockStream, streamSimple: bedrockStreamSimple });
 
 export type LoginProviderRow = {
   id: string;
@@ -48,6 +58,38 @@ export function vinculumAuthContext(): AuthContext {
   };
 }
 
+/**
+ * Pi's Azure login asks for the key and nothing else. The endpoint is provider
+ * config, not the key, so it has to ride along on the credential or the next
+ * request throws "base URL is required".
+ */
+function installAzureEndpointPrompt(models: MutableModels) {
+  const apiKey = models.getProvider("azure")?.auth.apiKey;
+  const login = apiKey?.login;
+  if (!apiKey || !login) return;
+  apiKey.login = async (interaction) => {
+    const credential = await login(interaction);
+    interaction.signal.throwIfAborted();
+    const entered = (
+      await interaction.prompt({
+        type: "text",
+        message: "Enter Azure OpenAI endpoint URL or resource name",
+        placeholder: "https://example.openai.azure.com",
+      })
+    ).trim();
+    interaction.signal.throwIfAborted();
+    if (!entered) throw new Error("Azure OpenAI base URL is required");
+    const env = { ...(credential.env ?? {}) };
+    if (entered.includes("://") || entered.includes(".") || entered.includes("/")) {
+      env.AZURE_OPENAI_BASE_URL = entered.includes("://") ? entered : `https://${entered}`;
+    } else {
+      env.AZURE_OPENAI_RESOURCE_NAME = entered;
+    }
+    resolveAzureBaseUrl({}, { env });
+    return { ...credential, env };
+  };
+}
+
 function deviceId(appConfig: string): string {
   const path = join(dirname(appConfig), "provider-device-id");
   try {
@@ -66,6 +108,7 @@ function deviceId(appConfig: string): string {
 export function openProviderRuntime(appConfig: string) {
   const credentials = openCredentialStore(credentialPath(appConfig));
   const models = builtinModels({ credentials, authContext: vinculumAuthContext() });
+  installAzureEndpointPrompt(models);
   installAlineryProvider(models, appConfig);
   const custom = openCustomProviders(customProviderPath(appConfig));
   custom.register(models);

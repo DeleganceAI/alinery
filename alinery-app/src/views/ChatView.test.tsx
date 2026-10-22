@@ -19,7 +19,13 @@ vi.mock("../confirm", () => ({
 }));
 vi.mock("../SessionTerminal", () => ({ SessionTerminal: () => <div data-testid="terminal" /> }));
 vi.mock("./ProviderSetupDialog", () => ({
-  ProviderSetupDialog: ({ initialTab, preselect }: { initialTab?: string; preselect?: string }) => <div data-testid="providers" data-tab={initialTab} data-preselect={preselect} />,
+  ProviderSetupDialog: ({ initialTab, preselect, current, onPick }: { initialTab?: string; preselect?: string; current?: string; onPick?: (model: string) => void }) => (
+    <div data-testid="providers" data-tab={initialTab} data-preselect={preselect} data-current={current}>
+      <button type="button" onClick={() => onPick?.("anthropic/claude")}>
+        Apply test model
+      </button>
+    </div>
+  ),
 }));
 
 const mocks = vi.hoisted(() => ({
@@ -35,6 +41,8 @@ const mocks = vi.hoisted(() => ({
   chatDetach: vi.fn(),
   chatRpcWrite: vi.fn(),
   chatTranscript: vi.fn(async () => [{ role: "user", text: "seeded" }]),
+  chatSetModel: vi.fn(async () => ({ model: "anthropic/claude", thinking: "off", thinking_levels: [] as string[] })),
+  chatSetThinkingLevel: vi.fn(async () => ({ model: "xai/grok-4.6", thinking: "low", thinking_levels: ["off", "low", "high"] })),
   chatPrompt: vi.fn(async () => undefined),
   chatAbort: vi.fn(async () => undefined),
   chatRestate: vi.fn(),
@@ -65,6 +73,8 @@ vi.mock("../ipc", () =>
     chatDetach: mocks.chatDetach,
     chatRpcWrite: mocks.chatRpcWrite,
     chatTranscript: mocks.chatTranscript,
+    chatSetModel: mocks.chatSetModel,
+    chatSetThinkingLevel: mocks.chatSetThinkingLevel,
     chatPrompt: mocks.chatPrompt,
     chatAbort: mocks.chatAbort,
     chatRestate: mocks.chatRestate,
@@ -292,6 +302,43 @@ describe("ChatView", () => {
     fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: "hello" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(mocks.chatPrompt).toHaveBeenCalledWith("/repo", "s-new", "hello"));
+  });
+
+  it("shows the model and thinking level from the transcript and applies a set from the reply", async () => {
+    const row = thread("s-new", { session: meta("s-new", { started_at: 1, ended_at: null, archived: false, model: "stale/model" }) });
+    mocks.listChatThreads.mockResolvedValue([row]);
+    mocks.chatSessionStatus.mockResolvedValue(observed("idle", "alive", "rpc"));
+    const transcript = {
+      messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] }],
+      model: "xai/grok-4.6",
+      thinking: "high",
+      thinking_levels: ["off", "low", "high"],
+    };
+    mocks.chatTranscript.mockResolvedValue(transcript);
+    mocks.chatSetThinkingLevel.mockImplementation(async () => {
+      mocks.chatTranscript.mockResolvedValue({ ...transcript, thinking: "low" });
+      return { model: "xai/grok-4.6", thinking: "low", thinking_levels: ["off", "low", "high"] };
+    });
+    mocks.chatSetModel.mockImplementation(async () => {
+      mocks.chatTranscript.mockResolvedValue({ ...transcript, model: "anthropic/claude", thinking: "off", thinking_levels: [] });
+      return { model: "anthropic/claude", thinking: "off", thinking_levels: [] };
+    });
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-new") }));
+    const modelButton = await screen.findByRole("button", { name: "xai/grok-4.6" });
+    const picker = (await screen.findByRole("combobox", { name: "Thinking level" })) as HTMLSelectElement;
+    expect(picker.value).toBe("high");
+    fireEvent.change(picker, { target: { value: "low" } });
+    await waitFor(() => expect(mocks.chatSetThinkingLevel).toHaveBeenCalledWith("/repo", "s-new", "low"));
+    expect(mocks.chatRpcWrite).not.toHaveBeenCalled();
+    await waitFor(() => expect((screen.getByRole("combobox", { name: "Thinking level" }) as HTMLSelectElement).value).toBe("low"));
+
+    fireEvent.click(modelButton);
+    expect((await screen.findByTestId("providers")).dataset.current).toBe("xai/grok-4.6");
+    fireEvent.click(screen.getByRole("button", { name: "Apply test model" }));
+    await waitFor(() => expect(mocks.chatSetModel).toHaveBeenCalledWith("/repo", "s-new", "anthropic/claude"));
+    expect(await screen.findByRole("button", { name: "anthropic/claude" })).toBeTruthy();
+    expect(screen.queryByRole("combobox", { name: "Thinking level" })).toBeNull();
   });
 
   it.skip("opens a booting thread idle and sends its first message as a prompt", async () => {

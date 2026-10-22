@@ -28,6 +28,7 @@ import {
   appendOptimisticUser,
   applyFilePage,
   applyRpcLine,
+  applySessionControls,
   applyVinculumTranscript,
   type ChatTranscriptState,
   carryOver,
@@ -36,6 +37,8 @@ import {
   isPresentationUi,
   matchingSendFailure,
   matchingSendSuccess,
+  NEXT_TURN_MODEL_TITLE,
+  NEXT_TURN_THINKING_TITLE,
   needsUiReply,
   settleRefusedSend,
   watchVinculumTranscript,
@@ -1808,7 +1811,19 @@ export function SessionView({
     .filter((part) => part && part.length > 0)
     .join(" · ");
   const pickThinking = (level: string) => {
-    if (vinculum) return;
+    if (vinculum) {
+      void ipc.sessionSetThinkingLevel(id, level).then(
+        (controls) => {
+          setChat((current) => {
+            const next = applySessionControls(current, controls);
+            chatRef.current = next;
+            return next;
+          });
+        },
+        (error) => toast(String(error), "error"),
+      );
+      return;
+    }
     void ipc.rpcWriteSession(id, setThinkingLevelCommand(level)).catch((error) => toast(String(error), "error"));
   };
 
@@ -1883,7 +1898,12 @@ export function SessionView({
     if (vinculum) {
       setModelError(null);
       try {
-        await ipc.sessionSetModel(id, `${provider}/${modelId}`);
+        const controls = await ipc.sessionSetModel(id, `${provider}/${modelId}`);
+        setChat((current) => {
+          const next = applySessionControls(current, controls);
+          chatRef.current = next;
+          return next;
+        });
         setModelDialog(null);
       } catch (error) {
         setModelError(String(error));
@@ -1982,7 +2002,9 @@ export function SessionView({
           </div>
         )}
         {(executionStep || phase) && <span className="pill">{executionStep?.title ?? phase}</span>}
-        <span className="pill">{harnessDisplayName(harness) + (model ? ` · ${model}` : "")}</span>
+        <span className="pill" title={vinculum && turnActive ? NEXT_TURN_MODEL_TITLE : undefined}>
+          {harnessDisplayName(harness) + (chatMetaHead ? ` · ${chatMetaHead}` : "")}
+        </span>
         <StatusDot id={id} slug={taskSlug} repoPath={repoPath} observation={observation} />
         <span className="session-path dim mono">
           {id} · {cwd}
@@ -2115,21 +2137,38 @@ export function SessionView({
                 <>
                   {chatVisibility.showMeta ? (
                     <div className="chat-meta">
-                      <p>
-                        {chatMetaHead ? `${chatMetaHead} · ` : null}
+                      <div>
+                        {vinculum ? (
+                          <button
+                            type="button"
+                            className="btn ghost small"
+                            aria-label="Change model"
+                            title={turnActive ? NEXT_TURN_MODEL_TITLE : "Change model"}
+                            onClick={() => {
+                              setModelError(null);
+                              setModelDialog({ tab: "models", preselect: "", setup: false });
+                            }}
+                          >
+                            {chatMetaHead || "Model"}
+                          </button>
+                        ) : chatMetaHead ? (
+                          chatMetaHead
+                        ) : null}
+                        {chatMetaHead || vinculum ? " · " : null}
                         {chat.sessionMeta.thinking ? (
                           <>
                             <ThinkingSelect
                               level={chat.sessionMeta.thinking}
                               levels={chat.sessionMeta.thinkingLevels}
                               disabledReason={rpcProcessLive ? null : "The session is not running, so its thinking level cannot change"}
+                              title={turnActive ? NEXT_TURN_THINKING_TITLE : undefined}
                               onPick={pickThinking}
                             />
                             {" · "}
                           </>
                         ) : null}
                         {chatMetaTail}
-                      </p>
+                      </div>
                     </div>
                   ) : null}
                   <div className="terminal-frame">

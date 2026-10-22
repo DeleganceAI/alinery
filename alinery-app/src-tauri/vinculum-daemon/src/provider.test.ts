@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
-import { resolveModel } from "./provider.ts";
+import { resolveModel, thinkingForHosted } from "./provider.ts";
 import { vinculumAuthContext } from "./runtime.ts";
 
 test("an old alinery grok id is xAI and a real provider prefix is kept", () => {
@@ -20,6 +20,22 @@ test("a blank model prefers the hosted catalog", () => {
   );
   const appConfig = join(dir, "instances", "one", "config.toml");
   expect(resolveModel(appConfig, "")).toEqual({ provider: "alinery", modelId: "DeepSeek-V4.1-Flash" });
+});
+
+test("hosted thinking becomes the Pi map, and a model without it does not think", () => {
+  const flash = {
+    off: "none",
+    minimal: null,
+    low: "low",
+    medium: null,
+    high: "high",
+    xhigh: null,
+    max: "max",
+  };
+  expect(thinkingForHosted({ reasoning: true, levels: flash })).toEqual({ reasoning: true, thinkingLevelMap: flash });
+  expect(thinkingForHosted({ reasoning: true, levels: { off: "  ", high: "high" } }).thinkingLevelMap).toMatchObject({ off: null, high: "high", low: null });
+  expect(thinkingForHosted(undefined)).toEqual({ reasoning: false });
+  expect(thinkingForHosted({ reasoning: false, levels: flash })).toEqual({ reasoning: false });
 });
 
 test("provider auth cannot see a shell key", async () => {

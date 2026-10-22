@@ -6,7 +6,30 @@ import { xaiProvider } from "@earendil-works/pi-ai/providers/xai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 
-type CatalogModel = { id: string; name: string; context_window: number; max_tokens: number };
+type CatalogModel = {
+  id: string;
+  name: string;
+  context_window: number;
+  max_tokens: number;
+  thinking?: { reasoning?: boolean; levels?: Record<string, string | null> };
+};
+
+const HOSTED_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+/**
+ * The catalog `thinking` object, as Pi's `reasoning` and `thinkingLevelMap`.
+ * A string is the `reasoning_effort` to send. Null, a blank, or a missing key is not offered.
+ * No object, or `reasoning` not exactly true, means this model does not think.
+ */
+export function thinkingForHosted(thinking: CatalogModel["thinking"]): { reasoning: boolean; thinkingLevelMap?: Record<string, string | null> } {
+  if (thinking?.reasoning !== true || !thinking.levels || typeof thinking.levels !== "object") return { reasoning: false };
+  const thinkingLevelMap: Record<string, string | null> = {};
+  for (const name of HOSTED_THINKING_LEVELS) {
+    const value = thinking.levels[name];
+    thinkingLevelMap[name] = typeof value === "string" && value.trim() ? value : null;
+  }
+  return { reasoning: true, thinkingLevelMap };
+}
 type InferenceFile = { token: string; expires_at: number; catalog: { base_url: string; models: CatalogModel[] } };
 
 export function pairingConfigDir(appConfig: string): string {
@@ -60,7 +83,7 @@ export function installAlineryProvider(models: Pick<MutableModels, "setProvider"
       api: "openai-completions",
       provider: "alinery",
       baseUrl: inference?.catalog.base_url,
-      reasoning: false,
+      ...thinkingForHosted(model.thinking),
       input: ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: model.context_window,

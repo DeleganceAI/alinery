@@ -348,6 +348,7 @@ pub mod ops {
     pub const PROMPT: &str = "prompt";
     pub const ABORT: &str = "abort";
     pub const SET_MODEL: &str = "set_model";
+    pub const SET_THINKING_LEVEL: &str = "set_thinking_level";
     pub const PROVIDER_CATALOG: &str = "provider_catalog";
     pub const PROVIDER_LOGOUT: &str = "provider_logout";
     pub const PROVIDER_LOGIN_START: &str = "provider_login_start";
@@ -463,6 +464,30 @@ pub fn abort_request(id: &str) -> Value {
 
 pub fn set_model_request(id: &str, model: &str) -> Value {
     json!({"op": ops::SET_MODEL, "id": id, "model": model})
+}
+
+pub fn set_thinking_level_request(id: &str, level: &str) -> Value {
+    json!({"op": ops::SET_THINKING_LEVEL, "id": id, "level": level})
+}
+
+/// The model and thinking level the next turn will use. `thinking_levels` is empty when the model cannot think.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct SessionControls {
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub thinking: String,
+    #[serde(default)]
+    pub thinking_levels: Vec<String>,
+}
+
+/// Transcript poll. The three control fields sit beside `messages`, not on each one.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct TranscriptReply {
+    #[serde(default)]
+    pub messages: Vec<TranscriptMessage>,
+    #[serde(flatten)]
+    pub controls: SessionControls,
 }
 
 pub fn provider_catalog_request() -> Value {
@@ -1114,13 +1139,12 @@ impl DaemonClient {
         self.call(&rpc_write_request(id, payload)).and_then(expect_ok)
     }
 
-    pub fn transcript(&self, id: &str) -> Result<Vec<TranscriptMessage>, String> {
+    pub fn transcript(&self, id: &str) -> Result<TranscriptReply, String> {
         let response = self.call(&transcript_request(id))?;
         if let Some(error) = reply_error(&response) {
             return Err(error.to_string());
         }
-        let messages = response.get("messages").cloned().unwrap_or(json!([]));
-        serde_json::from_value(messages).map_err(|error| error.to_string())
+        serde_json::from_value(response).map_err(|error| error.to_string())
     }
 
     pub fn prompt(&self, id: &str, text: &str) -> Result<(), String> {
@@ -1131,8 +1155,12 @@ impl DaemonClient {
         self.call(&abort_request(id)).and_then(expect_ok)
     }
 
-    pub fn set_model(&self, id: &str, model: &str) -> Result<(), String> {
-        self.call(&set_model_request(id, model)).and_then(expect_ok)
+    pub fn set_model(&self, id: &str, model: &str) -> Result<SessionControls, String> {
+        session_controls(self.call(&set_model_request(id, model))?)
+    }
+
+    pub fn set_thinking_level(&self, id: &str, level: &str) -> Result<SessionControls, String> {
+        session_controls(self.call(&set_thinking_level_request(id, level))?)
     }
 
     pub fn provider_catalog(&self) -> Result<ProviderCatalog, String> {
@@ -1203,6 +1231,11 @@ fn expect_message_send(response: Value) -> Result<(), String> {
         return Err(unknown_message_delivery("malformed daemon reply: missing ok:true"));
     }
     Ok(())
+}
+
+fn session_controls(response: Value) -> Result<SessionControls, String> {
+    expect_ok(response.clone())?;
+    serde_json::from_value(response).map_err(|error| format!("invalid daemon reply: {error}"))
 }
 
 fn expect_ok(response: Value) -> Result<(), String> {
@@ -1597,6 +1630,7 @@ mod tests {
         assert_eq!(prompt_request("s1", "hello"), json!({"op": "prompt", "id": "s1", "text": "hello"}));
         assert_eq!(abort_request("s1"), json!({"op": "abort", "id": "s1"}));
         assert_eq!(set_model_request("s1", "xai/grok-4.6"), json!({"op": "set_model", "id": "s1", "model": "xai/grok-4.6"}));
+        assert_eq!(set_thinking_level_request("s1", "high"), json!({"op": "set_thinking_level", "id": "s1", "level": "high"}));
         assert_eq!(provider_catalog_request(), json!({"op": "provider_catalog"}));
         assert_eq!(
             provider_login_start_request("anthropic", "oauth"),
@@ -1651,6 +1685,18 @@ mod tests {
         let replayed = serde_json::to_value(&messages[0]).unwrap();
         assert_eq!(replayed["content"][3]["arguments"]["path"], "a.ts");
         assert_eq!(replayed["content"][1]["type"], "redactedThinking");
+        let reply: TranscriptReply = serde_json::from_value(json!({
+            "messages": messages,
+            "model": "xai/grok-4.6",
+            "thinking": "high",
+            "thinking_levels": ["off", "high"]
+        }))
+        .unwrap();
+        assert_eq!(reply.controls.model, "xai/grok-4.6");
+        assert_eq!(reply.controls.thinking, "high");
+        assert_eq!(reply.controls.thinking_levels, vec!["off".to_string(), "high".to_string()]);
+        let controls: SessionControls = serde_json::from_value(json!({"ok": true, "model": "xai/grok-4.6", "thinking": "low", "thinking_levels": ["off", "low"]})).unwrap();
+        assert_eq!(controls.thinking, "low");
     }
 
     #[test]

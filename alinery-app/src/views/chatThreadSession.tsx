@@ -8,6 +8,7 @@ import type { SessionChatStatus } from "../chat/types";
 import {
   appendOptimisticAbort,
   appendOptimisticUser,
+  applySessionControls,
   applyVinculumTranscript,
   type ChatTranscriptState,
   emptyTranscript,
@@ -115,6 +116,7 @@ type ChatThreadApi = {
   approve: (id: string, allow: boolean) => void;
   reply: (id: string, value: string) => void;
   cancelUi: (id: string) => void;
+  applyControls: (controls: { model?: string; thinking?: string; thinking_levels?: string[] }) => void;
 };
 
 const IDLE_ACTIVITY = chatActivity(null, NO_TRANSCRIPT);
@@ -162,6 +164,7 @@ const NO_API: ChatThreadApi = {
   approve: () => {},
   reply: () => {},
   cancelUi: () => {},
+  applyControls: () => {},
 };
 
 type Verdict = { text: string; attachments: DraftAttachment[]; entryId: string | null; refused: boolean };
@@ -435,6 +438,7 @@ export type ChatThreadHandle = ChatThreadSnapshot & {
   approve: (id: string, allow: boolean) => void;
   reply: (id: string, value: string) => void;
   cancelUi: (id: string) => void;
+  applyControls: (controls: { model?: string; thinking?: string; thinking_levels?: string[] }) => void;
 };
 
 /**
@@ -534,6 +538,7 @@ export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions
     approve: (id, allow) => api.approve(id, allow),
     reply: (id, value) => api.reply(id, value),
     cancelUi: (id) => api.cancelUi(id),
+    applyControls: (controls) => api.applyControls(controls),
   };
 }
 
@@ -1018,6 +1023,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     approve: ui.approve,
     reply: ui.reply,
     cancelUi: ui.cancel,
+    applyControls: (controls) => updateTranscript((current) => applySessionControls(current, controls)),
   };
 
   const view: ChatThreadSnapshot = {
@@ -1062,9 +1068,13 @@ function ChatThreadController({ entry }: { entry: Entry }) {
           mode="manual"
           initialTab={providersDialog.tab}
           preselect={providersDialog.preselect}
+          current={transcript.sessionMeta.model}
           onPick={(model) => {
             setProvidersDialog(null);
-            void ipc.chatSetModel(repo, id, model).catch((cause: unknown) => registry.setError(String(cause)));
+            void ipc.chatSetModel(repo, id, model).then(
+              (controls) => updateTranscript((current) => applySessionControls(current, controls)),
+              (cause: unknown) => registry.setError(String(cause)),
+            );
           }}
           onClose={() => setProvidersDialog(null)}
         />

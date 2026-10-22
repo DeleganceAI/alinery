@@ -5,20 +5,21 @@ import { dlopen, FFIType, ptr, CString } from "bun:ffi";
 import type { WatchHandle } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
-import { Harness, LiveDoc, createRegistry, defineDoc, defineExtension, defineTool, section, type Conversation, type Harness as OpenedHarness } from "@earendil-works/pi-durable";
+import { AgentDoc, Harness, LiveDoc, createRegistry, defineDoc, defineExtension, defineTool, section, type Conversation, type Harness as OpenedHarness } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import { completeSession, engineAxis, enginePlaybook, permitSession, startGraphs } from "./graph.ts";
 import { CHAT_TITLE_PROMPT, SESSION_NAME_INSTRUCTION, chatTitleBucket, cleanChatTitle } from "./naming.ts";
-import { completeConfiguredText, modelSources, resolveModel, type ResolvedModel } from "./provider.ts";
+import { completeConfiguredText, modelSources, resolveModel } from "./provider.ts";
 import { openProviderRuntime } from "./runtime.ts";
 import { completeSessionMeta, getTaskExecution, ownershipLibrary, suggestSessionName, taskOp, taskWorktree } from "./tasks.ts";
 import { attachShell, detachPty, hasPty, isPty, killPty, resizePty, startShell, writePty } from "./terminal.ts";
+import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinking, seedLevel, seedUnsetThinking, setModelRefusal, turnControls } from "./sessionControls.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 20;
+const PROTOCOL = 21;
 const context = BACKGROUND_CONTEXT;
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
   kind: "alinery.attention",
@@ -363,7 +364,12 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
   if (!resolved) throw new Error("no model is configured");
   const root = await harness.root(context, exists ? undefined : { agent: { model: resolved } });
   row.conversationId = root.id;
-  await ensureModel(root, resolved);
+  await ensureModel(root, resolved, context);
+  const agentDoc = await harness.documentState(AgentDoc, root.id, context);
+  const storedThinking = agentDoc?.value?.thinkingLevel;
+  agentDoc?.dispose();
+  const registered = models.getModel(resolved.provider, resolved.modelId);
+  await seedUnsetThinking(storedThinking, root, seedLevel(readLaunchThinking(repo, appConfig), registered), context);
   if (!String(readMeta(taskSlug, id).model ?? "").trim()) writeMeta(taskSlug, id, { model: `${resolved.provider}/${resolved.modelId}` });
   // Resumed conversations were created before this hook existed. tx.doc loads an existing doc and creates a missing one.
   await root.commit(async (tx) => {
@@ -379,16 +385,6 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
   await seedPrompt(root, prompt);
   row.process = "alive";
   return row;
-}
-
-async function ensureModel(conversation: Conversation, resolved: ResolvedModel, force = false) {
-  const agent = await conversation.agent(context);
-  const current = agent.model;
-  if (current?.provider === resolved.provider && current.modelId === resolved.modelId) return;
-  // An old `alinery/grok-*` meta is xAI at read time. Reconfigure that session without rewriting the file.
-  const remap = current?.provider === "alinery" && resolved.provider === "xai" && current.modelId === resolved.modelId;
-  if (!force && current?.modelId && !remap) return;
-  await conversation.configure({ model: resolved }, context);
 }
 
 async function seedPrompt(conversation: Conversation, prompt: string) {
@@ -477,6 +473,14 @@ async function maybeTitleChat(row: Live) {
 async function conversationFor(row: Live): Promise<Conversation | null> {
   if (!row.harness || !row.conversationId) return null;
   return (await row.harness.conversation(row.conversationId, context)) ?? null;
+}
+
+async function sessionControls(conversation: Conversation) {
+  const agent = await conversation.agent(context);
+  const current = agent.model;
+  const id = current ? `${current.provider}/${current.modelId}` : "";
+  const catalog = current ? models.getModel(current.provider, current.modelId) : undefined;
+  return turnControls(id, agent.thinkingLevel, catalog);
 }
 
 function watch(row: Live, harness: OpenedHarness, conversationId: string) {
@@ -845,7 +849,7 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
       }
       if (op === "transcript") {
         const transcript = await transcriptMessages(row, conversation);
-        reply(socket, { messages: formatTranscript(transcript.messages, transcript.tools) });
+        reply(socket, { messages: formatTranscript(transcript.messages, transcript.tools), ...(await sessionControls(conversation)) });
         return;
       }
       if (op === "prompt") {
@@ -859,7 +863,7 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
           reply(socket, { error: "no model is configured" });
           return;
         }
-        await ensureModel(conversation, resolved);
+        await ensureModel(conversation, resolved, context);
         await conversation.submit({ type: "input", content: text, whenBusy: "followUp" }, context);
         reply(socket, { ok: true });
         return;
@@ -879,16 +883,12 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
     }
     return;
   }
-  if (op === "set_model") {
+  if (op === "set_model" || op === "set_thinking_level") {
     const row = live.get(String(header.id ?? ""));
-    if (!row) {
-      reply(socket, { error: "unknown-session" });
-      return;
-    }
-    const requested = typeof header.model === "string" ? header.model : "";
-    const resolved = resolveModel(appConfig, requested);
-    if (!resolved) {
-      reply(socket, { error: "no model is configured" });
+    const requested = op === "set_model" && typeof header.model === "string" ? header.model : "";
+    const refusal = op === "set_model" ? setModelRefusal(Boolean(row), requested) : row ? null : "unknown-session";
+    if (refusal || !row) {
+      reply(socket, { error: refusal ?? "unknown-session" });
       return;
     }
     try {
@@ -897,11 +897,23 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
         reply(socket, { error: "unknown-session" });
         return;
       }
-      await ensureModel(conversation, resolved, true);
-      writeMeta(row.taskSlug, row.id, { model: `${resolved.provider}/${resolved.modelId}` });
-      reply(socket, { ok: true });
+      if (op === "set_model") {
+        const resolved = resolveModel(appConfig, requested);
+        if (!resolved) {
+          reply(socket, { error: "no model is configured" });
+          return;
+        }
+        await changeSessionModel(conversation, resolved, context, (patch) => writeMeta(row.taskSlug, row.id, patch));
+      } else {
+        const level = typeof header.level === "string" ? header.level : "";
+        const agent = await conversation.agent(context);
+        const current = agent.model;
+        const catalog = current ? models.getModel(current.provider, current.modelId) : undefined;
+        await changeThinkingLevel(conversation, level, catalog, context);
+      }
+      reply(socket, { ok: true, ...(await sessionControls(conversation)) });
     } catch (error) {
-      reply(socket, { error: String(error) });
+      reply(socket, { error: error instanceof Error ? error.message : String(error) });
     }
     return;
   }
@@ -1094,7 +1106,7 @@ server.listen(uiSocket, () => {
       if (!row || !conversation) throw new Error(`unknown session ${id}`);
       const resolved = resolveModel(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
       if (!resolved) throw new Error("no model is configured");
-      await ensureModel(conversation, resolved);
+      await ensureModel(conversation, resolved, context);
       await conversation.submit({ type: "input", content: text, whenBusy: "followUp" }, context);
     },
     async stop(id) {

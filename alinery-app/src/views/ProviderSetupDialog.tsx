@@ -34,6 +34,7 @@ export function ProviderSetupDialog({
   initialTab = "accounts",
   preselect = "",
   unsignedOpensAccounts = false,
+  current,
   onPick,
   onClose,
 }: {
@@ -41,6 +42,8 @@ export function ProviderSetupDialog({
   initialTab?: ProvidersDialogTab;
   /** `/model provider/id` typed in a chat: filters the Models tab to it. */
   preselect?: string;
+  /** The model the open session will use next. Form pickers have no session, so they omit this. */
+  current?: string;
   /**
    * Form pickers land on Accounts once login providers and hosted state have settled
    * and this install still needs setup. The setup session's probe model is not that
@@ -233,7 +236,7 @@ export function ProviderSetupDialog({
       tab={tab}
       setup={mode === "auto"}
       models={shownModels}
-      current={chat.sessionMeta.model}
+      current={current || chat.sessionMeta.model}
       preselect={preselect}
       loginProviders={providers}
       livePromotedIds={[]}

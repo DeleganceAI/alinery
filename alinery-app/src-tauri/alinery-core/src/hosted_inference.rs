@@ -36,6 +36,10 @@ pub struct HostedModel {
     pub max_tokens: u64,
     #[serde(default)]
     pub price: Option<u8>,
+    /// Per-model thinking menu from the hosted catalog. Absent on older catalogs.
+    /// Kept verbatim so a rewrite of `inference.json` does not drop it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -639,6 +643,76 @@ mod tests {
         let before = fs::read(&inf).unwrap();
         assert_eq!(ensure_hosted_inference_for_spawn_at(&app_config, "http://127.0.0.1:1", "http://127.0.0.1:1"), Ok(()));
         assert_eq!(fs::read(&inf).unwrap(), before);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn thinking_survives_catalog_parse_and_inference_rewrite() {
+        let catalog = parse_hosted_catalog_body(
+            br#"{
+              "ok": true,
+              "provider": "alinery",
+              "default_model": "alinery/DeepSeek-V4.1-Flash",
+              "base_url": "https://inference.alinery.ai/v1",
+              "plans_url": "https://accounts.alinery.ai/plans",
+              "models": [
+                {
+                  "id": "DeepSeek-V4.1-Flash",
+                  "name": "DeepSeek-V4.1-Flash",
+                  "context_window": 1048576,
+                  "max_tokens": 32768,
+                  "price": 1,
+                  "thinking": {
+                    "reasoning": true,
+                    "levels": {"off":"none","minimal":null,"low":"low","medium":null,"high":"high","xhigh":null,"max":"max"}
+                  }
+                },
+                {
+                  "id": "GLM-5.3",
+                  "name": "GLM-5.3",
+                  "context_window": 1,
+                  "max_tokens": 1,
+                  "price": 2,
+                  "thinking": {
+                    "reasoning": true,
+                    "levels": {"off":null,"minimal":null,"low":"low","medium":null,"high":"high","xhigh":null,"max":"max"}
+                  }
+                }
+              ]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            catalog.models[0].thinking.as_ref().and_then(|value| value.get("reasoning")).and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(catalog.models[1].thinking.as_ref().and_then(|value| value.pointer("/levels/off")), Some(&Value::Null));
+        let yaml = render_models_yml(&catalog, "inf_keep");
+        assert!(!yaml.contains("thinking"));
+        assert!(!yaml.contains("reasoning_effort"));
+
+        let dir = temp_dir("thinking");
+        let path = inference_path(&dir);
+        write_inference_file(&path, "inf_keep", 10, "s", 1, &catalog).unwrap();
+        let loaded = load_inference_file(&path).unwrap();
+        assert_eq!(loaded.catalog.models[0].thinking, catalog.models[0].thinking);
+        assert_eq!(
+            loaded.catalog.models[1].thinking.as_ref().and_then(|value| value.pointer("/levels/off")),
+            Some(&Value::Null)
+        );
+
+        let bare = parse_hosted_catalog_body(
+            br#"{
+              "ok": true,
+              "provider": "alinery",
+              "default_model": "alinery/Qwen3.6-35B-A3B",
+              "base_url": "https://inference.alinery.ai/v1",
+              "plans_url": "https://accounts.alinery.ai/plans",
+              "models": [{"id":"Qwen3.6-35B-A3B","name":"Qwen","context_window":1,"max_tokens":1,"price":1}]
+            }"#,
+        )
+        .unwrap();
+        assert!(bare.models[0].thinking.is_none());
         let _ = fs::remove_dir_all(dir);
     }
 

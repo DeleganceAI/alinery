@@ -3,12 +3,12 @@ import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ChatComposer } from "../ChatComposer";
 import type { ChatPrefs } from "../chat/visibility";
-import { emptyTranscript } from "../chatTranscript";
+import { emptyTranscript, NEXT_TURN_MODEL_TITLE, NEXT_TURN_THINKING_TITLE } from "../chatTranscript";
 import { askConfirm, confirmDanger } from "../confirm";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { NameEditor } from "../NameEditor";
-import { setThinkingLevelCommand } from "../ompRpc";
+
 import { SessionTerminal } from "../SessionTerminal";
 import type { ObservationDisplayKind } from "../sessionAttention";
 import { Checkbox, Dialog, InlineStatus, LoadingState, obsLabel, StatusMarker } from "../shared";
@@ -410,7 +410,10 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
 
   function pickThinking(level: string) {
     if (!selected) return;
-    ipc.chatRpcWrite(selected.repo_path, selected.session.id, setThinkingLevelCommand(level)).catch((cause: unknown) => setError(String(cause)));
+    void ipc.chatSetThinkingLevel(selected.repo_path, selected.session.id, level).then(
+      (controls) => chat.applyControls(controls),
+      (cause: unknown) => setError(String(cause)),
+    );
   }
 
   function startThreadIn(path: string) {
@@ -597,6 +600,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
                       level={transcript.sessionMeta.thinking}
                       levels={transcript.sessionMeta.thinkingLevels}
                       disabledReason={connection.state === "ready" && processLive ? null : "Ava is not running in this thread, so its thinking level cannot change"}
+                      title={activity.turnActive ? NEXT_TURN_THINKING_TITLE : undefined}
                       onPick={pickThinking}
                     />
                   </span>
@@ -617,7 +621,12 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
               <>
                 {inTerminal ? null : (
                   <>
-                    <button type="button" className="btn ghost small chat-model-btn" onClick={() => chat.setProvidersDialog({ tab: "models", preselect: "" })} title="Change model">
+                    <button
+                      type="button"
+                      className="btn ghost small chat-model-btn"
+                      onClick={() => chat.setProvidersDialog({ tab: "models", preselect: "" })}
+                      title={activity.turnActive ? NEXT_TURN_MODEL_TITLE : "Change model"}
+                    >
                       <span className="chat-model-label">{modelLabel}</span>
                       <ChevronDown size={14} aria-hidden="true" />
                     </button>

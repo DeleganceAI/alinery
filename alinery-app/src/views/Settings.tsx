@@ -1200,7 +1200,7 @@ export function Settings({
               </option>
             ))}
           </select>
-          <div className="hint">New OMP sessions start at this level; resumed sessions keep theirs, and OMP lowers it to what the model supports.</div>
+          <div className="hint">New sessions start at this level; resumed sessions keep theirs.</div>
         </div>
         <Checkbox
           checked={value.draft_autosave}

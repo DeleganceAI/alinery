@@ -23,7 +23,7 @@
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { ProviderCatalog, ProviderLoginStatus } from "./chat/providers";
-import type { VinculumMessage } from "./chatTranscript";
+import type { SessionControls, VinculumTranscript } from "./chatTranscript";
 import type {
   AccountSignOutResult,
   AccountStatus,
@@ -289,11 +289,12 @@ export const archiveChatThread = (repoPath: string, sessionId: string, removeWor
 export const removeChatWorktree = (repoPath: string, sessionId: string) => invoke<void>("remove_chat_worktree", { repoPath, sessionId });
 export const resumeChatThread = (repoPath: string, sessionId: string) => invoke<SessionMeta>("resume_chat_thread", { repoPath, sessionId });
 export const chatBranchLabel = (repoPath: string, sessionId: string) => invoke<ChatBranch>("chat_branch_label", { repoPath, sessionId });
-export type { VinculumMessage };
-export const chatTranscript = (repoPath: string, id: string) => invoke<VinculumMessage[]>("chat_transcript", { repoPath, id });
+export type { SessionControls, VinculumTranscript };
+export const chatTranscript = (repoPath: string, id: string) => invoke<VinculumTranscript>("chat_transcript", { repoPath, id });
 export const chatPrompt = (repoPath: string, id: string, text: string) => invoke<void>("chat_prompt", { repoPath, id, text });
 export const chatAbort = (repoPath: string, id: string) => invoke<void>("chat_abort", { repoPath, id });
-export const chatSetModel = (repoPath: string, id: string, model: string) => invoke<void>("chat_set_model", { repoPath, id, model });
+export const chatSetModel = (repoPath: string, id: string, model: string) => invoke<SessionControls>("chat_set_model", { repoPath, id, model });
+export const chatSetThinkingLevel = (repoPath: string, id: string, level: string) => invoke<SessionControls>("chat_set_thinking_level", { repoPath, id, level });
 export const chatRpcWrite = (repoPath: string, id: string, payload: unknown) => invoke<void>("chat_rpc_write", { repoPath, id, payload });
 export const chatDetach = (repoPath: string, id: string, attachId: number) => invoke<void>("chat_detach", { repoPath, id, attachId });
 export const chatSessionStatus = (repoPath: string, id: string) => invoke<SessionObservation>("chat_session_status", { repoPath, id });
@@ -356,9 +357,10 @@ export const readSessionOmp = (a: { id: string; taskSlug?: string | null; end?: 
 export const resizeSession = (id: string, cols: number, rows: number) => invoke<void>("resize_session", { id, cols, rows });
 export const sessionArtifactReady = (id: string, taskSlug: string) => invoke<boolean>("session_artifact_ready", { id, taskSlug });
 export const sessionListStatuses = (refs: SessionStatusRef[]) => invoke<Record<string, SessionObservation>>("session_list_statuses", { refs });
-export const sessionTranscript = (id: string) => invoke<VinculumMessage[]>("session_transcript", { id });
+export const sessionTranscript = (id: string) => invoke<VinculumTranscript>("session_transcript", { id });
 export const sessionPrompt = (id: string, text: string) => invoke<void>("session_prompt", { id, text });
-export const sessionSetModel = (id: string, model: string) => invoke<void>("session_set_model", { id, model });
+export const sessionSetModel = (id: string, model: string) => invoke<SessionControls>("session_set_model", { id, model });
+export const sessionSetThinkingLevel = (id: string, level: string) => invoke<SessionControls>("session_set_thinking_level", { id, level });
 export const providerCatalog = () => invoke<ProviderCatalog>("provider_catalog");
 export const providerLogout = (provider: string) => invoke<ProviderCatalog>("provider_logout", { provider });
 export const providerLoginStart = (provider: string, method: "api_key" | "oauth") => invoke<ProviderLoginStatus>("provider_login_start", { provider, method });

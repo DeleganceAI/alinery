@@ -1055,7 +1055,7 @@ pub(crate) fn omp_setup_session(state: State<'_, AppState>) -> Result<String, St
 }
 
 #[tauri::command]
-pub(crate) async fn session_transcript(state: State<'_, AppState>, id: String) -> Result<Vec<alinery_core::daemon_client::TranscriptMessage>, String> {
+pub(crate) async fn session_transcript(state: State<'_, AppState>, id: String) -> Result<alinery_core::daemon_client::TranscriptReply, String> {
     let _repo = require_owned_active_repo(&state)?;
     let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
     off_main_thread("transcript", move || daemon.transcript(&id)).await
@@ -1076,10 +1076,17 @@ pub(crate) async fn session_abort(state: State<'_, AppState>, id: String) -> Res
 }
 
 #[tauri::command]
-pub(crate) async fn session_set_model(state: State<'_, AppState>, id: String, model: String) -> Result<(), String> {
+pub(crate) async fn session_set_model(state: State<'_, AppState>, id: String, model: String) -> Result<alinery_core::daemon_client::SessionControls, String> {
     let _repo = require_owned_active_repo(&state)?;
     let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
     off_main_thread("set model", move || daemon.set_model(&id, &model)).await
+}
+
+#[tauri::command]
+pub(crate) async fn session_set_thinking_level(state: State<'_, AppState>, id: String, level: String) -> Result<alinery_core::daemon_client::SessionControls, String> {
+    let _repo = require_owned_active_repo(&state)?;
+    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
+    off_main_thread("set thinking level", move || daemon.set_thinking_level(&id, &level)).await
 }
 
 fn active_daemon(state: &AppState) -> Result<alinery_core::daemon_client::DaemonClient, String> {

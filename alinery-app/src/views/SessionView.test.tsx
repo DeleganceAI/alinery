@@ -33,9 +33,23 @@ const rpcAttachSession = vi.hoisted(() => vi.fn(async (_args: unknown) => undefi
 const onStreamClosed = vi.hoisted(() => vi.fn((_id: string, _attachId: number, _onClosed: () => void, _onGiveUp: () => void) => () => {}));
 const readSessionOmp = vi.hoisted(() => vi.fn(async (_args: unknown): Promise<ArrayBuffer> => Promise.reject(new Error("no journal"))));
 const rpcWriteSession = vi.hoisted(() => vi.fn(async (_id: string, _payload: unknown) => undefined));
-const sessionTranscript = vi.hoisted(() => vi.fn(async () => [{ role: "user", text: "playbook prompt" }] as { role: string; text: string }[]));
+const sessionTranscript = vi.hoisted(() =>
+  vi.fn(
+    async () =>
+      [{ role: "user", text: "playbook prompt" }] as
+        | { role: string; text?: string; content?: unknown; id?: string }[]
+        | { messages: { role: string; text?: string; content?: unknown; id?: string }[]; model?: string; thinking?: string; thinking_levels?: string[] },
+  ),
+);
 const sessionPrompt = vi.hoisted(() => vi.fn(async () => undefined));
 const sessionAbort = vi.hoisted(() => vi.fn(async () => undefined));
+const sessionSetModel = vi.hoisted(() => vi.fn(async () => ({ model: "anthropic/claude", thinking: "off", thinking_levels: [] as string[] })));
+const sessionSetThinkingLevel = vi.hoisted(() => vi.fn(async () => ({ model: "xai/grok-4.6", thinking: "low", thinking_levels: ["off", "low", "high"] })));
+const providerCatalog = vi.hoisted(() =>
+  vi.fn(async () => {
+    throw new Error("no catalog");
+  }),
+);
 const detachSession = vi.hoisted(() => vi.fn(async () => undefined));
 const readOmpModelRoles = vi.hoisted(() => vi.fn(async () => ({}) as Record<string, string>));
 const writeOmpModelRoles = vi.hoisted(() => vi.fn(async (roles: Record<string, string>) => roles));
@@ -130,6 +144,9 @@ vi.mock("../ipc", () =>
     sessionTranscript,
     sessionPrompt,
     sessionAbort,
+    sessionSetModel,
+    sessionSetThinkingLevel,
+    providerCatalog,
     detachSession,
     readOmpModelRoles,
     writeOmpModelRoles,
@@ -2158,6 +2175,9 @@ describe("Vinculum session chat", () => {
     sessionTranscript.mockClear();
     sessionPrompt.mockClear();
     sessionAbort.mockClear();
+    sessionSetModel.mockReset().mockResolvedValue({ model: "anthropic/claude", thinking: "off", thinking_levels: [] });
+    sessionSetThinkingLevel.mockReset().mockResolvedValue({ model: "xai/grok-4.6", thinking: "low", thinking_levels: ["off", "low", "high"] });
+    providerCatalog.mockReset().mockRejectedValue(new Error("no catalog"));
     rpcAttachSession.mockClear();
     restateSession.mockClear();
     readSessionOmp.mockClear();
@@ -2192,5 +2212,48 @@ describe("Vinculum session chat", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Abort turn" }));
     await waitFor(() => expect(sessionAbort).toHaveBeenCalledWith("session"));
     expect(rpcWriteSession).not.toHaveBeenCalled();
+  });
+
+  it("shows the transcript model and thinking level, and a set updates the label without an OMP write", async () => {
+    const transcript = {
+      messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "playbook prompt" }] }],
+      model: "xai/grok-4.6",
+      thinking: "high",
+      thinking_levels: ["off", "low", "high"],
+    };
+    sessionTranscript.mockResolvedValue(transcript);
+    sessionSetThinkingLevel.mockImplementation(async () => {
+      sessionTranscript.mockResolvedValue({ ...transcript, thinking: "low" });
+      return { model: "xai/grok-4.6", thinking: "low", thinking_levels: ["off", "low", "high"] };
+    });
+    sessionSetModel.mockImplementation(async () => {
+      sessionTranscript.mockResolvedValue({ ...transcript, model: "anthropic/claude", thinking: "off", thinking_levels: [] });
+      return { model: "anthropic/claude", thinking: "off", thinking_levels: [] };
+    });
+    providerCatalog.mockResolvedValue({
+      providers: [],
+      models: [
+        { provider: "anthropic", id: "claude" },
+        { provider: "xai", id: "grok-4.6" },
+      ],
+      custom: [],
+    });
+    renderSession({ intent: "attach", model: "stale/model" });
+    expect(await screen.findByText("playbook prompt")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Change model" }).textContent).toBe("xai/grok-4.6");
+    const picker = screen.getByRole("combobox", { name: "Thinking level" }) as HTMLSelectElement;
+    expect(picker.value).toBe("high");
+    fireEvent.change(picker, { target: { value: "low" } });
+    await waitFor(() => expect(sessionSetThinkingLevel).toHaveBeenCalledWith("session", "low"));
+    expect(rpcWriteSession).not.toHaveBeenCalled();
+    await waitFor(() => expect((screen.getByRole("combobox", { name: "Thinking level" }) as HTMLSelectElement).value).toBe("low"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Change model" }));
+    expect(await screen.findByText("Current session xai/grok-4.6. Apply switches this chat only.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "anthropic/claude" }));
+    await waitFor(() => expect(sessionSetModel).toHaveBeenCalledWith("session", "anthropic/claude"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Change model" }).textContent).toBe("anthropic/claude"));
+    expect(screen.queryByRole("combobox", { name: "Thinking level" })).toBeNull();
+    expect(screen.getByText("off")).toBeTruthy();
   });
 });
