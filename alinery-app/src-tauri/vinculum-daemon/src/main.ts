@@ -9,7 +9,7 @@ import { AgentDoc, Harness, LiveDoc, createRegistry, defineDoc, defineExtension,
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
-import { completeSession, engineAxis, enginePlaybook, permitSession, startGraphs } from "./graph.ts";
+import { completeSession, engineAxis, enginePlaybook, permitSession, sessionHarnessStatus, startGraphs } from "./graph.ts";
 import { CHAT_TITLE_PROMPT, SESSION_NAME_INSTRUCTION, chatTitleBucket, cleanChatTitle } from "./naming.ts";
 import { completeConfiguredText, modelSources, resolveModel } from "./provider.ts";
 import { openProviderRuntime } from "./runtime.ts";
@@ -21,7 +21,7 @@ import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 22;
+const PROTOCOL = 23;
 const context = BACKGROUND_CONTEXT;
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
   kind: "alinery.attention",
@@ -282,8 +282,9 @@ function repairSessionMetas() {
       } catch {
         continue;
       }
-      if (typeof meta.worktree === "string" && meta.worktree !== "" && typeof meta.created === "number") continue;
-      writeMeta(taskSlug, name.slice(0, -".meta.json".length), {});
+      const fieldsReady = typeof meta.worktree === "string" && meta.worktree !== "" && typeof meta.created === "number";
+      if (fieldsReady && meta.harness !== "omp") continue;
+      writeMeta(taskSlug, name.slice(0, -".meta.json".length), meta.harness === "omp" ? { harness: "vinculum" } : {});
     }
   };
   const tasksRoot = join(repo, ".alinery", "tasks");
@@ -351,7 +352,7 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
   };
   live.set(id, row);
   const meta = readMeta(taskSlug, id);
-  if (!meta.started_at) writeMeta(taskSlug, id, { started_at: Math.floor(Date.now() / 1000), harness: "omp", harness_resume_token: "" });
+  if (!meta.started_at) writeMeta(taskSlug, id, { started_at: Math.floor(Date.now() / 1000), harness: "vinculum", harness_resume_token: "" });
   // Bun can finish the later awaits as microtasks. Yield once so list can observe starting.
   const turn = Promise.withResolvers();
   setImmediate(turn.resolve);
@@ -1112,13 +1113,8 @@ repairSessionMetas();
 server.listen(uiSocket, () => {
   void resumeInterrupted().then(() => startGraphs(repo, {
     open: (id, taskSlug, model, prompt) => openSession(id, taskSlug, model, prompt).then(() => undefined),
-    async status(id) {
-      const row = live.get(id);
-      if (!row) return { kind: "unknown" };
-      if (row.process === "exited") return { kind: "exited", exitCode: null };
-      if (row.process === "starting") return { kind: "starting" };
-      if (row.agent.state === "busy" || row.liveRun) return { kind: "running" };
-      return { kind: "idle" };
+    status(id) {
+      return Promise.resolve(sessionHarnessStatus(live.get(id)));
     },
     async send(id, text) {
       const row = live.get(id);
@@ -1147,5 +1143,5 @@ server.listen(uiSocket, () => {
       const row = live.get(id);
       if (row) row.executionId = executionId;
     },
-  }));
+  }, appConfig));
 });

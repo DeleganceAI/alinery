@@ -4,7 +4,7 @@ import { dlopen, FFIType, ptr, CString } from "bun:ffi";
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { engineExecutions, runTask } from "./graph.ts";
+import { engineExecutions, resumeFailedSession, runTask } from "./graph.ts";
 import { parsePlaybookMd } from "playbook-engine/src/playbook-md.ts";
 import type { Execution } from "playbook-engine/src/state.ts";
 import type { Playbook, Step } from "playbook-engine/src/playbook.ts";
@@ -154,7 +154,7 @@ function readMeta(repo: string, slug: string, id: string): Record<string, unknow
 }
 
 function sessionReply(meta: Record<string, unknown>, worktree: string): Record<string, unknown> {
-  return { worktree, created: Math.floor(Date.now() / 1000), harness: "omp", model: "", ...meta };
+  return { worktree, created: Math.floor(Date.now() / 1000), model: "", ...meta, harness: recordedHarness(meta.harness) };
 }
 
 export function getTaskExecution(repo: string, slug: string, lane: string, appIdentity: string): Record<string, unknown> {
@@ -222,10 +222,18 @@ export function taskWorktree(repo: string, slug: string): string {
 
 // SessionMeta requires worktree and created. A patch keeps values already on the file.
 // A file that does not have them, including one this daemon is creating, gets them now.
+/** Session meta records the Vinculum agent as `vinculum`. `omp` is the old key and the registry key. */
+export function recordedHarness(key: unknown): string {
+  const value = typeof key === "string" ? key.trim() : "";
+  if (!value || value === "omp") return "vinculum";
+  return value;
+}
+
 export function completeSessionMeta(current: Record<string, unknown>, patch: Record<string, unknown>, id: string, worktree: string, now: number): Record<string, unknown> {
   const next: Record<string, unknown> = { ...current, ...patch, id };
   if (typeof next.worktree !== "string" || next.worktree === "") next.worktree = worktree;
   if (typeof next.created !== "number" || !Number.isFinite(next.created)) next.created = now;
+  if (next.harness === "omp") next.harness = "vinculum";
   return next;
 }
 
@@ -288,7 +296,7 @@ function materializeSessions(repo: string, reply: Request): Request {
       worktree,
       created: Math.floor(Date.now() / 1000),
       phase: step.key,
-      harness,
+      harness: recordedHarness(harness),
       model,
       execution_id: executionId,
     };
@@ -323,7 +331,7 @@ export async function createExecutionSession(
       id,
       worktree: taskWorktree(repo, slug),
       created: Math.floor(Date.now() / 1000),
-      harness: target.harness || "omp",
+      harness: recordedHarness(target.harness),
       model: target.model ?? "",
       subtask_manager: true,
     };
@@ -343,7 +351,7 @@ export async function createExecutionSession(
       worktree: taskWorktree(repo, slug),
       created: Math.floor(Date.now() / 1000),
       phase: target.step_key ?? "",
-      harness,
+      harness: recordedHarness(harness),
       model,
       execution_id: executionId,
       prompt_extra: String(request.prompt_extra ?? ""),
@@ -367,7 +375,7 @@ export async function createExecutionSession(
   const id = randomUUID();
   const model = target.model ?? "";
   const prompt = target.prompt ?? "";
-  const meta = { id, worktree: repo, created: Math.floor(Date.now() / 1000), harness: target.harness || "omp", model, generic: true, prompt };
+  const meta = { id, worktree: repo, created: Math.floor(Date.now() / 1000), harness: recordedHarness(target.harness), model, generic: true, prompt };
   const dir = slug ? join(repo, ".alinery", "tasks", slug, "sessions") : join(repo, ".alinery", "sessions");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${id}.meta.json`), JSON.stringify(meta));
@@ -385,10 +393,18 @@ export async function startSession(
   const session = readMeta(repo, slug, id);
   if (!session) return { error: "missing session" };
   if (slug) {
+    let resumed = false;
     try {
-      await runTask(slug);
-    } catch {
-      /* a terminal still starts when the playbook has no model */
+      resumed = await resumeFailedSession(slug, id);
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+    if (!resumed) {
+      try {
+        await runTask(slug);
+      } catch {
+        /* a terminal still starts when the playbook has no model */
+      }
     }
   }
   const execution = engineExecutions(slug).find((item) => item.sessionId === id);

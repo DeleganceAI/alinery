@@ -82,6 +82,7 @@ import {
   harnessDisplayName,
   InlineStatus,
   isAllowedLaunchHarness,
+  isVinculumHarness,
   LoadingState,
   StatusDot,
   sameArtifactListItems,
@@ -326,7 +327,7 @@ export function SessionView({
   const [chat, setChat] = useState<ChatTranscriptState>(emptyTranscript);
   const [modelDialog, setModelDialog] = useState<{ tab: ProvidersDialogTab; preselect: string; setup?: boolean } | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
-  const providerAccess = useProviderAccess(harness === "omp");
+  const providerAccess = useProviderAccess(isVinculumHarness(harness));
   const [modelRoles, setModelRoles] = useState<ModelRolesMap>({});
   const [hosted, setHosted] = useState<HostedCatalogView | null>(null);
   const [hostedLoaded, setHostedLoaded] = useState(false);
@@ -1285,12 +1286,12 @@ export function SessionView({
     utilityTerminal: !hasTask,
     harness,
   });
-  const vinculum = harness === "omp";
+  const vinculum = isVinculumHarness(harness);
   const liveRpc = observation?.transport === "rpc";
   // Exited RPC sessions still support replay, but their processes cannot accept commands.
   const rpcProcessLive = liveRpc && observation?.lifecycle.state === "live" && observation.state?.process.state === "alive";
   const livePty = observation?.transport === "pty";
-  const ompCoding = harness === "omp" && !leftover && !navHistory && !showPanel;
+  const ompCoding = vinculum && !leftover && !navHistory && !showPanel;
   const showChat = ompCoding && Boolean(termIntent) && !livePty;
   const showPtyTerminal = Boolean(termIntent) && !showChat;
   const showHatch = !vinculum && ompCoding && observation?.lifecycle.state === "live" && (liveRpc || livePty);
@@ -1353,7 +1354,7 @@ export function SessionView({
   }, [id, loadOmpPage]);
 
   useEffect(() => {
-    if (vinculum || harness !== "omp") return;
+    if (vinculum || !isVinculumHarness(harness)) return;
     void seedOmpJournal();
   }, [vinculum, harness, seedOmpJournal]);
 
@@ -2099,7 +2100,7 @@ export function SessionView({
               {/* `liveRpc` is false the moment the session dies, which used to drop a finished OMP
                   chat onto the PTY terminal and a `.scrollback` an RPC session never wrote. The
                   journal does not need the session to be alive. */}
-              {liveRpc || harness === "omp" ? (
+              {liveRpc || vinculum ? (
                 <>
                   <ChatPane
                     entries={chatEntries}
@@ -2271,7 +2272,7 @@ export function SessionView({
                 onKilled={() => setReclassifyTick((n) => n + 1)}
               />
               {showHistory &&
-                (harness === "omp" ? (
+                (vinculum ? (
                   <div className="terminal-frame">
                     <ChatPane entries={chat.entries} status="idle" visibility={chatVisibility} onLoadOlder={loadOlder} loadingOlder={loadingOlder} atStart={chat.fileStart === 0} />
                     <ChatComposer body="" status="idle" catalog={[]} showHints={false} readOnly onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} />

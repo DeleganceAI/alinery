@@ -124,6 +124,7 @@ describe("pending session name", () => {
   const live = { lifecycle: { state: "live" }, state: { process: { state: "alive" }, agent: { state: "busy" } } };
 
   it("waits only while a non-idle live OMP session has no name", () => {
+    expect(awaitingSessionName({ harness: "vinculum" }, live)).toBe(true);
     expect(awaitingSessionName({ harness: "omp" }, live)).toBe(true);
     expect(awaitingSessionName({ harness: "omp" }, { ...live, state: { ...live.state, process: { state: "starting" } } })).toBe(true);
     expect(awaitingSessionName({ harness: "omp" }, { ...live, state: { ...live.state, agent: { state: "idle" } } })).toBe(false);

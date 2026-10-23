@@ -53,7 +53,10 @@ import type {
   TaskExecutionState,
   UpdateStatus,
 } from "./types";
+import { isVinculumHarness } from "./vinculumHarness";
 import { WindowControls } from "./WindowChrome";
+
+export { isVinculumHarness };
 
 export const ALL_REPOS = "__all_repos__";
 
@@ -96,7 +99,7 @@ export function findOwnedArtifactNode(nodes: ArtifactTreeNode[], relativePath: s
 }
 
 export function isAllowedLaunchHarness(key: string): boolean {
-  return key === "omp" || key === "no-harness";
+  return isVinculumHarness(key) || key === "no-harness";
 }
 
 export function ompDefaultModel(defaults: { harness?: string; model?: string } | null | undefined): string {
@@ -109,7 +112,7 @@ export function ompDefaultModel(defaults: { harness?: string; model?: string } |
 
 export function harnessDisplayName(harness: string) {
   if (harness === "no-harness") return "Terminal";
-  if (harness === "omp") return "Vinculum";
+  if (isVinculumHarness(harness)) return "Vinculum";
   return "Unsupported";
 }
 

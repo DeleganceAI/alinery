@@ -6,7 +6,7 @@ test("a session born without a meta file still has the fields SessionMeta requir
   expect(born).toEqual({
     id: "s",
     started_at: 10,
-    harness: "omp",
+    harness: "vinculum",
     harness_resume_token: "",
     model: "alinery/x",
     worktree: "/wt",

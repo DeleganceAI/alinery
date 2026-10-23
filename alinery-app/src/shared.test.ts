@@ -62,7 +62,8 @@ describe("harnessDisplayName", () => {
     expect(harnessDisplayName("no-harness")).toBe("Terminal");
   });
 
-  it("uses the bundled OMP label", () => {
+  it("uses the Vinculum label for the session key and the registry key", () => {
+    expect(harnessDisplayName("vinculum")).toBe("Vinculum");
     expect(harnessDisplayName("omp")).toBe("Vinculum");
   });
 
@@ -76,6 +77,7 @@ describe("harnessDisplayName", () => {
 describe("isAllowedLaunchHarness", () => {
   it("accepts only omp and Terminal", () => {
     expect(isAllowedLaunchHarness("omp")).toBe(true);
+    expect(isAllowedLaunchHarness("vinculum")).toBe(true);
     expect(isAllowedLaunchHarness("no-harness")).toBe(true);
     expect(isAllowedLaunchHarness("claude")).toBe(false);
     expect(isAllowedLaunchHarness("codex")).toBe(false);
@@ -87,6 +89,7 @@ describe("isAllowedLaunchHarness", () => {
 describe("ompDefaultModel", () => {
   it("keeps only omp-owned selectors", () => {
     expect(ompDefaultModel({ harness: "omp", model: "sonnet" })).toBe("sonnet");
+    expect(ompDefaultModel({ harness: "vinculum", model: "sonnet" })).toBe("sonnet");
     expect(ompDefaultModel({ harness: "claude", model: "sonnet" })).toBe("");
     expect(ompDefaultModel({ harness: "", model: "sonnet" })).toBe("sonnet");
     expect(ompDefaultModel({ harness: "omp", model: "" })).toBe("");
