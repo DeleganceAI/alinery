@@ -207,6 +207,59 @@ pub enum RepoOp {
         artifact: String,
         anchor_id: String,
     },
+    TaskSourceBranches {
+        repo: PathBuf,
+        #[serde(default)]
+        selected_base_ref: Option<String>,
+    },
+    /// `git worktree remove --force` the task's worktree and clear it from the task.
+    RemoveWorktree {
+        repo: PathBuf,
+        slug: String,
+    },
+    /// Push from the task's worktree with the host's git credentials; the reply is the compare URL.
+    PushAndCompareUrl {
+        repo: PathBuf,
+        slug: String,
+    },
+    SetPrUrl {
+        repo: PathBuf,
+        slug: String,
+        url: String,
+    },
+    CommitWorktree {
+        repo: PathBuf,
+        slug: String,
+        message: String,
+    },
+    /// What a PR lookup needs from the repo (the stored link, the branch, the origin URL).
+    TaskPullRequestInputs {
+        repo: PathBuf,
+        slug: String,
+    },
+    RecordDiscoveredPullRequest {
+        repo: PathBuf,
+        slug: String,
+        branch: String,
+        previous_url: String,
+        url: String,
+    },
+    SubtaskManagerRequest {
+        repo: PathBuf,
+        slug: String,
+        recover: bool,
+    },
+    /// The (owner task, session) pairs that discarding a sub-task has to stop first.
+    SubtaskDiscardSessions {
+        repo: PathBuf,
+        slug: String,
+        manager_session_id: String,
+    },
+    DiscardSubtask {
+        repo: PathBuf,
+        slug: String,
+        manager_session_id: String,
+    },
     /// Atomic, owner-only write (parent directories are created).
     WriteFile {
         path: PathBuf,
@@ -447,6 +500,22 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::DeleteCommentDraft { repo, slug, artifact, anchor_id } => {
             crate::artifact_comments::delete_artifact_comment_draft_for(&repo, &slug, &artifact, &anchor_id).map(|()| Value::Null)
         }
+        RepoOp::TaskSourceBranches { repo, selected_base_ref } => to_value(crate::git_actions::task_source_branches(&repo, selected_base_ref.as_deref())?),
+        RepoOp::RemoveWorktree { repo, slug } => crate::git_actions::remove_worktree(&repo, &slug).map(|()| Value::Null),
+        RepoOp::PushAndCompareUrl { repo, slug } => to_value(crate::git_actions::push_and_compare_url(&repo, &slug)?),
+        RepoOp::SetPrUrl { repo, slug, url } => crate::git_actions::set_pr_url_in(&repo, slug, url).map(|()| Value::Null),
+        RepoOp::CommitWorktree { repo, slug, message } => crate::git_actions::commit_worktree_in(&repo, slug, message).map(|()| Value::Null),
+        RepoOp::TaskPullRequestInputs { repo, slug } => to_value(crate::git_actions::pull_request_inputs(&repo, &slug)?),
+        RepoOp::RecordDiscoveredPullRequest {
+            repo,
+            slug,
+            branch,
+            previous_url,
+            url,
+        } => crate::git_actions::record_discovered_pull_request_in(&repo, &slug, &branch, &previous_url, &url).map(|()| Value::Null),
+        RepoOp::SubtaskManagerRequest { repo, slug, recover } => to_value(crate::subtask::subtask_manager_request(&repo, slug, recover)?),
+        RepoOp::SubtaskDiscardSessions { repo, slug, manager_session_id } => to_value(crate::subtask_discard_sessions(&repo, &slug, &manager_session_id)?),
+        RepoOp::DiscardSubtask { repo, slug, manager_session_id } => crate::discard_subtask(&repo, &slug, &manager_session_id).map(|_| Value::Null),
         RepoOp::WriteFile { path, contents } => write_file(&path, &contents).map(|()| Value::Null),
         RepoOp::SyncCredentials { path, entries } => to_value(crate::credential_sync::apply_incoming(&path, &entries)?),
         RepoOp::SpawnDaemon {
@@ -689,6 +758,54 @@ mod tests {
                 slug: "t".into(),
                 artifact: "01.md".into(),
                 anchor_id: "a".into(),
+            },
+            RepoOp::TaskSourceBranches {
+                repo: "/srv/a".into(),
+                selected_base_ref: Some("refs/heads/main".into()),
+            },
+            RepoOp::RemoveWorktree {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+            },
+            RepoOp::PushAndCompareUrl {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+            },
+            RepoOp::SetPrUrl {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                url: "https://github.com/o/r/pull/1".into(),
+            },
+            RepoOp::CommitWorktree {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                message: "m".into(),
+            },
+            RepoOp::TaskPullRequestInputs {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+            },
+            RepoOp::RecordDiscoveredPullRequest {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                branch: "b".into(),
+                previous_url: String::new(),
+                url: "https://github.com/o/r/pull/1".into(),
+            },
+            RepoOp::SubtaskManagerRequest {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                recover: true,
+            },
+            RepoOp::SubtaskDiscardSessions {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                manager_session_id: "m".into(),
+            },
+            RepoOp::DiscardSubtask {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                manager_session_id: "m".into(),
             },
             RepoOp::RenameSession {
                 repo: "/srv/a".into(),

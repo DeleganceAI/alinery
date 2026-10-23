@@ -10,6 +10,7 @@ pub mod daemon_client;
 pub mod execution;
 pub mod fs_atomic;
 pub mod git;
+pub mod git_actions;
 pub mod history;
 pub mod hosted_inference;
 pub mod http;

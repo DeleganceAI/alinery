@@ -284,7 +284,7 @@ fn save_comment_draft_local(repo: &Path, slug: &str, artifact: &str, comment: Co
 }
 
 /// The repo a mutating `_for_repo` command acts on: a local one must be owned by this window.
-fn owned_target(app: &AppHandle, state: &AppState, repo_path: &str) -> Result<RepoRef, String> {
+pub(crate) fn owned_target(app: &AppHandle, state: &AppState, repo_path: &str) -> Result<RepoRef, String> {
     let target = target_repo_ref_for_app(app, repo_path)?;
     if let RepoRef::Local(repo) = &target {
         require_repo_owned(state, repo)?;

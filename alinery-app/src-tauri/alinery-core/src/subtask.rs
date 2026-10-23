@@ -294,6 +294,33 @@ pub fn subtask_manager_state(repo: &Path, task_slug: &str) -> Result<crate::type
     })
 }
 
+/// The request that starts (or recovers) the sub-task manager session for a task.
+pub fn subtask_manager_request(repo: &Path, task_slug: String, recover: bool) -> Result<crate::task_creation::CreateExecutionSessionRequest, String> {
+    let subtask_slug = if recover {
+        Some(
+            read_task_relationships(repo, &task_slug)?
+                .active_subtask
+                .ok_or("task has no active sub-task to recover")?
+                .slug,
+        )
+    } else {
+        None
+    };
+    Ok(crate::task_creation::CreateExecutionSessionRequest {
+        task_slug,
+        target: crate::task_creation::ExecutionSessionTarget::SubtaskManager {
+            subtask_slug,
+            recover,
+            harness: "omp".into(),
+            model: None,
+        },
+        launch_override: None,
+        prompt_extra: None,
+        handoff_artifact: None,
+        start: true,
+    })
+}
+
 pub fn subtask_manager_owner_slug(repo: &Path, manager_session_id: &str) -> Result<String, String> {
     resolve_subtask_manager(repo, manager_session_id).map(|manager| manager.owner_slug)
 }

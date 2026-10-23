@@ -1,5 +1,7 @@
 //! imports: extracted from lib.rs. See AGENTS.md for the module map.
 use crate::*;
+
+pub(crate) use alinery_core::git_actions::{issue_number, GitHubIssueRef};
 use pulldown_cmark::{Event, LinkType, Parser, Tag, TagEnd};
 
 // ---- M5 Linear import (opt-in, one-way) --------------------------------------
@@ -214,27 +216,6 @@ pub(crate) async fn import_linear_for_repo(app: AppHandle, state: State<'_, AppS
 // Accepts a full issue or pull-request URL, owner/repo#123,
 // owner/repo/issues/123, owner/repo/pull/123, or a bare #123/123 when the
 // active repo's origin is github.com/owner/repo(.git).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct GitHubIssueRef {
-    pub(crate) owner: String,
-    pub(crate) repo: String,
-    pub(crate) number: u64,
-}
-
-impl GitHubIssueRef {
-    pub(crate) fn label(&self) -> String {
-        format!("{}/{}#{}", self.owner, self.repo, self.number)
-    }
-}
-
-pub(crate) fn issue_number(s: &str) -> Option<u64> {
-    let s = s.trim();
-    (!s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
-        .then(|| s.parse::<u64>().ok())
-        .flatten()
-        .filter(|n| *n > 0)
-}
-
 pub(crate) fn owner_repo(owner: &str, repo: &str) -> Option<(String, String)> {
     let owner = owner.trim();
     let repo = repo.trim().trim_end_matches(".git");

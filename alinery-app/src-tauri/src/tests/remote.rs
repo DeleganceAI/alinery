@@ -856,6 +856,185 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     }
 }
 
+/// Git on the host: commit, push with the host's credentials, the compare URL and PR link, worktree
+/// removal, branch discovery, and the sub-task requests, all against a real repo with an origin.
+#[test]
+fn live_git_actions_run_on_the_host() {
+    let Some(args) = live_args() else {
+        eprintln!("skipped: ALINERY_TEST_SSH_ARGS is not set");
+        return;
+    };
+    let _turn = LIVE_HOST.lock().unwrap_or_else(|e| e.into_inner());
+    let id = format!("git-{}", std::process::id());
+    let session = live_session(&args, &id);
+    let home = session.root.trim_end_matches("/.local/share/alinery-remote").to_string();
+    let (repo, origin, worktree) = (
+        format!("{home}/work/git-{}", std::process::id()),
+        format!("{home}/origin-{}.git", std::process::id()),
+        format!("{home}/work/git-{}/.alinery/worktrees/feat", std::process::id()),
+    );
+    let sh = |script: &str| session.conn.exec_ok(script, RemoteStdin::None, std::time::Duration::from_secs(60)).unwrap();
+    // A repo with an initial commit, a bare origin it can push to, and a task with a worktree on `feat`.
+    // The fetch URL looks like GitHub's so the compare URL can be built; pushes go to the bare repo.
+    sh(&format!(
+        "set -e; rm -rf '{repo}' '{origin}'; git init -q --bare '{origin}'; git init -q -b main '{repo}'; cd '{repo}'; echo hi > a.txt; git add a.txt; git commit -q -m init; \
+         git remote add origin https://github.com/acme/widgets.git; git config remote.origin.pushurl '{origin}'; git push -q origin main; \
+         mkdir -p .alinery/worktrees; git worktree add -q -b feat '{worktree}'"
+    ));
+    let task = alinery_core::Task {
+        name: "Feature".into(),
+        slug: "feat".into(),
+        branch: "feat".into(),
+        worktree: worktree.clone(),
+        has_worktree: true,
+        created: 1_700_000_000,
+        ..Default::default()
+    };
+    let call = |op: RepoOp| session.channel.call(op, std::time::Duration::from_secs(60));
+    call(RepoOp::WriteFile {
+        path: format!("{repo}/.alinery/tasks/feat/task.md").into(),
+        contents: toml::to_string(&task).unwrap(),
+    })
+    .unwrap();
+    let repo_path = || std::path::PathBuf::from(&repo);
+    let slug = || "feat".to_string();
+    let get_task = || -> alinery_core::Task { serde_json::from_value(call(RepoOp::GetTask { repo: repo_path(), slug: slug() }).unwrap()).unwrap() };
+
+    let branches: crate::TaskSourceBranches = serde_json::from_value(
+        call(RepoOp::TaskSourceBranches {
+            repo: repo_path(),
+            selected_base_ref: Some("refs/heads/feat".into()),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let names: Vec<_> = branches.branches.iter().map(|branch| branch.name.as_str()).collect();
+    assert_eq!(names, ["feat", "main"]);
+    assert!(branches.selected.is_some_and(|selected| selected.available));
+
+    // Commit: the host stages and commits in the task's worktree.
+    call(RepoOp::WriteFile {
+        path: format!("{worktree}/hello.txt").into(),
+        contents: "hello\n".into(),
+    })
+    .unwrap();
+    assert!(
+        call(RepoOp::CommitWorktree {
+            repo: repo_path(),
+            slug: slug(),
+            message: "   ".into()
+        })
+        .is_err(),
+        "an empty message is refused"
+    );
+    call(RepoOp::CommitWorktree {
+        repo: repo_path(),
+        slug: slug(),
+        message: "add hello".into(),
+    })
+    .unwrap();
+    assert!(sh(&format!("git -C '{worktree}' log --oneline -1")).contains("add hello"));
+    assert!(
+        call(RepoOp::CommitWorktree {
+            repo: repo_path(),
+            slug: slug(),
+            message: "again".into()
+        })
+        .is_err(),
+        "nothing left to commit"
+    );
+
+    // Push: lands in the origin, and the compare URL is stored on the task.
+    let url: String = serde_json::from_value(call(RepoOp::PushAndCompareUrl { repo: repo_path(), slug: slug() }).unwrap()).unwrap();
+    assert_eq!(url, "https://github.com/acme/widgets/compare/main...feat?expand=1");
+    assert!(sh(&format!("git -C '{origin}' rev-parse --verify refs/heads/feat")).trim().len() >= 40);
+    assert_eq!(get_task().pr_url, url);
+
+    // PR link: a real link replaces the compare URL and survives the next push.
+    let pr = "https://github.com/acme/widgets/pull/7";
+    call(RepoOp::SetPrUrl {
+        repo: repo_path(),
+        slug: slug(),
+        url: format!("  {pr}  "),
+    })
+    .unwrap();
+    assert_eq!(get_task().pr_url, pr);
+    call(RepoOp::PushAndCompareUrl { repo: repo_path(), slug: slug() }).unwrap();
+    assert_eq!(get_task().pr_url, pr, "pushing must not replace a real PR link");
+    let inputs: alinery_core::git_actions::PullRequestInputs = serde_json::from_value(call(RepoOp::TaskPullRequestInputs { repo: repo_path(), slug: slug() }).unwrap()).unwrap();
+    assert_eq!(
+        (inputs.pr_url.as_str(), inputs.branch.as_str(), inputs.origin_url.as_deref()),
+        (pr, "feat", Some("https://github.com/acme/widgets.git"))
+    );
+    assert!(call(RepoOp::TaskPullRequestInputs {
+        repo: repo_path(),
+        slug: "../feat".into()
+    })
+    .is_err());
+    let record = |previous: &str, url: &str| {
+        call(RepoOp::RecordDiscoveredPullRequest {
+            repo: repo_path(),
+            slug: slug(),
+            branch: "feat".into(),
+            previous_url: previous.into(),
+            url: url.into(),
+        })
+    };
+    assert!(
+        record("https://github.com/acme/widgets/pull/1", "https://github.com/acme/widgets/pull/9").is_err(),
+        "a changed link is refused"
+    );
+    assert!(record(pr, "https://example.com/not-a-pr").is_err());
+    record(pr, "https://github.com/acme/widgets/pull/9").unwrap();
+    assert_eq!(get_task().pr_url, "https://github.com/acme/widgets/pull/9");
+
+    // Sub-tasks: the manager request is built from the host's files.
+    let request: alinery_core::task_creation::CreateExecutionSessionRequest = serde_json::from_value(
+        call(RepoOp::SubtaskManagerRequest {
+            repo: repo_path(),
+            slug: slug(),
+            recover: false,
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(request.task_slug, "feat");
+    assert!(
+        call(RepoOp::SubtaskManagerRequest {
+            repo: repo_path(),
+            slug: slug(),
+            recover: true
+        })
+        .is_err(),
+        "nothing to recover without an active sub-task"
+    );
+    assert!(call(RepoOp::SubtaskDiscardSessions {
+        repo: repo_path(),
+        slug: slug(),
+        manager_session_id: "nope".into()
+    })
+    .is_err());
+    assert!(call(RepoOp::DiscardSubtask {
+        repo: repo_path(),
+        slug: slug(),
+        manager_session_id: "nope".into()
+    })
+    .is_err());
+
+    // Remove the worktree: the directory goes, the task forgets it, the branch stays.
+    call(RepoOp::RemoveWorktree { repo: repo_path(), slug: slug() }).unwrap();
+    assert!(sh(&format!("test -e '{worktree}' && echo present || echo gone")).contains("gone"));
+    assert_eq!(get_task().worktree, "");
+    assert!(sh(&format!("git -C '{repo}' rev-parse --verify refs/heads/feat")).trim().len() >= 40);
+    assert!(call(RepoOp::RemoveWorktree { repo: repo_path(), slug: slug() }).is_err(), "already removed");
+    assert!(
+        call(RepoOp::PushAndCompareUrl { repo: repo_path(), slug: slug() }).is_err(),
+        "nothing to push without a worktree"
+    );
+    sh(&format!("rm -rf '{repo}' '{origin}'"));
+    session.conn.exit_master();
+}
+
 #[test]
 fn ssh_failures_become_actionable_messages() {
     assert_eq!(classify_ssh_failure("Host key verification failed.\n"), SshFailure::UnknownHostKey);
