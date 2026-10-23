@@ -1,17 +1,20 @@
 export type ChatStampParts = { date?: boolean; time?: boolean };
 
+// Constructing this per row per render dominated the chat webview while subagent frames were streaming.
+const CHAT_STAMP = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
 /** Journal stamp: date and/or time, matching the Chat demo (`Sep 5 12:11`). */
 export function formatChatStamp(at: number, parts: ChatStampParts = {}): string {
   const showDate = parts.date !== false;
   const showTime = parts.time !== false;
   if (!showDate && !showTime) return "";
-  const bits = new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(new Date(at));
+  const bits = CHAT_STAMP.formatToParts(new Date(at));
   const g = (type: Intl.DateTimeFormatPartTypes) => bits.find((p) => p.type === type)?.value ?? "";
   const date = `${g("month")} ${g("day")}`;
   const time = `${g("hour")}:${g("minute")}`;

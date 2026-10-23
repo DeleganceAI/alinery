@@ -1,5 +1,5 @@
-import { Star, X } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { Search, Star, X } from "lucide-react";
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { costBand } from "../chat/costBand";
 import { BUILTIN_MODEL_ROLES, type ModelRolesMap } from "../chat/modelRoles";
 import { type AdvancedProviderRow, HOSTED_PROVIDER, hostedPrice, type LoginProvider, mergeGrokModels, mergeHostedModels, partitionProviders } from "../chat/providers";
@@ -45,8 +45,18 @@ export type ChatProvidersDialogProps = {
 };
 
 function advancedHint(row: AdvancedProviderRow): string {
-  if (row.reason === "env") return row.readyViaEnv ? "ready" : "not configured";
-  return "sign-in did not finish";
+  if (row.reason === "env") return row.readyViaEnv ? "Ready" : "Not configured";
+  return "Sign-in did not finish";
+}
+
+const DIALOG_TABS: { id: ProvidersDialogTab; label: string }[] = [
+  { id: "accounts", label: "Accounts" },
+  { id: "models", label: "Models" },
+];
+
+/** Case-insensitive match on the display name or the provider id, which is what people type ("anth", "codex"). */
+function providerMatches(row: { id: string; name: string }, q: string): boolean {
+  return row.name.toLowerCase().includes(q) || row.id.toLowerCase().includes(q);
 }
 
 function CostBand({ price }: { price: number }) {
@@ -77,12 +87,12 @@ function AlineryAccountRow({
   onBuyCredits?: () => void;
 }) {
   if (hosted.ready) {
-    const meta = hosted.balanceCents != null ? formatCreditUsd(hosted.balanceCents) : "ready";
+    const meta = hosted.balanceCents != null ? formatCreditUsd(hosted.balanceCents) : "Ready";
     return (
       <li>
         <button type="button" className="chat-model-item" disabled>
           <span>Alinery</span>
-          <span className="chat-work-meta">{meta}</span>
+          <span className="chat-provider-status">{meta}</span>
         </button>
       </li>
     );
@@ -92,7 +102,7 @@ function AlineryAccountRow({
       <li>
         <button type="button" className="chat-model-item" onClick={onSubscribe}>
           <span>Alinery</span>
-          <span className="chat-work-meta">Subscribe</span>
+          <span className="chat-provider-status">Subscribe</span>
         </button>
       </li>
     );
@@ -102,7 +112,7 @@ function AlineryAccountRow({
       <li>
         <button type="button" className="chat-model-item" onClick={onBuyCredits}>
           <span>Alinery</span>
-          <span className="chat-work-meta">Buy credits</span>
+          <span className="chat-provider-status">Buy credits</span>
         </button>
       </li>
     );
@@ -111,7 +121,7 @@ function AlineryAccountRow({
     <li>
       <button type="button" className="chat-model-item" onClick={onSignIn}>
         <span>Alinery</span>
-        <span className="chat-work-meta">Sign in</span>
+        <span className="chat-provider-status">Sign in</span>
       </button>
     </li>
   );
@@ -148,12 +158,40 @@ export function ChatModelDialog({
   onClose,
 }: ChatProvidersDialogProps) {
   const [query, setQuery] = useState(preselect ?? "");
+  const [providerQuery, setProviderQuery] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(defaultAdvancedOpen);
-  const [rolePick, setRolePick] = useState<string | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const advancedRef = useRef<HTMLDivElement | null>(null);
+  const panelId = useId();
+  const searchValue = tab === "accounts" ? providerQuery : query;
+  const setSearchValue = tab === "accounts" ? setProviderQuery : setQuery;
 
   useEffect(() => {
     setQuery(preselect ?? "");
   }, [preselect]);
+
+  // Search shortcuts stay inside this modal, including when focus has moved to a row or tab.
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape" && searchValue !== "") {
+        e.preventDefault();
+        e.stopPropagation();
+        setSearchValue("");
+      } else if (e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        e.stopPropagation();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [searchValue, setSearchValue]);
+
+  // Advanced opens from the footer, below a list that may be long: bring its rows into view.
+  useEffect(() => {
+    if (advancedOpen) advancedRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [advancedOpen]);
 
   const listed = useMemo(() => mergeGrokModels(mergeHostedModels(models, hosted), grok), [models, hosted, grok]);
   const { chatLogin, advanced } = useMemo(
@@ -170,8 +208,33 @@ export function ChatModelDialog({
     if (starred.size === 0) return matched;
     return [...matched.filter((m) => starred.has(`${m.provider}/${m.id}`)), ...matched.filter((m) => !starred.has(`${m.provider}/${m.id}`))];
   }, [listed, query, favorites]);
-  const selected = filtered.find((m) => `${m.provider}/${m.id}` === query.trim()) ?? filtered[0];
+  const roleModels = useMemo(() => listed.filter((model) => model.provider !== HOSTED_PROVIDER || hosted?.ready), [listed, hosted?.ready]);
+  // A `provider/id` nobody lists is still a valid ask (preview models, private deployments).
+  const customRef = (() => {
+    const q = query.trim();
+    const slash = q.indexOf("/");
+    if (slash <= 0 || slash === q.length - 1 || listed.some((m) => `${m.provider}/${m.id}` === q)) return null;
+    return { provider: q.slice(0, slash), id: q.slice(slash + 1) };
+  })();
+  const selected = customRef ?? filtered.find((model) => `${model.provider}/${model.id}` === query.trim()) ?? filtered[0];
   const title = setup ? "Set up your providers" : tab === "accounts" ? "Providers" : "Models";
+
+  const providerNeedle = providerQuery.trim().toLowerCase();
+  const shownHosted = hosted && (!providerNeedle || providerMatches({ id: HOSTED_PROVIDER, name: "Alinery" }, providerNeedle)) ? hosted : null;
+  const shownLogin = providerNeedle ? chatLogin.filter((p) => providerMatches(p, providerNeedle)) : chatLogin;
+  // A search reaches Advanced rows too, so an env-only provider is findable without knowing where it lives.
+  const shownAdvanced = providerNeedle ? advanced.filter((row) => providerMatches(row, providerNeedle)) : advancedOpen ? advanced : [];
+  const noProviderMatch = providerNeedle !== "" && !shownHosted && shownLogin.length === 0 && shownAdvanced.length === 0;
+
+  const onTabKeyDown = (e: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const last = DIALOG_TABS.length - 1;
+    const target = { ArrowRight: index === last ? 0 : index + 1, ArrowLeft: index === 0 ? last : index - 1, Home: 0, End: last }[e.key];
+    if (target === undefined) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onTabChange(DIALOG_TABS[target].id);
+    (e.currentTarget.parentElement?.children[target] as HTMLElement | undefined)?.focus();
+  };
 
   const applyOrUpsell = (provider: string, modelId: string) => {
     if (provider === HOSTED_PROVIDER && !hosted?.ready) {
@@ -191,181 +254,190 @@ export function ChatModelDialog({
         </button>
       </div>
       <div className="mb">
-        <div className="chat-hatch chat-providers-tabs" role="tablist" aria-label="Providers dialog">
-          <button type="button" role="tab" aria-selected={tab === "accounts"} className={tab === "accounts" ? "active" : ""} onClick={() => onTabChange("accounts")}>
-            Accounts
-          </button>
-          <button type="button" role="tab" aria-selected={tab === "models"} className={tab === "models" ? "active" : ""} onClick={() => onTabChange("models")}>
-            Models
-          </button>
-        </div>
-
-        {tab === "accounts" ? (
-          <>
-            <p className="dim">Sign in with an API key or the provider's browser login. The key is stored for this app, not in the transcript.</p>
-            {error ? <p className="chat-face-danger">{error}</p> : null}
-            {children}
-            <ul className="chat-model-list">
-              {hosted ? <AlineryAccountRow hosted={hosted} onSignIn={onSignIn} onSubscribe={onSubscribe} onBuyCredits={onBuyCredits} /> : null}
-              {catalogueStatus === "connecting" ? <li className="dim">Connecting…</li> : null}
-              {catalogueStatus === "ready" && chatLogin.length === 0 && !hosted ? <li className="dim">No Chat-capable providers yet.</li> : null}
-              {chatLogin.map((p) => {
-                const busy = loginBusy === p.id;
-                const canSignOut = p.authenticated && p.stored === true && !!onLogout;
-                return (
-                  <li key={p.id}>
-                    <button
-                      type="button"
-                      className="chat-model-item"
-                      disabled={!!loginBusy || (p.authenticated && !canSignOut)}
-                      onClick={() => (canSignOut ? onLogout?.(p.id) : onLogin(p.id))}
-                    >
-                      <span>{p.name}</span>
-                      <span className="chat-work-meta">{canSignOut ? "sign out" : p.authenticated ? "signed in" : busy ? "signing in…" : "sign in"}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-            {advanced.length > 0 ? (
-              <div className="chat-providers-advanced">
-                <button type="button" className="btn ghost small" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen((o) => !o)}>
-                  {advancedOpen ? "Hide Advanced" : "Advanced"}
-                </button>
-                {advancedOpen ? (
-                  <>
-                    <p className="dim">These already have models without a sign-in step.</p>
-                    <ul className="chat-model-list">
-                      {advanced.map((row) => (
-                        <li key={row.id}>
-                          <div className="chat-model-item">
-                            <span>{row.name}</span>
-                            <span className="chat-work-meta">{advancedHint(row)}</span>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                ) : null}
-              </div>
-            ) : null}
-            {footer}
-          </>
-        ) : (
-          <>
-            <p className="dim">{current ? `Current session ${current}. Apply switches this chat only.` : "Choose a model for this session."}</p>
+        <div className="chat-providers-bar">
+          <div className="chat-hatch" role="tablist" aria-label="Providers dialog">
+            {DIALOG_TABS.map((t, index) => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                id={`${panelId}-${t.id}`}
+                aria-controls={panelId}
+                aria-selected={tab === t.id}
+                tabIndex={tab === t.id ? 0 : -1}
+                className={tab === t.id ? "active" : ""}
+                onClick={() => onTabChange(t.id)}
+                onKeyDown={(e) => onTabKeyDown(e, index)}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <div className="chat-providers-search">
+            <Search size={14} strokeWidth={1.5} aria-hidden="true" />
             <input
+              ref={searchRef}
               className="field-input"
               data-autofocus=""
-              aria-label="Filter models"
-              placeholder="provider/id"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              aria-label={tab === "accounts" ? "Search providers" : "Search models"}
+              placeholder={tab === "accounts" ? "Search providers" : "Search models"}
+              value={searchValue}
+              onChange={(e) => setSearchValue(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && selected) applyOrUpsell(selected.provider, selected.id);
+                if (e.key !== "Enter" || tab !== "models") return;
+                if (selected) applyOrUpsell(selected.provider, selected.id);
               }}
             />
-            {error ? <p className="chat-face-danger">{error}</p> : null}
-            <ul className="chat-model-list">
-              {catalogueStatus === "connecting" ? <li className="dim">Connecting…</li> : null}
-              {catalogueStatus === "ready" && filtered.length === 0 ? <li className="dim">No models match.</li> : null}
+          </div>
+        </div>
+        {error ? (
+          <div className="chat-provider-error">
+            <p role="alert">Provider setup couldn't be loaded.</p>
+            <details>
+              <summary>Technical details</summary>
+              <pre>{error}</pre>
+            </details>
+          </div>
+        ) : null}
+        {tab === "accounts" ? children : null}
 
-              {filtered.map((m) => {
-                const label = `${m.provider}/${m.id}`;
-                const active = selected ? `${selected.provider}/${selected.id}` === label : false;
-                const isCurrent = current === label;
-                const starred = (favorites ?? []).includes(label);
-                const band = costBand(hostedPrice(hosted, m.provider, m.id));
-                return (
-                  <li key={label} className="chat-model-row">
-                    <button type="button" className={`chat-model-item${active ? " active" : ""}`} onClick={() => applyOrUpsell(m.provider, m.id)}>
-                      <span>{label}</span>
-                      <span className="chat-model-item-side">
-                        {band !== null ? <CostBand price={band} /> : null}
-                        {isCurrent ? <span className="chat-work-meta">current</span> : null}
-                      </span>
-                    </button>
-                    {onToggleFavorite ? (
+        <div id={panelId} role="tabpanel" aria-labelledby={`${panelId}-${tab}`} className="chat-providers-panel">
+          {tab === "accounts" ? (
+            <>
+              <ul className="chat-model-list">
+                {shownHosted ? <AlineryAccountRow hosted={shownHosted} onSignIn={onSignIn} onSubscribe={onSubscribe} onBuyCredits={onBuyCredits} /> : null}
+                {catalogueStatus === "connecting" ? <li className="dim">Connecting…</li> : null}
+                {catalogueStatus === "ready" && !providerNeedle && chatLogin.length === 0 && !hosted ? <li className="dim">No Chat-capable providers yet.</li> : null}
+                {catalogueStatus !== "connecting" && noProviderMatch ? <li className="dim">No providers match “{providerQuery.trim()}”</li> : null}
+                {shownLogin.map((p) => {
+                  const busy = loginBusy === p.id;
+                  const canSignOut = p.authenticated && p.stored === true && !!onLogout;
+                  return (
+                    <li key={p.id}>
                       <button
                         type="button"
-                        className="btn ghost small chat-model-star"
-                        aria-pressed={starred}
-                        aria-label={starred ? `Unstar ${label}` : `Star ${label}`}
-                        title={starred ? "Remove from favourites" : "Add to favourites"}
-                        onClick={() => onToggleFavorite(label, !starred)}
+                        className="chat-model-item"
+                        disabled={!!loginBusy || (p.authenticated && !canSignOut)}
+                        onClick={() => (canSignOut ? onLogout?.(p.id) : onLogin(p.id))}
                       >
-                        <Star size={14} strokeWidth={1.5} fill={starred ? "currentColor" : "none"} aria-hidden="true" />
+                        <span>{p.name}</span>
+                        <span className="chat-provider-status">{canSignOut ? "Sign out" : p.authenticated ? "Signed in" : busy ? "Signing in…" : "Sign in"}</span>
                       </button>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
+                    </li>
+                  );
+                })}
+              </ul>
+              {shownAdvanced.length > 0 ? (
+                <div ref={advancedRef} className="chat-providers-advanced">
+                  <p className="dim">These already have models without a sign-in step.</p>
+                  <ul className="chat-model-list">
+                    {shownAdvanced.map((row) => (
+                      <li key={row.id}>
+                        <div className="chat-model-item">
+                          <span>{row.name}</span>
+                          <span className="chat-provider-status">{advancedHint(row)}</span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {footer}
+            </>
+          ) : (
+            <>
+              <p className="dim">{current ? `Current model: ${current}` : "Choose a model."}</p>
+              <ul className="chat-model-list">
+                {catalogueStatus === "connecting" ? <li className="dim">Connecting…</li> : null}
+                {catalogueStatus === "ready" && filtered.length === 0 && !customRef ? (
+                  <li className="dim">{query.trim() ? `No models match “${query.trim()}”` : "No models match."}</li>
+                ) : null}
 
-            <div className="chat-model-roles">
-              <p className="dim">Role assignments apply to new OMP processes (titles, @smol, advisor, …). This chat’s model is the session control above.</p>
-              <table className="chat-role-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Role</th>
-                    <th scope="col">Model</th>
-                    <th scope="col" />
-                  </tr>
-                </thead>
-                <tbody>
+                {customRef && (
+                  <li className="chat-model-row">
+                    <button type="button" className="chat-model-item" onClick={() => applyOrUpsell(customRef.provider, customRef.id)}>
+                      <span>
+                        Use {customRef.provider}/{customRef.id}
+                      </span>
+                      <span className="chat-work-meta">Custom model</span>
+                    </button>
+                  </li>
+                )}
+                {filtered.map((m) => {
+                  const label = `${m.provider}/${m.id}`;
+                  const active = selected ? `${selected.provider}/${selected.id}` === label : false;
+                  const isCurrent = current === label;
+                  const starred = (favorites ?? []).includes(label);
+                  const band = costBand(hostedPrice(hosted, m.provider, m.id));
+                  return (
+                    <li key={label} className="chat-model-row">
+                      <button type="button" className={`chat-model-item${active ? " active" : ""}`} onClick={() => applyOrUpsell(m.provider, m.id)}>
+                        <span>{label}</span>
+                        <span className="chat-model-item-side">
+                          {band !== null ? <CostBand price={band} /> : null}
+                          {isCurrent ? <span className="chat-work-meta">current</span> : null}
+                        </span>
+                      </button>
+                      {onToggleFavorite ? (
+                        <button
+                          type="button"
+                          className="btn ghost small chat-model-star"
+                          aria-pressed={starred}
+                          aria-label={starred ? `Unstar ${label}` : `Star ${label}`}
+                          title={starred ? "Remove from favourites" : "Add to favourites"}
+                          onClick={() => onToggleFavorite(label, !starred)}
+                        >
+                          <Star size={14} strokeWidth={1.5} fill={starred ? "currentColor" : "none"} aria-hidden="true" />
+                        </button>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+
+              <details className="chat-model-roles">
+                <summary>Role defaults</summary>
+                <p className="dim">Defaults for new agent sessions.</p>
+                <div className="chat-role-list">
                   {BUILTIN_MODEL_ROLES.map((role) => {
-                    const assigned = modelRoles[role];
-                    const picking = rolePick === role;
+                    const assigned = modelRoles[role] ?? "";
+                    const missing = assigned !== "" && !roleModels.some((model) => `${model.provider}/${model.id}` === assigned);
                     return (
-                      <tr key={role}>
-                        <td>
-                          <code>{role}</code>
-                        </td>
-                        <td>{assigned || <span className="dim">unset</span>}</td>
-                        <td>
-                          {picking ? (
-                            <select
-                              aria-label={`Assign ${role}`}
-                              className="field-input"
-                              defaultValue=""
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                setRolePick(null);
-                                if (v === "") onAssignRole(role, null);
-                                else onAssignRole(role, v);
-                              }}
-                            >
-                              <option value="">Clear</option>
-                              {listed
-                                .filter((m) => m.provider !== HOSTED_PROVIDER || hosted?.ready)
-                                .map((m) => {
-                                  const label = `${m.provider}/${m.id}`;
-                                  return (
-                                    <option key={label} value={label}>
-                                      {label}
-                                    </option>
-                                  );
-                                })}
-                            </select>
-                          ) : (
-                            <button type="button" className="btn ghost small" onClick={() => setRolePick(role)}>
-                              {assigned ? "Change" : "Assign"}
-                            </button>
+                      <label key={role} className="chat-role-row">
+                        <code>{role}</code>
+                        <select className="field-input" aria-label={`Model for ${role}`} value={assigned} onChange={(event) => onAssignRole(role, event.target.value || null)}>
+                          <option value="">Not assigned</option>
+                          {missing && (
+                            <option value={assigned} disabled>
+                              {assigned} (unavailable)
+                            </option>
                           )}
-                        </td>
-                      </tr>
+                          {roleModels.map((model) => {
+                            const label = `${model.provider}/${model.id}`;
+                            return (
+                              <option key={label} value={label}>
+                                {label}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </label>
                     );
                   })}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
+                </div>
+              </details>
+            </>
+          )}
+        </div>
       </div>
       <div className="mfoot">
         {tab === "models" ? (
           <button type="button" className="btn small" disabled={!selected} onClick={() => selected && applyOrUpsell(selected.provider, selected.id)}>
             Apply
+          </button>
+        ) : advanced.length > 0 && !providerNeedle ? (
+          <button type="button" className="btn ghost small" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen((o) => !o)}>
+            {advancedOpen ? "Hide Advanced" : "Advanced"}
           </button>
         ) : (
           <span />

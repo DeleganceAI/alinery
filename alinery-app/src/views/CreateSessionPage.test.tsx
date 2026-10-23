@@ -1,4 +1,5 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { File as NodeFile } from "node:buffer";
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockIpc } from "../test/mockIpc";
 import type { BoardTask, TaskExecutionReply } from "../types";
@@ -32,9 +33,16 @@ const task: BoardTask = {
   current_column_key: "",
   current_column_title: "",
 };
-const mocks = vi.hoisted(() => ({ getTaskExecution: vi.fn(), listBoardTasks: vi.fn(), askConfirm: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getTaskExecution: vi.fn(), listBoardTasks: vi.fn(), askConfirm: vi.fn(), writeChatAttachmentBytes: vi.fn() }));
 vi.mock("../confirm", () => ({ askConfirm: mocks.askConfirm }));
-vi.mock("../ipc", () => mockIpc({ getTaskExecution: mocks.getTaskExecution, listBoardTasks: mocks.listBoardTasks, listHarnessModelsForRepo: async () => [] }));
+vi.mock("../ipc", () =>
+  mockIpc({
+    getTaskExecution: mocks.getTaskExecution,
+    listBoardTasks: mocks.listBoardTasks,
+    writeChatAttachmentBytes: mocks.writeChatAttachmentBytes,
+    listHarnessModelsForRepo: async () => [],
+  }),
+);
 
 beforeEach(() => {
   vi.stubGlobal("localStorage", { getItem: vi.fn(() => null), setItem: vi.fn() });
@@ -205,5 +213,101 @@ describe("retained execution session selection", () => {
     await waitFor(() => expect(mocks.askConfirm).toHaveBeenCalled());
     expect((screen.getByLabelText("Additional instructions") as HTMLTextAreaElement).value).toBe("Keep this draft");
     expect((screen.getByLabelText("Session type") as HTMLSelectElement).value).toBe("manual:execution-a");
+  });
+});
+
+describe("session clipboard attachments", () => {
+  beforeEach(() => {
+    mocks.getTaskExecution.mockResolvedValue(executionReply([]));
+    mocks.writeChatAttachmentBytes.mockReset().mockImplementation(async (_slug, name) => name);
+    vi.stubGlobal(
+      "URL",
+      class extends URL {
+        static createObjectURL = vi.fn(() => "blob:session-image");
+        static revokeObjectURL = vi.fn();
+      },
+    );
+  });
+
+  function paste(text = "", filesOnly = false) {
+    const file = new NodeFile([new Uint8Array([0, 255, 128, 1])], "image.png", { type: "image/png" });
+    const event = createEvent.paste(screen.getByLabelText("Additional instructions"), {
+      clipboardData: {
+        items: filesOnly ? [] : [{ kind: "file", type: file.type, getAsFile: () => file }],
+        files: [file],
+        getData: () => text,
+      },
+    });
+    fireEvent(screen.getByLabelText("Additional instructions"), event);
+    return event;
+  }
+
+  it("saves pasted bytes to the selected task before launching with readable attachment paths", async () => {
+    mocks.listBoardTasks.mockResolvedValue([{ ...task, repo_path: "/other repo" }]);
+    const created = renderPage();
+    await waitFor(() => expect((screen.getByRole("button", { name: "Launch" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.change(screen.getByLabelText("Additional instructions"), { target: { value: "Inspect this screenshot." } });
+    expect(paste().defaultPrevented).toBe(true);
+    expect(screen.getByRole("img", { name: /Preview of pasted-image/ })).toBeDefined();
+    expect(mocks.writeChatAttachmentBytes).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    await waitFor(() => expect(created).toHaveBeenCalledOnce());
+    const name = mocks.writeChatAttachmentBytes.mock.calls[0][1];
+    expect(mocks.writeChatAttachmentBytes).toHaveBeenCalledWith("a-task", name, [0, 255, 128, 1], "/other repo");
+    expect(created).toHaveBeenCalledWith(
+      expect.objectContaining({ repo_path: "/other repo" }),
+      { kind: "auxiliary" },
+      "omp",
+      "",
+      `Inspect this screenshot.\n\nAttached file: /other repo/.alinery/tasks/a-task/artifacts/attachments/${name}`,
+    );
+  });
+
+  it("removes staged images and preserves native mixed-text paste with the files fallback", async () => {
+    const created = renderPage();
+    await waitFor(() => expect((screen.getByRole("button", { name: "Launch" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(paste("caption", true).defaultPrevented).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: /Remove pasted-image/ }));
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:session-image");
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    await waitFor(() => expect(created).toHaveBeenCalledWith(task, { kind: "auxiliary" }, "omp", "", undefined));
+    expect(mocks.writeChatAttachmentBytes).not.toHaveBeenCalled();
+  });
+
+  it("blocks launch on write failure and reuses saved images when retrying a partial batch", async () => {
+    const created = renderPage();
+    await waitFor(() => expect((screen.getByRole("button", { name: "Launch" }) as HTMLButtonElement).disabled).toBe(false));
+    paste();
+    paste();
+    mocks.writeChatAttachmentBytes.mockResolvedValueOnce("first.png").mockRejectedValueOnce(new Error("disk full")).mockResolvedValueOnce("second.png");
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    await screen.findByText(/disk full/);
+    expect(created).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("button", { name: /Remove pasted-image/ })).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    await waitFor(() => expect(created).toHaveBeenCalledOnce());
+    expect(mocks.writeChatAttachmentBytes).toHaveBeenCalledTimes(3);
+    expect(created).toHaveBeenCalledWith(
+      task,
+      { kind: "auxiliary" },
+      "omp",
+      "",
+      "Attached file: /r/.alinery/tasks/a-task/artifacts/attachments/first.png\nAttached file: /r/.alinery/tasks/a-task/artifacts/attachments/second.png",
+    );
+  });
+
+  it("requires discarding image-only drafts before switching context", async () => {
+    renderPage();
+    await waitFor(() => expect((screen.getByRole("button", { name: "Launch" }) as HTMLButtonElement).disabled).toBe(false));
+    paste();
+    fireEvent.change(screen.getByLabelText("Auxiliary harness"), { target: { value: "no-harness" } });
+    await waitFor(() => expect(mocks.askConfirm).toHaveBeenCalledOnce());
+    expect(screen.getByRole("button", { name: /Remove pasted-image/ })).toBeDefined();
+    expect((screen.getByLabelText("Auxiliary harness") as HTMLSelectElement).value).toBe("omp");
+    mocks.askConfirm.mockResolvedValueOnce("discard");
+    fireEvent.change(screen.getByLabelText("Auxiliary harness"), { target: { value: "no-harness" } });
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Remove pasted-image/ })).toBeNull());
+    expect((screen.getByLabelText("Additional instructions") as HTMLTextAreaElement).disabled).toBe(true);
+    expect(mocks.writeChatAttachmentBytes).not.toHaveBeenCalled();
   });
 });

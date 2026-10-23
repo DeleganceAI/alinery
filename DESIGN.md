@@ -357,6 +357,21 @@ Shared Alinery components should own the final class names, tokens, semantics, a
 - Command palette, toast, tooltip, confirmation, and destructive dialogs.
 - Loading, empty, error, unavailable, and recovery states.
 
+Provider and model selection uses a content-sized Accounts/Models segmented control beside a search field. Filter providers by name or identifier and models by provider/model identifier. Command-F focuses search; Escape clears a nonempty query before closing. Keep the header, search, and footer fixed while only the list scrolls; group footer actions at the right edge. The dialog grows to the available window size, capped at 960 × 720px.
+
+A complete unlisted `provider/model` identifier remains the selected custom model for Enter and Apply, even when a catalog model shares its prefix. Ordinary filter-only searches still select catalog results.
+
+### Tasks and Sessions collections
+
+- Use `ListToolbar` for the page heading, local search, filters, result counts, and a single clear-filters action. Tasks also keeps New task in that row. Keep the header on one line when space permits, wrapping controls without shrinking text at narrower widths. Search combines whitespace-separated terms; filters compose without changing repository or archived scope.
+- Archive visibility uses the shared `ArchiveFilter` button labeled “Include archived”, not a settings checkbox. Off shows an archive icon; on shows a checkmark and subtle accent treatment. Expose `aria-pressed`, support native keyboard activation, and include archived rows alongside active work rather than silently switching to archived-only results.
+- Keep task names and session names primary. Use quiet secondary metadata, light row separators, neutral selection with an accent edge, and the existing semantic status components.
+- Tasks expose status and playbook filters and default to Updated, most recent first, when there is no valid saved sort choice. Preserve explicit sort choices across visits and use Created when a task has no Updated timestamp. Preserve hierarchy among visible results; when a parent is filtered out, keep its context in the child's secondary line without crowding the name.
+- Sessions expose status filtering and the existing Priority, Started, and Updated sorts. Keep rename available by keyboard and on hover or selection, without a persistent text button. Do not repeat the session slug in every row.
+- Missing observations remain unknown, not inactive. Session filters share the display-state derivation used by `StatusDot`; filtering must not invent lifecycle state or change stop-session consent. Track attention transitions across the unfiltered collection so hiding a row cannot suppress notifications or cause duplicate delivery when it returns.
+- At `900 x 600`, task columns fit without horizontal scrolling and Sessions fits eight complete two-line rows at the default UI scale. In narrower panes, move secondary task fields into row metadata and retain every sort through the compact sort controls; attach complete metadata and parent context to the visible secondary line's tooltip, not a child that can be clipped. Session timestamps stack vertically beside the primary content.
+- Keyboard navigation and row actions operate only on visible results. Filter controls own navigation and confirmation keys without blocking global command shortcuts such as Search or view switching. Preserve selection across refresh when it remains visible, and show a distinct no-matches state rather than the first-use empty state.
+
 ### AI-native pattern mapping
 
 Use AI Elements as the pattern reference, adapted to Alinery's terminology and layout:
@@ -381,6 +396,7 @@ AI components are not chat bubbles by default. Choose the structure that best ex
 - Do not hide essential actions exclusively behind hover.
 - Hover-only actions must also appear on keyboard focus.
 - Menus and dialogs support Escape, correct focus trapping, and focus restoration.
+- The onboarding overlay uses the shared native dialog. Background workspace shortcuts stay inactive, and Escape dismisses only the topmost nested dialog.
 - Destructive confirmations default focus to the safe choice.
 - Lists and tables preserve selection during refresh when the selected object still exists.
 - Streaming content should not steal scroll position or cause avoidable layout shift.
@@ -460,6 +476,8 @@ Rules:
 - Preserve technical detail for inspection or copying.
 - Give the next safe recovery action.
 - Distinguish a product error, missing dependency, unavailable repository, permission problem, and agent failure.
+- A repository ownership conflict opens the take-over confirmation once. Dismissing it leaves a thin, neutral recovery strip below the header; clicking the strip reopens the confirmation. Keep owner identities and lock evidence in collapsed, copyable Details. Polling must not repeatedly reopen a dismissed confirmation, and live owners still require explicit consent before stopping.
+- Remember every owner whose preview was shown, including manually opened and refreshed previews, across repository switches. A partial takeover still requires an explicit click for the next owner.
 
 ### Success
 
@@ -472,6 +490,7 @@ Rules:
 - Prefer explaining why an action is unavailable.
 - Do not use disabled styling to hide permission, lifecycle, or dependency problems.
 - Disabled controls remain legible; reduced contrast must still meet the intended accessibility treatment.
+- Installation checks report installation, not an agent connection, and must not start an unattached agent session.
 
 ### Agent lifecycle
 
@@ -563,6 +582,7 @@ Rules:
 ### Compatibility and safety
 
 - Preserve all current repository, task, session, artifact, worktree, and daemon lifecycle behavior.
+- Changing the onboarding model preserves all unrelated repository overrides, including credentials, backup settings, and other session defaults.
 - Preserve safe-default confirmation behavior.
 - Preserve session continuity across app quit and relaunch.
 - Never make destructive operations easier to trigger for visual simplicity.

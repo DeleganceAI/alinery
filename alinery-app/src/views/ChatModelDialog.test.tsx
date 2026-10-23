@@ -24,16 +24,6 @@ describe("ChatModelDialog", () => {
 
   afterEach(cleanup);
 
-  it("renders models tab with current and role table", () => {
-    const empty = renderToStaticMarkup(<ChatModelDialog {...base} models={[]} />);
-    expect(empty).toContain("No models match");
-    const html = renderToStaticMarkup(<ChatModelDialog {...base} />);
-    expect(html).toContain("xai/grok-4.6");
-    expect(html).toContain("current");
-    expect(html).toContain("smol");
-    expect(html).toContain("Role assignments apply");
-  });
-
   it("renders Accounts with Advanced collapsed for env-only providers", () => {
     const html = renderToStaticMarkup(
       <ChatModelDialog
@@ -67,12 +57,105 @@ describe("ChatModelDialog", () => {
       />,
     );
     expect(html).toContain("Anthropic");
-    expect(html).toContain("signed in");
+    expect(html).toContain("Signed in");
     expect(html).toContain("Baseten");
-    expect(html).toContain("sign in");
+    expect(html).toContain("Sign in");
     expect(html).toContain("openrouter");
-    expect(html).toContain("ready");
+    expect(html).toContain("Ready");
     expect(html).not.toContain("Terminal /login");
+  });
+
+  it("filters Accounts by name or provider id, case-insensitively, and Esc clears before closing", () => {
+    render(
+      <ChatModelDialog
+        {...base}
+        tab="accounts"
+        loginProviders={[
+          { id: "anthropic", name: "Anthropic", available: true, authenticated: false },
+          { id: "openai-codex", name: "ChatGPT", available: true, authenticated: true },
+        ]}
+        models={[{ provider: "openrouter", id: "auto" }]}
+      />,
+    );
+    const search = screen.getByRole("textbox", { name: "Search providers" }) as HTMLInputElement;
+    expect(document.activeElement).toBe(search);
+
+    fireEvent.change(search, { target: { value: "ANTH" } });
+    expect(screen.getByRole("button", { name: /Anthropic/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /ChatGPT/ })).toBeNull();
+
+    fireEvent.change(search, { target: { value: "codex" } });
+    expect(screen.getByRole("button", { name: /ChatGPT/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Anthropic/ })).toBeNull();
+
+    // Advanced rows are searchable while collapsed, and the footer toggle steps aside meanwhile.
+    fireEvent.change(search, { target: { value: "router" } });
+    expect(screen.getByText(/openrouter/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Advanced" })).toBeNull();
+
+    fireEvent.change(search, { target: { value: "zzz" } });
+    expect(screen.getByText("No providers match “zzz”")).toBeTruthy();
+
+    // Escape clears the filter even after focus leaves the search field.
+    const close = screen.getByTitle("Cancel");
+    close.focus();
+    expect(fireEvent.keyDown(close, { key: "Escape" })).toBe(false);
+    expect(search.value).toBe("");
+    expect(screen.getByRole("button", { name: /Anthropic/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /ChatGPT/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Advanced" })).toBeTruthy();
+    // Empty: Esc is left alone, so the dialog's cancel closes it as before.
+    expect(fireEvent.keyDown(search, { key: "Escape" })).toBe(true);
+  });
+
+  it("filters Models with the same search field and empty line", () => {
+    render(
+      <ChatModelDialog
+        {...base}
+        models={[
+          { provider: "xai", id: "grok-4.6" },
+          { provider: "anthropic", id: "claude-opus" },
+        ]}
+      />,
+    );
+    const search = screen.getByRole("textbox", { name: "Search models" });
+    fireEvent.change(search, { target: { value: "OPUS" } });
+    expect(screen.getByRole("button", { name: /anthropic\/claude-opus/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /xai\/grok-4\.6/ })).toBeNull();
+    fireEvent.change(search, { target: { value: "nothing" } });
+    expect(screen.queryByRole("button", { name: /anthropic\/claude-opus/ })).toBeNull();
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(screen.getByRole("button", { name: /xai\/grok-4\.6/ })).toBeTruthy();
+  });
+
+  it.each(["Enter", "Apply"])("keeps a complete custom ID when a catalog model shares its prefix via %s", (action) => {
+    const onApplyModel = vi.fn();
+    render(<ChatModelDialog {...base} models={[{ provider: "openai", id: "gpt-5-mini" }]} onApplyModel={onApplyModel} />);
+    const search = screen.getByRole("textbox", { name: "Search models" });
+    fireEvent.change(search, { target: { value: "openai/gpt-5" } });
+    if (action === "Enter") fireEvent.keyDown(search, { key: "Enter" });
+    else fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(onApplyModel).toHaveBeenCalledExactlyOnceWith("openai", "gpt-5");
+  });
+
+  it.each(["gpt-5", "openai/gpt-5-mini"])("selects a catalog result for %s", (query) => {
+    const onApplyModel = vi.fn();
+    render(<ChatModelDialog {...base} models={[{ provider: "openai", id: "gpt-5-mini" }]} onApplyModel={onApplyModel} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Search models" }), { target: { value: query } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(onApplyModel).toHaveBeenCalledExactlyOnceWith("openai", "gpt-5-mini");
+  });
+
+  it("switches tabs with arrow keys and focuses the search with ⌘F", () => {
+    const onTabChange = vi.fn();
+    render(<ChatModelDialog {...base} tab="accounts" onTabChange={onTabChange} />);
+    const accounts = screen.getByRole("tab", { name: "Accounts" });
+    accounts.focus();
+    fireEvent.keyDown(accounts, { key: "ArrowRight" });
+    expect(onTabChange).toHaveBeenCalledWith("models");
+    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Models" }));
+    fireEvent.keyDown(window, { key: "f", metaKey: true });
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Search providers" }));
   });
 
   it("shows Connecting… instead of ready-empty copy while the catalogue is connecting", () => {
@@ -92,9 +175,9 @@ describe("ChatModelDialog", () => {
   });
 
   it("does not list a starred model the query does not match", () => {
-    const html = renderToStaticMarkup(<ChatModelDialog {...base} favorites={["xai/grok-4.6"]} onToggleFavorite={vi.fn()} preselect="nope-nope" />);
-    expect(html).toContain("No models match");
-    expect(html).not.toContain(">xai/grok-4.6<");
+    render(<ChatModelDialog {...base} favorites={["xai/grok-4.6"]} onToggleFavorite={vi.fn()} preselect="nope-nope" />);
+    expect(screen.queryByRole("button", { name: /xai\/grok-4.6/ })).toBeNull();
+    expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("still lists a starred model the query matches", () => {
@@ -125,7 +208,7 @@ describe("ChatModelDialog", () => {
     );
     expect(accounts.indexOf("Alinery")).toBeGreaterThan(-1);
     expect(accounts.indexOf("Alinery")).toBeLessThan(accounts.indexOf("Anthropic"));
-    expect(accounts).toContain("ready");
+    expect(accounts).toContain("Ready");
     expect(accounts).not.toContain("Advanced");
 
     const models = renderToStaticMarkup(<ChatModelDialog {...base} hosted={hosted} />);
@@ -190,16 +273,40 @@ describe("ChatModelDialog", () => {
       source: "live",
     };
     render(<ChatModelDialog {...base} hosted={hosted} />);
-    fireEvent.click(screen.getAllByRole("button", { name: "Assign" })[0]);
-    const values = [...screen.getByLabelText(/Assign/).querySelectorAll("option")].map((option) => (option as HTMLOptionElement).value);
+    fireEvent.click(screen.getByText("Role defaults"));
+    const values = [...screen.getByLabelText("Model for default").querySelectorAll("option")].map((option) => (option as HTMLOptionElement).value);
     expect(values).toContain("xai/grok-4.6");
     expect(values.some((value) => value.startsWith("alinery/"))).toBe(false);
 
     cleanup();
     render(<ChatModelDialog {...base} hosted={{ ...hosted, ready: true, upsell: null, source: "live" }} />);
-    fireEvent.click(screen.getAllByRole("button", { name: "Assign" })[0]);
-    const readyValues = [...screen.getByLabelText(/Assign/).querySelectorAll("option")].map((option) => (option as HTMLOptionElement).value);
+    fireEvent.click(screen.getByText("Role defaults"));
+    const readyValues = [...screen.getByLabelText("Model for default").querySelectorAll("option")].map((option) => (option as HTMLOptionElement).value);
     expect(readyValues).toContain("alinery/Qwen3.6-35B-A3B");
+  });
+
+  it("preserves unavailable role assignments and permits replacing or clearing them", () => {
+    const onAssignRole = vi.fn();
+    render(<ChatModelDialog {...base} modelRoles={{ default: "old/private" }} onAssignRole={onAssignRole} />);
+    fireEvent.click(screen.getByText("Role defaults"));
+    const select = screen.getByLabelText("Model for default") as HTMLSelectElement;
+    expect(select.value).toBe("old/private");
+    fireEvent.change(select, { target: { value: "xai/grok-4.6" } });
+    expect(onAssignRole).toHaveBeenLastCalledWith("default", "xai/grok-4.6");
+    fireEvent.change(select, { target: { value: "" } });
+    expect(onAssignRole).toHaveBeenLastCalledWith("default", null);
+  });
+
+  it("keeps diagnostics collapsed without blocking model selection", () => {
+    const error = `project ownership unavailable: ${"project owner is still running (/repo/.alinery/owner.lock); ".repeat(30)}`;
+    const onApplyModel = vi.fn();
+    render(<ChatModelDialog {...base} error={error} onApplyModel={onApplyModel} />);
+    const details = screen.getByText("Technical details").closest("details");
+    expect(details?.open).toBe(false);
+    expect(details?.textContent).toContain(error);
+    expect(screen.getByRole("alert").textContent).not.toContain(".lock");
+    fireEvent.click(screen.getByRole("button", { name: /xai\/grok-4.6/ }));
+    expect(onApplyModel).toHaveBeenCalledWith("xai", "grok-4.6");
   });
 });
 
