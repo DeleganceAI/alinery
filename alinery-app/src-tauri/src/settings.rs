@@ -155,7 +155,7 @@ pub(crate) fn scoped_for(app_config: &Path, state: &AppState, target: &RepoRef) 
     }
 }
 
-fn owned_active_target(state: &AppState) -> Result<RepoRef, String> {
+pub(crate) fn owned_active_target(state: &AppState) -> Result<RepoRef, String> {
     Ok(match require_active_target(state)? {
         ActiveRepo::Local(repo) => RepoRef::Local(repo),
         ActiveRepo::Remote { host_id, path } => RepoRef::Remote { host_id, path },

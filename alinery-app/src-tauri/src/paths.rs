@@ -189,6 +189,7 @@ pub(crate) fn worktrees_dir(repo: &Path) -> PathBuf {
 }
 // Option C: artifacts are task-owned (with task.md/sessions), NOT in the worktree —
 // already gitignored, survives worktree removal, sensible once a task spans >1 repo.
+#[cfg(test)]
 pub(crate) fn artifacts_dir(repo: &Path, slug: &str) -> PathBuf {
     task_dir(repo, slug).join("artifacts")
 }
@@ -210,27 +211,6 @@ pub(crate) fn ensure_repo_ready(repo: &Path) -> Result<(), String> {
 
 pub(crate) fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
-}
-
-// kebab-case: lowercase alnum runs joined by single dashes, no leading/trailing dash.
-pub(crate) fn slugify(name: &str) -> String {
-    let mut s = String::new();
-    let mut prev_dash = false;
-    for c in name.chars() {
-        if c.is_ascii_alphanumeric() {
-            s.push(c.to_ascii_lowercase());
-            prev_dash = false;
-        } else if !s.is_empty() && !prev_dash {
-            s.push('-');
-            prev_dash = true;
-        }
-    }
-    let s = s.trim_end_matches('-').to_string();
-    if s.is_empty() {
-        "task".to_string()
-    } else {
-        s
-    }
 }
 
 // Keep task data + worktrees out of the active repo's `git status` (like `.git`).

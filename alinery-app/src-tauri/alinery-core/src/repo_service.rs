@@ -20,6 +20,8 @@ pub const LIST_DIR_CAP: usize = 2000;
 /// called `id`, or the two collide on the wire (the round-trip test covers every variant).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "call", rename_all = "snake_case")]
+// One short-lived value per request, built and dropped on the spot: boxing the biggest variant buys nothing.
+#[allow(clippy::large_enum_variant)]
 pub enum RepoOp {
     Ping,
     /// Hold `<repo>/.alinery/.alinery-app.lock` for the life of the service process, as
@@ -397,6 +399,43 @@ pub enum RepoOp {
         slugs: Vec<String>,
         statuses: Vec<crate::daemon_client::DaemonSessionStatus>,
     },
+    /// Autosave (or first save) of a task draft; the reply is the stored task.
+    WriteDraft {
+        repo: PathBuf,
+        draft_slug: String,
+        task_slug: String,
+        name: String,
+        description: String,
+        evidence: String,
+        linear_id: String,
+        github_issue: String,
+        playbook: crate::playbook::PlaybookRef,
+        harness: String,
+        model: String,
+        #[serde(default)]
+        auto_advance: Option<Vec<String>>,
+        #[serde(default)]
+        step_models: Option<std::collections::BTreeMap<String, String>>,
+        max_live_sessions: u32,
+        branch_name: String,
+        worktree_name: String,
+        #[serde(default)]
+        draft_base_ref: Option<String>,
+        #[serde(default)]
+        draft_attachments: Option<crate::task_drafts::DraftAttachments>,
+    },
+    ReadDraftAttachments {
+        repo: PathBuf,
+        slug: String,
+    },
+    DeleteDraft {
+        repo: PathBuf,
+        slug: String,
+    },
+    /// The URL of the repository's `origin` remote, if it has one.
+    GitOriginUrl {
+        repo: PathBuf,
+    },
     /// Atomic, owner-only write (parent directories are created).
     WriteFile {
         path: PathBuf,
@@ -718,6 +757,50 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::SessionArtifactReady { repo, slug, session_id } => to_value(crate::board::session_artifact_ready(&repo, &slug, &session_id)),
         RepoOp::ClearSessionNotifications { repo, refs } => crate::session_actions::clear_session_notifications_in(&repo, &refs).map(|()| Value::Null),
         RepoOp::TaskActivity { repo, repo_path, slugs, statuses } => to_value(crate::task_activity::resolve_task_activity_for_repo(&repo, &repo_path, &slugs, &statuses)),
+        RepoOp::WriteDraft {
+            repo,
+            draft_slug,
+            task_slug,
+            name,
+            description,
+            evidence,
+            linear_id,
+            github_issue,
+            playbook,
+            harness,
+            model,
+            auto_advance,
+            step_models,
+            max_live_sessions,
+            branch_name,
+            worktree_name,
+            draft_base_ref,
+            draft_attachments,
+        } => to_value(crate::task_drafts::write_draft_in_with_slug(
+            &repo,
+            // Telemetry is about this person's own machine; the host records none.
+            None,
+            &draft_slug,
+            &task_slug,
+            name,
+            description,
+            evidence,
+            linear_id,
+            github_issue,
+            playbook,
+            harness,
+            model,
+            auto_advance,
+            step_models,
+            max_live_sessions,
+            branch_name,
+            worktree_name,
+            draft_base_ref,
+            draft_attachments,
+        )?),
+        RepoOp::ReadDraftAttachments { repo, slug } => to_value(crate::task_drafts::read_draft_attachments_in(&repo, &slug)?),
+        RepoOp::DeleteDraft { repo, slug } => crate::task_drafts::delete_draft_in(&repo, None, &slug).map(|()| Value::Null),
+        RepoOp::GitOriginUrl { repo } => to_value(git_origin_url(&repo)),
         RepoOp::WriteFile { path, contents } => write_file(&path, &contents).map(|()| Value::Null),
         RepoOp::SyncCredentials { path, entries } => to_value(crate::credential_sync::apply_incoming(&path, &entries)?),
         RepoOp::SpawnDaemon {
@@ -750,6 +833,11 @@ fn host_daemon(repo: &Path, app_config: &Path) -> Option<crate::DaemonClient> {
     crate::connect_compatible_once(crate::alineryd_socket_path(repo, None), app_config)
         .ok()
         .map(|(client, _)| client)
+}
+
+fn git_origin_url(repo: &Path) -> Option<String> {
+    let out = crate::git_cmd(repo).args(["remote", "get-url", "origin"]).output().ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 fn write_file(path: &Path, contents: &str) -> Result<(), String> {
@@ -1144,6 +1232,45 @@ mod tests {
                     transport: Default::default(),
                 }],
             },
+            RepoOp::WriteDraft {
+                repo: "/srv/a".into(),
+                draft_slug: "d".into(),
+                task_slug: "t".into(),
+                name: "Name".into(),
+                description: "desc".into(),
+                evidence: String::new(),
+                linear_id: String::new(),
+                github_issue: String::new(),
+                playbook: crate::playbook::PlaybookRef {
+                    scope: crate::playbook::PlaybookScope::Repo,
+                    key: "one-shot".into(),
+                },
+                harness: "omp".into(),
+                model: "m".into(),
+                auto_advance: Some(vec!["a".into()]),
+                step_models: Some([("a".to_string(), "m".to_string())].into()),
+                max_live_sessions: 3,
+                branch_name: "b".into(),
+                worktree_name: "w".into(),
+                draft_base_ref: None,
+                draft_attachments: Some(crate::task_drafts::DraftAttachments {
+                    entries: vec!["e".into()],
+                    images: vec![crate::task_drafts::DraftImage {
+                        name: "a.png".into(),
+                        bytes: vec![0, 255],
+                        mime_type: "image/png".into(),
+                    }],
+                }),
+            },
+            RepoOp::ReadDraftAttachments {
+                repo: "/srv/a".into(),
+                slug: "d".into(),
+            },
+            RepoOp::DeleteDraft {
+                repo: "/srv/a".into(),
+                slug: "d".into(),
+            },
+            RepoOp::GitOriginUrl { repo: "/srv/a".into() },
             RepoOp::RenameSession {
                 repo: "/srv/a".into(),
                 slug: "t".into(),

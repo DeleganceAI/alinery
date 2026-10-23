@@ -40,6 +40,7 @@ pub mod subtask;
 pub mod task;
 pub mod task_activity;
 pub mod task_creation;
+pub mod task_drafts;
 pub mod telemetry;
 pub mod types;
 

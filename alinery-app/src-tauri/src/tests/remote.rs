@@ -1306,6 +1306,89 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
         activity.keys().collect::<Vec<_>>()
     );
 
+    // Task drafts: saved, re-saved under the same slug, given attachments, and deleted on the host.
+    let draft_op = |draft_slug: &str, name: &str, attachments: Option<crate::DraftAttachments>| RepoOp::WriteDraft {
+        repo: repo.clone().into(),
+        draft_slug: draft_slug.into(),
+        task_slug: String::new(),
+        name: name.into(),
+        description: "Write the thing".into(),
+        evidence: String::new(),
+        linear_id: String::new(),
+        github_issue: String::new(),
+        playbook: alinery_core::playbook::PlaybookRef {
+            scope: alinery_core::playbook::PlaybookScope::Repo,
+            key: "one-shot".into(),
+        },
+        harness: "omp".into(),
+        model: "m".into(),
+        auto_advance: None,
+        step_models: None,
+        max_live_sessions: 3,
+        branch_name: "draft-branch".into(),
+        worktree_name: "draft-tree".into(),
+        draft_base_ref: None,
+        draft_attachments: attachments,
+    };
+    let draft: alinery_core::Task = remote_call(&state, &id, draft_op("", "My draft", None)).unwrap();
+    assert!(draft.draft && draft.name == "My draft", "{draft:?}");
+    let again: alinery_core::Task = remote_call(&state, &id, draft_op(&draft.slug, "My draft", None)).unwrap();
+    assert_eq!((again.slug.as_str(), again.created), (draft.slug.as_str(), draft.created), "autosave reuses the draft");
+    let attachments = crate::DraftAttachments {
+        entries: vec!["/tmp/spec.pdf".into()],
+        images: vec![crate::DraftImage {
+            name: "shot.png".into(),
+            bytes: png.clone(),
+            mime_type: "image/png".into(),
+        }],
+    };
+    remote_call::<alinery_core::Task>(&state, &id, draft_op(&draft.slug, "My draft", Some(attachments.clone()))).unwrap();
+    let read_back: crate::DraftAttachments = remote_call(
+        &state,
+        &id,
+        RepoOp::ReadDraftAttachments {
+            repo: repo.clone().into(),
+            slug: draft.slug.clone(),
+        },
+    )
+    .unwrap();
+    assert_eq!(read_back, attachments, "non-UTF-8 image bytes survive");
+    assert!(
+        remote_call::<alinery_core::Task>(&state, &id, draft_op(&draft.slug, "", None)).is_err(),
+        "an empty name is refused"
+    );
+    assert!(
+        remote_call::<()>(
+            &state,
+            &id,
+            RepoOp::DeleteDraft {
+                repo: repo.clone().into(),
+                slug: slug()
+            }
+        )
+        .is_err(),
+        "a real task is not a draft"
+    );
+    remote_call::<()>(
+        &state,
+        &id,
+        RepoOp::DeleteDraft {
+            repo: repo.clone().into(),
+            slug: draft.slug.clone(),
+        },
+    )
+    .unwrap();
+    let gone: Option<alinery_core::Task> = remote_call(
+        &state,
+        &id,
+        RepoOp::GetTask {
+            repo: repo.clone().into(),
+            slug: draft.slug.clone(),
+        },
+    )
+    .unwrap();
+    assert!(gone.is_none());
+
     // Disconnect: the app forgets the daemon handle; the daemon itself is untouched.
     disconnect_host(&handle, &id);
     assert!(state.daemon_for(Path::new(&key)).is_none());
@@ -1439,6 +1522,9 @@ fn live_git_actions_run_on_the_host() {
         (inputs.pr_url.as_str(), inputs.branch.as_str(), inputs.origin_url.as_deref()),
         (pr, "feat", Some("https://github.com/acme/widgets.git"))
     );
+    // The origin URL is what a bare `#123` GitHub import resolves against.
+    let origin_url: Option<String> = serde_json::from_value(call(RepoOp::GitOriginUrl { repo: repo_path() }).unwrap()).unwrap();
+    assert_eq!(origin_url.as_deref(), Some("https://github.com/acme/widgets.git"));
     assert!(call(RepoOp::TaskPullRequestInputs {
         repo: repo_path(),
         slug: "../feat".into()

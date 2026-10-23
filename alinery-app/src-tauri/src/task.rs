@@ -20,32 +20,10 @@ pub(crate) struct TaskActivityRef {
 pub(crate) use alinery_core::task_activity::TaskActivityStatus;
 pub(crate) use alinery_core::task_activity::{task_activity_key, TaskActivitySummary};
 
-pub(crate) fn branch_ref_conflicts(repo: &Path, candidate: &str) -> bool {
-    let Ok(out) = git_cmd(repo).args(["for-each-ref", "--format=%(refname:strip=2)", "refs/heads"]).output() else {
-        return false;
-    };
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .any(|existing| alinery_core::branch_names_conflict(existing, candidate))
-}
-
-// Dedupe so dir, branch, and worktree path are all unique (-2, -3, …). `git
-// worktree add -b` fails if the branch OR path already exists — check all three.
-pub(crate) fn unique_slug(repo: &Path, base: &str) -> String {
-    unique_slug_except(repo, base, "")
-}
-
-pub(crate) fn unique_slug_except(repo: &Path, base: &str, except: &str) -> String {
-    let mut slug = base.to_string();
-    let mut n = 2;
-    while (task_dir(repo, &slug).exists() && slug != except) || worktrees_dir(repo).join(&slug).exists() || branch_ref_conflicts(repo, &slug) {
-        slug = format!("{base}-{n}");
-        n += 1;
-    }
-    slug
-}
-
 pub(crate) use alinery_core::board::read_task_checked as read_task;
+#[cfg(test)]
+pub(crate) use alinery_core::task_drafts::{branch_ref_conflicts, slugify, DraftImage};
+pub(crate) use alinery_core::task_drafts::{delete_draft_in, read_draft_attachments_in, write_draft_in_with_slug, DraftAttachments};
 
 #[cfg(test)]
 pub(crate) use alinery_core::attachments::MAX_CHAT_IMAGE_BYTES;
@@ -422,149 +400,20 @@ pub(crate) async fn read_attachment_image(
     .map(tauri::ipc::Response::new)
 }
 
-// Archived drafts require explicit restore. Autosave and create must treat their slugs as occupied.
-fn is_reusable_draft(task: &Task) -> bool {
-    task.draft && !task.archived
-}
-
-pub(crate) fn latest_draft_slug_with_name(repo: &Path, name: &str) -> Option<String> {
-    let mut best: Option<(u64, String)> = None;
-    let entries = fs::read_dir(tasks_dir(repo)).ok()?;
-    for entry in entries.flatten() {
-        if !entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-            continue;
-        }
-        let slug = entry.file_name().to_string_lossy().to_string();
-        let Ok(task) = read_task(repo, &slug) else {
-            continue;
-        };
-        if !is_reusable_draft(&task) || task.name != name {
-            continue;
-        }
-        if best
-            .as_ref()
-            .map(|(created, best_slug)| task.created > *created || (task.created == *created && slug > *best_slug))
-            .unwrap_or(true)
-        {
-            best = Some((task.created, slug));
-        }
-    }
-    best.map(|(_, slug)| slug)
-}
-
-pub(crate) fn draft_slug_for_name(repo: &Path, base: &str, name: &str) -> String {
-    match read_task(repo, base) {
-        Ok(t) if is_reusable_draft(&t) => base.to_string(),
-        Ok(_) => latest_draft_slug_with_name(repo, name).unwrap_or_else(|| unique_slug(repo, base)),
-        Err(_) if task_dir(repo, base).exists() => latest_draft_slug_with_name(repo, name).unwrap_or_else(|| unique_slug(repo, base)),
-        Err(_) => latest_draft_slug_with_name(repo, name).unwrap_or_else(|| base.to_string()),
-    }
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct DraftAttachments {
-    pub(crate) entries: Vec<String>,
-    pub(crate) images: Vec<DraftImage>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct DraftImage {
-    pub(crate) name: String,
-    #[serde(with = "alinery_core::rpc_chunk::base64_bytes")]
-    pub(crate) bytes: Vec<u8>,
-    pub(crate) mime_type: String,
-}
-
-fn validate_draft_attachments(attachments: &DraftAttachments) -> Result<(), String> {
-    let mut total = 0;
-    for image in &attachments.images {
-        alinery_core::safe_component(&image.name).ok_or_else(|| format!("invalid attachment name: {}", image.name))?;
-        let len = image.bytes.len() as u64;
-        if len > MAX_ATTACHMENT_BYTES {
-            return Err(format!("{} — larger than 25 MB", image.name));
-        }
-        if len > MAX_ATTACHMENT_SET_BYTES - total {
-            return Err("attachment set would exceed 100 MB".into());
-        }
-        total += len;
-    }
-    Ok(())
-}
-
-pub(crate) fn read_draft_attachments_in(repo: &Path, slug: &str) -> Result<DraftAttachments, String> {
-    let slug = alinery_core::safe_component(slug).ok_or("invalid draft slug")?;
-    read_task(repo, slug)?;
-    let path = task_dir(repo, slug).join("draft-attachments.json");
-    let bytes = match fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(DraftAttachments::default()),
-        Err(error) => return Err(format!("read {}: {error}", path.display())),
-    };
-    let attachments = serde_json::from_slice(&bytes).map_err(|error| format!("read {}: {error}", path.display()))?;
-    validate_draft_attachments(&attachments)?;
-    Ok(attachments)
-}
-
 #[tauri::command]
 pub(crate) async fn read_draft_attachments_for_repo(app: AppHandle, repo_path: String, slug: String) -> Result<DraftAttachments, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    tauri::async_runtime::spawn_blocking(move || read_draft_attachments_in(&repo, &slug))
-        .await
-        .map_err(|error| error.to_string())?
-}
-
-pub(crate) fn write_draft_in_with_slug(
-    repo: &Path,
-    app_config: Option<&Path>,
-    draft_slug: &str,
-    task_slug: &str,
-    name: String,
-    description: String,
-    evidence: String,
-    linear_id: String,
-    github_issue: String,
-    playbook: alinery_core::playbook::PlaybookRef,
-    harness: String,
-    model: String,
-    auto_advance: Option<Vec<String>>,
-    step_models: Option<std::collections::BTreeMap<String, String>>,
-    max_live_sessions: u32,
-    branch_name: String,
-    worktree_name: String,
-    draft_base_ref: Option<String>,
-    draft_attachments: Option<DraftAttachments>,
-) -> Result<Task, String> {
-    alinery_core::with_task_mutation_lock_waiting(repo, "write draft", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
-        write_draft_in_with_slug_unlocked(
-            repo,
-            app_config,
-            draft_slug,
-            task_slug,
-            name,
-            description,
-            evidence,
-            linear_id,
-            github_issue,
-            playbook,
-            harness,
-            model,
-            auto_advance,
-            step_models,
-            max_live_sessions,
-            branch_name,
-            worktree_name,
-            draft_base_ref,
-            draft_attachments,
-        )
+    let target = target_repo_ref_for_app(&app, &repo_path)?;
+    off_main_thread("read draft attachments", move || match target {
+        RepoRef::Local(repo) => read_draft_attachments_in(&repo, &slug),
+        RepoRef::Remote { host_id, path } => remote_call(&app.state::<AppState>(), &host_id, RepoOp::ReadDraftAttachments { repo: path.into(), slug }),
     })
+    .await
 }
 
-fn write_draft_in_with_slug_unlocked(
-    repo: &Path,
-    app_config: Option<&Path>,
-    draft_slug: &str,
-    task_slug: &str,
+/// Everything a draft save carries, so the active-repo and explicit-repo commands share one body.
+struct DraftArgs {
     name: String,
+    task_slug: String,
     description: String,
     evidence: String,
     linear_id: String,
@@ -577,122 +426,63 @@ fn write_draft_in_with_slug_unlocked(
     max_live_sessions: u32,
     branch_name: String,
     worktree_name: String,
+    draft_slug: String,
     draft_base_ref: Option<String>,
     draft_attachments: Option<DraftAttachments>,
-) -> Result<Task, String> {
-    if max_live_sessions == 0 {
-        return Err("maximum live sessions must be positive".into());
-    }
-    let name = name.trim().to_string();
-    if name.is_empty() {
-        return Err("task name is empty".into());
-    }
-    let base = slugify(&name);
-    if base.is_empty() {
-        return Err("task name is empty".into());
-    }
-    let requested_draft = draft_slug.trim();
-    let slug = if requested_draft.is_empty() {
-        draft_slug_for_name(repo, &base, &name)
-    } else {
-        let requested_draft = alinery_core::safe_component(requested_draft).ok_or_else(|| "invalid draft slug".to_string())?;
-        match read_task(repo, requested_draft) {
-            Ok(t) if is_reusable_draft(&t) => requested_draft.to_string(),
-            Ok(_) => return Err("draft is archived or has already been promoted".into()),
-            Err(error) => return Err(error),
-        }
-    };
+}
 
-    if let Some(attachments) = &draft_attachments {
-        validate_draft_attachments(attachments)?;
-    }
-    fs::create_dir_all(tasks_dir(repo)).map_err(|e| e.to_string())?;
-    fs::create_dir_all(task_dir(repo, &slug)).map_err(|e| e.to_string())?;
-
-    let previous = read_task(repo, &slug).ok();
-    let requested_slug = if task_slug.trim().is_empty() {
-        previous
-            .as_ref()
-            .map(|task| task.requested_slug.clone())
-            .filter(|slug| !slug.is_empty())
-            .unwrap_or_else(|| slugify(&name))
-    } else {
-        let normalized = slugify(task_slug.trim());
-        if normalized != task_slug.trim() {
-            return Err("task slug must use lowercase letters, numbers, and single dashes".into());
-        }
-        normalized
-    };
-    let created = previous.as_ref().map(|t| t.created).unwrap_or_else(now_secs);
-    let branch = branch_name.trim().to_string();
-    let worktree = worktree_name.trim().to_string();
-    let task = Task {
-        name: name.clone(),
-        slug: slug.clone(),
-        requested_slug,
-        branch,
-        worktree,
-        has_worktree: true,
-        created,
-        archived: false,
-        pr_url: String::new(),
-        linear_id: linear_id.trim().to_string(),
-        github_issue: github_issue.trim().to_string(),
-        playbook: String::new(),
-        playbook_ref: Some(playbook.clone()),
-        engine_version: 0,
-        max_live_sessions,
-        launch_defaults: alinery_core::execution::LaunchChoices { harness, model },
-        auto_advance: auto_advance.unwrap_or_default(),
-        auto_approve_all: false,
-        step_models: step_models
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|(key, value)| {
-                let trimmed = value.trim();
-                (!trimmed.is_empty()).then(|| (key, trimmed.to_string()))
-            })
-            .collect(),
-        draft: true,
-        draft_base_ref,
-        parent_task: String::new(),
-        active_subtask: String::new(),
-        subtask_outcome: String::new(),
-        related_tasks: Vec::new(),
-        telemetry_id: previous
-            .as_ref()
-            .map(|task| task.telemetry_id.clone())
-            .filter(|id| !id.is_empty())
-            .unwrap_or_else(alinery_core::new_telemetry_id),
-    };
-    write_task_unlocked(repo, &task)?;
-    if previous.is_none() {
-        if let Some(path) = app_config {
-            emit_at(
-                path,
-                alinery_core::TelemetryEvent::TaskDraftCreate {
-                    source: alinery_core::TelemetrySource::App,
-                    has_worktree: true,
-                    playbook: playbook.key,
-                    task_id: task.telemetry_id.clone(),
-                },
-            );
-        }
-    }
-
-    let ticket = alinery_core::compose_ticket(&name, &description, &evidence, &[], &[], &[]);
-    if !ticket.is_empty() {
-        fs::create_dir_all(artifacts_dir(repo, &slug)).map_err(|e| e.to_string())?;
-        let path = artifacts_dir(repo, &slug).join("00-ticket.md");
-        if fs::read_to_string(&path).ok().as_deref() != Some(ticket.as_str()) {
-            write_bytes_atomic(&path, ticket.as_bytes())?;
-        }
-    }
-    if let Some(attachments) = draft_attachments {
-        let bytes = serde_json::to_vec(&attachments).map_err(|error| error.to_string())?;
-        write_bytes_atomic(&task_dir(repo, &slug).join("draft-attachments.json"), &bytes)?;
-    }
-    Ok(task)
+/// Save a draft where its repo lives: in place for a local repo, in the host's files for a remote one
+/// (telemetry about the draft stays on this machine's side, so a remote save records none).
+async fn save_draft(app: AppHandle, target: RepoRef, args: DraftArgs) -> Result<Task, String> {
+    let app_config = app_config_path(&app)?;
+    off_main_thread("write draft", move || match target {
+        RepoRef::Local(repo) => write_draft_in_with_slug(
+            &repo,
+            Some(&app_config),
+            &args.draft_slug,
+            &args.task_slug,
+            args.name,
+            args.description,
+            args.evidence,
+            args.linear_id,
+            args.github_issue,
+            args.playbook,
+            args.harness,
+            args.model,
+            args.auto_advance,
+            args.step_models,
+            args.max_live_sessions,
+            args.branch_name,
+            args.worktree_name,
+            args.draft_base_ref,
+            args.draft_attachments,
+        ),
+        RepoRef::Remote { host_id, path } => remote_call(
+            &app.state::<AppState>(),
+            &host_id,
+            RepoOp::WriteDraft {
+                repo: path.into(),
+                draft_slug: args.draft_slug,
+                task_slug: args.task_slug,
+                name: args.name,
+                description: args.description,
+                evidence: args.evidence,
+                linear_id: args.linear_id,
+                github_issue: args.github_issue,
+                playbook: args.playbook,
+                harness: args.harness,
+                model: args.model,
+                auto_advance: args.auto_advance,
+                step_models: args.step_models,
+                max_live_sessions: args.max_live_sessions,
+                branch_name: args.branch_name,
+                worktree_name: args.worktree_name,
+                draft_base_ref: args.draft_base_ref,
+                draft_attachments: args.draft_attachments,
+            },
+        ),
+    })
+    .await
 }
 
 #[tauri::command]
@@ -717,33 +507,27 @@ pub(crate) async fn write_draft(
     draft_base_ref: Option<String>,
     draft_attachments: Option<DraftAttachments>,
 ) -> Result<Task, String> {
-    let repo = require_owned_active_repo(&state)?;
-    let app_config = app_config_path(&app)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        write_draft_in_with_slug(
-            &repo,
-            Some(&app_config),
-            &draft_slug,
-            &task_slug,
-            name,
-            description,
-            evidence,
-            linear_id,
-            github_issue,
-            playbook,
-            harness,
-            model,
-            auto_advance,
-            step_models,
-            max_live_sessions,
-            branch_name,
-            worktree_name,
-            draft_base_ref,
-            draft_attachments,
-        )
-    })
-    .await
-    .map_err(|error| error.to_string())?
+    let target = owned_active_target(&state)?;
+    let args = DraftArgs {
+        name,
+        task_slug,
+        description,
+        evidence,
+        linear_id,
+        github_issue,
+        playbook,
+        harness,
+        model,
+        auto_advance,
+        step_models,
+        max_live_sessions,
+        branch_name,
+        worktree_name,
+        draft_slug,
+        draft_base_ref,
+        draft_attachments,
+    };
+    save_draft(app, target, args).await
 }
 
 #[tauri::command]
@@ -769,72 +553,48 @@ pub(crate) async fn write_draft_for_repo(
     draft_base_ref: Option<String>,
     draft_attachments: Option<DraftAttachments>,
 ) -> Result<Task, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
+    let target = owned_target(&app, &state, &repo_path)?;
+    let args = DraftArgs {
+        name,
+        task_slug,
+        description,
+        evidence,
+        linear_id,
+        github_issue,
+        playbook,
+        harness,
+        model,
+        auto_advance,
+        step_models,
+        max_live_sessions,
+        branch_name,
+        worktree_name,
+        draft_slug,
+        draft_base_ref,
+        draft_attachments,
+    };
+    save_draft(app, target, args).await
+}
+
+async fn delete_draft_at(app: AppHandle, target: RepoRef, slug: String) -> Result<(), String> {
     let app_config = app_config_path(&app)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        write_draft_in_with_slug(
-            &repo,
-            Some(&app_config),
-            &draft_slug,
-            &task_slug,
-            name,
-            description,
-            evidence,
-            linear_id,
-            github_issue,
-            playbook,
-            harness,
-            model,
-            auto_advance,
-            step_models,
-            max_live_sessions,
-            branch_name,
-            worktree_name,
-            draft_base_ref,
-            draft_attachments,
-        )
+    off_main_thread("delete draft", move || match target {
+        RepoRef::Local(repo) => delete_draft_in(&repo, Some(&app_config), &slug),
+        RepoRef::Remote { host_id, path } => remote_call(&app.state::<AppState>(), &host_id, RepoOp::DeleteDraft { repo: path.into(), slug }),
     })
     .await
-    .map_err(|error| error.to_string())?
-}
-
-// M6: remove a draft task directory entirely (archive is insufficient — leaves task.md).
-pub(crate) fn delete_draft_in(repo: &Path, app_config: Option<&Path>, slug: &str) -> Result<(), String> {
-    // Eager on purpose: the read must happen before the directory is removed below, so this one
-    // cannot be deferred into the emit closure the way the other id lookups are.
-    let telemetry_id = alinery_core::telemetry_id_for_task(repo, slug);
-    alinery_core::with_task_mutation_lock_waiting(repo, "delete draft", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
-        let task = read_task(repo, slug)?;
-        if !task.draft {
-            return Err("not a draft".into());
-        }
-        let dir = task_dir(repo, slug);
-        fs::remove_dir_all(&dir).map_err(|e| format!("remove draft {}: {e}", dir.display()))
-    })?;
-    if let Some(path) = app_config {
-        emit_at(
-            path,
-            alinery_core::TelemetryEvent::TaskDraftDelete {
-                source: alinery_core::TelemetrySource::App,
-                task_id: telemetry_id,
-            },
-        );
-    }
-    Ok(())
 }
 
 #[tauri::command]
-pub(crate) fn delete_draft(app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<(), String> {
-    let repo = require_owned_active_repo(&state)?;
-    delete_draft_in(&repo, Some(&app_config_path(&app)?), &slug)
+pub(crate) async fn delete_draft(app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<(), String> {
+    let target = owned_active_target(&state)?;
+    delete_draft_at(app, target, slug).await
 }
 
 #[tauri::command]
-pub(crate) fn delete_draft_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    delete_draft_in(&repo, Some(&app_config_path(&app)?), &slug)
+pub(crate) async fn delete_draft_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
+    let target = owned_target(&app, &state, &repo_path)?;
+    delete_draft_at(app, target, slug).await
 }
 // Scan `.alinery/tasks/*/task.md`. Returns archived too; the UI hides them.
 #[tauri::command]
