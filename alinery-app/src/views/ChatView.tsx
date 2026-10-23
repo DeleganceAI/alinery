@@ -8,6 +8,7 @@ import { askConfirm, confirmDanger } from "../confirm";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { NameEditor } from "../NameEditor";
+import { repoDisplayPath } from "../remoteRepo";
 
 import { SessionTerminal } from "../SessionTerminal";
 import type { ObservationDisplayKind } from "../sessionAttention";
@@ -780,7 +781,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
                 <ChevronDown size={14} aria-hidden="true" />
               </span>
             </label>
-            {repoPath ? <p className="dsc chat-dialog-path">{repoPath}</p> : null}
+            {repoPath ? <p className="dsc chat-dialog-path">{repoDisplayPath(repoPath)}</p> : null}
             {pickClosed ? (
               <p className="dsc field-error" role="alert">
                 {repoLabel(pickedRepo, dirs)} is not open in this window. Open it again{dirs.length > 0 ? ", or choose another repository" : ""}.

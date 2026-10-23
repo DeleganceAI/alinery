@@ -965,6 +965,187 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     .unwrap();
     assert!(archived.unwrap().archived);
 
+    // Restore flips the flag back on the host; an unknown task is refused.
+    remote_call::<()>(
+        &state,
+        &id,
+        RepoOp::RestoreTask {
+            repo: repo.clone().into(),
+            slug: slug(),
+        },
+    )
+    .unwrap();
+    let restored: Option<alinery_core::Task> = remote_call(
+        &state,
+        &id,
+        RepoOp::GetTask {
+            repo: repo.clone().into(),
+            slug: slug(),
+        },
+    )
+    .unwrap();
+    assert!(!restored.unwrap().archived);
+    assert!(remote_call::<()>(
+        &state,
+        &id,
+        RepoOp::RestoreTask {
+            repo: repo.clone().into(),
+            slug: "missing".into()
+        }
+    )
+    .is_err());
+
+    // Chat threads: created beside the host's daemon, listed under the repo's key, pinned, given
+    // attachments, archived. The terminal made above is a session but not a chat thread.
+    let app_config = crate::host_app_config(&state, &id).unwrap();
+    let new_thread = |create_worktree: bool| -> alinery_core::task_creation::CreateExecutionSessionReply {
+        remote_call(
+            &state,
+            &id,
+            RepoOp::CreateChatThread {
+                repo: repo.clone().into(),
+                app_config: app_config.clone(),
+                model: String::new(),
+                create_worktree,
+            },
+        )
+        .unwrap()
+    };
+    let thread = new_thread(false).session.id;
+    let chat_meta = |session_id: &str| {
+        remote_call::<crate::SessionMeta>(
+            &state,
+            &id,
+            RepoOp::ChatThreadMeta {
+                repo: repo.clone().into(),
+                session_id: session_id.into(),
+            },
+        )
+    };
+    assert_eq!(chat_meta(&thread).unwrap().id, thread);
+    assert!(chat_meta(&terminal).is_err(), "a terminal session is not a chat thread");
+    assert!(chat_meta("../x").is_err());
+    assert_eq!(crate::open_chat_repos_in(std::slice::from_ref(&key), &state), [std::path::PathBuf::from(&key)]);
+    let listed = crate::chat::chat_threads_across(&state, &[std::path::PathBuf::from(&key)], false).unwrap();
+    assert_eq!(listed.len(), 1, "{}", listed.len());
+    assert_eq!(listed[0].repo_path, key, "the rail addresses the repo by its key, not the host path");
+    assert!(listed[0].checkout && !listed[0].session.pinned);
+    remote_call::<()>(
+        &state,
+        &id,
+        RepoOp::SetChatPinned {
+            repo: repo.clone().into(),
+            session_id: thread.clone(),
+            pinned: true,
+        },
+    )
+    .unwrap();
+    assert!(chat_meta(&thread).unwrap().pinned);
+    let branch: crate::ChatBranch = remote_call(
+        &state,
+        &id,
+        RepoOp::ChatBranchLabel {
+            repo: repo.clone().into(),
+            session_id: thread.clone(),
+        },
+    )
+    .unwrap();
+    assert!(branch.checkout);
+    assert_eq!(
+        remote_call::<Option<String>>(
+            &state,
+            &id,
+            RepoOp::ChatThreadName {
+                repo: repo.clone().into(),
+                session_id: thread.clone()
+            }
+        )
+        .unwrap(),
+        None
+    );
+
+    // The thread's attachments live beside its session on the host and come back byte for byte.
+    let put = |name: &str, data: &[u8]| {
+        remote_call::<String>(
+            &state,
+            &id,
+            RepoOp::WriteChatThreadAttachment {
+                repo: repo.clone().into(),
+                session_id: thread.clone(),
+                file_name: name.into(),
+                data: data.to_vec(),
+            },
+        )
+    };
+    assert_eq!(put("shot.png", &png).unwrap(), "shot.png");
+    assert!(put("../shot.png", &png).is_err());
+    let back: crate::ChatImage = remote_call(
+        &state,
+        &id,
+        RepoOp::ReadChatThreadImage {
+            repo: repo.clone().into(),
+            session_id: thread.clone(),
+            name: "shot.png".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(alinery_core::rpc_chunk::decode_base64(&back.data).unwrap(), png);
+    assert!(remote_call::<crate::ChatImage>(
+        &state,
+        &id,
+        RepoOp::ReadChatThreadImage {
+            repo: repo.clone().into(),
+            session_id: thread.clone(),
+            name: "missing.png".into()
+        }
+    )
+    .is_err());
+    let local = std::env::temp_dir().join(format!("chat-note-{}.txt", std::process::id()));
+    std::fs::write(&local, "chat note\n").unwrap();
+    let sent = crate::send_files_to_host(&[local.display().to_string()], |file_name, data| put(&file_name, &data));
+    assert_eq!(sent.copied, ["chat-note-".to_string() + &std::process::id().to_string() + ".txt"], "{:?}", sent.failures);
+    let _ = std::fs::remove_file(local);
+
+    // A thread cannot be continued without a journal; archiving stops it and hides it from the rail.
+    assert!(remote_call::<crate::SessionMeta>(
+        &state,
+        &id,
+        RepoOp::ResumeChatThread {
+            repo: repo.clone().into(),
+            app_config: app_config.clone(),
+            session_id: thread.clone()
+        }
+    )
+    .is_err());
+    remote_call::<()>(
+        &state,
+        &id,
+        RepoOp::ArchiveChatThread {
+            repo: repo.clone().into(),
+            app_config: app_config.clone(),
+            session_id: thread.clone(),
+            remove_worktree: false,
+        },
+    )
+    .unwrap();
+    assert!(crate::chat::chat_threads_across(&state, &[std::path::PathBuf::from(&key)], false).unwrap().is_empty());
+    let all = crate::chat::chat_threads_across(&state, &[std::path::PathBuf::from(&key)], true).unwrap();
+    assert!(all.len() == 1 && all[0].session.archived);
+
+    // The checkout is never deleted as if it were a thread's worktree.
+    let other = new_thread(false).session.id;
+    assert!(remote_call::<()>(
+        &state,
+        &id,
+        RepoOp::ArchiveChatThread {
+            repo: repo.clone().into(),
+            app_config: app_config.clone(),
+            session_id: other,
+            remove_worktree: true
+        }
+    )
+    .is_err());
+
     // Disconnect: the app forgets the daemon handle; the daemon itself is untouched.
     disconnect_host(&handle, &id);
     assert!(state.daemon_for(Path::new(&key)).is_none());

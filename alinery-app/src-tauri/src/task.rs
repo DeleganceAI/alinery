@@ -80,8 +80,8 @@ pub(crate) use alinery_core::board::read_task_checked as read_task;
 #[cfg(test)]
 pub(crate) use alinery_core::attachments::MAX_CHAT_IMAGE_BYTES;
 pub(crate) use alinery_core::attachments::{
-    attachment_dir_bytes, read_attachment_image as read_attachment_image_in, read_chat_image as read_chat_image_in, read_chat_image_file, write_attachment_bytes_into,
-    write_chat_attachment_bytes as write_chat_attachment_bytes_in, ChatImage,
+    attachment_dir_bytes, read_attachment_image as read_attachment_image_in, read_chat_image as read_chat_image_in, write_chat_attachment_bytes as write_chat_attachment_bytes_in,
+    ChatImage,
 };
 pub(crate) use alinery_core::board::read_task_opt;
 
@@ -421,6 +421,23 @@ pub(crate) fn copy_chat_attachments(state: State<'_, AppState>, task_slug: Strin
 /// checks as a local copy run here; the host enforces the set limit and picks unique names.
 pub(crate) fn copy_files_to_remote_attachments(state: &AppState, host_id: &str, repo: &str, task_slug: &str, paths: &[String]) -> Result<CopyChatAttachmentsResult, String> {
     alinery_core::safe_component(task_slug).ok_or("invalid task slug")?;
+    Ok(send_files_to_host(paths, |file_name, data| {
+        remote_call::<String>(
+            state,
+            host_id,
+            RepoOp::WriteAttachment {
+                repo: repo.into(),
+                slug: task_slug.to_string(),
+                file_name,
+                data,
+            },
+        )
+    }))
+}
+
+/// The per-file half of a copy to a host: read and check each local file, hand its bytes to `send`
+/// (which returns the name the host stored it under), and collect what was copied and what failed.
+pub(crate) fn send_files_to_host(paths: &[String], mut send: impl FnMut(String, Vec<u8>) -> Result<String, String>) -> CopyChatAttachmentsResult {
     let (mut copied, mut failures) = (vec![], vec![]);
     for entry in paths
         .iter()
@@ -443,24 +460,12 @@ pub(crate) fn copy_files_to_remote_attachments(state: &AppState, host_id: &str, 
                 .ok_or("unusable file name")?;
             Ok((base.to_string(), fs::read(src).map_err(|e| e.to_string())?))
         })();
-        let sent = loaded.and_then(|(file_name, data)| {
-            remote_call::<String>(
-                state,
-                host_id,
-                RepoOp::WriteAttachment {
-                    repo: repo.into(),
-                    slug: task_slug.to_string(),
-                    file_name,
-                    data,
-                },
-            )
-        });
-        match sent {
+        match loaded.and_then(|(file_name, data)| send(file_name, data)) {
             Ok(name) => copied.push(name),
             Err(error) => failures.push(format!("{entry} — {error}")),
         }
     }
-    Ok(CopyChatAttachmentsResult { copied, failures })
+    CopyChatAttachmentsResult { copied, failures }
 }
 
 #[tauri::command]
@@ -969,9 +974,13 @@ pub(crate) async fn archive_task_for_repo(app: AppHandle, state: State<'_, AppSt
 
 #[tauri::command]
 pub(crate) async fn restore_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    let result = tauri::async_runtime::spawn_blocking(move || restore_task_in(&repo, &slug)).await;
+    let target = owned_target(&app, &state, &repo_path)?;
+    // The pre-archive backup has no restore counterpart, so a remote repo is just the file flip on the host.
+    let result = tauri::async_runtime::spawn_blocking(move || match target {
+        RepoRef::Local(repo) => restore_task_in(&repo, &slug),
+        RepoRef::Remote { host_id, path } => remote_call::<()>(&app.state::<AppState>(), &host_id, RepoOp::RestoreTask { repo: path.into(), slug }),
+    })
+    .await;
     result.map_err(|e| format!("restore task: {e}"))?
 }
 

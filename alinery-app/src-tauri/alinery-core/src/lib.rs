@@ -6,6 +6,7 @@ pub mod artifact_tree;
 pub mod attachments;
 pub mod backup;
 pub mod board;
+pub mod chat;
 pub mod credential_sync;
 pub mod daemon_client;
 pub mod execution;

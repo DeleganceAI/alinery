@@ -1,7 +1,6 @@
 //! session: extracted from lib.rs. See AGENTS.md for the module map.
 use crate::*;
 
-pub(crate) use alinery_core::board::load_session_meta as load_session_meta_for;
 pub(crate) use alinery_core::board::session_display_context as session_display_context_for_repo;
 pub(crate) use alinery_core::board::{current_subtask_name, project_session_display, SessionDisplayContext, SessionDisplayMeta};
 pub(crate) use alinery_core::session_actions::{
@@ -1231,25 +1230,18 @@ pub(crate) async fn read_session_omp(app: AppHandle, id: String, task_slug: Opti
     let slug = task_slug.unwrap_or_default();
     let window = tauri::async_runtime::spawn_blocking(move || match target {
         RepoRef::Local(repo) => alinery_core::read_omp_window(&repo, &slug, &id, end, want),
-        RepoRef::Remote { host_id, path } => {
-            let wire: alinery_core::repo_service::WireOmpWindow = remote_call(
-                &app.state::<AppState>(),
-                &host_id,
-                RepoOp::ReadOmpWindow {
-                    repo: path.into(),
-                    slug,
-                    session_id: id,
-                    end,
-                    want,
-                },
-            )?;
-            Ok(alinery_core::OmpWindow {
-                start: wire.start,
-                end: wire.end,
-                length: wire.length,
-                data: wire.data,
-            })
-        }
+        RepoRef::Remote { host_id, path } => remote_call::<alinery_core::repo_service::WireOmpWindow>(
+            &app.state::<AppState>(),
+            &host_id,
+            RepoOp::ReadOmpWindow {
+                repo: path.into(),
+                slug,
+                session_id: id,
+                end,
+                want,
+            },
+        )
+        .map(Into::into),
     })
     .await
     .map_err(|error| error.to_string())??;

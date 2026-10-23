@@ -942,12 +942,17 @@ pub(crate) fn ensure_remote_daemon(session: &RemoteSession, repo_path: &str, app
 /// A forwarded socket costs a channel open plus the request.
 pub(crate) const REMOTE_OBSERVE_TIMEOUT: Duration = Duration::from_secs(3);
 
-fn connected_session(state: &AppState, host_id: &str) -> Result<std::sync::Arc<RemoteSession>, String> {
+pub(crate) fn connected_session(state: &AppState, host_id: &str) -> Result<std::sync::Arc<RemoteSession>, String> {
     state
         .remotes
         .session(host_id)
         .filter(|session| session.channel.is_alive())
         .ok_or_else(|| format!("not connected to {host_id}; connect first"))
+}
+
+/// The `app.toml` the host's daemon and repo service run with.
+pub(crate) fn host_app_config(state: &AppState, host_id: &str) -> Result<PathBuf, String> {
+    Ok(PathBuf::from(format!("{}/app.toml", connected_session(state, host_id)?.config_dir)))
 }
 
 /// Run a typed repo operation on a connected host and decode its answer. The remote half of

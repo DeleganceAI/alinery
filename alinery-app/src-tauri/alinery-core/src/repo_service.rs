@@ -292,6 +292,68 @@ pub enum RepoOp {
         #[serde(with = "crate::rpc_chunk::base64_bytes")]
         data: Vec<u8>,
     },
+    /// Chat threads of one repo. `repo_path` in each row is the host path.
+    ListChatThreads {
+        repo: PathBuf,
+        include_archived: bool,
+    },
+    /// The chat thread's session meta; refuses an id that is not a chat thread.
+    ChatThreadMeta {
+        repo: PathBuf,
+        session_id: String,
+    },
+    ChatThreadName {
+        repo: PathBuf,
+        session_id: String,
+    },
+    ChatBranchLabel {
+        repo: PathBuf,
+        session_id: String,
+    },
+    SetChatPinned {
+        repo: PathBuf,
+        session_id: String,
+        pinned: bool,
+    },
+    /// The chat ops below that also touch a process run beside the host's own daemon.
+    CreateChatThread {
+        repo: PathBuf,
+        app_config: PathBuf,
+        model: String,
+        create_worktree: bool,
+    },
+    ArchiveChatThread {
+        repo: PathBuf,
+        app_config: PathBuf,
+        session_id: String,
+        remove_worktree: bool,
+    },
+    RemoveChatWorktree {
+        repo: PathBuf,
+        app_config: PathBuf,
+        session_id: String,
+    },
+    ResumeChatThread {
+        repo: PathBuf,
+        app_config: PathBuf,
+        session_id: String,
+    },
+    WriteChatThreadAttachment {
+        repo: PathBuf,
+        session_id: String,
+        file_name: String,
+        #[serde(with = "crate::rpc_chunk::base64_bytes")]
+        data: Vec<u8>,
+    },
+    ReadChatThreadImage {
+        repo: PathBuf,
+        session_id: String,
+        name: String,
+    },
+    RestoreTask {
+        repo: PathBuf,
+        slug: String,
+    },
     /// Atomic, owner-only write (parent directories are created).
     WriteFile {
         path: PathBuf,
@@ -395,6 +457,17 @@ pub struct WireOmpWindow {
     pub length: u64,
     #[serde(with = "crate::rpc_chunk::base64_bytes")]
     pub data: Vec<u8>,
+}
+
+impl From<WireOmpWindow> for crate::OmpWindow {
+    fn from(wire: WireOmpWindow) -> Self {
+        Self {
+            start: wire.start,
+            end: wire.end,
+            length: wire.length,
+            data: wire.data,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -555,6 +628,41 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
             data: crate::attachments::read_attachment_image(&repo, &slug, &name, node_id.as_deref())?,
         }),
         RepoOp::WriteAttachment { repo, slug, file_name, data } => to_value(crate::attachments::write_chat_attachment_bytes(&repo, &slug, &file_name, &data)?),
+        RepoOp::ListChatThreads { repo, include_archived } => to_value(crate::chat::list_chat_threads_in(&[repo], include_archived)?),
+        RepoOp::ChatThreadMeta { repo, session_id } => to_value(crate::chat::load_root_omp(&repo, &session_id)?),
+        RepoOp::ChatThreadName { repo, session_id } => {
+            crate::chat::load_root_omp(&repo, &session_id)?;
+            to_value(crate::read_session_name(&repo, "", &session_id)?.map(|name| name.name))
+        }
+        RepoOp::ChatBranchLabel { repo, session_id } => to_value(crate::chat::chat_branch_of(&repo, &crate::chat::load_root_omp(&repo, &session_id)?)),
+        RepoOp::SetChatPinned { repo, session_id, pinned } => crate::chat::set_chat_pinned_in(&repo, &session_id, pinned).map(|()| Value::Null),
+        RepoOp::CreateChatThread {
+            repo,
+            app_config,
+            model,
+            create_worktree,
+        } => {
+            let daemon = host_daemon(&repo, &app_config).ok_or("daemon not connected")?;
+            to_value(crate::chat::create_chat_thread_in(&repo, &daemon, &model, create_worktree)?)
+        }
+        RepoOp::ArchiveChatThread {
+            repo,
+            app_config,
+            session_id,
+            remove_worktree,
+        } => crate::chat::archive_chat_thread_in(&repo, &session_id, remove_worktree, host_daemon(&repo, &app_config).as_ref()).map(|()| Value::Null),
+        RepoOp::RemoveChatWorktree { repo, app_config, session_id } => {
+            crate::chat::remove_chat_worktree_in(&repo, &session_id, host_daemon(&repo, &app_config).as_ref()).map(|()| Value::Null)
+        }
+        RepoOp::ResumeChatThread { repo, app_config, session_id } => to_value(crate::chat::resume_chat_thread_in(&repo, &session_id, host_daemon(&repo, &app_config).as_ref())?),
+        RepoOp::WriteChatThreadAttachment {
+            repo,
+            session_id,
+            file_name,
+            data,
+        } => to_value(crate::chat::write_chat_thread_attachment_bytes_in(&repo, &session_id, &file_name, &data)?),
+        RepoOp::ReadChatThreadImage { repo, session_id, name } => to_value(crate::chat::read_chat_thread_image_in(&repo, &session_id, &name)?),
+        RepoOp::RestoreTask { repo, slug } => crate::restore_task(&repo, &slug).map(|()| Value::Null),
         RepoOp::WriteFile { path, contents } => write_file(&path, &contents).map(|()| Value::Null),
         RepoOp::SyncCredentials { path, entries } => to_value(crate::credential_sync::apply_incoming(&path, &entries)?),
         RepoOp::SpawnDaemon {
@@ -580,6 +688,13 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         )
         .map(|()| Value::Null),
     }
+}
+
+/// The host's own daemon for `repo`, or none when it is not running or does not match this build.
+fn host_daemon(repo: &Path, app_config: &Path) -> Option<crate::DaemonClient> {
+    crate::connect_compatible_once(crate::alineryd_socket_path(repo, None), app_config)
+        .ok()
+        .map(|(client, _)| client)
 }
 
 fn write_file(path: &Path, contents: &str) -> Result<(), String> {
@@ -872,6 +987,64 @@ mod tests {
                 slug: "t".into(),
                 file_name: "a.bin".into(),
                 data: vec![0, 255, 7],
+            },
+            RepoOp::ListChatThreads {
+                repo: "/srv/a".into(),
+                include_archived: true,
+            },
+            RepoOp::ChatThreadMeta {
+                repo: "/srv/a".into(),
+                session_id: "s".into(),
+            },
+            RepoOp::ChatThreadName {
+                repo: "/srv/a".into(),
+                session_id: "s".into(),
+            },
+            RepoOp::ChatBranchLabel {
+                repo: "/srv/a".into(),
+                session_id: "s".into(),
+            },
+            RepoOp::SetChatPinned {
+                repo: "/srv/a".into(),
+                session_id: "s".into(),
+                pinned: true,
+            },
+            RepoOp::CreateChatThread {
+                repo: "/srv/a".into(),
+                app_config: "/c/app.toml".into(),
+                model: "m".into(),
+                create_worktree: true,
+            },
+            RepoOp::ArchiveChatThread {
+                repo: "/srv/a".into(),
+                app_config: "/c/app.toml".into(),
+                session_id: "s".into(),
+                remove_worktree: true,
+            },
+            RepoOp::RemoveChatWorktree {
+                repo: "/srv/a".into(),
+                app_config: "/c/app.toml".into(),
+                session_id: "s".into(),
+            },
+            RepoOp::ResumeChatThread {
+                repo: "/srv/a".into(),
+                app_config: "/c/app.toml".into(),
+                session_id: "s".into(),
+            },
+            RepoOp::WriteChatThreadAttachment {
+                repo: "/srv/a".into(),
+                session_id: "s".into(),
+                file_name: "a.bin".into(),
+                data: vec![0, 255, 7],
+            },
+            RepoOp::ReadChatThreadImage {
+                repo: "/srv/a".into(),
+                session_id: "s".into(),
+                name: "a.png".into(),
+            },
+            RepoOp::RestoreTask {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
             },
             RepoOp::RenameSession {
                 repo: "/srv/a".into(),
