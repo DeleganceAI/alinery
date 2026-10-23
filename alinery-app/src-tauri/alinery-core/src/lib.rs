@@ -3,6 +3,7 @@
 
 pub mod artifact_comments;
 pub mod artifact_tree;
+pub mod attachments;
 pub mod backup;
 pub mod board;
 pub mod credential_sync;

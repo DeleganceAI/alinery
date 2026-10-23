@@ -46,6 +46,7 @@ import {
 import { completionPrompt } from "../completionPrompt";
 import { confirmDanger, confirmStopAndSwitch } from "../confirm";
 import * as ipc from "../ipc";
+import { revealPath } from "../revealPath";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 import {
   abortAndPromptCommand,
@@ -2542,7 +2543,7 @@ export function SessionView({
                             if (item.attachment) {
                               ipc
                                 .attachmentPath(taskSlug, item.name)
-                                .then(ipc.revealItemInDir)
+                                .then(revealPath)
                                 .catch((error) => setArtifactErr(String(error)));
                               return;
                             }

@@ -77,6 +77,12 @@ pub(crate) fn unique_slug_except(repo: &Path, base: &str, except: &str) -> Strin
 
 pub(crate) use alinery_core::board::read_task_checked as read_task;
 
+#[cfg(test)]
+pub(crate) use alinery_core::attachments::MAX_CHAT_IMAGE_BYTES;
+pub(crate) use alinery_core::attachments::{
+    attachment_dir_bytes, read_attachment_image as read_attachment_image_in, read_chat_image as read_chat_image_in, read_chat_image_file, write_attachment_bytes_into,
+    write_chat_attachment_bytes as write_chat_attachment_bytes_in, ChatImage,
+};
 pub(crate) use alinery_core::board::read_task_opt;
 
 #[tauri::command]
@@ -306,20 +312,6 @@ pub(crate) async fn prepare_task_attachments(entries: Vec<String>) -> PreparedTa
         })
 }
 
-pub(crate) const MAX_CHAT_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
-
-fn attachment_dir_bytes(dir: &Path) -> u64 {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return 0;
-    };
-    entries
-        .flatten()
-        .filter_map(|entry| entry.metadata().ok())
-        .filter(|meta| meta.is_file())
-        .map(|meta| meta.len())
-        .sum()
-}
-
 // Infallible by construction: a bad attachment is data, never control flow. Runs strictly after
 // the git block so it can never reach a rollback_task_dir call site.
 pub(crate) fn copy_task_attachments(repo: &Path, slug: &str, entries: &[String]) -> (Vec<String>, Vec<String>, Vec<String>) {
@@ -396,23 +388,6 @@ pub(crate) struct CopyChatAttachmentsResult {
     pub(crate) failures: Vec<String>,
 }
 
-#[derive(Serialize)]
-pub(crate) struct ChatImage {
-    pub(crate) mime_type: String,
-    pub(crate) data: String,
-}
-
-fn chat_image_mime(name: &str) -> Result<String, String> {
-    let ext = Path::new(name).extension().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase());
-    match ext.as_deref() {
-        Some("png") => Ok("image/png".into()),
-        Some("jpg") | Some("jpeg") => Ok("image/jpeg".into()),
-        Some("gif") => Ok("image/gif".into()),
-        Some("webp") => Ok("image/webp".into()),
-        _ => Err(format!("{name} — not a chat image")),
-    }
-}
-
 #[tauri::command]
 pub(crate) fn chat_file_stat(path: String) -> Result<ChatFileStat, String> {
     let path = Path::new(&path);
@@ -435,88 +410,118 @@ pub(crate) fn copy_chat_attachments_in(repo: &Path, task_slug: &str, paths: &[St
 }
 
 #[tauri::command]
-pub(crate) fn copy_chat_attachments(task_slug: String, paths: Vec<String>) -> Result<CopyChatAttachmentsResult, String> {
-    copy_chat_attachments_in(&active_repo()?, &task_slug, &paths)
+pub(crate) fn copy_chat_attachments(state: State<'_, AppState>, task_slug: String, paths: Vec<String>) -> Result<CopyChatAttachmentsResult, String> {
+    match active_repo_ref()? {
+        RepoRef::Local(repo) => copy_chat_attachments_in(&repo, &task_slug, &paths),
+        RepoRef::Remote { host_id, path } => copy_files_to_remote_attachments(&state, &host_id, &path, &task_slug, &paths),
+    }
 }
 
-pub(crate) fn write_chat_attachment_bytes_in(repo: &Path, task_slug: &str, file_name: &str, bytes: &[u8]) -> Result<String, String> {
-    let slug = alinery_core::safe_component(task_slug).ok_or("invalid task slug")?;
-    write_attachment_bytes_into(&alinery_core::attachments_dir(repo, slug), file_name, bytes)
-}
-
-pub(crate) fn write_attachment_bytes_into(dir: &Path, file_name: &str, bytes: &[u8]) -> Result<String, String> {
-    let base = alinery_core::safe_component(file_name).ok_or_else(|| format!("invalid attachment name: {file_name}"))?;
-    let len = bytes.len() as u64;
-    if len > MAX_ATTACHMENT_BYTES {
-        return Err(format!("{file_name} — larger than 25 MB"));
+/// Send files from this machine to a remote task's attachments, one at a time. The same per-file
+/// checks as a local copy run here; the host enforces the set limit and picks unique names.
+pub(crate) fn copy_files_to_remote_attachments(state: &AppState, host_id: &str, repo: &str, task_slug: &str, paths: &[String]) -> Result<CopyChatAttachmentsResult, String> {
+    alinery_core::safe_component(task_slug).ok_or("invalid task slug")?;
+    let (mut copied, mut failures) = (vec![], vec![]);
+    for entry in paths
+        .iter()
+        .map(|entry| entry.trim())
+        .filter(|entry| !entry.is_empty() && !entry.starts_with("http://") && !entry.starts_with("https://"))
+    {
+        let src = Path::new(entry);
+        let loaded = (|| -> Result<(String, Vec<u8>), String> {
+            let meta = fs::metadata(src).map_err(|e| e.to_string())?;
+            if !meta.is_file() {
+                return Err("not a regular file".into());
+            }
+            if meta.len() > MAX_ATTACHMENT_BYTES {
+                return Err("larger than 25 MB".into());
+            }
+            let base = src
+                .file_name()
+                .and_then(|s| s.to_str())
+                .and_then(alinery_core::safe_component)
+                .ok_or("unusable file name")?;
+            Ok((base.to_string(), fs::read(src).map_err(|e| e.to_string())?))
+        })();
+        let sent = loaded.and_then(|(file_name, data)| {
+            remote_call::<String>(
+                state,
+                host_id,
+                RepoOp::WriteAttachment {
+                    repo: repo.into(),
+                    slug: task_slug.to_string(),
+                    file_name,
+                    data,
+                },
+            )
+        });
+        match sent {
+            Ok(name) => copied.push(name),
+            Err(error) => failures.push(format!("{entry} — {error}")),
+        }
     }
-    let batch_bytes = attachment_dir_bytes(dir);
-    if batch_bytes + len > MAX_ATTACHMENT_SET_BYTES {
-        return Err(format!("{file_name} — attachment set would exceed 100 MB"));
-    }
-    fs::create_dir_all(dir).map_err(|e| format!("{file_name} — {e}"))?;
-    let Some(target) = unique_attachment_name(dir, base) else {
-        return Err(format!("{file_name} — too many name collisions"));
-    };
-    fs::write(dir.join(&target), bytes).map_err(|e| format!("{file_name} — {e}"))?;
-    Ok(target)
+    Ok(CopyChatAttachmentsResult { copied, failures })
 }
 
 #[tauri::command]
-pub(crate) fn write_chat_attachment_bytes(task_slug: String, file_name: String, bytes: Vec<u8>) -> Result<String, String> {
-    write_chat_attachment_bytes_in(&active_repo()?, &task_slug, &file_name, &bytes)
+pub(crate) fn write_chat_attachment_bytes(state: State<'_, AppState>, task_slug: String, file_name: String, bytes: Vec<u8>) -> Result<String, String> {
+    match active_repo_ref()? {
+        RepoRef::Local(repo) => write_chat_attachment_bytes_in(&repo, &task_slug, &file_name, &bytes),
+        RepoRef::Remote { host_id, path } => remote_call(
+            &state,
+            &host_id,
+            RepoOp::WriteAttachment {
+                repo: path.into(),
+                slug: task_slug,
+                file_name,
+                data: bytes,
+            },
+        ),
+    }
 }
 
-pub(crate) fn read_chat_image_file(path: &Path, name: &str) -> Result<ChatImage, String> {
-    let meta = fs::metadata(path).map_err(|e| format!("{name} — {e}"))?;
-    if meta.len() > MAX_CHAT_IMAGE_BYTES {
-        return Err(format!("{name} — larger than 5 MB"));
+#[tauri::command]
+pub(crate) fn read_chat_image(state: State<'_, AppState>, task_slug: String, name: String) -> Result<ChatImage, String> {
+    match active_repo_ref()? {
+        RepoRef::Local(repo) => read_chat_image_in(&repo, &task_slug, &name),
+        RepoRef::Remote { host_id, path } => remote_call(
+            &state,
+            &host_id,
+            RepoOp::ReadChatImage {
+                repo: path.into(),
+                slug: task_slug,
+                name,
+            },
+        ),
     }
-    let mime_type = chat_image_mime(name)?;
-    let bytes = fs::read(path).map_err(|e| format!("{name} — {e}"))?;
-    Ok(ChatImage {
-        mime_type,
-        data: alinery_core::rpc_chunk::encode_base64(&bytes),
+}
+
+#[tauri::command]
+pub(crate) async fn read_attachment_image(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_slug: String,
+    name: String,
+    node_id: Option<String>,
+) -> Result<tauri::ipc::Response, String> {
+    let target = require_active_target(&state)?;
+    tauri::async_runtime::spawn_blocking(move || match target {
+        ActiveRepo::Local(repo) => read_attachment_image_in(&repo, &task_slug, &name, node_id.as_deref()),
+        ActiveRepo::Remote { host_id, path } => remote_call::<alinery_core::repo_service::WireBytes>(
+            &app.state::<AppState>(),
+            &host_id,
+            RepoOp::ReadAttachmentImage {
+                repo: path.into(),
+                slug: task_slug,
+                name,
+                node_id,
+            },
+        )
+        .map(|wire| wire.data),
     })
-}
-
-pub(crate) fn read_chat_image_in(repo: &Path, task_slug: &str, name: &str) -> Result<ChatImage, String> {
-    let path = attachment_path_in(repo, task_slug, name)?;
-    read_chat_image_file(Path::new(&path), name)
-}
-
-#[tauri::command]
-pub(crate) fn read_chat_image(task_slug: String, name: String) -> Result<ChatImage, String> {
-    read_chat_image_in(&active_repo()?, &task_slug, &name)
-}
-
-pub(crate) fn read_attachment_image_in(repo: &Path, task_slug: &str, name: &str, node_id: Option<&str>) -> Result<Vec<u8>, String> {
-    let path = match node_id {
-        Some(id) => artifact_node_path_for(repo, task_slug, id)?,
-        None => attachment_path_in(repo, task_slug, name)?,
-    };
-    let path = Path::new(&path);
-    let name = path.file_name().and_then(|name| name.to_str()).ok_or("invalid image name")?;
-    chat_image_mime(name)?;
-    let file = fs::File::open(path).map_err(|error| error.to_string())?;
-    let metadata = file.metadata().map_err(|error| error.to_string())?;
-    if !metadata.is_file() || metadata.len() > MAX_ATTACHMENT_BYTES {
-        return Err("Image must be a regular file no larger than 25 MB".into());
-    }
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.take(MAX_ATTACHMENT_BYTES + 1).read_to_end(&mut bytes).map_err(|error| error.to_string())?;
-    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
-        return Err("Image is larger than 25 MB".into());
-    }
-    Ok(bytes)
-}
-
-#[tauri::command]
-pub(crate) async fn read_attachment_image(state: State<'_, AppState>, task_slug: String, name: String, node_id: Option<String>) -> Result<tauri::ipc::Response, String> {
-    let repo = require_owned_active_repo(&state)?;
-    tauri::async_runtime::spawn_blocking(move || read_attachment_image_in(&repo, &task_slug, &name, node_id.as_deref()).map(tauri::ipc::Response::new))
-        .await
-        .map_err(|error| error.to_string())?
+    .await
+    .map_err(|error| error.to_string())?
+    .map(tauri::ipc::Response::new)
 }
 
 // Archived drafts require explicit restore. Autosave and create must treat their slugs as occupied.

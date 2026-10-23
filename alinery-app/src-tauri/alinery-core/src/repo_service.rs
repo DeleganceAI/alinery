@@ -260,6 +260,38 @@ pub enum RepoOp {
         slug: String,
         manager_session_id: String,
     },
+    /// The host's own path to an attachment, for "copy path on host".
+    AttachmentPath {
+        repo: PathBuf,
+        slug: String,
+        name: String,
+    },
+    ArtifactNodePath {
+        repo: PathBuf,
+        slug: String,
+        node_id: String,
+    },
+    ReadChatImage {
+        repo: PathBuf,
+        slug: String,
+        name: String,
+    },
+    /// An attachment (or artifact-tree attachment node) image; the reply carries the bytes as base64.
+    ReadAttachmentImage {
+        repo: PathBuf,
+        slug: String,
+        name: String,
+        #[serde(default)]
+        node_id: Option<String>,
+    },
+    /// Adds a file to the task's attachments under a unique name; the reply is the name it got.
+    WriteAttachment {
+        repo: PathBuf,
+        slug: String,
+        file_name: String,
+        #[serde(with = "crate::rpc_chunk::base64_bytes")]
+        data: Vec<u8>,
+    },
     /// Atomic, owner-only write (parent directories are created).
     WriteFile {
         path: PathBuf,
@@ -516,6 +548,13 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::SubtaskManagerRequest { repo, slug, recover } => to_value(crate::subtask::subtask_manager_request(&repo, slug, recover)?),
         RepoOp::SubtaskDiscardSessions { repo, slug, manager_session_id } => to_value(crate::subtask_discard_sessions(&repo, &slug, &manager_session_id)?),
         RepoOp::DiscardSubtask { repo, slug, manager_session_id } => crate::discard_subtask(&repo, &slug, &manager_session_id).map(|_| Value::Null),
+        RepoOp::AttachmentPath { repo, slug, name } => to_value(crate::attachments::attachment_path(&repo, &slug, &name)?),
+        RepoOp::ArtifactNodePath { repo, slug, node_id } => to_value(crate::artifact_node_path(&repo, &slug, &node_id)?),
+        RepoOp::ReadChatImage { repo, slug, name } => to_value(crate::attachments::read_chat_image(&repo, &slug, &name)?),
+        RepoOp::ReadAttachmentImage { repo, slug, name, node_id } => to_value(WireBytes {
+            data: crate::attachments::read_attachment_image(&repo, &slug, &name, node_id.as_deref())?,
+        }),
+        RepoOp::WriteAttachment { repo, slug, file_name, data } => to_value(crate::attachments::write_chat_attachment_bytes(&repo, &slug, &file_name, &data)?),
         RepoOp::WriteFile { path, contents } => write_file(&path, &contents).map(|()| Value::Null),
         RepoOp::SyncCredentials { path, entries } => to_value(crate::credential_sync::apply_incoming(&path, &entries)?),
         RepoOp::SpawnDaemon {
@@ -806,6 +845,33 @@ mod tests {
                 repo: "/srv/a".into(),
                 slug: "t".into(),
                 manager_session_id: "m".into(),
+            },
+            RepoOp::AttachmentPath {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                name: "a.png".into(),
+            },
+            RepoOp::ArtifactNodePath {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                node_id: "n".into(),
+            },
+            RepoOp::ReadChatImage {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                name: "a.png".into(),
+            },
+            RepoOp::ReadAttachmentImage {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                name: "a.png".into(),
+                node_id: Some("n".into()),
+            },
+            RepoOp::WriteAttachment {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                file_name: "a.bin".into(),
+                data: vec![0, 255, 7],
             },
             RepoOp::RenameSession {
                 repo: "/srv/a".into(),

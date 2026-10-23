@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useState } from "react";
 import * as ipc from "./ipc";
+import { filesAreRemote, revealActionLabel, revealPath } from "./revealPath";
 
 export function AttachmentPreview({ taskSlug, name, nodeId, children }: { taskSlug: string; name: string; nodeId?: string; children?: ReactNode }) {
   const [src, setSrc] = useState("");
@@ -48,13 +49,13 @@ export function AttachmentPreview({ taskSlug, name, nodeId, children }: { taskSl
         <button
           type="button"
           className="btn ghost small"
-          aria-label={`Show ${name} in folder`}
+          aria-label={filesAreRemote() ? `Copy path of ${name} on host` : `Show ${name} in folder`}
           onClick={() => {
             const path = nodeId ? ipc.artifactNodePath(taskSlug, nodeId) : ipc.attachmentPath(taskSlug, name);
-            path.then(ipc.revealItemInDir).catch((reason) => setError(String(reason)));
+            path.then(revealPath).catch((reason) => setError(String(reason)));
           }}
         >
-          Show in folder
+          {revealActionLabel()}
         </button>
         {children}
       </div>

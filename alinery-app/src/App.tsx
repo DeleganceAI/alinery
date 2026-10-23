@@ -34,6 +34,7 @@ import { ORB_SPEED } from "./Indicators";
 import * as ipc from "./ipc";
 import { RemoteRepoDialog } from "./RemoteRepoDialog";
 import { isRemoteRepo, parseRemoteRepo } from "./remoteRepo";
+import { setRevealRepo } from "./revealPath";
 import { useRemoteHosts } from "./useRemoteHosts";
 import { LaunchSourceBar } from "./LaunchSourceBar";
 import { BrandMark } from "./Logo";
@@ -275,6 +276,8 @@ export default function App() {
 
   const daemon = useDaemonStatus(appConfig?.active_repo ?? "");
   const [remoteDialog, setRemoteDialog] = useState<{ hostId?: string } | null>(null);
+  const activeRepoKey = appConfig?.active_repo ?? "";
+  useEffect(() => setRevealRepo(activeRepoKey), [activeRepoKey]);
   const remoteHosts = useRemoteHosts(remoteDialog !== null || Boolean(appConfig?.known_repos.some(isRemoteRepo)));
   const remoteStates = useMemo(() => Object.fromEntries(remoteHosts.hosts.map((host) => [host.host_id, host.state])), [remoteHosts.hosts]);
   const mcp = useMcpStatus();

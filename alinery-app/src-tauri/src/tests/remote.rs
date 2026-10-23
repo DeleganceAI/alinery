@@ -614,6 +614,138 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     .unwrap();
     assert!(approval.text.contains("Review playbook action"));
 
+    // Attachments: bytes written from here land on the host, and previews read them back intact.
+    let png: Vec<u8> = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0xfe, 0x7f];
+    let attach = |name: &str, data: &[u8]| -> Result<String, String> {
+        remote_call(
+            &state,
+            &id,
+            RepoOp::WriteAttachment {
+                repo: repo.clone().into(),
+                slug: slug(),
+                file_name: name.into(),
+                data: data.to_vec(),
+            },
+        )
+    };
+    assert_eq!(attach("shot.png", &png).unwrap(), "shot.png");
+    let second = attach("shot.png", &png).unwrap();
+    assert_ne!(second, "shot.png", "a name collision gets a unique name");
+    assert!(attach("../escape.png", &png).is_err());
+    let host_path: String = remote_call(
+        &state,
+        &id,
+        RepoOp::AttachmentPath {
+            repo: repo.clone().into(),
+            slug: slug(),
+            name: "shot.png".into(),
+        },
+    )
+    .unwrap();
+    assert!(host_path.ends_with("/.alinery/tasks/remote-task/artifacts/attachments/shot.png"), "{host_path}");
+    assert!(remote_call::<String>(
+        &state,
+        &id,
+        RepoOp::AttachmentPath {
+            repo: repo.clone().into(),
+            slug: slug(),
+            name: "missing.png".into()
+        }
+    )
+    .is_err());
+    let image: crate::ChatImage = remote_call(
+        &state,
+        &id,
+        RepoOp::ReadChatImage {
+            repo: repo.clone().into(),
+            slug: slug(),
+            name: "shot.png".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(image.mime_type, "image/png");
+    assert_eq!(alinery_core::rpc_chunk::decode_base64(&image.data).unwrap(), png);
+    let wire: alinery_core::repo_service::WireBytes = remote_call(
+        &state,
+        &id,
+        RepoOp::ReadAttachmentImage {
+            repo: repo.clone().into(),
+            slug: slug(),
+            name: "shot.png".into(),
+            node_id: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(wire.data, png, "image bytes survive the wire, including bytes that are not UTF-8");
+    attach("notes.txt", b"plain").unwrap();
+    assert!(remote_call::<alinery_core::repo_service::WireBytes>(
+        &state,
+        &id,
+        RepoOp::ReadAttachmentImage {
+            repo: repo.clone().into(),
+            slug: slug(),
+            name: "notes.txt".into(),
+            node_id: None
+        }
+    )
+    .is_err());
+
+    // The artifact tree lists attachments as nodes with a path of their own.
+    let tree: Vec<alinery_core::ArtifactTreeNode> = remote_call(
+        &state,
+        &id,
+        RepoOp::ListTaskArtifactTree {
+            repo: repo.clone().into(),
+            slug: slug(),
+        },
+    )
+    .unwrap();
+    let node = tree
+        .iter()
+        .flat_map(|node| std::iter::once(node).chain(node.children.iter()))
+        .find(|node| node.kind == alinery_core::ArtifactTreeNodeKind::Attachment && node.label == "shot.png")
+        .unwrap_or_else(|| panic!("{tree:?}"));
+    let node_path: String = remote_call(
+        &state,
+        &id,
+        RepoOp::ArtifactNodePath {
+            repo: repo.clone().into(),
+            slug: slug(),
+            node_id: node.id.clone(),
+        },
+    )
+    .unwrap();
+    assert!(node_path.ends_with("/attachments/shot.png"), "{node_path}");
+    let by_node: alinery_core::repo_service::WireBytes = remote_call(
+        &state,
+        &id,
+        RepoOp::ReadAttachmentImage {
+            repo: repo.clone().into(),
+            slug: slug(),
+            name: String::new(),
+            node_id: Some(node.id.clone()),
+        },
+    )
+    .unwrap();
+    assert_eq!(by_node.data, png);
+
+    // Copying files from this machine: each goes over on its own, bad ones are reported, URLs are skipped.
+    let local = std::env::temp_dir().join(format!("local-note-{}.txt", std::process::id()));
+    std::fs::write(&local, "from the Mac\n").unwrap();
+    let copied = crate::copy_files_to_remote_attachments(
+        &state,
+        &id,
+        &repo,
+        "remote-task",
+        &[local.display().to_string(), "/nonexistent/file.bin".into(), "https://example.com/x.png".into(), "  ".into()],
+    )
+    .unwrap();
+    assert_eq!(copied.copied.len(), 1, "{:?}", copied.failures);
+    assert!(copied.copied[0].starts_with("local-note-"));
+    assert_eq!(copied.failures.len(), 1, "{:?}", copied.failures);
+    assert!(copied.failures[0].contains("/nonexistent/file.bin"));
+    let _ = std::fs::remove_file(local);
+
     // A terminal on the host, streamed through the forwarded socket: create the auxiliary
     // session, open it, type a command, read the output come back.
     let client = repo_client(&state, &crate::RepoRef::parse(&key).unwrap()).unwrap();

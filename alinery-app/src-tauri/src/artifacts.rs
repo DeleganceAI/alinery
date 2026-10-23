@@ -2,6 +2,7 @@
 use crate::*;
 
 pub(crate) use alinery_core::artifact_comments::*;
+pub(crate) use alinery_core::attachments::attachment_path as attachment_path_in;
 
 #[tauri::command]
 pub(crate) fn artifact_review_pending_status(state: State<'_, AppState>, task_slug: String, artifact: String) -> Result<Option<ArtifactReviewPendingStatus>, String> {
@@ -167,21 +168,21 @@ pub(crate) fn read_artifact_for_repo(app: AppHandle, state: State<'_, AppState>,
     }
 }
 
-// safe_component is pass-or-None: it rejects empty, any `..`, any separator and absolute
-// paths, and never rewrites — the right guard for two user-supplied components.
-pub(crate) fn attachment_path_in(repo: &Path, task_slug: &str, name: &str) -> Result<String, String> {
-    let slug = alinery_core::safe_component(task_slug).ok_or("invalid task slug")?;
-    let name = alinery_core::safe_component(name).ok_or_else(|| format!("invalid attachment name: {name}"))?;
-    let path = alinery_core::resolve_artifact_path(repo, &format!(".alinery/tasks/{slug}/artifacts/attachments/{name}"))?;
-    if !path.is_file() {
-        return Err(format!("attachment not found: {name}"));
-    }
-    Ok(path.to_string_lossy().to_string())
-}
-
 #[tauri::command]
-pub(crate) fn attachment_path(task_slug: String, name: String) -> Result<String, String> {
-    attachment_path_in(&active_repo()?, &task_slug, &name)
+pub(crate) fn attachment_path(state: State<'_, AppState>, task_slug: String, name: String) -> Result<String, String> {
+    match active_repo_ref()? {
+        RepoRef::Local(repo) => attachment_path_in(&repo, &task_slug, &name),
+        // The path on the host: it cannot be revealed here, so the UI offers to copy it.
+        RepoRef::Remote { host_id, path } => remote_call(
+            &state,
+            &host_id,
+            RepoOp::AttachmentPath {
+                repo: path.into(),
+                slug: task_slug,
+                name,
+            },
+        ),
+    }
 }
 
 #[tauri::command]
@@ -560,7 +561,18 @@ pub(crate) fn read_task_artifact_node(state: State<'_, AppState>, task_slug: Str
 
 #[tauri::command]
 pub(crate) fn artifact_node_path(state: State<'_, AppState>, task_slug: String, node_id: String) -> Result<String, String> {
-    artifact_node_path_for(&require_owned_active_repo(&state)?, &task_slug, &node_id)
+    match require_active_target(&state)? {
+        ActiveRepo::Local(repo) => artifact_node_path_for(&repo, &task_slug, &node_id),
+        ActiveRepo::Remote { host_id, path } => remote_call(
+            &state,
+            &host_id,
+            RepoOp::ArtifactNodePath {
+                repo: path.into(),
+                slug: task_slug,
+                node_id,
+            },
+        ),
+    }
 }
 
 #[tauri::command]
