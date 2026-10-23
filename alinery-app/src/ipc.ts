@@ -29,6 +29,8 @@ import type {
   AccountStatus,
   AppConfig,
   AppearancePrefs,
+  RemoteDirListing,
+  RemoteHostView,
   ArtifactComment,
   ArtifactCommentDraft,
   ArtifactListItem,
@@ -128,6 +130,19 @@ export const readAppConfig = () => invoke<AppConfig>("read_app_config");
 export const removeRepo = (path: string) => invoke<AppConfig>("remove_repo", { path });
 export const setActiveRepo = (path: string, drawerSessionIds: string[]) => invoke<AppConfig>("set_active_repo", { path, drawerSessionIds });
 export const writeAppearance = (appearance: AppearancePrefs) => invoke<AppConfig>("write_appearance", { appearance });
+
+// ── remote.rs ─────────────────────────────────────────────────────────
+// A failed connect whose message starts with HOST_KEY_UNKNOWN (remoteRepo.ts) means first
+// contact with the host: confirm with the user, then connect again with trust = true.
+export const remoteHosts = () => invoke<RemoteHostView[]>("remote_hosts");
+export const remoteAddHost = (destination: string) => invoke<RemoteHostView>("remote_add_host", { destination });
+export const remoteConnect = (hostId: string, trust: boolean) => invoke<void>("remote_connect", { hostId, trust });
+export const remoteDisconnect = (hostId: string) => invoke<void>("remote_disconnect", { hostId });
+export const remoteListDir = (hostId: string, path: string, showHidden: boolean) => invoke<RemoteDirListing>("remote_list_dir", { hostId, path, showHidden });
+export const remoteClassify = (hostId: string, path: string) => invoke<PickedFolder>("remote_classify", { hostId, path });
+export const remoteInit = (hostId: string, path: string) => invoke<InitializedFolder>("remote_init", { hostId, path });
+export const remoteAddRepo = (hostId: string, path: string) => invoke<string>("remote_add_repo", { hostId, path });
+export const removeRemoteRepoKeepRunning = (path: string) => invoke<AppConfig>("remove_remote_repo_keep_running", { path });
 
 // ── artifacts.rs ──────────────────────────────────────────────────────
 export const addArtifactComment = (a: {

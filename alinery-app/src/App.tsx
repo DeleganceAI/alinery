@@ -32,6 +32,9 @@ import { ACTIVE_GRID_VIEW_STORAGE_KEY, DEFAULT_GRID_VIEW_ID, gridViewShortcut, n
 import { HotkeyBar } from "./HotkeyBar";
 import { ORB_SPEED } from "./Indicators";
 import * as ipc from "./ipc";
+import { RemoteRepoDialog } from "./RemoteRepoDialog";
+import { isRemoteRepo, parseRemoteRepo } from "./remoteRepo";
+import { useRemoteHosts } from "./useRemoteHosts";
 import { LaunchSourceBar } from "./LaunchSourceBar";
 import { BrandMark } from "./Logo";
 import { PRIORITY_SESSION_SORT, type SessionSort } from "./sessionAttention";
@@ -271,6 +274,9 @@ export default function App() {
   }, []);
 
   const daemon = useDaemonStatus(appConfig?.active_repo ?? "");
+  const [remoteDialog, setRemoteDialog] = useState<{ hostId?: string } | null>(null);
+  const remoteHosts = useRemoteHosts(remoteDialog !== null || Boolean(appConfig?.known_repos.some(isRemoteRepo)));
+  const remoteStates = useMemo(() => Object.fromEntries(remoteHosts.hosts.map((host) => [host.host_id, host.state])), [remoteHosts.hosts]);
   const mcp = useMcpStatus();
   const noticeSnapshot = useSessionNoticeSnapshot(Boolean(appConfig?.active_repo));
   useDockBadgeCount(noticeSnapshot.rows, appConfig?.global?.notifications, noticeSnapshot.loaded);
@@ -568,6 +574,12 @@ export default function App() {
     const p = path.trim();
     if (!p) return;
     setRepoErr("");
+    // A remote repo whose host is not connected needs the connect flow first.
+    const remote = parseRemoteRepo(p);
+    if (remote && remoteStates[remote.hostId] !== "connected") {
+      setRemoteDialog({ hostId: remote.hostId });
+      return;
+    }
     try {
       const cfg = await switchActiveRepo(p);
       setAppConfig(cfg);
@@ -793,6 +805,30 @@ export default function App() {
   const removeRepo = async (path: string) => {
     setRepoErr("");
     const wasActive = path === appConfig?.active_repo;
+    if (isRemoteRepo(path)) {
+      const choice = await askConfirm({
+        title: `Remove ${repoName(path)}?`,
+        body: "It is removed from this list. Its daemon and every session keep running on the host, and you can add it again later to pick them back up. Files are untouched.",
+        choices: [
+          { key: "remove", label: "Remove, leave sessions running" },
+          { key: "cancel", label: "Cancel", tone: "ghost" },
+        ],
+      });
+      if (choice !== "remove") return;
+      try {
+        const cfg = await ipc.removeRemoteRepoKeepRunning(path);
+        setAppConfig({ ...cfg, appearance: applyAppearance(cfg.appearance) });
+        if (wasActive) {
+          setScope("active");
+          setView({ kind: "list" });
+          if (cfg.known_repos.length > 0) await setRepo(cfg.known_repos[0]);
+        }
+        toast(`Removed ${repoName(path)}`, "success");
+      } catch (e) {
+        setRepoErr(String(e));
+      }
+      return;
+    }
     const live = await liveSessions(path);
     const ok = await confirmDanger(
       `Close ${repoName(path)}?`,
@@ -1258,6 +1294,17 @@ export default function App() {
             }}
           />
         )}
+        {remoteDialog && (
+          <RemoteRepoDialog
+            hostId={remoteDialog.hostId}
+            hosts={remoteHosts.hosts}
+            onClose={() => {
+              setRemoteDialog(null);
+              void remoteHosts.refresh();
+            }}
+            onOpened={(key) => setRepo(key)}
+          />
+        )}
         <ResizeHandles />
         <div className="app-shell">
           <div className={drawerOpen ? "app app-with-drawer" : "app"} style={drawerOpen ? ({ ["--drawer-width" as string]: `${drawerWidth}px` } as CSSProperties) : undefined}>
@@ -1368,7 +1415,7 @@ export default function App() {
         <p className="first-run-tagline">
           Increase your <span>token:attention</span> ratio.
         </p>
-        <RepoPicker appConfig={appConfig} error={repoErr} onSelect={setRepo} onRemove={removeRepo} onAdd={addRepo} />
+        <RepoPicker appConfig={appConfig} error={repoErr} onSelect={setRepo} onRemove={removeRepo} onAdd={addRepo} onAddRemote={() => setRemoteDialog({})} />
       </div>,
       minimalHeader,
     );
@@ -1390,6 +1437,8 @@ export default function App() {
       onSwitchGrid={(gridViewId) => switchTop("grid", { gridViewId })}
       onSelectRepo={selectRepoValue}
       onAddRepo={addRepo}
+      onAddRemote={() => setRemoteDialog({})}
+      remoteStates={remoteStates}
       onRemoveRepo={removeRepo}
       onBrand={() => switchTop("grid", { gridViewId: gridViews[0].id })}
       onSearch={() => setSearchOpen(true)}

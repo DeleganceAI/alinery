@@ -7,7 +7,6 @@
 //!
 //! The first half is pure (parsing, quoting, paths, probe, selection) so it is unit tested
 //! without a network; the second half drives ssh.
-#![cfg_attr(not(test), allow(dead_code))]
 
 use crate::*;
 use std::collections::BTreeMap;
@@ -431,7 +430,6 @@ pub(crate) fn classify_ssh_failure(text: &str) -> SshFailure {
 
 pub(crate) enum RemoteStdin {
     None,
-    Bytes(Vec<u8>),
     File(std::fs::File),
 }
 
@@ -455,15 +453,9 @@ fn run_command(mut command: Command, stdin: RemoteStdin, timeout: Duration) -> R
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     command.stdin(match &stdin {
         RemoteStdin::None => Stdio::null(),
-        RemoteStdin::Bytes(_) => Stdio::piped(),
         RemoteStdin::File(file) => Stdio::from(file.try_clone().map_err(|error| error.to_string())?),
     });
     let mut child = command.spawn().map_err(|error| format!("start ssh: {error}"))?;
-    if let (RemoteStdin::Bytes(bytes), Some(mut pipe)) = (stdin, child.stdin.take()) {
-        std::thread::spawn(move || {
-            let _ = pipe.write_all(&bytes);
-        });
-    }
     let drain = |mut pipe: Box<dyn Read + Send>| {
         std::thread::spawn(move || {
             let mut buffer = Vec::new();
@@ -620,10 +612,6 @@ impl HostConn {
         self.control_op("forward", Some(Self::forward_spec(local, remote)?))
     }
 
-    pub(crate) fn cancel_forward(&self, local: &Path, remote: &str) -> Result<(), String> {
-        self.control_op("cancel", Some(Self::forward_spec(local, remote)?))
-    }
-
     /// Drop the master. This never stops anything running on the host.
     pub(crate) fn exit_master(&self) {
         let _ = self.control_op("exit", None);
@@ -663,7 +651,6 @@ pub(crate) struct RepoChannel {
     pending: Pending,
     next_id: AtomicU64,
     alive: std::sync::Arc<AtomicBool>,
-    pub(crate) hello: Hello,
 }
 
 impl RepoChannel {
@@ -700,7 +687,8 @@ impl RepoChannel {
                 pending.lock().unwrap_or_else(|e| e.into_inner()).clear();
             });
         }
-        let hello = hello_rx
+        // The hello proves this stdout is the repo service and not a shell printing something else.
+        hello_rx
             .recv_timeout(Duration::from_secs(20))
             .map_err(|_| "the repo service did not start on the host".to_string())?
             .into_result()
@@ -711,7 +699,6 @@ impl RepoChannel {
             pending,
             next_id: AtomicU64::new(1),
             alive,
-            hello,
         })
     }
 
@@ -883,7 +870,6 @@ fn connect_inner<R: tauri::Runtime>(app: &AppHandle<R>, state: &AppState, host_i
         RemoteSession {
             conn,
             channel,
-            probe,
             launcher,
             root,
             runtime_hash: target.runtime_hash.clone(),
@@ -949,6 +935,244 @@ pub(crate) fn ensure_remote_daemon(session: &RemoteSession, repo_path: &str, app
 /// A forwarded socket costs a channel open plus the request.
 pub(crate) const REMOTE_OBSERVE_TIMEOUT: Duration = Duration::from_secs(3);
 
+fn connected_session(state: &AppState, host_id: &str) -> Result<std::sync::Arc<RemoteSession>, String> {
+    state
+        .remotes
+        .session(host_id)
+        .filter(|session| session.channel.is_alive())
+        .ok_or_else(|| format!("not connected to {host_id}; connect first"))
+}
+
+/// Claim a remote repo on its host, bring its daemon up through the forward, and record the
+/// client where the rest of the app looks for it. `key` is the `alinery+ssh://` entry.
+fn attach_remote_repo(state: &AppState, session: &RemoteSession, key: &str, path: &str) -> Result<(), String> {
+    let claim = session.channel.call(RepoOp::ClaimRepo { repo: path.into() }, SERVICE_TIMEOUT)?;
+    if claim["claimed"] != true {
+        return Err("repo-busy: another Alinery window holds this repository on the host".to_string());
+    }
+    let identity = alinery_core::app_config_identity(Path::new(&format!("{}/app.toml", session.config_dir)));
+    let (client, compat, warning) = ensure_remote_daemon(session, path, &identity)?;
+    state.set_daemon(Path::new(key), client, compat, identity, warning);
+    Ok(())
+}
+
+/// After (re)connecting, bring back every known repo on the host. Failures are per repo: one
+/// busy repository must not hide the others.
+fn attach_host_repos<R: tauri::Runtime>(app: &AppHandle<R>, state: &AppState, session: &RemoteSession, host_id: &str) {
+    for key in load_app_config(app).known_repos {
+        if let Ok(RepoRef::Remote { host_id: id, path }) = RepoRef::parse(&key) {
+            if id == host_id {
+                if let Err(error) = attach_remote_repo(state, session, &key, &path) {
+                    if let Ok(app_config) = app_config_path(app) {
+                        alinery_core::append_exception(
+                            &app_config,
+                            &format!(
+                                "app.remote-attach-failed repo={} err={}",
+                                alinery_core::quote_log_value(&key),
+                                alinery_core::quote_log_value(&error)
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `set_active_repo` for a remote key: it must be known and its host connected.
+pub(crate) fn activate_remote_repo<R: tauri::Runtime>(app: &AppHandle<R>, state: &AppState, key: &str) -> Result<AppConfig, String> {
+    let RepoRef::Remote { host_id, path } = RepoRef::parse(key)? else {
+        return Err("not a remote repository".into());
+    };
+    let mut config = load_app_config(app);
+    if !config.known_repos.iter().any(|known| known == key) {
+        return Err(format!("unknown repository: {key}"));
+    }
+    let session = connected_session(state, &host_id)?;
+    attach_remote_repo(state, &session, key, &path)?;
+    config.active_repo = key.to_string();
+    write_app_config(app, &config)?;
+    set_active_repo_global(Some(PathBuf::from(key)))?;
+    Ok(sanitize_app_config(config))
+}
+
+// ── commands ───────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RemoteHostView {
+    pub(crate) host_id: String,
+    pub(crate) label: String,
+    /// What the user typed, as stored (flags then host), for display.
+    pub(crate) destination: String,
+    pub(crate) state: String,
+    pub(crate) phase: String,
+    pub(crate) error: Option<String>,
+    pub(crate) home: Option<String>,
+    pub(crate) platform: Option<String>,
+}
+
+fn host_view(state: &AppState, host_id: &str, host: &RemoteHost) -> RemoteHostView {
+    let status = state.remotes.status(host_id);
+    RemoteHostView {
+        host_id: host_id.to_string(),
+        label: host.label.clone(),
+        destination: host.ssh_args.join(" "),
+        state: status.state,
+        phase: status.phase,
+        error: status.error,
+        home: host.home.clone(),
+        platform: host.platform.clone(),
+    }
+}
+
+pub(crate) fn host_views<R: tauri::Runtime>(app: &AppHandle<R>, state: &AppState) -> Vec<RemoteHostView> {
+    load_app_config(app).remote_hosts.iter().map(|(id, host)| host_view(state, id, host)).collect()
+}
+
+#[tauri::command]
+pub(crate) fn remote_hosts(app: AppHandle, state: State<'_, AppState>) -> Vec<RemoteHostView> {
+    host_views(&app, &state)
+}
+
+/// Validate and remember a destination. Nothing connects yet.
+#[tauri::command]
+pub(crate) fn remote_add_host(app: AppHandle, state: State<'_, AppState>, destination: String) -> Result<RemoteHostView, String> {
+    let ssh_args = parse_destination(&destination)?;
+    let host_id = host_id(&ssh_args);
+    let mut config = load_app_config(&app);
+    let host = config.remote_hosts.entry(host_id.clone()).or_insert_with(|| RemoteHost {
+        label: ssh_args.last().cloned().unwrap_or_default(),
+        ssh_args: ssh_args.clone(),
+        ..Default::default()
+    });
+    let view = host_view(&state, &host_id, host);
+    write_app_config(&app, &config)?;
+    Ok(view)
+}
+
+/// Connect (or reconnect) a host, then bring back every known repo on it.
+pub(crate) fn connect_and_attach<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str, trust: bool) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    connect_host(app, &state, host_id, trust)?;
+    if let Some(session) = state.remotes.session(host_id) {
+        attach_host_repos(app, &state, &session, host_id);
+    }
+    Ok(())
+}
+
+/// `trust` accepts a first-seen host key after the user said so.
+#[tauri::command]
+pub(crate) async fn remote_connect(app: AppHandle, host_id: String, trust: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || connect_and_attach(&app, &host_id, trust))
+        .await
+        .map_err(|error| format!("remote connect task: {error}"))?
+}
+
+/// Drop the connection. Sessions keep running on the host; this ends only ssh processes and
+/// forgets the local daemon handles, so the board shows the host as offline.
+pub(crate) fn disconnect_host<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str) {
+    let state = app.state::<AppState>();
+    for key in load_app_config(app).known_repos {
+        if matches!(RepoRef::parse(&key), Ok(RepoRef::Remote { host_id: ref id, .. }) if id == host_id) {
+            state.clear_daemon(Path::new(&key));
+        }
+    }
+    if let Some(session) = state.remotes.remove_session(host_id) {
+        session.conn.exit_master();
+    }
+    state.remotes.set(host_id, "idle", "", None);
+}
+
+#[tauri::command]
+pub(crate) async fn remote_disconnect(app: AppHandle, host_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || disconnect_host(&app, &host_id))
+        .await
+        .map_err(|error| format!("remote disconnect task: {error}"))
+}
+
+fn session_call(app: &AppHandle, host_id: &str, op: RepoOp) -> Result<Value, String> {
+    let state = app.state::<AppState>();
+    connected_session(&state, host_id)?.channel.call(op, SERVICE_TIMEOUT)
+}
+
+#[tauri::command]
+pub(crate) async fn remote_list_dir(app: AppHandle, host_id: String, path: String, show_hidden: bool) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || session_call(&app, &host_id, RepoOp::ListDir { path: path.into(), show_hidden }))
+        .await
+        .map_err(|error| format!("remote list task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn remote_classify(app: AppHandle, host_id: String, path: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || session_call(&app, &host_id, RepoOp::Classify { path: path.into() }))
+        .await
+        .map_err(|error| format!("remote classify task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn remote_init(app: AppHandle, host_id: String, path: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || session_call(&app, &host_id, RepoOp::Init { path: path.into() }))
+        .await
+        .map_err(|error| format!("remote init task: {error}"))?
+}
+
+/// List a git checkout on the host as a repository. `path` must be the checkout root that
+/// `remote_classify` reported. Returns the key to pass to `set_active_repo`.
+pub(crate) fn add_remote_repo<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str, path: &str) -> Result<String, String> {
+    let state = app.state::<AppState>();
+    let session = connected_session(&state, host_id)?;
+    let class = session.channel.call(RepoOp::Classify { path: path.into() }, SERVICE_TIMEOUT)?;
+    if class["kind"] != "checkout" || class["root"] != path {
+        return Err(format!("{path} is not the root of a git checkout"));
+    }
+    let key = RepoRef::Remote {
+        host_id: host_id.to_string(),
+        path: path.to_string(),
+    }
+    .uri();
+    let mut config = load_app_config(app);
+    if !config.known_repos.contains(&key) {
+        config.known_repos.push(key.clone());
+    }
+    write_app_config(app, &config)?;
+    // The host's copy of app.toml allowlists its repos for the remote alinery-mcp.
+    sync_config(&session.channel, &config, host_id, &session.config_dir, &app_config_path(app)?)?;
+    Ok(key)
+}
+
+#[tauri::command]
+pub(crate) async fn remote_add_repo(app: AppHandle, host_id: String, path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || add_remote_repo(&app, &host_id, &path))
+        .await
+        .map_err(|error| format!("remote add repo task: {error}"))?
+}
+
+/// Delist a remote repo and let go of it locally, leaving its daemon and every session running
+/// on the host. Stopping them is a separate, deliberate action.
+pub(crate) fn remove_remote_repo<R: tauri::Runtime>(app: &AppHandle<R>, path: &str) -> Result<AppConfig, String> {
+    let state = app.state::<AppState>();
+    let RepoRef::Remote { host_id, path: remote_path } = RepoRef::parse(path.trim())? else {
+        return Err("not a remote repository".into());
+    };
+    let (config, was_active) = remove_repo_from_config(load_app_config(app), path)?;
+    write_app_config(app, &config)?;
+    if was_active {
+        set_active_repo_global(None)?;
+    }
+    state.clear_daemon(Path::new(path.trim()));
+    if let Some(session) = state.remotes.session(&host_id) {
+        let _ = session.channel.call(RepoOp::ReleaseRepo { repo: remote_path.into() }, SERVICE_TIMEOUT);
+    }
+    Ok(config)
+}
+
+#[tauri::command]
+pub(crate) async fn remove_remote_repo_keep_running(app: AppHandle, path: String) -> Result<AppConfig, String> {
+    tauri::async_runtime::spawn_blocking(move || remove_remote_repo(&app, &path))
+        .await
+        .map_err(|error| format!("remove remote repo task: {error}"))?
+}
+
 // ── connection manager ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
@@ -965,7 +1189,6 @@ pub(crate) struct RemoteStatus {
 pub(crate) struct RemoteSession {
     pub(crate) conn: HostConn,
     pub(crate) channel: RepoChannel,
-    pub(crate) probe: Probe,
     pub(crate) launcher: Launcher,
     pub(crate) root: String,
     pub(crate) runtime_hash: String,

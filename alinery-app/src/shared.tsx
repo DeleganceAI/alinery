@@ -25,6 +25,7 @@ import { IdleDot, ORB_SPEED, ORB_STATE, RunningIndicator, StateIcon } from "./In
 import * as ipc from "./ipc";
 import { BrandMark } from "./Logo";
 import { deriveModelRows } from "./modelFavorites";
+import { parseRemoteRepo, repoDisplayPath } from "./remoteRepo";
 import { type ObservationDisplayKind, observationDisplayKind } from "./sessionAttention";
 import { useTabPill } from "./tabMotion";
 import { toast } from "./toast";
@@ -626,6 +627,8 @@ export function TopBar({
   onSelectRepo,
   onRemoveRepo,
   onAddRepo,
+  onAddRemote,
+  remoteStates,
   onBrand,
   onSearch,
   onCreate,
@@ -648,6 +651,10 @@ export function TopBar({
   onSelectRepo: (path: string) => void;
   onRemoveRepo: (path: string) => void;
   onAddRepo: () => void;
+  /** Opens the SSH repository dialog. */
+  onAddRemote?: () => void;
+  /** Connection state per remote host id, for the repo menu. */
+  remoteStates?: Record<string, string>;
   onBrand: () => void;
   onSearch: () => void;
   onCreate: () => void;
@@ -729,7 +736,15 @@ export function TopBar({
         </span>
       </button>
       <div className="repo-switcher">
-        <RepoSelect value={value} includeAll={includeAll} knownRepos={appConfig.known_repos} onSelect={onSelectRepo} onRemove={onRemoveRepo} />
+        <RepoSelect
+          value={value}
+          includeAll={includeAll}
+          knownRepos={appConfig.known_repos}
+          remoteStates={remoteStates}
+          onSelect={onSelectRepo}
+          onRemove={onRemoveRepo}
+          onAddRemote={onAddRemote}
+        />
         <button type="button" className="iconbtn repo-add" title="Add repo" aria-label="Add repository" onClick={onAddRepo}>
           <FolderPlus size={16} strokeWidth={1.5} aria-hidden="true" />
         </button>
@@ -751,14 +766,18 @@ function RepoSelect({
   value,
   includeAll,
   knownRepos,
+  remoteStates,
   onSelect,
   onRemove,
+  onAddRemote,
 }: {
   value: string;
   includeAll: boolean;
   knownRepos: string[];
+  remoteStates?: Record<string, string>;
   onSelect: (path: string) => void;
   onRemove: (path: string) => void;
+  onAddRemote?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement | null>(null);
@@ -834,36 +853,62 @@ function RepoSelect({
               </button>
             </div>
           )}
-          {knownRepos.map((repo) => (
-            <div key={repo} className={`repo-opt${repo === value ? " on" : ""}`}>
+          {knownRepos.map((repo) => {
+            const remote = parseRemoteRepo(repo);
+            const offline = remote !== null && remoteStates?.[remote.hostId] !== "connected";
+            return (
+              <div key={repo} className={`repo-opt${repo === value ? " on" : ""}${offline ? " offline" : ""}`}>
+                <button
+                  type="button"
+                  className="repo-opt-main"
+                  title={remote && offline ? `${repoDisplayPath(repo)} — not connected` : repoDisplayPath(repo)}
+                  onClick={() => {
+                    setOpen(false);
+                    trigger.current?.focus();
+                    onSelect(repo);
+                  }}
+                >
+                  <span className="repo-opt-name">
+                    {repoName(repo)}
+                    {remote ? <span className="repo-host-badge">{offline ? "SSH · offline" : "SSH"}</span> : null}
+                  </span>
+                  <span className="repo-opt-path">{repoDisplayPath(repo)}</span>
+                </button>
+                <button
+                  type="button"
+                  className="repo-opt-x"
+                  title={
+                    remote
+                      ? `Remove ${repoName(repo)} from the list — its sessions keep running on the host`
+                      : `Close ${repoName(repo)} — stops its session daemon (killing live sessions) and drops it from the list; repo files are untouched`
+                  }
+                  aria-label={`Close ${repoName(repo)}`}
+                  onClick={() => {
+                    setOpen(false);
+                    trigger.current?.focus();
+                    onRemove(repo);
+                  }}
+                >
+                  <X size={14} strokeWidth={1.5} aria-hidden="true" />
+                </button>
+              </div>
+            );
+          })}
+          {onAddRemote ? (
+            <div className="repo-opt">
               <button
                 type="button"
                 className="repo-opt-main"
-                title={repo}
                 onClick={() => {
                   setOpen(false);
                   trigger.current?.focus();
-                  onSelect(repo);
+                  onAddRemote();
                 }}
               >
-                <span className="repo-opt-name">{repoName(repo)}</span>
-                <span className="repo-opt-path">{repo}</span>
-              </button>
-              <button
-                type="button"
-                className="repo-opt-x"
-                title={`Close ${repoName(repo)} — stops its session daemon (killing live sessions) and drops it from the list; repo files are untouched`}
-                aria-label={`Close ${repoName(repo)}`}
-                onClick={() => {
-                  setOpen(false);
-                  trigger.current?.focus();
-                  onRemove(repo);
-                }}
-              >
-                <X size={14} strokeWidth={1.5} aria-hidden="true" />
+                <span className="repo-opt-name">Add remote repository (SSH)…</span>
               </button>
             </div>
-          ))}
+          ) : null}
         </div>
       )}
     </div>
@@ -1371,12 +1416,14 @@ export function RepoPicker({
   onSelect,
   onRemove,
   onAdd,
+  onAddRemote,
 }: {
   appConfig: AppConfig;
   error: string;
   onSelect: (path: string) => void;
   onRemove: (path: string) => void;
   onAdd: () => void;
+  onAddRemote?: () => void;
 }) {
   return (
     <div className="picker">
@@ -1394,10 +1441,10 @@ export function RepoPicker({
           <div className="picker-repo-list">
             {appConfig.known_repos.map((repo) => (
               <div key={repo} className="repobtn-row">
-                <button type="button" className="repobtn" title={repo} onClick={() => onSelect(repo)}>
+                <button type="button" className="repobtn" title={repoDisplayPath(repo)} onClick={() => onSelect(repo)}>
                   <span className="repobtn-copy">
                     <strong>{repoName(repo)}</strong>
-                    <span>{repo}</span>
+                    <span>{repoDisplayPath(repo)}</span>
                   </span>
                   <ArrowRight size={16} strokeWidth={1.6} aria-hidden="true" />
                 </button>
@@ -1419,6 +1466,11 @@ export function RepoPicker({
         <FolderPlus size={16} strokeWidth={1.6} aria-hidden="true" />
         Add a repository
       </button>
+      {onAddRemote ? (
+        <button type="button" className="btn ghost picker-action" onClick={onAddRemote}>
+          Add a repository over SSH
+        </button>
+      ) : null}
       <p className="picker-footnote">Your files stay on this Mac. A folder that is not a Git repository is initialized only after you confirm.</p>
       {error && (
         <InlineStatus tone="error" detail={error}>

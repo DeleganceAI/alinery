@@ -368,9 +368,31 @@ export type Harness = {
 };
 export type EffectiveHarness = Harness & { source: SettingSource };
 export type HarnessFile = { harness: Harness[] };
+/** An SSH host that remote repos (`alinery+ssh://<host-id>/<path>`) live on. */
+export type RemoteHost = {
+  label: string;
+  ssh_args: string[];
+  home?: string | null;
+  platform?: string | null;
+  glibc?: string | null;
+};
+export type RemoteHostView = {
+  host_id: string;
+  label: string;
+  destination: string;
+  state: "idle" | "connecting" | "connected" | "failed";
+  /** What the connect dialog shows while `connecting`. */
+  phase: string;
+  error: string | null;
+  home: string | null;
+  platform: string | null;
+};
+export type RemoteDirEntry = { name: string; git: boolean; symlink: boolean };
+export type RemoteDirListing = { path: string; entries: RemoteDirEntry[]; truncated: boolean };
 export type AppConfig = {
   active_repo: string;
   known_repos: string[];
+  remote_hosts?: Record<string, RemoteHost>;
   mcp_enabled: boolean;
   appearance: AppearancePrefs;
   settings_version?: number;

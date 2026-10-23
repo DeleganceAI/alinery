@@ -85,6 +85,9 @@ fn control_and_forward_sockets_are_short_and_distinct() {
     assert!(control_socket(Path::new(&"/x".repeat(60)), &id).is_err());
 }
 
+/// The live tests share one host and count its daemons, so they take turns.
+static LIVE_HOST: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn live_args() -> Option<Vec<String>> {
     let raw = std::env::var("ALINERY_TEST_SSH_ARGS").ok()?;
     Some(raw.split_whitespace().map(str::to_string).collect())
@@ -108,7 +111,6 @@ fn live_session(args: &[String], id: &str) -> RemoteSession {
     RemoteSession {
         conn,
         channel,
-        probe,
         launcher,
         root,
         runtime_hash: target.runtime_hash.clone(),
@@ -125,12 +127,13 @@ fn live_host_installs_browses_runs_a_daemon_and_survives_a_disconnect() {
         eprintln!("skipped: ALINERY_TEST_SSH_ARGS is not set");
         return;
     };
+    let _turn = LIVE_HOST.lock().unwrap_or_else(|e| e.into_inner());
     let id = format!("live-{}", std::process::id());
     let session = live_session(&args, &id);
     let call = |op| session.channel.call(op, std::time::Duration::from_secs(30)).unwrap();
 
     // Browse, classify and initialize a plain directory.
-    let home = session.probe.home.clone();
+    let home = session.root.trim_end_matches("/.local/share/alinery-remote").to_string();
     let listing = call(alinery_core::repo_service::RepoOp::ListDir {
         path: home.clone().into(),
         show_hidden: false,
@@ -186,6 +189,85 @@ fn live_host_installs_browses_runs_a_daemon_and_survives_a_disconnect() {
         true
     );
     again.conn.exit_master();
+}
+
+/// The same sshd, driven through the app's own commands and state: connect, list a repo,
+/// activate it, disconnect (the daemon keeps running), reconnect (it is picked back up), remove.
+#[test]
+fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
+    use tauri::Manager;
+    let Some(args) = live_args() else {
+        eprintln!("skipped: ALINERY_TEST_SSH_ARGS is not set");
+        return;
+    };
+    let _turn = LIVE_HOST.lock().unwrap_or_else(|e| e.into_inner());
+    let _active = super::ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+    context.config_mut().identifier = format!("test.alinery.remote.{}", uuid::Uuid::new_v4());
+    let app = tauri::test::mock_builder().manage(crate::AppState::default()).build(context).unwrap();
+    let handle = app.handle().clone();
+    let state = handle.state::<crate::AppState>();
+    let id = format!("cmd-{}", std::process::id());
+
+    // The destination parser refuses UserKnownHostsFile, so the test stores the host directly.
+    let mut config = crate::AppConfig::default();
+    config.remote_hosts.insert(
+        id.clone(),
+        crate::RemoteHost {
+            label: "live".into(),
+            ssh_args: args.clone(),
+            ..Default::default()
+        },
+    );
+    crate::write_app_config(&handle, &config).unwrap();
+
+    connect_and_attach(&handle, &id, true).unwrap();
+    let hosts = host_views(&handle, &state);
+    assert_eq!(hosts[0].state, "connected", "{hosts:?}");
+    assert!(hosts[0].home.as_deref().is_some_and(|home| home.starts_with('/')));
+
+    let home = hosts[0].home.clone().unwrap();
+    let repo = format!("{home}/work/cmd-{}", std::process::id());
+    let session = state.remotes.session(&id).unwrap();
+    session
+        .conn
+        .exec_ok(
+            &format!("rm -rf '{repo}' && mkdir -p '{repo}' && git init -q '{repo}'"),
+            RemoteStdin::None,
+            std::time::Duration::from_secs(30),
+        )
+        .unwrap();
+    let key = add_remote_repo(&handle, &id, &repo).unwrap();
+    assert_eq!(key, format!("alinery+ssh://{id}{repo}"));
+    // A path that is not a checkout root is refused.
+    assert!(add_remote_repo(&handle, &id, &home).is_err());
+
+    let config = crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone(), Vec::new()).unwrap();
+    assert_eq!(config.active_repo, key);
+    assert!(state.daemon_for(Path::new(&key)).is_some());
+    assert!(crate::active_repo().is_err(), "un-migrated local-path commands must refuse a remote active repo");
+
+    // Disconnect: the app forgets the daemon handle; the daemon itself is untouched.
+    disconnect_host(&handle, &id);
+    assert!(state.daemon_for(Path::new(&key)).is_none());
+    assert_eq!(host_views(&handle, &state)[0].state, "idle");
+    assert!(
+        crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone(), Vec::new()).is_err(),
+        "a disconnected host cannot be activated"
+    );
+
+    // Reconnect re-attaches every known repo on the host to the daemon that was still running.
+    connect_and_attach(&handle, &id, false).unwrap();
+    assert!(state.daemon_for(Path::new(&key)).is_some());
+
+    let after = remove_remote_repo(&handle, &key).unwrap();
+    assert!(!after.known_repos.contains(&key));
+    assert!(state.daemon_for(Path::new(&key)).is_none());
+    disconnect_host(&handle, &id);
+    let _ = crate::set_active_repo_global(None);
+    if let Ok(dir) = handle.path().app_config_dir() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 #[test]

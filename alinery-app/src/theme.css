@@ -5123,6 +5123,129 @@ dialog.modal::backdrop {
 .chat-new-foot {
   justify-content: flex-end;
 }
+
+/* Remote (SSH) repository dialog: the shared .modal frame with a destination field and a
+   folder browser. */
+.remote-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+.remote-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 10px;
+}
+.remote-body .dsc {
+  margin: 0;
+}
+.remote-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: calc(13px * var(--ui-scale));
+}
+.remote-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.remote-saved,
+.remote-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.remote-list:empty {
+  display: none;
+}
+.remote-saved > li + li,
+.remote-list > li + li {
+  border-top: 1px solid var(--border);
+}
+.remote-saved-host,
+.remote-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.remote-saved-host {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.remote-saved-host:hover,
+.remote-entry:hover:not(:disabled) {
+  background: var(--accent-subtle);
+}
+.remote-entry:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.remote-entry-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.remote-git {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.remote-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.remote-cwd {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-scale));
+  color: var(--text-muted);
+}
+.remote-hidden {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+/* A remote repo whose host is not connected. */
+.repo-opt.offline .repo-opt-name {
+  opacity: 0.6;
+}
+.repo-host-badge {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--text-muted);
+  font-size: calc(10px * var(--ui-scale));
+  letter-spacing: 0.04em;
+}
 /* Native select without the OS chrome: appearance:none drops the system bezel and arrow,
    and the lucide chevron stands in so it matches every other icon in the app. */
 .chat-select {

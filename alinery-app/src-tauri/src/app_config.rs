@@ -397,6 +397,9 @@ pub(crate) async fn set_active_repo(app: AppHandle, path: String, drawer_session
 }
 
 pub(crate) fn set_active_repo_sync<R: tauri::Runtime>(app: AppHandle<R>, state: State<'_, AppState>, path: String, drawer_session_ids: Vec<String>) -> Result<AppConfig, String> {
+    if is_remote_repo_key(path.trim()) {
+        return activate_remote_repo(&app, &state, path.trim());
+    }
     let repo = alinery_core::require_working_tree(Path::new(path.trim()))?;
     let lifecycle = state.repo_lifecycle(&repo);
     let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
@@ -477,6 +480,9 @@ pub(crate) fn remove_repo_from_config(mut cfg: AppConfig, target: &str) -> Resul
 #[tauri::command]
 pub(crate) async fn remove_repo(app: AppHandle, path: String) -> Result<AppConfig, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        if is_remote_repo_key(path.trim()) {
+            return Err("stopping a remote repository's sessions is not available yet; remove it and leave its sessions running".to_string());
+        }
         let target = PathBuf::from(path.trim());
         // Bound once so the closing guard below can borrow from it for the whole function.
         // `None` only in unit tests, which drive `AppState` directly.
