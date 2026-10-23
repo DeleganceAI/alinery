@@ -879,11 +879,17 @@ fn connect_inner<R: tauri::Runtime>(app: &AppHandle<R>, state: &AppState, host_i
     Ok(())
 }
 
+/// The local forwarded socket and the host's daemon socket it reaches, for one repo.
+fn repo_forward(host_id: &str, repo_path: &str) -> Result<(PathBuf, String), String> {
+    let remote_socket = alinery_core::alineryd_socket_path(Path::new(repo_path), None).to_string_lossy().into_owned();
+    let local = forward_socket(&control_dir(alinery_core::effective_uid()), host_id, &remote_socket)?;
+    Ok((local, remote_socket))
+}
+
 /// Bring up (or reconnect to) a remote repo's daemon: forward its socket, start the daemon
 /// if nothing answers, and return a client on the forwarded path. Never stops anything.
 pub(crate) fn ensure_remote_daemon(session: &RemoteSession, repo_path: &str, app_config_identity: &str) -> Result<(DaemonClient, DaemonCompat, bool), String> {
-    let remote_socket = alinery_core::alineryd_socket_path(Path::new(repo_path), None).to_string_lossy().into_owned();
-    let local = forward_socket(&control_dir(alinery_core::effective_uid()), &session.conn.host_id, &remote_socket)?;
+    let (local, remote_socket) = repo_forward(&session.conn.host_id, repo_path)?;
     let client = DaemonClient::connect_path(local.clone())?.with_observe_timeout(REMOTE_OBSERVE_TIMEOUT);
     // A reachable socket is not a live daemon: over a forward `connect` succeeds whenever the
     // master is up, so liveness is a `version` round trip.
@@ -1087,13 +1093,21 @@ pub(crate) async fn remote_connect(app: AppHandle, host_id: String, trust: bool)
 /// forgets the local daemon handles, so the board shows the host as offline.
 pub(crate) fn disconnect_host<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str) {
     let state = app.state::<AppState>();
+    let mut forwards = Vec::new();
     for key in load_app_config(app).known_repos {
-        if matches!(RepoRef::parse(&key), Ok(RepoRef::Remote { host_id: ref id, .. }) if id == host_id) {
-            state.clear_daemon(Path::new(&key));
+        if let Ok(RepoRef::Remote { host_id: id, path }) = RepoRef::parse(&key) {
+            if id == host_id {
+                state.clear_daemon(Path::new(&key));
+                forwards.extend(repo_forward(host_id, &path).ok().map(|(local, _)| local));
+            }
         }
     }
     if let Some(session) = state.remotes.remove_session(host_id) {
         session.conn.exit_master();
+    }
+    // The master is gone, so these sockets lead nowhere; the next connect binds them afresh.
+    for socket in forwards {
+        let _ = std::fs::remove_file(socket);
     }
     state.remotes.set(host_id, "idle", "", None);
 }
