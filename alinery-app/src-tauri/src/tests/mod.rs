@@ -52,6 +52,7 @@ mod notify;
 mod omp_update;
 mod paths;
 mod pi_durable;
+mod remote;
 mod session;
 mod settings;
 mod subtask;

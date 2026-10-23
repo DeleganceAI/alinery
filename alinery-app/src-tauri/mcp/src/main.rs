@@ -1,6 +1,8 @@
 // Expanded v2 tool schemas exceed serde_json's default macro expansion depth.
 #![recursion_limit = "256"]
 
+mod repo_service;
+
 use alinery_core::safe_component;
 use clap::Parser;
 use serde_json::{json, Value};
@@ -20,6 +22,10 @@ struct Args {
     /// Run in serve mode (unix socket under <repo>/.alinery/) for app-spawned child
     #[arg(long)]
     serve: bool,
+
+    /// Serve the remote repo service on stdin/stdout (see alinery_core::repo_service).
+    #[arg(long)]
+    repo_service: bool,
 
     /// Exit when the app-owned stdin pipe closes.
     #[arg(long)]
@@ -44,6 +50,11 @@ fn main() {
     let args = Args::parse();
     let process_repo = args.repo.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(PathBuf::from);
     let app_config = args.app_config.as_deref().map(PathBuf::from).or_else(alinery_core::app_config_toml_path);
+
+    if args.repo_service {
+        repo_service::serve(io::stdin().lock(), io::stdout());
+        return;
+    }
 
     if args.serve {
         let repo = match process_repo.as_deref() {

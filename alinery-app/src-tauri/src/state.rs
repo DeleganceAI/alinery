@@ -65,6 +65,8 @@ pub(crate) struct AppState {
     // Never evict a mutex while a lifecycle waiter can retain its Arc.
     pub(crate) repo_lifecycles: Mutex<HashMap<PathBuf, std::sync::Arc<Mutex<()>>>>,
     pub(crate) prepared_takeovers: Mutex<HashMap<String, PreparedTakeover>>,
+    // Remote (SSH) hosts: connection phase, the ssh master and the repo-service channel.
+    pub(crate) remotes: RemoteManager,
 }
 
 /// Scope guard for `AppState::closing_repos` — teardown has several fallible steps and an
