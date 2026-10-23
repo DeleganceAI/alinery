@@ -435,7 +435,179 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
         assert!(read > 0, "the stream closed before the command ran: {}", String::from_utf8_lossy(&seen));
         seen.extend_from_slice(&buffer[..read]);
     }
+
+    // Scrollback reads come back from the host as base64 and decode to the exact bytes, including
+    // bytes that are not valid UTF-8. (Task sessions only: a taskless drawer has no history.)
+    let scrollback: Vec<u8> = b"\x1b[1mhello alinery-42\r\n\xff\xfe tail".to_vec();
+    session
+        .channel
+        .call(
+            RepoOp::WriteFile {
+                path: format!("{repo}/.alinery/tasks/remote-task/sessions/s1.scrollback").into(),
+                // WriteFile carries text; the binary tail is appended by the host-side shell below.
+                contents: "\u{1b}[1mhello alinery-42\r\n".into(),
+            },
+            std::time::Duration::from_secs(30),
+        )
+        .unwrap();
+    session
+        .conn
+        .exec_ok(
+            &format!("printf '\\377\\376 tail' >> '{repo}/.alinery/tasks/remote-task/sessions/s1.scrollback'"),
+            RemoteStdin::None,
+            std::time::Duration::from_secs(20),
+        )
+        .unwrap();
+    let wire: alinery_core::repo_service::WireBytes = remote_call(
+        &state,
+        &id,
+        RepoOp::ReadSessionHistory {
+            repo: repo.clone().into(),
+            slug: slug(),
+            session_id: "s1".into(),
+            offset: None,
+            limit: None,
+        },
+    )
+    .unwrap();
+    // The default read is the terminal replayed (rendered), so only its text is stable.
+    assert!(String::from_utf8_lossy(&wire.data).contains("hello alinery-42"));
+    let raw: alinery_core::repo_service::WireBytes = remote_call(
+        &state,
+        &id,
+        RepoOp::ReadSessionHistory {
+            repo: repo.clone().into(),
+            slug: slug(),
+            session_id: "s1".into(),
+            offset: Some(0),
+            limit: Some(1000),
+        },
+    )
+    .unwrap();
+    assert_eq!(raw.data, scrollback, "raw windows are byte-exact, including bytes that are not UTF-8");
+    let window: alinery_core::repo_service::WireBytes = remote_call(
+        &state,
+        &id,
+        RepoOp::ReadSessionHistory {
+            repo: repo.clone().into(),
+            slug: slug(),
+            session_id: "s1".into(),
+            offset: Some(4),
+            limit: Some(5),
+        },
+    )
+    .unwrap();
+    assert_eq!(window.data, &scrollback[4..9]);
+    assert!(
+        remote_call::<alinery_core::repo_service::WireBytes>(
+            &state,
+            &id,
+            RepoOp::ReadSessionHistory {
+                repo: repo.clone().into(),
+                slug: slug(),
+                session_id: "s1".into(),
+                offset: Some(1),
+                limit: None
+            }
+        )
+        .is_err(),
+        "offset and limit travel together"
+    );
+
     client.kill_session(&terminal).unwrap();
+
+    // Session and task actions run on the host.
+    let named: alinery_core::SessionName = remote_call(
+        &state,
+        &id,
+        RepoOp::RenameSession {
+            repo: repo.clone().into(),
+            slug: slug(),
+            session_id: "s1".into(),
+            name: "Fix the build".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(named.name, "Fix the build");
+    let shown: crate::SessionDisplayContext = remote_call(
+        &state,
+        &id,
+        RepoOp::GetSessionDisplay {
+            repo: repo.clone().into(),
+            slug: slug(),
+            session_id: "s1".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(shown.session.name.as_deref(), Some("Fix the build"));
+    remote_call::<()>(
+        &state,
+        &id,
+        RepoOp::MarkSessionNotificationRead {
+            repo: repo.clone().into(),
+            slug: slug(),
+            session_id: "s1".into(),
+        },
+    )
+    .unwrap();
+    assert!(remote_call::<()>(
+        &state,
+        &id,
+        RepoOp::MarkSessionNotificationRead {
+            repo: repo.clone().into(),
+            slug: slug(),
+            session_id: "../s1".into()
+        }
+    )
+    .is_err());
+
+    let renamed: alinery_core::Task = remote_call(
+        &state,
+        &id,
+        RepoOp::RenameTask {
+            repo: repo.clone().into(),
+            slug: slug(),
+            name: "Renamed remote".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(renamed.name, "Renamed remote");
+
+    crate::archive_remote_session(&state, &id, repo.clone(), slug(), "s1".into()).unwrap();
+    let after: Vec<crate::SessionDisplayMeta> = remote_call(
+        &state,
+        &id,
+        RepoOp::ListSessions {
+            repo: repo.clone().into(),
+            slug: slug(),
+        },
+    )
+    .unwrap();
+    assert!(after[0].meta.archived);
+    assert!(
+        crate::archive_remote_session(&state, &id, repo.clone(), "  ".into(), "s1".into()).is_err(),
+        "a taskless session cannot be archived"
+    );
+
+    remote_call::<()>(
+        &state,
+        &id,
+        RepoOp::ArchiveTask {
+            repo: repo.clone().into(),
+            slug: slug(),
+        },
+    )
+    .unwrap();
+    let archived: Option<alinery_core::Task> = remote_call(
+        &state,
+        &id,
+        RepoOp::GetTask {
+            repo: repo.clone().into(),
+            slug: slug(),
+        },
+    )
+    .unwrap();
+    assert!(archived.unwrap().archived);
 
     // Disconnect: the app forgets the daemon handle; the daemon itself is untouched.
     disconnect_host(&handle, &id);

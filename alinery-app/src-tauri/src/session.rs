@@ -4,6 +4,9 @@ use crate::*;
 pub(crate) use alinery_core::board::load_session_meta as load_session_meta_for;
 pub(crate) use alinery_core::board::session_display_context as session_display_context_for_repo;
 pub(crate) use alinery_core::board::{current_subtask_name, project_session_display, SessionDisplayContext, SessionDisplayMeta};
+pub(crate) use alinery_core::session_actions::{
+    mark_exit_notification_read as mark_session_exit_notification_read_in, mark_notification_read as mark_session_notification_read_in, session_notification_path,
+};
 pub(crate) use alinery_core::SessionMeta;
 
 #[tauri::command]
@@ -15,9 +18,22 @@ pub(crate) fn rename_session<R: tauri::Runtime>(
     session_id: String,
     name: String,
 ) -> Result<alinery_core::SessionName, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    Ok(alinery_core::set_session_name(&repo, &task_slug, &session_id, &name, alinery_core::SessionNameSource::User)?.value)
+    match target_repo_ref_for_app(&app, &repo_path)? {
+        RepoRef::Remote { host_id, path } => remote_call(
+            &state,
+            &host_id,
+            RepoOp::RenameSession {
+                repo: path.into(),
+                slug: task_slug,
+                session_id,
+                name,
+            },
+        ),
+        RepoRef::Local(repo) => {
+            require_repo_owned(&state, &repo)?;
+            Ok(alinery_core::set_session_name(&repo, &task_slug, &session_id, &name, alinery_core::SessionNameSource::User)?.value)
+        }
+    }
 }
 
 #[tauri::command]
@@ -233,55 +249,6 @@ pub(crate) async fn create_session_for_repo(
         .map_err(|error| format!("create session task: {error}"))?
 }
 
-fn completion_notification_checkpoint(value: &serde_json::Value) -> Option<u64> {
-    value
-        .get("semantic")
-        .and_then(|semantic| semantic.get("phase_completed_at"))
-        .and_then(serde_json::Value::as_u64)
-}
-
-fn exit_notification_checkpoint(value: &serde_json::Value) -> Option<u64> {
-    value
-        .get("exit_code")
-        .and_then(serde_json::Value::as_i64)
-        .filter(|code| *code != 0)
-        .and_then(|_| value.get("ended_at").and_then(serde_json::Value::as_u64))
-}
-
-fn stamp_notification_checkpoint(value: &mut serde_json::Value, field: &str, checkpoint: Option<u64>) {
-    let Some(checkpoint) = checkpoint else {
-        return;
-    };
-    let prior = value.get(field).and_then(serde_json::Value::as_u64).unwrap_or(0);
-    value[field] = json!(prior.max(checkpoint));
-}
-
-fn notification_checkpoint_advances(value: &serde_json::Value, field: &str, checkpoint: Option<u64>) -> bool {
-    checkpoint.is_some_and(|checkpoint| value.get(field).and_then(serde_json::Value::as_u64).is_none_or(|prior| checkpoint > prior))
-}
-
-fn session_notification_path(repo: &Path, task_slug: &str, id: &str) -> Result<PathBuf, String> {
-    let task_slug = alinery_core::safe_component(task_slug).ok_or_else(|| "invalid task slug".to_string())?;
-    let id = alinery_core::safe_component(id).ok_or_else(|| "invalid session id".to_string())?;
-    let path = session_meta_path(repo, task_slug, id);
-    fs::metadata(&path).map_err(|error| error.to_string())?;
-    Ok(path)
-}
-
-pub(crate) fn mark_session_notification_read_in(repo: &Path, task_slug: &str, id: &str) -> Result<(), String> {
-    let path = session_notification_path(repo, task_slug, id)?;
-    let persisted: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-    let completion = completion_notification_checkpoint(&persisted);
-    let exit = exit_notification_checkpoint(&persisted);
-    if !notification_checkpoint_advances(&persisted, "notification_read_at", completion) && !notification_checkpoint_advances(&persisted, "exit_notification_read_at", exit) {
-        return Ok(());
-    }
-    stamp_meta(&path, |value| {
-        stamp_notification_checkpoint(value, "notification_read_at", completion);
-        stamp_notification_checkpoint(value, "exit_notification_read_at", exit);
-    })
-}
-
 pub(crate) fn clear_session_notifications_in(repo: &Path, refs: &[SessionNotificationClearRef]) -> Result<(), String> {
     for reference in refs {
         mark_session_notification_read_in(repo, &reference.task_slug, &reference.id)?;
@@ -293,21 +260,23 @@ pub(crate) fn clear_session_notifications_in(repo: &Path, refs: &[SessionNotific
     Ok(())
 }
 
-fn mark_session_exit_notification_read_in(repo: &Path, task_slug: &str, id: &str) -> Result<(), String> {
-    let path = session_notification_path(repo, task_slug, id)?;
-    let persisted: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-    let exit = exit_notification_checkpoint(&persisted);
-    if !notification_checkpoint_advances(&persisted, "exit_notification_read_at", exit) {
-        return Ok(());
-    }
-    stamp_meta(&path, |value| stamp_notification_checkpoint(value, "exit_notification_read_at", exit))
-}
-
 #[tauri::command]
 pub(crate) fn mark_session_notification_read(app: AppHandle, state: State<'_, AppState>, repo_path: String, task_slug: String, id: String) -> Result<(), String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    mark_session_notification_read_in(&repo, &task_slug, &id)
+    match target_repo_ref_for_app(&app, &repo_path)? {
+        RepoRef::Remote { host_id, path } => remote_call(
+            &state,
+            &host_id,
+            RepoOp::MarkSessionNotificationRead {
+                repo: path.into(),
+                slug: task_slug,
+                session_id: id,
+            },
+        ),
+        RepoRef::Local(repo) => {
+            require_repo_owned(&state, &repo)?;
+            mark_session_notification_read_in(&repo, &task_slug, &id)
+        }
+    }
 }
 
 #[tauri::command]
@@ -453,26 +422,59 @@ pub(crate) fn archive_session_in(app: &AppHandle, state: &AppState, repo: &Path,
 
 #[tauri::command]
 pub(crate) async fn archive_session(app: AppHandle, state: State<'_, AppState>, task_slug: String, id: String) -> Result<(), String> {
-    let repo = require_owned_active_repo(&state)?;
-    // Resolve managed routing state inside the worker; no borrowed command State crosses threads.
+    let repo = match active_repo_ref()? {
+        RepoRef::Local(_) => RepoRef::Local(require_owned_active_repo(&state)?),
+        remote => remote,
+    };
+    archive_session_off_thread(app, repo, task_slug, id).await
+}
+
+// Resolve managed routing state inside the worker; no borrowed command State crosses threads.
+async fn archive_session_off_thread(app: AppHandle, repo: RepoRef, task_slug: String, id: String) -> Result<(), String> {
     let result = tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        archive_session_in(&app, &state, &repo, task_slug, id)
+        match repo {
+            RepoRef::Local(repo) => archive_session_in(&app, &state, &repo, task_slug, id),
+            RepoRef::Remote { host_id, path } => archive_remote_session(&state, &host_id, path, task_slug, id),
+        }
     })
     .await;
     result.map_err(|e| format!("archive session task: {e}"))?
 }
 
+/// Stop the session's process through the repo's daemon if it is live, then flag it archived on
+/// the host. A remote repo has the one daemon, so there is no foreign lane to route to.
+pub(crate) fn archive_remote_session(state: &AppState, host_id: &str, path: String, task_slug: String, id: String) -> Result<(), String> {
+    let task_slug = task_slug.trim().to_string();
+    if task_slug.is_empty() {
+        return Err("sessions must be attached to a task".into());
+    }
+    let key = RepoRef::Remote {
+        host_id: host_id.to_string(),
+        path: path.clone(),
+    };
+    let client = repo_client(state, &key)?;
+    if client.session_status_observed(&id).map(|status| status.is_some()).unwrap_or(false) {
+        client.kill_session(&id)?;
+    }
+    remote_call(
+        state,
+        host_id,
+        RepoOp::StampSessionArchived {
+            repo: path.into(),
+            slug: task_slug,
+            session_id: id,
+        },
+    )
+}
+
 #[tauri::command]
 pub(crate) async fn archive_session_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, task_slug: String, id: String) -> Result<(), String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        archive_session_in(&app, &state, &repo, task_slug, id)
-    })
-    .await;
-    result.map_err(|e| format!("archive session task: {e}"))?
+    let repo = target_repo_ref_for_app(&app, &repo_path)?;
+    if let RepoRef::Local(local) = &repo {
+        require_repo_owned(&state, local)?;
+    }
+    archive_session_off_thread(app, repo, task_slug, id).await
 }
 
 // Default derived via #[derive(Default)] on struct (Mutex<Option<T>> defaults to None)
@@ -1202,6 +1204,9 @@ pub(crate) async fn start_session(
 // That wait runs on the main thread if the command stays synchronous.
 #[tauri::command]
 pub(crate) async fn kill_session(app: AppHandle, state: State<'_, AppState>, id: String, task_slug: String) -> Result<(), String> {
+    if let RepoRef::Remote { .. } = active_repo_ref()? {
+        return kill_remote_session(app, active_repo_ref()?, id).await;
+    }
     let repo = require_owned_active_repo(&state)?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
@@ -1223,11 +1228,27 @@ pub(crate) async fn kill_session(app: AppHandle, state: State<'_, AppState>, id:
 
 #[tauri::command]
 pub(crate) async fn kill_session_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, task_slug: String) -> Result<(), String> {
+    let target = target_repo_ref_for_app(&app, &repo_path)?;
+    if let RepoRef::Remote { .. } = target {
+        return kill_remote_session(app, target, id).await;
+    }
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         with_session_client(&state, &repo, &task_slug, &id, |d| d.kill_session(&id))?;
+        state.clear_session_route(&id);
+        Ok(())
+    })
+    .await;
+    result.map_err(|error| format!("kill session task: {error}"))?
+}
+
+/// Terminate a session's process group through the remote repo's daemon. Never stops the daemon.
+async fn kill_remote_session(app: AppHandle, repo: RepoRef, id: String) -> Result<(), String> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        repo_client(&state, &repo)?.kill_session(&id)?;
         state.clear_session_route(&id);
         Ok(())
     })
@@ -1260,12 +1281,33 @@ pub(crate) fn session_artifact_ready(id: String, task_slug: String) -> bool {
 // to materialise a multi-megabyte string and a per-byte number array before parsing a single row.
 // Framing the header as its own line means the client's existing newline split does the work.
 #[tauri::command]
-pub(crate) async fn read_session_omp(id: String, task_slug: Option<String>, end: Option<u64>, want: Option<u64>) -> Result<tauri::ipc::Response, String> {
-    let repo = active_repo()?;
+pub(crate) async fn read_session_omp(app: AppHandle, id: String, task_slug: Option<String>, end: Option<u64>, want: Option<u64>) -> Result<tauri::ipc::Response, String> {
+    let target = active_repo_ref()?;
     let slug = task_slug.unwrap_or_default();
-    let window = tauri::async_runtime::spawn_blocking(move || alinery_core::read_omp_window(&repo, &slug, &id, end, want))
-        .await
-        .map_err(|error| error.to_string())??;
+    let window = tauri::async_runtime::spawn_blocking(move || match target {
+        RepoRef::Local(repo) => alinery_core::read_omp_window(&repo, &slug, &id, end, want),
+        RepoRef::Remote { host_id, path } => {
+            let wire: alinery_core::repo_service::WireOmpWindow = remote_call(
+                &app.state::<AppState>(),
+                &host_id,
+                RepoOp::ReadOmpWindow {
+                    repo: path.into(),
+                    slug,
+                    session_id: id,
+                    end,
+                    want,
+                },
+            )?;
+            Ok(alinery_core::OmpWindow {
+                start: wire.start,
+                end: wire.end,
+                length: wire.length,
+                data: wire.data,
+            })
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())??;
     let mut body = serde_json::to_vec(&serde_json::json!({
         "start": window.start,
         "end": window.end,
@@ -1278,13 +1320,27 @@ pub(crate) async fn read_session_omp(id: String, task_slug: Option<String>, end:
 }
 
 #[tauri::command]
-pub(crate) async fn read_session_history(id: String, task_slug: Option<String>, offset: Option<u64>, limit: Option<u64>) -> Result<tauri::ipc::Response, String> {
+pub(crate) async fn read_session_history(app: AppHandle, id: String, task_slug: Option<String>, offset: Option<u64>, limit: Option<u64>) -> Result<tauri::ipc::Response, String> {
     // Replay reads up to 8 MB. Returning `Vec<u8>` would JSON-encode that as a number array
     // on the main thread — the same cost `read_session_omp` already avoids with `Response`.
-    let repo = active_repo()?;
+    let target = active_repo_ref()?;
     let slug = task_slug.unwrap_or_default();
-    let data = tauri::async_runtime::spawn_blocking(move || alinery_core::read_session_history(&repo, &slug, &id, offset, limit).map(|result| result.data))
-        .await
-        .map_err(|error| error.to_string())??;
+    let data = tauri::async_runtime::spawn_blocking(move || match target {
+        RepoRef::Local(repo) => alinery_core::read_session_history(&repo, &slug, &id, offset, limit).map(|result| result.data),
+        RepoRef::Remote { host_id, path } => remote_call::<alinery_core::repo_service::WireBytes>(
+            &app.state::<AppState>(),
+            &host_id,
+            RepoOp::ReadSessionHistory {
+                repo: path.into(),
+                slug,
+                session_id: id,
+                offset,
+                limit,
+            },
+        )
+        .map(|wire| wire.data),
+    })
+    .await
+    .map_err(|error| error.to_string())??;
     Ok(tauri::ipc::Response::new(data))
 }

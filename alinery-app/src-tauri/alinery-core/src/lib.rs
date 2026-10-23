@@ -27,6 +27,7 @@ pub mod provision_ffi;
 pub mod repo_ownership;
 pub mod repo_service;
 pub mod rpc_chunk;
+pub mod session_actions;
 pub mod session_name;
 pub mod settings;
 pub mod shared;

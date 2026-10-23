@@ -111,9 +111,21 @@ pub(crate) async fn create_task_for_repo(app: AppHandle, state: State<'_, AppSta
 
 #[tauri::command]
 pub(crate) fn rename_task<R: tauri::Runtime>(app: AppHandle<R>, state: State<'_, AppState>, repo_path: String, task_slug: String, name: String) -> Result<Task, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    alinery_core::rename_task(&repo, &task_slug, &name)
+    match target_repo_ref_for_app(&app, &repo_path)? {
+        RepoRef::Remote { host_id, path } => remote_call(
+            &state,
+            &host_id,
+            RepoOp::RenameTask {
+                repo: path.into(),
+                slug: task_slug,
+                name,
+            },
+        ),
+        RepoRef::Local(repo) => {
+            require_repo_owned(&state, &repo)?;
+            alinery_core::rename_task(&repo, &task_slug, &name)
+        }
+    }
 }
 
 #[tauri::command]
@@ -897,7 +909,18 @@ pub(crate) fn restore_task_in(repo: &Path, slug: &str) -> Result<(), String> {
     alinery_core::restore_task(repo, slug)
 }
 
-async fn archive_task_off_thread(app: &AppHandle, repo: PathBuf, slug: String) -> Result<(), String> {
+async fn archive_task_off_thread(app: &AppHandle, repo: RepoRef, slug: String) -> Result<(), String> {
+    let repo = match repo {
+        RepoRef::Local(repo) => repo,
+        // The host checks eligibility and flips the flag itself; the pre-archive backup and
+        // telemetry are about this machine's copy of a repo, which a remote one is not.
+        RepoRef::Remote { host_id, path } => {
+            let app = app.clone();
+            return tauri::async_runtime::spawn_blocking(move || remote_call::<()>(&app.state::<AppState>(), &host_id, RepoOp::ArchiveTask { repo: path.into(), slug }))
+                .await
+                .map_err(|e| format!("archive task: {e}"))?;
+        }
+    };
     let result = tauri::async_runtime::spawn_blocking(move || {
         alinery_core::ensure_task_can_archive(&repo, &slug)?;
         Ok::<_, String>((repo, slug))
@@ -923,14 +946,19 @@ async fn archive_task_off_thread(app: &AppHandle, repo: PathBuf, slug: String) -
 // Archive flips a flag; the worktree and branch are untouched (removal is M5).
 #[tauri::command]
 pub(crate) async fn archive_task(app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<(), String> {
-    let repo = require_owned_active_repo(&state)?;
+    let repo = match active_repo_ref()? {
+        RepoRef::Local(_) => RepoRef::Local(require_owned_active_repo(&state)?),
+        remote => remote,
+    };
     archive_task_off_thread(&app, repo, slug).await
 }
 
 #[tauri::command]
 pub(crate) async fn archive_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
+    let repo = target_repo_ref_for_app(&app, &repo_path)?;
+    if let RepoRef::Local(local) = &repo {
+        require_repo_owned(&state, local)?;
+    }
     archive_task_off_thread(&app, repo, slug).await
 }
 

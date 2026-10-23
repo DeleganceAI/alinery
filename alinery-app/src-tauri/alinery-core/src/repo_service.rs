@@ -96,6 +96,53 @@ pub enum RepoOp {
         repo: PathBuf,
         slug: String,
     },
+    /// Sets the user's name for a session; the reply is the stored name.
+    RenameSession {
+        repo: PathBuf,
+        slug: String,
+        session_id: String,
+        name: String,
+    },
+    RenameTask {
+        repo: PathBuf,
+        slug: String,
+        name: String,
+    },
+    MarkSessionNotificationRead {
+        repo: PathBuf,
+        slug: String,
+        session_id: String,
+    },
+    /// Flags a session archived. Stopping its process is the daemon's job, done first.
+    StampSessionArchived {
+        repo: PathBuf,
+        slug: String,
+        session_id: String,
+    },
+    ArchiveTask {
+        repo: PathBuf,
+        slug: String,
+    },
+    /// A session's scrollback; the reply carries the bytes as base64.
+    ReadSessionHistory {
+        repo: PathBuf,
+        slug: String,
+        session_id: String,
+        #[serde(default)]
+        offset: Option<u64>,
+        #[serde(default)]
+        limit: Option<u64>,
+    },
+    /// One backward page of a session's journal.
+    ReadOmpWindow {
+        repo: PathBuf,
+        slug: String,
+        session_id: String,
+        #[serde(default)]
+        end: Option<u64>,
+        #[serde(default)]
+        want: Option<u64>,
+    },
     /// Atomic, owner-only write (parent directories are created).
     WriteFile {
         path: PathBuf,
@@ -185,6 +232,22 @@ pub struct Hello {
     pub pid: u32,
 }
 
+/// Raw bytes on the wire: base64, never a JSON number array.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireBytes {
+    #[serde(with = "crate::rpc_chunk::base64_bytes")]
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireOmpWindow {
+    pub start: u64,
+    pub end: u64,
+    pub length: u64,
+    #[serde(with = "crate::rpc_chunk::base64_bytes")]
+    pub data: Vec<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirEntry {
     pub name: String,
@@ -248,6 +311,35 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::ReadTaskArtifactNode { repo, slug, node_id } => to_value(crate::read_task_artifact_node(&repo, &slug, &node_id)?),
         RepoOp::ReadLaunchFields { repo, slug, session_id } => to_value(crate::read_meta_launch_fields(&repo, &slug, &session_id)),
         RepoOp::WorktreeExists { repo, slug } => to_value(crate::board::worktree_exists(&repo, &slug)?),
+        RepoOp::RenameSession { repo, slug, session_id, name } => to_value(crate::set_session_name(&repo, &slug, &session_id, &name, crate::SessionNameSource::User)?.value),
+        RepoOp::RenameTask { repo, slug, name } => to_value(crate::rename_task(&repo, &slug, &name)?),
+        RepoOp::MarkSessionNotificationRead { repo, slug, session_id } => crate::session_actions::mark_notification_read(&repo, &slug, &session_id).map(|()| Value::Null),
+        RepoOp::StampSessionArchived { repo, slug, session_id } => crate::session_actions::stamp_session_archived(&repo, &slug, &session_id).map(|()| Value::Null),
+        RepoOp::ArchiveTask { repo, slug } => crate::session_actions::archive_task_on_disk(&repo, &slug).map(|()| Value::Null),
+        RepoOp::ReadSessionHistory {
+            repo,
+            slug,
+            session_id,
+            offset,
+            limit,
+        } => to_value(WireBytes {
+            data: crate::read_session_history(&repo, &slug, &session_id, offset, limit)?.data,
+        }),
+        RepoOp::ReadOmpWindow {
+            repo,
+            slug,
+            session_id,
+            end,
+            want,
+        } => {
+            let window = crate::read_omp_window(&repo, &slug, &session_id, end, want)?;
+            to_value(WireOmpWindow {
+                start: window.start,
+                end: window.end,
+                length: window.length,
+                data: window.data,
+            })
+        }
         RepoOp::WriteFile { path, contents } => write_file(&path, &contents).map(|()| Value::Null),
         RepoOp::SyncCredentials { path, entries } => to_value(crate::credential_sync::apply_incoming(&path, &entries)?),
         RepoOp::SpawnDaemon {
@@ -411,6 +503,45 @@ mod tests {
             RepoOp::WorktreeExists {
                 repo: "/srv/a".into(),
                 slug: "t".into(),
+            },
+            RepoOp::RenameSession {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                session_id: "s".into(),
+                name: "n".into(),
+            },
+            RepoOp::RenameTask {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                name: "n".into(),
+            },
+            RepoOp::MarkSessionNotificationRead {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                session_id: "s".into(),
+            },
+            RepoOp::StampSessionArchived {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                session_id: "s".into(),
+            },
+            RepoOp::ArchiveTask {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+            },
+            RepoOp::ReadSessionHistory {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                session_id: "s".into(),
+                offset: Some(1),
+                limit: Some(2),
+            },
+            RepoOp::ReadOmpWindow {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                session_id: "s".into(),
+                end: None,
+                want: Some(3),
             },
             RepoOp::WriteFile {
                 path: "/srv/a/app.toml".into(),
