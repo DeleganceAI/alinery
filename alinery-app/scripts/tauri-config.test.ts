@@ -22,6 +22,14 @@ it("bundles the Apache license, copyright notice, and third-party license texts"
   expect(bundled["THIRD-PARTY-NOTICES.md"]).toContain(readFileSync(new URL("playbooks/superdevelop/LICENSE.superpowers", resourceRoot), "utf8"));
 });
 
+it("bundles the remote runtimes and keeps dev builds compiling without them", () => {
+  const config = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8")) as { bundle: { resources: Record<string, string> } };
+  expect(config.bundle.resources["resources/remote/"]).toBe("remote/");
+  // tauri-build fails on a missing resource, so the sidecar script must leave an empty manifest.
+  expect(readFileSync(new URL("../src-tauri/scripts/copy-sidecar.sh", import.meta.url), "utf8")).toContain("resources/remote/manifest.json");
+  expect(readFileSync(new URL("../src-tauri/.gitignore", import.meta.url), "utf8")).toContain("/resources/remote/");
+});
+
 describe("tauri development config overlay", () => {
   it("uses Alinery for the production product identity", () => {
     const config = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8")) as {
