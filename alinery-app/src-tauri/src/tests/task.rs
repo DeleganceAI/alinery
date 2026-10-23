@@ -2354,7 +2354,7 @@ fn targeted_restore_changes_only_selected_repository() {
     let _ = fs::remove_dir_all(repo_b);
 }
 
-fn retained_duplicate_fixture(repo: &Path) -> Task {
+pub(super) fn retained_duplicate_fixture(repo: &Path) -> Task {
     let source = include_str!("../../playbooks/one-shot/playbook.md");
     let reference = alinery_core::playbook::PlaybookRef {
         scope: alinery_core::playbook::PlaybookScope::Repo,

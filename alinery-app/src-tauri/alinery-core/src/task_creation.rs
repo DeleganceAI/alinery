@@ -454,6 +454,100 @@ pub fn provision_task_with_reservation(
     Ok(reply)
 }
 
+/// The create request that makes a fresh copy of `source_slug`: same playbook, ticket, attachments
+/// and launch settings, one generation (`D+n`) further. It only reads files, so a remote host builds
+/// it and the app sends it to the daemon.
+pub fn duplicate_task_package(repo: &Path, source_slug: &str) -> Result<CreateTaskRequest, String> {
+    let source_slug = crate::safe_component(source_slug).ok_or("invalid source slug")?;
+    let source = crate::board::read_task_checked(repo, source_slug)?;
+    if source.draft {
+        return Err("draft tasks cannot be duplicated".into());
+    }
+    if source.engine_version < 2 {
+        return Err("pre-v2 task data cannot be duplicated into executable work".into());
+    }
+    let state = crate::execution::read_execution_state(repo, source_slug)?;
+    let source_definition = fs::read_to_string(crate::execution::task_playbook_path(repo, source_slug)?).map_err(|error| error.to_string())?;
+    if crate::execution::definition_identity(source_definition.as_bytes()) != state.definition_identity {
+        return Err("retained task definition integrity mismatch".into());
+    }
+    let dir = crate::attachments_dir(repo, source_slug);
+    let original_ticket = fs::read_to_string(crate::artifact_file_path(repo, source_slug, "00-ticket.md")?).map_err(|error| error.to_string())?;
+    let mut attachments = Vec::new();
+    match fs::symlink_metadata(&dir) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err("source attachments are not a directory".into());
+            }
+            for entry in fs::read_dir(dir).map_err(|error| error.to_string())? {
+                let entry = entry.map_err(|error| error.to_string())?;
+                let name = entry.file_name().into_string().map_err(|_| "invalid attachment name")?;
+                let name = crate::safe_component(&name).ok_or("invalid attachment name")?.to_string();
+                let metadata = fs::symlink_metadata(entry.path()).map_err(|error| error.to_string())?;
+                if metadata.file_type().is_symlink() || !metadata.is_file() {
+                    return Err(format!("attachment '{name}' is not a regular file"));
+                }
+                attachments.push(TaskAttachment {
+                    name,
+                    bytes: fs::read(entry.path()).map_err(|error| error.to_string())?,
+                });
+            }
+        }
+    }
+    attachments.sort_by(|left, right| left.name.cmp(&right.name));
+    let generation = source
+        .name
+        .trim_end()
+        .rsplit_once(" D+")
+        .and_then(|(base, number)| number.parse::<u64>().ok().filter(|number| *number > 0).map(|number| (base, number)));
+    let name = match generation.and_then(|(base, number)| number.checked_add(1).map(|next| (base, next))) {
+        Some((base, next)) => format!("{base} D+{next}"),
+        None => format!("{} D+1", source.name.trim_end()),
+    };
+    let identity_base = |value: &str| -> String {
+        if generation.is_some() {
+            if let Some((base, number)) = value.rsplit_once('-') {
+                if number.parse::<u64>().is_ok() {
+                    return base.to_string();
+                }
+            }
+        }
+        value.to_string()
+    };
+    let requested_slug = identity_base(&source.slug);
+    let branch_name = identity_base(&source.branch);
+    let worktree_name = Path::new(&source.worktree).file_name().and_then(|name| name.to_str()).map(identity_base);
+    Ok(CreateTaskRequest {
+        name,
+        draft_slug: None,
+        requested_slug: Some(requested_slug),
+        description: String::new(),
+        evidence: String::new(),
+        original_ticket: Some(original_ticket),
+        attachments,
+        attachment_urls: Vec::new(),
+        attachment_errors: Vec::new(),
+        linear_id: source.linear_id,
+        github_issue: source.github_issue,
+        related_tasks: source.related_tasks,
+        parent_task: String::new(),
+        playbook: TaskPlaybookPackage {
+            reference: state.reference,
+            source: source_definition,
+        },
+        branch_name: Some(branch_name),
+        worktree_name,
+        base_ref: None,
+        launch_defaults: source.launch_defaults,
+        auto_advance_steps: Some(source.auto_advance),
+        max_live_sessions: Some(source.max_live_sessions),
+        step_models: source.step_models,
+        start: true,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,9 +1,7 @@
 //! task: extracted from lib.rs. See AGENTS.md for the module map.
 use crate::*;
 
-use alinery_core::task_creation::{
-    unique_attachment_name, CreateTaskReply, CreateTaskRequest, TaskAttachment, TaskPlaybookPackage, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_SET_BYTES,
-};
+use alinery_core::task_creation::{unique_attachment_name, CreateTaskReply, CreateTaskRequest, TaskAttachment, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_SET_BYTES};
 pub(crate) use alinery_core::{write_task_unlocked, Task};
 use std::io::Read;
 
@@ -84,6 +82,7 @@ pub(crate) use alinery_core::attachments::{
     ChatImage,
 };
 pub(crate) use alinery_core::board::read_task_opt;
+pub(crate) use alinery_core::task_creation::duplicate_task_package;
 
 #[tauri::command]
 pub(crate) async fn get_task(app: AppHandle, state: State<'_, AppState>, slug: String, repo_path: Option<String>) -> Result<Option<Task>, String> {
@@ -136,103 +135,18 @@ pub(crate) fn rename_task<R: tauri::Runtime>(app: AppHandle<R>, state: State<'_,
 
 #[tauri::command]
 pub(crate) async fn duplicate_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, source_slug: String) -> Result<CreateTaskReply, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    let daemon = state.daemon_for(&repo).ok_or("daemon not connected")?;
-    tauri::async_runtime::spawn_blocking(move || daemon.create_task(&duplicate_task_package(&repo, &source_slug)?))
-        .await
-        .map_err(|error| format!("duplicate task: {error}"))?
-}
-
-pub(crate) fn duplicate_task_package(repo: &Path, source_slug: &str) -> Result<CreateTaskRequest, String> {
-    let source_slug = alinery_core::safe_component(source_slug).ok_or("invalid source slug")?;
-    let source = read_task(repo, source_slug)?;
-    if source.draft {
-        return Err("draft tasks cannot be duplicated".into());
-    }
-    if source.engine_version < 2 {
-        return Err("pre-v2 task data cannot be duplicated into executable work".into());
-    }
-    let state = alinery_core::execution::read_execution_state(repo, source_slug)?;
-    let source_definition = fs::read_to_string(alinery_core::execution::task_playbook_path(repo, source_slug)?).map_err(|error| error.to_string())?;
-    if alinery_core::execution::definition_identity(source_definition.as_bytes()) != state.definition_identity {
-        return Err("retained task definition integrity mismatch".into());
-    }
-    let dir = alinery_core::attachments_dir(repo, source_slug);
-    let original_ticket = fs::read_to_string(artifact_file_path(repo, source_slug, "00-ticket.md")?).map_err(|error| error.to_string())?;
-    let mut attachments = Vec::new();
-    match fs::symlink_metadata(&dir) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.to_string()),
-        Ok(metadata) => {
-            if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                return Err("source attachments are not a directory".into());
-            }
-            for entry in fs::read_dir(dir).map_err(|error| error.to_string())? {
-                let entry = entry.map_err(|error| error.to_string())?;
-                let name = entry.file_name().into_string().map_err(|_| "invalid attachment name")?;
-                let name = alinery_core::safe_component(&name).ok_or("invalid attachment name")?.to_string();
-                let metadata = fs::symlink_metadata(entry.path()).map_err(|error| error.to_string())?;
-                if metadata.file_type().is_symlink() || !metadata.is_file() {
-                    return Err(format!("attachment '{name}' is not a regular file"));
-                }
-                attachments.push(TaskAttachment {
-                    name,
-                    bytes: fs::read(entry.path()).map_err(|error| error.to_string())?,
-                });
-            }
-        }
-    }
-    attachments.sort_by(|left, right| left.name.cmp(&right.name));
-    let generation = source
-        .name
-        .trim_end()
-        .rsplit_once(" D+")
-        .and_then(|(base, number)| number.parse::<u64>().ok().filter(|number| *number > 0).map(|number| (base, number)));
-    let name = match generation.and_then(|(base, number)| number.checked_add(1).map(|next| (base, next))) {
-        Some((base, next)) => format!("{base} D+{next}"),
-        None => format!("{} D+1", source.name.trim_end()),
-    };
-    let identity_base = |value: &str| -> String {
-        if generation.is_some() {
-            if let Some((base, number)) = value.rsplit_once('-') {
-                if number.parse::<u64>().is_ok() {
-                    return base.to_string();
-                }
-            }
-        }
-        value.to_string()
-    };
-    let requested_slug = identity_base(&source.slug);
-    let branch_name = identity_base(&source.branch);
-    let worktree_name = Path::new(&source.worktree).file_name().and_then(|name| name.to_str()).map(identity_base);
-    Ok(CreateTaskRequest {
-        name,
-        draft_slug: None,
-        requested_slug: Some(requested_slug),
-        description: String::new(),
-        evidence: String::new(),
-        original_ticket: Some(original_ticket),
-        attachments,
-        attachment_urls: Vec::new(),
-        attachment_errors: Vec::new(),
-        linear_id: source.linear_id,
-        github_issue: source.github_issue,
-        related_tasks: source.related_tasks,
-        parent_task: String::new(),
-        playbook: TaskPlaybookPackage {
-            reference: state.reference,
-            source: source_definition,
-        },
-        branch_name: Some(branch_name),
-        worktree_name,
-        base_ref: None,
-        launch_defaults: source.launch_defaults,
-        auto_advance_steps: Some(source.auto_advance),
-        max_live_sessions: Some(source.max_live_sessions),
-        step_models: source.step_models,
-        start: true,
+    let target = owned_target(&app, &state, &repo_path)?;
+    let daemon = repo_client(&state, &target)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        // A remote task's files are read on its host; the copy itself is created by the host's daemon.
+        let package = match target {
+            RepoRef::Local(repo) => duplicate_task_package(&repo, &source_slug)?,
+            RepoRef::Remote { host_id, path } => remote_call(&app.state::<AppState>(), &host_id, RepoOp::DuplicateTaskPackage { repo: path.into(), source_slug })?,
+        };
+        daemon.create_task(&package)
     })
+    .await
+    .map_err(|error| format!("duplicate task: {error}"))?
 }
 
 #[derive(Serialize, Default)]

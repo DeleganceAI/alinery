@@ -61,11 +61,20 @@ pub(crate) fn grok_key_ready(app: AppHandle) -> bool {
         .is_some_and(|path| !alinery_core::load_global_settings(&path).experiments.grok_api_key.trim().is_empty())
 }
 
+/// Models come from the harness binary on this machine. A remote repo has no overlay `harnesses.toml`
+/// here, so it resolves against an empty directory and gets the bundled harness rows.
+fn models_repo(target: &RepoRef) -> PathBuf {
+    match target {
+        RepoRef::Local(repo) => repo.clone(),
+        RepoRef::Remote { .. } => PathBuf::from("/var/empty"),
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn list_harness_models(app: AppHandle, harness: String) -> Vec<String> {
     // `models_cmd` is a login shell plus `omp models`. Never run that on the webview thread.
-    tauri::async_runtime::spawn_blocking(move || match (active_repo(), app_config_path(&app)) {
-        (Ok(repo), Ok(app_config)) => list_harness_models_in(&app_config, &repo, &harness),
+    tauri::async_runtime::spawn_blocking(move || match (active_repo_ref(), app_config_path(&app)) {
+        (Ok(target), Ok(app_config)) => list_harness_models_in(&app_config, &models_repo(&target), &harness),
         _ => vec![],
     })
     .await
@@ -74,9 +83,15 @@ pub(crate) async fn list_harness_models(app: AppHandle, harness: String) -> Vec<
 
 #[tauri::command]
 pub(crate) async fn list_harness_models_for_repo(app: AppHandle, repo_path: String, harness: String) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || Ok(list_harness_models_in(&app_config_path(&app)?, &target_repo_for_app(&app, &repo_path)?, &harness)))
-        .await
-        .map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(list_harness_models_in(
+            &app_config_path(&app)?,
+            &models_repo(&target_repo_ref_for_app(&app, &repo_path)?),
+            &harness,
+        ))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 // ---- Scoped settings ----------------------------------------------------------
@@ -106,21 +121,57 @@ pub(crate) fn load_config_with_app_path(app_config: &Path, repo: &Path) -> Confi
     alinery_core::resolve_effective_config(&global, &overrides)
 }
 
-pub(crate) fn scoped_settings_for(app: &AppHandle, repo: &Path) -> Result<alinery_core::ScopedSettings, String> {
-    ensure_config_toml(repo)?;
-    alinery_core::read_scoped_settings_strict(&app_config_path(app)?, repo)
+/// A repository's `config.toml` override layer: read in place for a local repo, from its host for a remote one.
+pub(crate) fn read_overrides(state: &AppState, target: &RepoRef) -> Result<alinery_core::RepoOverrides, String> {
+    match target {
+        RepoRef::Local(repo) => alinery_core::load_repo_overrides_strict(repo),
+        RepoRef::Remote { host_id, path } => remote_call(state, host_id, RepoOp::ReadRepoOverrides { repo: path.into() }),
+    }
+}
+
+pub(crate) fn write_overrides(app_config: &Path, state: &AppState, target: &RepoRef, overrides: &alinery_core::RepoOverrides) -> Result<(), String> {
+    match target {
+        RepoRef::Local(repo) => alinery_core::write_repo_overrides(Some(app_config), repo, overrides),
+        RepoRef::Remote { host_id, path } => remote_call(
+            state,
+            host_id,
+            RepoOp::WriteRepoOverrides {
+                repo: path.into(),
+                app_config: host_app_config(state, host_id)?,
+                overrides: overrides.clone(),
+            },
+        ),
+    }
+}
+
+/// Global settings from this machine's `app.toml` merged with the repository's overrides, wherever those live.
+pub(crate) fn scoped_for(app_config: &Path, state: &AppState, target: &RepoRef) -> Result<alinery_core::ScopedSettings, String> {
+    match target {
+        RepoRef::Local(repo) => {
+            ensure_config_toml(repo)?;
+            alinery_core::read_scoped_settings_strict(app_config, repo)
+        }
+        remote => alinery_core::scoped_settings_with(app_config, read_overrides(state, remote)?),
+    }
+}
+
+fn owned_active_target(state: &AppState) -> Result<RepoRef, String> {
+    Ok(match require_active_target(state)? {
+        ActiveRepo::Local(repo) => RepoRef::Local(repo),
+        ActiveRepo::Remote { host_id, path } => RepoRef::Remote { host_id, path },
+    })
 }
 
 #[tauri::command]
-pub(crate) fn read_config(app: AppHandle) -> Result<Config, String> {
-    let repo = active_repo()?;
-    Ok(scoped_settings_for(&app, &repo)?.effective)
+pub(crate) async fn read_config(app: AppHandle) -> Result<Config, String> {
+    let target = active_repo_ref()?;
+    off_main_thread("read config", move || Ok(scoped_for(&app_config_path(&app)?, &app.state::<AppState>(), &target)?.effective)).await
 }
 
 #[tauri::command]
-pub(crate) fn read_config_for_repo(app: AppHandle, repo_path: String) -> Result<Config, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    Ok(scoped_settings_for(&app, &repo)?.effective)
+pub(crate) async fn read_config_for_repo(app: AppHandle, repo_path: String) -> Result<Config, String> {
+    let target = target_repo_ref_for_app(&app, &repo_path)?;
+    off_main_thread("read config", move || Ok(scoped_for(&app_config_path(&app)?, &app.state::<AppState>(), &target)?.effective)).await
 }
 
 #[tauri::command]
@@ -207,66 +258,68 @@ pub(crate) fn write_global_settings(app: AppHandle, global: alinery_core::Global
 }
 
 #[tauri::command]
-pub(crate) fn read_scoped_settings_for_repo(app: AppHandle, repo_path: String) -> Result<alinery_core::ScopedSettings, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    scoped_settings_for(&app, &repo)
+pub(crate) async fn read_scoped_settings_for_repo(app: AppHandle, repo_path: String) -> Result<alinery_core::ScopedSettings, String> {
+    let target = target_repo_ref_for_app(&app, &repo_path)?;
+    off_main_thread("read settings", move || scoped_for(&app_config_path(&app)?, &app.state::<AppState>(), &target)).await
 }
 
 #[tauri::command]
-pub(crate) fn read_repo_overrides_for_repo(app: AppHandle, repo_path: String) -> Result<alinery_core::RepoOverrides, String> {
-    alinery_core::load_repo_overrides_strict(&target_repo_for_app(&app, &repo_path)?)
+pub(crate) async fn read_repo_overrides_for_repo(app: AppHandle, repo_path: String) -> Result<alinery_core::RepoOverrides, String> {
+    let target = target_repo_ref_for_app(&app, &repo_path)?;
+    off_main_thread("read repo overrides", move || read_overrides(&app.state::<AppState>(), &target)).await
+}
+
+fn emit_repo_settings_change(app: &AppHandle) {
+    emit(
+        app,
+        alinery_core::TelemetryEvent::SettingsChange {
+            source: alinery_core::TelemetrySource::App,
+            scope: alinery_core::SettingsChangeScope::Repo,
+        },
+    );
 }
 
 #[tauri::command]
-pub(crate) fn write_repo_overrides_for_repo(
+pub(crate) async fn write_repo_overrides_for_repo(
     app: AppHandle,
     state: State<'_, AppState>,
     repo_path: String,
     overrides: alinery_core::RepoOverrides,
 ) -> Result<alinery_core::ScopedSettings, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    alinery_core::write_repo_overrides(Some(&app_config_path(&app)?), &repo, &overrides)?;
-    emit(
-        &app,
-        alinery_core::TelemetryEvent::SettingsChange {
-            source: alinery_core::TelemetrySource::App,
-            scope: alinery_core::SettingsChangeScope::Repo,
-        },
-    );
-    scoped_settings_for(&app, &repo)
+    let target = owned_target(&app, &state, &repo_path)?;
+    off_main_thread("write repo overrides", move || {
+        let state = app.state::<AppState>();
+        write_overrides(&app_config_path(&app)?, &state, &target, &overrides)?;
+        emit_repo_settings_change(&app);
+        scoped_for(&app_config_path(&app)?, &state, &target)
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn clear_repo_override_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, field: String) -> Result<alinery_core::ScopedSettings, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    let mut overrides = alinery_core::load_repo_overrides_strict(&repo)?;
-    alinery_core::clear_repo_override(&mut overrides, &field)?;
-    alinery_core::write_repo_overrides(Some(&app_config_path(&app)?), &repo, &overrides)?;
-    emit(
-        &app,
-        alinery_core::TelemetryEvent::SettingsChange {
-            source: alinery_core::TelemetrySource::App,
-            scope: alinery_core::SettingsChangeScope::Repo,
-        },
-    );
-    scoped_settings_for(&app, &repo)
+pub(crate) async fn clear_repo_override_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, field: String) -> Result<alinery_core::ScopedSettings, String> {
+    let target = owned_target(&app, &state, &repo_path)?;
+    off_main_thread("clear repo override", move || {
+        let state = app.state::<AppState>();
+        let mut overrides = read_overrides(&state, &target)?;
+        alinery_core::clear_repo_override(&mut overrides, &field)?;
+        write_overrides(&app_config_path(&app)?, &state, &target, &overrides)?;
+        emit_repo_settings_change(&app);
+        scoped_for(&app_config_path(&app)?, &state, &target)
+    })
+    .await
 }
 
 // Compatibility command: active-repo writes now replace only that repository's override layer.
 #[tauri::command]
-pub(crate) fn write_config(app: AppHandle, state: State<'_, AppState>, config: alinery_core::RepoOverrides) -> Result<(), String> {
-    let repo = require_owned_active_repo(&state)?;
-    alinery_core::write_repo_overrides(Some(&app_config_path(&app)?), &repo, &config)?;
-    emit(
-        &app,
-        alinery_core::TelemetryEvent::SettingsChange {
-            source: alinery_core::TelemetrySource::App,
-            scope: alinery_core::SettingsChangeScope::Repo,
-        },
-    );
-    Ok(())
+pub(crate) async fn write_config(app: AppHandle, state: State<'_, AppState>, config: alinery_core::RepoOverrides) -> Result<(), String> {
+    let target = owned_active_target(&state)?;
+    off_main_thread("write config", move || {
+        write_overrides(&app_config_path(&app)?, &app.state::<AppState>(), &target, &config)?;
+        emit_repo_settings_change(&app);
+        Ok(())
+    })
+    .await
 }
 
 #[derive(Serialize)]

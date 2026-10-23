@@ -18,7 +18,7 @@ pub const LIST_DIR_CAP: usize = 2000;
 
 /// Ops are flattened into `RepoRequest`, whose own key is `id`: no variant may have a field
 /// called `id`, or the two collide on the wire (the round-trip test covers every variant).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "call", rename_all = "snake_case")]
 pub enum RepoOp {
     Ping,
@@ -354,6 +354,21 @@ pub enum RepoOp {
         repo: PathBuf,
         slug: String,
     },
+    /// The create request for a copy of a task, built from its files; the app sends it to the daemon.
+    DuplicateTaskPackage {
+        repo: PathBuf,
+        source_slug: String,
+    },
+    /// The repository's `config.toml` override layer (empty when the file is absent).
+    ReadRepoOverrides {
+        repo: PathBuf,
+    },
+    /// Replaces the override layer; `app_config` is where the settings audit line is logged.
+    WriteRepoOverrides {
+        repo: PathBuf,
+        app_config: PathBuf,
+        overrides: crate::RepoOverrides,
+    },
     /// Atomic, owner-only write (parent directories are created).
     WriteFile {
         path: PathBuf,
@@ -392,7 +407,7 @@ pub enum Launch {
     SystemdRun,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RepoRequest {
     pub id: u64,
     #[serde(flatten)]
@@ -663,6 +678,9 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         } => to_value(crate::chat::write_chat_thread_attachment_bytes_in(&repo, &session_id, &file_name, &data)?),
         RepoOp::ReadChatThreadImage { repo, session_id, name } => to_value(crate::chat::read_chat_thread_image_in(&repo, &session_id, &name)?),
         RepoOp::RestoreTask { repo, slug } => crate::restore_task(&repo, &slug).map(|()| Value::Null),
+        RepoOp::DuplicateTaskPackage { repo, source_slug } => to_value(crate::task_creation::duplicate_task_package(&repo, &source_slug)?),
+        RepoOp::ReadRepoOverrides { repo } => to_value(crate::load_repo_overrides_strict(&repo)?),
+        RepoOp::WriteRepoOverrides { repo, app_config, overrides } => crate::write_repo_overrides(Some(&app_config), &repo, &overrides).map(|()| Value::Null),
         RepoOp::WriteFile { path, contents } => write_file(&path, &contents).map(|()| Value::Null),
         RepoOp::SyncCredentials { path, entries } => to_value(crate::credential_sync::apply_incoming(&path, &entries)?),
         RepoOp::SpawnDaemon {
@@ -1045,6 +1063,16 @@ mod tests {
             RepoOp::RestoreTask {
                 repo: "/srv/a".into(),
                 slug: "t".into(),
+            },
+            RepoOp::DuplicateTaskPackage {
+                repo: "/srv/a".into(),
+                source_slug: "t".into(),
+            },
+            RepoOp::ReadRepoOverrides { repo: "/srv/a".into() },
+            RepoOp::WriteRepoOverrides {
+                repo: "/srv/a".into(),
+                app_config: "/c/app.toml".into(),
+                overrides: crate::RepoOverrides::default(),
             },
             RepoOp::RenameSession {
                 repo: "/srv/a".into(),

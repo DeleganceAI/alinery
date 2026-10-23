@@ -1146,6 +1146,73 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     )
     .is_err());
 
+    // Duplicating a task: the host builds the create request from its own files, identical to what a
+    // local repo would build. A pre-v2 task cannot be copied.
+    assert!(remote_call::<alinery_core::task_creation::CreateTaskRequest>(
+        &state,
+        &id,
+        RepoOp::DuplicateTaskPackage {
+            repo: repo.clone().into(),
+            source_slug: slug()
+        }
+    )
+    .is_err());
+    let scratch = std::env::temp_dir().join(format!("remote-dup-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&scratch);
+    std::fs::create_dir_all(&scratch).unwrap();
+    let source = super::task::retained_duplicate_fixture(&scratch);
+    let source_dir = scratch.join(".alinery/tasks").join(&source.slug);
+    let mut pending = vec![source_dir.clone()];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            let relative = path.strip_prefix(&source_dir).unwrap().display().to_string();
+            session
+                .channel
+                .call(
+                    RepoOp::WriteFile {
+                        path: format!("{repo}/.alinery/tasks/{}/{relative}", source.slug).into(),
+                        contents: std::fs::read_to_string(&path).unwrap(),
+                    },
+                    std::time::Duration::from_secs(30),
+                )
+                .unwrap();
+        }
+    }
+    let package: alinery_core::task_creation::CreateTaskRequest = remote_call(
+        &state,
+        &id,
+        RepoOp::DuplicateTaskPackage {
+            repo: repo.clone().into(),
+            source_slug: source.slug.clone(),
+        },
+    )
+    .unwrap();
+    assert_eq!(package.name, "Original D+1");
+    assert_eq!(package.original_ticket.as_deref(), Some("# Edited original\nKeep exact bytes.\n"));
+    let local = crate::duplicate_task_package(&scratch, &source.slug).unwrap();
+    assert_eq!(serde_json::to_value(&package).unwrap(), serde_json::to_value(&local).unwrap());
+    let _ = std::fs::remove_dir_all(&scratch);
+
+    // Repository settings: the override layer lives in the host's config.toml, the global layer here.
+    let target = crate::RepoRef::parse(&key).unwrap();
+    let app_config = crate::app_config_path(&handle).unwrap();
+    assert_eq!(crate::read_overrides(&state, &target).unwrap(), alinery_core::RepoOverrides::default());
+    let mut overrides = alinery_core::RepoOverrides::default();
+    overrides.defaults.model = Some("host-model".into());
+    overrides.defaults.harness = Some("omp".into());
+    crate::write_overrides(&app_config, &state, &target, &overrides).unwrap();
+    assert_eq!(crate::read_overrides(&state, &target).unwrap(), overrides);
+    let scoped = crate::scoped_for(&app_config, &state, &target).unwrap();
+    assert_eq!(scoped.overrides, overrides);
+    alinery_core::clear_repo_override(&mut overrides, "defaults.model").unwrap();
+    crate::write_overrides(&app_config, &state, &target, &overrides).unwrap();
+    assert_eq!(crate::read_overrides(&state, &target).unwrap(), alinery_core::RepoOverrides::default());
+
     // Disconnect: the app forgets the daemon handle; the daemon itself is untouched.
     disconnect_host(&handle, &id);
     assert!(state.daemon_for(Path::new(&key)).is_none());
