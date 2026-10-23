@@ -579,6 +579,7 @@ describe("subagent envelopes", () => {
       payload: { progress: { id: "sa-1", status: "completed", durationMs: 4000 } },
     });
     const finished = done.entries.find((entry) => entry.type === "subagent_status" && entry.subagentId === "sa-1");
+    if (finished?.type !== "subagent_status") throw new Error("Expected the completed subagent status");
     expect(finished?.id).toBe(row?.id);
     expect(finished?.status).toBe("completed");
     expect(finished?.summary).toBe("Search the repo");
