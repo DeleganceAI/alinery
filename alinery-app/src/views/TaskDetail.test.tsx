@@ -16,6 +16,7 @@ import type {
   Task,
   TaskActivityRef,
   TaskActivitySummary,
+  TaskExecutionReply,
 } from "../types";
 import { executionRecord, executionReply, partiallyPublishedExecution } from "./executionTestFixture";
 import { TaskDetail } from "./TaskDetail";
@@ -2058,6 +2059,28 @@ describe("session time columns and sorting", () => {
 });
 
 describe("the empty-sessions state", () => {
+  it("shows fetched sessions while execution observation is slow and accepts its eventual result", async () => {
+    vi.useFakeTimers();
+    const pending = deferred<TaskExecutionReply>();
+    mocks.getTaskExecution.mockReturnValue(pending.promise);
+    scenario.sessions = [{ ...session({ id: "already-started" }), name: "Already running", name_source: "user", name_error: null }];
+    renderSeededDetail({ initialTask: scenario.task });
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
+    try {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(7000);
+      });
+      expect(screen.getByText("Already running")).toBeDefined();
+      expect(screen.queryByText("No sessions yet.")).toBeNull();
+      await act(async () => {
+        pending.resolve(executionReply([]));
+      });
+      expect(screen.getByText("Retained worker")).toBeDefined();
+    } finally {
+      await act(async () => pending.resolve(executionReply([])));
+    }
+  });
+
   it("never renders before load() settles, and appears once it does", async () => {
     const fixture = task();
     const getTaskDeferred = deferred<Task | null>();
@@ -2068,8 +2091,10 @@ describe("the empty-sessions state", () => {
     mocks.sessionStatuses.mockResolvedValue({});
 
     renderSeededDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
+    expect(screen.getByText("Loading sessions…")).toBeDefined();
 
-    // Do not show an empty graph before the first successful session read.
+    // Do not show an empty list before the first successful session read.
     expect(screen.queryByText("No sessions yet.")).toBeNull();
 
     getTaskDeferred.resolve(fixture);

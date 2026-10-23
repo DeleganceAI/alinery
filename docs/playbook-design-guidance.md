@@ -303,6 +303,10 @@ The ancestry value 0 is not permission to rename existing physical `00-ticket.md
 
 Persistent choices and one-execution intent remain separate. Reconnect must not invent intent or upgrade a stale click to a newer revision. Supported legacy conversion preserves receipts/provenance and stored choices, but never turns an old completion grant into fresh intent or hot-switches a live owner.
 
+Task Detail displays saved sessions without waiting for live execution assessment. Execution observation has one request in flight per task view, so slow results are not discarded by polling. Both session list and graph views distinguish loading from a confirmed empty list.
+
+Execution observation resolves one shared graph for already accepted, exit-confirmed history, preserving each producer's own destinations and blockers. Unsettled executions still receive separate prospective assessments; acceptance without confirmed exit is not settled history.
+
 The external OMP integration orders Alinery-controlled dispatch and selected native entry/tool/queue lifetimes. Missing capability or unknown selected work blocks continuation with a reason. Ordinary review keeps exact dispatch recovery. Native slash-generated queued work can remain unattributed: retain its input, never guess per-command consumption or remove it on transport ACK, and wait for actual selected native settlement. Idle, elapsed time and cancellation are not settlement evidence.
 
 Selected background-job delivery remains owned until its consuming native run settles, whether it resolves or rejects. Failure releases that run's retained work without suppressing the original native error.

@@ -180,10 +180,13 @@ pub enum DispatchOutcome {
 
 /// Saved observations share graph assessment with live observations, but never carry authority.
 pub fn task_execution_reply(repo: &Path, slug: &str, state: TaskExecutionState, definition: crate::playbook::NormalizedPlaybook) -> Result<TaskExecutionReply, String> {
-    use crate::playbook_scheduler::{assess_execution, assess_task, AssessmentReason, ExecutionAssessment, Terminality};
+    use crate::playbook_scheduler::{assess_execution, assess_settled_executions, assess_task, AssessmentReason, ExecutionAssessment, Terminality};
     let assessment = assess_task(&definition, &state)?;
-    let mut executions = std::collections::BTreeMap::new();
+    let mut executions = assess_settled_executions(&definition, &state)?;
     for (id, record) in &state.executions {
+        if executions.contains_key(id) {
+            continue;
+        }
         let publications = if record.receipt_id.is_some() {
             Ok(Vec::new())
         } else {

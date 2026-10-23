@@ -1253,6 +1253,32 @@ pub fn assess_task(definition: &NormalizedPlaybook, state: &TaskExecutionState) 
     Ok(TaskAssessment { status, reasons })
 }
 
+/// Settled producers share the same graph view: projecting their accepted exit
+/// changes nothing. Resolve once instead of cloning and resolving per history row.
+pub(crate) fn assess_settled_executions(definition: &NormalizedPlaybook, state: &TaskExecutionState) -> Result<BTreeMap<String, ExecutionAssessment>, String> {
+    let mut contributed: BTreeMap<_, BTreeSet<String>> = state
+        .executions
+        .iter()
+        .filter(|(_, record)| settled(record))
+        .map(|(id, _)| (id.as_str(), BTreeSet::new()))
+        .collect();
+    if contributed.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    for occurrence in state.occurrences.values() {
+        if let Some(ids) = occurrence.producer_execution_id.as_deref().and_then(|id| contributed.get_mut(id)) {
+            ids.insert(occurrence.id.clone());
+        }
+    }
+    let mut view = WorkingState::Observe { source: state, derived: None };
+    let mut trace = ResolutionTrace::default();
+    let candidates = resolve_graph(definition, &mut view, Some(&mut trace))?;
+    contributed
+        .into_iter()
+        .map(|(id, inputs)| Ok((id.to_owned(), assessment_from_resolution(definition, &candidates, &trace, &inputs)?)))
+        .collect()
+}
+
 /// Project only this producer's validated publications. Prospective occurrence
 /// IDs and successful delivery exist solely in this private resolver view.
 pub fn assess_execution(
@@ -1301,6 +1327,15 @@ pub fn assess_execution(
     projected.receipt_id.get_or_insert_with(|| "prospective-only".into());
     let mut trace = ResolutionTrace::default();
     let candidates = resolve_graph(definition, &mut view, Some(&mut trace))?;
+    assessment_from_resolution(definition, &candidates, &trace, &contributed)
+}
+
+fn assessment_from_resolution(
+    definition: &NormalizedPlaybook,
+    candidates: &[ExecutionCandidate],
+    trace: &ResolutionTrace,
+    contributed: &BTreeSet<String>,
+) -> Result<ExecutionAssessment, String> {
     let mut keys: BTreeSet<_> = candidates
         .iter()
         .filter(|c| c.inputs.values().flatten().any(|id| contributed.contains(id)))
@@ -1308,12 +1343,12 @@ pub fn assess_execution(
         .collect();
     let mut reasons = Vec::new();
     let mut unresolved = false;
-    for held in trace.held.into_iter().filter(|held| !held.inputs.is_disjoint(&contributed)) {
+    for held in trace.held.iter().filter(|held| !held.inputs.is_disjoint(contributed)) {
         unresolved |= held.incompatible;
         if !held.incompatible {
-            keys.insert(held.step_key);
+            keys.insert(held.step_key.clone());
         }
-        reasons.push(held.reason);
+        reasons.push(held.reason.clone());
     }
     let destinations = keys
         .into_iter()
@@ -3593,6 +3628,41 @@ mod tests {
             }
             f.restart();
             assert!(f.tick().is_empty());
+        }
+    }
+
+    #[test]
+    fn shared_history_assessment_preserves_producer_routes_and_exit_boundary() {
+        use InputMode::Single;
+        let mut f = Fixture::new(vec![
+            step("a", &[("ticket.md", Single)], &["a.md"]),
+            step("b", &[("ticket.md", Single)], &["b.md"]),
+            step("leaf", &[("ticket.md", Single)], &["done.md"]),
+            step("join", &[("a.md", Single), ("b.md", Single)], &["answer.md"]),
+        ]);
+        let roots = f.tick();
+        let a = f.named(&roots, "a");
+        let b = f.named(&roots, "b");
+        let leaf = f.named(&roots, "leaf");
+        f.finish(&a, &[("a.md", "a")]);
+        f.finish(&leaf, &[("done.md", "done")]);
+        f.start(&b);
+        f.write(&b, &[("b.md", "b")]);
+        assert!(matches!(f.accept(&b), CompletionOutcome::Accepted { .. }));
+        let before = f.state.clone();
+        let history = assess_settled_executions(&f.definition, &f.state).unwrap();
+        assert!(!history.contains_key(&b), "acceptance without confirmed exit still needs its own projection");
+        assert_eq!(history[&a].destinations[0].step_key, "join");
+        assert_eq!(history[&leaf].terminality, Terminality::Terminal);
+        assert_eq!(f.state, before);
+        for (id, assessment) in history {
+            assert_eq!(assessment, assess_execution(&f.definition, &f.state, &id, &[]).unwrap());
+        }
+        f.exit(&b);
+        let history = assess_settled_executions(&f.definition, &f.state).unwrap();
+        assert_eq!(history[&b].destinations[0].step_key, "join");
+        for (id, assessment) in history {
+            assert_eq!(assessment, assess_execution(&f.definition, &f.state, &id, &[]).unwrap());
         }
     }
 
