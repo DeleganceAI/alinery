@@ -1103,7 +1103,12 @@ export class NativeContinuation {
               // aside consumption. Observe the original result before native commit.
               const run = agent.waitForIdle();
               const jobs = controller.trackJobMessage(message, run);
-              if (jobs) void run.then(() => controller.releaseJobRuns(jobs));
+              if (jobs) {
+                void run.then(
+                  () => controller.releaseJobRuns(jobs),
+                  () => controller.releaseJobRuns(jobs),
+                );
+              }
               return message;
             },
         );
@@ -1559,7 +1564,8 @@ export class NativeContinuation {
     }
   }
 
-  async ready(context: OmpExtensionContext, onRetry?: (reason: string) => void): Promise<CompletionOutcome> {
+  async ready(context: OmpExtensionContext, signal?: AbortSignal, onRetry?: (reason: string) => void): Promise<CompletionOutcome> {
+    signal?.throwIfAborted();
     this.context = context;
     if (this.failure || !this.control) return { status: "unavailable", reason: this.failure ?? "Primary receiver has not bound" };
     try {
@@ -1578,11 +1584,14 @@ export class NativeContinuation {
     }
     const token = this.lifecycleToken;
     const expectedWorkRevision = this.control.work_revision;
-    const outcome = await this.emitCompletion(
-      { type: "readiness_reported", process_incarnation: this.incarnation(), expected_work_revision: expectedWorkRevision },
-      undefined,
-      onRetry,
-    );
+    let outcome: CompletionOutcome;
+    try {
+      outcome = await this.emitCompletion({ type: "readiness_reported", process_incarnation: this.incarnation(), expected_work_revision: expectedWorkRevision }, signal, onRetry);
+    } catch (error) {
+      // A later native settlement must not restart a cancelled tool request.
+      if (signal?.aborted) this.requestedReady = false;
+      throw error;
+    }
     if (outcome.status !== "accepted" && token !== this.lifecycleToken) {
       return { status: "unavailable", reason: this.failure ?? "Continuation lifecycle changed while reporting readiness" };
     }
@@ -1827,7 +1836,7 @@ export function registerCallbacks(
       let outcome: CompletionOutcome;
       try {
         outcome = continuation
-          ? await continuation.ready(context, reportRetry)
+          ? await continuation.ready(context, signal, reportRetry)
           : await emitCompletion({ type: "readiness_reported", process_incarnation: sessionId, expected_work_revision: 0 }, signal, reportRetry);
       } catch (error) {
         if (signal?.aborted) {

@@ -566,19 +566,21 @@ test("external_abort_cannot_reuse_pre_abort_deferred_readiness_after_unwind", as
   }
 });
 
-for (const route of ["idle-prompt", "streaming-thunk"]) {
+for (const route of ["idle-prompt", "streaming-thunk", "failed-streaming-thunk"]) {
   test(`selected_job_delivery_keeps_${route}_owned_after_body_and_receipt`, async () => {
     let releaseBody;
     let releaseReceipt;
     let releaseRun;
+    let rejectRun;
     const body = new Promise((resolve) => {
       releaseBody = resolve;
     });
     const receipt = new Promise((resolve) => {
       releaseReceipt = resolve;
     });
-    const run = new Promise((resolve) => {
+    const run = new Promise((resolve, reject) => {
       releaseRun = resolve;
+      rejectRun = reject;
     });
     let jobId;
     let fixture;
@@ -619,8 +621,15 @@ for (const route of ["idle-prompt", "streaming-thunk"]) {
       releaseReceipt();
       await new Promise((resolve) => setImmediate(resolve));
       assert.equal((await fixture.adapter.ready(fixture.context)).status, "waiting", "a native receipt is not settlement of its consuming run");
-      releaseRun();
-      await (injected ?? run);
+      if (route === "failed-streaming-thunk") {
+        const failure = new Error("native consuming run failed");
+        const observed = assert.rejects(run, (error) => error === failure);
+        rejectRun(failure);
+        await observed;
+      } else {
+        releaseRun();
+        await (injected ?? run);
+      }
       await new Promise((resolve) => setImmediate(resolve));
       assert.equal((await fixture.adapter.ready(fixture.context)).status, "ready");
     } finally {
@@ -2220,6 +2229,39 @@ process.stdin.on("end", () => {
         assert.equal(state().requests.length, 2);
       });
     }
+  });
+
+  test("native_readiness_cancellation_stops_transport_and_deferred_retries_without_shutdown", async (context) => {
+    await withCompletionAttempts(
+      'reply = state.requests.length <= 2 ? { status: "delivery_failed" } : { status: "unavailable", reason: "cancellation was ignored" };',
+      async (emitCompletion, state) => {
+        let reports = 0;
+        const complete = (...args) => {
+          if (++reports === 1) return emitCompletion(...args);
+          return Promise.resolve({ status: "unavailable", reason: "cancelled readiness must not restart" });
+        };
+        const fixture = nativeFixture(undefined, complete);
+        fixture.context.shutdown = () => assert.fail("cancelled, unconfirmed readiness must keep the session open");
+        registerCallbacks(fixture.api, makeRecordingEmitter(), complete, undefined, undefined, undefined, undefined, fixture.adapter);
+        await fixture.adapter.bind(fixture.context);
+        const controller = new AbortController();
+        let updates = 0;
+        try {
+          const output = await fixture.api.callTool("alinery_phase_complete", {}, fixture.context, controller.signal, () => {
+            if (++updates === 2) controller.abort();
+          });
+          assert.equal(output.details.status, "delivery_failed");
+          assert.equal(state().requests.length, 2, "cancelling must stop the real transport retry loop");
+          context.mock.timers.enable({ apis: ["setTimeout"] });
+          await fixture.native.execute("later-work", {}, undefined, undefined, fixture.nativeContext);
+          context.mock.timers.runAll();
+          await new Promise((resolve) => setImmediate(resolve));
+          assert.equal(reports, 1, "later native settlement must not revive the cancelled readiness request");
+        } finally {
+          await fixture.adapter.invalidate("fixture disposed");
+        }
+      },
+    );
   });
 
   test("preserves_receipts_diagnostics_and_nonfatal_outcomes_after_pipe_drain", async () => {

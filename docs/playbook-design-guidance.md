@@ -305,9 +305,13 @@ Persistent choices and one-execution intent remain separate. Reconnect must not 
 
 The external OMP integration orders Alinery-controlled dispatch and selected native entry/tool/queue lifetimes. Missing capability or unknown selected work blocks continuation with a reason. Ordinary review keeps exact dispatch recovery. Native slash-generated queued work can remain unattributed: retain its input, never guess per-command consumption or remove it on transport ACK, and wait for actual selected native settlement. Idle, elapsed time and cancellation are not settlement evidence.
 
+Selected background-job delivery remains owned until its consuming native run settles, whether it resolves or rejects. Failure releases that run's retained work without suppressing the original native error.
+
 With an empty composer, **Send now** transfers the selected queued dispatch rather than submitting a second copy. A definite refusal removes only the replacement's optimistic row and recovery record; the original queue item and current composer remain unchanged. Unknown delivery retains recovery without automatic resend or a claim that the original is still queued. Transfer validation and notification failures use the native operation's normal cleanup path. Failure after queue removal but before confirmed consumption is uncertain and blocks continuation rather than being reported as a definite refusal.
 
 After the agent requests readiness, later selected native work or maintenance invalidates the ready snapshot but retains the request to revalidate after actual settlement. This restores normal Continue without another agent completion call. A new review message or explicit cancellation supersedes that request; an old delayed readiness reply cannot restore it. Revalidation does not reuse a human Continue click, publish artifacts, or treat Idle as settlement.
+
+Cancelling an in-flight completion tool stops its readiness transport retries and clears the deferred request, so later native settlement cannot restart it. It does not cancel an already-requested continuation's finalization recovery; ambiguous acceptance still requires receipt recovery.
 
 The current stock OMP boundary cannot acknowledge that arbitrary submitted terminal bytes, including deferred input, have drained. Such input remains unresolved and blocks ordinary Continue for that owner; switching views, observing idle or reporting readiness again does not clear it. Chat/RPC provides the correlated review path. This limitation must not be described as successful raw-terminal settlement coverage.
 
