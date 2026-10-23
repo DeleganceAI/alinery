@@ -1027,6 +1027,9 @@ fn format_socket_write_error(error: std::io::Error) -> String {
 #[derive(Clone, Debug)]
 pub struct DaemonClient {
     pub socket_path: PathBuf,
+    /// Budget for the `*_observed` reads. A local socket answers in microseconds; a socket
+    /// forwarded over ssh costs round trips, so remote clients raise it via `with_observe_timeout`.
+    pub observe_timeout: Duration,
 }
 
 impl DaemonClient {
@@ -1056,12 +1059,17 @@ impl DaemonClient {
     }
 
     pub fn connect_path(socket_path: PathBuf) -> Result<Self, String> {
-        Ok(Self { socket_path })
+        Ok(Self { socket_path, observe_timeout: DAEMON_OBSERVATION_TIMEOUT })
     }
 
     pub fn connect_path_checked(socket_path: PathBuf) -> Result<Self, String> {
         UnixStream::connect(&socket_path).map_err(|error| format!("daemon not running: {error}"))?;
-        Ok(Self { socket_path })
+        Self::connect_path(socket_path)
+    }
+
+    pub fn with_observe_timeout(mut self, timeout: Duration) -> Self {
+        self.observe_timeout = timeout;
+        self
     }
 
     // Timeouts are set before write_all so a wedged daemon can't hang the write side either.
@@ -1096,7 +1104,7 @@ impl DaemonClient {
     }
 
     pub fn version_checked(&self) -> Result<DaemonVersionReply, String> {
-        self.call_with_timeout(&version_request(), DAEMON_OBSERVATION_TIMEOUT)
+        self.call_with_timeout(&version_request(), self.observe_timeout)
             .map(|value| parse_version_reply(&value))
     }
 
@@ -1140,7 +1148,7 @@ impl DaemonClient {
     }
 
     pub fn session_status_observed(&self, id: &str) -> Result<Option<LiveSessionStatus>, String> {
-        let response = self.call_with_timeout(&status_request(id), DAEMON_OBSERVATION_TIMEOUT)?;
+        let response = self.call_with_timeout(&status_request(id), self.observe_timeout)?;
         parse_status_reply(&response)
     }
 
@@ -1234,7 +1242,7 @@ impl DaemonClient {
     }
 
     pub fn session_statuses_observed(&self) -> Result<Vec<DaemonSessionStatus>, String> {
-        parse_list_reply(&self.call_with_timeout(&list_request(), DAEMON_OBSERVATION_TIMEOUT)?)
+        parse_list_reply(&self.call_with_timeout(&list_request(), self.observe_timeout)?)
     }
 }
 
@@ -1460,6 +1468,14 @@ mod tests {
     use std::os::unix::net::UnixListener;
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn observe_timeout_defaults_to_local_budget_and_can_be_raised_for_remote() {
+        let client = DaemonClient::connect_path(PathBuf::from("/tmp/ai-none.sock")).unwrap();
+        assert_eq!(client.observe_timeout, DAEMON_OBSERVATION_TIMEOUT);
+        let remote = client.with_observe_timeout(Duration::from_secs(3));
+        assert_eq!(remote.observe_timeout, Duration::from_secs(3));
+    }
 
     #[test]
     fn bound_connection_rejects_same_pid_with_different_start() {

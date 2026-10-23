@@ -147,12 +147,32 @@ impl Default for AppearancePrefs {
     }
 }
 
+/// An SSH host that remote repos (`alinery+ssh://<host-id>/…`) live on. `ssh_args` is the
+/// already-validated destination (host plus allowlisted flags); the probed fields are filled on
+/// connect.
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+pub(crate) struct RemoteHost {
+    #[serde(default)]
+    pub(crate) label: String,
+    #[serde(default)]
+    pub(crate) ssh_args: Vec<String>,
+    #[serde(default)]
+    pub(crate) home: Option<String>,
+    #[serde(default)]
+    pub(crate) platform: Option<String>,
+    #[serde(default)]
+    pub(crate) glibc: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct AppConfig {
     #[serde(default)]
     pub(crate) active_repo: String,
     #[serde(default)]
     pub(crate) known_repos: Vec<String>,
+    /// Keyed by host id. Core's `AppConfig` has no such key and ignores it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) remote_hosts: BTreeMap<String, RemoteHost>,
     #[serde(default = "default_true")]
     pub(crate) mcp_enabled: bool,
     #[serde(default)]
@@ -172,6 +192,7 @@ impl Default for AppConfig {
         Self {
             active_repo: String::new(),
             known_repos: vec![],
+            remote_hosts: BTreeMap::new(),
             mcp_enabled: true,
             appearance: AppearancePrefs::default(),
             settings_version: 1,

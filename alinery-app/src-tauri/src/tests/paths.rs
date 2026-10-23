@@ -149,3 +149,27 @@ fn app_config_path_for_development_uses_unknown_for_missing_or_empty_provenance(
     );
     assert_ne!(expected, config_dir.join("app.toml"));
 }
+
+#[test]
+fn repo_ref_parses_local_paths_and_remote_uris() {
+    use crate::paths::RepoRef;
+    assert_eq!(RepoRef::parse("/Users/me/repo").unwrap(), RepoRef::Local("/Users/me/repo".into()));
+    let remote = RepoRef::parse("alinery+ssh://devbox-a1b2c3/home/me/my repo").unwrap();
+    assert_eq!(remote, RepoRef::Remote { host_id: "devbox-a1b2c3".into(), path: "/home/me/my repo".into() });
+    assert_eq!(remote.uri(), "alinery+ssh://devbox-a1b2c3/home/me/my repo");
+}
+
+#[test]
+fn repo_ref_rejects_malformed_remote_uris() {
+    use crate::paths::RepoRef;
+    for bad in ["alinery+ssh://", "alinery+ssh://host", "alinery+ssh:///path", "alinery+ssh://host/"] {
+        assert!(RepoRef::parse(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn remote_keys_never_resolve_as_local_target_repos() {
+    let known = vec!["alinery+ssh://devbox-a1b2c3/home/me/repo".to_string()];
+    let err = crate::paths::validate_known_target_repo(&known, &known[0]).unwrap_err();
+    assert!(err.contains("not yet available for remote"), "{err}");
+}

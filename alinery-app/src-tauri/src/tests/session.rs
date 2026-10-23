@@ -1354,7 +1354,7 @@ fn overlapping_resumes_of_one_thread_mint_and_launch_one_successor() {
         }
         ops
     });
-    let client = alinery_core::DaemonClient { socket_path: socket.clone() };
+    let client = alinery_core::DaemonClient::connect_path(socket.clone()).unwrap();
     let (first, second) = std::thread::scope(|scope| {
         let first = scope.spawn(|| resume_chat_thread_in(&repo, "s-pred", Some(&client)));
         let second = scope.spawn(|| resume_chat_thread_in(&repo, "s-pred", Some(&client)));
@@ -1465,7 +1465,7 @@ fn resume_chat_with_predecessor_name(source: alinery_core::SessionNameSource) ->
             writeln!(stream, "{reply}").unwrap();
         }
     });
-    let client = alinery_core::DaemonClient { socket_path: socket.clone() };
+    let client = alinery_core::DaemonClient::connect_path(socket.clone()).unwrap();
     let successor = resume_chat_thread_in(&repo, "s-pred", Some(&client)).unwrap();
     daemon.join().unwrap();
     let name = alinery_core::read_session_name(&repo, "", &successor.id).unwrap().expect("successor keeps the thread name");

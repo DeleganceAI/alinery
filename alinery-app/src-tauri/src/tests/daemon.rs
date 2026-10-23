@@ -1541,9 +1541,7 @@ impl TakeoverPeer {
             .unwrap();
         let mut peer = Self { child, root, lane: lane.into() };
         let until = Instant::now() + Duration::from_secs(5);
-        let client = DaemonClient {
-            socket_path: alinery_core::alineryd_socket_path(repo, Some(lane)),
-        };
+        let client = DaemonClient::connect_path(alinery_core::alineryd_socket_path(repo, Some(lane))).unwrap();
         while client.version_checked().is_err() {
             assert!(peer.child.try_wait().unwrap().is_none());
             assert!(Instant::now() < until, "legacy peer did not become queryable");
@@ -1724,11 +1722,10 @@ fn refused_shutdown_consumes_consent_without_attaching_replacement() {
     assert_eq!(peer.shutdowns(), 1);
     assert!(state.daemon_for(&repo.0).is_none());
     assert!(!crate::current_alineryd_socket_path(&repo.0).exists());
-    assert!(DaemonClient {
-        socket_path: alinery_core::alineryd_socket_path(&repo.0, Some("old"))
-    }
-    .version_checked()
-    .is_ok());
+    assert!(DaemonClient::connect_path(alinery_core::alineryd_socket_path(&repo.0, Some("old")))
+        .unwrap()
+        .version_checked()
+        .is_ok());
 }
 
 #[test]

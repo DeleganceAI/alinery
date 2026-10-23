@@ -9,12 +9,63 @@ pub(crate) fn active_repo_cell() -> &'static RwLock<Option<PathBuf>> {
     ACTIVE_REPO.get_or_init(|| RwLock::new(None))
 }
 
-pub(crate) fn active_repo() -> Result<PathBuf, String> {
-    active_repo_cell()
+const REMOTE_REPO_SCHEME: &str = "alinery+ssh://";
+
+/// A known-repo entry. Remote entries are `alinery+ssh://<host-id>/<absolute remote path>`
+/// and name a path on another machine, so they must never reach a local filesystem call:
+/// parse once at the command boundary, then branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RepoRef {
+    Local(PathBuf),
+    Remote { host_id: String, path: String },
+}
+
+impl RepoRef {
+    pub(crate) fn parse(key: &str) -> Result<Self, String> {
+        let Some(rest) = key.strip_prefix(REMOTE_REPO_SCHEME) else {
+            return Ok(Self::Local(PathBuf::from(key)));
+        };
+        match rest.split_once('/') {
+            Some((host_id, path)) if !host_id.is_empty() && !path.is_empty() => {
+                Ok(Self::Remote { host_id: host_id.to_string(), path: format!("/{path}") })
+            }
+            _ => Err(format!("malformed remote repository: {key}")),
+        }
+    }
+
+    pub(crate) fn uri(&self) -> String {
+        match self {
+            Self::Local(path) => path.to_string_lossy().into_owned(),
+            Self::Remote { host_id, path } => format!("{REMOTE_REPO_SCHEME}{host_id}{path}"),
+        }
+    }
+}
+
+pub(crate) fn is_remote_repo_key(key: &str) -> bool {
+    key.starts_with(REMOTE_REPO_SCHEME)
+}
+
+fn remote_unavailable(key: &str) -> String {
+    format!("this action is not yet available for remote repository {key}")
+}
+
+/// The active repo exactly as stored, local path or remote URI.
+pub(crate) fn active_repo_ref() -> Result<RepoRef, String> {
+    let key = active_repo_cell()
         .read()
         .map_err(|e| e.to_string())?
         .clone()
-        .ok_or_else(|| "no active repo selected".to_string())
+        .ok_or_else(|| "no active repo selected".to_string())?;
+    RepoRef::parse(&key.to_string_lossy())
+}
+
+/// The active repo as a local path. Fails closed for a remote repo, so every command that has
+/// not been moved onto the repo service refuses instead of touching a nonexistent local path.
+pub(crate) fn active_repo() -> Result<PathBuf, String> {
+    match active_repo_ref()? {
+        RepoRef::Local(path) => Ok(path),
+        remote => Err(remote_unavailable(&remote.uri())),
+    }
 }
 
 pub(crate) fn set_active_repo_global(repo: Option<PathBuf>) -> Result<(), String> {
@@ -81,6 +132,9 @@ pub(crate) fn app_config_path<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<P
 // the user. Canonicalize both sides so spelling/symlink differences cannot fall back to the
 // process-wide active repository.
 pub(crate) fn validate_known_target_repo(known_repos: &[String], requested: &str) -> Result<PathBuf, String> {
+    if is_remote_repo_key(requested) {
+        return Err(remote_unavailable(requested));
+    }
     alinery_core::resolve_target_repo(requested, None, known_repos)
 }
 
