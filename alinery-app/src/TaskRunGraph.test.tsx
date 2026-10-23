@@ -45,6 +45,33 @@ const occurrence = (id: string, producer: string | null, path = `${id}.md`): Art
 
 afterEach(cleanup);
 
+it("shows recoverable instead of exited, and completed when the step was accepted", () => {
+  const failed = executionRecord({ id: "e-failed", owner_session_id: "failed", lifecycle: "failed", receipt_id: null, shutdown_confirmed: true });
+  const done = executionRecord({ id: "e-done", owner_session_id: "done", lifecycle: "completed", receipt_id: "e-done", shutdown_confirmed: true });
+  const stopped = executionRecord({ id: "e-stopped", owner_session_id: "stopped", lifecycle: "running", receipt_id: null });
+  render(
+    <TaskRunGraph
+      sessions={[
+        session("failed", { harness: "vinculum", ended_at: 10, exit_code: 0 }),
+        session("done", { harness: "vinculum", ended_at: 11, exit_code: 0 }),
+        session("stopped", { harness: "vinculum", ended_at: 12, exit_code: 0 }),
+      ]}
+      state={executionReply([failed, done, stopped]).state}
+      observations={{
+        failed: { lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} },
+        done: { lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} },
+        stopped: { lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} },
+      }}
+      onOpenSession={vi.fn()}
+      onOpenArtifact={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "Open session failed" }).textContent).toContain("Recoverable");
+  expect(screen.getByRole("button", { name: "Open session done" }).textContent).toContain("Completed");
+  expect(screen.getByRole("button", { name: "Open session stopped" }).textContent).toContain("Exited");
+  expect(screen.getByRole("button", { name: "Open session failed" }).textContent).not.toContain("Exited");
+});
+
 it("zooms out to one percent with buttons and wheel, and resets from the lower bound", () => {
   render(<TaskRunGraph sessions={[session("worker")]} state={null} onOpenSession={vi.fn()} onOpenArtifact={vi.fn()} />);
   const zoomOut = screen.getByRole("button", { name: "Zoom out run graph" }) as HTMLButtonElement;

@@ -27,7 +27,7 @@ pub fn load_root_omp(repo: &Path, id: &str) -> Result<SessionMeta, String> {
         return Err("invalid session id".into());
     }
     let meta = crate::board::load_session_meta(repo, "", id)?;
-    if meta.id != id || meta.harness != crate::DEFAULT_HARNESS_KEY || !meta.generic {
+    if meta.id != id || !crate::is_vinculum_session(&meta.harness) || !meta.generic {
         return Err("not a chat thread".into());
     }
     Ok(meta)
@@ -48,7 +48,7 @@ fn root_omp_metas(repo: &Path) -> Vec<SessionMeta> {
             let raw = fs::read_to_string(entry.path()).ok()?;
             serde_json::from_str::<SessionMeta>(&raw).ok()
         })
-        .filter(|meta| meta.harness == crate::DEFAULT_HARNESS_KEY)
+        .filter(|meta| crate::is_vinculum_session(&meta.harness))
         .collect()
 }
 

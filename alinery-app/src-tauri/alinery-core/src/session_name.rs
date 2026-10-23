@@ -65,7 +65,7 @@ fn validate_target(repo: &Path, slug: &str, id: &str) -> Result<SessionMeta, Str
         let path = session_meta_path(repo, slug, id);
         crate::paths::validate_retained_file(repo, &path)?;
         let meta: SessionMeta = serde_json::from_slice(&bounded_read(&path, 1024 * 1024)?).map_err(|_| "invalid session metadata")?;
-        if meta.id != id || meta.harness != crate::DEFAULT_HARNESS_KEY || !meta.generic {
+        if meta.id != id || !crate::is_vinculum_session(&meta.harness) || !meta.generic {
             return Err("invalid task slug or session id".into());
         }
         return Ok(meta);

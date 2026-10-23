@@ -83,11 +83,13 @@ import {
   harnessDisplayName,
   InlineStatus,
   isAllowedLaunchHarness,
+  isVinculumHarness,
   LoadingState,
   StatusDot,
   sameArtifactListItems,
 } from "../shared";
 import { toast } from "../toast";
+import { sessionIsRecoverable, sessionTerminalLabel } from "../vinculumHarness";
 import type {
   AppearancePrefs,
   ArtifactListItem,
@@ -309,6 +311,7 @@ export function SessionView({
   const [executionError, setExecutionError] = useState("");
   const executionAvailable = executionView?.live?.status === "available" && !executionError;
   const [completionBusy, setCompletionBusy] = useState(false);
+  const [dismissedCompletionId, setDismissedCompletionId] = useState("");
   const [completionGrant, setCompletionGrant] = useState<{ sessionId: string; requestId: string } | null>(null);
   const grantedCompletionRequestId = completionGrant?.sessionId === id ? completionGrant.requestId : null;
   const execution = Object.values(executionView?.state.executions ?? {}).find((record) => record.owner_session_id === id || record.previous_session_ids.includes(id));
@@ -327,7 +330,7 @@ export function SessionView({
   const [chat, setChat] = useState<ChatTranscriptState>(emptyTranscript);
   const [modelDialog, setModelDialog] = useState<{ tab: ProvidersDialogTab; preselect: string; setup?: boolean } | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
-  const providerAccess = useProviderAccess(harness === "omp");
+  const providerAccess = useProviderAccess(isVinculumHarness(harness));
   const [modelRoles, setModelRoles] = useState<ModelRolesMap>({});
   const [hosted, setHosted] = useState<HostedCatalogView | null>(null);
   const [hostedLoaded, setHostedLoaded] = useState(false);
@@ -1286,12 +1289,12 @@ export function SessionView({
     utilityTerminal: !hasTask,
     harness,
   });
-  const vinculum = harness === "omp";
+  const vinculum = isVinculumHarness(harness);
   const liveRpc = observation?.transport === "rpc";
   // Exited RPC sessions still support replay, but their processes cannot accept commands.
   const rpcProcessLive = liveRpc && observation?.lifecycle.state === "live" && observation.state?.process.state === "alive";
   const livePty = observation?.transport === "pty";
-  const ompCoding = harness === "omp" && !leftover && !navHistory && !showPanel;
+  const ompCoding = vinculum && !leftover && !navHistory && !showPanel;
   const showChat = ompCoding && Boolean(termIntent) && !livePty;
   const showPtyTerminal = Boolean(termIntent) && !showChat;
   const showHatch = !vinculum && ompCoding && observation?.lifecycle.state === "live" && (liveRpc || livePty);
@@ -1354,7 +1357,7 @@ export function SessionView({
   }, [id, loadOmpPage]);
 
   useEffect(() => {
-    if (vinculum || harness !== "omp") return;
+    if (vinculum || !isVinculumHarness(harness)) return;
     void seedOmpJournal();
   }, [vinculum, harness, seedOmpJournal]);
 
@@ -1764,26 +1767,49 @@ export function SessionView({
     [chat.pendingUi],
   );
   const completionCopy = useMemo(() => completionPrompt(executionView?.definition, execution), [executionView?.definition, execution]);
-  const chatEntries = useMemo(
-    () =>
-      chat.entries.map(
-        (entry): ChatEntry =>
-          entry.type === "approval" && completionRequestIds.has(entry.requestId)
-            ? {
-                ...entry,
-                ...completionCopy,
-                detail:
-                  grantedCompletionRequestId === entry.requestId
-                    ? "You already chose to finish this step, but the reply did not reach the agent. Retry the handoff to let the agent finish; this does not grant permission again."
-                    : completionCopy.detail,
-                allowLabel: grantedCompletionRequestId === entry.requestId ? "Retry handoff" : completionCopy.allowLabel,
-                disabled: !liveRpc || navHistory || !completionAvailable || completionBusy,
-                denyDisabled: grantedCompletionRequestId === entry.requestId,
-              }
-            : entry,
-      ),
-    [chat.entries, completionRequestIds, completionCopy, liveRpc, navHistory, completionAvailable, completionBusy, grantedCompletionRequestId],
-  );
+  // Vinculum has no extension confirm card. The locked execution itself is the request.
+  const vinculumCompletionRequestId =
+    vinculum && completionAvailable && execution?.permission.kind === "locked" && dismissedCompletionId !== `vinculum-completion:${execution.id}`
+      ? `vinculum-completion:${execution.id}`
+      : "";
+  const chatEntries = useMemo(() => {
+    const entries = chat.entries.map(
+      (entry): ChatEntry =>
+        entry.type === "approval" && completionRequestIds.has(entry.requestId)
+          ? {
+              ...entry,
+              ...completionCopy,
+              detail:
+                grantedCompletionRequestId === entry.requestId
+                  ? "You already chose to finish this step, but the reply did not reach the agent. Retry the handoff to let the agent finish; this does not grant permission again."
+                  : completionCopy.detail,
+              allowLabel: grantedCompletionRequestId === entry.requestId ? "Retry handoff" : completionCopy.allowLabel,
+              disabled: !liveRpc || navHistory || !completionAvailable || completionBusy,
+              denyDisabled: grantedCompletionRequestId === entry.requestId,
+            }
+          : entry,
+    );
+    if (!vinculumCompletionRequestId) return entries;
+    entries.push({
+      id: vinculumCompletionRequestId,
+      type: "approval",
+      requestId: vinculumCompletionRequestId,
+      actor: { kind: "system", name: "Alinery" },
+      ...completionCopy,
+      disabled: navHistory || completionBusy,
+    });
+    return entries;
+  }, [
+    chat.entries,
+    completionRequestIds,
+    completionCopy,
+    liveRpc,
+    navHistory,
+    completionAvailable,
+    completionBusy,
+    grantedCompletionRequestId,
+    vinculumCompletionRequestId,
+  ]);
   const turnActive = isTurnActive({
     pendingTurn: chat.pendingTurn,
     turnOpen: chat.turnOpen,
@@ -1792,7 +1818,7 @@ export function SessionView({
   const chatStatus: SessionChatStatus = chat.sessionMeta.isCompacting || pendingUiReply ? "waiting_approval" : turnActive ? "running" : "idle";
   const agentState = observedState?.agent?.state;
   // A real approval card sets `pendingUiReply`, which already switches the composer to waiting and hides Stop.
-  // Vinculum completion permission is only an agent state: no card is coming, and Stop has to stay available.
+  // Vinculum's finish card is not one of those requests, so Stop stays available and the composer still sends.
   const composerCanAbort = canAbortChatSession(messageReadiness);
   const sendNowEnabled =
     turnActive &&
@@ -1850,6 +1876,29 @@ export function SessionView({
     // The row stays mounted across the await, so without this a double-click sends two responses.
     if (handledUiRef.current.has(requestId)) return;
     handledUiRef.current.add(requestId);
+    if (vinculumCompletionRequestId && requestId === vinculumCompletionRequestId) {
+      if (!allow) {
+        setDismissedCompletionId(requestId);
+        handledUiRef.current.delete(requestId);
+        return;
+      }
+      if (!execution || !completionAvailable || completionBusy) {
+        handledUiRef.current.delete(requestId);
+        return;
+      }
+      setCompletionBusy(true);
+      try {
+        await ipc.allowExecutionCompletion(taskSlug, execution.id, id, repoPath);
+        setExecutionView(await readTaskExecution(repoPath, taskSlug));
+        setExecutionError("");
+      } catch (error) {
+        setExecutionError(String(error));
+      } finally {
+        handledUiRef.current.delete(requestId);
+        setCompletionBusy(false);
+      }
+      return;
+    }
     const request = chatRef.current.pendingUi.find((pending) => pending.id === requestId);
     if (completionRequestIds.has(requestId)) {
       if (!liveRpc || navHistory || !completionAvailable || completionBusy || !execution || (!allow && grantedCompletionRequestId === requestId)) {
@@ -1955,6 +2004,23 @@ export function SessionView({
     }
   };
 
+  const terminalLabel = sessionTerminalLabel(harness, id, execution, effectiveLifecycle?.state === "exited" || effectiveLifecycle?.state === "interrupted" || effectiveLifecycle?.state === "orphaned");
+  const canRecoverSession = executionAvailable && sessionIsRecoverable(harness, id, execution);
+  const recoverSession = async () => {
+    if (!canRecoverSession || completionBusy) return;
+    setCompletionBusy(true);
+    try {
+      await ipc.startSession(taskSlug, id, repoPath);
+      setObservation(await ipc.sessionStatus(id, taskSlug));
+      setReclassifyTick((tick) => tick + 1);
+      setExecutionView(await readTaskExecution(repoPath, taskSlug));
+      setExecutionError("");
+    } catch (error) {
+      setExecutionError(String(error));
+    } finally {
+      setCompletionBusy(false);
+    }
+  };
   const finalizedNotice = task ? finalizedSubtaskNotice(task, parentTask) : "";
   const awaitingName = display != null && awaitingSessionName({ ...display.session, harness: display.session.harness || harness }, observation);
 
@@ -2006,7 +2072,7 @@ export function SessionView({
         <span className="pill" title={vinculum && turnActive ? NEXT_TURN_MODEL_TITLE : undefined}>
           {harnessDisplayName(harness) + (chatMetaHead ? ` · ${chatMetaHead}` : "")}
         </span>
-        <StatusDot id={id} slug={taskSlug} repoPath={repoPath} observation={observation} />
+        <StatusDot id={id} slug={taskSlug} repoPath={repoPath} observation={observation} terminalLabel={terminalLabel} />
         <span className="session-path dim mono">
           {id} · {cwd}
         </span>
@@ -2100,7 +2166,7 @@ export function SessionView({
               {/* `liveRpc` is false the moment the session dies, which used to drop a finished OMP
                   chat onto the PTY terminal and a `.scrollback` an RPC session never wrote. The
                   journal does not need the session to be alive. */}
-              {liveRpc || harness === "omp" ? (
+              {liveRpc || vinculum ? (
                 <>
                   <ChatPane
                     entries={chatEntries}
@@ -2270,9 +2336,11 @@ export function SessionView({
                 archiveBusy={archiveBusy}
                 onViewHistory={() => setShowHistory(true)}
                 onKilled={() => setReclassifyTick((n) => n + 1)}
+                onRecover={canRecoverSession ? () => void recoverSession() : undefined}
+                recoverBusy={completionBusy}
               />
               {showHistory &&
-                (harness === "omp" ? (
+                (vinculum ? (
                   <div className="terminal-frame">
                     <ChatPane entries={chat.entries} status="idle" visibility={chatVisibility} onLoadOlder={loadOlder} loadingOlder={loadingOlder} atStart={chat.fileStart === 0} />
                     <ChatComposer body="" status="idle" catalog={[]} showHints={false} readOnly onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} />

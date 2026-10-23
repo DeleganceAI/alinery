@@ -54,6 +54,7 @@ import {
   taskKey,
   useMinuteNow,
 } from "../shared";
+import { sessionTerminalLabel } from "../vinculumHarness";
 import { TaskRunGraph } from "../TaskRunGraph";
 import { toast } from "../toast";
 import type {
@@ -1541,6 +1542,7 @@ export function TaskDetail({
                             unreadCompletion={unreadCompletion}
                             exitCode={s.exit_code}
                             exitAcknowledged={hasAcknowledgedExit(s)}
+                            terminalLabel={superseded ? null : sessionTerminalLabel(s.harness, s.id, execution, s.ended_at != null || obs?.lifecycle.state === "exited")}
                           />
                         </td>
                         <td className="session-name-cell editable-name">
@@ -1552,7 +1554,7 @@ export function TaskDetail({
                             <span className="pill" title={sessionType}>
                               {sessionType}
                             </span>
-                            {execution && <span className="pill">{execution.lifecycle}</span>}
+                            {execution && <span className="pill">{sessionTerminalLabel(s.harness, s.id, superseded ? undefined : execution, s.ended_at != null || obs?.lifecycle.state === "exited") ?? execution.lifecycle}</span>}
                             {s.archived && <span className="pill session-archived">Archived</span>}
                             {resumedBy && <span className="pill dim">Resumed</span>}
                           </div>

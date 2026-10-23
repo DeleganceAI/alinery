@@ -268,3 +268,156 @@ test('nested fan-in: an omitted intermediate leaves the downstream collection in
   assert.equal(byStep(engine, 'synthesize').length, 0);
   assert.deepEqual(engine.diagnose().blocked, [{ step: 'synthesize', selector: 'extraction*.md', reason: 'no extract execution represents source-2.md' }]);
 });
+
+test('task gate: a step left out of the set stays locked even when the playbook default is automatic', async () => {
+  const pb = playbook([
+    step('locked', { autoAdvanceDefault: true, inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'locked.md' }] }),
+    step('open', { autoAdvanceDefault: false, inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'open.md' }] }),
+  ]);
+  const dir = taskDir();
+  let enabled = ['open'];
+  let approveAll = false;
+  const engine = openEngine(pb, new FakeHarness(async () => {}), dir, {
+    enabledSteps: () => enabled,
+    autoApproveAll: () => approveAll,
+  });
+  engine.seed(seedTicket(dir));
+  await engine.tick();
+  await new Promise((r) => setImmediate(r));
+  const locked = byStep(engine, 'locked')[0];
+  const open = byStep(engine, 'open')[0];
+  writeText(join(locked.outDir, 'locked.md'), 'x');
+  writeText(join(open.outDir, 'open.md'), 'x');
+  assert.equal(locked.automatic, false);
+  assert.equal(open.automatic, true);
+  assert.equal((await engine.requestCompletion(locked.id)).kind, 'permission-required');
+  approveAll = true;
+  assert.equal((await engine.requestCompletion(locked.id)).kind, 'accepted');
+  enabled = [];
+  assert.equal((await engine.requestCompletion(open.id)).kind, 'accepted');
+});
+
+test('task gate: turning approve-all off rejects the next attempt, and a grant still finishes a locked step', async () => {
+  const pb = playbook([step('review', { autoAdvanceDefault: true, inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'r.md' }] })]);
+  const dir = taskDir();
+  let approveAll = true;
+  const engine = openEngine(pb, new FakeHarness(async () => {}), dir, { enabledSteps: () => [], autoApproveAll: () => approveAll });
+  engine.seed(seedTicket(dir));
+  await engine.tick();
+  await new Promise((r) => setImmediate(r));
+  const [review] = byStep(engine, 'review');
+  writeText(join(review.outDir, 'r.md'), 'x');
+  approveAll = false;
+  assert.equal((await engine.requestCompletion(review.id)).kind, 'permission-required');
+  await engine.permit(review.id);
+  assert.equal((await engine.requestCompletion(review.id)).kind, 'accepted');
+});
+
+test('task gate: a step in the set completes with no grant', async () => {
+  const pb = playbook([step('build', { autoAdvanceDefault: false, inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'b.md' }] })]);
+  const dir = taskDir();
+  const engine = openEngine(pb, new FakeHarness(async () => {}), dir, { enabledSteps: () => ['build'], autoApproveAll: () => false });
+  engine.seed(seedTicket(dir));
+  await engine.tick();
+  await new Promise((r) => setImmediate(r));
+  const [build] = byStep(engine, 'build');
+  writeText(join(build.outDir, 'b.md'), 'x');
+  assert.equal((await engine.requestCompletion(build.id)).kind, 'accepted');
+});
+
+test('capacity: the cap is read at launch, and zero launches nothing', async () => {
+  const pb = playbook([
+    step('a', { inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'a.md' }] }),
+    step('b', { inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'b.md' }] }),
+  ]);
+  const dir = taskDir();
+  let cap = 1;
+  const engine = openEngine(pb, new FakeHarness(async () => {}), dir, { maxLiveSessions: () => cap });
+  engine.seed(seedTicket(dir));
+  await engine.tick();
+  assert.equal([...engine.state.executions.values()].filter((e) => e.status === 'live').length, 1);
+  assert.equal([...engine.state.executions.values()].filter((e) => e.status === 'reserved').length, 1);
+  cap = 2;
+  await engine.tick();
+  assert.equal([...engine.state.executions.values()].filter((e) => e.status === 'live').length, 2);
+
+  const quiet = taskDir();
+  const blocked = openEngine(pb, new FakeHarness(async () => {}), quiet, { maxLiveSessions: () => 0 });
+  blocked.seed(seedTicket(quiet));
+  await blocked.tick();
+  assert.equal([...blocked.state.executions.values()].filter((e) => e.status === 'live').length, 0);
+  assert.equal([...blocked.state.executions.values()].filter((e) => e.status === 'reserved').length, 2);
+});
+
+test('a failed status frees the slot, and resume launches that same execution once', async () => {
+  const pair = playbook([
+    step('a', { inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'a.md' }] }),
+    step('b', { inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'b.md' }] }),
+  ]);
+  const dir = taskDir();
+  const harness = new FakeHarness(async () => {});
+  const engine = openEngine(pair, harness, dir, { maxLiveSessions: 1 });
+  engine.seed(seedTicket(dir));
+  await engine.tick();
+  const live = [...engine.state.executions.values()].find((e) => e.status === 'live')!;
+  harness.crash(live.sessionId!);
+  await engine.tick();
+  assert.equal(engine.state.executions.get(live.id)?.status, 'failed');
+  const next = [...engine.state.executions.values()].filter((e) => e.status === 'live');
+  assert.equal(next.length, 1);
+  assert.notEqual(next[0].id, live.id);
+
+  const one = playbook([step('s', { inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'a.md' }] })]);
+  const again = taskDir();
+  const resumed = new FakeHarness(async () => {});
+  const recovery = openEngine(one, resumed, again);
+  recovery.seed(seedTicket(again));
+  await recovery.tick();
+  const failed = byStep(recovery, 's')[0];
+  const sessionId = failed.sessionId;
+  resumed.crash(sessionId!);
+  await recovery.tick();
+  await recovery.resume(failed.id);
+  assert.equal(byStep(recovery, 's').length, 1);
+  assert.equal(recovery.state.executions.get(failed.id)?.status, 'live');
+  assert.equal(recovery.state.executions.get(failed.id)?.sessionId, sessionId);
+  assert.equal(resumed.sessions.size, 1);
+});
+
+test('confirmExited records a process that is already gone and does not resume it', async () => {
+  const pb = playbook([step('s', { inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'a.md' }] })]);
+  const dir = taskDir();
+  const harness = new FakeHarness(async () => {});
+  const engine = openEngine(pb, harness, dir);
+  engine.seed(seedTicket(dir));
+  await engine.tick();
+  const [execution] = byStep(engine, 's');
+  const runs = harness.sessions.get(execution.sessionId!)!.runs;
+  engine.confirmExited(execution.id);
+  assert.equal(execution.status, 'failed');
+  assert.equal(harness.sessions.get(execution.sessionId!)!.runs, runs);
+});
+
+test('step tokens replace the extra and the handoff for that launch only', async () => {
+  const pb = playbook([
+    step('review', { prompt: 'extra {{PROMPT_EXTRA}} handoff {{REVIEW_HANDOFF_FILE}} history {{SESSION_HISTORY_DIR}}', inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'r.md' }] }),
+    step('build', { prompt: 'extra {{PROMPT_EXTRA}} handoff {{REVIEW_HANDOFF_FILE}} history {{SESSION_HISTORY_DIR}}', inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'b.md' }] }),
+  ]);
+  const dir = taskDir();
+  const harness = new FakeHarness(async () => {});
+  const engine = openEngine(pb, harness, dir, {
+    tokens: { SESSION_HISTORY_DIR: '/task/sessions' },
+    stepTokens: (step) => (step === 'review' ? { PROMPT_EXTRA: 'keep the tests', REVIEW_HANDOFF_FILE: '/task/artifacts/review-handoff-001.md' } : { PROMPT_EXTRA: '', REVIEW_HANDOFF_FILE: '' }),
+  });
+  engine.seed(seedTicket(dir));
+  await engine.tick();
+  await engine.tick();
+  const review = harness.launches.find((launch) => launch.step === 'review')!;
+  const build = harness.launches.find((launch) => launch.step === 'build')!;
+  assert.match(review.prompt, /keep the tests/);
+  assert.match(review.prompt, /review-handoff-001\.md/);
+  assert.match(review.prompt, /\/task\/sessions/);
+  assert.doesNotMatch(build.prompt, /keep the tests/);
+  assert.doesNotMatch(build.prompt, /review-handoff-001/);
+  assert.match(build.prompt, /\/task\/sessions/);
+});
