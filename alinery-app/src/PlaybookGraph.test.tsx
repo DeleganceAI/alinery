@@ -235,10 +235,19 @@ it("retains every cyclic and self-loop relationship in Flow", () => {
 
 it("renders concurrent active counts in the execution view", () => {
   render(
-    <PlaybookGraph title="Numbers" steps={[step("sum", ["numbers.md"], ["sum.md"]), step("product", ["numbers.md"], ["product.md"])]} countsByStep={{ sum: 2, product: 1 }} />,
+    <PlaybookGraph
+      title="Numbers"
+      steps={[step("sum", ["numbers.md"], ["sum.md"]), step("product", ["numbers.md"], ["product.md"])]}
+      countsByStep={{ sum: 2, product: 1 }}
+      selectedAutoAdvance={["sum"]}
+    />,
   );
   expect(screen.getByLabelText("sum: 2 active sessions")).toBeTruthy();
   expect(screen.getByLabelText("product: 1 active sessions")).toBeTruthy();
+  const sumMetadata = screen.getByLabelText("sum: 2 active sessions").parentElement as HTMLElement;
+  expect(within(sumMetadata).getByText("Automatic").getAttribute("title")).toBe("Completion automatically authorized");
+  const productMetadata = screen.getByLabelText("product: 1 active sessions").parentElement as HTMLElement;
+  expect(within(productMetadata).queryByText("Automatic")).toBeNull();
 });
 
 it("relates wildcard families only within the declared directory", () => {

@@ -74,11 +74,16 @@ export function ChatComposer({
   useLayoutEffect(() => {
     const el = ta.current;
     if (!el) return;
+    // Keep the transcript viewport fixed while measuring the collapsed field; otherwise
+    // flex layout can clamp its scroll position before the field regains its height.
+    const row = el.parentElement;
+    if (row) row.style.minHeight = `${row.getBoundingClientRect().height}px`;
     el.style.height = "0px";
     const cap = LINE * MAX_LINES;
     const next = Math.min(Math.max(el.scrollHeight, LINE), cap);
     el.style.height = `${next}px`;
     el.style.overflowY = el.scrollHeight > cap + 1 ? "auto" : "hidden";
+    if (row) row.style.minHeight = "";
   }, [body]);
 
   useEffect(() => {

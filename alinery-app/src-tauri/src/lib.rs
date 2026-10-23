@@ -176,6 +176,7 @@ pub fn run() {
             get_task,
             write_draft,
             write_draft_for_repo,
+            read_draft_attachments_for_repo,
             delete_draft,
             delete_draft_for_repo,
             list_tasks,

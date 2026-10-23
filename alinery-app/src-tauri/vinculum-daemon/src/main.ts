@@ -24,12 +24,14 @@ import { formatTranscript, transcriptSource, transcriptToolSlots, type Transcrip
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
 const PROTOCOL = 23;
 const context = BACKGROUND_CONTEXT;
+// 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
   kind: "alinery.attention",
   version: 1,
   scope: "conversation",
   history: "latest",
   fork: "initial",
+  checkpointWhen: () => false,
   initial: () => ({ wait: null }),
 });
 const PhaseRequest = defineDoc<{ phase: string; executionId: string; nonce: string }>({
@@ -38,6 +40,7 @@ const PhaseRequest = defineDoc<{ phase: string; executionId: string; nonce: stri
   scope: "conversation",
   history: "latest",
   fork: "initial",
+  checkpointWhen: () => false,
   initial: () => ({ phase: "", executionId: "", nonce: "" }),
 });
 

@@ -1,0 +1,136 @@
+/* Task list: a light-divider table that fits the 900 x 600 minimum window and
+   the pane left beside the terminal drawer. The name column takes the remaining
+   width; fixed columns stay just wide enough for their sort headers. */
+.task-list-view {
+  container: task-list / inline-size;
+}
+
+.task-list-view .task-table {
+  min-width: 0;
+}
+
+.task-list-view .task-table th,
+.task-list-view .task-table td {
+  padding-inline: 8px;
+}
+
+.task-list-view .task-table th {
+  background: var(--canvas);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.task-list-view .task-sort-header {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-list-view .task-table .task-col-name {
+  width: auto;
+}
+
+.task-list-view .task-table .task-col-status {
+  width: calc(68px * var(--ui-scale));
+}
+
+.task-list-view .task-table .task-col-active {
+  width: 15%;
+}
+
+.task-list-view .task-table .task-col-playbook {
+  width: 14%;
+}
+
+.task-list-view .task-table .task-col-sessions {
+  width: calc(80px * var(--ui-scale));
+}
+
+.task-list-view .task-table .task-col-created {
+  width: calc(76px * var(--ui-scale));
+}
+
+.task-list-view .task-table .task-col-updated {
+  width: calc(80px * var(--ui-scale));
+}
+
+/* The shared cell padding override above would erase the hierarchy indent. */
+.task-list-view .task-table .task-name-cell {
+  padding-left: calc(8px + var(--task-depth, 0) * 16px);
+}
+
+.task-list-view .task-table .task-name-cell.nested::before {
+  left: calc(8px + (var(--task-depth) - 1) * 16px);
+}
+
+.task-list-view .task-name-text {
+  font-weight: 500;
+}
+
+.task-list-view .task-playbook {
+  color: var(--text-muted);
+}
+
+.task-list-view .badge.res.active-session-action {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface-subtle);
+  color: var(--text);
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.task-list-view .badge.res.active-session-action:hover {
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+}
+
+/* Quieter selection: neutral fill plus a thin indicator, not an accent wash. */
+.task-list-view .task-table tbody tr:hover {
+  background: color-mix(in srgb, var(--surface-subtle) 55%, transparent);
+}
+
+.task-list-view .task-table tbody tr.sel {
+  background: var(--surface-subtle);
+}
+
+.task-list-view .task-table tbody tr.sel > td:first-child {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.task-list-view .task-table tbody tr:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.task-list-view .task-compact-meta,
+.task-list-view .task-compact-sort {
+  display: none;
+}
+
+/* Compact pane: Playbook, Sessions, Created, and Updated move into the row's
+   metadata line, and the toolbar sort control keeps every sort reachable. */
+@container task-list (max-width: 759px) {
+  .task-list-view .task-table .task-col-playbook,
+  .task-list-view .task-table .task-col-sessions,
+  .task-list-view .task-table .task-col-created,
+  .task-list-view .task-table .task-col-updated {
+    display: none;
+  }
+
+  .task-list-view .task-table .task-col-active {
+    width: 28%;
+  }
+
+  .task-list-view .task-compact-meta {
+    display: inline;
+  }
+
+  .task-list-view .task-compact-sort {
+    display: inline-flex;
+  }
+}

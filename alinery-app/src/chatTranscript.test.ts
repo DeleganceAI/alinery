@@ -551,6 +551,43 @@ describe("subagent envelopes", () => {
     expect(cards).toHaveLength(1);
     expect(liveIds(cards)).toEqual(["sa-1"]);
     expect(cards[0]?.preview).toBe("Still searching");
+    expect(state.entries.filter((entry) => entry.type === "subagent_status")).toHaveLength(1);
+  });
+
+  it("replaces the one row for an id and keeps the last summary across an empty frame", () => {
+    const progress = applyRpcLine(applyRpcLine(emptyTranscript(), load("live-subagent_lifecycle.json")), {
+      type: "subagent_progress",
+      payload: {
+        agent: "Explore",
+        agentSource: "bundled",
+        progress: { id: "sa-1", status: "running", currentTool: "read", lastIntent: "Search the repo", toolCount: 3, durationMs: 1500 },
+      },
+    });
+    const row = progress.entries.find((entry) => entry.type === "subagent_status");
+    expect(row?.summary).toBe("Search the repo");
+    expect(row?.activity).toBe("using read");
+
+    const emptied = applyRpcLine(progress, { type: "subagent_event", payload: { id: "sa-1", status: "running" } });
+    const kept = emptied.entries.filter((entry) => entry.type === "subagent_status");
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.id).toBe(row?.id);
+    expect(kept[0]?.agent).toBe("Explore");
+    expect(kept[0]?.summary).toBe("Search the repo");
+    expect(kept[0]?.activity).toBe("using read");
+    expect(kept[0]?.tools).toBe(3);
+
+    const done = applyRpcLine(emptied, {
+      type: "subagent_progress",
+      payload: { progress: { id: "sa-1", status: "completed", durationMs: 4000 } },
+    });
+    const finished = done.entries.find((entry) => entry.type === "subagent_status" && entry.subagentId === "sa-1");
+    expect(finished?.id).toBe(row?.id);
+    expect(finished?.status).toBe("completed");
+    expect(finished?.summary).toBe("Search the repo");
+    expect(finished?.durationMs).toBe(4000);
+
+    const both = applyRpcLine(done, load("live-subagent_lifecycle-b.json"));
+    expect(both.entries.filter((entry) => entry.type === "subagent_status")).toHaveLength(2);
   });
 
   it("keeps two Explores with distinct ids as two cards", () => {

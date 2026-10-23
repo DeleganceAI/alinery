@@ -1,4 +1,4 @@
-import { ArrowLeft, List, Network, Pencil } from "lucide-react";
+import { ArrowLeft, List, Network, Pencil, Square } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -31,6 +31,7 @@ import {
   sessionStartedAt,
   sessionUpdatedAt,
 } from "../sessionAttention";
+import { canAbortChatSession } from "../sessionMessage";
 import {
   ArchiveTaskModal,
   ArtifactProvenanceBadges,
@@ -54,7 +55,7 @@ import {
   taskKey,
   useMinuteNow,
 } from "../shared";
-import { sessionTerminalLabel } from "../vinculumHarness";
+import { isVinculumHarness, sessionTerminalLabel } from "../vinculumHarness";
 import { TaskRunGraph } from "../TaskRunGraph";
 import { toast } from "../toast";
 import type {
@@ -227,6 +228,7 @@ export function TaskDetail({
   const loadWarning = combineLoadWarnings(sessionsError, artifactsError);
   const [busy, setBusy] = useState("");
   const sessionArchivePending = useRef(false);
+  const sessionStopPending = useRef(false);
   const [editingName, setEditingName] = useState<string | null>(null);
   const nameTrigger = useRef<HTMLButtonElement | null>(null);
   const editorVersion = useRef(0);
@@ -1241,15 +1243,13 @@ export function TaskDetail({
                 className="btn ghost small"
                 disabled={!subtaskState?.can_start || !!busy}
                 title={subtaskState?.disabled_reason || undefined}
+                aria-describedby={subtaskState && !subtaskState.can_start ? "task-session-disabled" : undefined}
                 onClick={startManager}
               >
                 {busy === "subtask-manager" ? "Starting…" : "Start sub-task"}
               </button>
-              {subtaskState && !subtaskState.can_start && !(task && (task.archived || !task.worktree || worktreeMissing)) && (
-                <span className="dim task-session-disabled">{subtaskState.disabled_reason}</span>
-              )}
               {task && (task.archived || !task.worktree || worktreeMissing) ? (
-                <span className="dim task-session-disabled">
+                <span id="task-session-disabled" className="dim task-session-disabled">
                   {task.archived
                     ? task.worktree
                       ? "task archived — new sessions disabled; names remain editable"
@@ -1265,6 +1265,11 @@ export function TaskDetail({
               )}
             </div>
           </div>
+          {subtaskState && !subtaskState.can_start && !(task && (task.archived || !task.worktree || worktreeMissing)) && (
+            <p id="task-session-disabled" className="dim task-session-disabled">
+              {subtaskState.disabled_reason}
+            </p>
+          )}
           {err && (
             <InlineStatus tone="error" detail={err.detail}>
               {err.msg}
@@ -1314,8 +1319,6 @@ export function TaskDetail({
                   <tr>
                     <th className="status-col">Status</th>
                     <th className="session-name-col">Name</th>
-                    <th>Type</th>
-                    <th>Harness</th>
                     <th className="session-time-col" aria-sort={sessionSort.field === "started" ? (sessionSort.direction === "desc" ? "descending" : "ascending") : undefined}>
                       <button
                         type="button"
@@ -1350,7 +1353,7 @@ export function TaskDetail({
                 <tbody>
                   {sessionsLoaded && taskPanelRows.length === 0 && !subtaskState?.can_recover && (
                     <tr className="empty-row">
-                      <td colSpan={7}>
+                      <td colSpan={5}>
                         <EmptyState title="No sessions yet." hint="Start a session to run a harness in this task's worktree." />
                       </td>
                     </tr>
@@ -1371,14 +1374,9 @@ export function TaskDetail({
                               </span>
                               {outcome && <span className={`pill ${subtaskOutcomeClass(row.child)}`}>{outcome}</span>}
                             </button>
-                          </td>
-                          <td>
                             <span className="badge todo" title="Sub-task history">
                               Sub-task history
                             </span>
-                          </td>
-                          <td>
-                            <span className="dim">—</span>
                           </td>
                           <td className="session-time-col">
                             <span className="dim">—</span>
@@ -1416,7 +1414,6 @@ export function TaskDetail({
                               id={s.id}
                               slug={row.owner_task_slug}
                               repoPath={repoPath}
-                              minimal
                               observation={obs ?? undefined}
                               exitCode={s.exit_code}
                               exitAcknowledged={hasAcknowledgedExit(s)}
@@ -1425,9 +1422,7 @@ export function TaskDetail({
                           <td className="session-name-cell editable-name">
                             {renameControl("session", row.owner_task_slug, s.name ?? "", s.id, awaitingSessionName(s, obs))}
                             {s.name_error && <span className="name-error">{s.name_error}</span>}
-                          </td>
-                          <td>
-                            <button type="button" className="manager-row-primary" onClick={activate}>
+                            <button type="button" className="manager-row-primary session-metadata" onClick={activate}>
                               <span title={label}>{label}</span>
                               {detail && (
                                 <span className="dim mono" title={detail}>
@@ -1451,11 +1446,9 @@ export function TaskDetail({
                             <span className="badge todo" title={canReplaceThisManager ? "Manager unavailable" : "Sub-task manager"}>
                               {canReplaceThisManager ? "Manager unavailable" : "Sub-task manager"}
                             </span>
-                          </td>
-                          <td>
-                            <span className="pill" title={harnessLabel}>
+                            <div className="dim session-metadata" title={harnessLabel}>
                               {harnessLabel}
-                            </span>
+                            </div>
                           </td>
                           <td className="session-time-col">
                             <SessionTimestamp kind="started" value={sessionStartedAt(s)} now={sessionNow} />
@@ -1515,6 +1508,22 @@ export function TaskDetail({
                     const harnessLabel = `${harnessDisplayName(s.harness)}${s.model ? ` · ${s.model}` : ""}`;
                     const unreadCompletion = classifySessionNotice(s, obs ?? undefined) === "unread_completion";
                     const openable = Boolean(task?.worktree) && !s.archived;
+                    const canStop =
+                      !s.archived &&
+                      isVinculumHarness(s.harness) &&
+                      obs?.transport === "rpc" &&
+                      obs.state?.agent.state !== "waiting_for_approval" &&
+                      canAbortChatSession({
+                        connection: "open",
+                        lifecycle: obs.lifecycle,
+                        process: obs.state?.process ?? null,
+                        agent: obs.state?.agent ?? null,
+                        messageAdapter: obs.state?.message_adapter ?? "unsupported",
+                        body: "",
+                        composing: false,
+                        sending: false,
+                        interrupting: !!busy,
+                      });
                     return (
                       <tr
                         key={s.id}
@@ -1536,7 +1545,6 @@ export function TaskDetail({
                             id={s.id}
                             slug={slug}
                             repoPath={repoPath}
-                            minimal
                             observation={obs}
                             superseded={superseded}
                             unreadCompletion={unreadCompletion}
@@ -1548,21 +1556,17 @@ export function TaskDetail({
                         <td className="session-name-cell editable-name">
                           {renameControl("session", slug, s.name ?? "", s.id, awaitingSessionName(s, obs))}
                           {s.name_error && <span className="name-error">{s.name_error}</span>}
-                        </td>
-                        <td>
-                          <div className="session-step-cell">
-                            <span className="pill" title={sessionType}>
+                          <div className="session-step-cell session-metadata">
+                            <span className="dim" title={sessionType}>
                               {sessionType}
                             </span>
                             {execution && <span className="pill">{sessionTerminalLabel(s.harness, s.id, superseded ? undefined : execution, s.ended_at != null || obs?.lifecycle.state === "exited") ?? execution.lifecycle}</span>}
                             {s.archived && <span className="pill session-archived">Archived</span>}
                             {resumedBy && <span className="pill dim">Resumed</span>}
                           </div>
-                        </td>
-                        <td>
-                          <span className="pill" title={harnessLabel}>
+                          <div className="dim session-metadata" title={harnessLabel}>
                             {harnessLabel}
-                          </span>
+                          </div>
                         </td>
                         <td className="session-time-col">
                           <SessionTimestamp kind="started" value={sessionStartedAt(s)} now={sessionNow} />
@@ -1572,6 +1576,30 @@ export function TaskDetail({
                         </td>
                         <td className="session-actions">
                           <div className="session-actions-inner">
+                            <button
+                              type="button"
+                              className="btn ghost small chat-composer-abort"
+                              disabled={!canStop}
+                              aria-label={busy === `stop-session:${s.id}` ? "Stopping…" : "Stop"}
+                              title="Interrupt the current turn without killing the session"
+                              onClick={async () => {
+                                if (!canStop || sessionStopPending.current) return;
+                                sessionStopPending.current = true;
+                                setBusy(`stop-session:${s.id}`);
+                                setErr(null);
+                                try {
+                                  await ipc.sessionAbort(s.id);
+                                  await load();
+                                } catch (error) {
+                                  setErr({ msg: "Couldn't interrupt the session.", detail: String(error) });
+                                } finally {
+                                  sessionStopPending.current = false;
+                                  setBusy("");
+                                }
+                              }}
+                            >
+                              <Square className="chat-composer-icon" fill="currentColor" />
+                            </button>
                             <KillButton id={s.id} slug={slug} repoPath={repoPath} live={isLive} onKilled={load} />
                             <button type="button" className="btn ghost small" disabled={s.archived || !!busy} onClick={() => void archiveSession(s.id)}>
                               {busy === `archive-session:${s.id}` ? "Archiving session…" : "Archive"}
@@ -1603,13 +1631,10 @@ export function TaskDetail({
                             {subtaskState.active_subtask.slug}
                           </span>
                         </button>
-                      </td>
-                      <td>
                         <span className="badge todo" title="Manager unavailable">
                           Manager unavailable
                         </span>
                       </td>
-                      <td />
                       <td className="session-time-col">
                         <span className="dim">—</span>
                       </td>
