@@ -193,6 +193,7 @@ pub(crate) fn artifacts_dir(repo: &Path, slug: &str) -> PathBuf {
     task_dir(repo, slug).join("artifacts")
 }
 
+#[cfg(test)]
 pub(crate) fn artifact_file_path(repo: &Path, slug: &str, name: &str) -> Result<PathBuf, String> {
     alinery_core::artifact_file_path(repo, slug, name)
 }

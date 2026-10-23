@@ -493,184 +493,8 @@ pub(crate) fn passive_session_statuses(repo: &Path, expected_app_config_identity
     client.session_statuses_observed()
 }
 
-fn task_activity_session(repo: &Path, task: &Task, session: &SessionMeta) -> TaskActivitySession {
-    let playbook = task
-        .playbook_ref
-        .as_ref()
-        .map(|reference| reference.key.clone())
-        .unwrap_or_else(|| session.playbook.clone());
-    let step_title = if session.generic {
-        "Generic".to_string()
-    } else {
-        match retained_task_definition(repo, task) {
-            Ok(Some(definition)) => definition
-                .step
-                .iter()
-                .find(|step| step.key == session.phase)
-                .map(|step| step.title.clone())
-                .unwrap_or_else(|| session.phase.clone()),
-            Ok(None) => session.phase.clone(),
-            Err(error) => format!("Execution unavailable: {error}"),
-        }
-    };
-    TaskActivitySession {
-        id: session.id.clone(),
-        worktree: session.worktree.clone(),
-        phase: session.phase.clone(),
-        harness: session.harness.clone(),
-        model: session.model.clone(),
-        playbook,
-        generic: session.generic,
-        step_title,
-    }
-}
-
-#[derive(Clone, Copy, Default)]
-struct TaskSessionActivityProjection {
-    status: Option<(u8, TaskActivityStatus)>,
-    active_tier: Option<u8>,
-}
-
-fn has_unacknowledged_terminal_failure(session: &SessionMeta) -> bool {
-    session.exit_code.is_some_and(|code| code != 0)
-        && session
-            .ended_at
-            .is_none_or(|ended_at| session.exit_notification_read_at.is_none_or(|read_at| ended_at > read_at))
-}
-
-fn project_task_session_activity(task: &Task, session: &SessionMeta, daemon_state: Option<&alinery_core::SessionState>) -> TaskSessionActivityProjection {
-    let durable_status = if has_unacknowledged_terminal_failure(session) {
-        Some((2, TaskActivityStatus::Failed))
-    } else if alinery_core::board::is_primary_playbook_session(task, session)
-        && session
-            .semantic
-            .phase_completed_at
-            .is_some_and(|completed_at| session.notification_read_at.is_none_or(|read_at| completed_at > read_at))
-    {
-        Some((2, TaskActivityStatus::Completed))
-    } else {
-        None
-    };
-    let Some(state) = daemon_state else {
-        return TaskSessionActivityProjection {
-            status: durable_status,
-            active_tier: None,
-        };
-    };
-    let supported = !matches!(state.adapter, alinery_core::HarnessAdapter::Unsupported);
-    if supported {
-        if let alinery_core::PlaybookState::Failed { reason } = &state.playbook {
-            let acknowledged_terminal_failure = matches!(state.process, alinery_core::ProcessState::Exited { .. })
-                && session.exit_code.is_some_and(|code| code != 0)
-                && !has_unacknowledged_terminal_failure(session);
-            return TaskSessionActivityProjection {
-                status: if reason == "StaleSource" || acknowledged_terminal_failure {
-                    durable_status
-                } else {
-                    Some((2, TaskActivityStatus::Failed))
-                },
-                active_tier: None,
-            };
-        }
-    }
-    let process_live = matches!(state.process, alinery_core::ProcessState::Starting | alinery_core::ProcessState::Alive);
-    let waiting_for_input = supported && process_live && matches!(state.agent, alinery_core::AgentState::WaitingForInput { .. });
-    let waiting_for_approval = supported && process_live && matches!(state.agent, alinery_core::AgentState::WaitingForApproval { .. });
-    let busy_or_starting = matches!(state.process, alinery_core::ProcessState::Starting) || (supported && process_live && matches!(state.agent, alinery_core::AgentState::Busy));
-    let status = if waiting_for_input {
-        Some((0, TaskActivityStatus::WaitingForInput))
-    } else if waiting_for_approval {
-        Some((0, TaskActivityStatus::WaitingForApproval))
-    } else if busy_or_starting {
-        Some((1, TaskActivityStatus::Running))
-    } else {
-        durable_status
-    };
-    let active_tier = if busy_or_starting {
-        Some(0)
-    } else if waiting_for_input || waiting_for_approval {
-        Some(1)
-    } else {
-        None
-    };
-    TaskSessionActivityProjection { status, active_tier }
-}
-
-fn task_has_actionable_session(task: &Task, sessions: &[SessionMeta], statuses_by_id: &HashMap<&str, &alinery_core::SessionState>) -> bool {
-    sessions.iter().filter(|session| !session.archived).any(|session| {
-        project_task_session_activity(task, session, statuses_by_id.get(session.id.as_str()).copied())
-            .active_tier
-            .is_some()
-    })
-}
-
 pub(crate) fn resolve_task_activity_for_repo(repo: &Path, slugs: &[String], statuses: &[DaemonSessionStatus]) -> HashMap<String, TaskActivitySummary> {
-    let repo_path = repo.display().to_string();
-    let statuses_by_id = statuses.iter().map(|status| (status.id.as_str(), &status.state)).collect::<HashMap<_, _>>();
-    let mut activity = slugs
-        .iter()
-        .map(|slug| (task_activity_key(&repo_path, slug), TaskActivitySummary::default()))
-        .collect::<HashMap<_, _>>();
-
-    for slug in slugs {
-        let Ok(task) = read_task(repo, slug) else {
-            continue;
-        };
-        let Ok(mut sessions) = list_sessions_for_repo(repo, slug) else {
-            continue;
-        };
-        let key = task_activity_key(&repo_path, slug);
-        let mut activity_task = task;
-        let mut visited = HashSet::from([activity_task.slug.clone()]);
-        loop {
-            if activity_task.active_subtask.is_empty() || task_has_actionable_session(&activity_task, &sessions, &statuses_by_id) {
-                break;
-            }
-            let child_slug = activity_task.active_subtask.clone();
-            if !visited.insert(child_slug.clone()) {
-                break;
-            }
-            let Ok(child) = read_task(repo, &child_slug) else {
-                break;
-            };
-            let Ok(child_sessions) = list_sessions_for_repo(repo, &child.slug) else {
-                break;
-            };
-            activity_task = child;
-            sessions = child_sessions;
-        }
-        let mut summary = TaskActivitySummary::default();
-        let mut status_choice: Option<(u8, u64, String, TaskActivityStatus)> = None;
-        let mut active_choice: Option<(u8, u64, String, &SessionMeta)> = None;
-
-        for session in sessions.iter().filter(|session| !session.archived) {
-            let projection = project_task_session_activity(&activity_task, session, statuses_by_id.get(session.id.as_str()).copied());
-
-            if let Some((tier, status)) = projection.status {
-                let replace = status_choice.as_ref().is_none_or(|(current_tier, current_created, current_id, _)| {
-                    tier < *current_tier || (tier == *current_tier && (session.created > *current_created || (session.created == *current_created && session.id > *current_id)))
-                });
-                if replace {
-                    status_choice = Some((tier, session.created, session.id.clone(), status));
-                }
-            }
-
-            let Some(active_tier) = projection.active_tier else {
-                continue;
-            };
-            let replace = active_choice.as_ref().is_none_or(|(current_tier, current_created, current_id, _)| {
-                active_tier < *current_tier
-                    || (active_tier == *current_tier && (session.created > *current_created || (session.created == *current_created && session.id > *current_id)))
-            });
-            if replace {
-                active_choice = Some((active_tier, session.created, session.id.clone(), session));
-            }
-        }
-        summary.status = status_choice.map(|(_, _, _, status)| status);
-        summary.active_session = active_choice.map(|(_, _, _, session)| task_activity_session(repo, &activity_task, session));
-        activity.insert(key, summary);
-    }
-    activity
+    alinery_core::task_activity::resolve_task_activity_for_repo(repo, &repo.display().to_string(), slugs, statuses)
 }
 
 pub(crate) fn list_task_activity_for_refs(refs: &[TaskActivityRef], app_config_identity: Option<&str>) -> HashMap<String, TaskActivitySummary> {
@@ -716,6 +540,42 @@ pub(crate) fn list_task_activity_for_refs(refs: &[TaskActivityRef], app_config_i
     for resolved in result_rx {
         activity.extend(resolved);
     }
+    activity
+}
+
+/// Activity for tasks of remote repos: the host reads its own files, this side supplies the live session states.
+pub(crate) fn remote_task_activity(state: &AppState, refs: &[TaskActivityRef]) -> HashMap<String, TaskActivitySummary> {
+    let mut activity = HashMap::new();
+    let mut grouped = BTreeMap::<&str, BTreeSet<String>>::new();
+    for reference in refs {
+        activity.insert(task_activity_key(&reference.repo_path, &reference.task_slug), TaskActivitySummary::default());
+        grouped.entry(&reference.repo_path).or_default().insert(reference.task_slug.clone());
+    }
+    for (key, slugs) in grouped {
+        let Ok(target @ RepoRef::Remote { .. }) = RepoRef::parse(key) else {
+            continue;
+        };
+        let RepoRef::Remote { host_id, path } = &target else {
+            continue;
+        };
+        let statuses = repo_client(state, &target).and_then(|client| client.session_statuses_observed()).unwrap_or_default();
+        let op = RepoOp::TaskActivity {
+            repo: path.into(),
+            repo_path: key.to_string(),
+            slugs: slugs.into_iter().collect(),
+            statuses,
+        };
+        if let Ok(resolved) = remote_call::<HashMap<String, TaskActivitySummary>>(state, host_id, op) {
+            activity.extend(resolved);
+        }
+    }
+    activity
+}
+
+pub(crate) fn list_task_activity_for_all(state: &AppState, refs: Vec<TaskActivityRef>, app_config_identity: Option<&str>) -> HashMap<String, TaskActivitySummary> {
+    let (remote, local): (Vec<_>, Vec<_>) = refs.into_iter().partition(|reference| is_remote_repo_key(&reference.repo_path));
+    let mut activity = list_task_activity_for_refs(&local, app_config_identity);
+    activity.extend(remote_task_activity(state, &remote));
     activity
 }
 

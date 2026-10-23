@@ -3,6 +3,7 @@
 //! Every app and MCP request is built and every daemon-only reply field is parsed here.
 
 use crate::{alineryd_socket_path, app_config_identity, daemon_compat, login_shell_path, DaemonCompat, ProcessState, SessionState, SessionTransport, PROTOCOL_VERSION};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
 use std::io::{Read, Write};
@@ -721,7 +722,7 @@ pub struct LiveSessionStatus {
     pub transport: SessionTransport,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DaemonSessionStatus {
     pub id: String,
     pub state: SessionState,

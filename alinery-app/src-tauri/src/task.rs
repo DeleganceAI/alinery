@@ -7,7 +7,7 @@ use std::io::Read;
 
 // The board projection lives in alinery-core so a remote host computes the same rows.
 pub(crate) use alinery_core::board::list_tasks_checked as list_tasks_for_repo;
-pub(crate) use alinery_core::board::{board_tasks_from_loaded, retained_task_definition, BoardTask};
+pub(crate) use alinery_core::board::{board_tasks_from_loaded, BoardTask};
 
 #[derive(Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -16,37 +16,9 @@ pub(crate) struct TaskActivityRef {
     pub(crate) task_slug: String,
 }
 
-#[derive(Serialize, Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct TaskActivitySession {
-    pub(crate) id: String,
-    pub(crate) worktree: String,
-    pub(crate) phase: String,
-    pub(crate) harness: String,
-    pub(crate) model: String,
-    pub(crate) playbook: String,
-    pub(crate) generic: bool,
-    pub(crate) step_title: String,
-}
-
-#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum TaskActivityStatus {
-    Running,
-    WaitingForInput,
-    WaitingForApproval,
-    Failed,
-    Completed,
-}
-
-#[derive(Serialize, Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct TaskActivitySummary {
-    pub(crate) status: Option<TaskActivityStatus>,
-    pub(crate) active_session: Option<TaskActivitySession>,
-}
-
-pub(crate) fn task_activity_key(repo_path: &str, slug: &str) -> String {
-    format!("{repo_path}:{slug}")
-}
+#[cfg(test)]
+pub(crate) use alinery_core::task_activity::TaskActivityStatus;
+pub(crate) use alinery_core::task_activity::{task_activity_key, TaskActivitySummary};
 
 pub(crate) fn branch_ref_conflicts(repo: &Path, candidate: &str) -> bool {
     let Ok(out) = git_cmd(repo).args(["for-each-ref", "--format=%(refname:strip=2)", "refs/heads"]).output() else {
@@ -822,7 +794,10 @@ pub(crate) async fn list_board_tasks(app: AppHandle, state: State<'_, AppState>,
 pub(crate) async fn list_task_activity(app: AppHandle, refs: Vec<TaskActivityRef>) -> HashMap<String, TaskActivitySummary> {
     let app_config = app_config_path(&app).ok();
     let app_config_identity = app_config.as_ref().map(|path| alinery_core::app_config_identity(path));
-    list_task_activity_for_refs(&refs, app_config_identity.as_deref())
+    // File reads plus a daemon query per repo (and ssh round trips for remote ones).
+    tauri::async_runtime::spawn_blocking(move || list_task_activity_for_all(&app.state::<AppState>(), refs, app_config_identity.as_deref()))
+        .await
+        .unwrap_or_default()
 }
 
 pub(crate) fn archive_task_in(repo: &Path, slug: &str) -> Result<(), String> {

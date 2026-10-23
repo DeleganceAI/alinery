@@ -1213,6 +1213,99 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     crate::write_overrides(&app_config, &state, &target, &overrides).unwrap();
     assert_eq!(crate::read_overrides(&state, &target).unwrap(), alinery_core::RepoOverrides::default());
 
+    // The sessions list, list statuses, artifact readiness, notification clearing and task activity
+    // all read the host's files; live states come through the forward.
+    let rows = crate::list_session_items_with_repo_resolver(&state, false, true, Vec::new(), Some(&key), crate::RepoRef::parse).unwrap();
+    let s1 = rows.iter().find(|row| row.session.meta.id == "s1").unwrap_or_else(|| panic!("{}", rows.len()));
+    assert_eq!((s1.repo_path.as_str(), s1.task_slug.as_str()), (key.as_str(), "remote-task"));
+    assert!(
+        crate::list_session_items_with_repo_resolver(&state, false, false, Vec::new(), Some(&key), crate::RepoRef::parse)
+            .unwrap()
+            .iter()
+            .all(|row| row.session.meta.id != "s1"),
+        "archived sessions are left out unless asked for"
+    );
+    let status_ref = |id: &str| crate::SessionStatusRef {
+        repo_path: key.clone(),
+        task_slug: slug(),
+        id: id.into(),
+    };
+    let statuses = crate::remote_session_statuses(&state, &[status_ref("s1"), status_ref("missing")]);
+    assert_eq!(statuses.len(), 2);
+    assert!(statuses.contains_key(&crate::session_list_status_key(&key, "remote-task", "s1")));
+
+    let ready = |sid: &str| {
+        remote_call::<bool>(
+            &state,
+            &id,
+            RepoOp::SessionArtifactReady {
+                repo: repo.clone().into(),
+                slug: slug(),
+                session_id: sid.into(),
+            },
+        )
+        .unwrap()
+    };
+    session
+        .channel
+        .call(
+            RepoOp::WriteFile {
+                path: format!("{repo}/.alinery/tasks/remote-task/sessions/s-art.meta.json").into(),
+                contents: serde_json::to_string(&crate::SessionMeta {
+                    id: "s-art".into(),
+                    artifact: "01-out.md".into(),
+                    ..Default::default()
+                })
+                .unwrap(),
+            },
+            std::time::Duration::from_secs(30),
+        )
+        .unwrap();
+    assert!(!ready("s-art"), "no artifact yet");
+    session
+        .channel
+        .call(
+            RepoOp::WriteFile {
+                path: format!("{repo}/.alinery/tasks/remote-task/artifacts/01-out.md").into(),
+                contents: "# Out\n".into(),
+            },
+            std::time::Duration::from_secs(30),
+        )
+        .unwrap();
+    assert!(ready("s-art"));
+    assert!(!ready("missing"));
+
+    let clear = |sid: &str| {
+        remote_call::<()>(
+            &state,
+            &id,
+            RepoOp::ClearSessionNotifications {
+                repo: repo.clone().into(),
+                refs: vec![crate::SessionNotificationClearRef {
+                    repo_path: key.clone(),
+                    task_slug: slug(),
+                    id: sid.into(),
+                    notification_suppression: None,
+                }],
+            },
+        )
+    };
+    clear("s-art").unwrap();
+    assert!(clear("../s-art").is_err());
+
+    let activity = crate::remote_task_activity(
+        &state,
+        &[crate::TaskActivityRef {
+            repo_path: key.clone(),
+            task_slug: slug(),
+        }],
+    );
+    assert!(
+        activity.contains_key(&crate::task_activity_key(&key, "remote-task")),
+        "{:?}",
+        activity.keys().collect::<Vec<_>>()
+    );
+
     // Disconnect: the app forgets the daemon handle; the daemon itself is untouched.
     disconnect_host(&handle, &id);
     assert!(state.daemon_for(Path::new(&key)).is_none());

@@ -317,3 +317,79 @@ pub fn worktree_exists(repo: &Path, task_slug: &str) -> Result<bool, String> {
 pub fn board_tasks(repo: &Path, repo_path: &str) -> Result<Vec<BoardTask>, String> {
     board_tasks_from_loaded(repo, repo_path, list_tasks_checked(repo)?)
 }
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SessionListItem {
+    #[serde(flatten)]
+    pub session: SessionDisplayMeta,
+    pub task_slug: String,
+    pub task_name: String,
+    pub subtask_name: Option<String>,
+    pub task_worktree: String,
+    pub repo_path: String,
+    pub playbook_title: String,
+    pub step_title: String,
+    pub is_playbook_step: bool,
+}
+
+/// Every session row of every unarchived task, newest first, for the sessions list.
+pub fn session_list_items_for_repo(repo: &Path, repo_path: &str, include_archived_sessions: bool) -> Result<Vec<SessionListItem>, String> {
+    let mut out = vec![];
+    for task in list_tasks_checked(repo)? {
+        if task.archived {
+            continue;
+        }
+        let definition = retained_task_definition(repo, &task)?;
+        let sessions = list_task_sessions(repo, &task.slug)?;
+        out.extend(sessions.into_iter().filter(|session| include_archived_sessions || !session.archived).map(|session| {
+            let step = definition.as_ref().and_then(|definition| definition.step.iter().find(|step| step.key == session.phase));
+            let is_playbook_step = !session.generic && !session.execution_id.is_empty() && step.is_some();
+            let title = if session.generic {
+                "Generic".into()
+            } else {
+                step.map(|step| step.title.clone()).unwrap_or_else(|| session.phase.clone())
+            };
+            SessionListItem {
+                subtask_name: current_subtask_name(repo, &session),
+                session: project_session_display(repo, &task.slug, session),
+                task_slug: task.slug.clone(),
+                task_name: task.name.clone(),
+                task_worktree: task.worktree.clone(),
+                repo_path: repo_path.to_string(),
+                playbook_title: definition.as_ref().map(|definition| definition.title.clone()).unwrap_or_else(|| task.playbook.clone()),
+                step_title: title,
+                is_playbook_step,
+            }
+        }));
+    }
+    out.sort_by(|a, b| {
+        b.session
+            .created
+            .cmp(&a.session.created)
+            .then_with(|| a.task_slug.cmp(&b.task_slug))
+            .then_with(|| a.session.id.cmp(&b.session.id))
+    });
+    Ok(out)
+}
+
+/// Parsed metas for (task slug, session id) pairs, in the same order; a missing or unreadable one is `None`.
+pub fn read_session_metas(repo: &Path, refs: &[(String, String)]) -> Vec<Option<SessionMeta>> {
+    refs.iter()
+        .map(|(slug, id)| {
+            std::fs::read_to_string(crate::session_meta_path(repo, slug, id))
+                .ok()
+                .and_then(|text| serde_json::from_str(&text).ok())
+        })
+        .collect()
+}
+
+/// True when the session's phase artifact exists and is non-empty. A content feature, not a completion signal.
+pub fn session_artifact_ready(repo: &Path, task_slug: &str, id: &str) -> bool {
+    let Some(Some(meta)) = read_session_metas(repo, &[(task_slug.to_string(), id.to_string())]).pop() else {
+        return false;
+    };
+    crate::artifact_file_path(repo, task_slug, &meta.artifact)
+        .ok()
+        .and_then(|path| std::fs::metadata(path).ok())
+        .is_some_and(|metadata| metadata.is_file() && metadata.len() > 0)
+}

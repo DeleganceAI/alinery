@@ -369,6 +369,34 @@ pub enum RepoOp {
         app_config: PathBuf,
         overrides: crate::RepoOverrides,
     },
+    /// Every session row of the repo's unarchived tasks. `repo_path` is stamped on each row.
+    ListSessionItems {
+        repo: PathBuf,
+        repo_path: String,
+        include_archived: bool,
+    },
+    /// Metas for (task slug, session id) pairs, in order; `null` for one that is missing.
+    ReadSessionMetas {
+        repo: PathBuf,
+        refs: Vec<(String, String)>,
+    },
+    SessionArtifactReady {
+        repo: PathBuf,
+        slug: String,
+        session_id: String,
+    },
+    ClearSessionNotifications {
+        repo: PathBuf,
+        refs: Vec<crate::session_actions::SessionNotificationClearRef>,
+    },
+    /// Task activity from the host's files and the live session states the app observed.
+    /// Result keys are built from `repo_path`.
+    TaskActivity {
+        repo: PathBuf,
+        repo_path: String,
+        slugs: Vec<String>,
+        statuses: Vec<crate::daemon_client::DaemonSessionStatus>,
+    },
     /// Atomic, owner-only write (parent directories are created).
     WriteFile {
         path: PathBuf,
@@ -681,6 +709,15 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::DuplicateTaskPackage { repo, source_slug } => to_value(crate::task_creation::duplicate_task_package(&repo, &source_slug)?),
         RepoOp::ReadRepoOverrides { repo } => to_value(crate::load_repo_overrides_strict(&repo)?),
         RepoOp::WriteRepoOverrides { repo, app_config, overrides } => crate::write_repo_overrides(Some(&app_config), &repo, &overrides).map(|()| Value::Null),
+        RepoOp::ListSessionItems {
+            repo,
+            repo_path,
+            include_archived,
+        } => to_value(crate::board::session_list_items_for_repo(&repo, &repo_path, include_archived)?),
+        RepoOp::ReadSessionMetas { repo, refs } => to_value(crate::board::read_session_metas(&repo, &refs)),
+        RepoOp::SessionArtifactReady { repo, slug, session_id } => to_value(crate::board::session_artifact_ready(&repo, &slug, &session_id)),
+        RepoOp::ClearSessionNotifications { repo, refs } => crate::session_actions::clear_session_notifications_in(&repo, &refs).map(|()| Value::Null),
+        RepoOp::TaskActivity { repo, repo_path, slugs, statuses } => to_value(crate::task_activity::resolve_task_activity_for_repo(&repo, &repo_path, &slugs, &statuses)),
         RepoOp::WriteFile { path, contents } => write_file(&path, &contents).map(|()| Value::Null),
         RepoOp::SyncCredentials { path, entries } => to_value(crate::credential_sync::apply_incoming(&path, &entries)?),
         RepoOp::SpawnDaemon {
@@ -1074,6 +1111,39 @@ mod tests {
                 app_config: "/c/app.toml".into(),
                 overrides: crate::RepoOverrides::default(),
             },
+            RepoOp::ListSessionItems {
+                repo: "/srv/a".into(),
+                repo_path: "alinery+ssh://h/srv/a".into(),
+                include_archived: true,
+            },
+            RepoOp::ReadSessionMetas {
+                repo: "/srv/a".into(),
+                refs: vec![("t".into(), "s".into())],
+            },
+            RepoOp::SessionArtifactReady {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                session_id: "s".into(),
+            },
+            RepoOp::ClearSessionNotifications {
+                repo: "/srv/a".into(),
+                refs: vec![crate::session_actions::SessionNotificationClearRef {
+                    repo_path: "k".into(),
+                    task_slug: "t".into(),
+                    id: "s".into(),
+                    notification_suppression: None,
+                }],
+            },
+            RepoOp::TaskActivity {
+                repo: "/srv/a".into(),
+                repo_path: "k".into(),
+                slugs: vec!["t".into()],
+                statuses: vec![crate::daemon_client::DaemonSessionStatus {
+                    id: "s".into(),
+                    state: Default::default(),
+                    transport: Default::default(),
+                }],
+            },
             RepoOp::RenameSession {
                 repo: "/srv/a".into(),
                 slug: "t".into(),
@@ -1137,7 +1207,9 @@ mod tests {
             let request = RepoRequest { id: id as u64, op };
             let line = serde_json::to_string(&request).unwrap();
             assert!(line.contains("\"call\""), "{line}");
-            assert_eq!(line.matches("\"id\":").count(), 1, "an op field collides with the request id: {line}");
+            // Only a top-level op field can collide with the request id; nested objects may have their own `id`.
+            let fields = serde_json::to_value(&request.op).unwrap();
+            assert!(fields.get("id").is_none(), "an op field collides with the request id: {line}");
             assert!(!line.contains("\"op\""), "{line}");
             assert_eq!(serde_json::from_str::<RepoRequest>(&line).unwrap(), request);
         }

@@ -4,6 +4,7 @@
 //! also has to stop a process (kill, the live half of archive) stays with the daemon client.
 
 use crate::stamp_meta;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -159,4 +160,25 @@ mod tests {
         assert_eq!((stored.ended_at, stored.exit_code), (Some(9), Some(1)));
         fs::remove_dir_all(repo).unwrap();
     }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct SessionNotificationClearRef {
+    pub repo_path: String,
+    pub task_slug: String,
+    pub id: String,
+    #[serde(default)]
+    pub notification_suppression: Option<crate::NotificationSuppression>,
+}
+
+/// Mark each session's notifications read and record any suppression the person chose.
+pub fn clear_session_notifications_in(repo: &Path, refs: &[SessionNotificationClearRef]) -> Result<(), String> {
+    for reference in refs {
+        mark_notification_read(repo, &reference.task_slug, &reference.id)?;
+        if let Some(suppression) = &reference.notification_suppression {
+            let path = session_notification_path(repo, &reference.task_slug, &reference.id)?;
+            stamp_meta(&path, |value| value["notification_suppression"] = serde_json::json!(suppression))?;
+        }
+    }
+    Ok(())
 }

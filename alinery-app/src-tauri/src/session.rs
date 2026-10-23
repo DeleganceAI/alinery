@@ -2,9 +2,9 @@
 use crate::*;
 
 pub(crate) use alinery_core::board::session_display_context as session_display_context_for_repo;
-pub(crate) use alinery_core::board::{current_subtask_name, project_session_display, SessionDisplayContext, SessionDisplayMeta};
+pub(crate) use alinery_core::board::{project_session_display, SessionDisplayContext, SessionDisplayMeta};
 pub(crate) use alinery_core::session_actions::{
-    mark_exit_notification_read as mark_session_exit_notification_read_in, mark_notification_read as mark_session_notification_read_in, session_notification_path,
+    mark_exit_notification_read as mark_session_exit_notification_read_in, mark_notification_read as mark_session_notification_read_in,
 };
 pub(crate) use alinery_core::SessionMeta;
 
@@ -51,34 +51,11 @@ pub(crate) fn get_session_display<R: tauri::Runtime>(app: AppHandle<R>, repo_pat
     }
 }
 
-#[derive(Serialize, Clone)]
-pub(crate) struct SessionListItem {
-    #[serde(flatten)]
-    pub(crate) session: SessionDisplayMeta,
-    pub(crate) task_slug: String,
-    pub(crate) task_name: String,
-    pub(crate) subtask_name: Option<String>,
-    pub(crate) task_worktree: String,
-    pub(crate) repo_path: String,
-    pub(crate) playbook_title: String,
-    pub(crate) step_title: String,
-    pub(crate) is_playbook_step: bool,
-}
-
 #[derive(Deserialize, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) struct SessionStatusRef {
     pub(crate) repo_path: String,
     pub(crate) task_slug: String,
     pub(crate) id: String,
-}
-
-#[derive(Deserialize, Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SessionNotificationClearRef {
-    pub(crate) repo_path: String,
-    pub(crate) task_slug: String,
-    pub(crate) id: String,
-    #[serde(default)]
-    pub(crate) notification_suppression: Option<alinery_core::NotificationSuppression>,
 }
 
 // Structured observation returned to the frontend for a single session.
@@ -94,6 +71,9 @@ pub(crate) struct SessionObservation {
     pub(crate) transport: Option<alinery_core::SessionTransport>,
 }
 
+pub(crate) use alinery_core::board::{session_list_items_for_repo, SessionListItem};
+pub(crate) use alinery_core::session_actions::{clear_session_notifications_in, SessionNotificationClearRef};
+
 pub(crate) fn session_list_status_key(repo_path: &str, task_slug: &str, id: &str) -> String {
     format!("{repo_path}:{task_slug}:{id}")
 }
@@ -103,45 +83,6 @@ pub(crate) fn session_list_status_key(repo_path: &str, task_slug: &str, id: &str
 pub(crate) fn session_meta_path(repo: &Path, slug: &str, id: &str) -> PathBuf {
     let dir = if slug.is_empty() { root_sessions_dir(repo) } else { sessions_dir(repo, slug) };
     dir.join(format!("{id}.meta.json"))
-}
-
-pub(crate) fn session_list_items_for_repo(repo: &Path, repo_path: &str, include_archived_sessions: bool) -> Result<Vec<SessionListItem>, String> {
-    let mut out = vec![];
-    for task in list_tasks_for_repo(repo)? {
-        if task.archived {
-            continue;
-        }
-        let definition = retained_task_definition(repo, &task)?;
-        let sessions = list_sessions_for_repo(repo, &task.slug)?;
-        out.extend(sessions.into_iter().filter(|session| include_archived_sessions || !session.archived).map(|session| {
-            let step = definition.as_ref().and_then(|definition| definition.step.iter().find(|step| step.key == session.phase));
-            let is_playbook_step = !session.generic && !session.execution_id.is_empty() && step.is_some();
-            let title = if session.generic {
-                "Generic".into()
-            } else {
-                step.map(|step| step.title.clone()).unwrap_or_else(|| session.phase.clone())
-            };
-            SessionListItem {
-                subtask_name: current_subtask_name(repo, &session),
-                session: project_session_display(repo, &task.slug, session),
-                task_slug: task.slug.clone(),
-                task_name: task.name.clone(),
-                task_worktree: task.worktree.clone(),
-                repo_path: repo_path.to_string(),
-                playbook_title: definition.as_ref().map(|definition| definition.title.clone()).unwrap_or_else(|| task.playbook.clone()),
-                step_title: title,
-                is_playbook_step,
-            }
-        }));
-    }
-    out.sort_by(|a, b| {
-        b.session
-            .created
-            .cmp(&a.session.created)
-            .then_with(|| a.task_slug.cmp(&b.task_slug))
-            .then_with(|| a.session.id.cmp(&b.session.id))
-    });
-    Ok(out)
 }
 
 #[tauri::command]
@@ -172,17 +113,6 @@ pub(crate) async fn create_session_for_repo(
         .map_err(|error| format!("create session task: {error}"))?
 }
 
-pub(crate) fn clear_session_notifications_in(repo: &Path, refs: &[SessionNotificationClearRef]) -> Result<(), String> {
-    for reference in refs {
-        mark_session_notification_read_in(repo, &reference.task_slug, &reference.id)?;
-        if let Some(suppression) = &reference.notification_suppression {
-            let path = session_notification_path(repo, &reference.task_slug, &reference.id)?;
-            stamp_meta(&path, |value| value["notification_suppression"] = json!(suppression))?;
-        }
-    }
-    Ok(())
-}
-
 #[tauri::command]
 pub(crate) fn mark_session_notification_read(app: AppHandle, state: State<'_, AppState>, repo_path: String, task_slug: String, id: String) -> Result<(), String> {
     match target_repo_ref_for_app(&app, &repo_path)? {
@@ -203,13 +133,24 @@ pub(crate) fn mark_session_notification_read(app: AppHandle, state: State<'_, Ap
 }
 
 #[tauri::command]
-pub(crate) fn clear_session_notifications(app: AppHandle, state: State<'_, AppState>, refs: Vec<SessionNotificationClearRef>) -> Result<(), String> {
+pub(crate) async fn clear_session_notifications(app: AppHandle, state: State<'_, AppState>, refs: Vec<SessionNotificationClearRef>) -> Result<(), String> {
+    // Resolve (and ownership-check) every repo first, then group: a remote host gets one call for its refs.
+    let mut grouped = BTreeMap::<String, (RepoRef, Vec<SessionNotificationClearRef>)>::new();
     for reference in refs {
-        let repo = target_repo_for_app(&app, &reference.repo_path)?;
-        require_repo_owned(&state, &repo)?;
-        clear_session_notifications_in(&repo, std::slice::from_ref(&reference))?;
+        let target = owned_target(&app, &state, &reference.repo_path)?;
+        grouped.entry(target.uri()).or_insert_with(|| (target, Vec::new())).1.push(reference);
     }
-    Ok(())
+    off_main_thread("clear session notifications", move || {
+        let state = app.state::<AppState>();
+        for (target, refs) in grouped.into_values() {
+            match target {
+                RepoRef::Local(repo) => clear_session_notifications_in(&repo, &refs)?,
+                RepoRef::Remote { host_id, path } => remote_call::<()>(&state, &host_id, RepoOp::ClearSessionNotifications { repo: path.into(), refs })?,
+            }
+        }
+        Ok(())
+    })
+    .await
 }
 
 pub(crate) fn unended_task_session_refs_for_repo(repo: &Path) -> Vec<(String, String)> {
@@ -268,33 +209,59 @@ pub(crate) async fn list_sessions(app: AppHandle, state: State<'_, AppState>, ta
 
 #[tauri::command]
 pub(crate) async fn list_session_items(app: AppHandle, all_repos: bool, include_archived: bool, repo_path: Option<String>) -> Result<Vec<SessionListItem>, String> {
-    list_session_items_with_repo_resolver(all_repos, include_archived, load_app_config(&app).known_repos, repo_path.as_deref(), |path| {
-        target_repo_for_app(&app, path)
+    let known_repos = load_app_config(&app).known_repos;
+    off_main_thread("list session items", move || {
+        list_session_items_with_repo_resolver(&app.state::<AppState>(), all_repos, include_archived, known_repos, repo_path.as_deref(), |path| {
+            target_repo_ref_for_app(&app, path)
+        })
     })
+    .await
 }
 
+/// Session rows of every known repo, or of one: the requested repo (resolved and validated by
+/// `resolve_repo`) or else the active one. A remote repo's rows come from its host.
 pub(crate) fn list_session_items_with_repo_resolver(
+    state: &AppState,
     all_repos: bool,
     include_archived: bool,
     known_repos: Vec<String>,
     repo_path: Option<&str>,
-    resolve_repo: impl FnOnce(&str) -> Result<PathBuf, String>,
+    resolve_repo: impl FnOnce(&str) -> Result<RepoRef, String>,
 ) -> Result<Vec<SessionListItem>, String> {
     let repos = if all_repos {
         known_repos
     } else {
-        let repo = match repo_path {
+        let target = match repo_path {
             Some(path) => resolve_repo(path)?,
-            None => active_repo()?,
+            None => active_repo_ref()?,
         };
-        vec![repo.to_string_lossy().into_owned()]
+        vec![target.uri()]
     };
     let mut out = vec![];
-    for repo_path in dedupe_known_repos(repos) {
-        let repo = PathBuf::from(&repo_path);
-        out.extend(session_list_items_for_repo(&repo, &repo_path, include_archived)?);
+    for key in dedupe_known_repos(repos) {
+        match RepoRef::parse(&key)? {
+            RepoRef::Local(repo) => out.extend(session_list_items_for_repo(&repo, &key, include_archived)?),
+            RepoRef::Remote { host_id, path } => {
+                let op = RepoOp::ListSessionItems {
+                    repo: path.into(),
+                    repo_path: key.clone(),
+                    include_archived,
+                };
+                match remote_call::<Vec<SessionListItem>>(state, &host_id, op) {
+                    Ok(rows) => out.extend(rows),
+                    // One unreachable host must not blank the other repos' lists.
+                    Err(_) if all_repos => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
     }
-    out.sort_by(|a, b| {
+    sort_session_items(&mut out);
+    Ok(out)
+}
+
+fn sort_session_items(items: &mut [SessionListItem]) {
+    items.sort_by(|a, b| {
         b.session
             .created
             .cmp(&a.session.created)
@@ -302,7 +269,6 @@ pub(crate) fn list_session_items_with_repo_resolver(
             .then_with(|| a.task_slug.cmp(&b.task_slug))
             .then_with(|| a.session.id.cmp(&b.session.id))
     });
-    Ok(out)
 }
 
 #[allow(dead_code)]
@@ -919,8 +885,65 @@ pub(crate) fn session_list_statuses_for_refs(refs: &[SessionStatusRef]) -> HashM
 
 #[tauri::command]
 pub(crate) async fn session_list_statuses(app: AppHandle, refs: Vec<SessionStatusRef>) -> HashMap<String, SessionObservation> {
-    session_list_statuses_with_repo_resolver(&refs, |repo_path| target_repo_for_app(&app, repo_path))
+    // File reads plus a daemon round trip per lane: never on the async runtime's own threads.
+    tauri::async_runtime::spawn_blocking(move || {
+        let (remote, local): (Vec<_>, Vec<_>) = refs.into_iter().partition(|reference| is_remote_repo_key(&reference.repo_path));
+        let mut result = session_list_statuses_with_repo_resolver(&local, |repo_path| target_repo_for_app(&app, repo_path));
+        result.extend(remote_session_statuses(&app.state::<AppState>(), &remote));
+        result
+    })
+    .await
+    .unwrap_or_default()
 }
+
+/// One session's observation from its meta and the live state its daemon reported, if any.
+fn observation_of(meta: SessionMeta, live: Option<&(alinery_core::SessionState, alinery_core::SessionTransport)>) -> SessionObservation {
+    let state = live.map(|(state, _)| state.clone());
+    SessionObservation {
+        lifecycle: lifecycle_from_structured(meta.started_at, meta.ended_at, meta.exit_code, state.as_ref()),
+        state,
+        checkpoint: meta.semantic,
+        transport: live.map(|(_, transport)| *transport),
+    }
+}
+
+/// Statuses for sessions of remote repos: metas from each host in one call, live states from its forwarded
+/// daemon. A host that does not answer leaves its rows as "never started", like an offline local daemon.
+pub(crate) fn remote_session_statuses(state: &AppState, refs: &[SessionStatusRef]) -> HashMap<String, SessionObservation> {
+    let mut result = HashMap::new();
+    let mut grouped = BTreeMap::<&str, Vec<&SessionStatusRef>>::new();
+    for reference in refs {
+        let key = session_list_status_key(&reference.repo_path, &reference.task_slug, &reference.id);
+        result.insert(key.clone(), unknown_session_observation(key));
+        grouped.entry(&reference.repo_path).or_default().push(reference);
+    }
+    for (key, group) in grouped {
+        let Ok(target @ RepoRef::Remote { .. }) = RepoRef::parse(key) else {
+            continue;
+        };
+        let RepoRef::Remote { host_id, path } = &target else {
+            continue;
+        };
+        let pairs = group.iter().map(|reference| (reference.task_slug.clone(), reference.id.clone())).collect();
+        let Ok(metas) = remote_call::<Vec<Option<SessionMeta>>>(state, host_id, RepoOp::ReadSessionMetas { repo: path.into(), refs: pairs }) else {
+            continue;
+        };
+        let live: HashMap<_, _> = repo_client(state, &target)
+            .and_then(|client| client.session_statuses_observed())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|status| (status.id, (status.state, status.transport)))
+            .collect();
+        for (reference, meta) in group.into_iter().zip(metas) {
+            if let Some(meta) = meta {
+                let observation = observation_of(meta, live.get(&reference.id));
+                result.insert(session_list_status_key(&reference.repo_path, &reference.task_slug, &reference.id), observation);
+            }
+        }
+    }
+    result
+}
+
 // Task pages render several session rows at once. Resolve all of their daemon states through one
 // app IPC call and one `list` request per owning daemon lane instead of starting a poller per row.
 #[tauri::command]
@@ -1203,20 +1226,24 @@ async fn kill_remote_session(app: AppHandle, repo: RepoRef, id: String) -> Resul
 /// True when the phase artifact for this session exists and is non-empty.
 /// This is a content feature (artifact listing/rendering), not a completion signal.
 #[tauri::command]
-pub(crate) fn session_artifact_ready(id: String, task_slug: String) -> bool {
-    let Ok(repo) = active_repo() else {
+pub(crate) async fn session_artifact_ready(app: AppHandle, id: String, task_slug: String) -> bool {
+    let Ok(target) = active_repo_ref() else {
         return false;
     };
-    let Ok(contents) = fs::read_to_string(session_meta_path(&repo, &task_slug, &id)) else {
-        return false;
-    };
-    let Ok(meta) = serde_json::from_str::<SessionMeta>(&contents) else {
-        return false;
-    };
-    artifact_file_path(&repo, &task_slug, &meta.artifact)
-        .ok()
-        .and_then(|path| fs::metadata(path).ok())
-        .is_some_and(|metadata| metadata.is_file() && metadata.len() > 0)
+    off_main_thread("session artifact ready", move || match target {
+        RepoRef::Local(repo) => Ok(alinery_core::board::session_artifact_ready(&repo, &task_slug, &id)),
+        RepoRef::Remote { host_id, path } => remote_call(
+            &app.state::<AppState>(),
+            &host_id,
+            RepoOp::SessionArtifactReady {
+                repo: path.into(),
+                slug: task_slug,
+                session_id: id,
+            },
+        ),
+    })
+    .await
+    .unwrap_or(false)
 }
 
 // One backward page of a session's OMP journal, as a JSON header line followed by the raw window
