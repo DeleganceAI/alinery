@@ -121,7 +121,8 @@ impl AppState {
     }
     /// The active repo's client — what every session command still routes through.
     pub(crate) fn daemon(&self) -> Option<DaemonClient> {
-        self.daemon_for(&active_repo().ok()?)
+        // Keyed by the stored repo key, so a remote active repo finds its forwarded client.
+        self.daemon_for(Path::new(&active_repo_ref().ok()?.uri()))
     }
     pub(crate) fn set_daemon(&self, repo: &Path, client: DaemonClient, compat: DaemonCompat, app_config_identity: String, host_guard_warning: bool) {
         self.daemons.lock().unwrap_or_else(|e| e.into_inner()).insert(

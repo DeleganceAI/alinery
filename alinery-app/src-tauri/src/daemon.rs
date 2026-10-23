@@ -469,10 +469,10 @@ fn has_unacknowledged_terminal_failure(session: &SessionMeta) -> bool {
             .is_none_or(|ended_at| session.exit_notification_read_at.is_none_or(|read_at| ended_at > read_at))
 }
 
-fn project_task_session_activity(repo: &Path, task: &Task, session: &SessionMeta, daemon_state: Option<&alinery_core::SessionState>) -> TaskSessionActivityProjection {
+fn project_task_session_activity(task: &Task, session: &SessionMeta, daemon_state: Option<&alinery_core::SessionState>) -> TaskSessionActivityProjection {
     let durable_status = if has_unacknowledged_terminal_failure(session) {
         Some((2, TaskActivityStatus::Failed))
-    } else if is_primary_playbook_session(repo, task, session)
+    } else if alinery_core::board::is_primary_playbook_session(task, session)
         && session
             .semantic
             .phase_completed_at
@@ -527,9 +527,9 @@ fn project_task_session_activity(repo: &Path, task: &Task, session: &SessionMeta
     TaskSessionActivityProjection { status, active_tier }
 }
 
-fn task_has_actionable_session(repo: &Path, task: &Task, sessions: &[SessionMeta], statuses_by_id: &HashMap<&str, &alinery_core::SessionState>) -> bool {
+fn task_has_actionable_session(task: &Task, sessions: &[SessionMeta], statuses_by_id: &HashMap<&str, &alinery_core::SessionState>) -> bool {
     sessions.iter().filter(|session| !session.archived).any(|session| {
-        project_task_session_activity(repo, task, session, statuses_by_id.get(session.id.as_str()).copied())
+        project_task_session_activity(task, session, statuses_by_id.get(session.id.as_str()).copied())
             .active_tier
             .is_some()
     })
@@ -554,7 +554,7 @@ pub(crate) fn resolve_task_activity_for_repo(repo: &Path, slugs: &[String], stat
         let mut activity_task = task;
         let mut visited = HashSet::from([activity_task.slug.clone()]);
         loop {
-            if activity_task.active_subtask.is_empty() || task_has_actionable_session(repo, &activity_task, &sessions, &statuses_by_id) {
+            if activity_task.active_subtask.is_empty() || task_has_actionable_session(&activity_task, &sessions, &statuses_by_id) {
                 break;
             }
             let child_slug = activity_task.active_subtask.clone();
@@ -575,7 +575,7 @@ pub(crate) fn resolve_task_activity_for_repo(repo: &Path, slugs: &[String], stat
         let mut active_choice: Option<(u8, u64, String, &SessionMeta)> = None;
 
         for session in sessions.iter().filter(|session| !session.archived) {
-            let projection = project_task_session_activity(repo, &activity_task, session, statuses_by_id.get(session.id.as_str()).copied());
+            let projection = project_task_session_activity(&activity_task, session, statuses_by_id.get(session.id.as_str()).copied());
 
             if let Some((tier, status)) = projection.status {
                 let replace = status_choice.as_ref().is_none_or(|(current_tier, current_created, current_id, _)| {
@@ -1565,16 +1565,21 @@ pub(crate) struct DaemonStatus {
 #[tauri::command]
 pub(crate) async fn daemon_status(state: State<'_, AppState>) -> Result<DaemonStatus, String> {
     let (extra_lanes, stale_lanes) = count_foreign_lanes();
-    let active = active_repo().ok();
-    let repo = active.as_ref().map(|r| r.display().to_string()).unwrap_or_default();
-    let conflict = active.as_ref().and_then(|r| state.daemon_conflict(r));
+    // A remote repo is looked up by its stored key; the lock probe below is for local folders.
+    let active_ref = active_repo_ref().ok();
+    let remote = matches!(active_ref, Some(RepoRef::Remote { .. }));
+    let key = active_ref.map(|r| PathBuf::from(r.uri()));
+    let local = key.as_ref().filter(|_| !remote);
+    let repo = key.as_ref().map(|r| r.display().to_string()).unwrap_or_default();
+    let conflict = key.as_ref().and_then(|r| state.daemon_conflict(r));
     // Status is observational. The ordered lifecycle poller owns GUI claims.
-    let repo_busy = !state.is_quitting() && conflict.is_none() && active.as_ref().is_some_and(|repo| !state.owns_repo(repo) && gui_lock_held_elsewhere(repo));
-    let build_drift = active.as_ref().and_then(|r| state.daemon_compat(r)) == Some(DaemonCompat::BuildDrift);
-    let host_guard_warning = active.as_ref().is_some_and(|repo| state.daemon_host_guard_warning(repo));
+    let repo_busy = !state.is_quitting() && conflict.is_none() && local.is_some_and(|repo| !state.owns_repo(repo) && gui_lock_held_elsewhere(repo));
+    let build_drift = key.as_ref().and_then(|r| state.daemon_compat(r)) == Some(DaemonCompat::BuildDrift);
+    let host_guard_warning = key.as_ref().is_some_and(|repo| state.daemon_host_guard_warning(repo));
+    let mode = if remote { "remote" } else { "local" };
     let offline = || DaemonStatus {
         reachable: false,
-        mode: "local".into(),
+        mode: mode.into(),
         alive: 0,
         busy: 0,
         waiting_for_input: 0,
@@ -1623,7 +1628,7 @@ pub(crate) async fn daemon_status(state: State<'_, AppState>) -> Result<DaemonSt
             }
             Ok(DaemonStatus {
                 reachable: true,
-                mode: "local".into(),
+                mode: mode.into(),
                 alive,
                 busy,
                 waiting_for_input,

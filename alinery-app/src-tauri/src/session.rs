@@ -466,32 +466,8 @@ pub(crate) fn list_root_sessions_for_repo(repo: &Path) -> Result<Vec<SessionMeta
     list_sessions_in_dir(root_sessions_dir(repo))
 }
 
-pub(crate) fn list_sessions_for_repo(repo: &Path, task_slug: &str) -> Result<Vec<SessionMeta>, String> {
-    list_sessions_in_dir(sessions_dir(repo, task_slug))
-}
-
-pub(crate) fn list_sessions_in_dir(dir: PathBuf) -> Result<Vec<SessionMeta>, String> {
-    if !dir.exists() {
-        return Ok(vec![]);
-    }
-    let mut out = vec![];
-    let entries = fs::read_dir(&dir).map_err(|error| format!("read {}: {error}", dir.display()))?;
-    for entry in entries {
-        let entry = entry.map_err(|error| format!("read {}: {error}", dir.display()))?;
-        let path = entry.path();
-        if !path.to_string_lossy().ends_with(".meta.json") {
-            continue;
-        }
-        let s = fs::read_to_string(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
-        out.push(serde_json::from_str::<SessionMeta>(&s).map_err(|error| format!("parse {}: {error}", path.display()))?);
-    }
-    // created is seconds-granularity, so two same-second sessions would tie and fall
-    // to arbitrary read_dir order. Break ties on id (= "s{nanos}", lexicographically
-    // chronological) so "latest session" — hence the DERIVED current_phase / kanban
-    // column — is deterministic even for rapid create-then-advance.
-    out.sort_by(|a, b| a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id)));
-    Ok(out)
-}
+pub(crate) use alinery_core::board::list_session_metas_in_dir as list_sessions_in_dir;
+pub(crate) use alinery_core::board::list_task_sessions as list_sessions_for_repo;
 
 pub(crate) fn archive_session_in(app: &AppHandle, state: &AppState, repo: &Path, task_slug: String, id: String) -> Result<(), String> {
     let task_slug = task_slug.trim().to_string();

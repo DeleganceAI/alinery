@@ -34,8 +34,12 @@ pub fn serve(input: impl BufRead, output: impl Write + Send + 'static) {
         let request = match serde_json::from_str::<RepoRequest>(&line) {
             Ok(request) => request,
             Err(error) => {
-                // Without a parseable id there is nothing to answer; the client times out.
-                eprintln!("repo-service: unreadable request: {error}");
+                // A request this build cannot decode (an op it does not know) still has an id the
+                // client is waiting on; answer it instead of leaving the caller to time out.
+                match serde_json::from_str::<Value>(&line).ok().and_then(|value| value.get("id")?.as_u64()) {
+                    Some(id) => write_reply(&output, &RepoReply::new(id, Err(format!("the host's runtime does not understand this request: {error}")))),
+                    None => eprintln!("repo-service: unreadable request: {error}"),
+                }
                 continue;
             }
         };

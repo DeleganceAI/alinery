@@ -943,6 +943,21 @@ fn connected_session(state: &AppState, host_id: &str) -> Result<std::sync::Arc<R
         .ok_or_else(|| format!("not connected to {host_id}; connect first"))
 }
 
+/// Run a typed repo operation on a connected host and decode its answer. The remote half of
+/// an in-process core call: both run the same function in alinery-core.
+pub(crate) fn remote_call<T: serde::de::DeserializeOwned>(state: &AppState, host_id: &str, op: RepoOp) -> Result<T, String> {
+    let value = connected_session(state, host_id)?.channel.call(op, SERVICE_TIMEOUT)?;
+    serde_json::from_value(value).map_err(|error| format!("unexpected reply from the host: {error}"))
+}
+
+/// The repo a command targets: the explicit key if given, otherwise the active repo.
+pub(crate) fn repo_key_or_active(repo_path: Option<String>) -> Result<String, String> {
+    match repo_path {
+        Some(path) => Ok(path),
+        None => active_repo_ref().map(|repo| repo.uri()),
+    }
+}
+
 /// Claim a remote repo on its host, bring its daemon up through the forward, and record the
 /// client where the rest of the app looks for it. `key` is the `alinery+ssh://` entry.
 fn attach_remote_repo(state: &AppState, session: &RemoteSession, key: &str, path: &str) -> Result<(), String> {

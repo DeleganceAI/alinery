@@ -81,6 +81,16 @@ fn answers_ping_list_dir_and_errors_with_the_request_id() {
 }
 
 #[test]
+fn an_unknown_call_is_answered_with_its_id_instead_of_being_dropped() {
+    let mut service = Service::start();
+    let reply = service.call(json!({"call": "an_op_from_a_newer_build"}));
+    assert!(reply["err"].as_str().unwrap().contains("does not understand"), "{reply}");
+    // The service keeps serving afterwards.
+    assert_eq!(service.call(json!({"call": "ping"}))["ok"], Value::Null);
+    service.close();
+}
+
+#[test]
 fn a_claim_is_exclusive_across_services_and_dies_with_the_channel() {
     let repo = temp_dir("claim");
     let claim = |service: &mut Service, repo: &Path| service.call(json!({"call": "claim_repo", "repo": repo}))["ok"]["claimed"].clone();

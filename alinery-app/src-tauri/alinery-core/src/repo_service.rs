@@ -40,6 +40,18 @@ pub enum RepoOp {
         #[serde(default)]
         show_hidden: bool,
     },
+    /// The board rows of one repo (`alinery_core::board::board_tasks`).
+    ListBoardTasks {
+        repo: PathBuf,
+    },
+    ListTasks {
+        repo: PathBuf,
+    },
+    /// `null` when the task does not exist.
+    GetTask {
+        repo: PathBuf,
+        slug: String,
+    },
     /// Atomic, owner-only write (parent directories are created).
     WriteFile {
         path: PathBuf,
@@ -180,6 +192,9 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::Classify { path } => to_value(classify_folder(&path)?),
         RepoOp::Init { path } => to_value(init_absent_folder(&path)?),
         RepoOp::ListDir { path, show_hidden } => to_value(list_dir(&path, show_hidden)?),
+        RepoOp::ListBoardTasks { repo } => to_value(crate::board::board_tasks(&repo, &repo.to_string_lossy())?),
+        RepoOp::ListTasks { repo } => to_value(crate::board::list_tasks_checked(&repo)?),
+        RepoOp::GetTask { repo, slug } => to_value(crate::board::read_task_opt(&repo, &slug)?),
         RepoOp::WriteFile { path, contents } => write_file(&path, &contents).map(|()| Value::Null),
         RepoOp::SyncCredentials { path, entries } => to_value(crate::credential_sync::apply_incoming(&path, &entries)?),
         RepoOp::SpawnDaemon {
@@ -278,6 +293,7 @@ fn to_value<T: Serialize>(value: T) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Task;
     use std::fs;
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -370,6 +386,52 @@ mod tests {
         assert!(!listing.truncated);
         assert_eq!(list_dir(&root, true).unwrap().entries.len(), 3);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn board_reads_over_the_wire_equal_the_in_process_projection() {
+        let repo = temp_dir("board");
+        let task = Task {
+            name: "Wire task".into(),
+            slug: "wire-task".into(),
+            branch: "wire-task".into(),
+            created: 1_700_000_000,
+            ..Default::default()
+        };
+        let dir = repo.join(".alinery/tasks/wire-task");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("task.md"), toml::to_string(&task).unwrap()).unwrap();
+
+        let direct = serde_json::to_value(crate::board::board_tasks(&repo, &repo.to_string_lossy()).unwrap()).unwrap();
+        let over_wire = run(RepoOp::ListBoardTasks { repo: repo.clone() }).unwrap();
+        assert_eq!(over_wire, direct);
+        assert_eq!(over_wire[0]["slug"], "wire-task", "the task fields are flattened into the row");
+        assert_eq!(run(RepoOp::ListTasks { repo: repo.clone() }).unwrap()[0]["name"], "Wire task");
+        assert_eq!(
+            run(RepoOp::GetTask {
+                repo: repo.clone(),
+                slug: "wire-task".into()
+            })
+            .unwrap()["slug"],
+            "wire-task"
+        );
+        assert_eq!(
+            run(RepoOp::GetTask {
+                repo: repo.clone(),
+                slug: "absent".into()
+            })
+            .unwrap(),
+            Value::Null
+        );
+        // A malformed task.md is a reported fault, not a missing task.
+        fs::write(dir.join("task.md"), "not = [valid").unwrap();
+        assert!(run(RepoOp::GetTask {
+            repo: repo.clone(),
+            slug: "wire-task".into()
+        })
+        .is_err());
+        assert!(run(RepoOp::ListBoardTasks { repo: repo.clone() }).is_err());
+        fs::remove_dir_all(repo).unwrap();
     }
 
     #[test]

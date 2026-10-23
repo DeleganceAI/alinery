@@ -1,4 +1,5 @@
 use crate::remote::*;
+use alinery_core::repo_service::RepoOp;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -246,6 +247,55 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     assert_eq!(config.active_repo, key);
     assert!(state.daemon_for(Path::new(&key)).is_some());
     assert!(crate::active_repo().is_err(), "un-migrated local-path commands must refuse a remote active repo");
+    assert!(state.daemon().is_some(), "the active remote repo's client is the one session commands use");
+
+    // A task written on the host shows up in the same board rows a local repo would give.
+    let task = alinery_core::Task {
+        name: "Remote task".into(),
+        slug: "remote-task".into(),
+        branch: "remote-task".into(),
+        created: 1_700_000_000,
+        ..Default::default()
+    };
+    session
+        .channel
+        .call(
+            RepoOp::WriteFile {
+                path: format!("{repo}/.alinery/tasks/remote-task/task.md").into(),
+                contents: toml::to_string(&task).unwrap(),
+            },
+            std::time::Duration::from_secs(30),
+        )
+        .unwrap();
+    let rows: Vec<crate::BoardTask> = remote_call(&state, &id, RepoOp::ListBoardTasks { repo: repo.clone().into() }).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (rows[0].task.slug.as_str(), rows[0].current_phase.as_str(), rows[0].latest_session_title.as_str()),
+        ("remote-task", "", "No sessions")
+    );
+    let tasks: Vec<alinery_core::Task> = remote_call(&state, &id, RepoOp::ListTasks { repo: repo.clone().into() }).unwrap();
+    assert_eq!(tasks, [task.clone()]);
+    let found: Option<alinery_core::Task> = remote_call(
+        &state,
+        &id,
+        RepoOp::GetTask {
+            repo: repo.clone().into(),
+            slug: "remote-task".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(found, Some(task));
+    let missing: Option<alinery_core::Task> = remote_call(
+        &state,
+        &id,
+        RepoOp::GetTask {
+            repo: repo.clone().into(),
+            slug: "nope".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(missing, None);
+    assert!(remote_call::<Vec<crate::BoardTask>>(&state, "not-a-host", RepoOp::ListTasks { repo: repo.clone().into() }).is_err());
 
     // Disconnect: the app forgets the daemon handle; the daemon itself is untouched.
     disconnect_host(&handle, &id);

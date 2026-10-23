@@ -1,34 +1,16 @@
 //! task: extracted from lib.rs. See AGENTS.md for the module map.
 use crate::*;
 
+use alinery_core::repo_service::RepoOp;
 use alinery_core::task_creation::{
     unique_attachment_name, CreateTaskReply, CreateTaskRequest, TaskAttachment, TaskPlaybookPackage, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_SET_BYTES,
 };
 pub(crate) use alinery_core::{write_task_unlocked, Task};
 use std::io::Read;
 
-#[derive(Serialize, Clone)]
-pub(crate) struct BoardPlaybookStep {
-    pub(crate) key: String,
-    pub(crate) title: String,
-}
-
-#[derive(Serialize, Clone)]
-pub(crate) struct BoardTask {
-    #[serde(flatten)]
-    pub(crate) task: Task,
-    pub(crate) repo_path: String,
-    pub(crate) session_count: usize,
-    pub(crate) playbook_title: String,
-    pub(crate) playbook_steps: Vec<BoardPlaybookStep>,
-    pub(crate) updated: u64,
-    pub(crate) current_phase: String,
-    pub(crate) current_step_title: String,
-    pub(crate) latest_session_title: String,
-    pub(crate) latest_session_column_key: String,
-    pub(crate) current_column_key: String,
-    pub(crate) current_column_title: String,
-}
+// The board projection lives in alinery-core so a remote host computes the same rows.
+pub(crate) use alinery_core::board::list_tasks_checked as list_tasks_for_repo;
+pub(crate) use alinery_core::board::{board_tasks_from_loaded, retained_task_definition, BoardTask};
 
 #[derive(Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -94,31 +76,17 @@ pub(crate) fn unique_slug_except(repo: &Path, base: &str, except: &str) -> Strin
     slug
 }
 
-pub(crate) fn read_task(repo: &Path, slug: &str) -> Result<Task, String> {
-    let p = task_dir(repo, slug).join("task.md");
-    let s = fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))?;
-    toml::from_str(&s).map_err(|e| format!("parse {}: {e}", p.display()))
-}
+pub(crate) use alinery_core::board::read_task_checked as read_task;
 
-// Ok(None): task.md missing (deleted, or never existed) — a drop-in for today's `?? null`.
-// Err: task.md exists but will not parse — a real fault, not "no task." Neither existing
-// read_task has this split (task.rs:133 errors on both; alinery-core/src/task.rs:25 returns
-// None for both), so this needs its own thin body rather than reuse of either.
-pub(crate) fn read_task_opt(repo: &Path, slug: &str) -> Result<Option<Task>, String> {
-    let p = task_dir(repo, slug).join("task.md");
-    match fs::read_to_string(&p) {
-        Ok(s) => toml::from_str(&s).map(Some).map_err(|e| format!("parse {}: {e}", p.display())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("read {}: {e}", p.display())),
-    }
-}
+pub(crate) use alinery_core::board::read_task_opt;
 
 #[tauri::command]
-pub(crate) async fn get_task(app: AppHandle, slug: String, repo_path: Option<String>) -> Result<Option<Task>, String> {
-    let repo = match repo_path {
-        Some(path) => target_repo_for_app(&app, &path)?,
-        None => active_repo()?,
-    };
+pub(crate) async fn get_task(app: AppHandle, state: State<'_, AppState>, slug: String, repo_path: Option<String>) -> Result<Option<Task>, String> {
+    let key = repo_key_or_active(repo_path)?;
+    if let RepoRef::Remote { host_id, path } = RepoRef::parse(&key)? {
+        return remote_call(&state, &host_id, RepoOp::GetTask { repo: path.into(), slug });
+    }
+    let repo = target_repo_for_app(&app, &key)?;
     read_task_opt(&repo, &slug)
 }
 
@@ -883,143 +851,15 @@ pub(crate) fn delete_draft_for_repo(app: AppHandle, state: State<'_, AppState>, 
     require_repo_owned(&state, &repo)?;
     delete_draft_in(&repo, Some(&app_config_path(&app)?), &slug)
 }
-pub(crate) fn list_tasks_for_repo(repo: &Path) -> Result<Vec<Task>, String> {
-    let dir = tasks_dir(repo);
-    if !dir.exists() {
-        return Ok(vec![]);
-    }
-    let mut tasks = vec![];
-    for entry in fs::read_dir(&dir).map_err(|error| format!("read {}: {error}", dir.display()))? {
-        let entry = entry.map_err(|error| format!("read {}: {error}", dir.display()))?;
-        if !entry.path().join("task.md").exists() {
-            continue;
-        }
-        if let Some(slug) = entry.file_name().to_str() {
-            tasks.push(read_task(repo, slug).map_err(|error| format!("task {}: {error}", entry.path().display()))?);
-        }
-    }
-    tasks.sort_by_key(|t| t.created);
-    Ok(tasks)
-}
-
 // Scan `.alinery/tasks/*/task.md`. Returns archived too; the UI hides them.
 #[tauri::command]
-pub(crate) async fn list_tasks(app: AppHandle, repo_path: Option<String>) -> Result<Vec<Task>, String> {
-    let repo = match repo_path {
-        Some(path) => target_repo_for_app(&app, &path)?,
-        None => active_repo()?,
-    };
+pub(crate) async fn list_tasks(app: AppHandle, state: State<'_, AppState>, repo_path: Option<String>) -> Result<Vec<Task>, String> {
+    let key = repo_key_or_active(repo_path)?;
+    if let RepoRef::Remote { host_id, path } = RepoRef::parse(&key)? {
+        return remote_call(&state, &host_id, RepoOp::ListTasks { repo: path.into() });
+    }
+    let repo = target_repo_for_app(&app, &key)?;
     list_tasks_for_repo(&repo)
-}
-
-pub(crate) fn retained_task_definition(repo: &Path, task: &Task) -> Result<Option<alinery_core::playbook::NormalizedPlaybook>, String> {
-    if task.draft || task.engine_version < 2 {
-        return Ok(None);
-    }
-    // Display uses the task-owned snapshot, never a live owner or the mutable library.
-    // The shared reader checks both the stored state and the retained source's integrity.
-    saved_task_execution_for(repo, &task.slug)
-        .map(|execution| Some(execution.definition))
-        .map_err(|error| format!("task {}: {error}", task_dir(repo, &task.slug).display()))
-}
-
-pub(crate) fn is_primary_playbook_session(_repo: &Path, task: &Task, session: &SessionMeta) -> bool {
-    !session.generic
-        && if task.engine_version >= 2 {
-            !session.execution_id.is_empty()
-        } else {
-            session.playbook == task.playbook
-        }
-}
-
-pub(crate) fn task_updated_at(repo: &Path, task: &Task, sessions: &[SessionMeta]) -> Result<u64, String> {
-    let mut updated = task.created;
-    if let Some(ts) = file_mtime_secs(task_dir(repo, &task.slug).join("task.md")) {
-        updated = updated.max(ts);
-    }
-    for name in list_artifacts_for(repo, &task.slug)? {
-        if name.ends_with(".review-pending.json") {
-            continue;
-        }
-        if let Some(ts) = file_mtime_secs(artifacts_dir(repo, &task.slug).join(name)) {
-            updated = updated.max(ts);
-        }
-    }
-    // Session files are projections: polling, replay, and acknowledgments can rewrite
-    // them without work happening. Only durable semantic timestamps count as activity.
-    for session in sessions {
-        updated = updated.max(session.created);
-        for ts in [
-            session.started_at,
-            session.ended_at,
-            session.status_changed_at,
-            session.semantic.phase_completed_at,
-            session.activity_at,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            updated = updated.max(ts);
-        }
-    }
-    Ok(updated)
-}
-
-pub(crate) fn board_task(repo: &Path, repo_path: &str, task: Task) -> Result<BoardTask, String> {
-    let definition = retained_task_definition(repo, &task)?;
-    let sessions = list_sessions_for_repo(repo, &task.slug)?;
-    let live: Vec<&SessionMeta> = sessions.iter().filter(|session| !session.archived).collect();
-    let current_phase = live
-        .iter()
-        .rev()
-        .find(|session| is_primary_playbook_session(repo, &task, session))
-        .map(|session| session.phase.clone())
-        .unwrap_or_default();
-    let title = |phase: &str| {
-        definition
-            .as_ref()
-            .and_then(|definition| definition.step.iter().find(|step| step.key == phase))
-            .map(|step| step.title.clone())
-            .unwrap_or_else(|| phase.to_string())
-    };
-    let current_step_title = title(&current_phase);
-    let latest_session_title = if task.draft {
-        "Draft".into()
-    } else {
-        live.last()
-            .map(|session| if session.generic { "Generic".into() } else { title(&session.phase) })
-            .unwrap_or_else(|| "No sessions".into())
-    };
-    let updated = task_updated_at(repo, &task, &sessions)?;
-    let playbook_title = definition.as_ref().map(|definition| definition.title.clone()).unwrap_or_else(|| task.playbook.clone());
-    let playbook_steps = definition
-        .into_iter()
-        .flat_map(|definition| definition.step)
-        .map(|step| BoardPlaybookStep { key: step.key, title: step.title })
-        .collect();
-    Ok(BoardTask {
-        task,
-        repo_path: repo_path.into(),
-        session_count: live.len(),
-        playbook_title,
-        playbook_steps,
-        updated,
-        current_phase,
-        current_step_title,
-        latest_session_title,
-        latest_session_column_key: String::new(),
-        current_column_key: String::new(),
-        current_column_title: String::new(),
-    })
-}
-
-fn board_tasks_from_loaded(repo: &Path, repo_path: &str, tasks: Vec<Task>) -> Result<Vec<BoardTask>, String> {
-    alinery_core::validate_task_relationship_fields(
-        tasks
-            .iter()
-            .map(|task| (task.slug.as_str(), task.parent_task.as_str(), task.active_subtask.as_str(), task.archived)),
-    )?;
-    tasks.into_iter().map(|task| board_task(repo, repo_path, task)).collect()
 }
 
 #[cfg(test)]
@@ -1028,16 +868,23 @@ pub(crate) fn board_tasks_for_repo(repo: &Path, repo_path: &str) -> Result<Vec<B
 }
 
 #[tauri::command]
-pub(crate) async fn list_board_tasks(app: AppHandle, all_repos: bool) -> Result<Vec<BoardTask>, String> {
-    let repos = if all_repos {
-        load_app_config(&app).known_repos
-    } else {
-        vec![active_repo()?.to_string_lossy().to_string()]
-    };
+pub(crate) async fn list_board_tasks(app: AppHandle, state: State<'_, AppState>, all_repos: bool) -> Result<Vec<BoardTask>, String> {
+    let repos = if all_repos { load_app_config(&app).known_repos } else { vec![active_repo_ref()?.uri()] };
     let mut out = vec![];
     for repo_path in dedupe_known_repos(repos) {
-        let repo = PathBuf::from(&repo_path);
-        out.extend(board_tasks_from_loaded(&repo, &repo_path, list_tasks_for_repo(&repo)?)?);
+        match RepoRef::parse(&repo_path)? {
+            RepoRef::Local(repo) => out.extend(board_tasks_from_loaded(&repo, &repo_path, list_tasks_for_repo(&repo)?)?),
+            RepoRef::Remote { host_id, path } => match remote_call::<Vec<BoardTask>>(&state, &host_id, RepoOp::ListBoardTasks { repo: path.into() }) {
+                // The host answered with its own paths; the board addresses the repo by its key.
+                Ok(rows) => out.extend(rows.into_iter().map(|row| BoardTask {
+                    repo_path: repo_path.clone(),
+                    ..row
+                })),
+                // One unreachable host must not blank the other repos' boards.
+                Err(_) if all_repos => {}
+                Err(error) => return Err(error),
+            },
+        }
     }
     out.sort_by_key(|task| task.task.created);
     Ok(out)

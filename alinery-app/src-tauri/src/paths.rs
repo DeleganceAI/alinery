@@ -223,11 +223,3 @@ pub(crate) fn slugify(name: &str) -> String {
 pub(crate) fn ensure_gitignore(repo: &Path) -> Result<(), String> {
     alinery_core::task_creation::ensure_task_data_ignored(repo)
 }
-
-pub(crate) fn file_mtime_secs(path: impl AsRef<Path>) -> Option<u64> {
-    fs::metadata(path)
-        .ok()
-        .and_then(|m| m.modified().ok())
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-}
