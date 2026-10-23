@@ -390,6 +390,230 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     .unwrap();
     assert_eq!(launch.map(|launch| launch.harness), Some(alinery_core::NO_HARNESS_KEY.to_string()));
 
+    // Artifacts and review comments: the viewer's reads and the whole comment round trip.
+    let artifact = "01-plan.md";
+    let call_ok = |op: RepoOp| session.channel.call(op, std::time::Duration::from_secs(30)).unwrap();
+    call_ok(RepoOp::WriteFile {
+        path: format!("{repo}/.alinery/tasks/remote-task/artifacts/{artifact}").into(),
+        contents: "# Plan\nline two\n".into(),
+    });
+    let text: String = remote_call(
+        &state,
+        &id,
+        RepoOp::ReadArtifact {
+            repo: repo.clone().into(),
+            slug: slug(),
+            name: artifact.into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(text, "# Plan\nline two\n");
+    assert!(remote_call::<String>(
+        &state,
+        &id,
+        RepoOp::ReadArtifact {
+            repo: repo.clone().into(),
+            slug: slug(),
+            name: "../task.md".into()
+        }
+    )
+    .is_err());
+
+    let input = |body: &str| alinery_core::artifact_comments::CommentInput {
+        anchor_id: "h1".into(),
+        anchor_kind: "heading".into(),
+        anchor_label: "Plan".into(),
+        anchor_excerpt: "# Plan".into(),
+        line_start: 1,
+        line_end: 1,
+        body: body.into(),
+    };
+    let added: Vec<crate::ArtifactComment> = remote_call(
+        &state,
+        &id,
+        RepoOp::AddArtifactComment {
+            repo: repo.clone().into(),
+            slug: slug(),
+            artifact: artifact.into(),
+            comment: input("  Needs a rollback step  "),
+        },
+    )
+    .unwrap();
+    assert_eq!(added.len(), 1);
+    assert_eq!(added[0].body, "Needs a rollback step", "the body is trimmed on the host");
+    assert!(remote_call::<Vec<crate::ArtifactComment>>(
+        &state,
+        &id,
+        RepoOp::AddArtifactComment {
+            repo: repo.clone().into(),
+            slug: slug(),
+            artifact: artifact.into(),
+            comment: input("   ")
+        }
+    )
+    .is_err());
+    let listed: Vec<crate::ArtifactComment> = remote_call(
+        &state,
+        &id,
+        RepoOp::ListArtifactComments {
+            repo: repo.clone().into(),
+            slug: slug(),
+            artifact: artifact.into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(listed, added);
+
+    // Drafts are saved, listed (not stale while the artifact is unchanged) and deleted.
+    remote_call::<()>(
+        &state,
+        &id,
+        RepoOp::SaveCommentDraft {
+            repo: repo.clone().into(),
+            slug: slug(),
+            artifact: artifact.into(),
+            comment: input("draft text"),
+        },
+    )
+    .unwrap();
+    let drafts: Vec<crate::ArtifactCommentDraft> = remote_call(
+        &state,
+        &id,
+        RepoOp::ListCommentDrafts {
+            repo: repo.clone().into(),
+            slug: slug(),
+        },
+    )
+    .unwrap();
+    assert_eq!((drafts.len(), drafts[0].body.as_str()), (1, "draft text"));
+    remote_call::<()>(
+        &state,
+        &id,
+        RepoOp::DeleteCommentDraft {
+            repo: repo.clone().into(),
+            slug: slug(),
+            artifact: artifact.into(),
+            anchor_id: "h1".into(),
+        },
+    )
+    .unwrap();
+    let drafts: Vec<crate::ArtifactCommentDraft> = remote_call(
+        &state,
+        &id,
+        RepoOp::ListCommentDrafts {
+            repo: repo.clone().into(),
+            slug: slug(),
+        },
+    )
+    .unwrap();
+    assert!(drafts.is_empty());
+
+    // Prepare the prompt, "send" it (finalize), and the comments become a pending review.
+    let prepared: crate::PreparedSessionMessageAction = remote_call(
+        &state,
+        &id,
+        RepoOp::PrepareArtifactCommentsPrompt {
+            repo: repo.clone().into(),
+            slug: slug(),
+            artifacts: vec![artifact.into()],
+        },
+    )
+    .unwrap();
+    assert!(
+        prepared.text.contains(&format!("{repo}/.alinery/tasks/remote-task/artifacts/01-plan.review-001.md")),
+        "the prompt names the host's path: {}",
+        prepared.text
+    );
+    remote_call::<()>(
+        &state,
+        &id,
+        RepoOp::FinalizeSessionMessageActions {
+            repo: repo.clone().into(),
+            slug: slug(),
+            session_id: "s1".into(),
+            actions: vec![prepared.provenance],
+        },
+    )
+    .unwrap();
+    let pending: Option<crate::ArtifactReviewPendingStatus> = remote_call(
+        &state,
+        &id,
+        RepoOp::ArtifactReviewPendingStatus {
+            repo: repo.clone().into(),
+            slug: slug(),
+            artifact: artifact.into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(pending.map(|status| status.review), Some("01-plan.review-001.md".to_string()));
+    let after: Vec<crate::ArtifactComment> = remote_call(
+        &state,
+        &id,
+        RepoOp::ListArtifactComments {
+            repo: repo.clone().into(),
+            slug: slug(),
+            artifact: artifact.into(),
+        },
+    )
+    .unwrap();
+    assert!(after.is_empty(), "sending the comments consumes them");
+    remote_call::<()>(
+        &state,
+        &id,
+        RepoOp::ClearArtifactReviewPending {
+            repo: repo.clone().into(),
+            slug: slug(),
+            artifact: artifact.into(),
+        },
+    )
+    .unwrap();
+    let pending: Option<crate::ArtifactReviewPendingStatus> = remote_call(
+        &state,
+        &id,
+        RepoOp::ArtifactReviewPendingStatus {
+            repo: repo.clone().into(),
+            slug: slug(),
+            artifact: artifact.into(),
+        },
+    )
+    .unwrap();
+    assert!(pending.is_none());
+
+    // The archive path numbers the next review file and reports the host's path to it.
+    remote_call::<Vec<crate::ArtifactComment>>(
+        &state,
+        &id,
+        RepoOp::AddArtifactComment {
+            repo: repo.clone().into(),
+            slug: slug(),
+            artifact: artifact.into(),
+            comment: input("second pass"),
+        },
+    )
+    .unwrap();
+    let review: String = remote_call(
+        &state,
+        &id,
+        RepoOp::ArchiveArtifactComments {
+            repo: repo.clone().into(),
+            slug: slug(),
+            artifact: artifact.into(),
+        },
+    )
+    .unwrap();
+    assert!(review.ends_with("01-plan.review-002.md"), "{review}");
+    let approval: crate::PreparedSessionMessageAction = remote_call(
+        &state,
+        &id,
+        RepoOp::PrepareReviewApprovalPrompt {
+            repo: repo.clone().into(),
+            slug: slug(),
+            review_artifact: "01-plan.review-002.md".into(),
+        },
+    )
+    .unwrap();
+    assert!(approval.text.contains("Review playbook action"));
+
     // A terminal on the host, streamed through the forwarded socket: create the auxiliary
     // session, open it, type a command, read the output come back.
     let client = repo_client(&state, &crate::RepoRef::parse(&key).unwrap()).unwrap();

@@ -1,6 +1,7 @@
 // alinery-core: shared pure logic for tasks, sessions, config, harnesses, paths.
 // Used by alinery-app, alineryd, and mcp.
 
+pub mod artifact_comments;
 pub mod artifact_tree;
 pub mod backup;
 pub mod board;

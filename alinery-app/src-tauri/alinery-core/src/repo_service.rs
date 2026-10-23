@@ -143,6 +143,70 @@ pub enum RepoOp {
         #[serde(default)]
         want: Option<u64>,
     },
+    ReadArtifact {
+        repo: PathBuf,
+        slug: String,
+        name: String,
+    },
+    ListArtifactComments {
+        repo: PathBuf,
+        slug: String,
+        artifact: String,
+    },
+    AddArtifactComment {
+        repo: PathBuf,
+        slug: String,
+        artifact: String,
+        comment: crate::artifact_comments::CommentInput,
+    },
+    /// Turns an artifact's comments into a review file; the reply is the host's path to it.
+    ArchiveArtifactComments {
+        repo: PathBuf,
+        slug: String,
+        artifact: String,
+    },
+    PrepareArtifactCommentsPrompt {
+        repo: PathBuf,
+        slug: String,
+        artifacts: Vec<String>,
+    },
+    PrepareReviewApprovalPrompt {
+        repo: PathBuf,
+        slug: String,
+        review_artifact: String,
+    },
+    FinalizeSessionMessageActions {
+        repo: PathBuf,
+        slug: String,
+        session_id: String,
+        actions: Vec<crate::artifact_comments::SessionMessageActionProvenance>,
+    },
+    ArtifactReviewPendingStatus {
+        repo: PathBuf,
+        slug: String,
+        artifact: String,
+    },
+    ClearArtifactReviewPending {
+        repo: PathBuf,
+        slug: String,
+        artifact: String,
+    },
+    ListCommentDrafts {
+        repo: PathBuf,
+        slug: String,
+    },
+    SaveCommentDraft {
+        repo: PathBuf,
+        slug: String,
+        artifact: String,
+        comment: crate::artifact_comments::CommentInput,
+    },
+    DeleteCommentDraft {
+        repo: PathBuf,
+        slug: String,
+        artifact: String,
+        anchor_id: String,
+    },
     /// Atomic, owner-only write (parent directories are created).
     WriteFile {
         path: PathBuf,
@@ -340,6 +404,49 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
                 data: window.data,
             })
         }
+        RepoOp::ReadArtifact { repo, slug, name } => to_value(crate::artifact_comments::read_artifact_text(&repo, &slug, &name)?),
+        RepoOp::ListArtifactComments { repo, slug, artifact } => to_value(crate::artifact_comments::load_artifact_comments_for(&repo, &slug, &artifact)?),
+        RepoOp::AddArtifactComment { repo, slug, artifact, comment } => to_value(crate::artifact_comments::add_artifact_comment_for(
+            &repo,
+            &slug,
+            &artifact,
+            comment.anchor_id,
+            comment.anchor_kind,
+            comment.anchor_label,
+            comment.anchor_excerpt,
+            comment.line_start,
+            comment.line_end,
+            comment.body,
+        )?),
+        RepoOp::ArchiveArtifactComments { repo, slug, artifact } => {
+            to_value(crate::artifact_comments::archive_artifact_comments_for(&repo, &slug, &artifact)?.display().to_string())
+        }
+        RepoOp::PrepareArtifactCommentsPrompt { repo, slug, artifacts } => to_value(crate::artifact_comments::prepare_artifact_comments_prompt_for(&repo, &slug, &artifacts)?),
+        RepoOp::PrepareReviewApprovalPrompt { repo, slug, review_artifact } => {
+            to_value(crate::artifact_comments::prepare_review_approval_prompt_for(&repo, &slug, &review_artifact)?)
+        }
+        RepoOp::FinalizeSessionMessageActions { repo, slug, session_id, actions } => {
+            crate::artifact_comments::finalize_session_message_actions_for(&repo, &session_id, &slug, &actions).map(|()| Value::Null)
+        }
+        RepoOp::ArtifactReviewPendingStatus { repo, slug, artifact } => to_value(crate::artifact_comments::artifact_review_pending_status_for(&repo, &slug, &artifact)?),
+        RepoOp::ClearArtifactReviewPending { repo, slug, artifact } => crate::artifact_comments::clear_artifact_review_pending_for(&repo, &slug, &artifact).map(|()| Value::Null),
+        RepoOp::ListCommentDrafts { repo, slug } => to_value(crate::artifact_comments::list_artifact_comment_drafts_for(&repo, &slug)?),
+        RepoOp::SaveCommentDraft { repo, slug, artifact, comment } => crate::artifact_comments::save_artifact_comment_draft_for(
+            &repo,
+            &slug,
+            &artifact,
+            comment.anchor_id,
+            comment.anchor_kind,
+            comment.anchor_label,
+            comment.anchor_excerpt,
+            comment.line_start,
+            comment.line_end,
+            comment.body,
+        )
+        .map(|()| Value::Null),
+        RepoOp::DeleteCommentDraft { repo, slug, artifact, anchor_id } => {
+            crate::artifact_comments::delete_artifact_comment_draft_for(&repo, &slug, &artifact, &anchor_id).map(|()| Value::Null)
+        }
         RepoOp::WriteFile { path, contents } => write_file(&path, &contents).map(|()| Value::Null),
         RepoOp::SyncCredentials { path, entries } => to_value(crate::credential_sync::apply_incoming(&path, &entries)?),
         RepoOp::SpawnDaemon {
@@ -503,6 +610,85 @@ mod tests {
             RepoOp::WorktreeExists {
                 repo: "/srv/a".into(),
                 slug: "t".into(),
+            },
+            RepoOp::ReadArtifact {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                name: "01.md".into(),
+            },
+            RepoOp::ListArtifactComments {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                artifact: "01.md".into(),
+            },
+            RepoOp::AddArtifactComment {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                artifact: "01.md".into(),
+                comment: crate::artifact_comments::CommentInput {
+                    anchor_id: "a".into(),
+                    anchor_kind: "heading".into(),
+                    anchor_label: "L".into(),
+                    anchor_excerpt: "E".into(),
+                    line_start: 1,
+                    line_end: 2,
+                    body: "B".into(),
+                },
+            },
+            RepoOp::ArchiveArtifactComments {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                artifact: "01.md".into(),
+            },
+            RepoOp::PrepareArtifactCommentsPrompt {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                artifacts: vec!["01.md".into()],
+            },
+            RepoOp::PrepareReviewApprovalPrompt {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                review_artifact: "r.md".into(),
+            },
+            RepoOp::FinalizeSessionMessageActions {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                session_id: "s".into(),
+                actions: vec![crate::artifact_comments::SessionMessageActionProvenance::ReviewApproval { review_artifact: "r.md".into() }],
+            },
+            RepoOp::ArtifactReviewPendingStatus {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                artifact: "01.md".into(),
+            },
+            RepoOp::ClearArtifactReviewPending {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                artifact: "01.md".into(),
+            },
+            RepoOp::ListCommentDrafts {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+            },
+            RepoOp::SaveCommentDraft {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                artifact: "01.md".into(),
+                comment: crate::artifact_comments::CommentInput {
+                    anchor_id: "a".into(),
+                    anchor_kind: "heading".into(),
+                    anchor_label: "L".into(),
+                    anchor_excerpt: "E".into(),
+                    line_start: 1,
+                    line_end: 2,
+                    body: "B".into(),
+                },
+            },
+            RepoOp::DeleteCommentDraft {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                artifact: "01.md".into(),
+                anchor_id: "a".into(),
             },
             RepoOp::RenameSession {
                 repo: "/srv/a".into(),

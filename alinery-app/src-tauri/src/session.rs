@@ -95,82 +95,6 @@ pub(crate) struct SessionObservation {
     pub(crate) transport: Option<alinery_core::SessionTransport>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PreparedSessionMessageAction {
-    pub(crate) text: String,
-    pub(crate) provenance: SessionMessageActionProvenance,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PreparedArtifactCommentSnapshot {
-    pub(crate) artifact: String,
-    pub(crate) review: String,
-    pub(crate) comments_hash: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub(crate) enum SessionMessageActionProvenance {
-    ArtifactComments { items: Vec<PreparedArtifactCommentSnapshot> },
-    ReviewApproval { review_artifact: String },
-}
-
-pub(crate) fn prepare_review_approval_prompt_for(repo: &Path, task_slug: &str, review_artifact: &str) -> Result<PreparedSessionMessageAction, String> {
-    let task = read_task(repo, task_slug)?;
-    let artifact_path = artifact_file_path(repo, task_slug, review_artifact)?;
-    let metadata = fs::metadata(&artifact_path).map_err(|error| format!("read {}: {error}", artifact_path.display()))?;
-    if !metadata.is_file() {
-        return Err(format!("review findings artifact is not a file: {}", artifact_path.display()));
-    }
-    let artifact_path = fs::canonicalize(&artifact_path).map_err(|error| format!("resolve {}: {error}", artifact_path.display()))?;
-    let pr = if task.pr_url.is_empty() {
-        "PR URL: not set in Alinery task metadata; infer it from the checked-out branch/remote if possible.".to_string()
-    } else {
-        format!("PR URL: {}", task.pr_url)
-    };
-    Ok(PreparedSessionMessageAction {
-        text: [
-            "Review playbook action: approve this PR through the harness, not through Alinery.".to_string(),
-            pr,
-            format!("Review findings artifact: {review_artifact}"),
-            format!("Review findings path: {}", artifact_path.display()),
-            "Read the findings artifact. If it contains no blocking work, submit an approving GitHub PR review or comment using your own GitHub capability.".to_string(),
-            "Do not ask Alinery/the local app to call a GitHub approval API; the approval/comment is harness-owned.".to_string(),
-            "After submitting or deciding not to submit, write or update the review-response artifact with the decision and evidence.".to_string(),
-        ]
-        .join("\n"),
-        provenance: SessionMessageActionProvenance::ReviewApproval {
-            review_artifact: review_artifact.to_string(),
-        },
-    })
-}
-
-pub(crate) fn finalize_session_message_actions_for(repo: &Path, id: &str, task_slug: &str, actions: &[SessionMessageActionProvenance]) -> Result<(), String> {
-    let session = load_session_meta_for(repo, task_slug, id)?;
-    if session.id != id {
-        return Err("session id mismatch".into());
-    }
-    for action in actions {
-        match action {
-            SessionMessageActionProvenance::ArtifactComments { items } => {
-                validate_artifact_comments_finalization(repo, task_slug, items)?;
-            }
-            SessionMessageActionProvenance::ReviewApproval { review_artifact } => {
-                artifact_file_path(repo, task_slug, review_artifact)?;
-            }
-        }
-    }
-    for action in actions {
-        match action {
-            SessionMessageActionProvenance::ArtifactComments { items } => {
-                finalize_artifact_comments_for(repo, task_slug, items)?;
-            }
-            SessionMessageActionProvenance::ReviewApproval { .. } => {}
-        }
-    }
-    Ok(())
-}
-
 pub(crate) fn session_list_status_key(repo_path: &str, task_slug: &str, id: &str) -> String {
     format!("{repo_path}:{task_slug}:{id}")
 }
@@ -770,13 +694,34 @@ pub(crate) fn write_session(state: State<'_, AppState>, id: String, data: String
 
 #[tauri::command]
 pub(crate) fn prepare_review_approval_prompt(state: State<'_, AppState>, task_slug: String, review_artifact: String) -> Result<PreparedSessionMessageAction, String> {
-    let repo = require_owned_active_repo(&state)?;
-    prepare_review_approval_prompt_for(&repo, &task_slug, &review_artifact)
+    match require_active_target(&state)? {
+        ActiveRepo::Local(repo) => prepare_review_approval_prompt_for(&repo, &task_slug, &review_artifact),
+        ActiveRepo::Remote { host_id, path } => remote_call(
+            &state,
+            &host_id,
+            RepoOp::PrepareReviewApprovalPrompt {
+                repo: path.into(),
+                slug: task_slug,
+                review_artifact,
+            },
+        ),
+    }
 }
 #[tauri::command]
 pub(crate) fn finalize_session_message_actions(state: State<'_, AppState>, id: String, task_slug: String, actions: Vec<SessionMessageActionProvenance>) -> Result<(), String> {
-    let repo = require_owned_active_repo(&state)?;
-    finalize_session_message_actions_for(&repo, &id, &task_slug, &actions)
+    match require_active_target(&state)? {
+        ActiveRepo::Local(repo) => finalize_session_message_actions_for(&repo, &id, &task_slug, &actions),
+        ActiveRepo::Remote { host_id, path } => remote_call(
+            &state,
+            &host_id,
+            RepoOp::FinalizeSessionMessageActions {
+                repo: path.into(),
+                slug: task_slug,
+                session_id: id,
+                actions,
+            },
+        ),
+    }
 }
 
 // Resize the pty so the TUI reflows. No-op if the session isn't registered yet.

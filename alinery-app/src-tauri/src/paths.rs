@@ -197,14 +197,6 @@ pub(crate) fn artifact_file_path(repo: &Path, slug: &str, name: &str) -> Result<
     alinery_core::artifact_file_path(repo, slug, name)
 }
 
-pub(crate) fn remove_file_if_exists(path: &Path) -> Result<(), String> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(format!("remove {}: {e}", path.display())),
-    }
-}
-
 pub(crate) fn ensure_repo_ready(repo: &Path) -> Result<(), String> {
     fs::create_dir_all(alinery_dir(repo)).map_err(|e| e.to_string())?;
     ensure_gitignore(repo)?;
