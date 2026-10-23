@@ -155,7 +155,13 @@ fn repo_ref_parses_local_paths_and_remote_uris() {
     use crate::paths::RepoRef;
     assert_eq!(RepoRef::parse("/Users/me/repo").unwrap(), RepoRef::Local("/Users/me/repo".into()));
     let remote = RepoRef::parse("alinery+ssh://devbox-a1b2c3/home/me/my repo").unwrap();
-    assert_eq!(remote, RepoRef::Remote { host_id: "devbox-a1b2c3".into(), path: "/home/me/my repo".into() });
+    assert_eq!(
+        remote,
+        RepoRef::Remote {
+            host_id: "devbox-a1b2c3".into(),
+            path: "/home/me/my repo".into()
+        }
+    );
     assert_eq!(remote.uri(), "alinery+ssh://devbox-a1b2c3/home/me/my repo");
 }
 
@@ -165,6 +171,17 @@ fn repo_ref_rejects_malformed_remote_uris() {
     for bad in ["alinery+ssh://", "alinery+ssh://host", "alinery+ssh:///path", "alinery+ssh://host/"] {
         assert!(RepoRef::parse(bad).is_err(), "{bad}");
     }
+}
+
+#[test]
+fn remote_keys_are_skipped_by_local_loops_and_never_locked_locally() {
+    let remote = std::path::Path::new("alinery+ssh://devbox-a1b2c3/home/me/repo");
+    assert!(!crate::paths::is_local_repo_dir(remote));
+    assert!(crate::paths::is_local_repo_dir(&std::env::temp_dir()));
+    // reserve_repo must refuse before create_dir_all, or it would litter the working directory.
+    let err = crate::AppState::default().reserve_repo(remote).err().expect("remote reservation is refused");
+    assert!(err.contains("remote repository"), "{err}");
+    assert!(!remote.exists());
 }
 
 #[test]

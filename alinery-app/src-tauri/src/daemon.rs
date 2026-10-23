@@ -1469,7 +1469,7 @@ pub(crate) fn spawn_daemon_poller(app: AppHandle) {
         for repo in load_app_config(&app).known_repos.iter().map(PathBuf::from) {
             // A repo that no longer exists on disk cannot host a daemon; spawning for it
             // would burn the full connect-retry window (~2s) on every tick.
-            if !repo.is_dir() {
+            if !is_local_repo_dir(&repo) {
                 continue;
             }
             // Deliberate teardown in flight. Skipped before the probe, not just before the

@@ -99,7 +99,7 @@ fn chat_branch_with(repo: &Path, meta: &SessionMeta, checkout_label: impl FnOnce
 
 pub(crate) fn list_chat_threads_in(repos: &[PathBuf], include_archived: bool) -> Result<Vec<ChatThread>, String> {
     let mut threads = Vec::new();
-    for repo in repos.iter().filter(|repo| repo.is_dir()) {
+    for repo in repos.iter().filter(|repo| is_local_repo_dir(repo)) {
         let metas = root_omp_metas(repo);
         let superseded: std::collections::HashSet<String> = metas.iter().filter_map(|meta| meta.resume_of.clone()).collect();
         // Every checkout thread in a repo shares its branch: one git call per repo, not per thread.
@@ -349,7 +349,7 @@ pub(crate) fn open_chat_repos_in(known: &[String], state: &AppState) -> Vec<Path
     known
         .iter()
         .map(PathBuf::from)
-        .filter(|repo| repo.is_dir() && state.owns_repo(repo) && !state.is_closing(repo) && state.daemon_for(repo).is_some())
+        .filter(|repo| is_local_repo_dir(repo) && state.owns_repo(repo) && !state.is_closing(repo) && state.daemon_for(repo).is_some())
         .collect()
 }
 

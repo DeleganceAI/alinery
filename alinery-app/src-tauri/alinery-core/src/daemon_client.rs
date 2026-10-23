@@ -1059,7 +1059,10 @@ impl DaemonClient {
     }
 
     pub fn connect_path(socket_path: PathBuf) -> Result<Self, String> {
-        Ok(Self { socket_path, observe_timeout: DAEMON_OBSERVATION_TIMEOUT })
+        Ok(Self {
+            socket_path,
+            observe_timeout: DAEMON_OBSERVATION_TIMEOUT,
+        })
     }
 
     pub fn connect_path_checked(socket_path: PathBuf) -> Result<Self, String> {
@@ -1104,8 +1107,7 @@ impl DaemonClient {
     }
 
     pub fn version_checked(&self) -> Result<DaemonVersionReply, String> {
-        self.call_with_timeout(&version_request(), self.observe_timeout)
-            .map(|value| parse_version_reply(&value))
+        self.call_with_timeout(&version_request(), self.observe_timeout).map(|value| parse_version_reply(&value))
     }
 
     pub fn version(&self) -> DaemonVersionReply {
@@ -1439,16 +1441,18 @@ pub fn configure_host_guard_environment(command: &mut Command, host_executable: 
     }
 }
 
-pub fn spawn_daemon_detached(repo: &Path, app_config: &Path, namespace: Option<&str>, host_executable: Option<&Path>) -> Result<(), String> {
-    let daemon = resolve_alineryd_path().ok_or("alinery-vinculum-daemon binary not found")?;
-    let mut command = Command::new(daemon);
+/// The one recipe for launching the daemon, locally or (through the repo service) on a remote
+/// host: arguments, login-shell PATH, the Grok key, detachment and null stdio. Callers add
+/// anything host-specific (such as the ownership library) and spawn it.
+pub fn daemon_command(binary: &Path, repo: &Path, app_config: &Path, build_id: &std::ffi::OsStr, namespace: Option<&str>, host_executable: Option<&Path>) -> Command {
+    let mut command = Command::new(binary);
     command
         .arg("--repo")
         .arg(repo)
         .arg("--app-config")
         .arg(app_config)
         .arg("--build-id")
-        .arg(daemon_binary_build_id())
+        .arg(build_id)
         .env("PATH", login_shell_path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -1457,8 +1461,20 @@ pub fn spawn_daemon_detached(repo: &Path, app_config: &Path, namespace: Option<&
     if let Some(namespace) = namespace.filter(|value| !value.is_empty()) {
         command.arg("--socket-namespace").arg(namespace);
     }
+    let grok_key = crate::load_global_settings(app_config).experiments.grok_api_key;
+    if !grok_key.trim().is_empty() {
+        command.env("XAI_API_KEY", grok_key.trim());
+    }
     configure_detached_process(&mut command);
-    command.spawn().map(|_| ()).map_err(|error| format!("spawn alinery-vinculum-daemon: {error}"))
+    command
+}
+
+pub fn spawn_daemon_detached(repo: &Path, app_config: &Path, namespace: Option<&str>, host_executable: Option<&Path>) -> Result<(), String> {
+    let daemon = resolve_alineryd_path().ok_or("alinery-vinculum-daemon binary not found")?;
+    daemon_command(&daemon, repo, app_config, daemon_binary_build_id().as_ref(), namespace, host_executable)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("spawn alinery-vinculum-daemon: {error}"))
 }
 
 #[cfg(test)]

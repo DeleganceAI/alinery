@@ -5,19 +5,14 @@
 //! module starts release `alineryd`.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use tauri::{AppHandle, Manager};
 
-use alinery_core::daemon_client::{self, configure_detached_process, configure_host_guard_environment};
+use alinery_core::daemon_client::{self, daemon_command};
 
 use crate::daemon::{alineryd_socket_namespace, canonical_host_executable, connect_current_daemon};
-use crate::paths::app_config_path;
+use crate::paths::{app_config_path, is_local_repo_dir};
 use crate::state::AppState;
-
-fn grok_key(app_config: &Path) -> String {
-    alinery_core::load_global_settings(app_config).experiments.grok_api_key
-}
 
 pub(crate) fn resolve_alongside(name: &str) -> Option<PathBuf> {
     let executable = std::env::current_exe().ok()?;
@@ -39,44 +34,23 @@ fn ownership_library() -> Option<PathBuf> {
     None
 }
 
-fn spawn_detached(binary: &Path, repo: &Path, app_config: &Path, extra_env: &[(&str, &str)]) -> Result<(), String> {
-    let namespace = alineryd_socket_namespace();
-    let host_executable = canonical_host_executable(std::env::current_exe());
-    let mut command = Command::new(binary);
-    command
-        .arg("--repo")
-        .arg(repo)
-        .arg("--app-config")
-        .arg(app_config)
-        .arg("--build-id")
-        .arg(binary.file_name().unwrap_or_default())
-        .env("PATH", alinery_core::login_shell_path())
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    configure_host_guard_environment(&mut command, host_executable.as_deref());
-    if let Some(namespace) = namespace.as_deref().filter(|value| !value.is_empty()) {
-        command.arg("--socket-namespace").arg(namespace);
-    }
-    for (key, value) in extra_env {
-        command.env(key, value);
-    }
-    configure_detached_process(&mut command);
-    command.spawn().map(|_| ()).map_err(|error| format!("spawn {}: {error}", binary.display()))
-}
-
 fn start_pi_daemon(repo: &Path, app_config: &Path) -> Result<(), String> {
     let binary = resolve_alongside("alinery-vinculum-daemon").ok_or("alinery-vinculum-daemon binary not found beside the app")?;
     let library = ownership_library().ok_or("ownership library not found beside the app")?;
-    let library = library.to_string_lossy().into_owned();
-    let mut env = vec![("ALINERY_OWNERSHIP_LIB", library)];
-    let key = grok_key(app_config);
-    let key = key.trim();
-    if !key.is_empty() {
-        env.push(("XAI_API_KEY", key.to_string()));
-    }
-    let borrowed: Vec<(&str, &str)> = env.iter().map(|(key, value)| (*key, value.as_str())).collect();
-    spawn_detached(&binary, repo, app_config, &borrowed)
+    let namespace = alineryd_socket_namespace();
+    let host_executable = canonical_host_executable(std::env::current_exe());
+    daemon_command(
+        &binary,
+        repo,
+        app_config,
+        binary.file_name().unwrap_or_default(),
+        namespace.as_deref(),
+        host_executable.as_deref(),
+    )
+    .env("ALINERY_OWNERSHIP_LIB", library)
+    .spawn()
+    .map(|_| ())
+    .map_err(|error| format!("spawn {}: {error}", binary.display()))
 }
 
 /// Start Vinculum. Does not start release `alineryd`.
@@ -109,7 +83,7 @@ pub(crate) fn spawn_pi_supervisor(app: AppHandle) {
         }
         let Ok(app_config) = app_config_path(&app) else { continue };
         for repo in crate::app_config::load_app_config(&app).known_repos.iter().map(PathBuf::from) {
-            if !repo.is_dir() || state.is_closing(&repo) {
+            if !is_local_repo_dir(&repo) || state.is_closing(&repo) {
                 continue;
             }
             let lifecycle = state.repo_lifecycle(&repo);

@@ -26,9 +26,10 @@ impl RepoRef {
             return Ok(Self::Local(PathBuf::from(key)));
         };
         match rest.split_once('/') {
-            Some((host_id, path)) if !host_id.is_empty() && !path.is_empty() => {
-                Ok(Self::Remote { host_id: host_id.to_string(), path: format!("/{path}") })
-            }
+            Some((host_id, path)) if !host_id.is_empty() && !path.is_empty() => Ok(Self::Remote {
+                host_id: host_id.to_string(),
+                path: format!("/{path}"),
+            }),
             _ => Err(format!("malformed remote repository: {key}")),
         }
     }
@@ -43,6 +44,13 @@ impl RepoRef {
 
 pub(crate) fn is_remote_repo_key(key: &str) -> bool {
     key.starts_with(REMOTE_REPO_SCHEME)
+}
+
+/// A known repo that exists as a directory on this machine. Local-only loops (the pollers,
+/// claims, the chat rail) use this instead of `is_dir()` so a remote key is skipped on purpose,
+/// not because the URI happens to be a nonexistent relative path.
+pub(crate) fn is_local_repo_dir(repo: &Path) -> bool {
+    !is_remote_repo_key(&repo.to_string_lossy()) && repo.is_dir()
 }
 
 fn remote_unavailable(key: &str) -> String {

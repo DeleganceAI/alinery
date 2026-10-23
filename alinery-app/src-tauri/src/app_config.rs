@@ -349,7 +349,7 @@ pub(crate) async fn read_app_config(app: AppHandle) -> Result<AppConfig, String>
             // Claim every repository this window has open before the daemon poller can manage
             // it. Active goes first so a startup collision preserves the selected repo's
             // existing repo_busy recovery path; inactive busy repos simply remain unattached.
-            if let Some(repo) = active.as_ref().filter(|repo| repo.is_dir()) {
+            if let Some(repo) = active.as_ref().filter(|repo| is_local_repo_dir(repo)) {
                 let lifecycle = state.repo_lifecycle(repo);
                 let _guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
                 if !state.is_quitting() && !state.is_closing(repo) && load_app_config(&app).known_repos.iter().any(|known| Path::new(known) == repo) {
@@ -358,7 +358,7 @@ pub(crate) async fn read_app_config(app: AppHandle) -> Result<AppConfig, String>
             }
             for known in &cfg.known_repos {
                 let repo = PathBuf::from(known);
-                if active.as_ref() == Some(&repo) || !repo.is_dir() {
+                if active.as_ref() == Some(&repo) || !is_local_repo_dir(&repo) {
                     continue;
                 }
                 let lifecycle = state.repo_lifecycle(&repo);

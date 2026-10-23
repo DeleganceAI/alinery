@@ -195,6 +195,10 @@ impl AppState {
             return Ok(Some(RepoReservation::AlreadyOwned));
         }
 
+        // A remote repo's lock lives on its host (taken through the repo service), never here.
+        if is_remote_repo_key(&repo.to_string_lossy()) {
+            return Err(format!("remote repository {} cannot be locked from this machine yet", repo.display()));
+        }
         fs::create_dir_all(alinery_dir(repo)).map_err(|e| format!("prepare repository lock for {}: {e}", repo.display()))?;
         try_lock_exclusive(&alinery_app_lock_path(repo))
             .map(|lock| lock.map(|lock| RepoReservation::Candidate { repo: repo.to_path_buf(), lock }))
