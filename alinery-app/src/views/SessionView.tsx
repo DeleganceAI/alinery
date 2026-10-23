@@ -433,18 +433,24 @@ export function SessionView({
     pending.reason = reason;
     const draft = messageDraftRef.current;
     const blank = draft.body === "" && draft.attachments.length === 0 && draft.pendingActions.length === 0;
+    const transfer = pending.transferDispatchId !== undefined;
     const restore = blank || draft === pending.sourceDraft;
-    const next = settleRefusedSend(chatRef.current, pending.entryId, pending.caption, restore);
+    const next = settleRefusedSend(chatRef.current, pending.entryId, pending.caption, transfer || restore);
     chatRef.current = next;
     setChat(next);
-    if (restore) {
-      updateMessageDraft({ body: pending.draft, pendingActions: pending.actions, attachments: pending.attachments });
+    if (transfer || restore) {
+      if (!transfer) updateMessageDraft({ body: pending.draft, pendingActions: pending.actions, attachments: pending.attachments });
       pendingSendsRef.current.delete(pending.commandId);
     }
     const remaining = queuedFollowUpsRef.current.filter((item) => item.dispatchId !== pending.commandId);
     if (remaining.length !== queuedFollowUpsRef.current.length) {
       queuedFollowUpsRef.current = remaining;
       onQueuedFollowUpsChange?.(remaining);
+    }
+    if (transfer) {
+      releaseUnusedPreviews(pending.attachments);
+      const stillQueued = queuedFollowUpsRef.current.some((item) => item.dispatchId === pending.transferDispatchId);
+      reason = `Couldn't send now.${stillQueued ? " The message remains queued." : ""} ${reason}`;
     }
     refreshSendRecovery((revision) => revision + 1);
     setMessageError(reason);

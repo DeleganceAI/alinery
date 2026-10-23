@@ -1879,6 +1879,65 @@ describe("session chat send routing", () => {
     expect(queue.map((item) => item.text)).toEqual(["earlier"]);
   });
 
+  it.each(["not_sent", "rejected", "unknown"] as const)("preserves queued ownership and the composer after a %s Send now transfer", async (outcome) => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    let resolveWrite!: (result: DispatchOutcome) => void;
+    const write = new Promise<DispatchOutcome>((resolve) => {
+      resolveWrite = resolve;
+    });
+    const attempts: Array<{ id: string }> = [];
+    rpcWriteSession.mockImplementation(async (_id, payload) => {
+      if (typeof payload === "object" && payload !== null && "type" in payload && payload.type === "abort_and_prompt" && "id" in payload && typeof payload.id === "string") {
+        attempts.push({ id: payload.id });
+        return write;
+      }
+      return { status: "written" };
+    });
+    const onDraftChange = vi.fn();
+    const onQueueChange = vi.fn();
+    const recovery = new Map<string, SessionSendRecovery>();
+    const props = {
+      queuedFollowUps: [{ text: "selected queued message", attachments: [blobPng], dispatchId: "selected-id" }],
+      onQueuedFollowUpsChange: onQueueChange,
+      onMessageDraftChange: onDraftChange,
+      sendRecovery: recovery,
+    };
+    const view = renderSession(props);
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    await waitFor(() => expect(attempts).toHaveLength(1));
+    const command = attempts[0];
+    const body = outcome === "not_sent" ? "" : "newer draft";
+    view.rerender(sessionView({ ...props, messageDraft: { body, pendingActions: [], attachments: [] } }));
+    onDraftChange.mockClear();
+    onQueueChange.mockClear();
+    await act(async () => {
+      resolveWrite(outcome === "rejected" ? { status: "written" } : { status: outcome, reason: "transfer failed" });
+    });
+    if (outcome === "rejected") {
+      await act(async () => {
+        onLine.current?.(JSON.stringify({ type: "alinery_dispatch", dispatch_id: command.id, status: "rejected", reason: "transfer failed" }));
+      });
+    }
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(body);
+    expect(onDraftChange).not.toHaveBeenCalled();
+    expect(onQueueChange).not.toHaveBeenCalled();
+    expect(within(screen.getByTestId("chat-pane")).getAllByText("selected queued message")).toHaveLength(1);
+    expect(attempts).toHaveLength(1);
+    expect(screen.getByText("queued · after this turn")).toBeDefined();
+    if (outcome === "unknown") {
+      expect(screen.getByText(/Delivery unknown:/)).toBeDefined();
+      expect(screen.queryByText(/The message remains queued/)).toBeNull();
+      expect(recovery.get(command.id)?.status).toBe("unknown");
+    } else {
+      expect(screen.getByText(/The message remains queued/)).toBeDefined();
+      expect(screen.queryByRole("button", { name: "Copy original message" })).toBeNull();
+      expect(recovery.has(command.id)).toBe(false);
+    }
+  });
+
   it("keeps an image follow-up recoverable through rejected Send now and transport-only retry ACK", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
     const onDraftChange = vi.fn();

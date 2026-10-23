@@ -797,6 +797,48 @@ test("send_now_transfers_only_the_exact_queued_dispatch_and_rejects_consumed_rep
     fixture.events.filter((event) => event.type === "native_dispatch_transferred" && event.dispatch_id === "selected" && event.replacement_dispatch_id === "send-now").length,
     1,
   );
+  await fixture.session.agent.continue();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal((await fixture.adapter.ready(fixture.context)).status, "ready", "a rejected replacement must not keep the drained queue's work alive");
+});
+
+test("failed_transfer_rejection_notification_still_releases_the_entered_operation", async () => {
+  const active = new Set();
+  const fixture = nativeFixture(undefined, undefined, (event) => {
+    if (event.type === "native_work_entered") active.add(event.operation_id);
+    if (event.type === "native_work_settled") active.delete(event.operation_id);
+    if (event.type === "native_dispatch_rejected") throw new Error("rejection acknowledgement lost");
+  });
+  await fixture.adapter.bind(fixture.context);
+  const frame = '\u001eALINERY:{"id":"failed-transfer","proof":"proof","transfer_dispatch_id":"missing"}\u001fselected';
+  await assert.rejects(() => fixture.session.prompt(frame));
+  assert.deepEqual([...active], [], "the daemon must not retain an operation whose native call has unwound");
+  const outcome = await fixture.adapter.ready(fixture.context);
+  assert.equal(outcome.status, "unavailable");
+  assert.match(outcome.reason, /rejection acknowledgement lost/);
+});
+
+test("lost_transfer_ack_is_not_a_definite_refusal_and_releases_both_operation_lifetimes", async () => {
+  const active = new Set();
+  const fixture = nativeFixture(undefined, undefined, (event) => {
+    if (event.type === "native_work_entered") active.add(event.operation_id);
+    if (event.type === "native_work_settled") active.delete(event.operation_id);
+    if (event.type === "native_dispatch_transferred") throw new Error("transfer acknowledgement lost");
+  });
+  await fixture.adapter.bind(fixture.context);
+  const framed = (id, transfer_dispatch_id) => `\u001eALINERY:${JSON.stringify({ id, proof: `${id}-proof`, transfer_dispatch_id })}\u001fselected`;
+  await fixture.session.followUp(framed("selected"));
+  await assert.rejects(() => fixture.session.prompt(framed("replacement", "selected")), /transfer acknowledgement lost/);
+  assert.deepEqual(fixture.session.agent.peekFollowUpQueue(), []);
+  assert.deepEqual([...active], [], "both unwound operations must retire even when transfer reporting fails");
+  assert.equal(
+    fixture.events.some((event) => event.type === "native_dispatch_rejected"),
+    false,
+    "queue removal makes delivery uncertain, not definitely refused",
+  );
+  const outcome = await fixture.adapter.ready(fixture.context);
+  assert.equal(outcome.status, "unavailable");
+  assert.match(outcome.reason, /transfer acknowledgement lost/);
 });
 
 test("known_native_job_cancellation_retains_the_actual_unwind_promise", async () => {

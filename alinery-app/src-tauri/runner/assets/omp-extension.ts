@@ -1419,48 +1419,31 @@ export class NativeContinuation {
     }
     const operation = this.enter(dispatch, name, proof, parent);
     await operation.entered;
-    if (transfer && dispatch) {
-      const agent = this.session?.agent;
-      const match = [...this.queued].find(([message, queuedOperation]) => queuedOperation.dispatch === transfer && queuedOperation.queuedUser === message);
-      if (!agent || !match) {
-        await this.send({
-          type: "native_dispatch_rejected",
-          process_incarnation: this.incarnation(),
-          dispatch_id: dispatch,
-          reason: "Selected queued input is no longer transferable",
-        });
-        operation.returned = true;
-        await this.settle(operation);
-        throw new Error("Selected queued input is no longer transferable");
-      }
-      const [message, previous] = match;
-      // Exact public queue objects only; snapshot and replacement have no await gap.
-      const steering = agent.peekSteeringQueue();
-      const followUp = agent.peekFollowUpQueue();
-      if (!steering.includes(message) && !followUp.includes(message)) {
-        await this.send({
-          type: "native_dispatch_rejected",
-          process_incarnation: this.incarnation(),
-          dispatch_id: dispatch,
-          reason: "Selected queued input has already been consumed",
-        });
-        operation.returned = true;
-        await this.settle(operation);
-        throw new Error("Selected queued input has already been consumed");
-      }
-      agent.replaceQueues(
-        steering.filter((item) => item !== message),
-        followUp.filter((item) => item !== message),
-      );
-      this.queued.delete(message);
-      operation.transfers = [previous];
-      await this.send({ type: "native_dispatch_transferred", process_incarnation: this.incarnation(), dispatch_id: transfer, replacement_dispatch_id: dispatch });
-    }
     if (name === "setModel") this.modelChanges++;
     try {
+      if (transfer && dispatch) {
+        const agent = this.session?.agent;
+        const match = [...this.queued].find(([message, queuedOperation]) => queuedOperation.dispatch === transfer && queuedOperation.queuedUser === message);
+        if (!agent || !match) throw new Error("Selected queued input is no longer transferable");
+        const [message, previous] = match;
+        // Exact public queue objects only; snapshot and replacement have no await gap.
+        const steering = agent.peekSteeringQueue();
+        const followUp = agent.peekFollowUpQueue();
+        if (!steering.includes(message) && !followUp.includes(message)) throw new Error("Selected queued input has already been consumed");
+        agent.replaceQueues(
+          steering.filter((item) => item !== message),
+          followUp.filter((item) => item !== message),
+        );
+        this.queued.delete(message);
+        operation.transfers = [previous];
+        await this.send({ type: "native_dispatch_transferred", process_incarnation: this.incarnation(), dispatch_id: transfer, replacement_dispatch_id: dispatch });
+      }
       return await this.scope.run(operation, () => Reflect.apply(original, receiver, args));
     } catch (error) {
-      if (dispatch && !operation.consumed && !operation.queuedUser && operation.pending === 0) {
+      // Once removed from the queue, a failed transfer cannot promise that the
+      // original remains queued. Keep continuation fenced and report uncertainty.
+      if (operation.transfers && !operation.consumed) this.failure = String(error);
+      if (dispatch && !operation.transfers && !operation.consumed && !operation.queuedUser && operation.pending === 0) {
         await this.send({
           type: "native_dispatch_rejected",
           process_incarnation: this.incarnation(),
