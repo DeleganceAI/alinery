@@ -2009,6 +2009,7 @@ main {
 .create-footer .create-actions { flex-shrink: 0; }
 .create-footer .btn { min-height: 36px; }
 .createpage-with-preview .create-repository-source .field-input { font-size: calc(13px * var(--ui-scale)); padding: 9px 10px; }
+.createpage-with-preview .create-repository-source select.field-input { padding-inline-end: 36px; }
 .createpage-with-preview .task-default-model .field-input { height: 36px; font-size: calc(13px * var(--ui-scale)); }
 .createpage-with-preview .worktree-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; }
 .createpage-with-preview .step-model-head, .createpage-with-preview .step-model-row { grid-template-columns: minmax(0, 1fr) minmax(8rem, 1.4fr); row-gap: 4px; }
@@ -2045,8 +2046,9 @@ main {
   min-width: 0;
 }
 .playbook-picker-card.selected {
-  border: 1px solid var(--accent);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
 }
 .playbook-picker-card .playbook-definition-graph {
   padding: 12px 6px;
@@ -2071,14 +2073,13 @@ main {
 .playbook-option:hover {
   border-color: var(--border-strong);
 }
-.playbook-option:focus-within {
+.playbook-option:has(input:focus-visible) {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 .playbook-option.selected {
-  border-color: var(--accent);
-  background: var(--accent-subtle);
-  box-shadow: inset 3px 0 var(--accent);
+  border-color: transparent;
+  background: transparent;
 }
 .playbook-option-input {
   position: absolute;

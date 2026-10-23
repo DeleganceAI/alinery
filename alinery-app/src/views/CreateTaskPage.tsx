@@ -1,3 +1,4 @@
+import { ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { afterPaint } from "../afterPaint";
@@ -949,46 +950,52 @@ export function CreateTaskPage({
             <div className="create-repository-source">
               <label className="create-field">
                 <span>Repository</span>
-                <select className="field-input" value={repoPath} disabled={creating || clearing || creatingRef.current} onChange={(e) => selectRepo(e.target.value)}>
-                  {knownRepos.map((repo) => (
-                    <option key={repo} value={repo}>
-                      {repo}
-                    </option>
-                  ))}
-                </select>
+                <span className="chat-select">
+                  <select className="field-input" value={repoPath} disabled={creating || clearing || creatingRef.current} onChange={(e) => selectRepo(e.target.value)}>
+                    {knownRepos.map((repo) => (
+                      <option key={repo} value={repo}>
+                        {repo}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown size={14} strokeWidth={1.5} aria-hidden="true" />
+                </span>
               </label>
               <div className="create-source-field">
                 <label className="create-field">
                   <span>Starting branch</span>
-                  <select
-                    className="field-input"
-                    value={baseRef ?? ""}
-                    disabled={branchesLoading || !!branchError || creating || clearing || creatingRef.current}
-                    onChange={(event) => {
-                      if (creatingRef.current || clearingRef.current || branchesLoading || branchError || branchSnapshotRequest.current !== branchRequest.current) return;
-                      const next = event.target.value;
-                      if (!branchOptions.some((option) => option.value === next)) return;
-                      dirtyRef.current = true;
-                      baseRefRef.current = next;
-                      setBaseRef(next);
-                    }}
-                  >
-                    {baseRef === null && (
-                      <option value="" disabled>
-                        {branchesLoading ? "Loading…" : "Choose a branch"}
-                      </option>
-                    )}
-                    {baseRef !== null && !branchOptions.some((option) => option.value === baseRef) && (
-                      <option value={baseRef} disabled>
-                        {unavailableBranchLabel}
-                      </option>
-                    )}
-                    {branchOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                  <span className="chat-select">
+                    <select
+                      className="field-input"
+                      value={baseRef ?? ""}
+                      disabled={branchesLoading || !!branchError || creating || clearing || creatingRef.current}
+                      onChange={(event) => {
+                        if (creatingRef.current || clearingRef.current || branchesLoading || branchError || branchSnapshotRequest.current !== branchRequest.current) return;
+                        const next = event.target.value;
+                        if (!branchOptions.some((option) => option.value === next)) return;
+                        dirtyRef.current = true;
+                        baseRefRef.current = next;
+                        setBaseRef(next);
+                      }}
+                    >
+                      {baseRef === null && (
+                        <option value="" disabled>
+                          {branchesLoading ? "Loading…" : "Choose a branch"}
+                        </option>
+                      )}
+                      {baseRef !== null && !branchOptions.some((option) => option.value === baseRef) && (
+                        <option value={baseRef} disabled>
+                          {unavailableBranchLabel}
+                        </option>
+                      )}
+                      {branchOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown size={14} strokeWidth={1.5} aria-hidden="true" />
+                  </span>
                 </label>
                 {branchError && (
                   <button
@@ -1491,7 +1498,9 @@ export function CreateTaskPage({
                       </label>
                       {selected && selectedSource && (
                         <details className="create-graph-preview">
-                          <summary>Preview {selectedSource.definition.step.length} steps</summary>
+                          <summary>
+                            Preview {selectedSource.definition.step.length} {selectedSource.definition.step.length === 1 ? "step" : "steps"}
+                          </summary>
                           <PlaybookGraph title={item.title ?? selectedSource.definition.title} steps={selectedSource.definition.step} variant="definition" showInspector={false} />
                         </details>
                       )}
