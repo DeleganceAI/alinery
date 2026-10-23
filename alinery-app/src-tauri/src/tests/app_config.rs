@@ -88,9 +88,7 @@ fn set_active_repo_rejects_a_deleted_git_dir_without_creating_alinery() {
     use tauri::Manager;
     let repo = init_git_test_repo("deleted-git");
     fs::remove_dir_all(repo.join(".git")).unwrap();
-    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
-    context.config_mut().identifier = format!("test.alinery.open-git.{}", uuid::Uuid::new_v4());
-    let app = tauri::test::mock_builder().manage(AppState::default()).build(context).unwrap();
+    let (app, _config_dir) = build_mock_app("open-git", tauri::test::mock_builder().manage(AppState::default()));
     let err = match crate::set_active_repo_sync(app.handle().clone(), app.state(), repo.display().to_string(), Vec::new()) {
         Ok(_) => panic!("deleted .git must not open"),
         Err(err) => err,
@@ -217,6 +215,7 @@ struct DrawerSwitch {
     prev_thread: Option<std::thread::JoinHandle<()>>,
     dest_thread: Option<std::thread::JoinHandle<()>>,
     _reset: ActiveRepoReset,
+    _config_dir: AppConfigDirGuard,
 }
 
 impl Drop for DrawerSwitch {
@@ -241,9 +240,7 @@ fn drawer_switch(name: &str, kill_error: bool) -> DrawerSwitch {
     set_active_repo_global(Some(previous.clone())).unwrap();
     let state = AppState::default();
     assert!(state.claim_repo(&previous), "previous repo must be owned");
-    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
-    context.config_mut().identifier = format!("test.alinery.{name}.{}", uuid::Uuid::new_v4());
-    let app = tauri::test::mock_builder().manage(state).build(context).unwrap();
+    let (app, config_dir) = build_mock_app(name, tauri::test::mock_builder().manage(state));
     let config_path = crate::app_config_path(app.handle()).unwrap();
     let identity = alinery_core::app_config_identity(&config_path);
     let (prev_requests, prev_stop, prev_thread) = serve_daemon(current_alineryd_socket_path(&previous), identity.clone(), kill_error);
@@ -266,6 +263,7 @@ fn drawer_switch(name: &str, kill_error: bool) -> DrawerSwitch {
         prev_thread: Some(prev_thread),
         dest_thread: Some(dest_thread),
         _reset: ActiveRepoReset,
+        _config_dir: config_dir,
     }
 }
 
@@ -349,9 +347,7 @@ fn set_active_repo_does_not_kill_drawer_ids_when_reservation_fails() {
     set_active_repo_global(Some(previous.clone())).unwrap();
     let state = AppState::default();
     assert!(state.claim_repo(&previous));
-    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
-    context.config_mut().identifier = format!("test.alinery.drawer-reserved.{}", uuid::Uuid::new_v4());
-    let app = tauri::test::mock_builder().manage(state).build(context).unwrap();
+    let (app, _config_dir) = build_mock_app("drawer-reserved", tauri::test::mock_builder().manage(state));
     let (prev_requests, prev_stop, prev_thread) = serve_daemon(current_alineryd_socket_path(&previous), "fixture".into(), false);
     app.state::<AppState>().set_daemon(
         &previous,
