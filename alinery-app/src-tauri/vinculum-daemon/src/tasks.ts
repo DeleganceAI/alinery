@@ -231,6 +231,9 @@ export function recordedHarness(key: unknown): string {
 
 export function completeSessionMeta(current: Record<string, unknown>, patch: Record<string, unknown>, id: string, worktree: string, now: number): Record<string, unknown> {
   const next: Record<string, unknown> = { ...current, ...patch, id };
+  // Reopening a stopped session clears the exit. Null is the clear; a later stamp sets the number again.
+  if ("ended_at" in patch && patch.ended_at == null) delete next.ended_at;
+  if ("exit_code" in patch && patch.exit_code == null) delete next.exit_code;
   if (typeof next.worktree !== "string" || next.worktree === "") next.worktree = worktree;
   if (typeof next.created !== "number" || !Number.isFinite(next.created)) next.created = now;
   if (next.harness === "omp") next.harness = "vinculum";
@@ -400,6 +403,8 @@ export async function startSession(
       return { error: error instanceof Error ? error.message : String(error) };
     }
     if (!resumed) {
+      const existing = engineExecutions(slug).find((item) => item.sessionId === id);
+      if (existing && (existing.status === "done" || existing.status === "finishing")) return { error: "this execution already completed" };
       try {
         await runTask(slug);
       } catch {

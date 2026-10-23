@@ -88,6 +88,7 @@ import {
   sameArtifactListItems,
 } from "../shared";
 import { toast } from "../toast";
+import { sessionIsRecoverable, sessionTerminalLabel } from "../vinculumHarness";
 import type {
   AppearancePrefs,
   ArtifactListItem,
@@ -1955,6 +1956,23 @@ export function SessionView({
     }
   };
 
+  const terminalLabel = sessionTerminalLabel(harness, id, execution, effectiveLifecycle?.state === "exited" || effectiveLifecycle?.state === "interrupted" || effectiveLifecycle?.state === "orphaned");
+  const canRecoverSession = executionAvailable && sessionIsRecoverable(harness, id, execution);
+  const recoverSession = async () => {
+    if (!canRecoverSession || completionBusy) return;
+    setCompletionBusy(true);
+    try {
+      await ipc.startSession(taskSlug, id, repoPath);
+      setObservation(await ipc.sessionStatus(id, taskSlug));
+      setReclassifyTick((tick) => tick + 1);
+      setExecutionView(await readTaskExecution(repoPath, taskSlug));
+      setExecutionError("");
+    } catch (error) {
+      setExecutionError(String(error));
+    } finally {
+      setCompletionBusy(false);
+    }
+  };
   const finalizedNotice = task ? finalizedSubtaskNotice(task, parentTask) : "";
   const awaitingName = display != null && awaitingSessionName({ ...display.session, harness: display.session.harness || harness }, observation);
 
@@ -2006,7 +2024,7 @@ export function SessionView({
         <span className="pill" title={vinculum && turnActive ? NEXT_TURN_MODEL_TITLE : undefined}>
           {harnessDisplayName(harness) + (chatMetaHead ? ` · ${chatMetaHead}` : "")}
         </span>
-        <StatusDot id={id} slug={taskSlug} repoPath={repoPath} observation={observation} />
+        <StatusDot id={id} slug={taskSlug} repoPath={repoPath} observation={observation} terminalLabel={terminalLabel} />
         <span className="session-path dim mono">
           {id} · {cwd}
         </span>
@@ -2270,6 +2288,8 @@ export function SessionView({
                 archiveBusy={archiveBusy}
                 onViewHistory={() => setShowHistory(true)}
                 onKilled={() => setReclassifyTick((n) => n + 1)}
+                onRecover={canRecoverSession ? () => void recoverSession() : undefined}
+                recoverBusy={completionBusy}
               />
               {showHistory &&
                 (vinculum ? (

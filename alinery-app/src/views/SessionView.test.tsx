@@ -2129,6 +2129,35 @@ describe("held task sessions", () => {
     sessionStatus.mockReset().mockResolvedValue({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} });
   });
 
+  it("recovers a failed Vinculum session from its file and leaves a completed one alone", async () => {
+    startSession.mockClear();
+    scenario.tasks = [task];
+    scenario.tasksPromise = null;
+    scenario.tasksError = null;
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} });
+    getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session", lifecycle: "failed", receipt_id: null, shutdown_confirmed: true, error: "exited without completing" })]));
+    renderSession({ intent: undefined, harness: "vinculum" });
+    const recover = await screen.findByRole("button", { name: "Recover session" });
+    expect(screen.getByText("The daemon stopped before this step was accepted. The conversation is still in the session file.")).toBeDefined();
+    expect(startSession).not.toHaveBeenCalled();
+    startSession.mockImplementation(async () => {
+      sessionStatus.mockResolvedValue(liveObservation("rpc"));
+      getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session", lifecycle: "running" })]));
+    });
+    fireEvent.click(recover);
+    await waitFor(() => expect(startSession).toHaveBeenCalledWith("task", "session", "/repo"));
+    expect(await screen.findByLabelText("Message or /command")).toBeDefined();
+
+    cleanup();
+    startSession.mockClear();
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} });
+    getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session", lifecycle: "completed", receipt_id: "execution-a", shutdown_confirmed: true })]));
+    renderSession({ intent: undefined, harness: "vinculum" });
+    await screen.findByRole("button", { name: "Start fresh" });
+    expect(screen.queryByRole("button", { name: "Recover session" })).toBeNull();
+    expect(startSession).not.toHaveBeenCalled();
+  });
+
   it("opens queued work without starting it and starts only on explicit request", async () => {
     startSession.mockClear();
     scenario.tasks = [task];

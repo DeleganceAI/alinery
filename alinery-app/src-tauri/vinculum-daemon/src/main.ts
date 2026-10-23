@@ -16,6 +16,7 @@ import { openProviderRuntime } from "./runtime.ts";
 import { completeSessionMeta, getTaskExecution, ownershipLibrary, suggestSessionName, taskOp, taskWorktree } from "./tasks.ts";
 import { attachShell, detachPty, hasPty, isPty, killPty, resizePty, startShell, writePty } from "./terminal.ts";
 import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinking, seedLevel, seedUnsetThinking, setModelRefusal, turnControls } from "./sessionControls.ts";
+import { rememberSessionEnv, sessionByToolEnv } from "./sessionLookup.ts";
 import { McpHub } from "./mcp.ts";
 import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
@@ -120,7 +121,7 @@ function codingExtension() {
         },
         execute: async (args, api, ctx) => {
           const path = args.path.trim();
-          if (path === PHASE_WRITE) return requestPhase(api.conversationId);
+          if (path === PHASE_WRITE) return requestPhase(api);
           if (path.startsWith("xd://")) return { output: [{ type: "text", text: `Unsupported internal path ${path}.` }], isError: true };
           return fileWrite.execute(args, api, ctx);
         },
@@ -146,7 +147,7 @@ function phaseExtension() {
         prepareArguments() {
           return {};
         },
-        execute: async (_args, api) => requestPhase(api.conversationId),
+        execute: async (_args, api) => requestPhase(api),
       }),
     ],
   });
@@ -157,7 +158,7 @@ const sessionNameTool = defineTool({
   description: "Suggest this session's short work name. An existing name, including a human correction, is preserved.",
   parameters: Type.Object({ name: Type.String() }),
   execute: async (args, api) => {
-    const row = rowForConversation(api.conversationId);
+    const row = sessionForCall(api.env, api.conversationId);
     if (!row?.taskSlug) return { output: [{ type: "text", text: "Only a task session can name itself this way." }], isError: true };
     const outcome = suggestSessionName(repo, row.taskSlug, row.id, args.name);
     if ("error" in outcome) return { output: [{ type: "text", text: outcome.error }], isError: true };
@@ -171,7 +172,7 @@ function namingExtension() {
     tools: [sessionNameTool],
     sections: [
       section("session-name", (input) => {
-        const row = rowForConversation(input.conversationId);
+        const row = sessionForCall(input.env, input.conversationId);
         if (!row?.taskSlug || sessionNameSource(row.taskSlug, row.id)) return undefined;
         return SESSION_NAME_INSTRUCTION;
       }),
@@ -353,6 +354,7 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
   live.set(id, row);
   const meta = readMeta(taskSlug, id);
   if (!meta.started_at) writeMeta(taskSlug, id, { started_at: Math.floor(Date.now() / 1000), harness: "vinculum", harness_resume_token: "" });
+  if (typeof meta.ended_at === "number") writeMeta(taskSlug, id, { ended_at: null, exit_code: null });
   // Bun can finish the later awaits as microtasks. Yield once so list can observe starting.
   const turn = Promise.withResolvers();
   setImmediate(turn.resolve);
@@ -363,7 +365,11 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
     {
       models,
       registry,
-      env: (target) => new NodeExecutionEnv({ cwd: sessionCwd(target.conversationId) }),
+      env: () => {
+        const env = new NodeExecutionEnv({ cwd: sessionCwd(taskSlug, id) });
+        rememberSessionEnv(env, id);
+        return env;
+      },
       conversationCreated: async (tx, conversation) => {
         await tx.doc(Attention, conversation.id);
         await tx.doc(PhaseRequest, conversation.id);
@@ -541,15 +547,12 @@ function watch(row: Live, harness: OpenedHarness, conversationId: string) {
   });
 }
 
-function rowForConversation(conversationId: string): Live | undefined {
-  for (const row of live.values()) if (row.conversationId === conversationId) return row;
-  return undefined;
+function sessionForCall(env: unknown, conversationId: string): Live | undefined {
+  return sessionByToolEnv(env, conversationId, (sessionId) => live.get(sessionId), live.values());
 }
 
-function sessionCwd(conversationId: string): string {
-  const row = rowForConversation(conversationId);
-  if (!row) return repo;
-  const worktree = readMeta(row.taskSlug, row.id).worktree;
+function sessionCwd(taskSlug: string, id: string): string {
+  const worktree = readMeta(taskSlug, id).worktree;
   return typeof worktree === "string" && worktree && existsSync(worktree) ? worktree : repo;
 }
 
@@ -575,8 +578,8 @@ function applyPhaseReply(row: Live, reply: Record<string, unknown>) {
   if (reply.playbook) row.playbook = { state: String(reply.playbook) };
 }
 
-async function requestPhase(conversationId: string) {
-  const row = rowForConversation(conversationId);
+async function requestPhase(api: { conversationId: string; env?: unknown }) {
+  const row = sessionForCall(api.env, api.conversationId);
   if (!row) return { output: [{ type: "text" as const, text: "No session is open for this completion." }], isError: true };
   if (!row.taskSlug) return { output: [{ type: "text" as const, text: phaseResultText({ forwarded: false }) }] };
   const nonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;

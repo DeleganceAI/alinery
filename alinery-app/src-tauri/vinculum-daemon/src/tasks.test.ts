@@ -20,3 +20,10 @@ test("a later patch keeps worktree and created already on the file", () => {
   expect(next.created).toBe(3);
   expect(next.model).toBe("b");
 });
+
+test("reopening a stopped session removes the exit stamp", () => {
+  const next = completeSessionMeta({ id: "s", worktree: "/wt", created: 3, ended_at: 9, exit_code: 0 }, { ended_at: null, exit_code: null }, "s", "/wt", 10);
+  expect(next.ended_at).toBeUndefined();
+  expect(next.exit_code).toBeUndefined();
+  expect(next.created).toBe(3);
+});
