@@ -36,11 +36,7 @@ pub(crate) struct AppTaskExecutionReply {
     pub live: ExecutionAvailability,
 }
 
-pub(crate) fn saved_task_execution_for(repo: &Path, task_slug: &str) -> Result<alinery_core::task_creation::TaskExecutionReply, String> {
-    let state = alinery_core::execution::read_execution_state(repo, task_slug)?;
-    let definition = alinery_core::execution::read_task_playbook(repo, task_slug, &state)?;
-    Ok(alinery_core::task_creation::TaskExecutionReply { state, definition })
-}
+pub(crate) use alinery_core::board::saved_task_execution as saved_task_execution_for;
 
 fn availability_from_client_error(error: daemon_client::DaemonClientError) -> ExecutionAvailability {
     let detail = error.to_string();
@@ -338,10 +334,83 @@ pub(crate) async fn observe_task_executions<R: tauri::Runtime>(app: AppHandle<R>
         enter_observe_worker();
         let config_path = app_config_path(&app)?;
         let known = load_app_config(&app).known_repos;
-        observe_task_executions_in(&config_path, &known, tasks)
+        if !tasks.iter().any(|task| is_remote_repo_key(&task.repo_path)) {
+            return observe_task_executions_in(&config_path, &known, tasks);
+        }
+        // Remote refs are answered from their host; the rest take the in-process path.
+        let mut seen = HashSet::new();
+        let order: Vec<(String, String)> = tasks
+            .iter()
+            .map(|task| (task.repo_path.clone(), task.task_slug.clone()))
+            .filter(|key| seen.insert(key.clone()))
+            .collect();
+        let (remote, local): (Vec<_>, Vec<_>) = tasks.into_iter().partition(|task| is_remote_repo_key(&task.repo_path));
+        let mut outcomes: HashMap<(String, String), TaskExecutionOutcome> = HashMap::new();
+        for outcome in observe_task_executions_in(&config_path, &known, local)? {
+            outcomes.insert((outcome.repo_path.clone(), outcome.task_slug.clone()), outcome);
+        }
+        let state = app.state::<AppState>();
+        for task in remote {
+            let outcome = observe_remote_task_execution(&state, &known, &task.repo_path, &task.task_slug);
+            outcomes.insert((task.repo_path, task.task_slug), outcome);
+        }
+        Ok(order.into_iter().filter_map(|key| outcomes.remove(&key)).collect())
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// A remote task's retained execution plus whatever its daemon says live, through the forward.
+fn observe_remote_task_execution(state: &AppState, known: &[String], repo_path: &str, task_slug: &str) -> TaskExecutionOutcome {
+    let outcome = |execution: Option<AppTaskExecutionReply>, error: Option<String>| TaskExecutionOutcome {
+        repo_path: repo_path.to_string(),
+        task_slug: task_slug.to_string(),
+        execution,
+        error,
+    };
+    let (host_id, path) = match RepoRef::parse(repo_path) {
+        Ok(RepoRef::Remote { host_id, path }) if known.iter().any(|repo| repo == repo_path) => (host_id, path),
+        _ => return outcome(None, Some(format!("unknown repository: {repo_path}"))),
+    };
+    let saved: alinery_core::task_creation::TaskExecutionReply = match remote_call(
+        state,
+        &host_id,
+        RepoOp::SavedExecution {
+            repo: path.into(),
+            slug: task_slug.to_string(),
+        },
+    ) {
+        Ok(saved) => saved,
+        Err(error) => return outcome(None, Some(error)),
+    };
+    let request = alinery_core::task_creation::GetTaskExecutionRequest { task_slug: task_slug.to_string() };
+    match state.daemon_for(Path::new(repo_path)) {
+        None => outcome(
+            Some(AppTaskExecutionReply {
+                execution: saved,
+                live: ExecutionAvailability::Offline {
+                    detail: "this remote repository's daemon is not connected".into(),
+                },
+            }),
+            None,
+        ),
+        Some(client) => match client.get_task_execution(&request) {
+            Ok(execution) => outcome(
+                Some(AppTaskExecutionReply {
+                    execution,
+                    live: ExecutionAvailability::Available,
+                }),
+                None,
+            ),
+            Err(detail) => outcome(
+                Some(AppTaskExecutionReply {
+                    execution: saved,
+                    live: ExecutionAvailability::Unavailable { detail },
+                }),
+                None,
+            ),
+        },
+    }
 }
 
 #[tauri::command]

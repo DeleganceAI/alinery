@@ -1,70 +1,6 @@
 use crate::*;
 
-fn manager_sessions(repo: &Path, owner_slug: &str) -> Vec<alinery_core::SessionMeta> {
-    let mut sessions = fs::read_dir(sessions_dir(repo, owner_slug))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| alinery_core::read_session_meta_full(&entry.path()))
-        .filter(|meta| meta.subtask_manager && !meta.archived)
-        .collect::<Vec<_>>();
-    sessions.sort_by(|left, right| left.created.cmp(&right.created).then_with(|| left.id.cmp(&right.id)));
-    sessions
-}
-
-fn manager_is_usable(meta: &alinery_core::SessionMeta) -> bool {
-    !meta.archived && (meta.ended_at.is_none() || !meta.harness_resume_token.is_empty())
-}
-
-pub(crate) fn subtask_state_in(repo: &Path, task_slug: &str) -> Result<alinery_core::SubtaskManagerState, String> {
-    let task = alinery_core::read_task(repo, task_slug).ok_or_else(|| format!("no such task: {task_slug}"))?;
-    let relationships = alinery_core::read_task_relationships(repo, task_slug)?;
-    let own_managers = manager_sessions(repo, task_slug);
-    let manager_session = if let Some(child) = &relationships.active_subtask {
-        own_managers.iter().rev().find(|meta| meta.subtask_slug == child.slug).cloned()
-    } else {
-        own_managers.iter().rev().find(|meta| meta.subtask_slug.is_empty()).cloned()
-    };
-    let (parent_manager_session, parent_manager_owner_task_slug) = if let Some(parent) = &relationships.parent_task {
-        (
-            manager_sessions(repo, &parent.slug).into_iter().rev().find(|meta| meta.subtask_slug == task.slug),
-            parent.slug.clone(),
-        )
-    } else {
-        (None, String::new())
-    };
-
-    let historical = task.engine_version < 2;
-    let disabled_reason = if historical {
-        "Pre-v2 task data is read-only".into()
-    } else if task.draft {
-        "Draft tasks cannot start sub-tasks".into()
-    } else if task.archived {
-        "Archived tasks cannot start sub-tasks".into()
-    } else if !task.has_worktree || task.worktree.is_empty() || !Path::new(&task.worktree).is_dir() {
-        "A dedicated task worktree is required".into()
-    } else if relationships.active_subtask.is_some() {
-        "Finish the active sub-task before starting another".into()
-    } else if own_managers.iter().any(|meta| meta.subtask_slug.is_empty()) {
-        "A sub-task setup manager already exists".into()
-    } else {
-        String::new()
-    };
-    let can_recover = relationships.active_subtask.is_some() && manager_session.as_ref().map(manager_is_usable) != Some(true);
-
-    Ok(alinery_core::SubtaskManagerState {
-        task: alinery_core::TaskSummary::from(&task),
-        parent_task: relationships.parent_task,
-        active_subtask: relationships.active_subtask,
-        manager_session,
-        manager_owner_task_slug: task.slug.clone(),
-        parent_manager_session,
-        parent_manager_owner_task_slug,
-        can_start: disabled_reason.is_empty(),
-        can_recover,
-        disabled_reason,
-    })
-}
+pub(crate) use alinery_core::subtask::subtask_manager_state as subtask_state_in;
 
 pub(crate) fn subtask_manager_request_in(repo: &Path, task_slug: String, recover: bool) -> Result<alinery_core::task_creation::CreateExecutionSessionRequest, String> {
     let subtask_slug = if recover {
@@ -124,12 +60,20 @@ pub(crate) fn discard_subtask_in(state: &AppState, repo: &Path, task_slug: &str,
 
 #[tauri::command]
 pub(crate) fn subtask_state(app: AppHandle, state: State<'_, AppState>, task_slug: String, repo_path: Option<String>) -> Result<alinery_core::SubtaskManagerState, String> {
-    let repo = match repo_path {
-        Some(path) => target_repo_for_app(&app, &path)?,
-        None => active_repo()?,
-    };
-    require_repo_owned(&state, &repo)?;
-    subtask_state_in(&repo, &task_slug)
+    match target_or_active_ref(&app, repo_path)? {
+        RepoRef::Remote { host_id, path } => remote_call(
+            &state,
+            &host_id,
+            RepoOp::SubtaskState {
+                repo: path.into(),
+                slug: task_slug,
+            },
+        ),
+        RepoRef::Local(repo) => {
+            require_repo_owned(&state, &repo)?;
+            subtask_state_in(&repo, &task_slug)
+        }
+    }
 }
 
 #[tauri::command]

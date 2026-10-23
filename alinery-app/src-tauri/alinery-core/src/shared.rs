@@ -1217,7 +1217,7 @@ pub fn strip_terminal_queries(input: &[u8]) -> Vec<u8> {
     out
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaunchFields {
     pub id: String,
     pub task_slug: String,

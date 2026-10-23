@@ -510,19 +510,21 @@ pub(crate) async fn list_artifacts(task_slug: String) -> Result<Vec<String>, Str
     list_artifacts_for(&repo, &task_slug)
 }
 
-pub(crate) fn list_artifacts_with_metadata_in(repo: &Path, task_slug: &str) -> Result<Vec<alinery_core::ArtifactListItem>, String> {
-    let task = read_task(repo, task_slug)?;
-    if task.engine_version >= 2 {
-        let execution = saved_task_execution_for(repo, task_slug)?;
-        alinery_core::list_artifacts_with_execution_metadata(repo, task_slug, &execution.state)
-    } else {
-        alinery_core::list_artifacts_with_metadata_for(repo, task_slug)
-    }
-}
+pub(crate) use alinery_core::board::artifacts_with_metadata as list_artifacts_with_metadata_in;
 
 #[tauri::command]
-pub(crate) async fn list_artifacts_with_metadata(task_slug: String) -> Result<Vec<alinery_core::ArtifactListItem>, String> {
-    list_artifacts_with_metadata_in(&active_repo()?, &task_slug)
+pub(crate) async fn list_artifacts_with_metadata(state: State<'_, AppState>, task_slug: String) -> Result<Vec<alinery_core::ArtifactListItem>, String> {
+    match active_repo_ref()? {
+        RepoRef::Local(repo) => list_artifacts_with_metadata_in(&repo, &task_slug),
+        RepoRef::Remote { host_id, path } => remote_call(
+            &state,
+            &host_id,
+            RepoOp::ListArtifactsWithMetadata {
+                repo: path.into(),
+                slug: task_slug,
+            },
+        ),
+    }
 }
 
 #[tauri::command]
@@ -799,12 +801,33 @@ pub(crate) fn artifact_node_path_for(repo: &Path, task_slug: &str, node_id: &str
 
 #[tauri::command]
 pub(crate) fn list_task_artifact_tree(state: State<'_, AppState>, task_slug: String) -> Result<Vec<alinery_core::ArtifactTreeNode>, String> {
-    list_task_artifact_tree_for(&require_owned_active_repo(&state)?, &task_slug)
+    match require_active_target(&state)? {
+        ActiveRepo::Local(repo) => list_task_artifact_tree_for(&repo, &task_slug),
+        ActiveRepo::Remote { host_id, path } => remote_call(
+            &state,
+            &host_id,
+            RepoOp::ListTaskArtifactTree {
+                repo: path.into(),
+                slug: task_slug,
+            },
+        ),
+    }
 }
 
 #[tauri::command]
 pub(crate) fn read_task_artifact_node(state: State<'_, AppState>, task_slug: String, node_id: String) -> Result<String, String> {
-    read_task_artifact_node_for(&require_owned_active_repo(&state)?, &task_slug, &node_id)
+    match require_active_target(&state)? {
+        ActiveRepo::Local(repo) => read_task_artifact_node_for(&repo, &task_slug, &node_id),
+        ActiveRepo::Remote { host_id, path } => remote_call(
+            &state,
+            &host_id,
+            RepoOp::ReadTaskArtifactNode {
+                repo: path.into(),
+                slug: task_slug,
+                node_id,
+            },
+        ),
+    }
 }
 
 #[tauri::command]

@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 /// Directory listings stop here so a huge directory cannot stall the browse dialog.
 pub const LIST_DIR_CAP: usize = 2000;
 
+/// Ops are flattened into `RepoRequest`, whose own key is `id`: no variant may have a field
+/// called `id`, or the two collide on the wire (the round-trip test covers every variant).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "call", rename_all = "snake_case")]
 pub enum RepoOp {
@@ -49,6 +51,48 @@ pub enum RepoOp {
     },
     /// `null` when the task does not exist.
     GetTask {
+        repo: PathBuf,
+        slug: String,
+    },
+    /// A task's sessions with their display names, oldest first.
+    ListSessions {
+        repo: PathBuf,
+        slug: String,
+    },
+    GetSessionDisplay {
+        repo: PathBuf,
+        slug: String,
+        session_id: String,
+    },
+    SubtaskState {
+        repo: PathBuf,
+        slug: String,
+    },
+    /// The task's retained execution state and playbook, as stored.
+    SavedExecution {
+        repo: PathBuf,
+        slug: String,
+    },
+    ListArtifactsWithMetadata {
+        repo: PathBuf,
+        slug: String,
+    },
+    ListTaskArtifactTree {
+        repo: PathBuf,
+        slug: String,
+    },
+    ReadTaskArtifactNode {
+        repo: PathBuf,
+        slug: String,
+        node_id: String,
+    },
+    /// `null` when the session has no meta.
+    ReadLaunchFields {
+        repo: PathBuf,
+        slug: String,
+        session_id: String,
+    },
+    WorktreeExists {
         repo: PathBuf,
         slug: String,
     },
@@ -195,6 +239,15 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::ListBoardTasks { repo } => to_value(crate::board::board_tasks(&repo, &repo.to_string_lossy())?),
         RepoOp::ListTasks { repo } => to_value(crate::board::list_tasks_checked(&repo)?),
         RepoOp::GetTask { repo, slug } => to_value(crate::board::read_task_opt(&repo, &slug)?),
+        RepoOp::ListSessions { repo, slug } => to_value(crate::board::list_session_displays(&repo, &slug)?),
+        RepoOp::GetSessionDisplay { repo, slug, session_id } => to_value(crate::board::session_display_context(&repo, &slug, &session_id)?),
+        RepoOp::SubtaskState { repo, slug } => to_value(crate::subtask::subtask_manager_state(&repo, &slug)?),
+        RepoOp::SavedExecution { repo, slug } => to_value(crate::board::saved_task_execution(&repo, &slug)?),
+        RepoOp::ListArtifactsWithMetadata { repo, slug } => to_value(crate::board::artifacts_with_metadata(&repo, &slug)?),
+        RepoOp::ListTaskArtifactTree { repo, slug } => to_value(crate::list_task_artifact_tree(&repo, &slug)?),
+        RepoOp::ReadTaskArtifactNode { repo, slug, node_id } => to_value(crate::read_task_artifact_node(&repo, &slug, &node_id)?),
+        RepoOp::ReadLaunchFields { repo, slug, session_id } => to_value(crate::read_meta_launch_fields(&repo, &slug, &session_id)),
+        RepoOp::WorktreeExists { repo, slug } => to_value(crate::board::worktree_exists(&repo, &slug)?),
         RepoOp::WriteFile { path, contents } => write_file(&path, &contents).map(|()| Value::Null),
         RepoOp::SyncCredentials { path, entries } => to_value(crate::credential_sync::apply_incoming(&path, &entries)?),
         RepoOp::SpawnDaemon {
@@ -314,6 +367,51 @@ mod tests {
                 path: "/srv".into(),
                 show_hidden: true,
             },
+            RepoOp::ListBoardTasks { repo: "/srv/a".into() },
+            RepoOp::ListTasks { repo: "/srv/a".into() },
+            RepoOp::GetTask {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+            },
+            RepoOp::ListSessions {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+            },
+            RepoOp::GetSessionDisplay {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                session_id: "s".into(),
+            },
+            RepoOp::SubtaskState {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+            },
+            RepoOp::SavedExecution {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+            },
+            RepoOp::ListArtifactsWithMetadata {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+            },
+            RepoOp::ListTaskArtifactTree {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+            },
+            RepoOp::ReadTaskArtifactNode {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                node_id: "n".into(),
+            },
+            RepoOp::ReadLaunchFields {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                session_id: "s".into(),
+            },
+            RepoOp::WorktreeExists {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+            },
             RepoOp::WriteFile {
                 path: "/srv/a/app.toml".into(),
                 contents: "x=1\n".into(),
@@ -338,6 +436,7 @@ mod tests {
             let request = RepoRequest { id: id as u64, op };
             let line = serde_json::to_string(&request).unwrap();
             assert!(line.contains("\"call\""), "{line}");
+            assert_eq!(line.matches("\"id\":").count(), 1, "an op field collides with the request id: {line}");
             assert!(!line.contains("\"op\""), "{line}");
             assert_eq!(serde_json::from_str::<RepoRequest>(&line).unwrap(), request);
         }

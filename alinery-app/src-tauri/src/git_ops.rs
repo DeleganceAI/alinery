@@ -252,13 +252,15 @@ pub(crate) async fn remove_worktree_for_repo(app: AppHandle, state: State<'_, Ap
 // (manually, or by a `git worktree remove` run outside alinery); this gives the frontend a
 // live filesystem check instead of trusting the stored path.
 #[tauri::command]
-pub(crate) fn worktree_exists(slug: String) -> Result<bool, String> {
-    let repo = active_repo()?;
-    let task = read_task(&repo, &slug)?;
-    if task.worktree.is_empty() {
-        return Ok(false);
+pub(crate) fn worktree_exists(state: State<'_, AppState>, slug: String) -> Result<bool, String> {
+    worktree_exists_for(&state, slug)
+}
+
+pub(crate) fn worktree_exists_for(state: &AppState, slug: String) -> Result<bool, String> {
+    match active_repo_ref()? {
+        RepoRef::Local(repo) => alinery_core::board::worktree_exists(&repo, &slug),
+        RepoRef::Remote { host_id, path } => remote_call(state, &host_id, alinery_core::repo_service::RepoOp::WorktreeExists { repo: path.into(), slug }),
     }
-    Ok(Path::new(&task.worktree).exists())
 }
 
 // ---- M5 PR compare URL -------------------------------------------------------

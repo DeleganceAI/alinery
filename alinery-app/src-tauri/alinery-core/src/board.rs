@@ -216,6 +216,103 @@ pub fn board_tasks_from_loaded(repo: &Path, repo_path: &str, tasks: Vec<Task>) -
     tasks.into_iter().map(|task| board_task(repo, repo_path, task)).collect()
 }
 
+/// A session row as the UI shows it: the stored meta plus the session's display name.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SessionDisplayMeta {
+    #[serde(flatten)]
+    pub meta: SessionMeta,
+    pub name: Option<String>,
+    pub name_source: Option<crate::SessionNameSource>,
+    pub name_error: Option<String>,
+}
+
+impl std::ops::Deref for SessionDisplayMeta {
+    type Target = SessionMeta;
+    fn deref(&self) -> &Self::Target {
+        &self.meta
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SessionDisplayContext {
+    pub session: SessionDisplayMeta,
+    pub task_name: String,
+    pub subtask_name: Option<String>,
+}
+
+pub fn project_session_display(repo: &Path, task_slug: &str, meta: SessionMeta) -> SessionDisplayMeta {
+    let (name, name_source, name_error) = match crate::read_session_name(repo, task_slug, &meta.id) {
+        Ok(Some(value)) => (Some(value.name), Some(value.source), None),
+        Ok(None) => (None, None, None),
+        Err(error) => (None, None, Some(error.chars().take(256).collect())),
+    };
+    SessionDisplayMeta {
+        meta,
+        name,
+        name_source,
+        name_error,
+    }
+}
+
+pub fn list_session_displays(repo: &Path, task_slug: &str) -> Result<Vec<SessionDisplayMeta>, String> {
+    Ok(list_task_sessions(repo, task_slug)?
+        .into_iter()
+        .map(|meta| project_session_display(repo, task_slug, meta))
+        .collect())
+}
+
+pub fn load_session_meta(repo: &Path, task_slug: &str, id: &str) -> Result<SessionMeta, String> {
+    let path = crate::session_meta_path(repo, task_slug, id);
+    let raw = fs::read_to_string(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    serde_json::from_str(&raw).map_err(|error| format!("parse {}: {error}", path.display()))
+}
+
+pub fn current_subtask_name(repo: &Path, session: &SessionMeta) -> Option<String> {
+    if crate::safe_component(&session.subtask_slug) != Some(session.subtask_slug.as_str()) {
+        return None;
+    }
+    read_task_checked(repo, &session.subtask_slug).ok().map(|task| task.name)
+}
+
+pub fn session_display_context(repo: &Path, task_slug: &str, session_id: &str) -> Result<SessionDisplayContext, String> {
+    if crate::safe_component(task_slug) != Some(task_slug) || crate::safe_component(session_id) != Some(session_id) {
+        return Err("invalid task slug or session id".into());
+    }
+    let task = read_task_checked(repo, task_slug)?;
+    let meta = load_session_meta(repo, task_slug, session_id)?;
+    if meta.id != session_id || task.slug != task_slug {
+        return Err("retained display identity mismatch".into());
+    }
+    Ok(SessionDisplayContext {
+        subtask_name: current_subtask_name(repo, &meta),
+        session: project_session_display(repo, task_slug, meta),
+        task_name: task.name,
+    })
+}
+
+/// The task's retained execution state and playbook, as stored on disk.
+pub fn saved_task_execution(repo: &Path, task_slug: &str) -> Result<crate::task_creation::TaskExecutionReply, String> {
+    let state = read_execution_state(repo, task_slug)?;
+    let definition = read_task_playbook(repo, task_slug, &state)?;
+    Ok(crate::task_creation::TaskExecutionReply { state, definition })
+}
+
+pub fn artifacts_with_metadata(repo: &Path, task_slug: &str) -> Result<Vec<crate::ArtifactListItem>, String> {
+    let task = read_task_checked(repo, task_slug)?;
+    if task.engine_version >= 2 {
+        let execution = saved_task_execution(repo, task_slug)?;
+        crate::list_artifacts_with_execution_metadata(repo, task_slug, &execution.state)
+    } else {
+        crate::list_artifacts_with_metadata_for(repo, task_slug)
+    }
+}
+
+/// Whether the task's recorded worktree still exists on disk.
+pub fn worktree_exists(repo: &Path, task_slug: &str) -> Result<bool, String> {
+    let task = read_task_checked(repo, task_slug)?;
+    Ok(!task.worktree.is_empty() && Path::new(&task.worktree).exists())
+}
+
 /// The whole board for one repo, `repo_path` stamped on every row.
 pub fn board_tasks(repo: &Path, repo_path: &str) -> Result<Vec<BoardTask>, String> {
     board_tasks_from_loaded(repo, repo_path, list_tasks_checked(repo)?)

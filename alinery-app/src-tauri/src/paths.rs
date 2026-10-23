@@ -150,6 +150,27 @@ pub(crate) fn target_repo_for_app<R: tauri::Runtime>(app: &AppHandle<R>, repo_pa
     validate_known_target_repo(&load_app_config(app).known_repos, repo_path)
 }
 
+/// Like `target_repo_for_app`, but a remote key is accepted when it is a known repository.
+pub(crate) fn target_repo_ref_for_app<R: tauri::Runtime>(app: &AppHandle<R>, repo_path: &str) -> Result<RepoRef, String> {
+    match RepoRef::parse(repo_path)? {
+        RepoRef::Local(_) => target_repo_for_app(app, repo_path).map(RepoRef::Local),
+        remote => load_app_config(app)
+            .known_repos
+            .iter()
+            .any(|known| known == repo_path)
+            .then_some(remote)
+            .ok_or_else(|| format!("unknown repository: {repo_path}")),
+    }
+}
+
+/// The repo a command targets, validated: the explicit key if given, otherwise the active repo.
+pub(crate) fn target_or_active_ref<R: tauri::Runtime>(app: &AppHandle<R>, repo_path: Option<String>) -> Result<RepoRef, String> {
+    match repo_path {
+        Some(path) => target_repo_ref_for_app(app, &path),
+        None => active_repo_ref(),
+    }
+}
+
 pub(crate) fn tasks_dir(repo: &Path) -> PathBuf {
     alinery_dir(repo).join("tasks")
 }

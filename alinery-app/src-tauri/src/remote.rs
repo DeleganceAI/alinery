@@ -383,7 +383,8 @@ pub(crate) fn render_remote_app_toml(local: &AppConfig, remote_repo_paths: &[Str
 
 // ── ssh driving ────────────────────────────────────────────────────────────────────────
 
-use alinery_core::repo_service::{Hello, Launch, RepoOp, RepoReply, RepoRequest, HELLO_ID};
+pub(crate) use alinery_core::repo_service::RepoOp;
+use alinery_core::repo_service::{Hello, Launch, RepoReply, RepoRequest, HELLO_ID};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, ExitStatus, Output, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -956,12 +957,68 @@ pub(crate) fn remote_call<T: serde::de::DeserializeOwned>(state: &AppState, host
     serde_json::from_value(value).map_err(|error| format!("unexpected reply from the host: {error}"))
 }
 
-/// The repo a command targets: the explicit key if given, otherwise the active repo.
-pub(crate) fn repo_key_or_active(repo_path: Option<String>) -> Result<String, String> {
-    match repo_path {
-        Some(path) => Ok(path),
-        None => active_repo_ref().map(|repo| repo.uri()),
+/// The active repo of a command that talks to a daemon: a local repo this window owns, or a
+/// remote one whose host is connected and whose daemon answers.
+pub(crate) enum ActiveRepo {
+    Local(PathBuf),
+    Remote { host_id: String, path: String },
+}
+
+pub(crate) fn require_active_target(state: &AppState) -> Result<ActiveRepo, String> {
+    match active_repo_ref()? {
+        RepoRef::Local(_) => require_owned_active_repo(state).map(ActiveRepo::Local),
+        RepoRef::Remote { host_id, path } => {
+            connected_session(state, &host_id)?;
+            let key = RepoRef::Remote {
+                host_id: host_id.clone(),
+                path: path.clone(),
+            }
+            .uri();
+            state
+                .daemon_for(Path::new(&key))
+                .ok_or_else(|| "this remote repository's daemon is not connected".to_string())?;
+            Ok(ActiveRepo::Remote { host_id, path })
+        }
     }
+}
+
+/// The daemon client that owns `task_slug` in `repo`. A local task may live on a foreign lane, so
+/// it is found through its retained execution; a remote repo has the one forwarded daemon.
+pub(crate) fn task_client(state: &AppState, app_config: &Path, repo: &RepoRef, task_slug: &str) -> Result<DaemonClient, String> {
+    match repo {
+        RepoRef::Local(path) => {
+            require_repo_owned(state, path)?;
+            task_daemon_for(path, task_slug, app_config)
+        }
+        RepoRef::Remote { host_id, .. } => {
+            connected_session(state, host_id)?;
+            state
+                .daemon_for(Path::new(&repo.uri()))
+                .ok_or_else(|| "this remote repository's daemon is not connected".to_string())
+        }
+    }
+}
+
+/// The repo's own daemon client (its own lane), for operations that are not about one task.
+pub(crate) fn repo_client(state: &AppState, repo: &RepoRef) -> Result<DaemonClient, String> {
+    match repo {
+        RepoRef::Local(path) => {
+            require_repo_owned(state, path)?;
+            state.daemon_for(path).ok_or_else(|| "daemon not connected".to_string())
+        }
+        RepoRef::Remote { host_id, .. } => {
+            connected_session(state, host_id)?;
+            state
+                .daemon_for(Path::new(&repo.uri()))
+                .ok_or_else(|| "this remote repository's daemon is not connected".to_string())
+        }
+    }
+}
+
+/// For the commands that only need a live daemon for the active repo (write, resize, transcript,
+/// prompt, ...): the local ownership check, or the remote connection check.
+pub(crate) fn require_active_repo_ready(state: &AppState) -> Result<(), String> {
+    require_active_target(state).map(|_| ())
 }
 
 /// Claim a remote repo on its host, bring its daemon up through the forward, and record the

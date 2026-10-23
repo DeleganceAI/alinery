@@ -45,7 +45,9 @@ pub fn serve(input: impl BufRead, output: impl Write + Send + 'static) {
         };
         let (output, claims) = (Arc::clone(&output), Arc::clone(&claims));
         workers.push(std::thread::spawn(move || {
-            let result = handle(&claims, request.op);
+            // A panic in one call must still answer it, or the caller waits out its timeout.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle(&claims, request.op)))
+                .unwrap_or_else(|_| Err("the host's repo service hit an internal error".to_string()));
             write_reply(&output, &RepoReply::new(request.id, result));
         }));
         workers.retain(|worker| !worker.is_finished());

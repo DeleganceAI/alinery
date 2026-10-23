@@ -297,6 +297,146 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     assert_eq!(missing, None);
     assert!(remote_call::<Vec<crate::BoardTask>>(&state, "not-a-host", RepoOp::ListTasks { repo: repo.clone().into() }).is_err());
 
+    // The task page's reads, answered by the host: a session meta written there is listed,
+    // and the sub-task, artifact, worktree and launch-field reads agree with the task.
+    let meta = alinery_core::SessionMeta {
+        id: "s1".into(),
+        phase: "build".into(),
+        harness: alinery_core::NO_HARNESS_KEY.into(),
+        created: 1_700_000_001,
+        ..Default::default()
+    };
+    session
+        .channel
+        .call(
+            RepoOp::WriteFile {
+                path: format!("{repo}/.alinery/tasks/remote-task/sessions/s1.meta.json").into(),
+                contents: serde_json::to_string(&meta).unwrap(),
+            },
+            std::time::Duration::from_secs(30),
+        )
+        .unwrap();
+    let slug = || "remote-task".to_string();
+    let sessions: Vec<crate::SessionDisplayMeta> = remote_call(
+        &state,
+        &id,
+        RepoOp::ListSessions {
+            repo: repo.clone().into(),
+            slug: slug(),
+        },
+    )
+    .unwrap();
+    assert_eq!(sessions.iter().map(|session| session.meta.id.as_str()).collect::<Vec<_>>(), ["s1"]);
+    let display: crate::SessionDisplayContext = remote_call(
+        &state,
+        &id,
+        RepoOp::GetSessionDisplay {
+            repo: repo.clone().into(),
+            slug: slug(),
+            session_id: "s1".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!((display.task_name.as_str(), display.session.meta.phase.as_str()), ("Remote task", "build"));
+    let subtask: alinery_core::SubtaskManagerState = remote_call(
+        &state,
+        &id,
+        RepoOp::SubtaskState {
+            repo: repo.clone().into(),
+            slug: slug(),
+        },
+    )
+    .unwrap();
+    assert_eq!(subtask.disabled_reason, "Pre-v2 task data is read-only");
+    let tree: Vec<alinery_core::ArtifactTreeNode> = remote_call(
+        &state,
+        &id,
+        RepoOp::ListTaskArtifactTree {
+            repo: repo.clone().into(),
+            slug: slug(),
+        },
+    )
+    .unwrap();
+    assert!(tree.is_empty());
+    let artifacts: Vec<alinery_core::ArtifactListItem> = remote_call(
+        &state,
+        &id,
+        RepoOp::ListArtifactsWithMetadata {
+            repo: repo.clone().into(),
+            slug: slug(),
+        },
+    )
+    .unwrap();
+    assert!(artifacts.is_empty());
+    let worktree: bool = remote_call(
+        &state,
+        &id,
+        RepoOp::WorktreeExists {
+            repo: repo.clone().into(),
+            slug: slug(),
+        },
+    )
+    .unwrap();
+    assert!(!worktree);
+    let launch: Option<alinery_core::LaunchFields> = remote_call(
+        &state,
+        &id,
+        RepoOp::ReadLaunchFields {
+            repo: repo.clone().into(),
+            slug: slug(),
+            session_id: "s1".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(launch.map(|launch| launch.harness), Some(alinery_core::NO_HARNESS_KEY.to_string()));
+
+    // A terminal on the host, streamed through the forwarded socket: create the auxiliary
+    // session, open it, type a command, read the output come back.
+    let client = repo_client(&state, &crate::RepoRef::parse(&key).unwrap()).unwrap();
+    let created = client
+        .create_execution_session(&alinery_core::task_creation::CreateExecutionSessionRequest {
+            task_slug: String::new(),
+            target: alinery_core::task_creation::ExecutionSessionTarget::Auxiliary {
+                harness: alinery_core::NO_HARNESS_KEY.into(),
+                model: None,
+                prompt: None,
+            },
+            launch_override: None,
+            prompt_extra: None,
+            handoff_artifact: None,
+            start: false,
+        })
+        .unwrap();
+    let terminal = created.session.id.clone();
+    let stream = client
+        .send(&alinery_core::daemon_client::open_request(&alinery_core::daemon_client::OpenRequest {
+            intent: alinery_core::daemon_client::ops::SPAWN,
+            id: &terminal,
+            cwd: &repo,
+            task_slug: Some(""),
+            phase: None,
+            model: None,
+            attach_id: 1,
+            resume_token: None,
+            cols: Some(80),
+            rows: Some(24),
+        }))
+        .unwrap();
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+    let mut reader = std::io::BufReader::new(stream);
+    let mut handshake = String::new();
+    std::io::BufRead::read_line(&mut reader, &mut handshake).unwrap();
+    assert!(handshake.contains("\"ok\":true"), "{handshake}");
+    client.write_session(&terminal, "echo alinery-$((40+2))\n").unwrap();
+    let mut seen = Vec::new();
+    let mut buffer = [0u8; 4096];
+    while !String::from_utf8_lossy(&seen).contains("alinery-42") {
+        let read = std::io::Read::read(&mut reader, &mut buffer).expect("the terminal answered through the forward");
+        assert!(read > 0, "the stream closed before the command ran: {}", String::from_utf8_lossy(&seen));
+        seen.extend_from_slice(&buffer[..read]);
+    }
+    client.kill_session(&terminal).unwrap();
+
     // Disconnect: the app forgets the daemon handle; the daemon itself is untouched.
     disconnect_host(&handle, &id);
     assert!(state.daemon_for(Path::new(&key)).is_none());

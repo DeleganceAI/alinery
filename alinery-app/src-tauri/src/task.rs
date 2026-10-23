@@ -1,7 +1,6 @@
 //! task: extracted from lib.rs. See AGENTS.md for the module map.
 use crate::*;
 
-use alinery_core::repo_service::RepoOp;
 use alinery_core::task_creation::{
     unique_attachment_name, CreateTaskReply, CreateTaskRequest, TaskAttachment, TaskPlaybookPackage, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_SET_BYTES,
 };
@@ -82,12 +81,10 @@ pub(crate) use alinery_core::board::read_task_opt;
 
 #[tauri::command]
 pub(crate) async fn get_task(app: AppHandle, state: State<'_, AppState>, slug: String, repo_path: Option<String>) -> Result<Option<Task>, String> {
-    let key = repo_key_or_active(repo_path)?;
-    if let RepoRef::Remote { host_id, path } = RepoRef::parse(&key)? {
-        return remote_call(&state, &host_id, RepoOp::GetTask { repo: path.into(), slug });
+    match target_or_active_ref(&app, repo_path)? {
+        RepoRef::Remote { host_id, path } => remote_call(&state, &host_id, RepoOp::GetTask { repo: path.into(), slug }),
+        RepoRef::Local(repo) => read_task_opt(&repo, &slug),
     }
-    let repo = target_repo_for_app(&app, &key)?;
-    read_task_opt(&repo, &slug)
 }
 
 // M0: prove one JS -> Rust -> JS command round-trip.
@@ -98,8 +95,7 @@ pub(crate) fn ping(name: &str) -> String {
 
 #[tauri::command]
 pub(crate) async fn create_task(state: State<'_, AppState>, request: CreateTaskRequest) -> Result<CreateTaskReply, String> {
-    let repo = require_owned_active_repo(&state)?;
-    let daemon = state.daemon_for(&repo).ok_or("daemon not connected")?;
+    let daemon = repo_client(&state, &active_repo_ref()?)?;
     tauri::async_runtime::spawn_blocking(move || daemon.create_task(&request))
         .await
         .map_err(|error| format!("create task: {error}"))?
@@ -107,9 +103,7 @@ pub(crate) async fn create_task(state: State<'_, AppState>, request: CreateTaskR
 
 #[tauri::command]
 pub(crate) async fn create_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, request: CreateTaskRequest) -> Result<CreateTaskReply, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    let daemon = state.daemon_for(&repo).ok_or("daemon not connected")?;
+    let daemon = repo_client(&state, &target_repo_ref_for_app(&app, &repo_path)?)?;
     tauri::async_runtime::spawn_blocking(move || daemon.create_task(&request))
         .await
         .map_err(|error| format!("create task: {error}"))?
@@ -854,12 +848,10 @@ pub(crate) fn delete_draft_for_repo(app: AppHandle, state: State<'_, AppState>, 
 // Scan `.alinery/tasks/*/task.md`. Returns archived too; the UI hides them.
 #[tauri::command]
 pub(crate) async fn list_tasks(app: AppHandle, state: State<'_, AppState>, repo_path: Option<String>) -> Result<Vec<Task>, String> {
-    let key = repo_key_or_active(repo_path)?;
-    if let RepoRef::Remote { host_id, path } = RepoRef::parse(&key)? {
-        return remote_call(&state, &host_id, RepoOp::ListTasks { repo: path.into() });
+    match target_or_active_ref(&app, repo_path)? {
+        RepoRef::Remote { host_id, path } => remote_call(&state, &host_id, RepoOp::ListTasks { repo: path.into() }),
+        RepoRef::Local(repo) => list_tasks_for_repo(&repo),
     }
-    let repo = target_repo_for_app(&app, &key)?;
-    list_tasks_for_repo(&repo)
 }
 
 #[cfg(test)]
