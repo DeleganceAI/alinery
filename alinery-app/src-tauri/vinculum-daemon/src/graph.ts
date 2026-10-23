@@ -78,18 +78,28 @@ export async function permitSession(sessionId: string): Promise<boolean> {
   return true;
 }
 
-function harnessFor(slug: string, hooks: SessionHooks): Harness {
+/** Same order as `resolve_execution_launch`: a step override, then the playbook, then the task default. */
+export function executionModel(playbookModel: string, step: string, taskModel: string, stepModels: Record<string, string>): string {
+  const override = stepModels[step]?.trim() ?? "";
+  if (override) return override;
+  const fromPlaybook = playbookModel.trim();
+  if (fromPlaybook) return fromPlaybook;
+  return taskModel.trim();
+}
+
+function harnessFor(slug: string, hooks: SessionHooks, taskModel: string, stepModels: Record<string, string>): Harness {
+  const modelFor = (launch: Launch) => executionModel(launch.model, launch.step, taskModel, stepModels);
   return {
     async start(launch: Launch) {
       const id = randomUUID();
       bound.set(id, { slug, execId: launch.executionId });
-      await hooks.open(id, slug, launch.model, launch.prompt);
+      await hooks.open(id, slug, modelFor(launch), launch.prompt);
       hooks.bind(id, launch.executionId);
       return id;
     },
     async resume(id: string, launch: Launch) {
       bound.set(id, { slug, execId: launch.executionId });
-      await hooks.open(id, slug, launch.model, launch.prompt);
+      await hooks.open(id, slug, modelFor(launch), launch.prompt);
       hooks.bind(id, launch.executionId);
       return id;
     },
@@ -132,16 +142,28 @@ function openTask(repo: string, slug: string, hooks: SessionHooks) {
   }
   let cwd = repo;
   let taskName = parsed.playbook.title;
+  let taskModel = "";
+  const stepModels: Record<string, string> = {};
   try {
-    const task = parse(readFileSync(join(taskDir, "task.md"), "utf8")) as { name?: string; worktree?: string; has_worktree?: boolean };
+    const task = parse(readFileSync(join(taskDir, "task.md"), "utf8")) as {
+      name?: string;
+      worktree?: string;
+      has_worktree?: boolean;
+      launch_defaults?: { model?: unknown };
+      step_models?: Record<string, unknown>;
+    };
     if (typeof task.name === "string" && task.name) taskName = task.name;
     if (task.has_worktree !== false && task.worktree && existsSync(task.worktree)) cwd = task.worktree;
+    if (typeof task.launch_defaults?.model === "string") taskModel = task.launch_defaults.model;
+    for (const [step, model] of Object.entries(task.step_models ?? {})) {
+      if (typeof model === "string" && model.trim()) stepModels[step] = model;
+    }
   } catch {
     /* task.md is optional until create finishes */
   }
   const engine = Engine.open({
     playbook: parsed.playbook,
-    harness: harnessFor(slug, hooks),
+    harness: harnessFor(slug, hooks, taskModel, stepModels),
     logPath: join(taskDir, "engine.jsonl"),
     artifactsDir: join(taskDir, "artifacts"),
     cwd,
