@@ -3967,6 +3967,7 @@ dialog.modal::backdrop {
 }
 .task-session-disabled {
   font-size: calc(12px * var(--ui-scale));
+  margin: 0 0 10px;
 }
 .task-session-table-wrap {
   container: session-table / inline-size;
@@ -4012,8 +4013,17 @@ dialog.modal::backdrop {
   vertical-align: middle;
 }
 .task-session-table .session-name-cell {
+  min-width: calc(160px * var(--ui-scale));
   overflow-wrap: anywhere;
   white-space: normal;
+}
+.task-session-table .editable-name-text {
+  white-space: normal;
+}
+.task-session-table .session-metadata {
+  margin-top: 4px;
+  font-size: calc(12px * var(--ui-scale));
+  overflow-wrap: anywhere;
 }
 .session-name-cell > .name-error {
   display: block;
@@ -4156,7 +4166,7 @@ dialog.modal::backdrop {
 .manager-row-primary {
   display: flex;
   width: 100%;
-  min-width: 0;
+  min-width: calc(180px * var(--ui-scale));
   flex-direction: column;
   align-items: flex-start;
   gap: 3px;
@@ -4183,6 +4193,7 @@ dialog.modal::backdrop {
   min-width: 0;
   box-sizing: border-box;
   align-items: center;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 8px;
   margin-top: 4px;
@@ -4196,11 +4207,11 @@ dialog.modal::backdrop {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .subtask-child-activity {
   display: inline-flex;
-  flex: 0 0 auto;
+  min-width: 0;
   align-items: center;
   gap: 5px;
   color: var(--text);
@@ -4219,7 +4230,7 @@ dialog.modal::backdrop {
   width: calc(76px * var(--ui-scale));
 }
 .task-session-table .session-name-col {
-  width: 24%;
+  width: auto;
 }
 .task-sort-header,
 .playbooks-sort-header,
@@ -4230,6 +4241,9 @@ dialog.modal::backdrop {
   cursor: pointer;
   font: inherit;
   padding: 2px 0;
+}
+.session-sort-header {
+  white-space: nowrap;
 }
 .task-sort-header:hover,
 .task-sort-header.active,
@@ -4310,13 +4324,21 @@ dialog.modal::backdrop {
   align-content: center;
   justify-content: flex-end;
   gap: 8px;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  width: calc(164px * var(--ui-scale));
+  max-width: 100%;
   white-space: nowrap;
 }
 .session-actions-inner > .btn {
   flex: 0 0 auto;
   max-width: 100%;
   white-space: nowrap;
+}
+.subtask-manager-row .session-actions-inner {
+  width: max-content;
+  max-width: none;
+  flex-direction: column;
+  align-items: flex-end;
 }
 /* Respond to the pane left by the artifact viewer/drawer, not the window. */
 @container session-table (max-width: 700px) {
@@ -7313,6 +7335,7 @@ dialog.modal::backdrop {
   background: var(--surface);
   padding: 10px 11px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
@@ -7328,44 +7351,41 @@ dialog.modal::backdrop {
 }
 .playbook-node-main {
   min-width: 0;
+  flex: 1 1 calc(140px * var(--ui-scale));
   display: flex;
   flex-direction: column;
   gap: 3px;
 }
 .playbook-node-key {
+  overflow-wrap: anywhere;
   color: var(--text-muted);
   font-size: calc(12px * var(--ui-scale));
   font-weight: 500;
 }
 .playbook-node-title {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   color: var(--text);
   font-size: calc(13px * var(--ui-scale));
 }
 .playbook-node-side {
-  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
+  margin-inline-start: auto;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 6px 12px;
 }
 .playbook-node-count {
-  flex: 0 0 auto;
-  min-width: 22px;
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
+  white-space: nowrap;
   color: var(--text);
-  text-align: center;
-  padding: 0 6px;
   font-size: calc(12px * var(--ui-scale));
   font-variant-numeric: tabular-nums;
 }
 .playbook-node-autoadvance {
-  flex: 0 0 auto;
-  width: calc(14px * var(--ui-scale));
-  height: calc(14px * var(--ui-scale));
+  white-space: nowrap;
+  font-size: calc(12px * var(--ui-scale));
   color: var(--text-muted);
 }
 .playbook-edge {
