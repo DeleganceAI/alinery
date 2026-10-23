@@ -105,7 +105,14 @@ function lifecycle(execution: Execution): string {
   return "running";
 }
 
-function projectExecution(execution: Execution): Record<string, unknown> {
+/** A closed gate stays locked until this execution is permitted. Auto-approve-all opens it without rewriting the snapshot. */
+export function completionPermission(execution: Pick<Execution, "id" | "sessionId" | "permitted" | "automatic">, autoApproveAll: boolean): Record<string, unknown> {
+  if (execution.permitted) return { kind: "human_granted", execution_id: execution.id, session_id: execution.sessionId ?? "" };
+  if (execution.automatic === false && !autoApproveAll) return { kind: "locked" };
+  return { kind: "automatic" };
+}
+
+function projectExecution(execution: Execution, autoApproveAll = false): Record<string, unknown> {
   return {
     id: execution.id,
     binding_key: execution.id,
@@ -127,7 +134,7 @@ function projectExecution(execution: Execution): Record<string, unknown> {
     is_coding_step: false,
     start_requested: true,
     lifecycle: lifecycle(execution),
-    permission: execution.permitted ? { kind: "human_granted", execution_id: execution.id, session_id: execution.sessionId ?? "" } : { kind: "automatic" },
+    permission: completionPermission(execution, autoApproveAll),
     receipt_id: execution.receipt ? execution.id : null,
     exit_code: null,
     shutdown_confirmed: execution.status === "done" || execution.status === "failed",
@@ -135,12 +142,23 @@ function projectExecution(execution: Execution): Record<string, unknown> {
   };
 }
 
+function taskAutoApproveAll(repo: string, slug: string): boolean {
+  const path = join(repo, ".alinery", "tasks", slug, "execution.json");
+  try {
+    const state = JSON.parse(readFileSync(path, "utf8")) as { auto_approve_all?: unknown };
+    return state.auto_approve_all === true;
+  } catch {
+    return false;
+  }
+}
+
 function executionState(repo: string, slug: string, lane: string, appIdentity: string): Record<string, unknown> | undefined {
   const path = join(repo, ".alinery", "tasks", slug, "execution.json");
   if (!existsSync(path)) return undefined;
   const state = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
   const executions: Record<string, unknown> = {};
-  for (const execution of engineExecutions(slug)) executions[execution.id] = projectExecution(execution);
+  const autoApproveAll = state.auto_approve_all === true;
+  for (const execution of engineExecutions(slug)) executions[execution.id] = projectExecution(execution, autoApproveAll);
   if (Object.keys(executions).length) state.executions = executions;
   state.owning_lane = typeof state.owning_lane === "string" ? state.owning_lane : lane;
   state.owning_app_config_identity = typeof state.owning_app_config_identity === "string" ? state.owning_app_config_identity : appIdentity;
@@ -373,7 +391,7 @@ export async function createExecutionSession(
     if (!match?.sessionId) return { error: "that step is not reserved yet" };
     const session = readMeta(repo, slug, match.sessionId);
     if (!session) return { error: "missing session" };
-    return { session: sessionReply(session, String(session.worktree ?? repo)), execution: projectExecution(match), start: "started", errors: [] };
+    return { session: sessionReply(session, String(session.worktree ?? repo)), execution: projectExecution(match, taskAutoApproveAll(repo, slug)), start: "started", errors: [] };
   }
   const id = randomUUID();
   const model = target.model ?? "";
@@ -414,7 +432,7 @@ export async function startSession(
   }
   const execution = engineExecutions(slug).find((item) => item.sessionId === id);
   if (!execution) await openSession(id, slug, String(session.model ?? ""), String(session.prompt ?? ""));
-  return { session: sessionReply(session, String(session.worktree ?? repo)), execution: execution ? projectExecution(execution) : null, start: "started", errors: [] };
+  return { session: sessionReply(session, String(session.worktree ?? repo)), execution: execution ? projectExecution(execution, taskAutoApproveAll(repo, slug)) : null, start: "started", errors: [] };
 }
 
 export async function createSubtask(repo: string, lane: string, appIdentity: string, request: Request): Promise<Record<string, unknown>> {

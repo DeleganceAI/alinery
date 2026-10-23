@@ -2214,6 +2214,8 @@ describe("Vinculum session chat", () => {
   });
   afterEach(() => {
     cleanup();
+    getTaskExecution.mockReset();
+    allowExecutionCompletion.mockReset();
   });
 
   it("polls the transcript into the chat pane and does not attach OMP", async () => {
@@ -2284,5 +2286,20 @@ describe("Vinculum session chat", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Change model" }).textContent).toBe("anthropic/claude"));
     expect(screen.queryByRole("combobox", { name: "Thinking level" })).toBeNull();
     expect(screen.getByText("off")).toBeTruthy();
+  });
+
+  it("shows Finish step for a locked Vinculum execution and grants it without an OMP reply", async () => {
+    getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session", permission: { kind: "locked" } })]));
+    allowExecutionCompletion.mockImplementation(async () => {
+      getTaskExecution.mockResolvedValue(
+        executionReply([executionRecord({ owner_session_id: "session", permission: { kind: "human_granted", execution_id: "execution-a", session_id: "session" } })]),
+      );
+    });
+    renderSession({ intent: "attach", harness: "vinculum" });
+    fireEvent.click(await screen.findByRole("button", { name: "Finish step" }));
+    await waitFor(() => expect(allowExecutionCompletion).toHaveBeenCalledExactlyOnceWith("task", "execution-a", "session", "/repo"));
+    expect(rpcWriteSession).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Finish step" })).toBeNull());
+    expect(screen.getByLabelText("Message or /command")).toBeDefined();
   });
 });
