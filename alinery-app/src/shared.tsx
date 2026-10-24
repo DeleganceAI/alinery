@@ -1,4 +1,4 @@
-import { ArrowUpCircle, Check, ChevronDown, CircleAlert, CircleCheck, FolderPlus, Info, Package, Plus, Search, TriangleAlert, X } from "lucide-react";
+import { ArrowUpCircle, Check, ChevronDown, CircleAlert, CircleCheck, FolderPlus, Info, Plus, Search, TriangleAlert, X } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { type OrbState, ThinkingOrb } from "thinking-orbs";
@@ -23,7 +23,6 @@ import type {
   GridViewDefinition,
   KanbanColumn,
   LifecycleState,
-  OmpUpdateStatus,
   PickerPreferences,
   PlaybookCandidate,
   PlaybookRef,
@@ -39,7 +38,10 @@ import type {
   TaskExecutionState,
   UpdateStatus,
 } from "./types";
+import { isVinculumHarness } from "./vinculumHarness";
 import { WindowControls } from "./WindowChrome";
+
+export { isVinculumHarness };
 
 export const ALL_REPOS = "__all_repos__";
 
@@ -82,7 +84,7 @@ export function findOwnedArtifactNode(nodes: ArtifactTreeNode[], relativePath: s
 }
 
 export function isAllowedLaunchHarness(key: string): boolean {
-  return key === "omp" || key === "no-harness";
+  return isVinculumHarness(key) || key === "no-harness";
 }
 
 export function ompDefaultModel(defaults: { harness?: string; model?: string } | null | undefined): string {
@@ -95,7 +97,7 @@ export function ompDefaultModel(defaults: { harness?: string; model?: string } |
 
 export function harnessDisplayName(harness: string) {
   if (harness === "no-harness") return "Terminal";
-  if (harness === "omp") return "OMP CLI";
+  if (isVinculumHarness(harness)) return "Vinculum";
   return "Unsupported";
 }
 
@@ -623,8 +625,6 @@ export function TopBar({
   update,
   onUpgrade,
   updating,
-  ompUpdate,
-  onOmpUpdateClick,
 }: {
   isDev: boolean;
   active: Tab;
@@ -645,8 +645,6 @@ export function TopBar({
   onCreate: () => void;
   update?: UpdateStatus | null;
   onUpgrade?: () => void;
-  ompUpdate?: OmpUpdateStatus | null;
-  onOmpUpdateClick?: () => void;
   updating?: boolean;
 }) {
   const includeAll = active !== "settings";
@@ -701,20 +699,6 @@ export function TopBar({
             }}
           >
             <ArrowUpCircle size={16} strokeWidth={1.5} aria-hidden="true" />
-          </button>
-        )}
-        {ompUpdate?.available && (
-          <button
-            type="button"
-            className="iconbtn omp-update"
-            title={`OMP update ${ompUpdate.available.version}`}
-            aria-label={`OMP update ${ompUpdate.available.version}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onOmpUpdateClick?.();
-            }}
-          >
-            <Package size={16} strokeWidth={1.5} aria-hidden="true" />
           </button>
         )}
       </div>
@@ -1083,6 +1067,7 @@ export function StatusDot({
   exitCode = null,
   exitAcknowledged = false,
   notifyTransitions = true,
+  terminalLabel = null,
 }: {
   id: string;
   slug?: string;
@@ -1096,6 +1081,8 @@ export function StatusDot({
   exitCode?: number | null;
   exitAcknowledged?: boolean;
   notifyTransitions?: boolean;
+  /** Replaces Exited when the session is stopped: recoverable, completed, or a real exit. */
+  terminalLabel?: "Recoverable" | "Completed" | "Ready to advance" | "Exited" | null;
 }) {
   const pollKey = `${slug ?? ""}\u0000${id}`;
   const [polledObs, setPolledObs] = useState<{ key: string; observation: SessionObservation } | null>(null);
@@ -1127,6 +1114,7 @@ export function StatusDot({
   const obs = observation ?? currentPolledObs;
   const observedKind: ObservationDisplayKind = obs ? observationDisplayKind(obs) : "loading";
   const kind = sessionDisplayKind(obs, superseded, exitCode, exitAcknowledged);
+  const processLive = obs?.lifecycle.state === "live" || obs?.lifecycle.state === "live_exited" || obs?.state?.process.state === "alive" || obs?.state?.process.state === "starting";
 
   // Attention notifications: fire on transitions into idle/waiting states.
   // Never notify for unsupported/unknown; artifact presence never triggers.
@@ -1146,6 +1134,24 @@ export function StatusDot({
         aria-label={`Failed: process exited with code ${exitCode}`}
       >
         <StateIcon state="failed" />
+      </span>
+    );
+  }
+
+  if (terminalLabel && !processLive && kind !== "busy" && kind !== "starting" && kind !== "waiting_for_input" && kind !== "waiting_for_approval") {
+    const title =
+      terminalLabel === "Recoverable"
+        ? "This step was not accepted. The conversation is still in the session file."
+        : terminalLabel === "Completed"
+          ? "Phase completed \u2014 checkpoint accepted"
+          : terminalLabel === "Ready to advance"
+            ? "Phase completed \u2014 ready to advance to the next step"
+            : "Session is not live in the current daemon";
+    const quiet = terminalLabel === "Recoverable" || terminalLabel === "Exited";
+    return (
+      <span className="statusdot" title={title}>
+        <span className="d" style={{ background: quiet ? "var(--text-faint)" : "var(--success)" }} />
+        {terminalLabel}
       </span>
     );
   }

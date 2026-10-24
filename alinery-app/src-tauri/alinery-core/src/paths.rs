@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 
 pub const REPO_DATA_DIR: &str = ".alinery";
@@ -396,13 +397,21 @@ pub fn default_omp_alongside_dir() -> PathBuf {
     }
 }
 
-/// Isolated OMP HOME under the app-config parent (not `~/.omp`).
-/// Returns `(PI_CODING_AGENT_DIR, PI_CONFIG_DIR)`.
-pub fn omp_home_dirs(app_config: &Path) -> (PathBuf, PathBuf) {
-    let omp_root = app_config.parent().unwrap_or(app_config).join("omp");
-    let config_root = omp_root.join("config");
-    let agent_dir = config_root.join("agent");
-    (agent_dir, config_root)
+/// Vinculum agent home under the app-config parent (not `~/.pi` and not `~/.omp`).
+/// Returns `(agent dir, config root)`: `<app.toml parent>/vinculum/config/agent` and `.../config`.
+///
+/// On first use, if `vinculum/` is absent and `omp/` is a directory, rename `omp` to `vinculum`
+/// so an existing install keeps its skills, MCP files, and `models.yml`. If `vinculum/` already
+/// exists, `omp/` is left unread. This does not touch `omp_alongside_dir` or `/Applications/Alinery.omp`.
+pub fn vinculum_home_dirs(app_config: &Path) -> (PathBuf, PathBuf) {
+    let parent = app_config.parent().unwrap_or(app_config);
+    let vinculum = parent.join("vinculum");
+    let omp = parent.join("omp");
+    if !vinculum.exists() && omp.is_dir() {
+        let _ = fs::rename(&omp, &vinculum);
+    }
+    let config_root = vinculum.join("config");
+    (config_root.join("agent"), config_root)
 }
 
 /// The only variables an isolated OMP child inherits from the daemon's own environment.
@@ -681,13 +690,22 @@ mod tests {
     }
 
     #[test]
-    fn omp_home_dirs_are_under_app_config_parent_omp() {
-        let (agent, config_root) = omp_home_dirs(Path::new("/tmp/id/app.toml"));
-        assert_eq!(agent, PathBuf::from("/tmp/id/omp/config/agent"));
-        assert_eq!(config_root, PathBuf::from("/tmp/id/omp/config"));
-        assert!(agent.starts_with("/tmp/id/omp"));
-        assert!(config_root.starts_with("/tmp/id/omp"));
-        assert!(!agent.starts_with(std::env::var_os("HOME").unwrap_or_default()));
+    fn vinculum_home_dirs_rename_omp_once_and_then_leave_it() {
+        let root = std::env::temp_dir().join(format!("alinery-vinculum-home-{}", uuid::Uuid::new_v4()));
+        let app_config = root.join("app.toml");
+        fs::create_dir_all(root.join("omp/config/agent")).unwrap();
+        fs::write(root.join("omp/config/agent/marker"), "kept").unwrap();
+        let (agent, config_root) = vinculum_home_dirs(&app_config);
+        assert_eq!(agent, root.join("vinculum/config/agent"));
+        assert_eq!(config_root, root.join("vinculum/config"));
+        assert_eq!(fs::read_to_string(agent.join("marker")).unwrap(), "kept");
+        assert!(!root.join("omp").exists());
+        fs::create_dir_all(root.join("omp/config/agent")).unwrap();
+        fs::write(root.join("omp/config/agent/other"), "stay").unwrap();
+        let (again, _) = vinculum_home_dirs(&app_config);
+        assert_eq!(again, agent);
+        assert_eq!(fs::read_to_string(root.join("omp/config/agent/other")).unwrap(), "stay");
+        let _ = fs::remove_dir_all(&root);
     }
 
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

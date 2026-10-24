@@ -24,7 +24,7 @@ import {
   UI_SCALE_STEPS,
 } from "../appearance";
 import { copyTextToClipboard } from "../chat/CopyMessage";
-import { askConfirm, confirmDanger } from "../confirm";
+import { confirmDanger } from "../confirm";
 import { createGridViewId, gridViewShortcut, MAX_GRID_VIEWS, nextGridViewName, normalizeGridViews, withGridViewSlots } from "../gridViews";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
@@ -54,9 +54,8 @@ import type {
   UpdateStatus,
 } from "../types";
 import { type McpStatus, type McpStatusHandle, mcpDotColor, mcpStatusLabel } from "../useMcpStatus";
-import { useOmpUpdateStatus } from "../useOmpUpdateStatus";
-import { OmpCustomizations } from "./OmpCustomizations";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
+import { VinculumCustomizations } from "./VinculumCustomizations";
 
 /** Kebab menu for a connected row: the actions that only make sense once a connection exists.
  *  Follows RepoSelect's dropdown idiom — outside click and Escape close it, Escape returns focus. */
@@ -287,12 +286,9 @@ export function Settings({
   const [updateCheckFailed, setUpdateCheckFailed] = useState(false);
   const displayedUpdate = update ?? localUpdate;
   const checkingUpdates = onCheckNow ? updateChecking : localChecking;
-  const ompUpdate = useOmpUpdateStatus();
-  const [ompUpdating, setOmpUpdating] = useState(false);
   const [providersOpen, setProvidersOpen] = useState(false);
   // Keyed by the choice row that opened it, so one hosted dialog serves every default-model field.
   const [pickModelFor, setPickModelFor] = useState<string | null>(null);
-  const [ompError, setOmpError] = useState("");
   const [playbookCatalog, setPlaybookCatalog] = useState<PlaybookCatalog | null>(null);
   const [playbookError, setPlaybookError] = useState("");
 
@@ -393,11 +389,6 @@ export function Settings({
       .then(setLocalUpdate)
       .catch(() => {});
   }, [activeSection, onCheckNow]);
-
-  useEffect(() => {
-    if (activeSection !== "harness") return;
-    void ompUpdate.checkNow();
-  }, [activeSection, ompUpdate.checkNow]);
 
   const loadScope = (nextScope: SettingsScope) => {
     if (nextScope.kind === "global") {
@@ -678,6 +669,11 @@ export function Settings({
   const setShowChat = (value: boolean) => {
     if (!global) return;
     saveGlobal({ ...global, experiments: { ...global.experiments, show_chat: value } }, value ? "Chat tab shown" : "Chat tab hidden");
+  };
+
+  const saveGrokKey = (value: string) => {
+    if (!global || !isGlobal) return;
+    saveGlobal({ ...global, experiments: { ...global.experiments, grok_api_key: value } }, value.trim() ? "Grok key saved" : "Grok key cleared");
   };
 
   const updateGlobalChoice = (key: ChoiceKey, patch: Partial<GlobalSettings[ChoiceKey]>) => {
@@ -1206,7 +1202,7 @@ export function Settings({
                 </option>
               ))}
             </select>
-            <div className="hint">New OMP sessions start at this level; resumed sessions keep theirs, and OMP lowers it to what the model supports.</div>
+            <div className="hint">New sessions start at this level; resumed sessions keep theirs.</div>
           </div>
           <Checkbox
             checked={value.draft_autosave}
@@ -1661,75 +1657,18 @@ export function Settings({
             </p>
           </details>
         </section>
-        <section className="omp-settings" aria-labelledby="omp-settings-title">
+        <section className="omp-settings" aria-labelledby="providers-settings-title">
           <div className="omp-settings-heading">
-            <h3 id="omp-settings-title">Agent &amp; providers</h3>
-            <p className="hint">OMP runs your agent sessions. Connect accounts to make their models available.</p>
+            <h3 id="providers-settings-title">Providers</h3>
+            <p className="hint">Sign in to model providers for this installation.</p>
           </div>
-          <section aria-label="OMP installation and providers">
-            <div className="harness-provider-row">
-              <div>
-                <strong>OMP</strong>
-                <p className="hint">{ompUpdate.status.installed ? `Installed · ${ompUpdate.status.installed}` : "Not installed"}</p>
-              </div>
-              <button type="button" className="btn ghost small" onClick={() => setProvidersOpen(true)}>
-                Providers &amp; accounts
-              </button>
-            </div>
-            <details className="harness-disclosure">
-              <summary>Installation details</summary>
-              <div className="omp-installation-paths dim">
-                {ompUpdate.status.binary_path && <div>Binary: {ompUpdate.status.binary_path}</div>}
-                {ompUpdate.status.config_dir && <div>Config: {ompUpdate.status.config_dir}</div>}
-              </div>
-            </details>
-            {providersOpen && <ProviderSetupDialog mode="manual" onClose={() => setProvidersOpen(false)} />}
-            {ompUpdate.status.available && (
-              <div className="field omp-update-offer">
-                <div style={{ marginBottom: 8 }}>Update available: {ompUpdate.status.available.version}</div>
-                <button
-                  type="button"
-                  className="btn small"
-                  disabled={ompUpdating}
-                  onClick={() => {
-                    void (async () => {
-                      const answer = await askConfirm({
-                        title: `Update OMP to ${ompUpdate.status.available?.version}?`,
-                        body: <p>Live sessions keep running on the current binary. New sessions use the updated one.</p>,
-                        choices: [
-                          { key: "cancel", label: "Cancel", tone: "ghost" },
-                          { key: "update", label: "Update OMP" },
-                        ],
-                        defaultKey: "cancel",
-                      });
-                      if (answer !== "update") return;
-                      setOmpUpdating(true);
-                      setOmpError("");
-                      try {
-                        await ipc.updateOmp();
-                        ompUpdate.clearOffer();
-                        await ompUpdate.checkNow();
-                      } catch (e) {
-                        setOmpError(String(e));
-                      } finally {
-                        setOmpUpdating(false);
-                      }
-                    })();
-                  }}
-                >
-                  {ompUpdating ? "Updating…" : "Update OMP"}
-                </button>
-                {ompError ? (
-                  <div className="dim" style={{ color: "var(--danger)", marginTop: 6 }}>
-                    {ompError}
-                  </div>
-                ) : null}
-              </div>
-            )}
-          </section>
+          <button type="button" className="btn ghost small" onClick={() => setProvidersOpen(true)}>
+            Providers &amp; accounts
+          </button>
+          {providersOpen && <ProviderSetupDialog mode="manual" onClose={() => setProvidersOpen(false)} />}
           <details className="harness-disclosure harness-customizations">
             <summary>Customizations</summary>
-            <OmpCustomizations />
+            <VinculumCustomizations />
           </details>
         </section>
         <details className="harness-disclosure harness-session-service">
@@ -2155,7 +2094,7 @@ export function Settings({
             <div className="settings-subsection">
               <h2>Misc</h2>
               {/* Each repository's daemon reads this pref and holds the idle-sleep inhibit
-                (alineryd/src/idle_inhibit.rs); the note states the same rule it enforces. */}
+                (alinery-core idle_inhibit); the note states the same rule it enforces. */}
               <Checkbox
                 checked={global.power?.keep_awake ?? false}
                 disabled={!isGlobal}
@@ -2195,6 +2134,20 @@ export function Settings({
                     </div>
                   }
                 />
+                <div className="field">
+                  <label htmlFor="grok-api-key">Grok API key</label>
+                  <input
+                    id="grok-api-key"
+                    className="field-input mono"
+                    type="password"
+                    autoComplete="off"
+                    disabled={!isGlobal}
+                    defaultValue={global.experiments?.grok_api_key ?? ""}
+                    onBlur={(event) => {
+                      if (event.target.value !== (global.experiments?.grok_api_key ?? "")) saveGrokKey(event.target.value);
+                    }}
+                  />
+                </div>
               </section>
             </div>
           </>
@@ -2262,7 +2215,7 @@ export function Settings({
         return (
           <div className="settings-subsection">
             <h2>Harness</h2>
-            <p>Manage OMP, session defaults, and background session daemons.</p>
+            <p>Providers, session defaults, and background session daemons.</p>
             {renderHarness()}
           </div>
         );

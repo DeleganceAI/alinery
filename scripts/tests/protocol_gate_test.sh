@@ -27,7 +27,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 CONST_REL="alinery-app/src-tauri/alinery-core/src/protocol.rs"
 CLIENT_REL="alinery-app/src-tauri/alinery-core/src/daemon_client.rs"
-DAEMON_REL="alinery-app/src-tauri/alineryd/src/main.rs"
+DAEMON_REL="alinery-app/src-tauri/vinculum-daemon/src/main.ts"
 
 # A minimal repo with the real SURFACE layout and a copy of the gate at the real path,
 # so the script's own `cd "$(dirname $0)/../.."` lands on the fixture.

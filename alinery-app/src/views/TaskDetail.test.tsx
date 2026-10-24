@@ -40,6 +40,7 @@ const ipcSpies = vi.hoisted(() => ({
   restoreTaskForRepo: vi.fn(),
   archiveSessionForRepo: vi.fn(),
   rpcWriteSession: vi.fn(),
+  sessionAbort: vi.fn(),
   renameSession: vi.fn(),
   renameTask: vi.fn(),
   setAutoApproveAllForRepo: vi.fn(),
@@ -95,6 +96,7 @@ vi.mock("../ipc", () =>
     restoreTaskForRepo: ipcSpies.restoreTaskForRepo,
     archiveSessionForRepo: ipcSpies.archiveSessionForRepo,
     rpcWriteSession: ipcSpies.rpcWriteSession,
+    sessionAbort: ipcSpies.sessionAbort,
     renameSession: ipcSpies.renameSession,
     renameTask: ipcSpies.renameTask,
     setAutoApproveAllForRepo: ipcSpies.setAutoApproveAllForRepo,
@@ -271,6 +273,7 @@ beforeEach(() => {
   ipcSpies.restoreTaskForRepo.mockReset().mockResolvedValue(undefined);
   ipcSpies.archiveSessionForRepo.mockReset();
   ipcSpies.rpcWriteSession.mockReset().mockResolvedValue(undefined);
+  ipcSpies.sessionAbort.mockReset().mockResolvedValue(undefined);
   ipcSpies.renameSession.mockReset().mockImplementation(async ({ sessionId, name }: { sessionId: string; name: string }) => {
     scenario.sessions = scenario.sessions.map((item) => (item.id === sessionId ? { ...item, name, name_source: "user" } : item));
     return { name, source: "user" };
@@ -828,10 +831,10 @@ describe("task session archive pending feedback", () => {
 
 describe("task session row Stop", () => {
   it("aborts the current turn without opening or archiving the session, guards repeats, and allows retry", async () => {
-    scenario.sessions = [session({ id: "stop-me", harness: "omp" })];
+    scenario.sessions = [session({ id: "stop-me", harness: "vinculum" })];
     mocks.sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("busy"), transport: "rpc" } });
     const pending = deferred<void>();
-    ipcSpies.rpcWriteSession.mockReturnValueOnce(pending.promise);
+    ipcSpies.sessionAbort.mockReturnValueOnce(pending.promise);
     const { onOpenSession } = await renderDetail();
     const stop = await screen.findByRole("button", { name: "Stop" });
     await waitFor(() => expect((stop as HTMLButtonElement).disabled).toBe(false));
@@ -839,8 +842,8 @@ describe("task session row Stop", () => {
       fireEvent.click(stop);
       fireEvent.click(stop);
     });
-    expect(ipcSpies.rpcWriteSession).toHaveBeenCalledTimes(1);
-    expect(ipcSpies.rpcWriteSession).toHaveBeenCalledWith("stop-me", expect.objectContaining({ type: "abort" }));
+    expect(ipcSpies.sessionAbort).toHaveBeenCalledTimes(1);
+    expect(ipcSpies.sessionAbort).toHaveBeenCalledWith("stop-me");
     expect(onOpenSession).not.toHaveBeenCalled();
     expect(ipcSpies.archiveSessionForRepo).not.toHaveBeenCalled();
     expect((screen.getByRole("button", { name: "Stopping…" }) as HTMLButtonElement).disabled).toBe(true);
@@ -848,7 +851,7 @@ describe("task session row Stop", () => {
     expect(screen.getByText(/abort delivery failed/)).toBeDefined();
     mocks.sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("idle"), transport: "rpc" } });
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
-    await waitFor(() => expect(ipcSpies.rpcWriteSession).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(ipcSpies.sessionAbort).toHaveBeenCalledTimes(2));
     await waitFor(() => expect((screen.getByRole("button", { name: "Stop" }) as HTMLButtonElement).disabled).toBe(true));
     expect(screen.getByRole("button", { name: "Kill" })).toBeDefined();
     expect(screen.getByRole("button", { name: "Archive" })).toBeDefined();

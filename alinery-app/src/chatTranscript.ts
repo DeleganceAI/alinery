@@ -213,7 +213,7 @@ function toolResultEntry(message: ChatMessage) {
     type: "tool_result" as const,
     tool: message.toolName ?? "tool",
     text: message.content.map((part) => (part.type === "text" ? part.text : "")).join(""),
-    status: message.isError ? ("error" as const) : ("ok" as const),
+    status: message.isError ? ("error" as const) : message.streaming ? ("running" as const) : ("ok" as const),
   };
 }
 
@@ -541,6 +541,111 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
  * everything after it. Live entries are identified by their ids never starting with `f:`, so they
  * survive a page landing and always sort after the file content.
  */
+export type VinculumMessage = {
+  id?: string;
+  role: string;
+  /** Older replies were a single string. A part list wins when it is present. */
+  text?: string;
+  content?: unknown;
+  streaming?: boolean;
+  toolName?: string;
+  toolCallId?: string;
+  isError?: boolean;
+  runningToolIds?: string[];
+};
+
+/** Model and thinking level for the next turn. Empty `thinking_levels` means no menu. */
+export type SessionControls = {
+  model: string;
+  thinking: string;
+  thinking_levels: string[];
+};
+
+export type VinculumTranscript = {
+  messages: VinculumMessage[];
+  model?: string;
+  thinking?: string;
+  thinking_levels?: string[];
+};
+
+export const NEXT_TURN_MODEL_TITLE = "This turn keeps the model it started with. The next message uses the new one.";
+export const NEXT_TURN_THINKING_TITLE = "This turn keeps the thinking level it started with. The next message uses the new one.";
+
+export const VINCULUM_TRANSCRIPT_IDLE_MS = 1000;
+/** The daemon already folds the partial about every 100ms. Idle stays on the slow poll. */
+export const VINCULUM_TRANSCRIPT_BUSY_MS = 200;
+
+export function vinculumTranscriptPollMs(messages: readonly VinculumMessage[]): number {
+  const busy = messages.some((message) => message.streaming === true || (message.runningToolIds?.length ?? 0) > 0);
+  return busy ? VINCULUM_TRANSCRIPT_BUSY_MS : VINCULUM_TRANSCRIPT_IDLE_MS;
+}
+
+/** Poll until `stop`. A busy reply (live partial or a tool still running) shortens the next wait. */
+export function watchVinculumTranscript(load: () => Promise<VinculumMessage[] | VinculumTranscript>, apply: (reply: VinculumMessage[] | VinculumTranscript) => void): () => void {
+  let timer = 0;
+  let stopped = false;
+  const pull = () => {
+    load().then(
+      (reply) => {
+        if (stopped) return;
+        apply(reply);
+        const messages = Array.isArray(reply) ? reply : (reply.messages ?? []);
+        timer = window.setTimeout(pull, vinculumTranscriptPollMs(messages));
+      },
+      () => {
+        if (!stopped) timer = window.setTimeout(pull, VINCULUM_TRANSCRIPT_IDLE_MS);
+      },
+    );
+  };
+  pull();
+  return () => {
+    stopped = true;
+    window.clearTimeout(timer);
+  };
+}
+
+function vinculumChatMessage(message: VinculumMessage, index: number): ChatMessage | null {
+  const raw = message.content !== undefined ? message : { ...message, content: [{ type: "text", text: message.text ?? "" }] };
+  const mapped = mapHydratedMessage(raw, message.id && message.id.length > 0 ? message.id : `v${index}`);
+  if (!mapped) return null;
+  if (message.streaming && mapped.role === "toolResult") mapped.streaming = true;
+  const running = new Set(message.runningToolIds ?? []);
+  if (!message.streaming && running.size === 0) return mapped;
+  mapped.content = mapped.content.map((part) => {
+    if (message.streaming && (part.type === "thinking" || part.type === "text" || part.type === "toolCall")) return { ...part, streaming: true };
+    if (part.type === "toolCall" && part.id && running.has(part.id)) return { ...part, streaming: true };
+    return part;
+  });
+  return mapped;
+}
+
+/** The reply's model and thinking level. A poll is the source of truth and replaces whatever a set just wrote. */
+export function applySessionControls(state: ChatTranscriptState, controls: { model?: string; thinking?: string; thinking_levels?: string[] }): ChatTranscriptState {
+  const sessionMeta: SessionChatMeta = { ...state.sessionMeta };
+  if (controls.model) sessionMeta.model = controls.model;
+  if (typeof controls.thinking === "string") {
+    if (controls.thinking) sessionMeta.thinking = controls.thinking;
+    else delete sessionMeta.thinking;
+  }
+  if (Array.isArray(controls.thinking_levels)) sessionMeta.thinkingLevels = controls.thinking_levels;
+  return { ...state, sessionMeta };
+}
+
+/** Replace the pane with the daemon transcript. Row ids are the entry id plus the part key, so a growing partial does not remount earlier rows. */
+export function applyVinculumTranscript(reply: VinculumMessage[] | VinculumTranscript): ChatTranscriptState {
+  const transcript = Array.isArray(reply) ? { messages: reply } : reply;
+  const messages = transcript.messages ?? [];
+  const page = {
+    start: 0,
+    messages: messages.flatMap((message, index) => {
+      const mapped = vinculumChatMessage(message, index);
+      return mapped ? [mapped] : [];
+    }),
+  };
+  const state = { ...applyFilePage(emptyTranscript(), page, "initial"), ready: true, fileStart: 0 };
+  return Array.isArray(reply) ? state : applySessionControls(state, transcript);
+}
+
 export function applyFilePage(state: ChatTranscriptState, page: { start: number; messages: ChatMessage[] }, position: "initial" | "older"): ChatTranscriptState {
   const messages = position === "older" ? [...page.messages, ...state.messages] : page.messages;
   // Only journal rows carry an OMP row id. Messages the stream added since attach already have their

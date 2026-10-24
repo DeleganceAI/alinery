@@ -49,15 +49,16 @@ mod git_ops;
 mod hosted;
 mod imports;
 mod notify;
-mod omp_customizations;
 mod omp_update;
 mod paths;
+mod pi_durable;
 mod session;
 mod settings;
 mod subtask;
 mod task;
 mod telemetry;
 mod update;
+mod vinculum_customizations;
 
 // worktree_exists / create_session's archived-task guard both read the process-global
 // ACTIVE_REPO; serialize the handful of tests that mutate it so parallel test threads

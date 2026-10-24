@@ -48,7 +48,7 @@ use alinery_core::daemon_client::{format_daemon_timeout, read_socket_line, Daemo
 use alinery_core::lockfile::{try_lock_exclusive, LockFile};
 #[cfg(test)]
 pub(crate) use alinery_core::write_task;
-use alinery_core::{alinery_app_lock_path, alinery_dir, ensure_harnesses_toml, login_shell_path, poller_action, DaemonCompat, PollerAction, PROTOCOL_VERSION};
+use alinery_core::{alinery_app_lock_path, alinery_dir, ensure_harnesses_toml, login_shell_path, DaemonCompat, PollerAction, PROTOCOL_VERSION};
 pub use alinery_core::{
     alineryd_lock_path,
     alineryd_socket_path,
@@ -76,6 +76,8 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 
 mod account;
+#[path = "vinculum_customizations.rs"]
+mod agent_customizations;
 mod app_config;
 mod artifacts;
 mod backup;
@@ -88,9 +90,9 @@ mod hosted;
 mod imports;
 mod mcp;
 mod notify;
-mod omp_customizations;
 mod omp_update;
 mod paths;
+mod pi_durable;
 mod playbook;
 mod session;
 mod settings;
@@ -101,6 +103,7 @@ mod telemetry;
 mod update;
 
 use account::*;
+use agent_customizations::*;
 use app_config::*;
 use artifacts::*;
 use backup::*;
@@ -113,9 +116,9 @@ use hosted::*;
 use imports::*;
 use mcp::*;
 use notify::*;
-use omp_customizations::*;
 use omp_update::*;
 use paths::*;
+use pi_durable::*;
 use playbook::*;
 use session::*;
 use settings::*;
@@ -141,6 +144,8 @@ pub fn run() {
         .setup(|app| {
             // B5: keep a daemon alive for every open repo (spawn-only — see the fn).
             spawn_daemon_poller(app.handle().clone());
+            spawn_pi_supervisor(app.handle().clone());
+            spawn_pi_hosted_refresh(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -185,6 +190,11 @@ pub fn run() {
             remove_chat_worktree,
             resume_chat_thread,
             chat_branch_label,
+            chat_transcript,
+            chat_prompt,
+            chat_abort,
+            chat_set_model,
+            chat_set_thinking_level,
             chat_rpc_write,
             chat_rpc_attach,
             chat_detach,
@@ -229,6 +239,7 @@ pub fn run() {
             save_playbook_picker_preferences,
             list_kanban_columns,
             list_harness_models,
+            grok_key_ready,
             session_artifact_ready,
             list_harness_models_for_repo,
             list_artifacts,
@@ -273,6 +284,18 @@ pub fn run() {
             restate_session,
             rpc_attach_session,
             rpc_write_session,
+            session_transcript,
+            session_prompt,
+            session_abort,
+            session_set_model,
+            session_set_thinking_level,
+            provider_catalog,
+            provider_logout,
+            provider_login_start,
+            provider_login_poll,
+            provider_login_reply,
+            custom_provider_save,
+            custom_provider_delete,
             omp_setup_session,
             session_status,
             session_statuses,
@@ -342,14 +365,16 @@ pub fn run() {
             check_update,
             download_update,
             apply_update,
-            check_omp_update,
-            update_omp,
             omp_agent_sessions_dir,
             read_omp_model_roles,
             write_omp_model_roles,
-            open_omp_config_dir,
-            omp_customization_prompt,
-            read_omp_customizations,
+            open_vinculum_agent_dir,
+            vinculum_customization_prompt,
+            read_vinculum_customizations,
+            pick_vinculum_skill_dialog,
+            install_vinculum_skill,
+            delete_vinculum_skill,
+            vinculum_customizations,
         ])
         .build(context)
         .expect("error while building tauri application")

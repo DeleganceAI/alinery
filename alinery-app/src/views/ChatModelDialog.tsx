@@ -2,7 +2,7 @@ import { Search, Star, X } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { costBand } from "../chat/costBand";
 import { BUILTIN_MODEL_ROLES, type ModelRolesMap } from "../chat/modelRoles";
-import { type AdvancedProviderRow, HOSTED_PROVIDER, hostedPrice, type LoginProvider, mergeHostedModels, partitionProviders } from "../chat/providers";
+import { type AdvancedProviderRow, HOSTED_PROVIDER, hostedPrice, type LoginProvider, mergeGrokModels, mergeHostedModels, partitionProviders } from "../chat/providers";
 import type { ProvidersDialogTab } from "../chat/slash";
 import type { ChatModelOption } from "../chatTranscript";
 import { Dialog } from "../shared";
@@ -18,6 +18,8 @@ export type ChatProvidersDialogProps = {
   livePromotedIds?: string[];
   modelRoles: ModelRolesMap;
   hosted?: HostedCatalogView | null;
+  /** Settings has a Grok key, so the xAI chat models are selectable. */
+  grok?: boolean;
   error?: string | null;
   loginBusy?: string | null;
   children?: ReactNode;
@@ -31,7 +33,10 @@ export type ChatProvidersDialogProps = {
   onTabChange: (tab: ProvidersDialogTab) => void;
   onApplyModel: (provider: string, modelId: string) => void;
   onLogin: (providerId: string) => void;
-  onHatchTerminalLogin: (providerId?: string) => void;
+  onLogout?: (providerId: string) => void;
+  /** Custom endpoint ids. They have models and are not an Accounts sign-in row. */
+  configuredIds?: string[];
+  footer?: ReactNode;
   onAssignRole: (role: string, model: string | null) => void;
   onSignIn?: () => void;
   onSubscribe?: () => void;
@@ -40,9 +45,8 @@ export type ChatProvidersDialogProps = {
 };
 
 function advancedHint(row: AdvancedProviderRow): string {
-  if (row.reason === "env") return row.readyViaEnv ? "Ready via env" : "Set env or Terminal";
-  if (row.reason === "live-promote") return "Needs Terminal";
-  return "Terminal /login";
+  if (row.reason === "env") return row.readyViaEnv ? "Ready" : "Not configured";
+  return "Sign-in did not finish";
 }
 
 const DIALOG_TABS: { id: ProvidersDialogTab; label: string }[] = [
@@ -133,6 +137,7 @@ export function ChatModelDialog({
   livePromotedIds = [],
   modelRoles,
   hosted,
+  grok = false,
   error,
   loginBusy,
   children,
@@ -143,7 +148,9 @@ export function ChatModelDialog({
   onTabChange,
   onApplyModel,
   onLogin,
-  onHatchTerminalLogin,
+  onLogout,
+  configuredIds = [],
+  footer,
   onAssignRole,
   onSignIn,
   onSubscribe,
@@ -186,8 +193,11 @@ export function ChatModelDialog({
     if (advancedOpen) advancedRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [advancedOpen]);
 
-  const listed = useMemo(() => mergeHostedModels(models, hosted), [models, hosted]);
-  const { chatLogin, advanced } = useMemo(() => partitionProviders({ loginProviders, models: listed, livePromotedIds }), [loginProviders, listed, livePromotedIds]);
+  const listed = useMemo(() => mergeGrokModels(mergeHostedModels(models, hosted), grok), [models, hosted, grok]);
+  const { chatLogin, advanced } = useMemo(
+    () => partitionProviders({ loginProviders, models: listed, livePromotedIds, configuredIds }),
+    [loginProviders, listed, livePromotedIds, configuredIds],
+  );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -301,11 +311,17 @@ export function ChatModelDialog({
                 {catalogueStatus !== "connecting" && noProviderMatch ? <li className="dim">No providers match “{providerQuery.trim()}”</li> : null}
                 {shownLogin.map((p) => {
                   const busy = loginBusy === p.id;
+                  const canSignOut = p.authenticated && p.stored === true && !!onLogout;
                   return (
                     <li key={p.id}>
-                      <button type="button" className="chat-model-item" disabled={!!loginBusy || p.authenticated} onClick={() => onLogin(p.id)}>
+                      <button
+                        type="button"
+                        className="chat-model-item"
+                        disabled={!!loginBusy || (p.authenticated && !canSignOut)}
+                        onClick={() => (canSignOut ? onLogout?.(p.id) : onLogin(p.id))}
+                      >
                         <span>{p.name}</span>
-                        <span className="chat-provider-status">{p.authenticated ? "Signed in" : busy ? "Signing in…" : "Sign in"}</span>
+                        <span className="chat-provider-status">{canSignOut ? "Sign out" : p.authenticated ? "Signed in" : busy ? "Signing in…" : "Sign in"}</span>
                       </button>
                     </li>
                   );
@@ -313,19 +329,20 @@ export function ChatModelDialog({
               </ul>
               {shownAdvanced.length > 0 ? (
                 <div ref={advancedRef} className="chat-providers-advanced">
-                  <p className="dim">These need Terminal /login or an environment variable on the Alinery process. Chat will not collect keys.</p>
+                  <p className="dim">These already have models without a sign-in step.</p>
                   <ul className="chat-model-list">
                     {shownAdvanced.map((row) => (
                       <li key={row.id}>
-                        <button type="button" className="chat-model-item" onClick={() => onHatchTerminalLogin(row.id)}>
+                        <div className="chat-model-item">
                           <span>{row.name}</span>
                           <span className="chat-provider-status">{advancedHint(row)}</span>
-                        </button>
+                        </div>
                       </li>
                     ))}
                   </ul>
                 </div>
               ) : null}
+              {footer}
             </>
           ) : (
             <>

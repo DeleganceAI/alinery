@@ -1,8 +1,6 @@
 import "../onboarding.css";
-import { ArrowRight, Check, Cpu, FolderOpen, FolderPlus, Layers, Play, RotateCcw, X } from "lucide-react";
+import { ArrowRight, FolderOpen, FolderPlus, Layers, Play, RotateCcw, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { ThinkingOrb } from "thinking-orbs";
-import { ORB_SPEED } from "../Indicators";
 import * as ipc from "../ipc";
 import { BrandMark } from "../Logo";
 import { CURATED_PLAYBOOK_ARCHETYPES, ONBOARDING_STEPS, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset, writeSavedOnboardingStep } from "../onboarding";
@@ -73,8 +71,6 @@ export function OnboardingFlow({
   }, [step, reducedMotion, intro]);
 
   // Step 03: Agent & model readiness state
-  const [agentStatus, setAgentStatus] = useState<"checking" | "ready" | "attention">("checking");
-  const [agentDetail, setAgentDetail] = useState<string>("Checking OMP installation…");
   const [repoConfig, setRepoConfig] = useState<Config | null>(null);
   const [defaultModel, setDefaultModel] = useState<string>("");
   const [modelError, setModelError] = useState("");
@@ -148,12 +144,9 @@ export function OnboardingFlow({
     }
   }, [playbookSteps, selectedStepKey]);
 
-  // Check installation without creating a reserved setup process with no attached client.
   useEffect(() => {
     if (step !== "models" || !appConfig.active_repo) return;
     let cancelled = false;
-    setAgentStatus("checking");
-    setAgentDetail("Checking OMP installation…");
     setModelError("");
     setRepoConfig(null);
 
@@ -166,20 +159,6 @@ export function OnboardingFlow({
       })
       .catch((error) => {
         if (!cancelled) setModelError(String(error));
-      });
-
-    void ipc
-      .checkOmpUpdate()
-      .then((status) => {
-        if (cancelled) return;
-        setAgentStatus(status.installed ? "ready" : "attention");
-        setAgentDetail(status.installed ? `Installed: ${status.installed}` : `OMP could not be started at ${status.binary_path || "the configured location"}.`);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        const msg = String(error);
-        setAgentStatus("attention");
-        setAgentDetail(msg || "Could not check the OMP installation.");
       });
 
     return () => {
@@ -726,43 +705,6 @@ export function OnboardingFlow({
                       Manage accounts…
                     </button>
                   </div>
-                </div>
-                <div className="onboarding-readiness-card">
-                  <div className="onboarding-readiness-row">
-                    <div className="onboarding-readiness-title">
-                      <Cpu size={16} aria-hidden="true" />
-                      <strong>Agent installation</strong>
-                    </div>
-                    {agentStatus === "checking" && (
-                      <span className="pill">
-                        <ThinkingOrb state="searching" size={20} speed={ORB_SPEED} />
-                        Checking…
-                      </span>
-                    )}
-                    {agentStatus === "ready" && (
-                      <span className="pill onboarding-pill-success">
-                        <Check size={12} aria-hidden="true" />
-                        Ready
-                      </span>
-                    )}
-                    {agentStatus === "attention" && <span className="pill onboarding-pill-warning">Needs attention</span>}
-                  </div>
-                  <p className="onboarding-readiness-detail">
-                    {agentStatus === "attention" ? "OMP isn't available. Review the details below, resolve the issue, then retry." : agentDetail}
-                  </p>
-                  {agentStatus === "attention" && (
-                    <details className="onboarding-prompt-preview">
-                      <summary>Technical details</summary>
-                      <pre>{agentDetail}</pre>
-                    </details>
-                  )}
-                  {agentStatus === "attention" && (
-                    <div className="onboarding-readiness-actions">
-                      <button type="button" className="btn ghost small" onClick={() => setProbeTick((n) => n + 1)}>
-                        Retry check
-                      </button>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>

@@ -108,7 +108,6 @@ beforeEach(() => {
   vi.spyOn(ipc, "readModelFavorites").mockResolvedValue([]);
   vi.spyOn(ipc, "listHarnessModels").mockResolvedValue(["anthropic/claude-sonnet-4-5"]);
   vi.spyOn(ipc, "listHarnessModelsForRepo").mockResolvedValue(["anthropic/claude-sonnet-4-5"]);
-  vi.spyOn(ipc, "checkOmpUpdate").mockResolvedValue({ installed: "18.11.1", available: null, checked_at: 1, binary_path: "/omp", config_dir: "/config" });
 });
 
 afterEach(() => {

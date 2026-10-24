@@ -9388,16 +9388,6 @@ dialog.modal::backdrop {
 .harness-settings-section > h3 {
   margin-bottom: 14px;
 }
-.omp-installation-paths {
-  display: grid;
-  gap: 4px;
-  margin-bottom: 12px;
-  font-size: calc(12px * var(--ui-scale));
-  overflow-wrap: anywhere;
-}
-.omp-update-offer {
-  margin-top: 14px;
-}
 .omp-customization-actions,
 .omp-inventory-heading {
   display: flex;
@@ -9445,6 +9435,14 @@ dialog.modal::backdrop {
 .omp-customization-source {
   margin-top: 4px;
   font-size: calc(12px * var(--ui-scale));
+}
+.vinculum-customization-groups {
+  display: grid;
+  gap: 16px;
+}
+.vinculum-customization-groups h5 {
+  margin: 0 0 8px;
+  font-size: calc(13px * var(--ui-scale));
 }
 .grid-view-settings-list {
   display: grid;

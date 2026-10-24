@@ -293,7 +293,7 @@ fn apply_default_role_after_sync(config_dir: &Path, app_config: &Path) {
 }
 
 fn apply_default_model_role(app_config: &Path, default_model: &str) {
-    let (agent_dir, _) = alinery_core::omp_home_dirs(app_config);
+    let (agent_dir, _) = alinery_core::vinculum_home_dirs(app_config);
     let _ = ensure_default_model_role(&agent_dir, default_model);
 }
 

@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => ({
   onStreamClosed: vi.fn(),
   chatDetach: vi.fn(),
   chatRpcWrite: vi.fn(),
+  chatPrompt: vi.fn(),
+  chatTranscript: vi.fn(),
   readChatOmp: vi.fn(),
   sessionListStatuses: vi.fn(),
   chatThreadName: vi.fn(),
@@ -44,6 +46,8 @@ vi.mock("../ipc", () =>
     onStreamClosed: mocks.onStreamClosed,
     chatDetach: mocks.chatDetach,
     chatRpcWrite: mocks.chatRpcWrite,
+    chatPrompt: mocks.chatPrompt,
+    chatTranscript: mocks.chatTranscript,
     readChatOmp: mocks.readChatOmp,
     sessionListStatuses: mocks.sessionListStatuses,
     chatThreadName: mocks.chatThreadName,
@@ -129,6 +133,8 @@ beforeEach(() => {
   mocks.onStreamClosed.mockReturnValue(() => {});
   mocks.chatDetach.mockResolvedValue(undefined);
   mocks.chatRpcWrite.mockResolvedValue(undefined);
+  mocks.chatPrompt.mockResolvedValue(undefined);
+  mocks.chatTranscript.mockResolvedValue([]);
   mocks.readChatOmp.mockRejectedValue(new Error("no journal"));
   mocks.sessionListStatuses.mockResolvedValue({});
   mocks.chatThreadName.mockResolvedValue(null);
@@ -310,7 +316,7 @@ describe("QuickChat", () => {
     mocks.copyChatThreadAttachments.mockResolvedValueOnce({ copied: ["notes.pdf"], failures: [] });
     render(windowOf());
     await screen.findByRole("button", { name: "Attach files" });
-    await waitFor(() => expect(mocks.chatRpcAttach).toHaveBeenCalled());
+    await waitFor(() => expect(mocks.chatTranscript).toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
     expect(await screen.findByRole("button", { name: "Remove notes.pdf" })).toBeTruthy();
 
@@ -336,13 +342,11 @@ describe("QuickChat", () => {
     fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: "see" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(mocks.copyChatThreadAttachments).toHaveBeenCalledWith("/repos/one", "s-a", ["/tmp/notes.pdf"]));
-    await waitFor(() =>
-      expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repos/one", "s-a", expect.objectContaining({ type: "prompt", message: expect.stringContaining("Attached file:") })),
-    );
+    await waitFor(() => expect(mocks.chatPrompt).toHaveBeenCalledWith("/repos/one", "s-a", expect.stringContaining("Attached file:")));
     expect(mocks.getCurrentWebview).not.toHaveBeenCalled();
   });
 
-  it("attaches a thread once when Chat and the window both show it", async () => {
+  it("reads a thread once from Vinculum when Chat and the window both show it", async () => {
     const row = thread("s-live", "/repos/one", { name: "Alpha", session: meta("s-live", { pinned: true }) });
     mocks.listChatThreads.mockResolvedValue([row]);
     render(
@@ -353,9 +357,9 @@ describe("QuickChat", () => {
     );
     const rail = await screen.findByTestId("chat-rail");
     fireEvent.click(await within(rail).findByRole("button", { name: /^Alpha/ }));
-    await waitFor(() => expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mocks.chatTranscript).toHaveBeenCalledWith("/repos/one", "s-live"));
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(1);
-    expect(mocks.chatRpcAttach).toHaveBeenCalledWith(expect.objectContaining({ repoPath: "/repos/one", id: "s-live" }));
+    expect(mocks.chatRpcAttach).not.toHaveBeenCalled();
+    expect(mocks.chatTranscript.mock.calls.filter((call) => call[0] === "/repos/one" && call[1] === "s-live").length).toBeGreaterThan(0);
   });
 });

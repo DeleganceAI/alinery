@@ -14,7 +14,6 @@ import { CopyArtifactButton, CopyTextButton, copyTextToClipboard } from "../chat
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
-import { abortCommand } from "../ompRpc";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PullRequestIndicator } from "../PullRequestIndicator";
 import {
@@ -55,6 +54,7 @@ import {
   taskKey,
   useMinuteNow,
 } from "../shared";
+import { isVinculumHarness, sessionTerminalLabel } from "../vinculumHarness";
 import { TaskRunGraph } from "../TaskRunGraph";
 import { toast } from "../toast";
 import type {
@@ -1509,7 +1509,7 @@ export function TaskDetail({
                     const openable = Boolean(task?.worktree) && !s.archived;
                     const canStop =
                       !s.archived &&
-                      s.harness === "omp" &&
+                      isVinculumHarness(s.harness) &&
                       obs?.transport === "rpc" &&
                       obs.state?.agent.state !== "waiting_for_approval" &&
                       canAbortChatSession({
@@ -1549,6 +1549,7 @@ export function TaskDetail({
                             unreadCompletion={unreadCompletion}
                             exitCode={s.exit_code}
                             exitAcknowledged={hasAcknowledgedExit(s)}
+                            terminalLabel={superseded ? null : sessionTerminalLabel(s.harness, s.id, execution, s.ended_at != null || obs?.lifecycle.state === "exited")}
                           />
                         </td>
                         <td className="session-name-cell editable-name">
@@ -1558,7 +1559,7 @@ export function TaskDetail({
                             <span className="dim" title={sessionType}>
                               {sessionType}
                             </span>
-                            {execution && <span className="pill">{execution.lifecycle}</span>}
+                            {execution && <span className="pill">{sessionTerminalLabel(s.harness, s.id, superseded ? undefined : execution, s.ended_at != null || obs?.lifecycle.state === "exited") ?? execution.lifecycle}</span>}
                             {s.archived && <span className="pill session-archived">Archived</span>}
                             {resumedBy && <span className="pill dim">Resumed</span>}
                           </div>
@@ -1586,7 +1587,7 @@ export function TaskDetail({
                                 setBusy(`stop-session:${s.id}`);
                                 setErr(null);
                                 try {
-                                  await ipc.rpcWriteSession(s.id, abortCommand());
+                                  await ipc.sessionAbort(s.id);
                                   await load();
                                 } catch (error) {
                                   setErr({ msg: "Couldn't interrupt the session.", detail: String(error) });

@@ -612,6 +612,7 @@ fn allow_root_session_open_rejects_non_drawer() {
 #[test]
 fn hosted_refresh_needed_only_for_omp_hosted_spawn_and_resume() {
     assert!(hosted_refresh_needed("spawn", "omp", "alinery/Qwen3.6-35B-A3B"));
+    assert!(hosted_refresh_needed("spawn", "vinculum", "alinery/Qwen3.6-35B-A3B"));
     assert!(hosted_refresh_needed("resume", "omp", "alinery/Qwen3.6-35B-A3B"));
     assert!(hosted_refresh_needed("spawn", "omp", " alinery/Qwen3.6-35B-A3B "));
     assert!(hosted_refresh_needed("spawn", "omp", ""));
@@ -623,6 +624,11 @@ fn hosted_refresh_needed_only_for_omp_hosted_spawn_and_resume() {
     assert!(!hosted_refresh_needed("resume", "no-harness", "alinery/Qwen3.6-35B-A3B"));
     assert!(!hosted_refresh_needed("spawn", "", "alinery/Qwen3.6-35B-A3B"));
     assert!(!hosted_refresh_needed("attach", "no-harness", "alinery/Qwen3.6-35B-A3B"));
+}
+
+#[test]
+fn pi_durable_hosted_refresh_is_thirty_minutes() {
+    assert_eq!(crate::PI_DURABLE_HOSTED_REFRESH, std::time::Duration::from_secs(30 * 60));
 }
 
 #[test]

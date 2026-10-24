@@ -3,6 +3,7 @@ import {
   HOSTED_PROVIDER,
   isInteractivePromptLoginError,
   type LoginProvider,
+  mergeGrokModels,
   mergeHostedModels,
   needsProviderSetup,
   partitionProviders,
@@ -18,6 +19,13 @@ const providers = (rows: Partial<LoginProvider>[]): LoginProvider[] =>
   }));
 
 const models = (...ids: string[]) => ids.map((provider) => ({ provider, id: `${provider}-model` }));
+
+describe("mergeGrokModels", () => {
+  it("adds the xAI chat models only when a Grok key is saved", () => {
+    expect(mergeGrokModels([], false)).toEqual([]);
+    expect(mergeGrokModels([], true).map((model) => `${model.provider}/${model.id}`)).toContain("xai/grok-4.6");
+  });
+});
 
 describe("needsProviderSetup", () => {
   it("is false with an empty provider list (still loading)", () => {
@@ -103,7 +111,7 @@ describe("partitionProviders", () => {
     expect(advanced).toEqual([expect.objectContaining({ id: "openrouter", reason: "env", readyViaEnv: true })]);
   });
 
-  it("moves documented RPC-incompatible login rows to Advanced", () => {
+  it("keeps an API-key provider in the accounts list", () => {
     const { chatLogin, advanced } = partitionProviders({
       loginProviders: providers([
         { id: "anthropic", name: "Anthropic" },
@@ -111,8 +119,17 @@ describe("partitionProviders", () => {
       ]),
       models: [],
     });
-    expect(chatLogin.map((p) => p.id)).toEqual(["anthropic"]);
-    expect(advanced).toEqual([expect.objectContaining({ id: "baseten", reason: "rpc-incompatible" })]);
+    expect(chatLogin.map((p) => p.id)).toEqual(["anthropic", "baseten"]);
+    expect(advanced).toEqual([]);
+  });
+
+  it("leaves a configured custom endpoint out of Advanced", () => {
+    const { advanced } = partitionProviders({
+      loginProviders: providers([{ id: "anthropic", authenticated: true }]),
+      models: [{ provider: "local", id: "llama" }],
+      configuredIds: ["local"],
+    });
+    expect(advanced).toEqual([]);
   });
 
   it("promotes live interactive-prompt failures into Advanced", () => {

@@ -9,7 +9,11 @@ it("bundles the Apache license, copyright notice, and third-party license texts"
     bundle: { licenseFile: string; resources: Record<string, string> };
   };
   const resourceRoot = new URL("../src-tauri/", import.meta.url);
-  const bundled = Object.fromEntries(Object.entries(config.bundle.resources).map(([source, destination]) => [destination, readFileSync(new URL(source, resourceRoot), "utf8")]));
+  const bundled = Object.fromEntries(
+    Object.entries(config.bundle.resources)
+      .filter(([, destination]) => !destination.endsWith("/"))
+      .map(([source, destination]) => [destination, readFileSync(new URL(source, resourceRoot), "utf8")]),
+  );
 
   expect(bundled.LICENSE).toContain("Version 2.0, January 2004");
   expect(bundled.LICENSE).toBe(readFileSync(new URL(config.bundle.licenseFile, resourceRoot), "utf8"));

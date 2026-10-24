@@ -11,6 +11,7 @@ use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 pub use crate::task_creation::{
@@ -164,12 +165,12 @@ pub fn peer_process_identity(stream: &UnixStream) -> Result<PeerProcessIdentity,
     Ok(PeerProcessIdentity { uid, pid, start })
 }
 
-/// Source-audited shutdown request/ack dialects (9/10/12/15 historical, 16 current).
+/// Source-audited shutdown request/ack dialects (9/10/12/15/16 historical, 18 current).
 /// Gaps are deliberate: normal protocol compatibility is not shutdown authority.
-/// Protocol 16 added `CreateTaskRequest.step_models`; shutdown is still
+/// Protocol 18 dropped the OMP process ops. Shutdown is still
 /// `{"op":"shutdown"}` acknowledged by `{"ok":true}`.
 pub fn audited_shutdown_protocol(protocol: Option<u32>) -> bool {
-    matches!(protocol, Some(9 | 10 | 12 | 15 | 16))
+    matches!(protocol, Some(9 | 10 | 12 | 15 | 16 | 18))
 }
 
 /// One request on one authenticated stream. No operation reconnects or retries.
@@ -344,6 +345,19 @@ pub mod ops {
     pub const RPC_ATTACH: &str = "rpc_attach";
     pub const RPC_WRITE: &str = "rpc_write";
     pub const OMP_SETUP: &str = "omp_setup";
+    pub const TRANSCRIPT: &str = "transcript";
+    pub const PROMPT: &str = "prompt";
+    pub const ABORT: &str = "abort";
+    pub const SET_MODEL: &str = "set_model";
+    pub const SET_THINKING_LEVEL: &str = "set_thinking_level";
+    pub const PROVIDER_CATALOG: &str = "provider_catalog";
+    pub const PROVIDER_LOGOUT: &str = "provider_logout";
+    pub const PROVIDER_LOGIN_START: &str = "provider_login_start";
+    pub const PROVIDER_LOGIN_POLL: &str = "provider_login_poll";
+    pub const PROVIDER_LOGIN_REPLY: &str = "provider_login_reply";
+    pub const CUSTOM_PROVIDER_SAVE: &str = "custom_provider_save";
+    pub const CUSTOM_PROVIDER_DELETE: &str = "custom_provider_delete";
+    pub const VINCULUM_CUSTOMIZATIONS: &str = "vinculum_customizations";
 }
 
 pub fn is_known_open_intent(intent: &str) -> bool {
@@ -406,6 +420,235 @@ pub fn rpc_write_request(id: &str, payload: &Value) -> Value {
 /// one and returns it, so the app cannot ask for a setup session under an id of its choosing.
 pub fn omp_setup_request() -> Value {
     json!({"op": ops::OMP_SETUP})
+}
+
+/// One stored or in-flight message. `content` is the part list the pane already maps
+/// (`thinking`, `text`, `toolCall`, `redactedThinking`, `toolResult` text). `id` is the Pi
+/// entry id, or `live` for the partial. A running tool call id stays in `running_tool_ids`
+/// after that assistant entry has committed.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptMessage {
+    #[serde(default)]
+    pub id: String,
+    pub role: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub text: String,
+    #[serde(default)]
+    pub content: Vec<Value>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub streaming: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_error: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub running_tool_ids: Vec<String>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+pub fn transcript_request(id: &str) -> Value {
+    json!({"op": ops::TRANSCRIPT, "id": id})
+}
+
+pub fn prompt_request(id: &str, text: &str) -> Value {
+    json!({"op": ops::PROMPT, "id": id, "text": text})
+}
+
+pub fn abort_request(id: &str) -> Value {
+    json!({"op": ops::ABORT, "id": id})
+}
+
+pub fn set_model_request(id: &str, model: &str) -> Value {
+    json!({"op": ops::SET_MODEL, "id": id, "model": model})
+}
+
+pub fn set_thinking_level_request(id: &str, level: &str) -> Value {
+    json!({"op": ops::SET_THINKING_LEVEL, "id": id, "level": level})
+}
+
+/// The model and thinking level the next turn will use. `thinking_levels` is empty when the model cannot think.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct SessionControls {
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub thinking: String,
+    #[serde(default)]
+    pub thinking_levels: Vec<String>,
+}
+
+/// Transcript poll. The three control fields sit beside `messages`, not on each one.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct TranscriptReply {
+    #[serde(default)]
+    pub messages: Vec<TranscriptMessage>,
+    #[serde(flatten)]
+    pub controls: SessionControls,
+}
+
+pub fn provider_catalog_request() -> Value {
+    json!({"op": ops::PROVIDER_CATALOG})
+}
+
+pub fn provider_logout_request(provider: &str) -> Value {
+    json!({"op": ops::PROVIDER_LOGOUT, "provider": provider})
+}
+
+pub fn provider_login_start_request(provider: &str, method: &str) -> Value {
+    json!({"op": ops::PROVIDER_LOGIN_START, "provider": provider, "method": method})
+}
+
+pub fn provider_login_poll_request(login_id: &str) -> Value {
+    json!({"op": ops::PROVIDER_LOGIN_POLL, "login_id": login_id})
+}
+
+pub fn provider_login_reply_request(login_id: &str, value: &str, cancel: bool) -> Value {
+    json!({"op": ops::PROVIDER_LOGIN_REPLY, "login_id": login_id, "value": value, "cancel": cancel})
+}
+
+pub fn custom_provider_save_request(id: &str, name: &str, base_url: &str, api_key: &str, keep_key: bool, models: &[String]) -> Value {
+    json!({"op": ops::CUSTOM_PROVIDER_SAVE, "id": id, "name": name, "base_url": base_url, "api_key": api_key, "keep_key": keep_key, "models": models})
+}
+
+pub fn vinculum_customizations_request() -> Value {
+    json!({"op": ops::VINCULUM_CUSTOMIZATIONS})
+}
+
+/// Built-in tool names and MCP connection state. `error` is a fixed string. No command, url, header, or env.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct VinculumMcpServer {
+    pub name: String,
+    pub builtin: bool,
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct VinculumCustomizations {
+    pub tools: Vec<String>,
+    pub servers: Vec<VinculumMcpServer>,
+}
+
+pub fn custom_provider_delete_request(id: &str) -> Value {
+    json!({"op": ops::CUSTOM_PROVIDER_DELETE, "id": id})
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderLoginRow {
+    pub id: String,
+    pub name: String,
+    pub authenticated: bool,
+    #[serde(default)]
+    pub stored: bool,
+    pub api_key: bool,
+    pub oauth: bool,
+    #[serde(default)]
+    pub api_key_name: String,
+    #[serde(default)]
+    pub oauth_name: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderModelRow {
+    pub provider: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomProviderRow {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    pub has_key: bool,
+    pub models: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderCatalog {
+    pub providers: Vec<ProviderLoginRow>,
+    pub models: Vec<ProviderModelRow>,
+    #[serde(default)]
+    pub custom: Vec<CustomProviderRow>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderLoginOption {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderLoginPrompt {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub message: String,
+    #[serde(default)]
+    pub placeholder: String,
+    #[serde(default)]
+    pub options: Vec<ProviderLoginOption>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ProviderLoginEvent {
+    Info {
+        message: String,
+        #[serde(default)]
+        links: Vec<ProviderLoginLink>,
+    },
+    AuthUrl {
+        url: String,
+        #[serde(default)]
+        instructions: String,
+    },
+    DeviceCode {
+        #[serde(rename = "userCode")]
+        user_code: String,
+        #[serde(rename = "verificationUri")]
+        verification_uri: String,
+        #[serde(default, rename = "intervalSeconds")]
+        interval_seconds: Option<u64>,
+        #[serde(default, rename = "expiresInSeconds")]
+        expires_in_seconds: Option<u64>,
+    },
+    Progress {
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ProviderLoginLink {
+    pub url: String,
+    #[serde(default)]
+    pub label: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderLoginStatus {
+    pub login_id: String,
+    pub status: String,
+    #[serde(default)]
+    pub prompt: Option<ProviderLoginPrompt>,
+    #[serde(default)]
+    pub events: Vec<ProviderLoginEvent>,
+    #[serde(default)]
+    pub failure: String,
 }
 
 pub struct OpenRequest<'a> {
@@ -918,6 +1161,62 @@ impl DaemonClient {
         self.call(&rpc_write_request(id, payload)).and_then(expect_ok)
     }
 
+    pub fn transcript(&self, id: &str) -> Result<TranscriptReply, String> {
+        let response = self.call(&transcript_request(id))?;
+        if let Some(error) = reply_error(&response) {
+            return Err(error.to_string());
+        }
+        serde_json::from_value(response).map_err(|error| error.to_string())
+    }
+
+    pub fn prompt(&self, id: &str, text: &str) -> Result<(), String> {
+        self.call(&prompt_request(id, text)).and_then(expect_ok)
+    }
+
+    pub fn abort(&self, id: &str) -> Result<(), String> {
+        self.call(&abort_request(id)).and_then(expect_ok)
+    }
+
+    pub fn set_model(&self, id: &str, model: &str) -> Result<SessionControls, String> {
+        session_controls(self.call(&set_model_request(id, model))?)
+    }
+
+    pub fn set_thinking_level(&self, id: &str, level: &str) -> Result<SessionControls, String> {
+        session_controls(self.call(&set_thinking_level_request(id, level))?)
+    }
+
+    pub fn provider_catalog(&self) -> Result<ProviderCatalog, String> {
+        typed_reply(self.call(&provider_catalog_request())?)
+    }
+
+    pub fn provider_logout(&self, provider: &str) -> Result<ProviderCatalog, String> {
+        typed_reply(self.call(&provider_logout_request(provider))?)
+    }
+
+    pub fn provider_login_start(&self, provider: &str, method: &str) -> Result<ProviderLoginStatus, String> {
+        typed_reply(self.call(&provider_login_start_request(provider, method))?)
+    }
+
+    pub fn provider_login_poll(&self, login_id: &str) -> Result<ProviderLoginStatus, String> {
+        typed_reply(self.call(&provider_login_poll_request(login_id))?)
+    }
+
+    pub fn provider_login_reply(&self, login_id: &str, value: &str, cancel: bool) -> Result<(), String> {
+        self.call(&provider_login_reply_request(login_id, value, cancel)).and_then(expect_ok)
+    }
+
+    pub fn custom_provider_save(&self, id: &str, name: &str, base_url: &str, api_key: &str, keep_key: bool, models: &[String]) -> Result<ProviderCatalog, String> {
+        typed_reply(self.call(&custom_provider_save_request(id, name, base_url, api_key, keep_key, models))?)
+    }
+
+    pub fn custom_provider_delete(&self, id: &str) -> Result<ProviderCatalog, String> {
+        typed_reply(self.call(&custom_provider_delete_request(id))?)
+    }
+
+    pub fn vinculum_customizations(&self) -> Result<VinculumCustomizations, String> {
+        typed_reply(self.call(&vinculum_customizations_request())?)
+    }
+
     /// Returns the reserved setup session id to attach to.
     pub fn omp_setup(&self) -> Result<String, String> {
         let reply = self.call(&omp_setup_request())?;
@@ -958,6 +1257,11 @@ fn expect_message_send(response: Value) -> Result<(), String> {
         return Err(unknown_message_delivery("malformed daemon reply: missing ok:true"));
     }
     Ok(())
+}
+
+fn session_controls(response: Value) -> Result<SessionControls, String> {
+    expect_ok(response.clone())?;
+    serde_json::from_value(response).map_err(|error| format!("invalid daemon reply: {error}"))
 }
 
 fn expect_ok(response: Value) -> Result<(), String> {
@@ -1067,20 +1371,31 @@ pub fn ensure_compatible_daemon(repo: &Path, app_config: &Path, namespace: Optio
     Err(DaemonClientError::Launch("daemon did not start".into()))
 }
 
-pub fn resolve_alineryd_path() -> Option<PathBuf> {
-    let executable = std::env::current_exe().ok()?;
-    let directory = executable.parent()?;
+fn daemon_in(directory: &Path) -> Option<PathBuf> {
     if let Ok(entries) = fs::read_dir(directory) {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if name == "alineryd" || name.starts_with("alineryd-") {
+            if name == "alinery-vinculum-daemon" || name.starts_with("alinery-vinculum-daemon-") {
                 return Some(entry.path());
             }
         }
     }
-    let development = directory.join("alineryd");
+    let development = directory.join("alinery-vinculum-daemon");
     development.exists().then_some(development)
+}
+
+pub fn resolve_alineryd_path() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let directory = executable.parent()?;
+    if let Some(found) = daemon_in(directory) {
+        return Some(found);
+    }
+    // `cargo test` runs from target/<profile>/deps. The built daemon sits next to that directory.
+    if directory.file_name().and_then(|name| name.to_str()) == Some("deps") {
+        return directory.parent().and_then(daemon_in);
+    }
+    None
 }
 
 pub fn file_content_id(path: &Path) -> Option<String> {
@@ -1101,7 +1416,14 @@ pub fn file_content_id(path: &Path) -> Option<String> {
 }
 
 pub fn daemon_binary_build_id() -> String {
-    resolve_alineryd_path().and_then(|path| file_content_id(&path)).unwrap_or_default()
+    // Vinculum is a large bun bundle. Attach, the poller, activity, and
+    // observation all ask for this id; hashing the file on every call keeps
+    // the blocking pool busy for the whole session. The bytes do not change
+    // until this process is replaced.
+    static CACHED: OnceLock<String> = OnceLock::new();
+    CACHED
+        .get_or_init(|| resolve_alineryd_path().and_then(|path| file_content_id(&path)).unwrap_or_default())
+        .clone()
 }
 
 pub fn configure_detached_process(command: &mut Command) {
@@ -1118,7 +1440,7 @@ pub fn configure_host_guard_environment(command: &mut Command, host_executable: 
 }
 
 pub fn spawn_daemon_detached(repo: &Path, app_config: &Path, namespace: Option<&str>, host_executable: Option<&Path>) -> Result<(), String> {
-    let daemon = resolve_alineryd_path().ok_or("alineryd binary not found")?;
+    let daemon = resolve_alineryd_path().ok_or("alinery-vinculum-daemon binary not found")?;
     let mut command = Command::new(daemon);
     command
         .arg("--repo")
@@ -1136,7 +1458,7 @@ pub fn spawn_daemon_detached(repo: &Path, app_config: &Path, namespace: Option<&
         command.arg("--socket-namespace").arg(namespace);
     }
     configure_detached_process(&mut command);
-    command.spawn().map(|_| ()).map_err(|error| format!("spawn alineryd: {error}"))
+    command.spawn().map(|_| ()).map_err(|error| format!("spawn alinery-vinculum-daemon: {error}"))
 }
 
 #[cfg(test)]
@@ -1333,6 +1655,89 @@ mod tests {
     #[test]
     fn rpc_attach_request_shape() {
         assert_eq!(rpc_attach_request("s1", 7), json!({"op": "rpc_attach", "id": "s1", "attach_id": 7}));
+    }
+
+    #[test]
+    fn vinculum_request_shapes() {
+        assert_eq!(transcript_request("s1"), json!({"op": "transcript", "id": "s1"}));
+        assert_eq!(prompt_request("s1", "hello"), json!({"op": "prompt", "id": "s1", "text": "hello"}));
+        assert_eq!(abort_request("s1"), json!({"op": "abort", "id": "s1"}));
+        assert_eq!(set_model_request("s1", "xai/grok-4.6"), json!({"op": "set_model", "id": "s1", "model": "xai/grok-4.6"}));
+        assert_eq!(set_thinking_level_request("s1", "high"), json!({"op": "set_thinking_level", "id": "s1", "level": "high"}));
+        assert_eq!(provider_catalog_request(), json!({"op": "provider_catalog"}));
+        assert_eq!(vinculum_customizations_request(), json!({"op": "vinculum_customizations"}));
+        let customizations: VinculumCustomizations = serde_json::from_value(json!({
+            "tools": ["read", "bash"],
+            "servers": [{"name": "alinery", "builtin": true, "state": "error", "error": "bundled alinery-mcp was not found"}]
+        }))
+        .unwrap();
+        assert!(customizations.servers[0].builtin);
+        assert_eq!(customizations.servers[0].error.as_deref(), Some("bundled alinery-mcp was not found"));
+        assert_eq!(
+            provider_login_start_request("anthropic", "oauth"),
+            json!({"op": "provider_login_start", "provider": "anthropic", "method": "oauth"})
+        );
+        assert_eq!(provider_login_reply_request("login", "secret", false)["cancel"], false);
+        let catalog: ProviderCatalog = serde_json::from_value(json!({
+            "providers": [{"id": "groq", "name": "Groq", "authenticated": false, "apiKey": true, "oauth": false}],
+            "models": [{"provider": "alinery", "id": "DeepSeek-V4.1-Flash"}],
+            "custom": [{"id": "local", "name": "Local", "baseUrl": "http://127.0.0.1:11434/v1", "hasKey": false, "models": ["llama"]}]
+        }))
+        .unwrap();
+        assert_eq!(catalog.providers[0].id, "groq");
+        assert!(catalog.providers[0].api_key);
+        assert_eq!(catalog.custom[0].base_url, "http://127.0.0.1:11434/v1");
+        let status: ProviderLoginStatus = serde_json::from_value(json!({
+            "loginId": "l1",
+            "status": "prompt",
+            "prompt": {"type": "secret", "message": "Enter Groq API key"},
+            "events": [{"type": "auth_url", "url": "https://example.com/device"}]
+        }))
+        .unwrap();
+        assert_eq!(status.prompt.unwrap().kind, "secret");
+        assert!(matches!(status.events[0], ProviderLoginEvent::AuthUrl { .. }));
+        let messages: Vec<TranscriptMessage> = serde_json::from_value(json!([
+            {
+                "id": "e1",
+                "role": "assistant",
+                "streaming": true,
+                "runningToolIds": ["c1"],
+                "content": [
+                    {"type": "thinking", "thinking": "plan"},
+                    {"type": "redactedThinking"},
+                    {"type": "text", "text": "hello"},
+                    {"type": "toolCall", "id": "c1", "name": "read", "arguments": {"path": "a.ts"}}
+                ]
+            },
+            {
+                "id": "e2",
+                "role": "toolResult",
+                "toolName": "read",
+                "toolCallId": "c1",
+                "isError": false,
+                "content": [{"type": "text", "text": "body"}]
+            }
+        ]))
+        .unwrap();
+        assert!(messages[0].streaming);
+        assert_eq!(messages[0].running_tool_ids, vec!["c1".to_string()]);
+        assert_eq!(messages[1].tool_name.as_deref(), Some("read"));
+        assert_eq!(messages[1].tool_call_id.as_deref(), Some("c1"));
+        let replayed = serde_json::to_value(&messages[0]).unwrap();
+        assert_eq!(replayed["content"][3]["arguments"]["path"], "a.ts");
+        assert_eq!(replayed["content"][1]["type"], "redactedThinking");
+        let reply: TranscriptReply = serde_json::from_value(json!({
+            "messages": messages,
+            "model": "xai/grok-4.6",
+            "thinking": "high",
+            "thinking_levels": ["off", "high"]
+        }))
+        .unwrap();
+        assert_eq!(reply.controls.model, "xai/grok-4.6");
+        assert_eq!(reply.controls.thinking, "high");
+        assert_eq!(reply.controls.thinking_levels, vec!["off".to_string(), "high".to_string()]);
+        let controls: SessionControls = serde_json::from_value(json!({"ok": true, "model": "xai/grok-4.6", "thinking": "low", "thinking_levels": ["off", "low"]})).unwrap();
+        assert_eq!(controls.thinking, "low");
     }
 
     #[test]

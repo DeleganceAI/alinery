@@ -66,7 +66,6 @@ import { useDaemonStatus } from "./useDaemonStatus";
 import { useDockBadgeCount } from "./useDockBadgeCount";
 import { useHotkeys } from "./useHotkeys";
 import { useMcpStatus } from "./useMcpStatus";
-import { useOmpUpdateStatus } from "./useOmpUpdateStatus";
 import { useSessionNoticeSnapshot } from "./useSessionNoticeSnapshot";
 import { readStoredTaskSessionSort, writeStoredTaskSessionSort } from "./useSessionSort";
 import { useUpdateStatus } from "./useUpdateStatus";
@@ -557,7 +556,6 @@ export default function App() {
   const chatViewVisibility = useMemo(() => chatVisibilityFromAppearance(appearance.ava_chat ?? {}), [appearance.ava_chat]);
   const isDev = isDevelopmentProductName(productName);
   const update = useUpdateStatus({ enabled: !isDev });
-  const ompUpdate = useOmpUpdateStatus();
   const onAppearanceChange = (next: AppearancePrefs) => {
     const normalized = applyAppearance(next);
     setAppConfig((cfg) => (cfg ? { ...cfg, appearance: normalized } : { active_repo: "", known_repos: [], mcp_enabled: true, appearance: normalized }));
@@ -1509,8 +1507,6 @@ export default function App() {
       update={update.status}
       onUpgrade={onUpgrade}
       updating={updating}
-      ompUpdate={ompUpdate.status}
-      onOmpUpdateClick={() => openSettings("harness")}
     />
   );
 

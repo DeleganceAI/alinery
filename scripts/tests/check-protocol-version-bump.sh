@@ -26,7 +26,7 @@ CONST_FILE="alinery-app/src-tauri/alinery-core/src/protocol.rs"
 # Files whose contents define or consume the wire format. Touching any of them can change
 # what the daemon accepts or replies with.
 SURFACE=(
-  "alinery-app/src-tauri/alineryd/src/main.rs"
+  "alinery-app/src-tauri/vinculum-daemon/src/main.ts"
   "$CONST_FILE"
   # Shared app/MCP wire client (ops / version classify). Keep this out of app lib.rs so
   # the gate is not drowned in unrelated UI/FS noise.

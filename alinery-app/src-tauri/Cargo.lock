@@ -34,6 +34,7 @@ dependencies = [
  "tauri-plugin-opener",
  "toml 0.8.2",
  "uuid",
+ "zip",
 ]
 
 [[package]]
@@ -63,31 +64,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "toml 0.8.2",
-]
-
-[[package]]
-name = "alinery-runner"
-version = "0.25.0"
-dependencies = [
- "alinery-core",
- "libc",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "alineryd"
-version = "0.25.0"
-dependencies = [
- "alinery-core",
- "libc",
- "portable-pty",
- "serde",
- "serde_json",
- "toml 0.8.2",
- "uuid",
- "vt100",
 ]
 
 [[package]]

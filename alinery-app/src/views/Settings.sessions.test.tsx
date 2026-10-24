@@ -61,9 +61,7 @@ const mocks = vi.hoisted(() => ({
   readGlobalSettings: vi.fn(),
   readScopedSettingsForRepo: vi.fn(),
   writeRepoOverridesForRepo: vi.fn(),
-  checkOmpUpdate: vi.fn(),
   writeAppearance: vi.fn(),
-  updateOmp: vi.fn(),
   confirmDanger: vi.fn(),
   askConfirm: vi.fn(),
 }));
@@ -74,8 +72,6 @@ vi.mock("../ipc", () =>
     writeGlobalSettings: mocks.writeGlobalSettings,
     readScopedSettingsForRepo: mocks.readScopedSettingsForRepo,
     writeRepoOverridesForRepo: mocks.writeRepoOverridesForRepo,
-    checkOmpUpdate: mocks.checkOmpUpdate,
-    updateOmp: mocks.updateOmp,
     storageInfo: () => new Promise(() => {}),
     repoLiveSessions: async () => 0,
     listHarnessModels: async () => [],
@@ -146,8 +142,6 @@ beforeEach(() => {
     removeItem: vi.fn(),
     clear: vi.fn(),
   });
-  mocks.checkOmpUpdate.mockReset().mockResolvedValue({ installed: "", available: null, checked_at: 0 });
-  mocks.updateOmp.mockReset().mockResolvedValue("omp/18.2.0");
   mocks.writeAppearance
     .mockReset()
     .mockImplementation(async (appearance: typeof DEFAULT_APPEARANCE) => ({ active_repo: "/r", known_repos: ["/r"], mcp_enabled: true, appearance }));
@@ -294,38 +288,14 @@ describe("Sessions view and Chat tabs", () => {
   });
 });
 
-describe("Harness OMP version", () => {
-  it("Update OMP goes through confirm, then updateOmp", async () => {
-    mocks.checkOmpUpdate.mockResolvedValue({
-      installed: "18.1.10",
-      available: { version: "18.2.0", asset_url: "https://example.test/omp" },
-      checked_at: 1,
-    });
+describe("Harness providers", () => {
+  it("does not offer an OMP update", async () => {
     renderHarnessSection();
-    const omp = await screen.findByRole("region", { name: "Agent & providers" });
-    const button = await within(omp).findByRole("button", { name: "Update OMP" });
-    fireEvent.click(button);
-    await waitFor(() => expect(mocks.askConfirm).toHaveBeenCalled());
-    await waitFor(() => expect(mocks.updateOmp).toHaveBeenCalledTimes(1));
-
-    mocks.updateOmp.mockClear();
-    mocks.askConfirm.mockResolvedValueOnce("cancel");
-    fireEvent.click(await screen.findByRole("button", { name: "Update OMP" }));
-    await waitFor(() => expect(mocks.askConfirm).toHaveBeenCalledTimes(2));
-    expect(mocks.updateOmp).not.toHaveBeenCalled();
-  });
-
-  it("hides the available offer after a successful OMP update", async () => {
-    mocks.checkOmpUpdate.mockResolvedValue({
-      installed: "18.1.10",
-      available: { version: "18.2.0", asset_url: "https://example.test/omp" },
-      checked_at: 1,
-    });
-    renderHarnessSection();
-    const button = await screen.findByRole("button", { name: "Update OMP" });
-    mocks.checkOmpUpdate.mockResolvedValue({ installed: "18.2.0", available: null, checked_at: 2 });
-    fireEvent.click(button);
-    await waitFor(() => expect(mocks.updateOmp).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.queryByText(/Update available:/)).toBeNull());
+    expect(await screen.findByRole("button", { name: "Providers & accounts" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Update OMP" })).toBeNull();
+    expect(screen.queryByText(/Update available:/)).toBeNull();
+    expect(screen.queryByText(/Installed:/)).toBeNull();
+    expect(screen.getByLabelText("Model")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Stop all sessions/ })).toBeTruthy();
   });
 });
