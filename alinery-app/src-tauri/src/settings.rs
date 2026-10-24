@@ -133,15 +133,25 @@ pub(crate) fn set_model_favorite_in(app_config: &Path, harness: &str, model: &st
     }
 
     let mut global = alinery_core::load_global_settings(app_config);
+    let was_favorite = global.model_favorites.get(harness).is_some_and(|models| models.iter().any(|saved| saved == model));
+    if was_favorite == favorite {
+        return Ok(global.model_favorites.remove(harness).unwrap_or_default());
+    }
     let models = global.model_favorites.entry(harness.to_string()).or_default();
     if favorite {
-        if !models.iter().any(|saved| saved == model) {
-            models.push(model.to_string());
-        }
+        models.push(model.to_string());
     } else {
         models.retain(|saved| saved != model);
     }
     alinery_core::write_global_settings(app_config, &global)?;
+    emit_at(
+        app_config,
+        alinery_core::TelemetryEvent::SettingsChange {
+            source: alinery_core::TelemetrySource::App,
+            scope: alinery_core::SettingsChangeScope::Global,
+            setting: "model_favorites",
+        },
+    );
     Ok(read_model_favorites_in(app_config, harness))
 }
 
@@ -186,12 +196,14 @@ pub(crate) fn write_global_settings(app: AppHandle, global: alinery_core::Global
         if source == alinery_core::TelemetryToggleSource::FirstRun && next.telemetry.enabled {
             emit(&app, alinery_core::TelemetryEvent::AppOpen { cold_start: true });
         }
-    } else {
+    }
+    for setting in alinery_core::global_settings_changes(&previous, &next) {
         emit(
             &app,
             alinery_core::TelemetryEvent::SettingsChange {
                 source: alinery_core::TelemetrySource::App,
                 scope: alinery_core::SettingsChangeScope::Global,
+                setting,
             },
         );
     }
@@ -218,14 +230,11 @@ pub(crate) fn write_repo_overrides_for_repo(
 ) -> Result<alinery_core::ScopedSettings, String> {
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
+    let previous = alinery_core::load_repo_overrides_strict(&repo).ok();
     alinery_core::write_repo_overrides(Some(&app_config_path(&app)?), &repo, &overrides)?;
-    emit(
-        &app,
-        alinery_core::TelemetryEvent::SettingsChange {
-            source: alinery_core::TelemetrySource::App,
-            scope: alinery_core::SettingsChangeScope::Repo,
-        },
-    );
+    if let Some(previous) = previous {
+        emit_repo_settings_changes(&app, &previous, &overrides);
+    }
     scoped_settings_for(&app, &repo)
 }
 
@@ -234,15 +243,10 @@ pub(crate) fn clear_repo_override_for_repo(app: AppHandle, state: State<'_, AppS
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
     let mut overrides = alinery_core::load_repo_overrides_strict(&repo)?;
+    let previous = overrides.clone();
     alinery_core::clear_repo_override(&mut overrides, &field)?;
     alinery_core::write_repo_overrides(Some(&app_config_path(&app)?), &repo, &overrides)?;
-    emit(
-        &app,
-        alinery_core::TelemetryEvent::SettingsChange {
-            source: alinery_core::TelemetrySource::App,
-            scope: alinery_core::SettingsChangeScope::Repo,
-        },
-    );
+    emit_repo_settings_changes(&app, &previous, &overrides);
     scoped_settings_for(&app, &repo)
 }
 
@@ -250,15 +254,25 @@ pub(crate) fn clear_repo_override_for_repo(app: AppHandle, state: State<'_, AppS
 #[tauri::command]
 pub(crate) fn write_config(app: AppHandle, state: State<'_, AppState>, config: alinery_core::RepoOverrides) -> Result<(), String> {
     let repo = require_owned_active_repo(&state)?;
+    let previous = alinery_core::load_repo_overrides_strict(&repo).ok();
     alinery_core::write_repo_overrides(Some(&app_config_path(&app)?), &repo, &config)?;
-    emit(
-        &app,
-        alinery_core::TelemetryEvent::SettingsChange {
-            source: alinery_core::TelemetrySource::App,
-            scope: alinery_core::SettingsChangeScope::Repo,
-        },
-    );
+    if let Some(previous) = previous {
+        emit_repo_settings_changes(&app, &previous, &config);
+    }
     Ok(())
+}
+
+fn emit_repo_settings_changes(app: &AppHandle, previous: &alinery_core::RepoOverrides, next: &alinery_core::RepoOverrides) {
+    for setting in alinery_core::repo_settings_changes(previous, next) {
+        emit(
+            app,
+            alinery_core::TelemetryEvent::SettingsChange {
+                source: alinery_core::TelemetrySource::App,
+                scope: alinery_core::SettingsChangeScope::Repo,
+                setting,
+            },
+        );
+    }
 }
 
 #[derive(Serialize)]
