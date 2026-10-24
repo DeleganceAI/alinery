@@ -89,6 +89,20 @@ it("defaults to reduced Flow without losing any authored inspector dependencies"
   ).toEqual(connections.map((item) => item.textContent));
 });
 
+it("uses horizontal flow only when requested and keeps dependency labels in the vertical layout", () => {
+  render(<PlaybookGraph variant="definition" title="Dense" steps={denseSteps} direction="horizontal" compact />);
+  const seed = screen.getByRole("button", { name: "Inspect seed" });
+  const plan = screen.getByRole("button", { name: "Inspect plan" });
+  expect(seed.style.top).toBe(plan.style.top);
+  expect(seed.style.left).not.toBe(plan.style.left);
+  expect(seed.style.width).toBe(`calc(${GRAPH_NODE_WIDTH}px * var(--ui-scale))`);
+  expect(seed.style.height).toBe(`calc(${GRAPH_NODE_HEIGHT}px * var(--ui-scale))`);
+  fireEvent.click(screen.getByRole("button", { name: "Artifact dependencies" }));
+  expect(seed.style.left).toBe(plan.style.left);
+  expect(seed.style.top).not.toBe(plan.style.top);
+  expect(screen.getByRole("group", { name: "Artifact dependency connections" })).toBeTruthy();
+});
+
 it("preserves selection and camera across mode switches and focuses edges without moving nodes", () => {
   mockCanvasDimensions();
   render(<PlaybookGraph variant="definition" title="Dense" steps={denseSteps} />);

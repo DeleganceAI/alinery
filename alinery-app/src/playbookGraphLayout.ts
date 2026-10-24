@@ -88,6 +88,7 @@ export function layoutDefinitionGraph(
   labelLineHeight = LABEL_LINE_HEIGHT,
   nodeHeights?: ReadonlyMap<string, number>,
   compact = false,
+  direction: "vertical" | "horizontal" = "vertical",
 ): DefinitionGraphLayout {
   const combined = new Map<string, { from: string; to: string; labels: Set<string> }>();
   for (const connection of connections) {
@@ -103,6 +104,10 @@ export function layoutDefinitionGraph(
   }
   const links = [...combined.values()].map(({ from, to, labels }) => ({ from, to, label: [...labels].join("\n") }));
   const compactFlow = compact && links.every((link) => !link.label);
+  // Keep artifact labels upright in their existing layout; only Flow changes direction.
+  const horizontal = direction === "horizontal" && links.every((link) => !link.label);
+  const position = (x: number, y: number) => (horizontal ? { x: y, y: x } : { x, y });
+  const point = (x: number, y: number) => (horizontal ? `${y} ${x}` : `${x} ${y}`);
   const outgoing: Record<string, (typeof links)[number][]> = Object.fromEntries(keys.map((key) => [key, []]));
   const incoming: Record<string, number> = Object.fromEntries(keys.map((key) => [key, 0]));
   for (const link of links) {
@@ -142,9 +147,10 @@ export function layoutDefinitionGraph(
     layers[rank].push(key);
   }
 
-  const nodeHeight = (key: string) => nodeHeights?.get(key) ?? GRAPH_NODE_HEIGHT;
+  const nodeWidth = (key: string) => (horizontal ? (nodeHeights?.get(key) ?? GRAPH_NODE_HEIGHT) : GRAPH_NODE_WIDTH);
+  const nodeHeight = (key: string) => (horizontal ? GRAPH_NODE_WIDTH : (nodeHeights?.get(key) ?? GRAPH_NODE_HEIGHT));
   const rankHeights = layers.map((layer) => Math.max(...layer.map(nodeHeight)));
-  const groupWidth = (key: string) => (repeatedKeys.has(key) ? GRAPH_NODE_WIDTH * 3 + COLUMN_GAP + ELLIPSIS_GAP : GRAPH_NODE_WIDTH);
+  const groupWidth = (key: string) => (repeatedKeys.has(key) ? nodeWidth(key) * 3 + COLUMN_GAP + ELLIPSIS_GAP : nodeWidth(key));
   const layerWidths = layers.map((layer) => layer.reduce((width, key) => width + groupWidth(key), 0) + (layer.length - 1) * COLUMN_GAP);
   const routes = links.map((link) => {
     const isFeedback = feedback.has(link);
@@ -158,7 +164,7 @@ export function layoutDefinitionGraph(
       track: 0,
     };
   });
-  const contentWidth = Math.max(GRAPH_NODE_WIDTH, ...layerWidths, ...routes.filter((route) => !route.side).map((route) => route.width));
+  const contentWidth = Math.max(horizontal ? GRAPH_NODE_HEIGHT : GRAPH_NODE_WIDTH, ...layerWidths, ...routes.filter((route) => !route.side).map((route) => route.width));
   const leftRoutes = routes.filter((route) => route.side === -1);
   const rightRoutes = routes.filter((route) => route.side === 1);
   const leftLabelWidth = Math.max(0, ...leftRoutes.map((route) => route.width));
@@ -175,8 +181,8 @@ export function layoutDefinitionGraph(
       groups[key] = {
         x,
         centers: repeatedKeys.has(key)
-          ? [x + GRAPH_NODE_WIDTH / 2, x + GRAPH_NODE_WIDTH * 1.5 + COLUMN_GAP, x + GRAPH_NODE_WIDTH * 2.5 + COLUMN_GAP + ELLIPSIS_GAP]
-          : [x + GRAPH_NODE_WIDTH / 2],
+          ? [x + nodeWidth(key) / 2, x + nodeWidth(key) * 1.5 + COLUMN_GAP, x + nodeWidth(key) * 2.5 + COLUMN_GAP + ELLIPSIS_GAP]
+          : [x + nodeWidth(key) / 2],
       };
       x += groupWidth(key) + COLUMN_GAP;
     }
@@ -237,7 +243,7 @@ export function layoutDefinitionGraph(
           while (ids.has(id)) id += ":";
           ids.add(id);
         }
-        return { key, id, instance, x: center - GRAPH_NODE_WIDTH / 2, y: rankY[rank] };
+        return { key, id, instance, ...position(center - nodeWidth(key) / 2, rankY[rank]) };
       }),
     ),
   );
@@ -245,8 +251,7 @@ export function layoutDefinitionGraph(
     .filter((key) => repeatedKeys.has(key))
     .map((key) => ({
       key,
-      x: groups[key].x + GRAPH_NODE_WIDTH * 2 + COLUMN_GAP + ELLIPSIS_GAP / 2,
-      y: rankY[ranks[key]] + nodeHeight(key) / 2,
+      ...position(groups[key].x + nodeWidth(key) * 2 + COLUMN_GAP + ELLIPSIS_GAP / 2, rankY[ranks[key]] + nodeHeight(key) / 2),
     }));
   const edges = routes.map((route) => {
     const from = groups[route.from].centers;
@@ -263,9 +268,13 @@ export function layoutDefinitionGraph(
       const endX = to[index % to.length];
       if (route.side) {
         const arrivalY = endY - 12;
-        paths.push(`M ${startX} ${startY} L ${startX} ${middleY} L ${route.track} ${middleY} L ${route.track} ${arrivalY} L ${endX} ${arrivalY} L ${endX} ${endY}`);
+        paths.push(
+          `M ${point(startX, startY)} L ${point(startX, middleY)} L ${point(route.track, middleY)} L ${point(route.track, arrivalY)} L ${point(endX, arrivalY)} L ${point(endX, endY)}`,
+        );
       } else {
-        paths.push(`M ${startX} ${startY} C ${startX} ${middleY}, ${labelCenter} ${middleY}, ${labelCenter} ${middleY} C ${endX} ${middleY}, ${endX} ${middleY}, ${endX} ${endY}`);
+        paths.push(
+          `M ${point(startX, startY)} C ${point(startX, middleY)}, ${point(labelCenter, middleY)}, ${point(labelCenter, middleY)} C ${point(endX, middleY)}, ${point(endX, middleY)}, ${point(endX, endY)}`,
+        );
       }
     }
     return {
@@ -274,20 +283,22 @@ export function layoutDefinitionGraph(
       paths,
       feedback: route.feedback,
       label: route.label,
-      labelX: route.labelX,
-      labelY,
-      labelWidth: route.width,
-      labelHeight: route.height,
+      labelX: horizontal ? labelY : route.labelX,
+      labelY: horizontal ? route.labelX : labelY,
+      labelWidth: horizontal ? route.height : route.width,
+      labelHeight: horizontal ? route.width : route.height,
     };
   });
   const lastRank = layers.length - 1;
   const bottomRoutes = lastRank < 0 ? [] : routes.filter((route) => ranks[route.from] === lastRank);
   const bottomSpace = Math.max(0, ...bottomRoutes.map((route) => route.gapY + route.height + 12));
+  const width = PADDING * 2 + leftGutter + contentWidth + rightGutter;
+  const height = (lastRank < 0 ? PADDING + (horizontal ? GRAPH_NODE_WIDTH : GRAPH_NODE_HEIGHT) : rankY[lastRank] + rankHeights[lastRank] + bottomSpace) + PADDING;
   return {
     nodes,
     edges,
     ellipses,
-    width: PADDING * 2 + leftGutter + contentWidth + rightGutter,
-    height: (lastRank < 0 ? PADDING + GRAPH_NODE_HEIGHT : rankY[lastRank] + rankHeights[lastRank] + bottomSpace) + PADDING,
+    width: horizontal ? height : width,
+    height: horizontal ? width : height,
   };
 }

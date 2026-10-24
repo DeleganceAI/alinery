@@ -261,6 +261,64 @@ it("handles graphs without ordering connections", () => {
   expect(reduceFlowConnections([])).toEqual([]);
 });
 
+it("lays out horizontal flows with stacked fan-out and correctly directed return paths", () => {
+  const keys = ["seed", "worker", "collect", "finish"];
+  const links = [
+    { from: "seed", to: "worker" },
+    { from: "worker", to: "collect" },
+    { from: "collect", to: "finish" },
+    { from: "seed", to: "finish" },
+    { from: "finish", to: "seed" },
+  ];
+  const repeated = new Set(["worker"]);
+  const layout = layoutDefinitionGraph(keys, links, repeated, undefined, undefined, true, "horizontal");
+  expectBounded(layout);
+  const workers = layout.nodes.filter((node) => node.key === "worker");
+  expect(workers.map((node) => node.instance)).toEqual([1, 2, 3]);
+  expect(workers.every((node) => node.x === workers[0].x)).toBe(true);
+  expect(workers[1].y).toBeGreaterThan(workers[0].y + GRAPH_NODE_HEIGHT);
+  expect(layout.ellipses[0].y).toBeGreaterThan(workers[1].y + GRAPH_NODE_HEIGHT);
+  expect(layout.ellipses[0].y).toBeLessThan(workers[2].y);
+  const first = Object.fromEntries(layout.nodes.map((node) => [node.key, node]));
+  expect(first.seed.x).toBeLessThan(first.worker.x);
+  expect(first.worker.x).toBeLessThan(first.collect.x);
+  expect(first.collect.x).toBeLessThan(first.finish.x);
+  expect(layout.edges.map(({ from, to }) => ({ from, to }))).toEqual(links);
+  expect(layout.edges.filter((edge) => edge.feedback).map(({ from, to }) => ({ from, to }))).toEqual([{ from: "finish", to: "seed" }]);
+  for (const edge of layout.edges) {
+    const from = layout.nodes.filter((node) => node.key === edge.from);
+    const to = layout.nodes.filter((node) => node.key === edge.to);
+    edge.paths.forEach((path, index) => {
+      const source = from[index % from.length];
+      const destination = to[index % to.length];
+      expect(path.startsWith(`M ${source.x + GRAPH_NODE_WIDTH} ${source.y + GRAPH_NODE_HEIGHT / 2} `)).toBe(true);
+      expect(path.endsWith(`${destination.x} ${destination.y + GRAPH_NODE_HEIGHT / 2}`)).toBe(true);
+    });
+  }
+});
+
+it("keeps labeled dependency layouts vertical even when horizontal flow is requested", () => {
+  const links = [{ from: "seed", to: "worker", label: "requests/request-*.md" }];
+  expect(layoutDefinitionGraph(["seed", "worker"], links, new Set(["worker"]), undefined, undefined, true, "horizontal")).toEqual(
+    layoutDefinitionGraph(["seed", "worker"], links, new Set(["worker"]), undefined, undefined, true),
+  );
+});
+
+it("respects custom node heights across the horizontal axis", () => {
+  const heights = new Map([["worker", 120]]);
+  const layout = layoutDefinitionGraph(["seed", "worker"], [{ from: "seed", to: "worker" }], new Set(["worker"]), undefined, heights, true, "horizontal");
+  const rectangles = layout.nodes.map((node) => ({ ...node, width: GRAPH_NODE_WIDTH, height: heights.get(node.key) ?? GRAPH_NODE_HEIGHT }));
+  expectSeparated(rectangles);
+  for (const rectangle of rectangles) {
+    expect(rectangle.x + rectangle.width).toBeLessThanOrEqual(layout.width);
+    expect(rectangle.y + rectangle.height).toBeLessThanOrEqual(layout.height);
+  }
+  const workers = layout.nodes.filter((node) => node.key === "worker");
+  layout.edges[0].paths.forEach((path, index) => {
+    expect(path.endsWith(`${workers[index].x} ${workers[index].y + 60}`)).toBe(true);
+  });
+});
+
 it("compacts an eight-step flow without losing fan-out, bypass or return connections", () => {
   const keys = ["frame", "plan", "gather", "dispatch", "read", "consolidate", "synthesize", "continue"];
   const links = [...keys.slice(1).map((to, index) => ({ from: keys[index], to })), ...keys.slice(3).map((to) => ({ from: "frame", to })), { from: "continue", to: "plan" }];

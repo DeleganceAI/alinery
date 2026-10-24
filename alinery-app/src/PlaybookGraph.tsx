@@ -43,6 +43,7 @@ export function PlaybookGraph({
   hideToolbar = false,
   minScale,
   compact = false,
+  direction = "vertical",
 }: {
   title: string;
   steps: NormalizedStep[];
@@ -62,6 +63,8 @@ export function PlaybookGraph({
   minScale?: number;
   /** Compact unlabeled flow spacing and keep the overview fitted as its viewport changes. */
   compact?: boolean;
+  /** Flow direction; artifact dependency labels retain the vertical layout. */
+  direction?: "vertical" | "horizontal";
 }) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const activeKey = selectedStepKey !== undefined ? selectedStepKey : selectedKey;
@@ -135,9 +138,10 @@ export function PlaybookGraph({
             undefined,
             undefined,
             compact,
+            direction,
           )
         : null,
-    [variant, steps, displayMode, flowConnections, connections, compact],
+    [variant, steps, displayMode, flowConnections, connections, compact, direction],
   );
 
   useLayoutEffect(() => {
@@ -403,7 +407,7 @@ export function PlaybookGraph({
                           aria-hidden="true"
                           style={{ left: `calc(${x}px * var(--ui-scale))`, top: `calc(${y}px * var(--ui-scale))` }}
                         >
-                          ⋯
+                          {direction === "horizontal" && displayMode === "flow" ? "⋮" : "⋯"}
                         </span>
                       ))}
                     </div>
