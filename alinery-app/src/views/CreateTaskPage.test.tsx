@@ -202,6 +202,88 @@ afterEach(() => {
   taskMutationGuard.release();
 });
 
+async function openStepSettings() {
+  const summary = await screen.findByText("Step models & approvals");
+  const details = summary.closest("details") as HTMLDetailsElement;
+  if (!details.open) fireEvent.click(summary);
+  return screen.findByRole("checkbox", { name: "Build" });
+}
+
+function openAdvancedOptions() {
+  const summary = screen.getByText("Advanced options");
+  const details = summary.closest("details") as HTMLDetailsElement;
+  if (!details.open) fireEvent.click(summary);
+}
+
+describe("creation layout", () => {
+  it("opens a larger graph without creating or losing the task brief, then restores focus", async () => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByLabelText("SuperDevelop steps");
+    fireEvent.change(screen.getByRole("textbox", { name: "Task name" }), { target: { value: "Keep this draft" } });
+    fireEvent.change(screen.getByRole("textbox", { name: /Description/ }), { target: { value: "Keep this context too." } });
+    fireEvent.click(screen.getByText("Preview 1 step"));
+    const opener = screen.getByRole("button", { name: "Open graph" });
+    opener.focus();
+    fireEvent.click(opener);
+    const dialog = await screen.findByRole("dialog", { name: "SuperDevelop graph" });
+    expect(within(dialog).getByRole("region", { name: "SuperDevelop graph" })).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Close graph" })).toBe(document.activeElement);
+    fireEvent.keyDown(dialog, { key: "Enter", metaKey: true });
+    fireEvent.keyDown(dialog, { key: "Enter", ctrlKey: true });
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close graph" }));
+    expect(screen.queryByRole("dialog", { name: "SuperDevelop graph" })).toBeNull();
+    expect(document.activeElement).toBe(opener);
+    expect(screen.getByRole("textbox", { name: "Task name" })).toHaveProperty("value", "Keep this draft");
+    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveProperty("value", "Keep this context too.");
+    expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
+    fireEvent.click(opener);
+    fireEvent(await screen.findByRole("dialog", { name: "SuperDevelop graph" }), new Event("cancel", { cancelable: true }));
+    expect(screen.queryByRole("dialog", { name: "SuperDevelop graph" })).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("labels the task brief and keeps optional setup collapsed without changing its values", async () => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByText("Step models & approvals");
+    expect(screen.getByRole("textbox", { name: "Task name" })).toBeDefined();
+    expect(screen.getByRole("textbox", { name: /Description/ })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Write task" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText("Advanced options").closest("details")).toHaveProperty("open", false);
+    expect(screen.getByText("Step models & approvals").closest("details")).toHaveProperty("open", false);
+    openAdvancedOptions();
+    fireEvent.change(screen.getByLabelText("Task slug"), { target: { value: "custom-task" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Task name" }), { target: { value: "Ship the task" } });
+    fireEvent.click(screen.getByText("Advanced options"));
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalled());
+    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(
+      expect.objectContaining({ request: expect.objectContaining({ requested_slug: "custom-task", max_live_sessions: 10, auto_advance_steps: [] }) }),
+    );
+  });
+
+  it("keeps disclosures open when the last evidence character or an invalid limit is corrected", async () => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} initialPreset={{ name: "Draft", description: "", evidence: "x" }} onCancel={() => {}} onCreated={() => {}} />);
+    const context = screen.getByText("Supporting context").closest("details") as HTMLDetailsElement;
+    expect(context.open).toBe(true);
+    fireEvent.change(screen.getByLabelText("Evidence / pointers"), { target: { value: "" } });
+    expect(context.open).toBe(true);
+    openAdvancedOptions();
+    const advanced = screen.getByText("Advanced options").closest("details") as HTMLDetailsElement;
+    const limit = screen.getByLabelText("Maximum live sessions");
+    fireEvent.change(limit, { target: { value: "" } });
+    fireEvent.change(limit, { target: { value: "1" } });
+    expect(advanced.open).toBe(true);
+  });
+
+  it("opens advanced options when a restored session limit is invalid", async () => {
+    vi.mocked(ipc.readArtifactForRepo).mockResolvedValue("");
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} initialDraft={{ ...draftTask, max_live_sessions: 0 }} onCancel={() => {}} onCreated={() => {}} />);
+    expect(screen.getByText("Advanced options").closest("details")).toHaveProperty("open", true);
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
+  });
+});
+
 describe("provider imports", () => {
   it("does not inspect providers while opening the task form", async () => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
@@ -318,7 +400,7 @@ describe("scoped playbook selection", () => {
     if (seedPreferred) preferred.picker_preferences.entries.push({ ...preferred.picker_preferences.entries[0], reference: sources[2].source.reference });
     vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
     render(<CreateTaskPage initialPlaybook={sources[2].source.reference} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: "Repository SuperDevelop graph" });
+    await screen.findByLabelText("Repository SuperDevelop steps");
     expect(screen.getByRole("radio", { name: "Repository SuperDevelop — repo/superdevelop" })).toHaveProperty("checked", true);
     expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", false);
     const displayedOrder = ["repo/superdevelop", "bundled/superdevelop"];
@@ -332,10 +414,10 @@ describe("scoped playbook selection", () => {
     expect(ipc.createSessionForRepo).not.toHaveBeenCalled();
     expect(ipc.startSession).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" }));
-    await screen.findByRole("region", { name: "SuperDevelop graph" });
+    await screen.findByLabelText("SuperDevelop steps");
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(displayedOrder);
     fireEvent.click(screen.getByRole("radio", { name: "Repository SuperDevelop — repo/superdevelop" }));
-    await screen.findByRole("region", { name: "Repository SuperDevelop graph" });
+    await screen.findByLabelText("Repository SuperDevelop steps");
 
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Seeded task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
@@ -354,14 +436,14 @@ describe("scoped playbook selection", () => {
     render(<CreateTaskPage initialPlaybook={initialPlaybook} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("radio", { name: /One-shot/ });
     expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", false);
-    expect(screen.queryByRole("region", { name: /graph$/ })).toBeNull();
+    expect(screen.queryByLabelText(/ steps$/)).toBeNull();
     expect(ipc.readPlaybook).not.toHaveBeenCalled();
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Blocked task" } });
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
     expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
-    await screen.findByRole("region", { name: "One-shot graph" });
+    await screen.findByLabelText("One-shot steps");
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false);
   });
 
@@ -379,7 +461,7 @@ describe("scoped playbook selection", () => {
     );
     await screen.findByRole("radio", { name: /One-shot/ });
     expect(screen.getAllByRole("radio").every((radio) => !(radio as HTMLInputElement).checked)).toBe(true);
-    expect(screen.queryByRole("region", { name: /graph$/ })).toBeNull();
+    expect(screen.queryByLabelText(/ steps$/)).toBeNull();
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
     expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
@@ -402,17 +484,18 @@ describe("scoped playbook selection", () => {
     };
     vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: "SuperDevelop graph" });
+    await screen.findByLabelText("SuperDevelop steps");
     const choices = () => screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value);
     expect(choices()).toEqual(["bundled/one-shot", "bundled/superdevelop"]);
     expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
     fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
-    const graph = await screen.findByRole("region", { name: "One-shot graph" });
-    expect(screen.queryByRole("region", { name: "SuperDevelop graph" })).toBeNull();
+    const preview = await screen.findByLabelText("One-shot steps");
+    expect(screen.queryByLabelText("SuperDevelop steps")).toBeNull();
     expect(choices()).toEqual(["bundled/one-shot", "bundled/superdevelop"]);
-    if (!graph.parentElement) throw new Error("Graph must be inside the selected card");
-    expect(within(graph.parentElement).getByRole("radio", { name: /One-shot/ })).toHaveProperty("checked", true);
-    expect(within(graph).getByRole("button", { name: "Highlight Build" })).toBeTruthy();
+    if (!preview.parentElement) throw new Error("Preview must be inside the selected card");
+    expect(within(preview.closest(".playbook-picker-card") as HTMLElement).getByRole("radio", { name: /One-shot/ })).toHaveProperty("checked", true);
+    expect(within(preview).getByText("Build")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "One-shot graph" })).toBeNull();
   });
 
   it("browses inline without losing form data or preferring a one-task selection", async () => {
@@ -423,7 +506,7 @@ describe("scoped playbook selection", () => {
     };
     vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: "SuperDevelop graph" });
+    await screen.findByLabelText("SuperDevelop steps");
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Preserved draft" } });
     const description = screen.getByPlaceholderText(/Describe the feature/);
     fireEvent.change(description, { target: { value: "Keep this task description" } });
@@ -431,7 +514,7 @@ describe("scoped playbook selection", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search playbooks" }), { target: { value: "global/superdevelop" } });
     expect(screen.getAllByRole("radio")).toHaveLength(1);
     fireEvent.click(screen.getByRole("radio", { name: /Global SuperDevelop/ }));
-    await screen.findByRole("region", { name: "Global SuperDevelop graph" });
+    await screen.findByLabelText("Global SuperDevelop steps");
     expect(screen.getByRole("searchbox", { name: "Search playbooks" })).toHaveProperty("value", "global/superdevelop");
     expect(screen.getAllByRole("radio")).toHaveLength(1);
     fireEvent.change(screen.getByRole("searchbox", { name: "Search playbooks" }), { target: { value: "" } });
@@ -447,7 +530,7 @@ describe("scoped playbook selection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back to preferred" }));
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(["bundled/superdevelop", "global/superdevelop"]);
     fireEvent.click(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" }));
-    await screen.findByRole("region", { name: "SuperDevelop graph" });
+    await screen.findByLabelText("SuperDevelop steps");
     expect(screen.getByRole("radio", { name: /Global SuperDevelop/ })).toHaveProperty("checked", false);
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(["bundled/superdevelop", "global/superdevelop"]);
     fireEvent.click(screen.getByRole("button", { name: "Browse all playbooks" }));
@@ -466,33 +549,33 @@ describe("scoped playbook selection", () => {
     await screen.findByRole("searchbox", { name: "Search playbooks" });
     const choices = screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value);
     fireEvent.click(screen.getByRole("radio", { name: /Global SuperDevelop/ }));
-    await screen.findByRole("region", { name: "Global SuperDevelop graph" });
+    await screen.findByLabelText("Global SuperDevelop steps");
     expect(screen.getByRole("searchbox", { name: "Search playbooks" })).toHaveProperty("value", "");
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(choices);
     fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
-    await screen.findByRole("region", { name: "One-shot graph" });
-    expect(screen.queryByRole("region", { name: "Global SuperDevelop graph" })).toBeNull();
+    await screen.findByLabelText("One-shot steps");
+    expect(screen.queryByLabelText("Global SuperDevelop steps")).toBeNull();
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(choices);
     expect(screen.getByRole("radio", { name: /Broken/ })).toHaveProperty("disabled", true);
   });
 
   it("retains the seed on refresh and a later user choice across catalog and repository changes", async () => {
     render(<CreateTaskPage initialPlaybook={sources[2].source.reference} activeRepo="/repo" knownRepos={["/repo", "/other"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: "Repository SuperDevelop graph" });
+    await screen.findByLabelText("Repository SuperDevelop steps");
     const displayedOrder = screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value);
     expect(displayedOrder[0]).toBe("repo/superdevelop");
     fireEvent.click(screen.getByRole("button", { name: "Refresh playbooks" }));
-    await screen.findByRole("region", { name: "Repository SuperDevelop graph" });
+    await screen.findByLabelText("Repository SuperDevelop steps");
     expect(screen.getByRole("radio", { name: /Repository SuperDevelop/ })).toHaveProperty("checked", true);
     fireEvent.click(screen.getByRole("radio", { name: /Global SuperDevelop/ }));
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     fireEvent.click(screen.getByRole("button", { name: "Refresh playbooks" }));
     await waitFor(() => expect(ipc.listPlaybookCatalog).toHaveBeenCalledTimes(3));
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     expect(screen.getByRole("radio", { name: /Global SuperDevelop/ })).toHaveProperty("checked", true);
     expect(screen.getByRole("radio", { name: /Broken/ })).toHaveProperty("disabled", true);
     fireEvent.change(screen.getByRole("combobox", { name: "Repository" }), { target: { value: "/other" } });
-    await screen.findByRole("region", { name: "Global SuperDevelop graph" });
+    await screen.findByLabelText("Global SuperDevelop steps");
     expect(screen.getByRole("radio", { name: /Global SuperDevelop/ })).toHaveProperty("checked", true);
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(displayedOrder);
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Scoped task" } });
@@ -516,7 +599,7 @@ describe("scoped playbook selection", () => {
     vi.mocked(ipc.readPlaybook).mockResolvedValue(original);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
 
-    const buildChoice = await screen.findByRole("checkbox", { name: "Build" });
+    const buildChoice = await openStepSettings();
     expect(buildChoice).toHaveProperty("checked", true);
     fireEvent.click(buildChoice);
     expect(screen.getByRole("checkbox", { name: "Removed" })).toHaveProperty("checked", true);
@@ -567,10 +650,10 @@ describe("OMP model default", () => {
   it("uses hosted Flash when signed in without a settings default, including after changing playbooks", async () => {
     vi.mocked(ipc.accountStatus).mockResolvedValue({ signedIn: true, email: null, plan: null, paid: false, unavailable: false });
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", "alinery/DeepSeek-V4.1-Flash");
     fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", "alinery/DeepSeek-V4.1-Flash");
   });
 
@@ -580,14 +663,14 @@ describe("OMP model default", () => {
       defaults: { harness: "omp", model: "anthropic/claude-sonnet-4-6", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
     } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", "anthropic/claude-sonnet-4-6");
   });
 
   it.each(["signed out", "account status unavailable"])("leaves the model unset when %s", async (status) => {
     if (status === "account status unavailable") vi.mocked(ipc.accountStatus).mockRejectedValue(new Error("Account unavailable"));
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", "");
   });
 
@@ -595,7 +678,7 @@ describe("OMP model default", () => {
     vi.mocked(ipc.accountStatus).mockResolvedValue({ signedIn: true, email: null, plan: null, paid: false, unavailable: false });
     const initialDraft: BoardTask = { ...draftTask, launch_defaults: { harness: "omp", model } };
     render(<CreateTaskPage initialDraft={initialDraft} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", model);
   });
 });
@@ -638,16 +721,16 @@ describe("per-step default model", () => {
 
   it("places Task Default Model above automatic completion permissions and drops the old Model label", async () => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     const taskModel = screen.getByLabelText("Task Default Model");
-    const permission = screen.getByText("Automatic completion permission for future executions");
+    const permission = screen.getByText("Step models & approvals");
     expect(taskModel.compareDocumentPosition(permission) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(screen.queryByLabelText("Model")).toBeNull();
   });
 
   it("gives each permission row its own model control", async () => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    const checkbox = await screen.findByRole("checkbox", { name: "Build" });
+    const checkbox = await openStepSettings();
     const stepModel = screen.getByLabelText("Build model");
     expect(checkbox.closest(".step-model-row")?.contains(stepModel)).toBe(true);
     expect(screen.getAllByText("Step model")).toHaveLength(1);
@@ -847,7 +930,7 @@ describe("Linear description images", () => {
       attachment_errors: ["Could not read missing.txt"],
     });
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     const entries = screen.getByPlaceholderText(/Paste file paths/);
     fireEvent.change(entries, { target: { value: "/manual.txt, https://example.test/manual.png" } });
     fireEvent.keyDown(entries, { key: "Enter" });
@@ -869,7 +952,7 @@ describe("Linear description images", () => {
   it("saves remote references in drafts and restores them when an imported image is removed", async () => {
     vi.mocked(ipc.importLinearForRepo).mockResolvedValueOnce(ticket);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     beginImport();
     await screen.findByText(image.name);
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited import" } });
@@ -895,7 +978,7 @@ describe("Linear description images", () => {
       });
     vi.mocked(ipc.importGithubForRepo).mockResolvedValueOnce({ reference: "org/repo#1", title: "GitHub title", description: "GitHub body" });
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     const entries = screen.getByPlaceholderText(/Paste file paths/);
     fireEvent.change(entries, { target: { value: "/manual.txt" } });
     fireEvent.keyDown(entries, { key: "Enter" });
@@ -919,7 +1002,7 @@ describe("Linear description images", () => {
     vi.mocked(ipc.importLinearForRepo).mockReturnValueOnce(pending.promise);
     const props = { activeRepo: "/repo", knownRepos: ["/repo", "/other"], initialDraft: draftTask, onCancel: () => {}, onCreated: () => {} };
     const view = render(<CreateTaskPage {...props} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     beginImport();
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
@@ -938,7 +1021,7 @@ describe("Linear description images", () => {
     } else {
       view.unmount();
       render(<CreateTaskPage {...props} />);
-      await screen.findByRole("checkbox", { name: "Build" });
+      await openStepSettings();
     }
     await act(async () => pending.resolve(ticket));
     expect(screen.queryByText(image.name)).toBeNull();
@@ -959,7 +1042,7 @@ describe("starting branch contract", () => {
         onCreated={() => {}}
       />,
     );
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/release");
     fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/other" } });
     await waitFor(() => expect(screen.getByLabelText("Starting branch")).toHaveProperty("disabled", false));
@@ -1089,7 +1172,7 @@ describe("starting branch contract", () => {
   it.each(["", "release", "refs/heads/deleted", "b".repeat(40)])("blocks unavailable saved identity %j without substitution", async (base) => {
     taskSourceBranchesForRepo.mockResolvedValueOnce({ ...branchSnapshot(), selected: { base_ref: base, available: false } });
     render(<CreateTaskPage initialDraft={{ ...draftTask, draft_base_ref: base }} activeRepo="/other" knownRepos={["/repo", "/other"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", base);
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
@@ -1196,7 +1279,7 @@ describe("starting branch contract", () => {
         render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onOpened={onOpened} onCancel={() => {}} onCreated={() => {}} />);
       });
       expect(onOpened).toHaveBeenCalledOnce();
-      expect(screen.getByRole("checkbox", { name: "Build" })).toBeDefined();
+      expect(screen.getByLabelText("Build")).toBeDefined();
       const title = screen.getByPlaceholderText("New task name…");
       fireEvent.change(title, { target: { value: "Choose a starting branch" } });
       expect(title).toHaveProperty("value", "Choose a starting branch");
@@ -1215,7 +1298,7 @@ describe("starting branch contract", () => {
     vi.mocked(ipc.readArtifactForRepo).mockResolvedValueOnce("Saved description");
     const saved = { ...draftTask, branch: "new-task-branch", draft_base_ref: "refs/heads/release" };
     render(<CreateTaskPage initialDraft={saved} activeRepo="/other" knownRepos={["/other", "/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByRole("button", { name: "Open task" });
     expect(ipc.createTaskForRepo).toHaveBeenCalledOnce();
@@ -1235,12 +1318,15 @@ describe("starting branch contract", () => {
       await act(async () => {
         render(<CreateTaskPage initialDraft={saved} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
       });
-      expect(screen.getByRole("checkbox", { name: "Build" })).toBeDefined();
+      expect(screen.getByLabelText("Build")).toBeDefined();
       expect(screen.getByPlaceholderText(/Describe the feature/)).toHaveProperty("value", "Saved description");
       await act(async () => vi.advanceTimersByTimeAsync(1_000));
       expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
       if (field === "title") fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited draft" } });
-      else fireEvent.change(screen.getByRole("spinbutton", { name: "Maximum live sessions" }), { target: { value: "7" } });
+      else {
+        openAdvancedOptions();
+        fireEvent.change(screen.getByRole("spinbutton", { name: "Maximum live sessions" }), { target: { value: "7" } });
+      }
       await act(async () => vi.advanceTimersByTimeAsync(1_000));
       expect(ipc.writeDraftForRepo).toHaveBeenCalledOnce();
       expect(ipc.writeDraftForRepo).toHaveBeenCalledWith(
@@ -1256,8 +1342,9 @@ describe("starting branch contract", () => {
 describe("v2 task creation", () => {
   it("requires a positive u32 cap and always creates a dedicated worktree", async () => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
+    openAdvancedOptions();
     const cap = screen.getByRole("spinbutton", { name: "Maximum live sessions" });
     expect(cap).toHaveProperty("value", "10");
     expect(screen.queryByRole("checkbox", { name: "Use worktree" })).toBeNull();
@@ -1293,7 +1380,7 @@ describe("v2 task creation", () => {
       );
     }
     render(<CreationFlow />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
     if (start === "not_requested") fireEvent.click(screen.getByRole("checkbox", { name: "Start eligible sessions after creation" }));
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
@@ -1308,7 +1395,7 @@ describe("v2 task creation", () => {
     });
     const onCreated = vi.fn();
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={onCreated} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByText(/attachments: Could not copy evidence.pdf/);
@@ -1332,7 +1419,7 @@ describe("v2 task creation", () => {
     vi.mocked(ipc.createTaskForRepo).mockResolvedValue(reply);
     const onCreated = vi.fn();
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={onCreated} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
     const create = screen.getByRole("button", { name: "Create task" });
     fireEvent.click(create);
@@ -1360,7 +1447,7 @@ describe("v2 task creation", () => {
     render(
       <CreateTaskPage initialDraft={draftTask} initialPlaybook={sources[2].source.reference} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />,
     );
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
     expect(screen.getByRole("radio", { name: /Repository SuperDevelop/ })).toHaveProperty("checked", false);
     fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/release" } });
@@ -1398,7 +1485,7 @@ describe("v2 task creation", () => {
       errors: [{ stage: "provisioning", code: "ambiguous", message: "Inspect durable state" }],
     });
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByText(/provisioning: Inspect durable state/);
@@ -1410,7 +1497,7 @@ describe("v2 task creation", () => {
   it("freezes creation and autosave after a lost provisioning reply", async () => {
     vi.mocked(ipc.createTaskForRepo).mockRejectedValue(new Error("Connection closed"));
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByText(/Creation outcome is unknown/);
@@ -1440,7 +1527,7 @@ describe("task creation feedback", () => {
 
   const startCreate = async (onCreated: (result: TargetedCreateResult) => void) => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={onCreated} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     fireEvent.change(await screen.findByPlaceholderText("New task name…"), { target: { value: "Slow task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
   };
@@ -1461,7 +1548,7 @@ describe("task creation feedback", () => {
     const onCreated = vi.fn();
     const onBusy = vi.fn();
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={onCreated} onBusy={onBusy} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     fireEvent.change(await screen.findByPlaceholderText("New task name…"), { target: { value: "Slow task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     expect(onBusy).toHaveBeenCalledWith("create");
@@ -1518,7 +1605,7 @@ describe("clipboard task attachments", () => {
 
   const openForm = async () => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Clipboard evidence" } });
   };
 
@@ -1533,6 +1620,22 @@ describe("clipboard task attachments", () => {
     fireEvent(target, event);
     return event;
   };
+
+  it("reveals a new paste error after supporting context was manually closed", async () => {
+    await openForm();
+    fireEvent.change(screen.getByLabelText("Evidence / pointers"), { target: { value: "Existing evidence" } });
+    const summary = screen.getByText("Supporting context");
+    const details = summary.closest("details") as HTMLDetailsElement;
+    await waitFor(() => expect(details.open).toBe(true));
+    fireEvent.click(summary);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(details.open).toBe(false);
+    paste(screen.getByPlaceholderText(/Describe the feature/), [new File([], "empty.png", { type: "image/png" })]);
+    await waitFor(() => expect(details.open).toBe(true));
+    expect(details.textContent).toMatch(/empty|zero|non.empty/i);
+  });
 
   it("restores autosaved pasted image bytes on reopen and persists image-only removal", async () => {
     let saved: ipc.DraftAttachments = { entries: [], images: [] };
@@ -1589,7 +1692,7 @@ describe("clipboard task attachments", () => {
     const loaded = deferred<ipc.DraftAttachments>();
     vi.mocked(ipc.readDraftAttachmentsForRepo).mockReturnValueOnce(loaded.promise);
     const form = render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await openStepSettings();
     paste(screen.getByPlaceholderText(/Describe the feature/), [new File([new Uint8Array([2])], "image.png", { type: "image/png" })]);
     const entry = screen.getByPlaceholderText(/Paste file paths/);
     fireEvent.change(entry, { target: { value: "/new.png" } });
@@ -1612,6 +1715,24 @@ describe("clipboard task attachments", () => {
     const previews = screen.getAllByRole("img").map((image) => image.getAttribute("src"));
     form.unmount();
     for (const preview of previews) expect(URL.revokeObjectURL).toHaveBeenCalledWith(preview);
+  });
+
+  it("reopens context when draft attachments fail after it was closed during loading", async () => {
+    const loaded = deferred<ipc.DraftAttachments>();
+    vi.mocked(ipc.readDraftAttachmentsForRepo).mockReturnValueOnce(loaded.promise);
+    render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByText("Loading draft attachments…");
+    const summary = screen.getByText("Supporting context");
+    const details = summary.closest("details") as HTMLDetailsElement;
+    fireEvent.click(summary);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(details.open).toBe(false);
+    await act(async () => loaded.reject(new Error("unreadable snapshot")));
+    await screen.findByText(/Couldn't load draft attachments:.*unreadable snapshot/);
+    expect(details.open).toBe(true);
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
   });
 
   it("shows hydration errors and does not overwrite unread attachments or create", async () => {
@@ -1794,7 +1915,7 @@ describe("clipboard task attachments", () => {
           <CreateTaskPage {...props} />
         </StrictMode>,
       );
-      await screen.findByRole("checkbox", { name: "Build" });
+      await openStepSettings();
       await screen.findByDisplayValue("Saved description");
       paste(screen.getByPlaceholderText(/Describe the feature/), [image([1]), image([2])]);
       const previews = screen.getAllByRole("img").map((element) => element.getAttribute("src"));
@@ -1807,11 +1928,11 @@ describe("clipboard task attachments", () => {
         </StrictMode>,
       );
       fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/other" } });
-      await screen.findByRole("checkbox", { name: "Build" });
+      await openStepSettings();
       expect(screen.getByRole("img").getAttribute("src")).toBe(previews[1]);
       expect(live).toEqual(new Set([previews[1]]));
       fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/repo" } });
-      await screen.findByRole("checkbox", { name: "Build" });
+      await openStepSettings();
       vi.mocked(ipc.deleteDraftForRepo).mockRejectedValueOnce(new Error("Draft deletion denied"));
       fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
       await screen.findByText(/Couldn't clear the draft/);
@@ -1881,12 +2002,12 @@ describe("clipboard task attachments", () => {
       vi.mocked(ipc.createTaskForRepo).mockReturnValueOnce(creation.promise);
       const onCreated = vi.fn();
       render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo", "/other"]} onCancel={() => {}} onCreated={onCreated} />);
-      await screen.findByRole("checkbox", { name: "Build" });
+      await openStepSettings();
       fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Frozen evidence" } });
       addEntry("/captured.bin");
       paste(screen.getByPlaceholderText(/Describe the feature/), [image([0, 255]), image([128, 1])]);
       fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/other" } });
-      await screen.findByRole("checkbox", { name: "Build" });
+      await openStepSettings();
       fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/release" } });
       fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
       fireEvent.change(screen.getByPlaceholderText(/Paste file paths/), { target: { value: "/pending.txt" } });
@@ -1954,7 +2075,7 @@ describe("clipboard task attachments", () => {
       vi.mocked(ipc.deleteDraftForRepo).mockReturnValueOnce(deletion.promise);
       render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} initialDraft={draftTask} onCancel={() => {}} onCreated={() => {}} />);
       await screen.findByDisplayValue("Saved description");
-      await screen.findByRole("checkbox", { name: "Build" });
+      await openStepSettings();
       paste(screen.getByPlaceholderText(/Describe the feature/), [image([0, 255, 128])]);
       fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
       await waitFor(() => expect(ipc.deleteDraftForRepo).toHaveBeenCalledOnce());

@@ -339,6 +339,40 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByRole("button", { name: "Simulate run" })).toBeTruthy();
   });
 
+  it("keeps step details collapsed until inspection and retains selection when they close", async () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    const launch = vi.fn(async () => {});
+    render(
+      <OnboardingFlow
+        appConfig={baseConfig}
+        repoError=""
+        initialStep="playbooks"
+        onSelectRepo={vi.fn(async () => true)}
+        onAddRepo={vi.fn(async () => true)}
+        onRemoveRepo={vi.fn()}
+        onOpenProviderSetup={vi.fn()}
+        onCompleteToWorkspace={vi.fn()}
+        onOpenCreateWithPlaybook={vi.fn()}
+        onLaunchStarterTask={launch}
+      />,
+    );
+    const investigate = await screen.findByRole("button", { name: "Highlight Investigate" });
+    expect(screen.getByLabelText("Step details: Clarify").closest("details")).toHaveProperty("open", false);
+
+    fireEvent.click(investigate);
+    expect(screen.getByLabelText("Step details: Investigate").closest("details")).toHaveProperty("open", true);
+    expect(screen.getByRole("region", { name: "Investigate step contract" })).toBeTruthy();
+    const summary = screen.getByLabelText("Step details: Investigate");
+    fireEvent.click(summary);
+    await waitFor(() => expect(summary.closest("details")).toHaveProperty("open", false));
+    expect(investigate.getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Simulate run" }));
+    expect(screen.getByText("Wave 1 of 7")).toBeTruthy();
+    expect(screen.getByLabelText("Step details: Clarify").closest("details")).toHaveProperty("open", false);
+    expect(launch).not.toHaveBeenCalled();
+  });
+
   it("shows the explorer immediately without autoplay when reduced motion is requested", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));

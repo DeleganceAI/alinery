@@ -120,6 +120,8 @@
 .playbook-definition-canvas {
   position: relative;
   margin: 0;
+  /* Scale text and geometry together without reflowing labels in WebKit. */
+  transform-origin: 0 0;
 }
 
 .playbook-definition-connections {
@@ -264,6 +266,9 @@
 }
 .playbook-definition-node.illustrative .playbook-definition-node-title {
   -webkit-line-clamp: 2;
+}
+.playbook-definition-graph.compact .playbook-definition-node-title {
+  font-size: calc(14px * var(--ui-scale));
 }
 .playbook-definition-instance {
   color: var(--text-muted);

@@ -522,9 +522,12 @@ export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions
   const disconnected = snap.connection.state === "failed" && !snap.inTerminal ? snap.connection.detail : null;
   // ChatEntryRow is memoized. A fresh approve on every snapshot (this hook re-renders on each RPC
   // line) redraws every visible row. The entry is stable; its api is replaced in place.
-  const approve = useCallback((id: string, allow: boolean) => {
-    entry?.api.approve(id, allow);
-  }, [entry]);
+  const approve = useCallback(
+    (id: string, allow: boolean) => {
+      entry?.api.approve(id, allow);
+    },
+    [entry],
+  );
   return {
     ...snap,
     error,

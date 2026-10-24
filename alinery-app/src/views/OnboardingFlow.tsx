@@ -1,5 +1,5 @@
 import "../onboarding.css";
-import { ArrowRight, Check, Cpu, FolderOpen, FolderPlus, Layers, Play, RotateCcw, X } from "lucide-react";
+import { ArrowRight, Check, ChevronRight, Cpu, FolderOpen, FolderPlus, Layers, Play, RotateCcw, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 import { ORB_SPEED } from "../Indicators";
@@ -47,6 +47,7 @@ export function OnboardingFlow({
   const [definitionErrors, setDefinitionErrors] = useState<Record<string, string>>({});
   const [definitionRefresh, setDefinitionRefresh] = useState(0);
   const [selectedStepKey, setSelectedStepKey] = useState<string | null>(null);
+  const [stepDetailsOpen, setStepDetailsOpen] = useState(false);
   const [simStepIndex, setSimStepIndex] = useState<number | null>(null);
   const [intro, setIntro] = useState<"explain" | "cards" | "cue" | "ready">("explain");
   const [playing, setPlaying] = useState(false);
@@ -211,6 +212,7 @@ export function OnboardingFlow({
     setIntro("ready");
     setPlaying(false);
     setSelectedArchetypeKey(key);
+    setStepDetailsOpen(false);
     const nextDef = liveDefinitions[key];
     setSelectedStepKey(nextDef?.step[0]?.key ?? null);
     setSimStepIndex(null);
@@ -598,67 +600,75 @@ export function OnboardingFlow({
                     variant="definition"
                     showInspector={false}
                     hideToolbar={true}
-                    minScale={0.72}
+                    compact
+                    direction="horizontal"
                     selectedStepKey={selectedStep?.key ?? null}
-                    onSelectStep={(key) => setSelectedStepKey(key)}
+                    onSelectStep={(key) => {
+                      setSelectedStepKey(key);
+                      setStepDetailsOpen(true);
+                    }}
                     simulatedStatuses={simulatedStatuses}
                   />
                 </div>
 
                 {selectedStep && (
-                  <section className="onboarding-step-inspector" aria-label={`${selectedStep.title} step contract`}>
-                    <div className="onboarding-step-inspector-header">
-                      <div className="onboarding-step-inspector-title">
-                        <span className="onboarding-step-ordinal">Step 0{selectedStepIndex + 1}</span>
-                        <h3>{selectedStep.title}</h3>
-                        <code>{selectedStep.key}</code>
+                  <details className="onboarding-step-inspector" open={stepDetailsOpen} onToggle={(event) => setStepDetailsOpen(event.currentTarget.open)}>
+                    <summary aria-label={`Step details: ${selectedStep.title}`}>
+                      <ChevronRight className="onboarding-inspector-chevron" size={14} aria-hidden="true" />
+                      <div className="onboarding-step-inspector-header">
+                        <div className="onboarding-step-inspector-title">
+                          <span className="onboarding-step-ordinal">Step 0{selectedStepIndex + 1}</span>
+                          <h3>{selectedStep.title}</h3>
+                          <code>{selectedStep.key}</code>
+                        </div>
+                        <div className="onboarding-step-badges">
+                          <span className={`pill ${selectedStep.auto_advance_default ? "onboarding-pill-accent" : "onboarding-pill-warning"}`}>
+                            {selectedStep.auto_advance_default ? "Auto-advances" : "Human checkpoint"}
+                          </span>
+                          <span className="pill">{selectedStep.is_coding_step ? "Coding step" : "Read-only / artifact step"}</span>
+                        </div>
                       </div>
-                      <div className="onboarding-step-badges">
-                        <span className={`pill ${selectedStep.auto_advance_default ? "onboarding-pill-accent" : "onboarding-pill-warning"}`}>
-                          {selectedStep.auto_advance_default ? "Auto-advances" : "Human checkpoint"}
-                        </span>
-                        <span className="pill">{selectedStep.is_coding_step ? "Coding step" : "Read-only / artifact step"}</span>
+                    </summary>
+                    <section className="onboarding-step-inspector-body" aria-label={`${selectedStep.title} step contract`}>
+                      <div className="onboarding-contract-grid">
+                        <div className="onboarding-contract-col">
+                          <h4>Reads (inputs)</h4>
+                          {selectedStep.inputs.length > 0 ? (
+                            <ul className="onboarding-contract-list">
+                              {selectedStep.inputs.map((input) => (
+                                <li key={`${input.path}:${input.mode}`}>
+                                  <code>{input.path}</code>
+                                  <span className="pill">{INPUT_MODE_LABELS[input.mode]}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="onboarding-contract-empty">Reads initial task ticket (ticket.md)</p>
+                          )}
+                        </div>
+                        <div className="onboarding-contract-col">
+                          <h4>Writes (outputs)</h4>
+                          {selectedStep.outputs.length > 0 ? (
+                            <ul className="onboarding-contract-list">
+                              {selectedStep.outputs.map((output) => (
+                                <li key={output.path}>
+                                  <code>{output.path}</code>
+                                  <span className="onboarding-artifact-path">.alinery/tasks/&lt;slug&gt;/artifacts/</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="onboarding-contract-empty">No declared output artifacts</p>
+                          )}
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="onboarding-contract-grid">
-                      <div className="onboarding-contract-col">
-                        <h4>Reads (inputs)</h4>
-                        {selectedStep.inputs.length > 0 ? (
-                          <ul className="onboarding-contract-list">
-                            {selectedStep.inputs.map((input) => (
-                              <li key={`${input.path}:${input.mode}`}>
-                                <code>{input.path}</code>
-                                <span className="pill">{INPUT_MODE_LABELS[input.mode]}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className="onboarding-contract-empty">Reads initial task ticket (ticket.md)</p>
-                        )}
-                      </div>
-                      <div className="onboarding-contract-col">
-                        <h4>Writes (outputs)</h4>
-                        {selectedStep.outputs.length > 0 ? (
-                          <ul className="onboarding-contract-list">
-                            {selectedStep.outputs.map((output) => (
-                              <li key={output.path}>
-                                <code>{output.path}</code>
-                                <span className="onboarding-artifact-path">.alinery/tasks/&lt;slug&gt;/artifacts/</span>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className="onboarding-contract-empty">No declared output artifacts</p>
-                        )}
-                      </div>
-                    </div>
-
-                    <details className="onboarding-prompt-preview">
-                      <summary>View step prompt instructions</summary>
-                      <pre>{selectedStep.prompt}</pre>
-                    </details>
-                  </section>
+                      <details className="onboarding-prompt-preview">
+                        <summary>View step prompt instructions</summary>
+                        <pre>{selectedStep.prompt}</pre>
+                      </details>
+                    </section>
+                  </details>
                 )}
               </div>
             ) : (

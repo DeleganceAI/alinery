@@ -42,6 +42,8 @@ export function PlaybookGraph({
   simulatedStatuses,
   hideToolbar = false,
   minScale,
+  compact = false,
+  direction = "vertical",
 }: {
   title: string;
   steps: NormalizedStep[];
@@ -59,6 +61,10 @@ export function PlaybookGraph({
   hideToolbar?: boolean;
   /** Lower zoom bound; also floors auto-fit so compact embeds stay legible and pan instead. */
   minScale?: number;
+  /** Compact unlabeled flow spacing and keep the overview fitted as its viewport changes. */
+  compact?: boolean;
+  /** Flow direction; artifact dependency labels retain the vertical layout. */
+  direction?: "vertical" | "horizontal";
 }) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const activeKey = selectedStepKey !== undefined ? selectedStepKey : selectedKey;
@@ -76,7 +82,7 @@ export function PlaybookGraph({
   const canvasEnabled = variant === "definition" && steps.length > 0;
   const paintView = useCallback(({ scale, tx, ty }: PanZoomView) => {
     if (stageRef.current) stageRef.current.style.transform = `translate(${tx}px, ${ty}px)`;
-    if (canvasRef.current) canvasRef.current.style.zoom = String(scale);
+    if (canvasRef.current) canvasRef.current.style.transform = `scale(${scale})`;
     if (zoomLabelRef.current) zoomLabelRef.current.textContent = `${Math.round(scale * 100)}%`;
   }, []);
   const { viewRef, panning, setView, zoomBy, center, fit, onPointerDown, onFocusCapture } = usePanZoom({
@@ -129,9 +135,13 @@ export function PlaybookGraph({
             steps.map((step) => step.key),
             displayMode === "flow" ? flowConnections : connections,
             new Set(steps.filter((step) => step.inputs.some((input) => input.mode === "each")).map((step) => step.key)),
+            undefined,
+            undefined,
+            compact,
+            direction,
           )
         : null,
-    [variant, steps, displayMode, flowConnections, connections],
+    [variant, steps, displayMode, flowConnections, connections, compact, direction],
   );
 
   useLayoutEffect(() => {
@@ -151,7 +161,7 @@ export function PlaybookGraph({
       // Skip transient collapsed layouts: fitting into a sliver would pin the camera at the
       // min scale; the observer retries once the viewport has real room.
       const viewportReady = viewport.clientWidth > 2 * FIT_PADDING && viewport.clientHeight > 2 * FIT_PADDING;
-      if (!initializedViewRef.current && viewportReady && canvas.offsetWidth > 0 && canvas.offsetHeight > 0) {
+      if ((!initializedViewRef.current || compact) && viewportReady && canvas.offsetWidth > 0 && canvas.offsetHeight > 0) {
         fit(canvas.offsetWidth, canvas.offsetHeight);
         initializedViewRef.current = true;
       }
@@ -163,7 +173,7 @@ export function PlaybookGraph({
     observer.observe(viewport);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [canvasEnabled, layout, showInspector, fit, paintView, viewRef]);
+  }, [canvasEnabled, layout, showInspector, fit, paintView, viewRef, compact]);
 
   useLayoutEffect(() => {
     if (!selectedStepKey || !simulatedStatuses?.[selectedStepKey]) return;
@@ -191,7 +201,7 @@ export function PlaybookGraph({
         ? layout.edges.filter(({ from, to }) => from === selectedStep.key || to === selectedStep.key)
         : layout.edges;
     return (
-      <section className="playbook-graph-view playbook-definition-graph" aria-label={`${title} graph`}>
+      <section className={`playbook-graph-view playbook-definition-graph${compact ? " compact" : ""}`} aria-label={`${title} graph`}>
         {!hideToolbar && (
           <div className="playbook-canvas-toolbar" role="group" aria-label="Graph display mode">
             <button type="button" className="btn ghost small" aria-pressed={displayMode === "flow"} onClick={() => setDisplayMode("flow")}>
@@ -397,7 +407,7 @@ export function PlaybookGraph({
                           aria-hidden="true"
                           style={{ left: `calc(${x}px * var(--ui-scale))`, top: `calc(${y}px * var(--ui-scale))` }}
                         >
-                          ⋯
+                          {direction === "horizontal" && displayMode === "flow" ? "⋮" : "⋯"}
                         </span>
                       ))}
                     </div>
