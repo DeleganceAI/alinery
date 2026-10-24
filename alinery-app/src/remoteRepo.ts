@@ -6,6 +6,9 @@ const SCHEME = "alinery+ssh://";
 /** Prefix of a failed connect's message on first contact with a host (SshFailure in remote.rs). */
 export const HOST_KEY_UNKNOWN = "host-key-unknown";
 
+/** What the connect shows while it runs, in order. Mirrors the phases `connect_inner` reports in remote.rs. */
+export const SETUP_PHASES = ["Connecting", "Checking the host", "Installing the runtime", "Starting the repo service", "Syncing settings"];
+
 export type RemoteRepo = { hostId: string; path: string };
 
 export function parseRemoteRepo(key: string): RemoteRepo | null {

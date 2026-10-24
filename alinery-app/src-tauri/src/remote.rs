@@ -9,7 +9,7 @@
 //! without a network; the second half drives ssh.
 
 use crate::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 // ── destination ────────────────────────────────────────────────────────────────────────
 
@@ -73,7 +73,7 @@ fn split_words(input: &str) -> Result<Vec<String>, String> {
 const ALLOWED_O_KEYS: [&str; 7] = ["port", "user", "identityfile", "identitiesonly", "proxyjump", "hostkeyalias", "connecttimeout"];
 
 fn plain_value(value: &str, what: &str, extra: &str) -> Result<(), String> {
-    let ok = !value.is_empty() && !value.starts_with('-') && value.chars().all(|c| c.is_ascii_alphanumeric() || "._@%:[]-".contains(c) || extra.contains(c));
+    let ok = !value.is_empty() && !value.starts_with('-') && value.chars().all(|c| c.is_ascii_alphanumeric() || "._@%:[]-_".contains(c) || extra.contains(c));
     ok.then_some(()).ok_or_else(|| format!("invalid {what}: {value}"))
 }
 
@@ -173,6 +173,114 @@ pub(crate) fn host_id(ssh_args: &[String]) -> String {
     let slug = slug.trim_matches('-');
     let slug = if slug.is_empty() { "host" } else { &slug[..slug.len().min(24)] };
     format!("{slug}-{}", &crate::daemon::fnv1a64_hex(&ssh_args.join("\0"))[..6])
+}
+
+// ── ssh config aliases ─────────────────────────────────────────────────────────────────
+
+const MAX_ALIASES: usize = 500;
+const MAX_CONFIG_BYTES: u64 = 1 << 20;
+const MAX_INCLUDE_DEPTH: u8 = 4;
+
+/// `*` and `?` against one file name.
+fn wildcard_match(pattern: &[u8], name: &[u8]) -> bool {
+    match (pattern.first(), name.first()) {
+        (None, None) => true,
+        (Some(b'*'), _) => wildcard_match(&pattern[1..], name) || (!name.is_empty() && wildcard_match(pattern, &name[1..])),
+        (Some(b'?'), Some(_)) => wildcard_match(&pattern[1..], &name[1..]),
+        (Some(p), Some(n)) if p == n => wildcard_match(&pattern[1..], &name[1..]),
+        _ => false,
+    }
+}
+
+/// Add the host names an ssh config declares with `Host`, following `Include` through
+/// `includes` (pattern in, file contents out). Patterns (`*`, `?`, `!`) are not hosts a user can
+/// pick, and a name this app would refuse as a destination is skipped.
+pub(crate) fn collect_aliases(text: &str, includes: &dyn Fn(&str) -> Vec<String>, depth: u8, found: &mut BTreeSet<String>) {
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some(split) = line.find(|c: char| c.is_whitespace() || c == '=') else { continue };
+        let rest = line[split..].trim_start_matches(|c: char| c.is_whitespace() || c == '=');
+        let Ok(words) = split_words(rest) else { continue };
+        let words = words.into_iter().take_while(|word| !word.starts_with('#'));
+        match line[..split].to_ascii_lowercase().as_str() {
+            "host" => found.extend(words.filter(|word| !word.contains(['*', '?', '!']) && plain_value(word, "host", "").is_ok())),
+            "include" if depth < MAX_INCLUDE_DEPTH => {
+                for pattern in words {
+                    for body in includes(&pattern) {
+                        collect_aliases(&body, includes, depth + 1, found);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn read_small_file(path: &Path) -> Option<String> {
+    let meta = std::fs::metadata(path).ok()?;
+    (meta.is_file() && meta.len() <= MAX_CONFIG_BYTES).then(|| std::fs::read_to_string(path).ok()).flatten()
+}
+
+/// The files an `Include` pattern names: relative to `~/.ssh`, `~/` expanded, and a wildcard only
+/// in the last path component (the common `conf.d/*` shape), in name order.
+pub(crate) fn include_bodies(pattern: &str, ssh_dir: &Path, home: &Path) -> Vec<String> {
+    let path = match pattern.strip_prefix("~/") {
+        Some(rest) => home.join(rest),
+        None if pattern.starts_with('/') => PathBuf::from(pattern),
+        None => ssh_dir.join(pattern),
+    };
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name().and_then(|name| name.to_str())) else {
+        return Vec::new();
+    };
+    if !name.contains(['*', '?']) {
+        return read_small_file(&path).into_iter().collect();
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut matched: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_str().is_some_and(|file| wildcard_match(name.as_bytes(), file.as_bytes())))
+        .map(|entry| entry.path())
+        .collect();
+    matched.sort();
+    matched.iter().filter_map(|file| read_small_file(file)).collect()
+}
+
+/// The host aliases in `~/.ssh/config`, sorted. Names only: nothing else in the file is read out.
+fn load_ssh_aliases() -> Vec<String> {
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else { return Vec::new() };
+    let ssh_dir = home.join(".ssh");
+    let Some(text) = read_small_file(&ssh_dir.join("config")) else { return Vec::new() };
+    let mut found = BTreeSet::new();
+    collect_aliases(&text, &|pattern| include_bodies(pattern, &ssh_dir, &home), 0, &mut found);
+    found.into_iter().take(MAX_ALIASES).collect()
+}
+
+/// Where a destination resolves to, as `ssh -G` reports it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct SshTarget {
+    pub(crate) hostname: String,
+    pub(crate) user: Option<String>,
+    pub(crate) port: u16,
+    pub(crate) jump: Option<String>,
+}
+
+pub(crate) fn parse_ssh_g(output: &str) -> Option<SshTarget> {
+    let value = |key: &str| {
+        output
+            .lines()
+            .find_map(|line| line.strip_prefix(key).and_then(|rest| rest.strip_prefix(' ')))
+            .map(|rest| rest.trim().to_string())
+            .filter(|rest| !rest.is_empty())
+    };
+    Some(SshTarget {
+        hostname: value("hostname")?,
+        user: value("user"),
+        port: value("port").and_then(|port| port.parse().ok()).unwrap_or(22),
+        jump: value("proxyjump").filter(|jump| jump != "none"),
+    })
 }
 
 // ── local socket paths ─────────────────────────────────────────────────────────────────
@@ -1258,14 +1366,18 @@ pub(crate) fn remote_hosts(app: AppHandle, state: State<'_, AppState>) -> Vec<Re
     host_views(&app, &state)
 }
 
-/// Validate and remember a destination. Nothing connects yet.
+/// Validate and remember a destination. Nothing connects yet. `label` names a new host; an
+/// existing one keeps its name.
 #[tauri::command]
-pub(crate) fn remote_add_host(app: AppHandle, state: State<'_, AppState>, destination: String) -> Result<RemoteHostView, String> {
+pub(crate) fn remote_add_host(app: AppHandle, state: State<'_, AppState>, destination: String, label: Option<String>) -> Result<RemoteHostView, String> {
     let ssh_args = parse_destination(&destination)?;
     let host_id = host_id(&ssh_args);
     let mut config = load_app_config(&app);
     let host = config.remote_hosts.entry(host_id.clone()).or_insert_with(|| RemoteHost {
-        label: ssh_args.last().cloned().unwrap_or_default(),
+        label: label
+            .map(|label| label.trim().to_string())
+            .filter(|label| !label.is_empty() && !label.chars().any(char::is_control))
+            .unwrap_or_else(|| ssh_args.last().cloned().unwrap_or_default()),
         ssh_args: ssh_args.clone(),
         // A new host receives no credentials until the user has chosen which.
         sharing: Some(RemoteSharing::default()),
@@ -1368,6 +1480,58 @@ pub(crate) async fn remote_set_sharing(app: AppHandle, host_id: String, shared: 
     tauri::async_runtime::spawn_blocking(move || set_sharing(&app, &host_id, shared))
         .await
         .map_err(|error| format!("remote sharing task: {error}"))?
+}
+
+/// The names in `~/.ssh/config`, for the "set up a remote" picker.
+#[tauri::command]
+pub(crate) async fn remote_ssh_aliases() -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(load_ssh_aliases)
+        .await
+        .map_err(|error| format!("ssh aliases task: {error}"))
+}
+
+/// Where a destination resolves to. `ssh -G` makes no connection, but it does evaluate the user's
+/// own `Match exec` lines, exactly as connecting would.
+pub(crate) fn describe_destination(destination: &str) -> Result<SshTarget, String> {
+    let args = parse_destination(destination)?;
+    let (host, flags) = args.split_last().ok_or("empty ssh destination")?;
+    let mut command = Command::new("ssh");
+    command.args(flags).arg("-G").arg(host);
+    let output = run_command(command, RemoteStdin::None, Duration::from_secs(5))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    parse_ssh_g(&String::from_utf8_lossy(&output.stdout)).ok_or_else(|| "ssh did not report a host".to_string())
+}
+
+#[tauri::command]
+pub(crate) async fn remote_describe_destination(destination: String) -> Result<SshTarget, String> {
+    tauri::async_runtime::spawn_blocking(move || describe_destination(&destination))
+        .await
+        .map_err(|error| format!("describe task: {error}"))?
+}
+
+/// Forget a host that never finished its first connect, so a failed setup leaves nothing behind.
+/// A host that has connected, or that has repos, is not touched.
+pub(crate) fn discard_unconnected_host<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str) -> Result<(), String> {
+    let mut config = load_app_config(app);
+    let has_repos = config
+        .known_repos
+        .iter()
+        .any(|key| matches!(RepoRef::parse(key), Ok(RepoRef::Remote { host_id: id, .. }) if id == host_id));
+    if has_repos || config.remote_hosts.get(host_id).is_none_or(|host| host.home.is_some()) {
+        return Ok(());
+    }
+    disconnect_host(app, host_id);
+    config.remote_hosts.remove(host_id);
+    write_app_config(app, &config)
+}
+
+#[tauri::command]
+pub(crate) async fn remote_discard_host(app: AppHandle, host_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || discard_unconnected_host(&app, &host_id))
+        .await
+        .map_err(|error| format!("discard host task: {error}"))?
 }
 
 /// Connect (or reconnect) a host, then bring back every known repo on it.

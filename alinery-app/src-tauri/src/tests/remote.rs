@@ -1,6 +1,6 @@
 use crate::remote::*;
 use alinery_core::repo_service::RepoOp;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 fn args(items: &[&str]) -> Vec<String> {
@@ -2330,4 +2330,128 @@ fn live_credentials_follow_the_choice_and_a_host_sign_in_survives() {
     session.conn.exit_master();
     let _ = std::fs::remove_dir_all(dir);
     let _ = std::fs::remove_dir_all(&session.secrets_dir);
+}
+
+#[test]
+fn ssh_config_aliases_are_the_pickable_host_names_only() {
+    let text = "\
+# my hosts
+Host dagent
+    HostName dagent.example.com
+    IdentityFile ~/.ssh/secret
+Host work_box gpu-box *.internal !blocked
+Host=eq-host # trailing comment
+Host *
+Match host db exec \"true\"
+    User x
+Host \"quoted one\" ok-two
+Include extra.conf
+";
+    let includes = |pattern: &str| {
+        assert_eq!(pattern, "extra.conf");
+        vec!["Host from-include\n".to_string()]
+    };
+    let mut found = BTreeSet::new();
+    collect_aliases(text, &includes, 0, &mut found);
+    assert_eq!(
+        found.into_iter().collect::<Vec<_>>(),
+        ["dagent", "eq-host", "from-include", "gpu-box", "ok-two", "work_box"]
+    );
+
+    // An include loop stops at the depth limit instead of running forever.
+    let looping = |_: &str| vec!["Include again\nHost deep\n".to_string()];
+    let mut found = BTreeSet::new();
+    collect_aliases("Include again\n", &looping, 0, &mut found);
+    assert!(found.contains("deep"));
+}
+
+#[test]
+fn include_patterns_resolve_against_the_ssh_dir_with_a_trailing_wildcard() {
+    let home = std::env::temp_dir().join(format!("alinery-ssh-home-{}", uuid::Uuid::new_v4()));
+    let ssh = home.join(".ssh");
+    std::fs::create_dir_all(ssh.join("conf.d")).unwrap();
+    std::fs::write(ssh.join("conf.d/b.conf"), "Host b-host\n").unwrap();
+    std::fs::write(ssh.join("conf.d/a.conf"), "Host a-host\n").unwrap();
+    std::fs::write(ssh.join("conf.d/notes.txt"), "Host skipped\n").unwrap();
+    std::fs::write(ssh.join("extra"), "Host extra-host\n").unwrap();
+    assert_eq!(include_bodies("conf.d/*.conf", &ssh, &home), ["Host a-host\n", "Host b-host\n"]);
+    assert_eq!(include_bodies("~/.ssh/extra", &ssh, &home), ["Host extra-host\n"]);
+    assert_eq!(include_bodies(&ssh.join("extra").display().to_string(), &ssh, &home), ["Host extra-host\n"]);
+    assert!(include_bodies("missing/*", &ssh, &home).is_empty());
+    let _ = std::fs::remove_dir_all(home);
+}
+
+#[test]
+fn ssh_g_output_becomes_a_target() {
+    let target = parse_ssh_g("host dagent\nuser me\nhostname dagent.example.com\nport 2222\nproxyjump me@gw\nidentityfile ~/.ssh/id\n").unwrap();
+    assert_eq!(
+        target,
+        SshTarget {
+            hostname: "dagent.example.com".into(),
+            user: Some("me".into()),
+            port: 2222,
+            jump: Some("me@gw".into()),
+        }
+    );
+    let plain = parse_ssh_g("hostname box\nport 22\nproxyjump none\n").unwrap();
+    assert_eq!((plain.user, plain.jump), (None, None));
+    assert!(parse_ssh_g("user me\n").is_none());
+}
+
+#[test]
+fn underscores_are_fine_in_user_names_and_aliases() {
+    assert_eq!(parse_destination("svc_deploy@work_box").unwrap(), args(&["svc_deploy@work_box"]));
+    assert_eq!(parse_destination("ssh -l ci_user work_box").unwrap(), args(&["-l", "ci_user", "work_box"]));
+    assert!(parse_destination("-bad_host").is_err());
+}
+
+/// A failed first setup leaves nothing behind; a host that has connected or has repos stays.
+#[test]
+fn only_a_host_that_never_connected_is_discarded() {
+    use tauri::Manager;
+    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+    context.config_mut().identifier = format!("test.alinery.discard.{}", uuid::Uuid::new_v4());
+    let app = tauri::test::mock_builder().manage(crate::AppState::default()).build(context).unwrap();
+    let handle = app.handle().clone();
+    let mut config = crate::AppConfig::default();
+    for id in ["fresh", "connected", "with-repo"] {
+        config.remote_hosts.insert(id.into(), crate::RemoteHost::default());
+    }
+    config.remote_hosts.get_mut("connected").unwrap().home = Some("/home/me".into());
+    config.known_repos.push("alinery+ssh://with-repo/srv/r".into());
+    crate::write_app_config(&handle, &config).unwrap();
+
+    for id in ["fresh", "connected", "with-repo", "unknown"] {
+        discard_unconnected_host(&handle, id).unwrap();
+    }
+    let kept: Vec<String> = crate::load_app_config(&handle).remote_hosts.into_keys().collect();
+    assert_eq!(kept, ["connected", "with-repo"]);
+    if let Ok(dir) = handle.path().app_config_dir() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// `ssh -G` resolves an alias from a config file without connecting.
+#[test]
+fn describe_destination_reports_where_an_alias_resolves() {
+    if std::process::Command::new("ssh").arg("-V").output().is_err() {
+        eprintln!("skipped: no ssh on this machine");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("alinery-ssh-g-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config = dir.join("config");
+    std::fs::write(&config, "Host demo\n  HostName demo.example.com\n  User deploy\n  Port 2200\n").unwrap();
+    let target = describe_destination(&format!("-F {} demo", config.display())).unwrap();
+    assert_eq!(
+        target,
+        SshTarget {
+            hostname: "demo.example.com".into(),
+            user: Some("deploy".into()),
+            port: 2200,
+            jump: None,
+        }
+    );
+    assert!(describe_destination("ssh box ls").is_err(), "a destination the parser refuses is not passed to ssh");
+    let _ = std::fs::remove_dir_all(dir);
 }

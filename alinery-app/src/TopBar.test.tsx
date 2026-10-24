@@ -111,6 +111,20 @@ describe("TopBar navigation", () => {
     expect(callbacks.onSwitchGrid).toHaveBeenCalledWith("triage");
   });
 
+  it("puts the remote button beside add repository, and shows it only when remotes are supported", () => {
+    const onAddRemote = vi.fn();
+    const { unmount } = render(<TopBar active="list" scope="active" appConfig={appConfig} isDev={false} onAddRemote={onAddRemote} {...callbacks} />);
+    const add = screen.getByRole("button", { name: "Add repository" });
+    const remote = screen.getByRole("button", { name: "Add remote repository" });
+    expect(add.nextElementSibling).toBe(remote);
+    fireEvent.click(remote);
+    expect(onAddRemote).toHaveBeenCalledOnce();
+    expect(callbacks.onAddRepo).not.toHaveBeenCalled();
+    unmount();
+    render(<TopBar active="list" scope="active" appConfig={appConfig} isDev={false} {...callbacks} />);
+    expect(screen.queryByRole("button", { name: "Add remote repository" })).toBeNull();
+  });
+
   it("keeps search and creation independently actionable", () => {
     render(<TopBar active="playbooks" scope="active" appConfig={appConfig} isDev={false} {...callbacks} />);
     fireEvent.click(screen.getByRole("button", { name: "Search" }));

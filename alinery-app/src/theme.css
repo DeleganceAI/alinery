@@ -598,6 +598,11 @@ nav.tabs .tab:hover:not(.on) {
   border-bottom-left-radius: 0;
   margin-left: -1px;
 }
+/* Add repo and add remote repo sit together as one joined control. */
+.repo-switcher .repo-add:not(:last-child) {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
 .repo-select {
   position: relative;
   display: flex;
@@ -5394,6 +5399,97 @@ dialog.modal::backdrop {
   gap: 4px;
   color: var(--text-muted);
   font-size: calc(12px * var(--ui-scale));
+}
+.remote-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.remote-field-label {
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 500;
+}
+.remote-saved-host.on {
+  background: var(--accent-subtle);
+}
+.remote-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+}
+.remote-empty .dsc {
+  margin: 0;
+}
+.remote-host-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+}
+.remote-host-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.remote-host-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.remote-state::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.remote-state.connected::before {
+  background: var(--success);
+}
+.remote-host-warn {
+  color: var(--warning);
+  font-size: calc(12px * var(--ui-scale));
+}
+.remote-steps,
+.remote-progress {
+  display: flex;
+  gap: 14px;
+  margin: 0;
+  padding: 0 16px 8px;
+  list-style: none;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.remote-steps li,
+.remote-progress li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.remote-steps li.on,
+.remote-progress li.on {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+.remote-steps li.done,
+.remote-progress li.done {
+  color: var(--text);
+}
+.remote-progress {
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
 }
 /* Credentials step: what a host may use. */
 .remote-share {

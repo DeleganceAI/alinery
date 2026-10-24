@@ -1,4 +1,4 @@
-import { ArrowUpCircle, Check, ChevronDown, CircleAlert, CircleCheck, FolderPlus, Info, Plus, Search, TriangleAlert, X } from "lucide-react";
+import { ArrowUpCircle, Check, ChevronDown, CircleAlert, CircleCheck, FolderPlus, Info, Plus, Search, Server, TriangleAlert, X } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { type OrbState, ThinkingOrb } from "thinking-orbs";
@@ -643,7 +643,7 @@ export function TopBar({
   onSelectRepo: (path: string) => void;
   onRemoveRepo: (path: string) => void;
   onAddRepo: () => void;
-  /** Opens the SSH repository dialog. */
+  /** Opens the remote repositories modal. */
   onAddRemote?: () => void;
   /** Connection state per remote host id, for the repo menu. */
   remoteStates?: Record<string, string>;
@@ -728,18 +728,15 @@ export function TopBar({
         </span>
       </button>
       <div className="repo-switcher">
-        <RepoSelect
-          value={value}
-          includeAll={includeAll}
-          knownRepos={appConfig.known_repos}
-          remoteStates={remoteStates}
-          onSelect={onSelectRepo}
-          onRemove={onRemoveRepo}
-          onAddRemote={onAddRemote}
-        />
+        <RepoSelect value={value} includeAll={includeAll} knownRepos={appConfig.known_repos} remoteStates={remoteStates} onSelect={onSelectRepo} onRemove={onRemoveRepo} />
         <button type="button" className="iconbtn repo-add" title="Add repo" aria-label="Add repository" onClick={onAddRepo}>
           <FolderPlus size={16} strokeWidth={1.5} aria-hidden="true" />
         </button>
+        {onAddRemote ? (
+          <button type="button" className="iconbtn repo-add" title="Add remote repo (SSH)" aria-label="Add remote repository" onClick={onAddRemote}>
+            <Server size={16} strokeWidth={1.5} aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
       <button type="button" className="iconbtn search" title="Search (⌘K)" aria-label="Search" onClick={onSearch}>
         <Search size={15} strokeWidth={1.5} aria-hidden="true" />
@@ -761,7 +758,6 @@ function RepoSelect({
   remoteStates,
   onSelect,
   onRemove,
-  onAddRemote,
 }: {
   value: string;
   includeAll: boolean;
@@ -769,7 +765,6 @@ function RepoSelect({
   remoteStates?: Record<string, string>;
   onSelect: (path: string) => void;
   onRemove: (path: string) => void;
-  onAddRemote?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement | null>(null);
@@ -886,21 +881,6 @@ function RepoSelect({
               </div>
             );
           })}
-          {onAddRemote ? (
-            <div className="repo-opt">
-              <button
-                type="button"
-                className="repo-opt-main"
-                onClick={() => {
-                  setOpen(false);
-                  trigger.current?.focus();
-                  onAddRemote();
-                }}
-              >
-                <span className="repo-opt-name">Add remote repository (SSH)…</span>
-              </button>
-            </div>
-          ) : null}
         </div>
       )}
     </div>

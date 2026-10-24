@@ -88,6 +88,7 @@ import type {
   SessionObservation,
   SessionStatusRef,
   SkillInstall,
+  SshTarget,
   StagedUpdate,
   StorageInfo,
   SubtaskManagerState,
@@ -136,7 +137,10 @@ export const writeAppearance = (appearance: AppearancePrefs) => invoke<AppConfig
 // A failed connect whose message starts with HOST_KEY_UNKNOWN (remoteRepo.ts) means first
 // contact with the host: confirm with the user, then connect again with trust = true.
 export const remoteHosts = () => invoke<RemoteHostView[]>("remote_hosts");
-export const remoteAddHost = (destination: string) => invoke<RemoteHostView>("remote_add_host", { destination });
+export const remoteAddHost = (destination: string, label?: string) => invoke<RemoteHostView>("remote_add_host", { destination, label: label ?? null });
+export const remoteSshAliases = () => invoke<string[]>("remote_ssh_aliases");
+export const remoteDescribeDestination = (destination: string) => invoke<SshTarget>("remote_describe_destination", { destination });
+export const remoteDiscardHost = (hostId: string) => invoke<void>("remote_discard_host", { hostId });
 export const remoteConnect = (hostId: string, trust: boolean) => invoke<void>("remote_connect", { hostId, trust });
 export const remoteDisconnect = (hostId: string) => invoke<void>("remote_disconnect", { hostId });
 export const remoteSharing = (hostId: string) => invoke<RemoteSharingView>("remote_sharing", { hostId });

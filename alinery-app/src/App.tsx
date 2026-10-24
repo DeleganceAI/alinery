@@ -35,7 +35,7 @@ import * as ipc from "./ipc";
 import { LaunchSourceBar } from "./LaunchSourceBar";
 import { BrandMark } from "./Logo";
 import { isOnboardingCompleted, markOnboardingCompleted, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset } from "./onboarding";
-import { RemoteRepoDialog } from "./RemoteRepoDialog";
+import { RemoteModal, type RemoteModalEntry } from "./RemoteModal";
 import { isRemoteRepo, parseRemoteRepo } from "./remoteRepo";
 import { setRevealRepo } from "./revealPath";
 import { PRIORITY_SESSION_SORT, type SessionSort } from "./sessionAttention";
@@ -313,7 +313,7 @@ export default function App() {
   }, []);
 
   const daemon = useDaemonStatus(appConfig?.active_repo ?? "");
-  const [remoteDialog, setRemoteDialog] = useState<{ hostId?: string } | null>(null);
+  const [remoteDialog, setRemoteDialog] = useState<RemoteModalEntry | null>(null);
   const activeRepoKey = appConfig?.active_repo ?? "";
   useEffect(() => setRevealRepo(activeRepoKey), [activeRepoKey]);
   const remoteHosts = useRemoteHosts(remoteDialog !== null || Boolean(appConfig?.known_repos.some(isRemoteRepo)));
@@ -603,14 +603,15 @@ export default function App() {
     return current;
   };
 
-  const setRepo = async (path: string): Promise<boolean> => {
+  // `connected` is the remote modal vouching for its host: the polled state lags a fresh connect.
+  const setRepo = async (path: string, connected = false): Promise<boolean> => {
     const p = path.trim();
     if (!p) return false;
     setRepoErr("");
-    // A remote repo whose host is not connected needs the connect flow first.
+    // A remote repo whose host is not connected reconnects first, then opens.
     const remote = parseRemoteRepo(p);
-    if (remote && remoteStates[remote.hostId] !== "connected") {
-      setRemoteDialog({ hostId: remote.hostId });
+    if (remote && !connected && remoteStates[remote.hostId] !== "connected") {
+      setRemoteDialog({ kind: "reconnect", hostId: remote.hostId, repoKey: p });
       return false;
     }
     try {
@@ -1398,15 +1399,16 @@ export default function App() {
           />
         )}
         {remoteDialog && (
-          <RemoteRepoDialog
-            hostId={remoteDialog.hostId}
+          <RemoteModal
+            entry={remoteDialog}
             hosts={remoteHosts.hosts}
+            knownRepos={appConfig?.known_repos ?? []}
             onClose={() => {
               setRemoteDialog(null);
               void remoteHosts.refresh();
             }}
             onOpened={async (key) => {
-              await setRepo(key);
+              await setRepo(key, true);
             }}
           />
         )}
@@ -1522,7 +1524,7 @@ export default function App() {
           initialStep="workspace"
           onSelectRepo={setRepo}
           onAddRepo={addRepo}
-          onAddRemoteRepo={() => setRemoteDialog({})}
+          onAddRemoteRepo={() => setRemoteDialog({ kind: "hosts" })}
           onRemoveRepo={removeRepo}
           onOpenProviderSetup={(tab, onPick) => setManualProviderSetup({ tab, onPick })}
           onCompleteToWorkspace={completeOnboarding}
@@ -1553,7 +1555,7 @@ export default function App() {
       onSwitchGrid={(gridViewId) => switchTop("grid", { gridViewId })}
       onSelectRepo={selectRepoValue}
       onAddRepo={addRepo}
-      onAddRemote={() => setRemoteDialog({})}
+      onAddRemote={() => setRemoteDialog({ kind: "hosts" })}
       remoteStates={remoteStates}
       onRemoveRepo={removeRepo}
       onBrand={() => switchTop("grid", { gridViewId: gridViews[0].id })}

@@ -391,6 +391,8 @@ export type RemoteHostView = {
   /** Provider ids whose sign-ins were removed from the host and not yet acknowledged. */
   erased_sign_ins: string[];
 };
+/** Where a destination resolves to, as `ssh -G` reports it. */
+export type SshTarget = { hostname: string; user: string | null; port: number; jump: string | null };
 /** What this Mac could give a host, and what the host is set to receive. */
 export type RemoteSharingView = {
   reviewed: boolean;
