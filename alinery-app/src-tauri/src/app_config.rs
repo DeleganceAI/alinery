@@ -70,8 +70,6 @@ pub(crate) struct AppearancePrefs {
     #[serde(default = "default_true")]
     pub(crate) chat_auto_collapse_thinking: bool,
     #[serde(default = "default_true")]
-    pub(crate) chat_auto_compaction: bool,
-    #[serde(default = "default_true")]
     pub(crate) chat_auto_scroll: bool,
     #[serde(default = "default_chat_rail_density")]
     pub(crate) chat_rail_density: String,
@@ -126,7 +124,6 @@ impl Default for AppearancePrefs {
             chat_show_subagent_rows: true,
             chat_show_subagent_drawer: true,
             chat_auto_collapse_thinking: true,
-            chat_auto_compaction: true,
             chat_auto_scroll: true,
             chat_rail_density: default_chat_rail_density(),
             chat_font_size: default_chat_font_size(),
@@ -227,7 +224,6 @@ pub(crate) fn sanitize_appearance(prefs: AppearancePrefs) -> AppearancePrefs {
         chat_show_subagent_rows: prefs.chat_show_subagent_rows,
         chat_show_subagent_drawer: prefs.chat_show_subagent_drawer,
         chat_auto_collapse_thinking: prefs.chat_auto_collapse_thinking,
-        chat_auto_compaction: prefs.chat_auto_compaction,
         chat_auto_scroll: prefs.chat_auto_scroll,
         chat_rail_density: match prefs.chat_rail_density.trim() {
             "dense" | "compact" => "dense".into(),

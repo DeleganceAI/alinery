@@ -346,6 +346,7 @@ pub fn run() {
             update_omp,
             omp_agent_sessions_dir,
             read_omp_model_roles,
+            read_omp_compaction,
             write_omp_model_roles,
             open_omp_config_dir,
             omp_customization_prompt,

@@ -33,8 +33,6 @@ export type AppearancePrefs = {
   chat_show_subagent_drawer?: boolean;
   /** Collapse thinking when streaming ends unless expand-by-default is on. Absent → true. */
   chat_auto_collapse_thinking?: boolean;
-  /** Push set_auto_compaction to OMP. Absent → true. */
-  chat_auto_compaction?: boolean;
   /** Stick scroll to bottom on new entries. Absent → true. */
   chat_auto_scroll?: boolean;
   /** Rail / journal spacing. Absent → normal. */
@@ -80,7 +78,6 @@ export type ChatViewPrefs = Pick<
   | "chat_show_subagent_rows"
   | "chat_show_subagent_drawer"
   | "chat_auto_collapse_thinking"
-  | "chat_auto_compaction"
   | "chat_auto_scroll"
   | "chat_rail_density"
   | "chat_font_size"
@@ -248,6 +245,24 @@ export type OmpRelease = { version: string; asset_url: string };
 export type OmpUpdateStatus = { installed: string; available: OmpRelease | null; checked_at: number; binary_path: string; config_dir: string };
 export type OmpCustomization = { name: string; kind: string; source: string; path: string | null };
 export type OmpCustomizations = { items: OmpCustomization[]; errors: string[] };
+
+export type OmpCompactionField<T extends boolean | number> = {
+  value: T | null;
+  source: "configured" | "upstream_default" | "unknown";
+  error?: string | null;
+};
+export type OmpCompactionSnapshot = {
+  binary_path: string | null;
+  installed_version: string | null;
+  config_path: string | null;
+  status: "ready" | "legacy_unresolved" | "invalid" | "unreadable" | "unsupported" | "missing_binary";
+  enabled: OmpCompactionField<boolean>;
+  threshold_percent: OmpCompactionField<number>;
+  threshold_tokens: OmpCompactionField<number>;
+  mid_turn_enabled: OmpCompactionField<boolean>;
+  async_enabled: OmpCompactionField<boolean>;
+  errors: string[];
+};
 export type StagedUpdate = { version: string; app_path: string; scratch_dir: string };
 export type GlobalSettings = {
   notifications: NotificationPrefs;

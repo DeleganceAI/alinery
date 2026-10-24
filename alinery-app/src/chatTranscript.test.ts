@@ -280,6 +280,16 @@ describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
     expect(state.sessionMeta.autoCompactionEnabled).toBe(false);
   });
 
+  it("compaction events remain observable without preference writer", () => {
+    const initial = applyRpcLine(emptyTranscript(), { type: "response", command: "get_state", success: true, data: { autoCompactionEnabled: false } });
+    const compacting = applyRpcLine(initial, { type: "auto_compaction_start" });
+    expect(compacting.sessionMeta.isCompacting).toBe(true);
+    expect(compacting.sessionMeta.autoCompactionEnabled).toBe(false);
+    const finished = applyRpcLine(compacting, { type: "auto_compaction_end" });
+    expect(finished.sessionMeta.isCompacting).toBe(false);
+    expect(finished.entries.some((entry) => entry.type === "harness" && entry.event === "auto_compaction_end")).toBe(true);
+  });
+
   describe("the thinking level", () => {
     const reasoning = { provider: "anthropic", id: "opus", reasoning: true, thinking: { efforts: ["minimal", "low", "medium", "high"] } };
     const getState = (data: object) => ({ type: "response", command: "get_state", success: true, data });

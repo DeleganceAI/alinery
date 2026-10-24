@@ -1,6 +1,14 @@
 //! settings: extracted from lib.rs. See AGENTS.md for the module map.
 use crate::*;
 
+#[tauri::command]
+pub(crate) async fn read_omp_compaction(app: AppHandle) -> Result<alinery_core::OmpCompactionSnapshot, String> {
+    let app_config = app_config_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || alinery_core::read_omp_compaction(&app_config))
+        .await
+        .map_err(|_| "OMP settings worker failed".to_string())?
+}
+
 // Bundled OMP launch config + compiled Terminal. Not a multi-harness picker registry.
 
 // {binary} lands in command position inside a shell pipeline, and the path behind it comes

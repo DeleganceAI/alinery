@@ -9419,6 +9419,54 @@ dialog.modal::backdrop {
   font-size: calc(12px * var(--ui-scale));
   line-height: 1.5;
 }
+.omp-compaction-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.omp-settings .omp-compaction-heading h4 {
+  margin: 0;
+}
+.omp-compaction-content {
+  display: grid;
+}
+.omp-compaction-values,
+.omp-compaction-first-error {
+  grid-area: 1 / 1;
+}
+.omp-compaction-first-error {
+  align-self: start;
+  min-width: 0;
+}
+.omp-compaction-values-hidden {
+  visibility: hidden;
+}
+.omp-compaction-placeholder {
+  display: block;
+  width: 8em;
+  max-width: 100%;
+  height: 1lh;
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+}
+.omp-compaction-values {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 24px;
+  max-width: 560px;
+  margin: 12px 0;
+  font-size: calc(13px * var(--ui-scale));
+}
+.omp-compaction-values dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.omp-compaction-token-limit {
+  min-block-size: 2lh;
+}
 .omp-customization-list {
   list-style: none;
   margin: 0;

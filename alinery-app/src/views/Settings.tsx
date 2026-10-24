@@ -55,6 +55,7 @@ import type {
 } from "../types";
 import { type McpStatus, type McpStatusHandle, mcpDotColor, mcpStatusLabel } from "../useMcpStatus";
 import { useOmpUpdateStatus } from "../useOmpUpdateStatus";
+import { OmpCompaction } from "./OmpCompaction";
 import { OmpCustomizations } from "./OmpCustomizations";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
@@ -1514,18 +1515,6 @@ export function Settings({
           }
         />
         <Checkbox
-          checked={view.chat_auto_compaction !== false}
-          disabled={!isGlobal}
-          onChange={(enabled) => {
-            if (isGlobal) saveView({ ...view, chat_auto_compaction: enabled });
-          }}
-          label={
-            <>
-              Auto-compaction <span className="dsc">— ask OMP to compact context when the session fills up</span>
-            </>
-          }
-        />
-        <Checkbox
           checked={view.chat_auto_scroll !== false}
           disabled={!isGlobal}
           onChange={(enabled) => {
@@ -1727,6 +1716,7 @@ export function Settings({
               </div>
             )}
           </section>
+          <OmpCompaction />
           <details className="harness-disclosure harness-customizations">
             <summary>Customizations</summary>
             <OmpCustomizations />

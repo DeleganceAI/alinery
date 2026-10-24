@@ -342,6 +342,34 @@ describe("QuickChat", () => {
     expect(mocks.getCurrentWebview).not.toHaveBeenCalled();
   });
 
+  it("shared pinned thread remains read-only across hide and reopen", async () => {
+    const row = thread("s-live", "/repos/one", { name: "Alpha", session: meta("s-live", { pinned: true }) });
+    mocks.listChatThreads.mockResolvedValue([row]);
+    let onLine: (line: string) => void = () => {};
+    mocks.chatRpcAttach.mockImplementation(async (args: { onLine: (line: string) => void }) => {
+      onLine = args.onLine;
+    });
+    const content = (open: boolean) => (
+      <ChatSessionProvider>
+        <ChatView terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />
+        <QuickChat open={open} visibility={DEFAULT_CHAT_VISIBILITY} onOpenInChat={() => {}} onHide={() => {}} />
+      </ChatSessionProvider>
+    );
+    const view = render(content(true));
+    const rail = await screen.findByTestId("chat-rail");
+    fireEvent.click(await within(rail).findByRole("button", { name: /^Alpha/ }));
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repos/one", "s-live", expect.objectContaining({ type: "get_state" })));
+    act(() => onLine(JSON.stringify({ type: "response", command: "get_state", success: true, data: { autoCompactionEnabled: false } })));
+    view.rerender(content(false));
+    expect(within(rail).getByRole("button", { name: /^Alpha/ })).toBeTruthy();
+    view.rerender(content(true));
+    const count = mocks.chatRpcAttach.mock.calls.length;
+    act(() => mocks.onStreamClosed.mock.calls[mocks.onStreamClosed.mock.calls.length - 1]?.[2]());
+    await waitFor(() => expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(count + 1));
+    await waitFor(() => expect(mocks.chatRpcWrite.mock.calls.filter(([, , command]) => command.type === "get_state").length).toBeGreaterThan(1));
+    expect(mocks.chatRpcWrite.mock.calls.filter(([, , command]) => command.type === "set_auto_compaction")).toEqual([]);
+  });
+
   it("attaches a thread once when Chat and the window both show it", async () => {
     const row = thread("s-live", "/repos/one", { name: "Alpha", session: meta("s-live", { pinned: true }) });
     mocks.listChatThreads.mockResolvedValue([row]);

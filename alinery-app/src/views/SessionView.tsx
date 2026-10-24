@@ -58,7 +58,6 @@ import {
   loginCommand,
   negotiateProtocolCommand,
   promptCommand,
-  setAutoCompactionCommand,
   setModelCommand,
   setSubagentSubscriptionCommand,
   setThinkingLevelCommand,
@@ -200,9 +199,6 @@ export function SessionView({
   const [artifactWidth, artifactResizerProps] = useArtifactPaneWidth(appearance, onAppearanceChange);
   const termhostRef = useRef<HTMLDivElement>(null);
   const backButtonRef = useRef<HTMLButtonElement>(null);
-  const chatAutoCompaction = appearance.chat_auto_compaction !== false;
-  const chatAutoCompactionRef = useRef(chatAutoCompaction);
-  chatAutoCompactionRef.current = chatAutoCompaction;
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const commentOpenerRef = useRef<HTMLElement | null>(null);
   const {
@@ -1533,8 +1529,6 @@ export function SessionView({
         if (cancelled) return;
         await ipc.rpcWriteSession(id, getStateCommand());
         if (cancelled) return;
-        await ipc.rpcWriteSession(id, setAutoCompactionCommand(chatAutoCompactionRef.current));
-        if (cancelled) return;
         await ipc.rpcWriteSession(id, setSubagentSubscriptionCommand("events"));
         if (cancelled) return;
         await ipc.rpcWriteSession(id, getSubagentsCommand());
@@ -1568,10 +1562,6 @@ export function SessionView({
       void ipc.detachSession(id, attachId);
     };
   }, [liveRpc, rpcProcessLive, id, taskSlug, seedOmpJournal, chatAttachEpoch]);
-  useEffect(() => {
-    if (!rpcProcessLive) return;
-    void ipc.rpcWriteSession(id, setAutoCompactionCommand(chatAutoCompaction)).catch(() => undefined);
-  }, [chatAutoCompaction, rpcProcessLive, id]);
   const settleOpenUrl = async (requestId: string, raw: string | undefined) => {
     try {
       await settleBrowserUrl(id, requestId, raw, (error) => toast(error, "error"));
