@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, ChevronRight, Ellipsis, FastForward, FileUp, Hand, MessageSquare, Pencil, RotateCcw, Square, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronRight, Ellipsis, Eye, EyeOff, FastForward, FileUp, Hand, MessageSquare, Pencil, RotateCcw, Square, X } from "lucide-react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -344,7 +344,9 @@ export function SessionView({
   }, [repoPath, taskSlug, id]);
   const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
   const executionEpoch = useRef(0);
-  const followContinuation = useRef<{ executionId: string; revision: number; stepKey?: string; automatic?: boolean; existingIds: Set<string> } | null>(null);
+  const [followEnabled, setFollowEnabled] = useState(true);
+  const followContinuation = useRef<string | null>(null);
+  const followNavigation = useRef<string | null>(null);
   const [executionError, setExecutionError] = useState("");
   const [lineageSessions, setLineageSessions] = useState<SessionDisplayMeta[]>([]);
   const [lineageObservations, setLineageObservations] = useState<Record<string, SessionObservation>>({});
@@ -680,6 +682,10 @@ export function SessionView({
     let alive = true;
     executionEpoch.current += 1;
     followContinuation.current = null;
+    if (followNavigation.current && followNavigation.current !== id) {
+      followNavigation.current = null;
+      setFollowEnabled(false);
+    }
     continuationInFlight.current = false;
     modeChangingRef.current = false;
     setModeChanging(false);
@@ -752,38 +758,33 @@ export function SessionView({
   }, [taskSlug, repoPath, id]);
 
   useEffect(() => {
-    if (!executionAvailable || !executionView || lineageError || !onOpenSession) return;
-    if (followContinuation.current?.automatic && !automaticContinuation) followContinuation.current = null;
-    if (automaticContinuation && execution?.owner_session_id === id && execution.lifecycle === "running" && !execution.receipt_id && !followContinuation.current) {
-      followContinuation.current = {
-        executionId: execution.id,
-        revision: execution.work_revision,
-        automatic: true,
-        existingIds: new Set(Object.keys(executionView.state.executions)),
-      };
+    if (!followEnabled || !executionAvailable || !executionView || lineageError || !onOpenSession) return;
+    if (followNavigation.current && followNavigation.current !== id) return;
+    if (!execution || execution.owner_session_id !== id) return;
+    if (!followContinuation.current) {
+      // Opening history must not redirect; following an already-finished successor may continue the chain.
+      if (execution.lifecycle === "completed" && followNavigation.current !== id) {
+        setFollowEnabled(false);
+        return;
+      }
+      if (!["running", "finishing", "completed"].includes(execution.lifecycle)) return;
+      followContinuation.current = execution.id;
+      followNavigation.current = null;
     }
-    const follow = followContinuation.current;
-    if (!follow) return;
-    const source = executionView.state.executions[follow.executionId];
-    if (!source || source.owner_session_id !== id || (!follow.automatic && source.work_revision !== follow.revision)) {
-      followContinuation.current = null;
-      return;
-    }
+    const source = executionView.state.executions[followContinuation.current];
+    if (!source || source.owner_session_id !== id) return;
     if (!source.receipt_id || !source.shutdown_confirmed || source.lifecycle !== "completed") return;
-    if (follow.automatic && executionView.executions[source.id]?.destinations.length !== 1) return;
-    const successors = Object.values(executionView.state.executions).filter(
-      (record) =>
-        !follow.existingIds.has(record.id) && record.parent_execution_ids.includes(source.id) && (follow.stepKey === undefined || record.candidate.step_key === follow.stepKey),
-    );
+    const successors = Object.values(executionView.state.executions).filter((record) => record.parent_execution_ids.includes(source.id));
+    // Follow actual execution lineage, not prospective destinations that disappear after completion.
     // A fan-out has no single destination session. Leave selection to the navigator.
     if (successors.length !== 1) return;
     const successor = successors[0];
     if (!["running", "finishing", "completed"].includes(successor.lifecycle)) return;
     const session = lineageSessions.find((item) => item.id === successor.owner_session_id && item.execution_id === successor.id && !item.archived && item.started_at != null);
     if (!session) return;
-    followContinuation.current = null;
+    followNavigation.current = session.id;
     onOpenSession(session);
-  }, [executionView, executionAvailable, execution, automaticContinuation, lineageSessions, lineageError, id, onOpenSession]);
+  }, [executionView, executionAvailable, execution, followEnabled, lineageSessions, lineageError, id, onOpenSession]);
 
   const handleArchive = async () => {
     if (archivePending.current) return;
@@ -2038,7 +2039,7 @@ export function SessionView({
     (completionBusy ? "A session action is in progress." : "");
   const modeBlocker = controlBlocker || (modeChanging ? "Updating continuation mode." : "");
   const pendingSendItems = [...pendingSends.values()];
-  const visibleSendRecovery = pendingSendItems.filter((item) => item.origin !== "nudge" || item.status === "refused" || item.status === "unknown");
+  const visibleSendRecovery = pendingSendItems.filter((item) => item.status === "refused" || item.status === "unknown");
   const pendingNudge = pendingSendItems.find((pending) => pending.origin === "nudge" && pending.status !== "refused" && pending.status !== "settled");
   const nudgeBlocker =
     controlBlocker ||
@@ -2075,15 +2076,6 @@ export function SessionView({
   const continueReadyExecution = async () => {
     if (continuationInFlight.current || continuationReason || !execution || !capability || execution.ready_revision == null) return;
     const epoch = executionEpoch.current;
-    followContinuation.current =
-      destinations.length === 1 && onOpenSession
-        ? {
-            executionId: execution.id,
-            revision: execution.ready_revision,
-            stepKey: destinations[0].step_key,
-            existingIds: new Set(Object.keys(executionView?.state.executions ?? {})),
-          }
-        : null;
     const request = {
       task_slug: taskSlug,
       execution_id: execution.id,
@@ -2100,7 +2092,6 @@ export function SessionView({
         const outcome = await ipc.continueExecution(request, repoPath);
         if (epoch !== executionEpoch.current) return;
         if (outcome.status !== "requested" && outcome.status !== "accepted") {
-          followContinuation.current = null;
           setRequestedContinuation(null);
         }
         if (outcome.status === "invalid_outputs") setContinuationMessage(outcome.diagnostics.join("\n"));
@@ -2403,7 +2394,7 @@ export function SessionView({
           )}
         </span>
       )}
-      <fieldset className="continuation-modes" aria-label="Continuation mode for this step">
+      <fieldset className="continuation-modes" aria-label="Session continuation controls">
         <button
           type="button"
           className="btn icon"
@@ -2430,6 +2421,25 @@ export function SessionView({
           onClick={() => void setContinuationMode(true)}
         >
           <FastForward size={16} />
+        </button>
+        <button
+          type="button"
+          className="btn icon"
+          aria-label="Follow next session"
+          aria-pressed={followEnabled}
+          disabled={!onOpenSession}
+          title={
+            followEnabled
+              ? "Follow next session: on. When this step finishes and a single successor starts, open it and keep following, in either continuation mode. Browsing another session pauses following. Click to stay here."
+              : "Follow next session: off. Stay on this session while the playbook continues. Click to follow its single started successor and keep following. This does not change continuation permissions."
+          }
+          onClick={() => {
+            followContinuation.current = !followEnabled && execution?.owner_session_id === id ? execution.id : null;
+            followNavigation.current = null;
+            setFollowEnabled(!followEnabled);
+          }}
+        >
+          {followEnabled ? <Eye size={16} /> : <EyeOff size={16} />}
         </button>
       </fieldset>
       {continuationMessage && (
@@ -2598,6 +2608,33 @@ export function SessionView({
       />
     );
   }
+  const recoveryContent =
+    visibleSendRecovery.length > 0 ? (
+      <section className="session-input-recovery" aria-label="Recoverable session input">
+        {visibleSendRecovery.map((item) => (
+          <div key={item.commandId} role="status">
+            <span>
+              {item.status === "refused" ? "Not sent" : "Delivery unknown"}: {item.draft}
+              {item.reason ? ` — ${item.reason}` : ""}
+            </span>
+            <CopyTextButton text={item.draft} label="original message" />
+            <button
+              type="button"
+              disabled={!showChatComposer || item.status !== "refused" || messageDraft.body !== "" || messageDraft.attachments.length > 0 || messageDraft.pendingActions.length > 0}
+              onClick={() => {
+                updateMessageDraft({ body: item.draft, pendingActions: item.actions, attachments: item.attachments });
+                pendingSends.delete(item.commandId);
+                refreshSendRecovery((revision) => revision + 1);
+              }}
+            >
+              Restore unsent message{item.attachments.length > 0 ? ` (${item.attachments.length} attachments)` : ""}
+            </button>
+          </div>
+        ))}
+      </section>
+    ) : messageError ? (
+      <InlineStatus tone="error">{messageError}</InlineStatus>
+    ) : null;
   return (
     <div className="sessionview">
       <div className="sessionhd">
@@ -2902,6 +2939,7 @@ export function SessionView({
               {liveRpc || harness === "omp" ? (
                 <>
                   <ChatPane
+                    recoveryContent={recoveryContent}
                     entries={chatEntries}
                     status={chatStatus}
                     visibility={chatVisibility}
@@ -2957,6 +2995,7 @@ export function SessionView({
                   ) : null}
                   <div className="terminal-frame">
                     <ChatPane
+                      recoveryContent={recoveryContent}
                       entries={chatEntries}
                       status={chatStatus}
                       visibility={chatVisibility}
@@ -3014,7 +3053,6 @@ export function SessionView({
                         canAbort={composerCanAbort}
                         queuedCount={queuedMeta}
                       />
-                      {messageError ? <InlineStatus tone="error">{messageError}</InlineStatus> : null}
                     </>
                   ) : null}
                 </>
@@ -3042,41 +3080,6 @@ export function SessionView({
               {contextActions.length > 0 && <ContextActionBar actions={contextActions} />}
             </>
           )}
-          {visibleSendRecovery.length > 0 && (
-            <section className="session-input-recovery" aria-label="Recoverable session input">
-              {visibleSendRecovery.map((item) => (
-                <div key={item.commandId} role="status">
-                  <span>
-                    {item.status === "refused"
-                      ? "Not sent"
-                      : item.status === "unknown"
-                        ? "Delivery unknown"
-                        : item.status === "pending"
-                          ? "Awaiting delivery confirmation"
-                          : item.status === "settled"
-                            ? "Message settled"
-                            : "Awaiting native settlement"}
-                    : {item.draft}
-                    {item.reason ? ` — ${item.reason}` : ""}
-                  </span>
-                  <CopyTextButton text={item.draft} label="original message" />
-                  <button
-                    type="button"
-                    disabled={
-                      !showChatComposer || item.status !== "refused" || messageDraft.body !== "" || messageDraft.attachments.length > 0 || messageDraft.pendingActions.length > 0
-                    }
-                    onClick={() => {
-                      updateMessageDraft({ body: item.draft, pendingActions: item.actions, attachments: item.attachments });
-                      pendingSends.delete(item.commandId);
-                      refreshSendRecovery((revision) => revision + 1);
-                    }}
-                  >
-                    Restore unsent message{item.attachments.length > 0 ? ` (${item.attachments.length} attachments)` : ""}
-                  </button>
-                </div>
-              ))}
-            </section>
-          )}
           {!navHistory && showPanel && effectiveLifecycle && (
             <>
               <SessionActionPanel
@@ -3097,7 +3100,15 @@ export function SessionView({
               {showHistory &&
                 (harness === "omp" ? (
                   <div className="terminal-frame">
-                    <ChatPane entries={chat.entries} status="idle" visibility={chatVisibility} onLoadOlder={loadOlder} loadingOlder={loadingOlder} atStart={chat.fileStart === 0} />
+                    <ChatPane
+                      recoveryContent={recoveryContent}
+                      entries={chat.entries}
+                      status="idle"
+                      visibility={chatVisibility}
+                      onLoadOlder={loadOlder}
+                      loadingOlder={loadingOlder}
+                      atStart={chat.fileStart === 0}
+                    />
                     <ChatComposer body="" status="idle" catalog={[]} showHints={false} readOnly onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} />
                   </div>
                 ) : (
@@ -3129,7 +3140,16 @@ export function SessionView({
             error={lineageError || executionError}
             artifactPaths={artifactNames}
             readableArtifactPaths={artifactNames.filter((path) => findOwnedArtifactNode(artifactTree, path))}
-            onOpenSession={onOpenSession}
+            onOpenSession={
+              onOpenSession
+                ? (session) => {
+                    setFollowEnabled(false);
+                    followContinuation.current = null;
+                    followNavigation.current = null;
+                    onOpenSession(session);
+                  }
+                : undefined
+            }
             onOpenArtifact={openStepArtifact}
           />
           {modelDialog && (

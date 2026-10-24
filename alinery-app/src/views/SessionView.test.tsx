@@ -1071,7 +1071,7 @@ describe("session chat send routing", () => {
     await flushPromises();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    expect(await screen.findByText("Error: stdin closed")).toBeDefined();
+    expect(await within(screen.getByTestId("chat-pane")).findByText(/stdin closed/)).toBeDefined();
     expect(onDraftChange).not.toHaveBeenCalled();
     expect(within(screen.getByTestId("chat-pane")).queryByText("keep me")).toBeNull();
   });
@@ -1239,7 +1239,7 @@ describe("session chat send routing", () => {
       rejectWrite(new Error("Acknowledgement lost"));
     });
     expect(screen.getByText(/Delivery unknown:/)).toBeDefined();
-    expect(screen.getByRole("button", { name: "Copy original message" })).toBeDefined();
+    expect(within(screen.getByTestId("chat-pane")).getByRole("button", { name: "Copy original message" })).toBeDefined();
     expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("newer review");
     expect(onDraftChange).not.toHaveBeenCalled();
     expect(sends()).toHaveLength(1);
@@ -1261,7 +1261,7 @@ describe("session chat send routing", () => {
     first.unmount();
     renderSession({ intent: "history", sendRecovery: recovery });
     await flushPromises();
-    expect(screen.getByRole("button", { name: "Copy original message" })).toBeDefined();
+    expect(within(screen.getByTestId("chat-pane")).getByRole("button", { name: "Copy original message" })).toBeDefined();
     expect(screen.getByText(/original before exit/)).toBeDefined();
     expect(sends()).toHaveLength(1);
   });
@@ -1293,7 +1293,7 @@ describe("session chat send routing", () => {
     });
     expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("newer draft");
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Restore unsent message (1 attachments)" }));
+    fireEvent.click(within(screen.getByTestId("chat-pane")).getByRole("button", { name: "Restore unsent message (1 attachments)" }));
     expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("  original review  ");
     expect(screen.getByRole("button", { name: "Remove shot.png" })).toBeDefined();
     expect(sends()).toHaveLength(1);
@@ -1344,8 +1344,12 @@ describe("session chat send routing", () => {
       onLine.current?.(JSON.stringify({ type: "turn_start" }));
       onLine.current?.(JSON.stringify({ type: "response", command: "get_state", success: true, data: { queuedMessageCount: 0 } }));
     });
+    expect(screen.queryByRole("region", { name: "Recoverable session input" })).toBeNull();
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "response", id: command.id, command: "compact", success: false, error: "Native outcome uncertain" }));
+    });
     expect(screen.getByRole("button", { name: "Copy original message" })).toBeDefined();
-    expect(screen.getByText(/Awaiting native settlement: \/compact keep the plan/)).toBeDefined();
+    expect(within(screen.getByRole("region", { name: "Recoverable session input" })).getByText(/\/compact keep the plan/)).toBeDefined();
   });
 
   it("settles only the exact native dispatch and never a queue count snapshot", async () => {
@@ -1374,6 +1378,7 @@ describe("session chat send routing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next draft" }));
     fireEvent.click(screen.getByRole("button", { name: "Queue" }));
     await waitFor(() => expect(queue).toHaveLength(2));
+    expect(screen.queryByRole("region", { name: "Recoverable session input" })).toBeNull();
     const [first, second] = sends();
     await act(async () => {
       onLine.current?.(JSON.stringify({ type: "response", command: "get_state", success: true, data: { queuedMessageCount: 0 } }));
@@ -1383,6 +1388,7 @@ describe("session chat send routing", () => {
       onLine.current?.(JSON.stringify({ type: "alinery_dispatch", dispatch_id: second?.id, status: "consumed" }));
     });
     expect(queue.map((item) => item.text)).toEqual(["first"]);
+    expect(screen.queryByRole("region", { name: "Recoverable session input" })).toBeNull();
     expect(recovery.has(first?.id ?? "")).toBe(true);
     expect(recovery.has(second?.id ?? "")).toBe(true);
     await act(async () => {
@@ -1818,7 +1824,7 @@ describe("session chat send routing", () => {
       await flushPromises();
       fireEvent.click(screen.getByRole("button", { name: button }));
 
-      expect(await screen.findByText(String(rejection))).toBeDefined();
+      expect(await within(screen.getByTestId("chat-pane")).findByText(String(rejection), { exact: false })).toBeDefined();
       expect(attempts).toEqual([
         expect.objectContaining({
           type: command,
@@ -1962,7 +1968,7 @@ describe("session chat send routing", () => {
     onQueuedFollowUpsChange.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "Send now" }));
 
-    expect(await screen.findByText(String(rejection))).toBeDefined();
+    expect(await within(screen.getByTestId("chat-pane")).findByText(String(rejection), { exact: false })).toBeDefined();
     expect(within(screen.getByTestId("chat-pane")).getByText("keep this queued caption")).toBeDefined();
     expect(screen.getByText("queued · after this turn")).toBeDefined();
     expect(onQueuedFollowUpsChange).not.toHaveBeenCalled();
@@ -2708,6 +2714,7 @@ describe("review continuation", () => {
       expect(onOpenSession).not.toHaveBeenCalled();
       source.lifecycle = "completed";
       source.shutdown_confirmed = true;
+      reply.executions[source.id] = { destinations: [], reasons: [], terminality: "terminal" };
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1500);
       });
@@ -2723,6 +2730,21 @@ describe("review continuation", () => {
       expect(onOpenSession).toHaveBeenCalledTimes(1);
       view.rerender(sessionView({ id: session.id, onOpenSession }));
       await flushPromises();
+      if (mode === "automatic") {
+        expect(screen.getByRole("button", { name: "Follow next session" }).getAttribute("aria-pressed")).toBe("true");
+        successor.lifecycle = "completed";
+        successor.receipt_id = "next-receipt";
+        successor.shutdown_confirmed = true;
+        const third = executionRecord({ id: "third", owner_session_id: "third-session", parent_execution_ids: [successor.id], continuation_mode: "manual" });
+        reply.state.executions.third = third;
+        const thirdSession = { ...session, id: "third-session", execution_id: "third", started_at: 4 };
+        listSessions.mockResolvedValue([session, thirdSession]);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1500);
+        });
+        expect(onOpenSession).toHaveBeenLastCalledWith(thirdSession);
+        expect(onOpenSession).toHaveBeenCalledTimes(2);
+      }
       expect(screen.queryByText("Continuation requested; waiting for the handoff.")).toBeNull();
     },
   );
@@ -2741,7 +2763,7 @@ describe("review continuation", () => {
     getTaskExecution.mockImplementation(async () => structuredClone(reply));
     const view = renderSession({ onOpenSession });
     await flushPromises();
-    if (condition === "disabled") source.continuation_mode = "manual";
+    if (condition === "disabled") fireEvent.click(screen.getByRole("button", { name: "Follow next session" }));
     if (condition === "left session") view.rerender(sessionView({ id: "another-session", onOpenSession }));
     source.receipt_id = "receipt";
     source.lifecycle = "completed";
@@ -2770,27 +2792,63 @@ describe("review continuation", () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
     expect(onOpenSession).not.toHaveBeenCalled();
+    if (condition === "disabled" || condition === "historical") {
+      const follow = screen.getByRole("button", { name: "Follow next session" });
+      expect(follow.getAttribute("aria-pressed")).toBe("false");
+      fireEvent.click(follow);
+      await flushPromises();
+      expect(onOpenSession).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "next-session" }));
+      expect(setStepContinuationForRepo).not.toHaveBeenCalled();
+    }
   });
 
-  it.each(["unrelated", "fanout", "new review", "refused", "left session"] as const)("does not redirect after continuation when %s", async (condition) => {
+  it("pauses following when the navigator opens another session", async () => {
+    const onOpenSession = vi.fn();
+    const reply = readyReply();
+    const previous = executionRecord({ id: "previous", owner_session_id: "previous-session", lifecycle: "completed" });
+    reply.state.executions.previous = previous;
+    reply.state.executions["execution-a"].parent_execution_ids = [previous.id];
+    getTaskExecution.mockResolvedValue(reply);
+    listSessions.mockResolvedValue([
+      {
+        id: "previous-session",
+        execution_id: "previous",
+        name: "Previous step",
+        name_source: "user",
+        name_error: null,
+        worktree: "/worktrees/task",
+        created: 1,
+        archived: false,
+        phase: "worker",
+        harness: "omp",
+        model: "",
+        playbook: "retained",
+        generic: false,
+        harness_resume_token: "",
+        started_at: 1,
+      },
+    ]);
+    renderSession({ onOpenSession });
+    const follow = await screen.findByRole("button", { name: "Follow next session" });
+    expect(follow.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByText("Session Navigator"));
+    fireEvent.click(screen.getByRole("button", { name: /Previous step/ }));
+    expect(onOpenSession).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "previous-session" }));
+    expect(follow.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it.each(["unrelated", "fanout", "follow off", "left session"] as const)("does not redirect after continuation when %s", async (condition) => {
     vi.useFakeTimers();
     const onOpenSession = vi.fn();
     const reply = readyReply();
     getTaskExecution.mockImplementation(async () => structuredClone(reply));
-    if (condition === "refused") continueExecution.mockResolvedValue({ status: "waiting", reason: "Still working" });
     const view = renderSession({ onOpenSession });
     await flushPromises();
+    if (condition === "follow off") fireEvent.click(screen.getByRole("button", { name: "Follow next session" }));
     fireEvent.click(screen.getByRole("button", { name: "Continue to Review changes" }));
     await flushPromises();
     if (condition === "left session") view.rerender(sessionView({ id: "another-session", onOpenSession }));
     const source = reply.state.executions["execution-a"];
-    if (condition === "new review") {
-      source.work_revision += 1;
-      source.ready_revision = null;
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(1500);
-      });
-    }
     source.receipt_id = "receipt";
     source.lifecycle = "completed";
     source.shutdown_confirmed = true;

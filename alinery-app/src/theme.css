@@ -9777,10 +9777,6 @@ dialog.modal::backdrop {
 }
 
 .session-input-recovery {
-  flex: 0 1 auto;
-  min-height: 0;
-  max-height: 160px;
-  overflow: auto;
   padding: 8px 14px;
   overflow-wrap: anywhere;
 }

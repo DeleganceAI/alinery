@@ -17,6 +17,7 @@ function ChatPaneImpl({
   loadingOlder = false,
   atStart = true,
   floatingActions,
+  recoveryContent,
 }: {
   entries: ChatEntry[];
   status?: SessionChatStatus;
@@ -29,6 +30,7 @@ function ChatPaneImpl({
   atStart?: boolean;
   /** Supplying this slot, including null, floats activity alongside the session actions. */
   floatingActions?: ReactNode;
+  recoveryContent?: ReactNode;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const floatingFooter = useRef<HTMLDivElement>(null);
@@ -67,7 +69,7 @@ function ChatPaneImpl({
 
   useEffect(() => {
     scrollToEnd();
-  }, [shown, activity, scrollToEnd]);
+  }, [shown, activity, recoveryContent, scrollToEnd]);
 
   const requestOlder = useCallback(() => {
     const el = scroller.current;
@@ -135,7 +137,7 @@ function ChatPaneImpl({
     >
       {visibility.showSubagentDrawer ? <SubagentDrawer agents={liveSubs} /> : null}
       <div ref={scroller} onScroll={onScroll} className="chat-list">
-        {shown.length === 0 ? <div className="chat-empty">No messages yet</div> : null}
+        {shown.length === 0 && !recoveryContent ? <div className="chat-empty">No messages yet</div> : null}
         <ol className="chat-journal">
           {loadingOlder ? <li className="chat-older">Loading earlier messages…</li> : atStart && shown.length > 0 ? <li className="chat-older">Start of conversation</li> : null}
           {shown.map((entry) => (
@@ -153,6 +155,7 @@ function ChatPaneImpl({
               />
             </li>
           ))}
+          {recoveryContent && <li>{recoveryContent}</li>}
         </ol>
       </div>
       {floatingActions !== undefined
