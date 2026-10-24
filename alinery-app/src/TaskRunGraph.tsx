@@ -258,6 +258,7 @@ export function TaskRunGraph({
               if (event.target !== event.currentTarget || event.metaKey || event.ctrlKey || event.altKey) return;
               if (event.key === "Escape") {
                 event.preventDefault();
+                event.stopPropagation();
                 panButtonRef.current?.focus();
                 return;
               }
