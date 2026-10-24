@@ -937,9 +937,24 @@ describe("Task Detail sub-task manager projection", () => {
     const start = screen.getByRole("button", { name: "Start sub-task" });
     expect((start as HTMLButtonElement).disabled).toBe(true);
     expect(start.getAttribute("title")).toBe("Finish the active sub-task before starting another");
-    expect(screen.getByText("Finish the active sub-task before starting another")).toBeDefined();
+    const reason = screen.getByText("Finish the active sub-task before starting another");
+    expect(start.getAttribute("aria-describedby")).toBe(reason.id);
+    expect(reason.closest(".task-session-controls")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "New session" }));
     expect(onNewSession).toHaveBeenCalledOnce();
+  });
+
+  it("labels running ordinary and manager sessions without requiring hover", async () => {
+    scenario.state = state({ manager_session: manager });
+    scenario.sessions = [manager, { ...session({ id: "ordinary" }), name: "Review changes" }];
+    scenario.managerObservation = observation("busy");
+
+    await renderDetail();
+
+    const managerRow = screen.getByRole("button", { name: "Open manager session" }).closest("tr") as HTMLTableRowElement;
+    const ordinaryRow = screen.getByRole("row", { name: "Open session superdevelop · research" });
+    expect(within(managerRow).getByText("Running")).toBeDefined();
+    expect(within(ordinaryRow).getByText("Running")).toBeDefined();
   });
 
   it("starts exactly one parent-owned manager and attaches without spawning it again", async () => {
@@ -1763,7 +1778,7 @@ describe("Task Detail duplicate action", () => {
 });
 
 const renderedSessionSteps = (container: HTMLElement) =>
-  [...container.querySelectorAll(".task-session-table tbody .session-step-cell > .pill:first-child")].map((node) => node.textContent);
+  [...container.querySelectorAll(".task-session-table tbody .session-step-cell > :first-child")].map((node) => node.textContent);
 
 describe("session list without identifiers", () => {
   it("keeps same-step sessions independently openable and preserves archived history and resumed state", async () => {
@@ -1914,7 +1929,7 @@ describe("attention-first session order", () => {
     await waitFor(() => expect(mocks.markSessionNotificationRead).toHaveBeenCalledWith("/r", "a-task", "stopped-generic"));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Acknowledge exited sessions" })).toBeNull());
     expect(within(stoppedRow).queryByRole("img", { name: /Failed/ })).toBeNull();
-    expect(stoppedRow.querySelector(".status-col")?.textContent).toBe("");
+    expect(stoppedRow.querySelector(".status-col")?.textContent).toBe("Exited");
   });
 });
 
@@ -2010,7 +2025,7 @@ describe("session time columns and sorting", () => {
     const { container } = renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]));
-    expect(screen.getByLabelText("Stale")).toBeDefined();
+    expect(screen.getByText("Stale")).toBeDefined();
 
     targetObservation = failedObservation("boom");
     await act(async () => {
@@ -2026,7 +2041,7 @@ describe("session time columns and sorting", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
-    await vi.waitFor(() => expect(screen.getByLabelText("Stale")).toBeDefined());
+    await vi.waitFor(() => expect(screen.getByText("Stale")).toBeDefined());
     expect(screen.queryByText("Failed")).toBeNull();
     expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]);
     expect(updated.closest("th")?.getAttribute("aria-sort")).toBe("descending");

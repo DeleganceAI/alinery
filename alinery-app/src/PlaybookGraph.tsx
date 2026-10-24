@@ -564,8 +564,12 @@ export function PlaybookGraph({
               <span className="playbook-node-key">{step.short || step.key}</span>
               <span className="playbook-node-title">{step.title}</span>
             </div>
-            <span aria-label={`${step.title}: ${countsByStep[step.key] ?? 0} active sessions`}>{countsByStep[step.key] ?? 0} active</span>
-            <span>{selectedAutoAdvance.includes(step.key) ? "Continue automatically" : "Wait for me"}</span>
+            <div className="playbook-node-side">
+              <span className="playbook-node-count" aria-label={`${step.title}: ${countsByStep[step.key] ?? 0} active sessions`}>
+                {countsByStep[step.key] ?? 0} active
+              </span>
+              <span className="playbook-node-autoadvance">{selectedAutoAdvance.includes(step.key) ? "Continue automatically" : "Wait for me"}</span>
+            </div>
           </div>
         ))}
       </div>
