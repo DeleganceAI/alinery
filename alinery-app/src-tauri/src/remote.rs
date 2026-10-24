@@ -1537,11 +1537,45 @@ pub(crate) async fn remote_discard_host(app: AppHandle, host_id: String) -> Resu
 /// Connect (or reconnect) a host, then bring back every known repo on it.
 pub(crate) fn connect_and_attach<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str, trust: bool) -> Result<(), String> {
     let state = app.state::<AppState>();
+    let was_connected = state.remotes.status(host_id).state == "connected";
+    let lock = state.remotes.lock(host_id);
+    let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
+    // The automatic reconnect finished while this call waited for it.
+    if !was_connected && state.remotes.status(host_id).state == "connected" {
+        return Ok(());
+    }
     connect_host(app, &state, host_id, trust)?;
     if let Some(session) = state.remotes.session(host_id) {
         attach_host_repos(app, &state, &session, host_id);
     }
+    state.remotes.want(host_id);
+    // Open terminals that lost their stream rejoin their sessions.
+    let _ = app.emit("remote_host_connected", json!({ "host_id": host_id }));
     Ok(())
+}
+
+/// How often the supervisor looks for hosts that dropped.
+const SUPERVISOR_TICK: Duration = Duration::from_secs(1);
+
+/// Bring back a host that was connected and dropped (network change, sleep, ssh killed). It only
+/// ever connects: it never stops a daemon or a session on the host, and it leaves a host the user
+/// disconnected alone. Backoff is `RECONNECT_DELAYS_SECS`.
+pub(crate) fn spawn_remote_supervisor<R: tauri::Runtime>(app: AppHandle<R>) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(SUPERVISOR_TICK);
+        let Some(state) = app.try_state::<AppState>() else { continue };
+        // "Close all repos" ran: the app is on its way out and reconnecting would undo it.
+        if state.is_quitting() {
+            continue;
+        }
+        for host_id in state.remotes.due_reconnects(Instant::now()) {
+            let app = app.clone();
+            std::thread::spawn(move || {
+                let result = connect_and_attach(&app, &host_id, false);
+                app.state::<AppState>().remotes.reconnect_finished(&host_id, &result, Instant::now());
+            });
+        }
+    });
 }
 
 /// `trust` accepts a first-seen host key after the user said so.
@@ -1556,6 +1590,10 @@ pub(crate) async fn remote_connect(app: AppHandle, host_id: String, trust: bool)
 /// forgets the local daemon handles, so the board shows the host as offline.
 pub(crate) fn disconnect_host<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str) {
     let state = app.state::<AppState>();
+    // A connect in flight finishes first (and marks the host wanted), so the user's disconnect wins.
+    let lock = state.remotes.lock(host_id);
+    let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
+    state.remotes.unwant(host_id);
     let mut forwards = Vec::new();
     for key in load_app_config(app).known_repos {
         if let Ok(RepoRef::Remote { host_id: id, path }) = RepoRef::parse(&key) {
@@ -1689,13 +1727,110 @@ pub(crate) struct RemoteSession {
     pub(crate) secrets_dir: PathBuf,
 }
 
+/// Waits before each automatic reconnect attempt; the last repeats.
+const RECONNECT_DELAYS_SECS: [u64; 4] = [5, 10, 30, 60];
+
+pub(crate) fn reconnect_delay(attempt: u32) -> Duration {
+    Duration::from_secs(
+        RECONNECT_DELAYS_SECS
+            .get(attempt as usize)
+            .copied()
+            .unwrap_or(RECONNECT_DELAYS_SECS[RECONNECT_DELAYS_SECS.len() - 1]),
+    )
+}
+
+/// A lost connection is retried, but not when retrying cannot help and would only hammer the host:
+/// its key is unknown or changed, or it refused our key.
+pub(crate) fn worth_retrying(error: &str) -> bool {
+    !(error.starts_with(HOST_KEY_UNKNOWN) || error.contains("key changed") || error.contains("authentication failed"))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Retry {
+    attempt: u32,
+    next_at: Instant,
+    running: bool,
+}
+
 #[derive(Default)]
 pub(crate) struct RemoteManager {
     statuses: Mutex<HashMap<String, RemoteStatus>>,
     sessions: Mutex<HashMap<String, std::sync::Arc<RemoteSession>>>,
+    /// Hosts the user connected and has not disconnected: the ones to bring back when they drop.
+    wanted: Mutex<HashSet<String>>,
+    retries: Mutex<HashMap<String, Retry>>,
+    /// One connect or disconnect at a time per host.
+    locks: Mutex<HashMap<String, std::sync::Arc<Mutex<()>>>>,
 }
 
 impl RemoteManager {
+    pub(crate) fn want(&self, host_id: &str) {
+        self.wanted.lock().unwrap_or_else(|e| e.into_inner()).insert(host_id.to_string());
+    }
+
+    pub(crate) fn unwant(&self, host_id: &str) {
+        self.wanted.lock().unwrap_or_else(|e| e.into_inner()).remove(host_id);
+        self.retries.lock().unwrap_or_else(|e| e.into_inner()).remove(host_id);
+    }
+
+    pub(crate) fn lock(&self, host_id: &str) -> std::sync::Arc<Mutex<()>> {
+        std::sync::Arc::clone(self.locks.lock().unwrap_or_else(|e| e.into_inner()).entry(host_id.to_string()).or_default())
+    }
+
+    /// Wanted hosts that are down and whose next attempt is due. A host seen down for the first
+    /// time is marked `reconnecting` now and tried after the first delay. Marks each returned
+    /// host as running, so a slow attempt is not started twice.
+    pub(crate) fn due_reconnects(&self, now: Instant) -> Vec<String> {
+        let wanted: Vec<String> = self.wanted.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect();
+        let mut retries = self.retries.lock().unwrap_or_else(|e| e.into_inner());
+        let mut due = Vec::new();
+        for host_id in wanted {
+            let status = self.status(&host_id);
+            match status.state.as_str() {
+                "connected" => {
+                    retries.remove(&host_id);
+                    continue;
+                }
+                "connecting" => continue,
+                _ => {}
+            }
+            let retry = retries.entry(host_id.clone()).or_insert(Retry {
+                attempt: 0,
+                next_at: now + reconnect_delay(0),
+                running: false,
+            });
+            // Just lost, or a manual attempt failed in between: either way it is being retried.
+            if !retry.running && status.state != "reconnecting" {
+                self.set(&host_id, "reconnecting", "Retrying automatically", status.error.clone());
+            }
+            if !retry.running && now >= retry.next_at {
+                retry.running = true;
+                due.push(host_id);
+            }
+        }
+        due
+    }
+
+    /// Record how an automatic attempt went: success clears the backoff, a failure schedules the
+    /// next attempt, and one that retrying cannot fix stops the retries.
+    pub(crate) fn reconnect_finished(&self, host_id: &str, result: &Result<(), String>, now: Instant) {
+        let Err(error) = result else {
+            self.retries.lock().unwrap_or_else(|e| e.into_inner()).remove(host_id);
+            return;
+        };
+        if !worth_retrying(error) {
+            self.unwant(host_id);
+            self.set(host_id, "failed", "", Some(error.clone()));
+            return;
+        }
+        if let Some(retry) = self.retries.lock().unwrap_or_else(|e| e.into_inner()).get_mut(host_id) {
+            retry.attempt += 1;
+            retry.next_at = now + reconnect_delay(retry.attempt);
+            retry.running = false;
+        }
+        self.set(host_id, "reconnecting", "Retrying automatically", Some(error.clone()));
+    }
+
     pub(crate) fn status(&self, host_id: &str) -> RemoteStatus {
         let statuses = self.statuses.lock().unwrap_or_else(|e| e.into_inner());
         let mut status = statuses.get(host_id).cloned().unwrap_or(RemoteStatus {

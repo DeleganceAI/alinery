@@ -113,6 +113,11 @@ describe("RemoteModal hosts", () => {
     expect(rows[1].textContent).toContain("0 repositories");
   });
 
+  it("says so while a dropped host is being brought back", () => {
+    mount({ hosts: [{ ...offline, state: "reconnecting" }] });
+    expect(within(screen.getByRole("list", { name: "Remote hosts" })).getByRole("listitem").textContent).toContain("Reconnecting");
+  });
+
   it("opens a connected host's folders without connecting again", async () => {
     mount();
     fireEvent.click(screen.getByRole("button", { name: "Open a folder" }));

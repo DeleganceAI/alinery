@@ -147,6 +147,7 @@ pub fn run() {
             // B5: keep a daemon alive for every open repo (spawn-only — see the fn).
             spawn_daemon_poller(app.handle().clone());
             spawn_pi_supervisor(app.handle().clone());
+            spawn_remote_supervisor(app.handle().clone());
             spawn_pi_hosted_refresh(app.handle().clone());
             Ok(())
         })

@@ -857,7 +857,9 @@ function RepoSelect({
                 >
                   <span className="repo-opt-name">
                     {repoName(repo)}
-                    {remote ? <span className="repo-host-badge">{offline ? "SSH · offline" : "SSH"}</span> : null}
+                    {remote ? (
+                      <span className="repo-host-badge">{!offline ? "SSH" : remoteStates?.[remote.hostId] === "reconnecting" ? "SSH · reconnecting" : "SSH · offline"}</span>
+                    ) : null}
                   </span>
                   <span className="repo-opt-path">{repoDisplayPath(repo)}</span>
                 </button>

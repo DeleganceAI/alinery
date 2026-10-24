@@ -524,6 +524,25 @@ const STREAM_RECOVERY_MAX = 6;
 const streamCloses = new Map<string, number[]>();
 
 /**
+ * A remote host was connected (the first time, or brought back after it dropped). A pane that lost
+ * its stream while the host was away rejoins here. Returns the unlisten.
+ */
+export function onRemoteHostConnected(handler: () => void): () => void {
+  let disposed = false;
+  let stop: (() => void) | null = null;
+  void listen("remote_host_connected", () => {
+    if (!disposed) handler();
+  }).then((unlisten) => {
+    if (disposed) unlisten();
+    else stop = unlisten;
+  });
+  return () => {
+    disposed = true;
+    stop?.();
+  };
+}
+
+/**
  * An attach's reader emits `session_stream_closed` whenever it stops: the daemon dropped a client
  * more than 2 MB behind (so it can never block OMP), the socket failed or ended, or the view's
  * channel closed. The event carries no cause, so a view says the connection closed, never why.

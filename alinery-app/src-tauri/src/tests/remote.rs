@@ -1706,6 +1706,102 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     }
 }
 
+/// The ssh master dies (a network change, sleep): the app notices, reconnects on its own with the
+/// same daemon still serving, and leaves a host the user disconnected alone.
+#[test]
+fn live_a_dropped_host_comes_back_by_itself_and_a_disconnect_stays_down() {
+    use std::time::{Duration, Instant};
+    use tauri::Manager;
+    let Some(args) = live_args() else {
+        eprintln!("skipped: ALINERY_TEST_SSH_ARGS is not set");
+        return;
+    };
+    let _turn = LIVE_HOST.lock().unwrap_or_else(|e| e.into_inner());
+    let _active = super::ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+    context.config_mut().identifier = format!("test.alinery.remote.{}", uuid::Uuid::new_v4());
+    let app = tauri::test::mock_builder().manage(crate::AppState::default()).build(context).unwrap();
+    let handle = app.handle().clone();
+    let state = handle.state::<crate::AppState>();
+    let id = format!("sup-{}", std::process::id());
+
+    let mut config = crate::AppConfig::default();
+    config.remote_hosts.insert(
+        id.clone(),
+        crate::RemoteHost {
+            label: "live".into(),
+            ssh_args: args.clone(),
+            ..Default::default()
+        },
+    );
+    crate::write_app_config(&handle, &config).unwrap();
+    connect_and_attach(&handle, &id, true).unwrap();
+
+    let first = state.remotes.session(&id).unwrap();
+    let home = host_views(&handle, &state)[0].home.clone().unwrap();
+    let repo = format!("{home}/work/sup-{}", std::process::id());
+    first
+        .conn
+        .exec_ok(
+            &format!("rm -rf '{repo}' && mkdir -p '{repo}' && git init -q '{repo}'"),
+            RemoteStdin::None,
+            Duration::from_secs(30),
+        )
+        .unwrap();
+    let key = add_remote_repo(&handle, &id, &repo).unwrap();
+    crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone(), Vec::new()).unwrap();
+    let daemons = || {
+        first
+            .conn
+            .exec_ok("pgrep -f '[a]linery-vinculum-daemon --repo' | sort", RemoteStdin::None, Duration::from_secs(20))
+            .unwrap()
+    };
+    let before = daemons();
+    assert!(!before.trim().is_empty());
+
+    spawn_remote_supervisor(handle.clone());
+    let wait_for = |what: &str, done: &dyn Fn() -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !done() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}: {:?}", state.remotes.status(&id));
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    };
+
+    // Kill the master. Everything that rode on it goes with it; nothing on the host is touched.
+    first.conn.exit_master();
+    wait_for("the drop to show", &|| state.remotes.status(&id).state != "connected");
+    wait_for("the host to come back", &|| {
+        state.remotes.status(&id).state == "connected" && state.remotes.session(&id).is_some_and(|session| !std::sync::Arc::ptr_eq(&session, &first))
+    });
+    let second = state.remotes.session(&id).unwrap();
+    assert!(second.channel.is_alive());
+    assert_eq!(
+        second
+            .conn
+            .exec_ok("pgrep -f '[a]linery-vinculum-daemon --repo' | sort", RemoteStdin::None, Duration::from_secs(20))
+            .unwrap(),
+        before,
+        "the daemon is the same process after the app reconnected on its own"
+    );
+    assert!(state.daemon_for(Path::new(&key)).is_some_and(|client| client.version_checked().is_ok()));
+
+    // The user disconnects: it stays down.
+    disconnect_host(&handle, &id);
+    std::thread::sleep(Duration::from_secs(8));
+    assert_eq!(state.remotes.status(&id).state, "idle");
+    assert!(state.remotes.session(&id).is_none());
+
+    // Clean up through a fresh connection.
+    connect_and_attach(&handle, &id, false).unwrap();
+    let _ = remove_remote_repo(&handle, &key);
+    disconnect_host(&handle, &id);
+    let _ = crate::set_active_repo_global(None);
+    if let Ok(dir) = handle.path().app_config_dir() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
 /// Git on the host: commit, push with the host's credentials, the compare URL and PR link, worktree
 /// removal, branch discovery, and the sub-task requests, all against a real repo with an origin.
 #[test]
@@ -2454,4 +2550,94 @@ fn describe_destination_reports_where_an_alias_resolves() {
     );
     assert!(describe_destination("ssh box ls").is_err(), "a destination the parser refuses is not passed to ssh");
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn reconnect_waits_5_10_30_then_60_seconds() {
+    let waits: Vec<u64> = (0..6).map(|attempt| reconnect_delay(attempt).as_secs()).collect();
+    assert_eq!(waits, [5, 10, 30, 60, 60, 60]);
+}
+
+#[test]
+fn a_key_or_login_problem_is_not_retried() {
+    assert!(worth_retrying("could not resolve the host name"));
+    assert!(worth_retrying("ssh timed out"));
+    assert!(!worth_retrying(&SshFailure::UnknownHostKey.to_string()));
+    assert!(!worth_retrying(
+        "the host's key changed since you last connected; check ~/.ssh/known_hosts before continuing"
+    ));
+    assert!(!worth_retrying("ssh authentication failed. Alinery connects without prompts"));
+}
+
+#[test]
+fn a_dropped_host_is_retried_with_backoff_and_a_user_disconnect_is_left_alone() {
+    use std::time::{Duration, Instant};
+    let remotes = RemoteManager::default();
+    let t0 = Instant::now();
+    let secs = |n: u64| t0 + Duration::from_secs(n);
+
+    // Never connected, or disconnected on purpose: nothing to bring back.
+    remotes.set("box", "failed", "", Some("boom".into()));
+    assert!(remotes.due_reconnects(secs(100)).is_empty());
+
+    // A host stored as connected whose channel is gone has dropped. The UI hears "reconnecting"
+    // at once; the first attempt is 5 s away.
+    remotes.want("box");
+    remotes.set("box", "connected", "", None);
+    assert!(remotes.due_reconnects(t0).is_empty());
+    let status = remotes.status("box");
+    assert_eq!((status.state.as_str(), status.error.as_deref()), ("reconnecting", Some(DISCONNECTED)));
+    assert!(remotes.due_reconnects(secs(4)).is_empty());
+    assert_eq!(remotes.due_reconnects(secs(5)), ["box"]);
+    assert!(remotes.due_reconnects(secs(60)).is_empty(), "an attempt in flight is not started twice");
+
+    // It fails: next try 10 s later, with the error kept.
+    remotes.reconnect_finished("box", &Err("ssh timed out".into()), secs(8));
+    assert_eq!(remotes.status("box").error.as_deref(), Some("ssh timed out"));
+    assert!(remotes.due_reconnects(secs(17)).is_empty());
+    assert_eq!(remotes.due_reconnects(secs(18)), ["box"]);
+
+    // It works: the backoff starts over for the next drop.
+    remotes.reconnect_finished("box", &Ok(()), secs(20));
+    remotes.set("box", "connected", "", None);
+    assert!(remotes.due_reconnects(secs(22)).is_empty());
+    assert_eq!(remotes.due_reconnects(secs(27)), ["box"]);
+
+    // A manual connect that fails in between is shown as retrying, not as failed.
+    remotes.reconnect_finished("box", &Err("ssh timed out".into()), secs(28));
+    remotes.set("box", "failed", "", Some("no route".into()));
+    remotes.due_reconnects(secs(29));
+    assert_eq!(remotes.status("box").state, "reconnecting");
+
+    // The user disconnects while it is down: it stays down.
+    remotes.unwant("box");
+    remotes.set("box", "idle", "", None);
+    assert!(remotes.due_reconnects(secs(1000)).is_empty());
+}
+
+#[test]
+fn a_failure_retrying_cannot_fix_ends_the_retries() {
+    use std::time::{Duration, Instant};
+    let remotes = RemoteManager::default();
+    let t0 = Instant::now();
+    remotes.want("box");
+    remotes.set("box", "failed", "", Some(DISCONNECTED.into()));
+    remotes.due_reconnects(t0);
+    assert_eq!(remotes.due_reconnects(t0 + Duration::from_secs(5)), ["box"]);
+    remotes.reconnect_finished(
+        "box",
+        &Err("ssh authentication failed. Alinery connects without prompts".into()),
+        t0 + Duration::from_secs(6),
+    );
+    assert_eq!(remotes.status("box").state, "failed");
+    assert!(remotes.due_reconnects(t0 + Duration::from_secs(1000)).is_empty());
+}
+
+#[test]
+fn a_host_that_is_mid_connect_is_not_started_again() {
+    use std::time::{Duration, Instant};
+    let remotes = RemoteManager::default();
+    remotes.want("box");
+    remotes.set("box", "connecting", "Probing", None);
+    assert!(remotes.due_reconnects(Instant::now() + Duration::from_secs(1000)).is_empty());
 }

@@ -8,7 +8,23 @@ vi.mock("@tauri-apps/api/event", () => ({
   }),
 }));
 
-const { onStreamClosed } = await import("./ipc");
+const { onStreamClosed, onRemoteHostConnected } = await import("./ipc");
+
+describe("onRemoteHostConnected", () => {
+  it("fires on the host event until it is unlistened", async () => {
+    const handler = vi.fn();
+    const stop = onRemoteHostConnected(handler);
+    await Promise.resolve();
+    const fire = () => {
+      for (const listener of listeners) listener({ payload: { id: "", attach_id: 0 } });
+    };
+    fire();
+    expect(handler).toHaveBeenCalledTimes(1);
+    stop();
+    fire();
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("onStreamClosed", () => {
   it("fires for its own attach only and gives up after six closes in 30s", async () => {

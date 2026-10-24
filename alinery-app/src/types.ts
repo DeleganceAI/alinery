@@ -380,7 +380,8 @@ export type RemoteHostView = {
   host_id: string;
   label: string;
   destination: string;
-  state: "idle" | "connecting" | "connected" | "failed";
+  /** `reconnecting`: the connection dropped and the app is retrying on its own. */
+  state: "idle" | "connecting" | "reconnecting" | "connected" | "failed";
   /** What the connect dialog shows while `connecting`. */
   phase: string;
   error: string | null;

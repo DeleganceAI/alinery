@@ -322,7 +322,15 @@ export function RemoteModal({
                         <span className="repo-opt-path">{host.destination}</span>
                         <span className="remote-host-meta">
                           <span className={`remote-state ${host.state}`}>
-                            {unfinished ? "Setup not finished" : connected ? "Connected" : host.state === "connecting" ? "Connecting" : "Not connected"}
+                            {unfinished
+                              ? "Setup not finished"
+                              : connected
+                                ? "Connected"
+                                : host.state === "connecting"
+                                  ? "Connecting"
+                                  : host.state === "reconnecting"
+                                    ? "Reconnecting"
+                                    : "Not connected"}
                           </span>
                           {host.platform ? <span>{host.platform}</span> : null}
                           <span>{count === 1 ? "1 repository" : `${count} repositories`}</span>
