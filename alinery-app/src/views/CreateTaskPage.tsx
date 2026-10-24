@@ -5,7 +5,7 @@ import { afterPaint } from "../afterPaint";
 import * as ipc from "../ipc";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { type PastedImage, stagePastedImages } from "../pastedImages";
-import { Checkbox, InlineStatus, ModelInput, ompDefaultModel, orderPlaybookCandidates, playbookRefKey, samePlaybookRef } from "../shared";
+import { Checkbox, Dialog, InlineStatus, ModelInput, ompDefaultModel, orderPlaybookCandidates, playbookRefKey, samePlaybookRef } from "../shared";
 import * as taskMutationGuard from "../taskMutationGuard";
 import { toast } from "../toast";
 import type {
@@ -164,6 +164,7 @@ export function CreateTaskPage({
   const [dropping, setDropping] = useState(false);
   const [contextOpen, setContextOpen] = useState(!!initialPreset?.evidence || !!initialDraft);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [graphOpen, setGraphOpen] = useState(false);
   const [created, setCreated] = useState<TargetedCreateResult | null>(null);
   const [err, setErr] = useState<ErrState>(null);
   const [mode, setMode] = useState<"inline" | "linear" | "github">(initialDraft?.linear_id ? "linear" : initialDraft?.github_issue ? "github" : "inline");
@@ -305,7 +306,9 @@ export function CreateTaskPage({
   };
 
   useEffect(() => {
-    const t = window.setTimeout(() => titleRef.current?.focus(), 40);
+    const t = window.setTimeout(() => {
+      if (!document.activeElement?.closest("dialog")) titleRef.current?.focus();
+    }, 40);
     return () => window.clearTimeout(t);
   }, []);
 
@@ -902,6 +905,7 @@ export function CreateTaskPage({
   };
 
   const onKey = (e: React.KeyboardEvent) => {
+    if (e.target instanceof Element && e.target.closest("dialog")) return;
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) create();
   };
 
@@ -1501,7 +1505,19 @@ export function CreateTaskPage({
                           <summary>
                             Preview {selectedSource.definition.step.length} {selectedSource.definition.step.length === 1 ? "step" : "steps"}
                           </summary>
-                          <PlaybookGraph title={item.title ?? selectedSource.definition.title} steps={selectedSource.definition.step} variant="definition" showInspector={false} />
+                          <div className="create-step-preview">
+                            <ul aria-label={`${item.title ?? selectedSource.definition.title} steps`}>
+                              {selectedSource.definition.step.map((step) => (
+                                <li key={step.key}>
+                                  <span>{step.title}</span>
+                                  {step.inputs.some((input) => input.mode === "each") && <span className="create-step-multiplicity">Per artifact</span>}
+                                </li>
+                              ))}
+                            </ul>
+                            <button type="button" className="btn ghost small" onClick={() => setGraphOpen(true)}>
+                              Open graph
+                            </button>
+                          </div>
                         </details>
                       )}
                     </div>
@@ -1550,6 +1566,20 @@ export function CreateTaskPage({
           )}
         </div>
       </footer>
+      {graphOpen && selectedSource && (
+        <Dialog className="create-graph-dialog" role="dialog" ariaLabel={`${selectedSource.definition.title} graph`} onClose={() => setGraphOpen(false)}>
+          <div className="mh">
+            <span className="mt">{selectedSource.definition.title}</span>
+            <button type="button" className="btn ghost small" data-autofocus onClick={() => setGraphOpen(false)}>
+              Close graph
+            </button>
+          </div>
+          <div className="create-graph-dialog-body">
+            <p className="hint">Drag to pan. Scroll to zoom. Select a step to highlight its connections.</p>
+            <PlaybookGraph title={selectedSource.definition.title} steps={selectedSource.definition.step} variant="definition" showInspector={false} minScale={0.85} />
+          </div>
+        </Dialog>
+      )}
     </div>
   );
 }

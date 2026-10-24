@@ -500,7 +500,7 @@ function camera(viewport: HTMLElement) {
   const canvas = viewport.querySelector<HTMLElement>(".playbook-definition-canvas");
   if (!stage || !canvas) throw new Error("Graph canvas is not mounted");
   const [tx, ty] = stage.style.transform.slice("translate(".length, -1).split(",").map(Number.parseFloat);
-  return { tx, ty, scale: Number(canvas.style.zoom) };
+  return { tx, ty, scale: Number(canvas.style.transform.slice("scale(".length, -1)) };
 }
 
 it("anchors wheel zoom under the pointer and fits using unzoomed dimensions", () => {

@@ -76,7 +76,7 @@ export function PlaybookGraph({
   const canvasEnabled = variant === "definition" && steps.length > 0;
   const paintView = useCallback(({ scale, tx, ty }: PanZoomView) => {
     if (stageRef.current) stageRef.current.style.transform = `translate(${tx}px, ${ty}px)`;
-    if (canvasRef.current) canvasRef.current.style.zoom = String(scale);
+    if (canvasRef.current) canvasRef.current.style.transform = `scale(${scale})`;
     if (zoomLabelRef.current) zoomLabelRef.current.textContent = `${Math.round(scale * 100)}%`;
   }, []);
   const { viewRef, panning, setView, zoomBy, center, fit, onPointerDown, onFocusCapture } = usePanZoom({

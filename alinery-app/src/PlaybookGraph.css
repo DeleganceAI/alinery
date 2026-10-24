@@ -120,6 +120,8 @@
 .playbook-definition-canvas {
   position: relative;
   margin: 0;
+  /* Scale text and geometry together without reflowing labels in WebKit. */
+  transform-origin: 0 0;
 }
 
 .playbook-definition-connections {

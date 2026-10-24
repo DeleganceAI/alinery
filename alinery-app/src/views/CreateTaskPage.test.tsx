@@ -216,6 +216,33 @@ function openAdvancedOptions() {
 }
 
 describe("creation layout", () => {
+  it("opens a larger graph without creating or losing the task brief, then restores focus", async () => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByLabelText("SuperDevelop steps");
+    fireEvent.change(screen.getByRole("textbox", { name: "Task name" }), { target: { value: "Keep this draft" } });
+    fireEvent.change(screen.getByRole("textbox", { name: /Description/ }), { target: { value: "Keep this context too." } });
+    fireEvent.click(screen.getByText("Preview 1 step"));
+    const opener = screen.getByRole("button", { name: "Open graph" });
+    opener.focus();
+    fireEvent.click(opener);
+    const dialog = await screen.findByRole("dialog", { name: "SuperDevelop graph" });
+    expect(within(dialog).getByRole("region", { name: "SuperDevelop graph" })).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Close graph" })).toBe(document.activeElement);
+    fireEvent.keyDown(dialog, { key: "Enter", metaKey: true });
+    fireEvent.keyDown(dialog, { key: "Enter", ctrlKey: true });
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close graph" }));
+    expect(screen.queryByRole("dialog", { name: "SuperDevelop graph" })).toBeNull();
+    expect(document.activeElement).toBe(opener);
+    expect(screen.getByRole("textbox", { name: "Task name" })).toHaveProperty("value", "Keep this draft");
+    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveProperty("value", "Keep this context too.");
+    expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
+    fireEvent.click(opener);
+    fireEvent(await screen.findByRole("dialog", { name: "SuperDevelop graph" }), new Event("cancel", { cancelable: true }));
+    expect(screen.queryByRole("dialog", { name: "SuperDevelop graph" })).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
   it("labels the task brief and keeps optional setup collapsed without changing its values", async () => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByText("Step models & approvals");
@@ -373,7 +400,7 @@ describe("scoped playbook selection", () => {
     if (seedPreferred) preferred.picker_preferences.entries.push({ ...preferred.picker_preferences.entries[0], reference: sources[2].source.reference });
     vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
     render(<CreateTaskPage initialPlaybook={sources[2].source.reference} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: "Repository SuperDevelop graph" });
+    await screen.findByLabelText("Repository SuperDevelop steps");
     expect(screen.getByRole("radio", { name: "Repository SuperDevelop — repo/superdevelop" })).toHaveProperty("checked", true);
     expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", false);
     const displayedOrder = ["repo/superdevelop", "bundled/superdevelop"];
@@ -387,10 +414,10 @@ describe("scoped playbook selection", () => {
     expect(ipc.createSessionForRepo).not.toHaveBeenCalled();
     expect(ipc.startSession).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" }));
-    await screen.findByRole("region", { name: "SuperDevelop graph" });
+    await screen.findByLabelText("SuperDevelop steps");
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(displayedOrder);
     fireEvent.click(screen.getByRole("radio", { name: "Repository SuperDevelop — repo/superdevelop" }));
-    await screen.findByRole("region", { name: "Repository SuperDevelop graph" });
+    await screen.findByLabelText("Repository SuperDevelop steps");
 
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Seeded task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
@@ -409,14 +436,14 @@ describe("scoped playbook selection", () => {
     render(<CreateTaskPage initialPlaybook={initialPlaybook} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("radio", { name: /One-shot/ });
     expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", false);
-    expect(screen.queryByRole("region", { name: /graph$/ })).toBeNull();
+    expect(screen.queryByLabelText(/ steps$/)).toBeNull();
     expect(ipc.readPlaybook).not.toHaveBeenCalled();
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Blocked task" } });
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
     expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
-    await screen.findByRole("region", { name: "One-shot graph" });
+    await screen.findByLabelText("One-shot steps");
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false);
   });
 
@@ -434,7 +461,7 @@ describe("scoped playbook selection", () => {
     );
     await screen.findByRole("radio", { name: /One-shot/ });
     expect(screen.getAllByRole("radio").every((radio) => !(radio as HTMLInputElement).checked)).toBe(true);
-    expect(screen.queryByRole("region", { name: /graph$/ })).toBeNull();
+    expect(screen.queryByLabelText(/ steps$/)).toBeNull();
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
     expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
@@ -457,17 +484,18 @@ describe("scoped playbook selection", () => {
     };
     vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: "SuperDevelop graph" });
+    await screen.findByLabelText("SuperDevelop steps");
     const choices = () => screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value);
     expect(choices()).toEqual(["bundled/one-shot", "bundled/superdevelop"]);
     expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
     fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
-    const graph = await screen.findByRole("region", { name: "One-shot graph" });
-    expect(screen.queryByRole("region", { name: "SuperDevelop graph" })).toBeNull();
+    const preview = await screen.findByLabelText("One-shot steps");
+    expect(screen.queryByLabelText("SuperDevelop steps")).toBeNull();
     expect(choices()).toEqual(["bundled/one-shot", "bundled/superdevelop"]);
-    if (!graph.parentElement) throw new Error("Graph must be inside the selected card");
-    expect(within(graph.closest(".playbook-picker-card") as HTMLElement).getByRole("radio", { name: /One-shot/ })).toHaveProperty("checked", true);
-    expect(within(graph).getByRole("button", { name: "Highlight Build" })).toBeTruthy();
+    if (!preview.parentElement) throw new Error("Preview must be inside the selected card");
+    expect(within(preview.closest(".playbook-picker-card") as HTMLElement).getByRole("radio", { name: /One-shot/ })).toHaveProperty("checked", true);
+    expect(within(preview).getByText("Build")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "One-shot graph" })).toBeNull();
   });
 
   it("browses inline without losing form data or preferring a one-task selection", async () => {
@@ -478,7 +506,7 @@ describe("scoped playbook selection", () => {
     };
     vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: "SuperDevelop graph" });
+    await screen.findByLabelText("SuperDevelop steps");
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Preserved draft" } });
     const description = screen.getByPlaceholderText(/Describe the feature/);
     fireEvent.change(description, { target: { value: "Keep this task description" } });
@@ -486,7 +514,7 @@ describe("scoped playbook selection", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search playbooks" }), { target: { value: "global/superdevelop" } });
     expect(screen.getAllByRole("radio")).toHaveLength(1);
     fireEvent.click(screen.getByRole("radio", { name: /Global SuperDevelop/ }));
-    await screen.findByRole("region", { name: "Global SuperDevelop graph" });
+    await screen.findByLabelText("Global SuperDevelop steps");
     expect(screen.getByRole("searchbox", { name: "Search playbooks" })).toHaveProperty("value", "global/superdevelop");
     expect(screen.getAllByRole("radio")).toHaveLength(1);
     fireEvent.change(screen.getByRole("searchbox", { name: "Search playbooks" }), { target: { value: "" } });
@@ -502,7 +530,7 @@ describe("scoped playbook selection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back to preferred" }));
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(["bundled/superdevelop", "global/superdevelop"]);
     fireEvent.click(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" }));
-    await screen.findByRole("region", { name: "SuperDevelop graph" });
+    await screen.findByLabelText("SuperDevelop steps");
     expect(screen.getByRole("radio", { name: /Global SuperDevelop/ })).toHaveProperty("checked", false);
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(["bundled/superdevelop", "global/superdevelop"]);
     fireEvent.click(screen.getByRole("button", { name: "Browse all playbooks" }));
@@ -521,23 +549,23 @@ describe("scoped playbook selection", () => {
     await screen.findByRole("searchbox", { name: "Search playbooks" });
     const choices = screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value);
     fireEvent.click(screen.getByRole("radio", { name: /Global SuperDevelop/ }));
-    await screen.findByRole("region", { name: "Global SuperDevelop graph" });
+    await screen.findByLabelText("Global SuperDevelop steps");
     expect(screen.getByRole("searchbox", { name: "Search playbooks" })).toHaveProperty("value", "");
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(choices);
     fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
-    await screen.findByRole("region", { name: "One-shot graph" });
-    expect(screen.queryByRole("region", { name: "Global SuperDevelop graph" })).toBeNull();
+    await screen.findByLabelText("One-shot steps");
+    expect(screen.queryByLabelText("Global SuperDevelop steps")).toBeNull();
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(choices);
     expect(screen.getByRole("radio", { name: /Broken/ })).toHaveProperty("disabled", true);
   });
 
   it("retains the seed on refresh and a later user choice across catalog and repository changes", async () => {
     render(<CreateTaskPage initialPlaybook={sources[2].source.reference} activeRepo="/repo" knownRepos={["/repo", "/other"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: "Repository SuperDevelop graph" });
+    await screen.findByLabelText("Repository SuperDevelop steps");
     const displayedOrder = screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value);
     expect(displayedOrder[0]).toBe("repo/superdevelop");
     fireEvent.click(screen.getByRole("button", { name: "Refresh playbooks" }));
-    await screen.findByRole("region", { name: "Repository SuperDevelop graph" });
+    await screen.findByLabelText("Repository SuperDevelop steps");
     expect(screen.getByRole("radio", { name: /Repository SuperDevelop/ })).toHaveProperty("checked", true);
     fireEvent.click(screen.getByRole("radio", { name: /Global SuperDevelop/ }));
     await openStepSettings();
@@ -547,7 +575,7 @@ describe("scoped playbook selection", () => {
     expect(screen.getByRole("radio", { name: /Global SuperDevelop/ })).toHaveProperty("checked", true);
     expect(screen.getByRole("radio", { name: /Broken/ })).toHaveProperty("disabled", true);
     fireEvent.change(screen.getByRole("combobox", { name: "Repository" }), { target: { value: "/other" } });
-    await screen.findByRole("region", { name: "Global SuperDevelop graph" });
+    await screen.findByLabelText("Global SuperDevelop steps");
     expect(screen.getByRole("radio", { name: /Global SuperDevelop/ })).toHaveProperty("checked", true);
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(displayedOrder);
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Scoped task" } });
