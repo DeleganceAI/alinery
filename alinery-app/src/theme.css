@@ -2051,22 +2051,24 @@ main {
   background: var(--surface-subtle);
 }
 .create-step-preview { display: grid; gap: 12px; padding: 0 16px 16px; }
-.create-step-preview ul { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
-.create-step-preview li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; color: var(--text); font-size: calc(13px * var(--ui-scale)); line-height: 1.4; }
-.create-step-preview .create-step-multiplicity { color: var(--text-muted); font-size: calc(11px * var(--ui-scale)); }
+.create-step-preview ol { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.create-step-preview li { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font-size: calc(13px * var(--ui-scale)); line-height: 1.4; }
+.create-step-number { display: inline-grid; place-items: center; width: calc(22px * var(--ui-scale)); height: calc(22px * var(--ui-scale)); border: 1px solid var(--border-strong); border-radius: 50%; color: var(--text-muted); font-size: calc(11px * var(--ui-scale)); font-variant-numeric: tabular-nums; }
+.create-step-copy { display: grid; align-self: center; gap: 5px; min-width: 0; }
+.create-step-title { color: var(--text-strong); font-weight: 500; overflow-wrap: anywhere; }
+.create-step-preview .create-step-multiplicity { justify-self: start; color: var(--text-muted); font-size: calc(10px * var(--ui-scale)); }
 .create-step-preview > button { justify-self: start; }
 .modal.create-graph-dialog {
-  width: min(1200px, calc(100vw - 48px));
-  height: calc(100dvh - 64px);
+  width: calc(100vw - 24px);
+  height: calc(100dvh - 24px);
   max-width: none;
   max-height: none;
   display: flex;
   flex-direction: column;
 }
 .create-graph-dialog .mh { flex-shrink: 0; gap: 16px; }
-.create-graph-dialog-body { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 16px; }
-.create-graph-dialog-body > .hint { margin: 0 0 12px; line-height: 1.4; }
-.create-graph-dialog-body > .playbook-definition-graph { flex: 1; min-height: 0; }
+.create-graph-dialog-body { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 12px; }
+.create-graph-dialog-body > .playbook-definition-graph { flex: 1; min-height: 0; padding: 0; }
 .create-graph-dialog .playbook-definition-viewport { min-height: 0; }
 .playbook-option {
   position: relative;

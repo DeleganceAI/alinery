@@ -87,6 +87,7 @@ export function layoutDefinitionGraph(
   repeatedKeys: ReadonlySet<string> = new Set(),
   labelLineHeight = LABEL_LINE_HEIGHT,
   nodeHeights?: ReadonlyMap<string, number>,
+  compact = false,
 ): DefinitionGraphLayout {
   const combined = new Map<string, { from: string; to: string; labels: Set<string> }>();
   for (const connection of connections) {
@@ -101,6 +102,7 @@ export function layoutDefinitionGraph(
     }
   }
   const links = [...combined.values()].map(({ from, to, labels }) => ({ from, to, label: [...labels].join("\n") }));
+  const compactFlow = compact && links.every((link) => !link.label);
   const outgoing: Record<string, (typeof links)[number][]> = Object.fromEntries(keys.map((key) => [key, []]));
   const incoming: Record<string, number> = Object.fromEntries(keys.map((key) => [key, 0]));
   for (const link of links) {
@@ -196,11 +198,11 @@ export function layoutDefinitionGraph(
 
   // Pack labels in the gap after their source rank. Overlapping horizontal spans get
   // separate rows; side labels can share rows with ordinary dependency labels.
-  const gapHeights = layers.map(() => 64);
+  const gapHeights: number[] = layers.map(() => (compactFlow ? 24 : 64));
   const labelsByRank = layers.map(() => [] as (typeof routes)[number][]);
   for (const route of routes) {
     const placed = labelsByRank[ranks[route.from]];
-    let y = 16;
+    let y = compactFlow ? 12 : 16;
     if (route.height) {
       for (const other of placed) {
         if (route.labelX < other.labelX + other.width + LABEL_GAP && route.labelX + route.width + LABEL_GAP > other.labelX) {
@@ -210,7 +212,7 @@ export function layoutDefinitionGraph(
       placed.push(route);
     }
     route.gapY = y;
-    gapHeights[ranks[route.from]] = Math.max(gapHeights[ranks[route.from]], y + route.height + 28);
+    if (!compactFlow) gapHeights[ranks[route.from]] = Math.max(gapHeights[ranks[route.from]], y + route.height + 28);
   }
   // Center the packed label rows, leaving a clear arrival strip above the next rank.
   for (const [rank, placed] of labelsByRank.entries()) {

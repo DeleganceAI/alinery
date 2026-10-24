@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PlaybookGraph } from "./PlaybookGraph";
 import { GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH, layoutDefinitionGraph } from "./playbookGraphLayout";
@@ -552,6 +552,35 @@ it("preserves node selection and inspector content after zoom and background pan
   expect(screen.getByLabelText("worker prompt").textContent).toBe(worker.prompt);
   expect(camera(viewport)).toEqual(panned);
   expect(screen.getByLabelText("Graph zoom").textContent).toBe(`${Math.round(panned.scale * 100)}%`);
+});
+
+it("refits a compact overview when its viewport shrinks, while retaining manual zoom between resizes", () => {
+  mockCanvasDimensions();
+  let resized = () => {};
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(callback: () => void) {
+        resized = callback;
+      }
+      observe() {}
+      disconnect() {}
+    },
+  );
+  render(<PlaybookGraph variant="definition" title="Review" steps={denseSteps} compact showInspector={false} />);
+  const viewport = screen.getByRole("region", { name: "Dependency graph canvas" });
+  const initial = camera(viewport);
+  fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+  expect(camera(viewport).scale).toBeGreaterThan(initial.scale);
+  vi.spyOn(viewport, "clientWidth", "get").mockReturnValue(400);
+  vi.spyOn(viewport, "clientHeight", "get").mockReturnValue(250);
+  act(() => resized());
+  const fitted = camera(viewport);
+  expect(fitted.scale).toBeLessThan(initial.scale);
+  expect(fitted.tx).toBeGreaterThanOrEqual(16);
+  expect(fitted.ty).toBeGreaterThanOrEqual(16);
+  expect(fitted.tx + 1000 * fitted.scale).toBeLessThanOrEqual(384);
+  expect(fitted.ty + 500 * fitted.scale).toBeLessThanOrEqual(234);
 });
 
 it("reveals keyboard-focused nodes without intercepting their keys", () => {

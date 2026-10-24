@@ -1506,14 +1506,19 @@ export function CreateTaskPage({
                             Preview {selectedSource.definition.step.length} {selectedSource.definition.step.length === 1 ? "step" : "steps"}
                           </summary>
                           <div className="create-step-preview">
-                            <ul aria-label={`${item.title ?? selectedSource.definition.title} steps`}>
-                              {selectedSource.definition.step.map((step) => (
+                            <ol aria-label={`${item.title ?? selectedSource.definition.title} steps`}>
+                              {selectedSource.definition.step.map((step, index) => (
                                 <li key={step.key}>
-                                  <span>{step.title}</span>
-                                  {step.inputs.some((input) => input.mode === "each") && <span className="create-step-multiplicity">Per artifact</span>}
+                                  <span className="create-step-number" aria-hidden="true">
+                                    {index + 1}
+                                  </span>
+                                  <span className="create-step-copy">
+                                    <span className="create-step-title">{step.title}</span>
+                                    {step.inputs.some((input) => input.mode === "each") && <span className="pill create-step-multiplicity">Per artifact</span>}
+                                  </span>
                                 </li>
                               ))}
-                            </ul>
+                            </ol>
                             <button type="button" className="btn ghost small" onClick={() => setGraphOpen(true)}>
                               Open graph
                             </button>
@@ -1575,8 +1580,7 @@ export function CreateTaskPage({
             </button>
           </div>
           <div className="create-graph-dialog-body">
-            <p className="hint">Drag to pan. Scroll to zoom. Select a step to highlight its connections.</p>
-            <PlaybookGraph title={selectedSource.definition.title} steps={selectedSource.definition.step} variant="definition" showInspector={false} minScale={0.85} />
+            <PlaybookGraph title={selectedSource.definition.title} steps={selectedSource.definition.step} variant="definition" showInspector={false} compact />
           </div>
         </Dialog>
       )}

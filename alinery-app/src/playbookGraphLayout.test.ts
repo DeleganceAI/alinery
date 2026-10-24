@@ -261,6 +261,24 @@ it("handles graphs without ordering connections", () => {
   expect(reduceFlowConnections([])).toEqual([]);
 });
 
+it("compacts an eight-step flow without losing fan-out, bypass or return connections", () => {
+  const keys = ["frame", "plan", "gather", "dispatch", "read", "consolidate", "synthesize", "continue"];
+  const links = [...keys.slice(1).map((to, index) => ({ from: keys[index], to })), ...keys.slice(3).map((to) => ({ from: "frame", to })), { from: "continue", to: "plan" }];
+  const repeated = new Set(["gather", "read"]);
+  const regular = layoutDefinitionGraph(keys, links, repeated);
+  const compact = layoutDefinitionGraph(keys, links, repeated, undefined, undefined, true);
+  expect(compact.height).toBeLessThanOrEqual(800);
+  expect(compact.height).toBeLessThan(regular.height);
+  expect(compact.nodes.map(({ id, instance }) => ({ id, instance }))).toEqual(regular.nodes.map(({ id, instance }) => ({ id, instance })));
+  expect(compact.edges.map(({ from, to, paths, feedback }) => ({ from, to, count: paths.length, feedback }))).toEqual(
+    regular.edges.map(({ from, to, paths, feedback }) => ({ from, to, count: paths.length, feedback })),
+  );
+  expectBounded(compact);
+
+  const labeled = links.map((link) => ({ ...link, label: "artifact.md" }));
+  expect(layoutDefinitionGraph(keys, labeled, repeated, undefined, undefined, true)).toEqual(layoutDefinitionGraph(keys, labeled, repeated));
+});
+
 it("keeps producer output footers clear of edges and later ranks, including terminal outputs", () => {
   const heights = new Map([
     ["root", 144],
