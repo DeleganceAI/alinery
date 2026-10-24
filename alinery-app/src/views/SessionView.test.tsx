@@ -2508,6 +2508,7 @@ describe("review continuation", () => {
     expect(await within(screen.getByTestId("chat-pane")).findByText(nudgeText)).toBeDefined();
     expect(screen.getByRole("textbox")).toHaveProperty("value", draft.body);
     expect(screen.getByRole("button", { name: "Remove notes.pdf" })).toBeDefined();
+    expect(screen.queryByRole("region", { name: "Recoverable session input" })).toBeNull();
     expect(onDraftChange).not.toHaveBeenCalled();
   });
 
@@ -2527,6 +2528,8 @@ describe("review continuation", () => {
 
   it("sends a busy nudge now without consuming drafts or other queued work and inhibits duplicate clicks", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
     const write = deferred<DispatchOutcome>();
     rpcWriteSession.mockImplementation(async (_id, payload) => {
       if (payload && typeof payload === "object" && "type" in payload && payload.type === "abort_and_prompt") return write.promise;
@@ -2552,12 +2555,23 @@ describe("review continuation", () => {
     expect(nudgeSends()[0]).toMatchObject({ type: "abort_and_prompt", message: nudgeText });
     expect(nudgeSends()[0]).not.toHaveProperty("transfer_dispatch_id");
     expect(nudge).toHaveProperty("disabled", true);
+    expect(screen.queryByRole("region", { name: "Recoverable session input" })).toBeNull();
     expect(screen.getByRole("textbox")).toHaveProperty("value", "Keep my draft");
     expect(screen.getByRole("button", { name: "Remove notes.pdf" })).toBeDefined();
     expect(within(screen.getByTestId("chat-pane")).getByText(nudgeText)).toBeDefined();
     expect(onDraftChange).not.toHaveBeenCalled();
     expect(onQueueChange).toHaveBeenLastCalledWith([expect.objectContaining({ text: "Other queued work", dispatchId: "other-work" })]);
     await act(async () => write.resolve({ status: "written" }));
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "response", id: nudgeSends()[0].id, command: "abort_and_prompt", success: true }));
+    });
+    expect(screen.queryByRole("region", { name: "Recoverable session input" })).toBeNull();
+    expect(nudge).toHaveProperty("disabled", true);
+    await act(async () => {
+      onLine.current?.(JSON.stringify({ type: "alinery_dispatch", dispatch_id: nudgeSends()[0].id, status: "consumed" }));
+    });
+    expect(screen.queryByRole("region", { name: "Recoverable session input" })).toBeNull();
+    expect(nudge).toHaveProperty("disabled", true);
   });
 
   it.each(["not_sent", "rejected"] as const)("clears nudge pending state after %s so it can be retried", async (outcome) => {
@@ -2600,6 +2614,7 @@ describe("review continuation", () => {
     await waitFor(() => expect(nudge).toHaveProperty("disabled", false));
     fireEvent.click(nudge);
     await screen.findByText(/Delivery unknown:/);
+    expect(screen.getByRole("region", { name: "Recoverable session input" })).toBeDefined();
     expect(nudge).toHaveProperty("disabled", true);
     fireEvent.click(nudge);
     expect(nudgeSends()).toHaveLength(1);

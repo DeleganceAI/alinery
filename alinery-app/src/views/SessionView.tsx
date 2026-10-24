@@ -2037,7 +2037,9 @@ export function SessionView({
     (continuationPending ? "A handoff has already been requested." : "") ||
     (completionBusy ? "A session action is in progress." : "");
   const modeBlocker = controlBlocker || (modeChanging ? "Updating continuation mode." : "");
-  const pendingNudge = [...pendingSends.values()].find((pending) => pending.origin === "nudge" && pending.status !== "refused" && pending.status !== "settled");
+  const pendingSendItems = [...pendingSends.values()];
+  const visibleSendRecovery = pendingSendItems.filter((item) => item.origin !== "nudge" || item.status === "refused" || item.status === "unknown");
+  const pendingNudge = pendingSendItems.find((pending) => pending.origin === "nudge" && pending.status !== "refused" && pending.status !== "settled");
   const nudgeBlocker =
     controlBlocker ||
     (!liveRpc || terminalConnection !== "open" ? "Reconnect to the live chat session to nudge." : "") ||
@@ -3040,9 +3042,9 @@ export function SessionView({
               {contextActions.length > 0 && <ContextActionBar actions={contextActions} />}
             </>
           )}
-          {pendingSends.size > 0 && (
+          {visibleSendRecovery.length > 0 && (
             <section className="session-input-recovery" aria-label="Recoverable session input">
-              {[...pendingSends.values()].map((item) => (
+              {visibleSendRecovery.map((item) => (
                 <div key={item.commandId} role="status">
                   <span>
                     {item.status === "refused"
