@@ -875,9 +875,44 @@ fn connect_inner<R: tauri::Runtime>(app: &AppHandle<R>, state: &AppState, host_i
             root,
             runtime_hash: target.runtime_hash.clone(),
             config_dir,
+            secrets_dir: remote_secrets_dir(&app_config, host_id)?,
         },
     );
     Ok(())
+}
+
+// A remote daemon cannot tell that a UI-only request (approving a step's completion) comes from this
+// app: over the ssh forward its peer is `sshd`. So the app that starts a daemon gives it a secret,
+// through a file the daemon deletes at startup, and keeps its own copy here, owner-only, per repo.
+// The host never holds the secret on disk once the daemon is up.
+
+pub(crate) fn remote_secrets_dir(app_config: &Path, host_id: &str) -> Result<PathBuf, String> {
+    Ok(app_config_dir_of(app_config).ok_or("app config root unavailable")?.join("remote").join(host_id))
+}
+
+pub(crate) fn read_ui_secrets(secrets_dir: &Path) -> std::collections::BTreeMap<String, String> {
+    fs::read(secrets_dir.join("ui-secrets.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+pub(crate) fn store_ui_secret(secrets_dir: &Path, repo_path: &str, secret: &str) -> Result<(), String> {
+    let mut secrets = read_ui_secrets(secrets_dir);
+    secrets.insert(repo_path.to_string(), secret.to_string());
+    fs::create_dir_all(secrets_dir).map_err(|error| format!("create {}: {error}", secrets_dir.display()))?;
+    alinery_core::write_owner_only_bytes(&secrets_dir.join("ui-secrets.json"), &serde_json::to_vec(&secrets).map_err(|error| error.to_string())?)
+}
+
+/// The secret for the daemon this Mac started for `repo_path` on `host_id`.
+pub(crate) fn remote_ui_secret(app_config: &Path, host_id: &str, repo_path: &str) -> Result<String, String> {
+    read_ui_secrets(&remote_secrets_dir(app_config, host_id)?).remove(repo_path).ok_or_else(|| {
+        "this remote daemon was not started by this Mac, so it cannot approve from here; stop the daemon on the host and reconnect to start one that can".to_string()
+    })
+}
+
+fn new_ui_secret() -> String {
+    format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple())
 }
 
 /// The local forwarded socket and the host's daemon socket it reaches, for one repo.
@@ -905,6 +940,18 @@ pub(crate) fn ensure_remote_daemon(session: &RemoteSession, repo_path: &str, app
     if version.is_none() {
         let repo_hash = crate::daemon::fnv1a64_hex(repo_path);
         let runtime = runtime_dir(&session.root, &session.runtime_hash);
+        // The secret goes to the host in a file only the daemon reads, and is kept here before the
+        // daemon exists so a successful start can never lack its copy.
+        let secret = new_ui_secret();
+        let secret_file = format!("{}/ui-secrets/{}.secret", session.config_dir, &repo_hash[..12]);
+        store_ui_secret(&session.secrets_dir, repo_path, &secret)?;
+        session.channel.call(
+            RepoOp::WriteFile {
+                path: secret_file.clone().into(),
+                contents: secret,
+            },
+            SERVICE_TIMEOUT,
+        )?;
         let (launch, unit) = match session.launcher {
             Launcher::SystemdRun => (Launch::SystemdRun, Some(format!("alinery-daemon-{}", &repo_hash[..12]))),
             Launcher::Setsid | Launcher::Nohup => (Launch::Direct, None),
@@ -920,6 +967,7 @@ pub(crate) fn ensure_remote_daemon(session: &RemoteSession, repo_path: &str, app
                 log: format!("{}/logs/daemon-{}.log", session.config_dir, &repo_hash[..12]).into(),
                 launch,
                 unit,
+                ui_secret_file: Some(secret_file.into()),
             },
             SERVICE_TIMEOUT,
         )?;
@@ -1284,6 +1332,8 @@ pub(crate) struct RemoteSession {
     pub(crate) root: String,
     pub(crate) runtime_hash: String,
     pub(crate) config_dir: String,
+    /// Where this Mac keeps the approval secrets of the daemons it started on this host.
+    pub(crate) secrets_dir: PathBuf,
 }
 
 #[derive(Default)]

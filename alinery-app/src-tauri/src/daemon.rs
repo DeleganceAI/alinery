@@ -422,16 +422,21 @@ pub(crate) async fn allow_execution_completion(
     execution_id: String,
     session_id: String,
 ) -> Result<(), String> {
-    let repo = match repo_path {
-        Some(path) => target_repo_for_app(&app, &path)?,
-        None => require_owned_active_repo(&state)?,
+    let target = match repo_path {
+        Some(path) => owned_target(&app, &state, &path)?,
+        None => owned_active_target(&state)?,
     };
-    require_repo_owned(&state, &repo)?;
     let app_config = app_config_path(&app)?;
     // Daemon control waits up to DAEMON_CONTROL_TIMEOUT. Keep that off the main thread.
     tauri::async_runtime::spawn_blocking(move || {
-        let daemon = task_daemon_for(&repo, &task_slug, &app_config)?;
-        daemon_client::UiControlConnection::connect(&daemon)?.allow_execution_completion(&alinery_core::task_creation::AllowExecutionCompletionRequest {
+        let daemon = task_client(&app.state::<AppState>(), &app_config, &target, &task_slug)?;
+        let mut control = match &target {
+            RepoRef::Local(_) => daemon_client::UiControlConnection::connect(&daemon)?,
+            // Over the forward the daemon cannot see who is asking, so this Mac proves it with the
+            // secret it gave the daemon when it started it.
+            RepoRef::Remote { host_id, path } => daemon_client::UiControlConnection::connect_with_secret(&daemon, &remote_ui_secret(&app_config, host_id, path)?)?,
+        };
+        control.allow_execution_completion(&alinery_core::task_creation::AllowExecutionCompletionRequest {
             task_slug,
             execution_id,
             session_id,

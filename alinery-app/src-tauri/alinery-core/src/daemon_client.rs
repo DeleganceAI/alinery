@@ -34,7 +34,21 @@ pub struct UiControlConnection {
 }
 impl UiControlConnection {
     pub fn connect(client: &DaemonClient) -> Result<Self, String> {
-        let mut stream = client.send(&json!({"op":"ui_control"}))?;
+        Self::open(client, None)
+    }
+
+    /// For a daemon reached through a forward, whose peer is not this process: the secret the app
+    /// gave the daemon when it started it.
+    pub fn connect_with_secret(client: &DaemonClient, secret: &str) -> Result<Self, String> {
+        Self::open(client, Some(secret))
+    }
+
+    fn open(client: &DaemonClient, secret: Option<&str>) -> Result<Self, String> {
+        let request = match secret {
+            Some(secret) => json!({"op":"ui_control","secret":secret}),
+            None => json!({"op":"ui_control"}),
+        };
+        let mut stream = client.send(&request)?;
         let value: Value = serde_json::from_str(&read_reply_line(&mut stream, DAEMON_CONTROL_TIMEOUT)?).map_err(|e| e.to_string())?;
         expect_ok(value)?;
         Ok(Self { stream })

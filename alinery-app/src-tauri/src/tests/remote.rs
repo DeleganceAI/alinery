@@ -116,6 +116,7 @@ fn live_session(args: &[String], id: &str) -> RemoteSession {
         root,
         runtime_hash: target.runtime_hash.clone(),
         config_dir,
+        secrets_dir: std::env::temp_dir().join(format!("alinery-live-secrets-{id}")),
     }
 }
 
@@ -164,6 +165,35 @@ fn live_host_installs_browses_runs_a_daemon_and_survives_a_disconnect() {
     let (client, compat, _) = ensure_remote_daemon(&session, &repo, &identity).unwrap();
     assert!(compat.usable());
     assert!(client.session_statuses_observed().unwrap().is_empty());
+
+    // UI control over the forward: the secret this Mac gave the daemon opens it, nothing else does,
+    // and the file that carried it is gone from the host.
+    let secret = read_ui_secrets(&session.secrets_dir).remove(&repo).expect("the app kept the secret it gave the daemon");
+    assert_eq!(secret.len(), 64);
+    let leftover = session
+        .conn
+        .exec_ok(
+            &format!("ls '{}/ui-secrets' | wc -l", session.config_dir),
+            RemoteStdin::None,
+            std::time::Duration::from_secs(20),
+        )
+        .unwrap();
+    assert_eq!(leftover.trim(), "0", "the daemon deletes the secret file when it starts");
+    assert!(
+        alinery_core::daemon_client::UiControlConnection::connect(&client).is_err(),
+        "the peer is sshd, which is not the UI host"
+    );
+    assert!(alinery_core::daemon_client::UiControlConnection::connect_with_secret(&client, &"x".repeat(64)).is_err());
+    let mut control = alinery_core::daemon_client::UiControlConnection::connect_with_secret(&client, &secret).unwrap();
+    let refused = control
+        .allow_execution_completion(&alinery_core::task_creation::AllowExecutionCompletionRequest {
+            task_slug: "t".into(),
+            execution_id: "e".into(),
+            session_id: "no-such-session".into(),
+        })
+        .unwrap_err();
+    assert!(refused.contains("no engine execution"), "an authorized request reaches the handler: {refused}");
+
     let daemons = |session: &RemoteSession| {
         session
             .conn
@@ -190,6 +220,7 @@ fn live_host_installs_browses_runs_a_daemon_and_survives_a_disconnect() {
         true
     );
     again.conn.exit_master();
+    let _ = std::fs::remove_dir_all(&again.secrets_dir);
 }
 
 /// The same sshd, driven through the app's own commands and state: connect, list a repo,
@@ -1701,6 +1732,27 @@ fn live_git_actions_run_on_the_host() {
     );
     sh(&format!("rm -rf '{repo}' '{origin}'"));
     session.conn.exit_master();
+}
+
+#[test]
+fn approval_secrets_are_kept_per_repo_in_an_owner_only_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("alinery-secrets-{}", uuid::Uuid::new_v4()));
+    let app_config = dir.join("app.toml");
+    let secrets = remote_secrets_dir(&app_config, "box-a1b2c3").unwrap();
+    assert!(remote_ui_secret(&app_config, "box-a1b2c3", "/srv/a").unwrap_err().contains("not started by this Mac"));
+    store_ui_secret(&secrets, "/srv/a", "first").unwrap();
+    store_ui_secret(&secrets, "/srv/b", "other").unwrap();
+    store_ui_secret(&secrets, "/srv/a", "second").unwrap();
+    assert_eq!(
+        remote_ui_secret(&app_config, "box-a1b2c3", "/srv/a").unwrap(),
+        "second",
+        "a restarted daemon replaces its secret"
+    );
+    assert_eq!(remote_ui_secret(&app_config, "box-a1b2c3", "/srv/b").unwrap(), "other");
+    assert!(remote_ui_secret(&app_config, "another-host", "/srv/a").is_err(), "secrets do not cross hosts");
+    assert_eq!(std::fs::metadata(secrets.join("ui-secrets.json")).unwrap().permissions().mode() & 0o777, 0o600);
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]

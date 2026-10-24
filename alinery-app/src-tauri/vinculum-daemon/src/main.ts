@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { createServer, type Socket } from "node:net";
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, unlinkSync, existsSync, statSync, realpathSync, readlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -22,7 +23,7 @@ import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 23;
+const PROTOCOL = 24;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -73,6 +74,30 @@ function flag(name: string): string {
 
 const repo = flag("--repo");
 const appConfig = flag("--app-config");
+// A daemon behind an ssh forward cannot prove its UI by peer executable (the peer is sshd), so the
+// app that started it hands it a secret in a file. It is read and deleted before the daemon listens
+// or resumes anything, and then lives only in this process's memory.
+let uiSecret = "";
+const uiSecretFile = flag("--ui-secret-file");
+if (uiSecretFile) {
+  try {
+    uiSecret = readFileSync(uiSecretFile, "utf8").trim();
+  } catch {
+    /* no secret: only the peer check can authorize UI control */
+  }
+  try {
+    unlinkSync(uiSecretFile);
+  } catch {
+    /* already gone */
+  }
+}
+
+function uiSecretMatches(given: unknown): boolean {
+  if (uiSecret.length < 32 || typeof given !== "string") return false;
+  const expected = Buffer.from(uiSecret);
+  const actual = Buffer.from(given);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
 const namespace = flag("--socket-namespace");
 const buildId = flag("--build-id") || "alinery-vinculum-daemon";
 if (!repo || !appConfig) {
@@ -997,10 +1022,12 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
   }
   if (op === "ui_control") {
     const host = process.env.ALINERY_HOST_EXECUTABLE;
-    const peer = peerExecutable(socket);
-    if (!host || !peer || !samePath(peer, host)) {
-      reply(socket, { error: "UI control requires the protected UI host" });
-      return;
+    if (!uiSecretMatches(header.secret)) {
+      const peer = peerExecutable(socket);
+      if (!host || !peer || !samePath(peer, host)) {
+        reply(socket, { error: "UI control requires the protected UI host" });
+        return;
+      }
     }
     uiAuthorized.add(socket);
     reply(socket, { ok: true }, true);
