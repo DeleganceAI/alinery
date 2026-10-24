@@ -7,7 +7,7 @@ import { parse } from "smol-toml";
 import { Engine } from "playbook-engine/src/engine.ts";
 import type { CompletionReply, Harness, Launch, SessionStatus } from "playbook-engine/src/harness.ts";
 import { parsePlaybookMd } from "playbook-engine/src/playbook-md.ts";
-import type { Execution } from "playbook-engine/src/state.ts";
+import { type Execution, fold, readLog, type State } from "playbook-engine/src/state.ts";
 import { readLaunchModel } from "./sessionControls.ts";
 
 export type SessionHooks = {
@@ -323,6 +323,15 @@ export function holdTask(slug: string) {
 
 export function engineExecutions(slug: string): Execution[] {
   return [...(running.get(slug)?.engine.state.executions.values() ?? [])];
+}
+
+/** Live engine when this process has the task open. Otherwise the log, so a restart still has the bindings. Undefined when there is no log. */
+export function engineSnapshot(repo: string, slug: string): State | undefined {
+  const live = running.get(slug)?.engine.state;
+  if (live) return live;
+  const logPath = join(repo, ".alinery", "tasks", slug, "engine.jsonl");
+  if (!existsSync(logPath)) return undefined;
+  return fold(readLog(logPath));
 }
 
 export async function runTask(slug: string) {
