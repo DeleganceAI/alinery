@@ -2,7 +2,7 @@
 use crate::*;
 
 use alinery_core::task_creation::{unique_attachment_name, CreateTaskReply, CreateTaskRequest, TaskAttachment, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_SET_BYTES};
-pub(crate) use alinery_core::{write_task_unlocked, Task};
+pub(crate) use alinery_core::Task;
 use std::io::Read;
 
 // The board projection lives in alinery-core so a remote host computes the same rows.
@@ -32,6 +32,7 @@ pub(crate) use alinery_core::attachments::{
     ChatImage,
 };
 pub(crate) use alinery_core::board::read_task_opt;
+pub(crate) use alinery_core::task::{set_auto_approve_all_in, set_related_tasks_in};
 pub(crate) use alinery_core::task_creation::duplicate_task_package;
 
 #[tauri::command]
@@ -716,89 +717,31 @@ pub(crate) async fn restore_task_for_repo(app: AppHandle, state: State<'_, AppSt
     result.map_err(|e| format!("restore task: {e}"))?
 }
 
-pub(crate) fn set_related_tasks_in(repo: &Path, slug: String, related: Vec<alinery_core::RelatedTaskRef>) -> Result<Task, String> {
-    let task = read_task(repo, &slug)?;
-    if task.archived {
-        return Err("task is archived — read-only".into());
-    }
-    let self_path = repo.to_string_lossy();
-    let mut cleaned: Vec<alinery_core::RelatedTaskRef> = Vec::new();
-    for mut tag in related {
-        tag.repo_path = tag.repo_path.trim().to_string();
-        tag.slug = tag.slug.trim().to_string();
-        tag.name = tag.name.trim().to_string();
-        if tag.repo_path.is_empty() || tag.slug.is_empty() {
-            return Err("related task is missing repo or slug".into());
-        }
-        if alinery_core::safe_component(&tag.slug) != Some(tag.slug.as_str()) {
-            return Err(format!("invalid related-task slug '{}'", tag.slug));
-        }
-        if tag.repo_path == self_path && tag.slug == slug {
-            return Err("cannot tag a task as related to itself".into());
-        }
-        if cleaned.iter().any(|existing| existing.repo_path == tag.repo_path && existing.slug == tag.slug) {
-            continue;
-        }
-        if tag.name.is_empty() {
-            if let Ok(other) = read_task(Path::new(&tag.repo_path), &tag.slug) {
-                tag.name = other.name;
-            }
-        }
-        cleaned.push(tag);
-    }
-    alinery_core::with_task_mutation_lock_waiting(repo, "set related tasks", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
-        let mut task = read_task(repo, &slug)?;
-        if task.archived {
-            return Err("task is archived — read-only".into());
-        }
-        task.related_tasks = cleaned;
-        write_task_unlocked(repo, &task)?;
-        alinery_core::sync_related_artifact_links(repo, &task.slug, &task.related_tasks)?;
-        Ok(task)
-    })
-}
-
-pub(crate) fn set_auto_approve_all_in(repo: &Path, slug: String, enabled: bool) -> Result<Task, String> {
-    alinery_core::with_task_mutation_lock_waiting(repo, "set auto approve all", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
-        let mut task = read_task(repo, &slug)?;
-        if task.archived {
-            return Err("task is archived — read-only".into());
-        }
-        if task.draft {
-            return Err("draft tasks have no execution to override".into());
-        }
-        if task.engine_version < 2 {
-            return Err("pre-v2 tasks have no automatic completion to override".into());
-        }
-        // Completion reads execution.json, not task.md. Write the task first so a failed
-        // execution write leaves the engine off rather than approving while the file says off.
-        let mut state = alinery_core::execution::read_execution_state(repo, &slug)?;
-        task.auto_approve_all = enabled;
-        write_task_unlocked(repo, &task)?;
-        if state.auto_approve_all != enabled {
-            state.auto_approve_all = enabled;
-            alinery_core::execution::write_execution_state_unlocked(repo, &slug, &mut state)?;
-        }
-        Ok(task)
-    })
-}
-
 #[tauri::command]
-pub(crate) fn set_auto_approve_all_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String, enabled: bool) -> Result<Task, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    set_auto_approve_all_in(&repo, slug, enabled)
+pub(crate) async fn set_auto_approve_all_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String, enabled: bool) -> Result<Task, String> {
+    let target = owned_target(&app, &state, &repo_path)?;
+    off_main_thread("set auto approve", move || match target {
+        RepoRef::Local(repo) => set_auto_approve_all_in(&repo, slug, enabled),
+        RepoRef::Remote { host_id, path } => remote_call(&app.state::<AppState>(), &host_id, RepoOp::SetAutoApproveAll { repo: path.into(), slug, enabled }),
+    })
+    .await
 }
 
+/// A task's related tasks are other tasks on the same machine: its files are linked, not copied. A
+/// remote task's tags are therefore paths on its host, and a tag that names a task this machine cannot
+/// read is refused where the files are.
 #[tauri::command]
-pub(crate) fn set_related_tasks_for_repo(
+pub(crate) async fn set_related_tasks_for_repo(
     app: AppHandle,
     state: State<'_, AppState>,
     repo_path: String,
     slug: String,
     related: Vec<alinery_core::RelatedTaskRef>,
 ) -> Result<Task, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    set_related_tasks_in(&repo, slug, related)
+    let target = owned_target(&app, &state, &repo_path)?;
+    off_main_thread("set related tasks", move || match target {
+        RepoRef::Local(repo) => set_related_tasks_in(&repo, slug, related),
+        RepoRef::Remote { host_id, path } => remote_call(&app.state::<AppState>(), &host_id, RepoOp::SetRelatedTasks { repo: path.into(), slug, related }),
+    })
+    .await
 }

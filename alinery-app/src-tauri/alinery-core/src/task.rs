@@ -288,6 +288,99 @@ pub fn prepare_task_dirs_and_ticket(repo: &Path, slug: &str, name: &str, descrip
     Ok(())
 }
 
+/// A related task is one whose files this machine can read, so its repository must be an absolute path
+/// here. A task in a repository on another machine cannot be linked: the reference would become a
+/// dangling link and a prompt that points the agent at nothing, so it is refused up front.
+pub fn validate_related_refs(related: &[RelatedTaskRef]) -> Result<(), String> {
+    for tag in related {
+        if !Path::new(tag.repo_path.trim()).is_absolute() {
+            return Err(format!(
+                "related task '{}' is not on this machine ({}); tasks can only be related to tasks on the same machine",
+                tag.slug, tag.repo_path
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub fn set_related_tasks_in(repo: &Path, slug: String, related: Vec<crate::RelatedTaskRef>) -> Result<Task, String> {
+    let task = crate::board::read_task_checked(repo, &slug)?;
+    if task.archived {
+        return Err("task is archived — read-only".into());
+    }
+    let self_path = repo.to_string_lossy();
+    let mut cleaned: Vec<crate::RelatedTaskRef> = Vec::new();
+    for mut tag in related {
+        tag.repo_path = tag.repo_path.trim().to_string();
+        tag.slug = tag.slug.trim().to_string();
+        tag.name = tag.name.trim().to_string();
+        if tag.repo_path.is_empty() || tag.slug.is_empty() {
+            return Err("related task is missing repo or slug".into());
+        }
+        validate_related_refs(std::slice::from_ref(&tag))?;
+        if crate::safe_component(&tag.slug) != Some(tag.slug.as_str()) {
+            return Err(format!("invalid related-task slug '{}'", tag.slug));
+        }
+        if tag.repo_path == self_path && tag.slug == slug {
+            return Err("cannot tag a task as related to itself".into());
+        }
+        if cleaned.iter().any(|existing| existing.repo_path == tag.repo_path && existing.slug == tag.slug) {
+            continue;
+        }
+        // A new tag must name a task this machine can read. A path from another machine (a remote
+        // host's, or this Mac's seen from a host) fails here instead of becoming a dangling link. A tag
+        // the task already has survives its repository going away, so a stale one can still be removed.
+        let already_tagged = task.related_tasks.iter().any(|old| old.repo_path == tag.repo_path && old.slug == tag.slug);
+        match crate::board::read_task_checked(Path::new(&tag.repo_path), &tag.slug) {
+            Ok(other) if tag.name.is_empty() => tag.name = other.name,
+            Ok(_) => {}
+            Err(_) if already_tagged => {}
+            Err(error) => {
+                return Err(format!(
+                    "related task '{}' was not found in {} on this machine ({error}); tasks can only be related to tasks on the same machine",
+                    tag.slug, tag.repo_path
+                ))
+            }
+        }
+        cleaned.push(tag);
+    }
+    crate::with_task_mutation_lock_waiting(repo, "set related tasks", crate::TASK_MUTATION_CONTENTION_WAIT, || {
+        let mut task = crate::board::read_task_checked(repo, &slug)?;
+        if task.archived {
+            return Err("task is archived — read-only".into());
+        }
+        task.related_tasks = cleaned;
+        write_task_unlocked(repo, &task)?;
+        crate::sync_related_artifact_links(repo, &task.slug, &task.related_tasks)?;
+        Ok(task)
+    })
+}
+
+pub fn set_auto_approve_all_in(repo: &Path, slug: String, enabled: bool) -> Result<Task, String> {
+    crate::with_task_mutation_lock_waiting(repo, "set auto approve all", crate::TASK_MUTATION_CONTENTION_WAIT, || {
+        let mut task = crate::board::read_task_checked(repo, &slug)?;
+        if task.archived {
+            return Err("task is archived — read-only".into());
+        }
+        if task.draft {
+            return Err("draft tasks have no execution to override".into());
+        }
+        if task.engine_version < 2 {
+            return Err("pre-v2 tasks have no automatic completion to override".into());
+        }
+        // Completion reads execution.json, not task.md. Write the task first so a failed
+        // execution write leaves the engine off rather than approving while the file says off.
+        let mut state = crate::execution::read_execution_state(repo, &slug)?;
+        task.auto_approve_all = enabled;
+        write_task_unlocked(repo, &task)?;
+        if state.auto_approve_all != enabled {
+            state.auto_approve_all = enabled;
+            crate::execution::write_execution_state_unlocked(repo, &slug, &mut state)?;
+        }
+        Ok(task)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -642,6 +735,57 @@ mod tests {
         assert!(!related_tasks_markdown_path(&repo, "here").exists());
         let _ = fs::remove_dir_all(repo);
         let _ = fs::remove_dir_all(other);
+    }
+
+    #[test]
+    fn related_refs_must_be_paths_on_this_machine() {
+        let ok = RelatedTaskRef {
+            repo_path: "/srv/other".into(),
+            slug: "t".into(),
+            name: String::new(),
+        };
+        assert!(validate_related_refs(std::slice::from_ref(&ok)).is_ok());
+        for bad in ["alinery+ssh://box-a1b2c3/srv/other", "relative/repo", ""] {
+            let tag = RelatedTaskRef {
+                repo_path: bad.into(),
+                ..ok.clone()
+            };
+            let error = validate_related_refs(&[tag]).unwrap_err();
+            assert!(error.contains("same machine"), "{bad}: {error}");
+        }
+    }
+
+    #[test]
+    fn set_related_tasks_needs_a_readable_task_for_new_tags_but_keeps_stale_ones() {
+        let repo = unique_temp("rel_here");
+        let other = unique_temp("rel_there");
+        write_task(&repo, &relationship_task("here")).unwrap();
+        let mut there = relationship_task("there");
+        there.name = "There".into();
+        write_task(&other, &there).unwrap();
+        let tag = |repo: &Path, slug: &str| RelatedTaskRef {
+            repo_path: repo.to_string_lossy().into_owned(),
+            slug: slug.into(),
+            name: String::new(),
+        };
+
+        // The name comes from the task that is really there.
+        let updated = set_related_tasks_in(&repo, "here".into(), vec![tag(&other, "there")]).unwrap();
+        assert_eq!(updated.related_tasks[0].name, "There");
+
+        // A task that is not on this machine (another machine's path, or one that does not exist) is refused.
+        let error = set_related_tasks_in(&repo, "here".into(), vec![tag(&other, "there"), tag(&other, "missing")]).unwrap_err();
+        assert!(error.contains("same machine"), "{error}");
+        let error = set_related_tasks_in(&repo, "here".into(), vec![tag(Path::new("/definitely/not/here"), "there")]).unwrap_err();
+        assert!(error.contains("same machine"), "{error}");
+        assert_eq!(read_task(&repo, "here").unwrap().related_tasks.len(), 1, "a refused update changes nothing");
+
+        // A tag the task already has outlives its repository, so it can still be removed or kept.
+        fs::remove_dir_all(&other).unwrap();
+        let kept = set_related_tasks_in(&repo, "here".into(), vec![tag(&other, "there")]).unwrap();
+        assert_eq!(kept.related_tasks.len(), 1);
+        assert!(set_related_tasks_in(&repo, "here".into(), vec![]).unwrap().related_tasks.is_empty());
+        let _ = fs::remove_dir_all(repo);
     }
 
     #[test]

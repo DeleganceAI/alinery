@@ -1529,6 +1529,141 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
         assert!(!catalog(remote.clone()).candidates.iter().any(|candidate| candidate.source.reference == reference));
     }
 
+    // The file operations that used to read this machine's disk now read the host's.
+    {
+        let op_slug = |slug: &str| slug.to_string();
+        // `original` is the retained v2 task the duplicate block wrote to the host.
+        let names: Vec<String> = remote_call(
+            &state,
+            &id,
+            RepoOp::ListArtifacts {
+                repo: repo.clone().into(),
+                slug: slug(),
+            },
+        )
+        .unwrap();
+        assert!(names.contains(&"01-out.md".to_string()), "{names:?}");
+        let comment_path: String = remote_call(
+            &state,
+            &id,
+            RepoOp::ArtifactCommentMarkdownPath {
+                repo: repo.clone().into(),
+                slug: slug(),
+                artifact: "01-out.md".into(),
+            },
+        )
+        .unwrap();
+        assert!(comment_path.starts_with(&repo) && comment_path.ends_with(".md"), "{comment_path}");
+
+        // The notification text uses the task's current name on the host.
+        let attention = |slug: &str, reason: &str| {
+            remote_call::<String>(
+                &state,
+                &id,
+                RepoOp::SessionAttentionBody {
+                    repo: repo.clone().into(),
+                    slug: Some(slug.into()),
+                    reason: reason.into(),
+                },
+            )
+        };
+        assert_eq!(attention("remote-task", "waiting_for_input").unwrap(), "Renamed remote — waiting for your input");
+        assert_eq!(attention("no-such-task", "idle").unwrap(), "no-such-task — idle, needs you");
+        assert!(attention("remote-task", "on_fire").is_err());
+
+        // Auto-approve is a flag in the task and its execution state, so it needs a v2 task.
+        let auto = |slug: &str, enabled: bool| {
+            remote_call::<alinery_core::Task>(
+                &state,
+                &id,
+                RepoOp::SetAutoApproveAll {
+                    repo: repo.clone().into(),
+                    slug: op_slug(slug),
+                    enabled,
+                },
+            )
+        };
+        assert!(auto("remote-task", true).unwrap_err().contains("pre-v2"));
+        assert!(auto("original", true).unwrap().auto_approve_all);
+        let stored: Option<alinery_core::Task> = remote_call(
+            &state,
+            &id,
+            RepoOp::GetTask {
+                repo: repo.clone().into(),
+                slug: "original".into(),
+            },
+        )
+        .unwrap();
+        assert!(stored.unwrap().auto_approve_all);
+        assert!(!auto("original", false).unwrap().auto_approve_all);
+
+        // Related tasks are other tasks on the host: named from their own files, never a path from
+        // another machine.
+        let relate = |related: Vec<alinery_core::RelatedTaskRef>| {
+            remote_call::<alinery_core::Task>(
+                &state,
+                &id,
+                RepoOp::SetRelatedTasks {
+                    repo: repo.clone().into(),
+                    slug: slug(),
+                    related,
+                },
+            )
+        };
+        let tag = |repo_path: &str, slug: &str| alinery_core::RelatedTaskRef {
+            repo_path: repo_path.into(),
+            slug: slug.into(),
+            name: String::new(),
+        };
+        let related = relate(vec![tag(&repo, "original")]).unwrap();
+        assert_eq!((related.related_tasks[0].slug.as_str(), related.related_tasks[0].name.as_str()), ("original", "Original"));
+        for foreign in [format!("alinery+ssh://{id}{repo}"), "/Users/someone/on-a-mac".to_string()] {
+            let refused = relate(vec![tag(&repo, "original"), tag(&foreign, "original")]).unwrap_err();
+            assert!(refused.contains("same machine"), "{foreign}: {refused}");
+        }
+        assert!(relate(Vec::new()).unwrap().related_tasks.is_empty());
+
+        // A review handoff copies an artifact between tasks on the host and starts the target session
+        // through the host's own daemon (here not started: no agent is wanted in a test).
+        let handoff = |start: bool| RepoOp::SendReviewHandoff {
+            source_repo: repo.clone().into(),
+            target_repo: repo.clone().into(),
+            app_config: crate::host_app_config(&state, &id).unwrap(),
+            request: alinery_core::ReviewHandoffRequest {
+                source_slug: slug(),
+                source_session: "s1".into(),
+                source_artifact: "01-out.md".into(),
+                target_slug: "original".into(),
+                target_phase: "implementation".into(),
+                harness: "omp".into(),
+                model: String::new(),
+                prompt_extra: String::new(),
+                start,
+            },
+        };
+        let sent: alinery_core::ReviewHandoffResult = remote_call(&state, &id, handoff(false)).unwrap();
+        assert_eq!(sent.target_record.target_task, "original");
+        assert_eq!(sent.target_session.phase, "implementation");
+        let target_artifacts: Vec<String> = remote_call(
+            &state,
+            &id,
+            RepoOp::ListArtifacts {
+                repo: repo.clone().into(),
+                slug: "original".into(),
+            },
+        )
+        .unwrap();
+        assert!(target_artifacts.contains(&sent.target_artifact), "{target_artifacts:?}");
+        let mut same = handoff(false);
+        if let RepoOp::SendReviewHandoff { request, .. } = &mut same {
+            request.target_slug = slug();
+        }
+        assert!(
+            remote_call::<alinery_core::ReviewHandoffResult>(&state, &id, same).is_err(),
+            "a task cannot hand off to itself"
+        );
+    }
+
     // Disconnect: the app forgets the daemon handle; the daemon itself is untouched.
     disconnect_host(&handle, &id);
     assert!(state.daemon_for(Path::new(&key)).is_none());

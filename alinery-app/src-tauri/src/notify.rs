@@ -73,28 +73,21 @@ pub(crate) fn set_dock_badge_count(app: AppHandle, count: i64) -> Result<(), Str
     Ok(())
 }
 
-pub(crate) fn session_attention_body(repo: &Path, slug: Option<String>, reason: &str) -> Result<String, String> {
-    let suffix = match reason {
-        "idle" => "idle, needs you",
-        "waiting_for_input" => "waiting for your input",
-        "waiting_for_approval" => "waiting for your approval",
-        _ => return Err(format!("unsupported attention reason: {reason}")),
-    };
-    let label = slug
-        .as_ref()
-        .and_then(|slug| read_task(repo, slug).ok().map(|task| task.name))
-        .or(slug)
-        .unwrap_or_else(|| "session".to_string());
-    Ok(format!("{label} — {suffix}"))
-}
-
 // Semantic attention bridge. The frontend calls this on normalized transitions into
 // idle/waiting states; only the three allowed semantic transitions may fire a notification.
 // Unsupported/unknown sessions must never reach this path (plan Step 3, TDD 3C).
+pub(crate) use alinery_core::session_actions::session_attention_body;
+
 #[tauri::command]
-pub(crate) fn notify_session_attention(app: AppHandle, repo_path: String, slug: Option<String>, reason: String) -> Result<(), String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    let body = session_attention_body(&repo, slug, &reason)?;
+pub(crate) async fn notify_session_attention(app: AppHandle, repo_path: String, slug: Option<String>, reason: String) -> Result<(), String> {
+    let target = target_repo_ref_for_app(&app, &repo_path)?;
+    let worker = app.clone();
+    let body = off_main_thread("session attention", move || match target {
+        RepoRef::Local(repo) => session_attention_body(&repo, slug, &reason),
+        // The task's name is read on its host; the notification itself is shown here.
+        RepoRef::Remote { host_id, path } => remote_call(&worker.state::<AppState>(), &host_id, RepoOp::SessionAttentionBody { repo: path.into(), slug, reason }),
+    })
+    .await?;
     fire_app_notification(&app, &body);
     Ok(())
 }

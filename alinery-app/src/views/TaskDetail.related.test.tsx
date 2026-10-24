@@ -148,3 +148,41 @@ it("resolves retained current related names without rewriting snapshots", async 
   expect(related.name).toBe("Historical snapshot");
   expect(mocks.setRelatedTasksForRepo).not.toHaveBeenCalled();
 });
+
+describe("related tasks on a remote host", () => {
+  const own = "alinery+ssh://box-a1b2c3/srv/a";
+  const sameHost = "alinery+ssh://box-a1b2c3/srv/b";
+  const otherHost = "alinery+ssh://other-00aa11/srv/c";
+
+  it("offers only tasks on the same host and stores their host path", async () => {
+    mocks.listBoardTasks.mockResolvedValue([
+      board({ repo_path: own }),
+      board({ name: "Same host", slug: "same", repo_path: sameHost }),
+      board({ name: "Other host", slug: "other", repo_path: otherHost }),
+      board({ name: "On this Mac", slug: "mac", repo_path: "/r" }),
+    ]);
+    mocks.getTask.mockResolvedValue(task());
+
+    renderDetail({ initialTask: task(), repoPath: own, knownRepos: [own, sameHost] });
+
+    const select = (await screen.findByLabelText("Tag a related task")) as HTMLSelectElement;
+    const labels = Array.from(select.options).map((option) => option.textContent);
+    expect(labels.some((label) => label?.includes("Same host"))).toBe(true);
+    expect(labels.some((label) => label?.includes("Other host") || label?.includes("On this Mac"))).toBe(false);
+
+    fireEvent.change(select, { target: { value: `${sameHost}:same` } });
+    await waitFor(() => expect(mocks.setRelatedTasksForRepo).toHaveBeenCalledWith(own, "a-task", [{ repo_path: "/srv/b", slug: "same", name: "Same host" }]));
+  });
+
+  it("shows a stored host path as the repo it names and opens it by key", async () => {
+    const onOpenRelatedTask = vi.fn();
+    const tagged = task({ related_tasks: [{ repo_path: "/srv/b", slug: "same", name: "Same host" }] });
+    mocks.getTask.mockResolvedValue(tagged);
+    mocks.listBoardTasks.mockResolvedValue([board({ name: "Same host", slug: "same", repo_path: sameHost })]);
+
+    renderDetail({ initialTask: tagged, repoPath: own, knownRepos: [own, sameHost], onOpenRelatedTask });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open Same host" }));
+    expect(onOpenRelatedTask).toHaveBeenCalledWith("same", sameHost);
+  });
+});

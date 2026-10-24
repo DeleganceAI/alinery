@@ -1,0 +1,12 @@
+# Commands that resolve their repository with a local-only helper and do not route a remote one.
+# Each fails closed on an alinery+ssh:// key ("not yet available for remote repositories"); this list
+# makes that a recorded decision. See scripts/tests/check-remote-routing.sh.
+#
+# command                         why it stays local for now
+pick_backup_destination_dialog    backups are of this machine's copy of a repo; a remote repo is not backed up (deferred)
+restore_backup                    restore stops the daemon and replaces the repo's files, a teardown the remote path must not do on its own (deferred)
+stop_daemon                       stopping a remote daemon is a deliberate teardown that needs its own confirmation flow (deferred)
+start_mcp_server                  the MCP server is bound to the active repo on this machine
+stop_mcp_server                   the MCP server is bound to the active repo on this machine
+storage_info                      storage accounting for a remote repo is the storage slice (next)
+delete_all_archived_storage       irreversible purge; the remote version is the storage slice (next)

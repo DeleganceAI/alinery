@@ -59,9 +59,20 @@ pub(crate) fn list_artifacts_for(repo: &Path, task_slug: &str) -> Result<Vec<Str
 // List artifact filenames for task detail (read-only; rendering is later polish).
 // Returns [] if the dir doesn't exist yet (task made before its first phase session).
 #[tauri::command]
-pub(crate) async fn list_artifacts(task_slug: String) -> Result<Vec<String>, String> {
-    let repo = active_repo()?;
-    list_artifacts_for(&repo, &task_slug)
+pub(crate) async fn list_artifacts(app: AppHandle, task_slug: String) -> Result<Vec<String>, String> {
+    let target = active_repo_ref()?;
+    off_main_thread("list artifacts", move || match target {
+        RepoRef::Local(repo) => list_artifacts_for(&repo, &task_slug),
+        RepoRef::Remote { host_id, path } => remote_call(
+            &app.state::<AppState>(),
+            &host_id,
+            RepoOp::ListArtifacts {
+                repo: path.into(),
+                slug: task_slug,
+            },
+        ),
+    })
+    .await
 }
 
 pub(crate) use alinery_core::board::artifacts_with_metadata as list_artifacts_with_metadata_in;
@@ -96,33 +107,56 @@ pub(crate) async fn send_review_handoff(
     model: String,
     prompt_extra: String,
 ) -> Result<alinery_core::ReviewHandoffResult, String> {
-    let source_repo = target_repo_for_app(&app, &source_repo_path)?;
-    let target_repo = target_repo_for_app(&app, &target_repo_path)?;
-    require_repo_owned(&state, &source_repo)?;
-    require_repo_owned(&state, &target_repo)?;
+    let source = owned_target(&app, &state, &source_repo_path)?;
+    let target = owned_target(&app, &state, &target_repo_path)?;
+    // The artifact is copied between the two repositories' files and the target's own daemon starts the
+    // session, so both must be on one machine.
+    if !same_machine(&source, &target) {
+        return Err("A review handoff needs both tasks on the same machine; these repositories are on different machines.".into());
+    }
     let app_config = app_config_path(&app)?;
+    let request = alinery_core::ReviewHandoffRequest {
+        source_slug,
+        source_session,
+        source_artifact,
+        target_slug: target_slug.clone(),
+        target_phase,
+        harness,
+        model,
+        prompt_extra,
+        start: true,
+    };
+    let remote = matches!(target, RepoRef::Remote { .. });
+    let worker = app.clone();
     // Copies the artifact and waits on the daemon to start the target session.
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let daemon = task_daemon_for(&target_repo, &target_slug, &app_config)?;
-        alinery_core::send_review_handoff_for_repos(
-            &daemon,
-            &source_repo,
-            &target_repo,
-            alinery_core::ReviewHandoffRequest {
-                source_slug,
-                source_session,
-                source_artifact,
-                target_slug,
-                target_phase,
-                harness,
-                model,
-                prompt_extra,
-                start: true,
-            },
-        )
+    let result = tauri::async_runtime::spawn_blocking(move || match (source, target) {
+        (RepoRef::Local(source_repo), RepoRef::Local(target_repo)) => {
+            let daemon = task_daemon_for(&target_repo, &target_slug, &app_config)?;
+            alinery_core::send_review_handoff_for_repos(&daemon, &source_repo, &target_repo, request)
+        }
+        (RepoRef::Remote { host_id, path: source_path }, RepoRef::Remote { path: target_path, .. }) => {
+            let state = worker.state::<AppState>();
+            let mut result: alinery_core::ReviewHandoffResult = remote_call(
+                &state,
+                &host_id,
+                RepoOp::SendReviewHandoff {
+                    source_repo: source_path.into(),
+                    target_repo: target_path.into(),
+                    app_config: host_app_config(&state, &host_id)?,
+                    request,
+                },
+            )?;
+            // The records on the host name host paths; the UI opens the target by its repo key.
+            result.target_repo_path = target_repo_path;
+            Ok(result)
+        }
+        _ => Err("review handoff repositories are on different machines".to_string()),
     })
     .await
     .map_err(|error| format!("send review handoff task: {error}"))??;
+    if remote {
+        return Ok(result);
+    }
     emit(
         &app,
         alinery_core::TelemetryEvent::ArtifactReviewHandoff {
@@ -375,9 +409,22 @@ pub(crate) fn delete_artifact_comment_draft_for_repo(
 }
 
 #[tauri::command]
-pub(crate) fn artifact_comment_markdown_path_for(task_slug: String, artifact: String) -> Result<String, String> {
-    let repo = active_repo()?;
-    artifact_comment_markdown_path(&repo, &task_slug, &artifact).map(|path| path.display().to_string())
+pub(crate) async fn artifact_comment_markdown_path_for(app: AppHandle, task_slug: String, artifact: String) -> Result<String, String> {
+    let target = active_repo_ref()?;
+    off_main_thread("artifact comment path", move || match target {
+        RepoRef::Local(repo) => artifact_comment_markdown_path(&repo, &task_slug, &artifact).map(|path| path.display().to_string()),
+        // The path is on the host, where the agent that reads it runs.
+        RepoRef::Remote { host_id, path } => remote_call(
+            &app.state::<AppState>(),
+            &host_id,
+            RepoOp::ArtifactCommentMarkdownPath {
+                repo: path.into(),
+                slug: task_slug,
+                artifact,
+            },
+        ),
+    })
+    .await
 }
 
 #[tauri::command]

@@ -998,6 +998,16 @@ pub(crate) fn connected_session(state: &AppState, host_id: &str) -> Result<std::
         .ok_or_else(|| format!("not connected to {host_id}; connect first"))
 }
 
+/// Two repositories share a machine when both are local or both are on the same host. Anything that
+/// links or copies files between repositories needs that: a path means one thing per machine.
+pub(crate) fn same_machine(left: &RepoRef, right: &RepoRef) -> bool {
+    match (left, right) {
+        (RepoRef::Local(_), RepoRef::Local(_)) => true,
+        (RepoRef::Remote { host_id: a, .. }, RepoRef::Remote { host_id: b, .. }) => a == b,
+        _ => false,
+    }
+}
+
 /// The `app.toml` the host's daemon and repo service run with.
 pub(crate) fn host_app_config(state: &AppState, host_id: &str) -> Result<PathBuf, String> {
     Ok(PathBuf::from(format!("{}/app.toml", connected_session(state, host_id)?.config_dir)))

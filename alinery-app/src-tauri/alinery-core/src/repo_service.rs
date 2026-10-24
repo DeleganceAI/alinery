@@ -445,6 +445,43 @@ pub enum RepoOp {
         repo: PathBuf,
         changes: Vec<crate::playbook_tree::TreeChange>,
     },
+    SetAutoApproveAll {
+        repo: PathBuf,
+        slug: String,
+        enabled: bool,
+    },
+    /// Related tasks are paths on this host: the app refuses anything that is not.
+    SetRelatedTasks {
+        repo: PathBuf,
+        slug: String,
+        related: Vec<crate::RelatedTaskRef>,
+    },
+    /// The task's visible artifact names.
+    ListArtifacts {
+        repo: PathBuf,
+        slug: String,
+    },
+    /// Where the pending review comments of an artifact are written for the agent.
+    ArtifactCommentMarkdownPath {
+        repo: PathBuf,
+        slug: String,
+        artifact: String,
+    },
+    /// The text of an attention notification for a task.
+    SessionAttentionBody {
+        repo: PathBuf,
+        #[serde(default)]
+        slug: Option<String>,
+        reason: String,
+    },
+    /// Copy a review artifact between two repositories on this host and start the target session
+    /// through the host's own daemon.
+    SendReviewHandoff {
+        source_repo: PathBuf,
+        target_repo: PathBuf,
+        app_config: PathBuf,
+        request: crate::ReviewHandoffRequest,
+    },
     /// Atomic, owner-only write (parent directories are created).
     WriteFile {
         path: PathBuf,
@@ -816,6 +853,22 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::GitOriginUrl { repo } => to_value(git_origin_url(&repo)),
         RepoOp::ReadPlaybookTree { repo } => to_value(crate::playbook_tree::read_tree(&repo)?),
         RepoOp::ApplyPlaybookTree { repo, changes } => crate::playbook_tree::apply_changes(&repo, &changes).map(|()| Value::Null),
+        RepoOp::SetAutoApproveAll { repo, slug, enabled } => to_value(crate::task::set_auto_approve_all_in(&repo, slug, enabled)?),
+        RepoOp::SetRelatedTasks { repo, slug, related } => to_value(crate::task::set_related_tasks_in(&repo, slug, related)?),
+        RepoOp::ListArtifacts { repo, slug } => to_value(crate::visible_artifact_names(&repo, &slug)?),
+        RepoOp::ArtifactCommentMarkdownPath { repo, slug, artifact } => {
+            to_value(crate::artifact_comments::artifact_comment_markdown_path(&repo, &slug, &artifact)?.display().to_string())
+        }
+        RepoOp::SessionAttentionBody { repo, slug, reason } => to_value(crate::session_actions::session_attention_body(&repo, slug, &reason)?),
+        RepoOp::SendReviewHandoff {
+            source_repo,
+            target_repo,
+            app_config,
+            request,
+        } => {
+            let daemon = host_daemon(&target_repo, &app_config).ok_or("daemon not connected")?;
+            to_value(crate::send_review_handoff_for_repos(&daemon, &source_repo, &target_repo, request)?)
+        }
         RepoOp::WriteFile { path, contents } => write_file(&path, &contents).map(|()| Value::Null),
         RepoOp::SyncCredentials { path, entries } => to_value(crate::credential_sync::apply_incoming(&path, &entries)?),
         RepoOp::SpawnDaemon {
@@ -1307,6 +1360,50 @@ mod tests {
                         new: Some(vec![1]),
                     },
                 ],
+            },
+            RepoOp::SetAutoApproveAll {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                enabled: true,
+            },
+            RepoOp::SetRelatedTasks {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                related: vec![crate::RelatedTaskRef {
+                    repo_path: "/srv/b".into(),
+                    slug: "u".into(),
+                    name: "U".into(),
+                }],
+            },
+            RepoOp::ListArtifacts {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+            },
+            RepoOp::ArtifactCommentMarkdownPath {
+                repo: "/srv/a".into(),
+                slug: "t".into(),
+                artifact: "01.md".into(),
+            },
+            RepoOp::SessionAttentionBody {
+                repo: "/srv/a".into(),
+                slug: Some("t".into()),
+                reason: "idle".into(),
+            },
+            RepoOp::SendReviewHandoff {
+                source_repo: "/srv/a".into(),
+                target_repo: "/srv/b".into(),
+                app_config: "/c/app.toml".into(),
+                request: crate::ReviewHandoffRequest {
+                    source_slug: "s".into(),
+                    source_session: "x".into(),
+                    source_artifact: "01.md".into(),
+                    target_slug: "t".into(),
+                    target_phase: "p".into(),
+                    harness: "omp".into(),
+                    model: "m".into(),
+                    prompt_extra: String::new(),
+                    start: true,
+                },
             },
             RepoOp::RenameSession {
                 repo: "/srv/a".into(),

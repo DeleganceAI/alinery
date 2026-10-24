@@ -24,6 +24,27 @@ export function repoDisplayPath(key: string): string {
   return remote ? `${remote.hostId}:${remote.path}` : key;
 }
 
+/** Which machine a repo key lives on: "" for this one, the host id for a remote repo. */
+export const machineOf = (key: string) => parseRemoteRepo(key)?.hostId ?? "";
+
+/** Files can be linked or copied between repos only when they are on one machine. */
+export const sameMachine = (left: string, right: string) => machineOf(left) === machineOf(right);
+
+/**
+ * A task's related list stores the other repo as a path on the task's own machine, because the
+ * files are linked there. This is that path for `target`, or null when `target` is elsewhere.
+ */
+export function relatedStoredPath(own: string, target: string): string | null {
+  if (!sameMachine(own, target)) return null;
+  return parseRemoteRepo(target)?.path ?? target;
+}
+
+/** The repo key a stored related path stands for, for a task in repo `own`. */
+export function relatedRepoKey(own: string, stored: string): string {
+  const remote = parseRemoteRepo(own);
+  return remote ? `${SCHEME}${remote.hostId}${stored}` : stored;
+}
+
 /** The parent of an absolute POSIX path, or the path itself at the root. */
 export function parentPath(path: string): string {
   const trimmed = path.replace(/\/+$/, "");

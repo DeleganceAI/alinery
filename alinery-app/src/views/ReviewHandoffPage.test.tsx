@@ -149,6 +149,27 @@ describe("ReviewHandoffPage", () => {
     await waitFor(() => expect(onConfirmed).toHaveBeenCalledWith(result));
   });
 
+  it("offers only targets on the source's machine", async () => {
+    const remoteSource = { ...sourceTask, repo_path: "alinery+ssh://box-a1b2c3/srv/a", name: "Remote source" };
+    const sameHost = { ...foreignTask, repo_path: "alinery+ssh://box-a1b2c3/srv/b", name: "Same host" };
+    const otherHost = { ...foreignTask, repo_path: "alinery+ssh://other-00aa11/srv/c", name: "Other host", slug: "elsewhere" };
+    const onThisMac = { ...foreignTask, name: "On this Mac", slug: "mac" };
+    mocks.listBoardTasks.mockResolvedValue([remoteSource, sameHost, otherHost, onThisMac]);
+    render(
+      <ReviewHandoffPage
+        source={{ source_repo_path: remoteSource.repo_path, source_slug: "shared", source_session: "s1", source_artifact: "review/3-findings-1.md" }}
+        allRepos
+        activeRepo={remoteSource.repo_path}
+        onCancel={() => {}}
+        onConfirmed={() => {}}
+      />,
+    );
+    await screen.findByRole("option", { name: /Same host/ });
+    expect(screen.queryByRole("option", { name: /Other host/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /On this Mac/ })).toBeNull();
+    expect(screen.getByText("Source repository: box-a1b2c3:/srv/a")).toBeTruthy();
+  });
+
   it("keeps a created session inspectable when the handoff reports a partial failure", async () => {
     const result: ReviewHandoffResult = {
       ...handoffResult,

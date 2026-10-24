@@ -261,6 +261,7 @@ pub fn provision_task_with_reservation(
     if crate::safe_component(&worktree_base) != Some(worktree_base.as_str()) {
         return Err("invalid worktree name".into());
     }
+    crate::task::validate_related_refs(&request.related_tasks)?;
     let branch_base = nonempty(request.branch_name.as_deref(), &requested);
     let valid_branch = crate::git_cmd(repo)
         .args(["check-ref-format", "--branch", &branch_base])

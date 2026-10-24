@@ -182,3 +182,19 @@ pub fn clear_session_notifications_in(repo: &Path, refs: &[SessionNotificationCl
     }
     Ok(())
 }
+
+/// The text of an attention notification: the task's name (or the slug, or "session") and why it needs the person.
+pub fn session_attention_body(repo: &Path, slug: Option<String>, reason: &str) -> Result<String, String> {
+    let suffix = match reason {
+        "idle" => "idle, needs you",
+        "waiting_for_input" => "waiting for your input",
+        "waiting_for_approval" => "waiting for your approval",
+        _ => return Err(format!("unsupported attention reason: {reason}")),
+    };
+    let label = slug
+        .as_ref()
+        .and_then(|slug| crate::board::read_task_checked(repo, slug).ok().map(|task| task.name))
+        .or(slug)
+        .unwrap_or_else(|| "session".to_string());
+    Ok(format!("{label} — {suffix}"))
+}
