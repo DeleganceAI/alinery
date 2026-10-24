@@ -264,8 +264,7 @@ fn backup_slot_is_released_on_every_exit_path() {
     assert!(!backup_queue_lock().busy(&key));
 }
 
-// Finding 1 follow-up: remove_repo/close_all_repos shut a daemon down, which is the
-// owning window's call. A guest must be refused before it reaches close_repo_daemon.
+// Repository mutation requires ownership; local delisting does not.
 #[test]
 fn a_guest_alinery_cannot_tear_down_the_owners_repo() {
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
@@ -277,7 +276,7 @@ fn a_guest_alinery_cannot_tear_down_the_owners_repo() {
     assert!(owner.claim_repo(&repo));
     assert!(!guest.claim_repo(&repo));
 
-    // The gate remove_repo applies before it ever calls close_repo_daemon.
+    // Mutating commands cannot acquire another window's ownership.
     assert!(require_repo_owned(&guest, &repo).is_err());
     // The owner is of course allowed.
     assert!(require_repo_owned(&owner, &repo).is_ok());

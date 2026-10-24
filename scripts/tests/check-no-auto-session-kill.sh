@@ -44,9 +44,9 @@ ALLOWED="stop_daemon close_repo_daemon restore_backup confirm_repo_takeover_bloc
 # `close_repo_daemon` is a plain fn, so a NEW CALLER of it would end every live session in
 # a repo without adding a `shutdown` sender for the scan above to notice. Its callers are
 # therefore allowlisted separately:
-#   remove_repo      close-repo confirmation (B4)
-#   close_all_repos  the quit dialog's express "close all repos" choice
-CLOSE_CALLERS_ALLOWED="remove_repo close_all_repos"
+#   remove_repo_sync  confirmed remove-repo command's blocking worker (B4)
+#   close_all_repos   the quit dialog's express "close all repos" choice
+CLOSE_CALLERS_ALLOWED="remove_repo_sync close_all_repos"
 
 senders="$(
   awk '

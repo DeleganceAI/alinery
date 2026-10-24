@@ -444,62 +444,56 @@ pub(crate) fn remove_repo_from_config(mut cfg: AppConfig, target: &str) -> Resul
     Ok((sanitize_app_config(cfg), was_active))
 }
 
-/// Drop a repository from the app-level list **and release ownership of it**: this repo's
-/// `alineryd` is stopped (ending every live session), then its retained GUI flock is released
-/// only after the app config no longer lists it.
-///
-/// The delist-only promise this docstring used to carry is retired. Teardown is still
-/// deliberate — the UI confirms with the live session count first (`repo_live_sessions`),
-/// and cancelling never reaches this command. Removing the *active* repo also clears the
-/// active selection; picking the next one is the caller's job so daemon/MCP bring-up
-/// lives only in `set_active_repo`.
+/// Remove a repository locally, attempting shutdown only for a repo we already own.
+/// Daemon conflicts and shutdown failures must not prevent delisting. Files stay intact;
+/// sessions we cannot stop remain available to their owner or when the repo is reopened.
+/// The caller selects the next repository through `set_active_repo`.
 #[tauri::command]
 pub(crate) async fn remove_repo(app: AppHandle, path: String) -> Result<AppConfig, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let target = PathBuf::from(path.trim());
-        // Bound once so the closing guard below can borrow from it for the whole function.
-        // `None` only in unit tests, which drive `AppState` directly.
-        let state = app.try_state::<AppState>();
-        // Held across teardown *and* the delisting below, not just teardown: until the repo
-        // is out of `known_repos` the poller still has a reason to spawn for it, so releasing
-        // between the two would leave a last tick free to hand us a daemon that no listed
-        // repo owns. Dropped at the end of the function, after the config write.
-        let _closing = state.as_ref().map(|s| s.mark_closing(&target));
-        let lifecycle = state.as_ref().map(|state| state.repo_lifecycle(&target));
-        let guard = lifecycle.as_ref().map(|lock| lock.lock().unwrap_or_else(|error| error.into_inner()));
-        // Teardown BEFORE delisting: if the daemon will not stop, keep the repo in
-        // config/UI so the user still has a handle. Never pretend a close succeeded.
-        if let Some(state) = state.as_ref() {
-            // B6: removing a repo shuts its daemon down. That is the owner's call — a second
-            // alinery must not tear down the window that actually holds the folder.
-            require_repo_owned(state, &target)?;
-            close_repo_daemon(state, &target, guard.as_ref().expect("lifecycle guard accompanies state"))
-                .map_err(|e| format!("{e}. Live sessions may still be running — stop them from Settings → Harness, then try again."))?;
-        }
-        // One source of truth for "was this the active repo": the same normalization the
-        // delist itself uses, computed after teardown so it reflects the config we write.
-        let (cfg, was_active) = remove_repo_from_config(load_app_config(&app), &path)?;
-        write_app_config(&app, &cfg)?;
-        if was_active {
-            if let Some(state) = state.as_ref() {
-                state.kill_mcp_for_repo(&target);
+    tauri::async_runtime::spawn_blocking(move || remove_repo_sync(app, path))
+        .await
+        .map_err(|error| format!("remove repository task: {error}"))?
+}
+
+pub(crate) fn remove_repo_sync<R: tauri::Runtime>(app: AppHandle<R>, path: String) -> Result<AppConfig, String> {
+    let target = PathBuf::from(path.trim());
+    // Bound once so the closing guard below can borrow from it for the whole function.
+    // `None` only in unit tests, which drive `AppState` directly.
+    let state = app.try_state::<AppState>();
+    // Held across teardown *and* the delisting below, not just teardown: until the repo
+    // is out of `known_repos` the poller still has a reason to spawn for it, so releasing
+    // between the two would leave a last tick free to hand us a daemon that no listed
+    // repo owns. Dropped at the end of the function, after the config write.
+    let _closing = state.as_ref().map(|s| s.mark_closing(&target));
+    let lifecycle = state.as_ref().map(|state| state.repo_lifecycle(&target));
+    let guard = lifecycle.as_ref().map(|lock| lock.lock().unwrap_or_else(|error| error.into_inner()));
+    let (cfg, was_active) = remove_repo_from_config(load_app_config(&app), &path)?;
+    if let Some(state) = state.as_ref() {
+        if state.owns_repo(&target) && state.daemon_conflict(&target).is_none() {
+            if let Err(error) = close_repo_daemon(state, &target, guard.as_ref().expect("lifecycle guard accompanies state")) {
+                eprintln!("removing {} without stopping its daemon: {error}", target.display());
             }
-            set_active_repo_global(None)?;
         }
+    }
+    write_app_config(&app, &cfg)?;
+    if was_active {
         if let Some(state) = state.as_ref() {
-            state.release_repo(&target);
+            state.kill_mcp_for_repo(&target);
         }
-        emit(
-            &app,
-            alinery_core::TelemetryEvent::RepoRemove {
-                source: alinery_core::TelemetrySource::App,
-                was_active,
-            },
-        );
-        Ok(cfg)
-    })
-    .await
-    .map_err(|error| format!("remove repository task: {error}"))?
+        set_active_repo_global(None)?;
+    }
+    if let Some(state) = state.as_ref() {
+        state.clear_daemon(&target);
+        state.release_repo(&target);
+    }
+    emit(
+        &app,
+        alinery_core::TelemetryEvent::RepoRemove {
+            source: alinery_core::TelemetrySource::App,
+            was_active,
+        },
+    );
+    Ok(cfg)
 }
 
 #[tauri::command]

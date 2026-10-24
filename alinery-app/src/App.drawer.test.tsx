@@ -576,7 +576,7 @@ describe("App terminal drawer tabs", () => {
     expect(mocks.killSessionForRepo).not.toHaveBeenCalled();
   });
 
-  it("kills drawer tabs before removing the active repo, and does nothing when confirm is denied", async () => {
+  it("removes the active repo without individual session kills, and does nothing when confirm is denied", async () => {
     await renderApp();
     const opened = await openFirst("s-1");
     const onNew = requireFn(opened.onNew, "onNew");
@@ -593,8 +593,9 @@ describe("App terminal drawer tabs", () => {
     mocks.confirmDanger.mockResolvedValueOnce(true);
     fireEvent.click(screen.getByRole("button", { name: "Repository" }));
     fireEvent.click(screen.getByRole("button", { name: "Close repo" }));
-    await waitFor(() => expect(mocks.killSession).toHaveBeenCalledWith("s-1", ""));
-    expect(mocks.killSession).toHaveBeenCalledWith("s-2", "");
-    expect(mocks.removeRepo).toHaveBeenCalledWith("/repo");
+    await waitFor(() => expect(mocks.removeRepo).toHaveBeenCalledWith("/repo"));
+    expect(mocks.killSession).not.toHaveBeenCalled();
+    expect(mocks.killSessionForRepo).not.toHaveBeenCalled();
+    await expectDrawerCleared();
   });
 });

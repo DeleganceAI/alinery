@@ -820,10 +820,7 @@ export default function App() {
     }
   };
 
-  // B4 / #132: closing a repo releases ownership — its daemon is stopped, its alineryd lock
-  // and its GUI lock are dropped, so a closed repo can never keep serving with no UI left
-  // to reach it. That ends live sessions, so it is confirmed here with the count first;
-  // cancel changes nothing at all (no config write, no daemon call).
+  // Removal is local even when daemon ownership or shutdown is unavailable.
   const removeRepo = async (path: string) => {
     setRepoErr("");
     const wasActive = path === appConfig?.active_repo;
@@ -831,26 +828,27 @@ export default function App() {
     const ok = await confirmDanger(
       `Remove ${repoName(path)}?`,
       <>
-        <p>Its session daemon is stopped and the repo is removed from the list. Files on disk are untouched.</p>
+        <p>The repo is removed from the list. Files on disk are untouched. Alinery tries to stop its daemon only when it owns the repo.</p>
         {live > 0 && (
           <p className="confirm-loss">
-            {live} live session{live === 1 ? "" : "s"} {live === 1 ? "is" : "are"} killed. In-flight harness work is lost and cannot be recovered.
+            {live} live session{live === 1 ? "" : "s"} may be killed. In-flight harness work may be lost.
           </p>
         )}
+        <p>If the daemon cannot be stopped or belongs to another Alinery, sessions remain running. Manage them from the owning app or reopen the repo.</p>
       </>,
       "Remove repository",
     );
     if (!ok) return;
     try {
-      if (wasActive) await killDrawer();
       const cfg = await ipc.removeRepo(path);
       setAppConfig({ ...cfg, appearance: applyAppearance(cfg.appearance) });
       if (wasActive) {
+        clearDrawerUi();
         setScope("active");
         setView({ kind: "list" });
         if (cfg.known_repos.length > 0) await setRepo(cfg.known_repos[0]);
       }
-      toast(`Closed ${repoName(path)}`, "success");
+      toast(`Removed ${repoName(path)}`, "success");
     } catch (e) {
       setRepoErr(String(e));
     }
